@@ -73,7 +73,7 @@ multiplexors, cache and memory functions, mathematics functions, digital data pr
 C++HDL is actively using std::format during debug printing so GCC 14 or CLANG 18 is recommended, while it's still possible to
 achieve execution using older compilators.
 
-Since C++HDL works as a reflection of SystemVerilog RTL model, strong understanding of SystemVerilog modelling techniques is required,
+&nbsp;&nbsp;&nbsp;&nbsp;Since C++HDL works as a reflection of SystemVerilog RTL model, strong understanding of SystemVerilog modelling techniques is required,
 in particular:
 
 * Synchronous logic digital circuits
@@ -281,17 +281,18 @@ public:
 
 * It is allowed to use native C++ types like bool, unsigned, unsigned long, etc
 
-* To define a register use reg<> template class, at will provide one additional obj.next value for register
+* To define a register use *reg<>* template class, at will provide one additional *obj.next* value for register
 
-* Each combinational value should have _comb postfix and corresponding value_name_comb_func() method which calculates and returns combinatinal value
+* Each combinational value should have *_comb* suffix and corresponding *value_name_comb_func()* method which calculates and returns combinational value
 
 * Each of *connect()*, *reset()*, *work()*, *strobe()* and *comb()* functions should call corresponding functions of module's nested instances
 
 * Only reg_name.next value should be changed in *work()* function. Both reg and reg.next values can be used on right side of expressions
 
-* In reset() function methods .clr() and .set(val) are used to set up both current and next register's values
+* In *reset()* function methods *.clr()* and *.set(val)* are used to set up both current and next register's values
 
-* [f]printf() functions are converted to $write() during SV conversion, exit() becomes finish(), DEBUG_NAME macroses are converted to `DEBUG_NAME and {} are replaced with %x in debug text
+* *[f]printf()* functions are converted to *$write()* during SV conversion, *exit()* becomes *finish()*, DEBUG_NAME macroses are converted to *\textasciigrave DEBUG_NAME*
+and *{}* are replaced with *%x* in debug format string
 
 ## Input/output ports (bidir?)
 
@@ -332,8 +333,8 @@ you should use packed structs to achieve proper <8bit fields placing.
 * combinational values
 * temporary variables
 
-&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg<TYPE> and always contain value, updated on last clock edge. To access next value of register reg_name.next property is used.
-It is recommended to give register variable names a postfix _reg in case when register is used as output port or in parent modules.
+&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg<TYPE> and always contain value, updated on last clock edge. To access next value of register *reg_name.next* property is used.
+It is recommended to give register variable names a suffix *reg* in case when register is used as output port or in parent modules.
 
 Combinational variable can be of any type.
 
@@ -341,12 +342,12 @@ In cases when you need temporary variables inside *work()* or another function i
 
 ## Connect function
 
-Function *connect()* is used to assign nested instances inputs to data sources in the module.
+&nbsp;&nbsp;&nbsp;&nbsp;Function *connect()* is used to assign nested instances inputs to data sources in the module.
 
 ## Work function
 
 &nbsp;&nbsp;&nbsp;&nbsp;Work function can make any changes to variables. Definition of local variables is prohibited (same as in Verilog).
-Only .next value of registers should be changed.
+Only *.next* value of registers should be changed.
 Work function can call other functions to make code well-structured.
 Function with return value represents function in Verilog while function with void return represents task in Verilog.
 
@@ -368,33 +369,46 @@ Since SystemVerilog RTL development process has a number of rules to avoid loops
 C++HDL inherits same rule set, except one rule: C++HDL uses only blocking assignments as default coding technique of any programming language.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Since SystemVerilog simulation (as well as synthesis) refreshes all combinational functions values after each line of blocking assignments,
-to achieve same behaviour, all C++HDL combinational functions should operate register's .next values and be called each time when they are used
+to achieve same behaviour, all C++HDL combinational functions should operate register's *.next* values and be called each time when they are used
 inside an owner module. Third module insertion in the middle of one's module combinational functions chain is prohibited.
 
-&nbsp;&nbsp;&nbsp;&nbsp;From the fact that C++HDL builds a reflection of SystemVerilog RTL model the obvious conclusion follows that
-C++HDL either allows forming of loops and oscillators using standalone combinational functions definition. With this, C++HDL simulation is only capable
+&nbsp;&nbsp;&nbsp;&nbsp;From the fact that C++HDL builds a reflection of SystemVerilog RTL model, the obvious conclusion follows, that
+C++HDL similarly allows forming of loops and oscillators using standalone combinational functions definition. With this, C++HDL simulation is only capable
 of runninng a limited number of combinational functions from input A to output B (not backwards), making loops and oscillators impossible.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Basically, each standalone combinational function should be represented by a C++ method and output variable,
-always accesible by address. All module's combinational functions should be executed by *comb()* function, which is always called
-after full system strobing or reset. Additional combinational functions complexity follows from the two additional circumstances:
+&nbsp;&nbsp;&nbsp;&nbsp;Basically, in C++HDL each standalone combinational function should be represented by a C++ method with a *comb_func()* suffix and
+an output variable with a *comb* suffix, always accesible by an address. All module's combinational functions should be executed by *comb()* function, which is always called
+after full system strobing or reset. Also nested instances *comb()* functions should be called at the same place.
+
+&nbsp;&nbsp;&nbsp;&nbsp;More combinational functions complexity follows from the two additional circumstances:
 
 1. Often the only one specific order of their execution provides right calculation of an output during simulation (bacause of cross-dependencies)
-2. Several combinational functions from different modules can be connected together and make combinational circuit intermodular
+2. Several combinational functions from different modules can be connected together and make combinational circuit to be intermodular
 
 This two possible complexities are handled in C++HDL with the following two rules of combinational logic development:
 
-1. At the beginning of design iteration, developer is responsible for minimization of combinational logic complexity, especially over modules borders
-2. After code is designed, C++HDL SV conversion tool builds combinational functions dependencies tree, checks the order of function calls and gives
-feedback on how to fix the problems
+1. At the beginning of design iteration, developer is responsible for minimization of combinational logic complexity, especially cross modules borders
+2. After code is designed, C++HDL SV conversion tool builds combinational functions dependencies tree, checks the order of functions calling and gives
+the feedback on how to fix the problems found
 
-&nbsp;&nbsp;&nbsp;&nbsp;In conclusion of the most important chapter of this Specification, the note should be made, that everything said
+&nbsp;&nbsp;&nbsp;&nbsp;In conclusion of the most important chapter of this specification, the note should be made, that everything said
 above is also a permament headache of the most of all RTL developers. Such signalling techniques as "valid/ready" require a lot of
 intermodule combinational signalling, which lead to a necessity of combinational function definition in SystemVerilog, even if
 the author applied a lot of effords into avoiding of it. Therefore, C++HDL role here is to balance additional difficulties of
-combinational functions designing using C++HDL with automatic tools which help in building correct calculation order and avoid loops.
+combinational functions designing with code clarity and automatic tools which help in building correct calculation order and avoiding loops.
 
 ## Data types
+
+&nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behaviour C++HDL implements a number of basic data types, responding to a specific
+SystemVerilog datatype each. Currently the list of C++HDL datatypes includes:
+
+* logic<WIDTH> - any width variable, optimized for bit-access
+* u<WIDTH>, u1, u8, u16, u32, u64 - unsigned variables
+* s<WIDTH>, s1, s8, s16, s32, s64 - signed variables (reserved but not implemented because of lack of demand and examples)
+* reg<TYPE> - register definition, works only with C++HDL types or any data structures
+* array<TYPE,SIZE> - variable, optimized for large arrays and access and changing by elements
+* memory<TYPE,SIZE> - special registered container implementing optimal access with strobing changing of one element
+* cat(TYPE, TYPE) - container to combine variables to the bus inline
 
 ### logic<WIDTH>
 
