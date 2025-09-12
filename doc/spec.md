@@ -292,7 +292,7 @@ public:
 
 * In *reset()* function methods *.clr()* and *.set(val)* are used to set up both current and next register's values
 
-* *[f]printf()* functions are converted to *\$write()* during SV conversion, *exit()* becomes *finish()*, DEBUG_NAME macroses are converted to *\textasciigrave DEBUG_NAME*
+* *[f]printf()* functions are converted to *\$write()* during SV conversion, *exit()* becomes *finish()*, DEBUG_NAME macroses are converted to *`` ` ``DEBUG_NAME*
 and *{}* are replaced with *%x* in debug format string
 
 ## Input/output ports (bidir?)
@@ -478,7 +478,7 @@ buffer1_byteenable.next[i] = buffer2_byteenable[i];
 &nbsp;&nbsp;&nbsp;&nbsp;array`<>` type is used for storing a vector of similar types. It should be used with reg`<>` template in case if registered access is required.
 
 ```cpp
-array<u8,AVALON_WIDTH/8>* avmm_writedata_out = &buffer1;
+array<u8,WIDTH/8>* avmm_writedata_out = &buffer1;
 ```
 
 ### memory`<TYPE,SIZE>`
