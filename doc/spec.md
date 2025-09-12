@@ -147,6 +147,8 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 #include "PrjConfig.h"
 #include "Memory.h"
 
+using namespace cpphdl;
+
 template<size_t FIFO_WIDTH_BYTES=BUS_WIDTH, size_t FIFO_DEPTH=FIFO_ROWS>
 class Fifo
 {
@@ -272,7 +274,6 @@ public:
 
 ```
 
-
 * Module class definition can use template parameters. (currently supported only default values)
 
 * Only *work()* function body is recommended to be offloaded to .cpp object file, while all other bodies should be filled in .h file.
@@ -281,7 +282,7 @@ public:
 
 * It is allowed to use native C++ types like bool, unsigned, unsigned long, etc
 
-* To define a register use *reg<>* template class, at will provide one additional *obj.next* value for register
+* To define a register use *reg`<>`* template class, at will provide one additional *obj.next* value for register
 
 * Each combinational value should have *_comb* suffix and corresponding *value_name_comb_func()* method which calculates and returns combinational value
 
@@ -291,7 +292,7 @@ public:
 
 * In *reset()* function methods *.clr()* and *.set(val)* are used to set up both current and next register's values
 
-* *[f]printf()* functions are converted to *$write()* during SV conversion, *exit()* becomes *finish()*, DEBUG_NAME macroses are converted to *\textasciigrave DEBUG_NAME*
+* *[f]printf()* functions are converted to *\$write()* during SV conversion, *exit()* becomes *finish()*, DEBUG_NAME macroses are converted to *\textasciigrave DEBUG_NAME*
 and *{}* are replaced with *%x* in debug format string
 
 ## Input/output ports (bidir?)
@@ -311,13 +312,13 @@ Since pointers are used to connect ports, any pair of connected ports must have 
 
 &nbsp;&nbsp;&nbsp;&nbsp;Any port size is multiple of 8 bit. There is no way to use less size of a variable in C++.
 Size reduction happens after SystemVerilog conversion and uses one of the following ways:
-* Standalone types of <8bit size (like reg<u1>) are translated to corresponding SystemVerilog types (like logic[0:0])
+* Standalone types of `<8b`it size (like reg`<u1>`) are translated to corresponding SystemVerilog types (like logic[0:0])
 * Structs should be packed and can have integral-type fields of any bit size (not more than maximum possible size in C++)
 * Composite types (structs with non-integral types and cat() busses) always align their subtypes size to 8 bit.
 Unused bits should be removed after SV generation, during optimization.
 
 Therefore, if you build a complex bus joint point between C++HDL/SV module with third-party SV module,
-you should use packed structs to achieve proper <8bit fields placing.
+you should use packed structs to achieve proper `<8b`it fields placing.
 
 
 ## Clock (and reset)
@@ -333,7 +334,7 @@ you should use packed structs to achieve proper <8bit fields placing.
 * combinational values
 * temporary variables
 
-&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg<TYPE> and always contain value, updated on last clock edge. To access next value of register *reg_name.next* property is used.
+&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg`<TYPE>` and always contain value, updated on last clock edge. To access next value of register *reg_name.next* property is used.
 It is recommended to give register variable names a suffix *reg* in case when register is used as output port or in parent modules.
 
 Combinational variable can be of any type.
@@ -402,30 +403,148 @@ combinational functions designing with code clarity and automatic tools which he
 &nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behaviour C++HDL implements a number of basic data types, responding to a specific
 SystemVerilog datatype each. Currently the list of C++HDL datatypes includes:
 
-* logic<WIDTH> - any width variable, optimized for bit-access
-* u<WIDTH>, u1, u8, u16, u32, u64 - unsigned variables
-* s<WIDTH>, s1, s8, s16, s32, s64 - signed variables (reserved but not implemented because of lack of demand and examples)
-* reg<TYPE> - register definition, works only with C++HDL types or any data structures
-* array<TYPE,SIZE> - variable, optimized for large arrays and access and changing by elements
-* memory<TYPE,SIZE> - special registered container implementing optimal access with strobing changing of one element
-* cat(TYPE, TYPE) - container to combine variables to the bus inline
+* logic`<WIDTH>` - any width variable, optimized for bit-access
+* u`<WIDTH>`, u1, u8, u16, u32, u64 - unsigned variables
+* s`<WIDTH>`, s1, s8, s16, s32, s64 - signed variables (reserved but not implemented because of lack of demand and examples)
+* reg`<TYPE>` - register definition, works only with C++HDL types or any data structures
+* array`<TYPE,SIZE>` - variable, optimized for large arrays and access and changing by elements
+* memory`<TYPE,SIZE>` - special registered container implementing optimal access with strobing changing of one element
 
-### logic<WIDTH>
+### logic`<WIDTH>`
+
+&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` is the basic type of C++HDL toolchain, representing SystemVerilog type logic.
+It is universal and can be of any width and can be used as standalone variable or inside reg`<>` construction.
+
+&nbsp;&nbsp;&nbsp;&nbsp;Example of usage as variable:
+
+```cpp
+logic<MEM_WIDTH_BYTES*8> data_out_comb;
+```
+
+&nbsp;&nbsp;&nbsp;&nbsp;Example of usage as port:
+
+```cpp
+logic<MEM_WIDTH_BYTES*8>* data_in = nullptr;
+```
+
+&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` type provides read/write access to particular bits using operator[] and to partial bitmap using method .bits(hi,lo):
+
+```cpp
+buffer1_byteenable.next[addr_sub+i] = 1;
+host_addr.bits(39,32) = *s_writedata_in >> 32;
+```
+
+### u`<WIDTH>`
+
+&nbsp;&nbsp;&nbsp;&nbsp;*u`<>`* is a basic unsigned value of variable size which supports all math operators and castable to a logic`<>` variable.
+Despite *u`<>`* can be of any size, tit supports maximum 64-bit math. Example of *u`<>`* usage:
+
+```cpp
+u<STEPS_SIZE> cmd_steps;
+```
 
 ### u1, u8, u16, u32, u64
 
-    (s8, s16, s32, s64)
+&nbsp;&nbsp;&nbsp;&nbsp;*u1*, *u8*, *u16*, *u32*, *u64* are aliaces for *u`<1>`*, *u`<8>`*, *u`<16>`*, *u`<32>`* and *u`<64>`* respectively.
 
-### u<WIDTH>
+### reg`<TYPE>`
 
-### reg<TYPE>
+&nbsp;&nbsp;&nbsp;&nbsp;reg`<>` template is intended to make variable to be a register. It adds *.next* property to be changed in a *work()* function as well as
+.strobe() method which synchronize current value with next. Despite it should never be used as port definition, it is allowed to take address of register
+to assign it to a port. Examples of reg`<>` usage are provided further:
 
-### array<SIZE>
+```cpp
+reg<State> state;
+reg<u16> size;
+reg<array<u8,WIDTH/8>> buffer1;
+reg<logic<WIDTH/8>> buffer1_byteenable;
+```
 
-### memory<TYPE,SIZE>
+```cpp
+state.next.steps = state.steps - 1;
+if (state.steps == 0) {
+    state.next.steps = 255;
+}
 
-### cat(obj,obj,...)
+size.next = 0xFFFF;
 
-# Appendix
+buffer1.next |= buffer1_precalc;
 
-(Any supporting info…)
+buffer1_byteenable.next[i] = buffer2_byteenable[i];
+```
+
+### array`<SIZE>`
+
+&nbsp;&nbsp;&nbsp;&nbsp;array`<>` type is used for storing a vector of similar types. It should be used with reg`<>` template in case if registered access is required.
+
+```cpp
+array<u8,AVALON_WIDTH/8>* avmm_writedata_out = &buffer1;
+```
+
+### memory`<TYPE,SIZE>`
+
+&nbsp;&nbsp;&nbsp;&nbsp;memory`<>` type is developed for optimal performance of access to registered memory with ability to change one word at a clock cycle.
+It is special container which is always registered and cant be used as a port. It uses apply() method for strobing data. The following example shows how memory`<>`
+type should be used to organize simple one r/w port memory.
+
+```cpp
+#pragma once
+
+#include "cpphdl.h"
+#include "PrjConfig.h"
+
+using namespace cpphdl;
+
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
+class Memory
+{
+public:
+    u<clog2(MEM_DEPTH)>* write_addr_in;
+    logic<MEM_WIDTH_BYTES*8>* data_in = nullptr;
+    bool* write_in = nullptr;
+    u<clog2(MEM_DEPTH)>* read_addr_in;
+    logic<MEM_WIDTH_BYTES*8>* data_out = &data_out_comb;
+    bool* read_in = nullptr;
+
+    void connect() {}
+private:
+    logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
+
+    size_t i;
+public:
+
+    void data_out_comb_func()
+    {
+        data_out_comb = buffer[*read_addr_in];
+    }
+
+    void reset()
+    {
+    }
+
+    void work(int clk)
+    {
+        if (!clk) return;
+
+        if (*write_in) {
+            buffer[*write_addr_in] = *data_in;
+        }
+    }
+
+    void strobe()
+    {
+        buffer.apply();
+    }
+
+    void comb()
+    {
+        data_out_comb_func();
+    }
+};
+
+```
+
+# C++HDL SV Conversion tool User Guide
+
+To be continued...
