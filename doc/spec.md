@@ -154,14 +154,14 @@ class Fifo
 {
     Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH> mem;
 public:
-    logic<FIFO_WIDTH_BYTES*8>* data_in = nullptr;
-    bool* write_in = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>* data_out = mem.data_out;
-    bool* read_in = nullptr;
-    bool* empty_out = &empty_comb;
-    bool* full_out = &full_comb;
-    bool* clear_in = &ZERO;
-    bool* afull_out = &afull_reg;
+    logic<FIFO_WIDTH_BYTES*8>* data_in   = nullptr;
+    bool*                      write_in  = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>* data_out  = mem.data_out;
+    bool*                      read_in   = nullptr;
+    bool*                      empty_out = &empty_comb;
+    bool*                      full_out  = &full_comb;
+    bool*                      clear_in  = &ZERO;
+    bool*                      afull_out = &afull_reg;
 
     void connect()
     {
@@ -498,12 +498,12 @@ template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
 class Memory
 {
 public:
-    u<clog2(MEM_DEPTH)>* write_addr_in;
-    logic<MEM_WIDTH_BYTES*8>* data_in = nullptr;
-    bool* write_in = nullptr;
-    u<clog2(MEM_DEPTH)>* read_addr_in;
-    logic<MEM_WIDTH_BYTES*8>* data_out = &data_out_comb;
-    bool* read_in = nullptr;
+    u<clog2(MEM_DEPTH)>*      write_addr_in = nullptr;
+    logic<MEM_WIDTH_BYTES*8>* data_in       = nullptr;
+    bool*                     write_in      = nullptr;
+    u<clog2(MEM_DEPTH)>*      read_addr_in  = nullptr;
+    logic<MEM_WIDTH_BYTES*8>* data_out      = &data_out_comb;
+    bool*                     read_in       = nullptr;
 
     void connect() {}
 private:
