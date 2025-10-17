@@ -1,0 +1,19 @@
+channels:
+    - conda-forge
+
+#platforms:
+#    - win-64
+#    - lin-64
+
+dependencies:
+    - clang==21.1.3
+    - llvm==21.1.3
+    - clangdev==21.1.3
+    - llvmdev==21.1.3
+    - libcxx==21.1.3
+    - libcxx-devel==21.1.3
+    - libcxxabi==21.1.3
+    - cmake==3.26.4
+    - make==4.4.1
+#    - lld==14.0.6
+    - git==2.45
