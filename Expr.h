@@ -22,7 +22,9 @@ struct Expr
 
     std::vector<Expr> sub;
 
-    std::string str()
+    // methods
+
+    std::string str(unsigned flags = 0, std::string prefix = "", std::string suffix = "")
     {
         std::string ret;
         switch (type)
@@ -30,17 +32,17 @@ struct Expr
             case EXPR_UNKNOWN:
                 return std::string("(unknown: ") + value + ")";
             case EXPR_TYPE:
-                return typeToSV(value);
+                return typeToSV(value, flags, prefix, suffix);
             case EXPR_TEMPLATE:
-                ASSERT(sub.size() == 1);
-                return typeToSV(value, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str());
+                ASSERT(sub.size() >= 1);
+                return typeToSV(value, flags, prefix, suffix, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str(flags,prefix,suffix));
             case EXPR_VALUE:
-                return typeToSV(value);
+                return typeToSV(value, flags, prefix, suffix);
             case EXPR_CALL:
                 return "unsupported";
             case EXPR_BINARY:
                 ASSERT(sub.size()==2);
-                return std::string("(binary: ") + sub[0].str() + " " + value + " " + sub[1].str() + ")";
+                return std::string("(binary: ") + sub[0].str(flags,prefix,suffix) + " " + value + " " + sub[1].str(flags,prefix,suffix) + ")";
             break;
             case EXPR_DECLARE:
                 ASSERT(0);
@@ -49,48 +51,71 @@ struct Expr
         return "missed case";
     }
 
-    std::string typeToSV(std::string type, std::string size = "")
+    enum : unsigned {
+        FLAG_PORT = 1,
+        FLAG_REG = 2,
+    };
+
+    std::string typeToSV(std::string type, unsigned flags, const std::string& prefix, const std::string& suffix, std::string size = "")
     {
-        if (type == "logic") {
-            return std::string("logic[" + size + "-1:0]");
-        }
-        if (type == "u") {
-            return std::string("logic[" + size + "-1:0]");
-        }
-        if (type == "u1") {
-            return std::string("logic[0:0]");
-        }
-        if (type == "u8") {
-            return std::string("logic[7:0]");
-        }
-        if (type == "u16") {
-            return std::string("logic[15:0]");
-        }
-        if (type == "u32") {
-            return std::string("logic[31:0]");
-        }
-        if (type == "u64") {
-            return std::string("logic[63:0]");
-        }
+        std::string logic = (flags&FLAG_PORT) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
+
+        std::string str = "unknown: " + type;
+        if (type == "cpphdl::logic") {
+            str = logic + suffix + "[" + size + "-1:0]";
+        } else
+        if (type == "cpphdl::u") {
+            str = logic + suffix + "[" + size + "-1:0]";
+        } else
+        if (type == "cpphdl::u1") {
+            str = logic + suffix;
+        } else
+        if (type == "cpphdl::u8") {
+            str = logic + suffix + "[7:0]";
+        } else
+        if (type == "cpphdl::u16") {
+            str = logic + suffix + "[15:0]";
+        } else
+        if (type == "cpphdl::u32") {
+            str = logic + suffix + "[31:0]";
+        } else
+        if (type == "cpphdl::u64") {
+            str = logic + suffix + "[63:0]";
+        } else
         if (type == "bool") {
-            return std::string("logic[0:0]");
-        }
+            str = logic;
+        } else
         if (type == "uint8_t") {
-            return std::string("logic[7:0]");
-        }
+            str = logic + "[7:0]";
+        } else
         if (type == "uint16_t") {
-            return std::string("logic[15:0]");
-        }
+            str = logic + "[15:0]";
+        } else
         if (type == "uint32_t") {
-            return std::string("logic[31:0]");
-        }
+            str = logic + "[31:0]";
+        } else
         if (type == "uint64_t") {
-            return std::string("logic[63:0]");
-        }
+            str = logic + "[63:0]";
+        } else
+        if (type.compare(0, 4, "short") == 0) {
+            str = "shortint";
+        } else
         if (type == "int") {
-            return std::string("integer");
+            str = "integer";
+        } else
+        if (type.compare(0, 4, "long") == 0) {
+            str = "longint";
+        } else
+        if (type == "unsigned short") {
+            str = "unsigned shortint";
+        } else
+        if (type == "unsigned long") {
+            str = "unsigned longint";
+        } else
+        if (type.compare(0, 8, "unsigned") == 0) {
+            str = "unsigned int";
         }
-        return "unknown";
+        return std::string() + prefix + str;
     }
 
 };

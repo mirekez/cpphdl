@@ -9,7 +9,6 @@ struct Field
 {
     std::string name;
     Expr type;
-    bool reg;
 };
 
 

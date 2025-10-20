@@ -31,24 +31,37 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             cpphdl::Expr expr1;
 
             switch (Arg.getKind()) {
-                case TemplateArgument::Type:
+                case TemplateArgument::Type:  // sub template is a type
                 {
                     std::string str;
                     llvm::raw_string_ostream OS(str);
                     Arg.getAsType().print(OS, Context->getPrintingPolicy());
                     OS.flush();
-                    expr1.value = str;
                     DEBUG_AST(std::cout << " type " << str);
                     const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()->getAsCXXRecordDecl());
                     if (SD) {
+                        str = SD->getQualifiedNameAsString();
+                        expr1.value = str;
                         expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
                         templateToExpr(expr1, SD->getTemplateArgs());
                         expr.sub.emplace_back(std::move(expr1));
                     }
                     else {
+                        expr1.value = str;
                         expr1.type = cpphdl::Expr::EXPR_TYPE;
                         expr.sub.emplace_back(std::move(expr1));
                     }
+                    break;
+                }
+                case TemplateArgument::Template:
+                {
+                    const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()->getAsCXXRecordDecl());
+                    ASSERT(SD);
+                    expr1.value = SD->getQualifiedNameAsString();
+                    expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
+                    templateToExpr(expr1, SD->getTemplateArgs());
+                    DEBUG_AST(std::cout << " template  " << expr1.value);
+                    expr.sub.emplace_back(std::move(expr1));
                     break;
                 }
                 case TemplateArgument::Integral:
@@ -70,20 +83,6 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     Arg.print(Context->getPrintingPolicy(), OS, true);
                     expr1.value = str;
                     DEBUG_AST(std::cout << " decl " << str);
-                    break;
-                }
-                case TemplateArgument::Template:
-                {
-                    std::string str;
-                    llvm::raw_string_ostream OS(str);
-                    Arg.getAsTemplate().print(OS, Context->getPrintingPolicy());
-                    OS.flush();
-                    expr1.value = str;
-                    DEBUG_AST(std::cout << " template  " << str);
-                    const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()->getAsCXXRecordDecl());
-                    expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                    templateToExpr(expr1, SD->getTemplateArgs());
-                    expr.sub.emplace_back(std::move(expr1));
                     break;
                 }
                 case TemplateArgument::Expression:
@@ -270,14 +269,12 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
                 cpphdl::Expr expr;
                 const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(BT->getAsCXXRecordDecl());
-                const TemplateArgument* first = nullptr;
                 if (SD) {
-                    str = SD->getNameAsString();
+                    str = SD->getQualifiedNameAsString();
                     expr.value = str;
                     expr.type = cpphdl::Expr::EXPR_TEMPLATE;
                     templateToExpr(expr, SD->getTemplateArgs());
                     ASSERT(SD->getTemplateArgs().asArray().size()>0);
-                    first = &SD->getTemplateArgs().asArray()[0];
                 }
                 else {
                     expr.value = str;
@@ -286,52 +283,11 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
                 if (pointer) {
                     DEBUG_AST(std::cout << " (port) " << str << ", " << FD->getNameAsString() << "\n");
-
                     mod.ports.emplace(FD->getNameAsString(), cpphdl::Port{FD->getNameAsString(), std::move(expr)});
                 }
                 else {
-                    if (SD && SD->getQualifiedNameAsString() == "cpphdl::reg") {
-                        ASSERT(first);
-                        if (first->getKind() != TemplateArgument::Type && first->getKind() != TemplateArgument::Template) {
-                            llvm::errs() << "cpphdl::reg<> of unsupported type" << "\n";
-                            return false;
-                        }
-
-                        std::string str1;
-                        llvm::raw_string_ostream OS1(str1);
-                        first->print(Context->getPrintingPolicy(), OS1, true);
-
-                        expr.value = str1;
-
-                        if (first->getAsType()->getAs<PointerType>()) {
-                            llvm::errs() << "cpphdl::reg<> of unsupported type" << "\n";
-                            return false;
-                        }
-
-                        cpphdl::Expr expr1;
-                        const auto* SD1 = dyn_cast_or_null<ClassTemplateSpecializationDecl>(first->getAsType()->getAsCXXRecordDecl());
-                        if (SD1) {
-                            str1 = SD1->getNameAsString();
-                            expr1.value = str1;
-                            expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                            templateToExpr(expr1, SD1->getTemplateArgs());
-                        }
-                        else {
-                            expr1.value = str1;
-                            expr1.type = cpphdl::Expr::EXPR_TYPE;
-                        }
-                        DEBUG_AST(std::cout << " (reg) " << str1 << ", " << FD->getNameAsString() << "\n");
-
-                        mod.fields.emplace(FD->getNameAsString(), cpphdl::Field{FD->getNameAsString(), std::move(expr1), true});
-                    }
-                    else {
-                        DEBUG_AST(std::cout << " (var) " << str << ", " << FD->getNameAsString() << "\n");
-
-                        expr.value = str;
-                        expr.type = cpphdl::Expr::EXPR_TYPE;
-
-                        mod.fields.emplace(FD->getNameAsString(), cpphdl::Field{FD->getNameAsString(), std::move(expr), false});
-                    }
+                    DEBUG_AST(std::cout << " (var) " << str << ", " << FD->getNameAsString() << "\n");
+                    mod.fields.emplace(FD->getNameAsString(), cpphdl::Field{FD->getNameAsString(), std::move(expr)});
                 }
             } else if (auto *VD = dyn_cast<VarDecl>(D)) {
                 if (VD->isStaticDataMember()) {
