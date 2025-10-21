@@ -11,14 +11,17 @@ struct Expr
     std::string value;
 
     enum {
-        EXPR_UNKNOWN,
+        EXPR_EMPTY,
         EXPR_TYPE,
         EXPR_TEMPLATE,
         EXPR_VALUE,
         EXPR_CALL,
         EXPR_BINARY,
-        EXPR_DECLARE
-    } type;
+        EXPR_DECLARE,
+        EXPR_FOR,
+        EXPR_IF,
+        EXPR_UNKNOWN
+    } type = EXPR_EMPTY;
 
     std::vector<Expr> sub;
 
@@ -29,8 +32,8 @@ struct Expr
         std::string ret;
         switch (type)
         {
-            case EXPR_UNKNOWN:
-                return std::string("(unknown: ") + value + ")";
+            case EXPR_EMPTY:
+                return "";
             case EXPR_TYPE:
                 return typeToSV(value, flags, prefix, suffix);
             case EXPR_TEMPLATE:
@@ -43,12 +46,16 @@ struct Expr
             case EXPR_BINARY:
                 ASSERT(sub.size()==2);
                 return std::string("(binary: ") + sub[0].str(flags,prefix,suffix) + " " + value + " " + sub[1].str(flags,prefix,suffix) + ")";
-            break;
             case EXPR_DECLARE:
                 ASSERT(0);
-            break;
+                return "";
+            case EXPR_UNKNOWN:
+                return std::string("(unknown: ") + value + ")";
+            default:
+                return "missed case";
         }
-        return "missed case";
+        ASSERT(0);
+        return "";
     }
 
     enum : unsigned {

@@ -6,7 +6,7 @@
 
 #define __PACKED __attribute__((packed))
 
-#ifndef DONT_USE_FORMAT_H
+#if __cplusplus >= 202302L
 #define USE_FORMAT_H  // for c++26
 #endif
 
