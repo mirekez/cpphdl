@@ -16,13 +16,96 @@ cpphdl::Project prj;
 using namespace clang;
 using namespace clang::tooling;
 
+bool getParametersFromInstantiation(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params)
+{
+    if (FD) {
+        clang::SourceRange SR = FD->getSourceRange();
+        str = clang::Lexer::getSourceText(
+            clang::CharSourceRange::getTokenRange(SR),
+            Ctx.getSourceManager(),
+            Ctx.getLangOpts()).str();
+    }
+
+    auto lt = str.find('<');
+    if (lt == (size_t)-1) {
+        return false;
+    }
+    str = str.substr(lt+1);
+    unsigned openCnt = 0;
+    bool quiot1 = false;
+    bool quiot2 = false;
+    bool escape = false;
+
+    size_t pos = 0;
+    while ((pos = str.find_first_of("<>\"'\\,", pos)) != (size_t)-1) {
+        escape = false;
+        if (str[pos] == ',') {
+            if (quiot1 || quiot2) {
+            } else
+            if (openCnt == 0) {
+                if (pos > 0) {
+                    params.push_back(str.substr(0, pos));
+                }
+                str = str.substr(pos+1);
+                pos = 0;
+            }
+        } else
+        if (str[pos] == '>') {
+            if (quiot1 || quiot2) {
+            }
+            else {
+                if (openCnt == 0) {
+                    if (pos > 0) {
+                        params.push_back(str.substr(0, pos));
+                    }
+                    return true;
+                }
+                --openCnt;
+            }
+        } else
+        if (str[pos] == '<') {
+            if (!quiot1 && !quiot2) {
+                ++openCnt;
+            }
+        } else
+        if (str[pos] == '\'') {
+            if (quiot2 || escape) {
+            } else
+            if (quiot1) {
+                quiot1 = false;
+            }
+            else {
+                quiot1 = true;
+            }
+        } else
+        if (str[pos] == '"') {
+            if (quiot1 || escape) {
+            } else
+            if (quiot2) {
+                quiot2 = false;
+            }
+            else {
+                quiot2 = true;
+            }
+        } else
+        if (str[pos] == '\\') {
+            escape = true;
+        }
+        ++pos;
+    }
+    return false;
+}
+
 cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx);
 
-bool templateToExpr(const TemplateArgumentList& Args, cpphdl::Expr& expr, ASTContext& Ctx)
+bool templateToExpr(const ClassTemplateSpecializationDecl *SD, std::vector<std::string>* params, cpphdl::Expr& expr, ASTContext& Ctx)
 {
+    const TemplateArgumentList& Args = SD->getTemplateArgs();
+    const TemplateParameterList* Params = SD->getSpecializedTemplate()->getTemplateParameters();
     DEBUG_AST(std::cout << " templateToExpr: ");
     for (unsigned i = 0; i < Args.size(); ++i) {
         const TemplateArgument& Arg = Args[i];
+//        printTemplateArgs(SD/*dyn_cast<clang::NonTypeTemplateParmDecl>(Params->getParam(i))->getTypeSourceInfo()*/, Ctx);
 
         cpphdl::Expr expr1;
 
@@ -39,7 +122,9 @@ bool templateToExpr(const TemplateArgumentList& Args, cpphdl::Expr& expr, ASTCon
                     str = SD->getQualifiedNameAsString();
                     expr1.value = str;
                     expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                    templateToExpr(SD->getTemplateArgs(), expr1, Ctx);
+                    std::vector<std::string> params1;
+                    getParametersFromInstantiation(nullptr, (params && params->size()) > i ? (*params)[i] : "", Ctx, params1);
+                    templateToExpr(SD, &params1, expr1, Ctx);
                     expr.sub.emplace_back(std::move(expr1));
                 }
                 else {
@@ -55,7 +140,7 @@ bool templateToExpr(const TemplateArgumentList& Args, cpphdl::Expr& expr, ASTCon
                 ASSERT(SD);
                 expr1.value = SD->getQualifiedNameAsString();
                 expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                templateToExpr(SD->getTemplateArgs(), expr1, Ctx);
+                templateToExpr(SD, nullptr, expr1, Ctx);
                 DEBUG_AST(std::cout << " template  " << expr1.value);
                 expr.sub.emplace_back(std::move(expr1));
                 break;
@@ -66,8 +151,15 @@ bool templateToExpr(const TemplateArgumentList& Args, cpphdl::Expr& expr, ASTCon
                 llvm::raw_string_ostream OS(str);
                 Arg.getAsIntegral().print(OS, true);
                 OS.flush();
-                expr1.value = str;
                 DEBUG_AST(std::cout << " integral " << str);
+                if (params && params->size() > i) {
+                    DEBUG_AST(std::cout << "(" << (*params)[i] << ")");
+                    expr1.value = (*params)[i];
+                    expr1.sub.push_back(cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE});
+                }
+                else {
+                    expr1.value = str;
+                }
                 expr1.type = cpphdl::Expr::EXPR_VALUE;
                 expr.sub.emplace_back(std::move(expr1));
                 break;
@@ -251,11 +343,11 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         DEBUG_AST(std::cout << "\nClass: " << RD->getQualifiedNameAsString());
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
-        if (auto *Spec = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (auto *SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
             DEBUG_AST(std::cout << " (template), parameters: ");
 
-            const TemplateArgumentList& Args = Spec->getTemplateArgs();
-            const TemplateParameterList *Params = Spec->getSpecializedTemplate()->getTemplateParameters();
+            const TemplateArgumentList& Args = SD->getTemplateArgs();
+            const TemplateParameterList *Params = SD->getSpecializedTemplate()->getTemplateParameters();
             for (unsigned i = 0; i < Args.size(); ++i) {
                 const TemplateArgument& Arg = Args[i];
                 switch (Arg.getKind()) {
@@ -319,27 +411,31 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 DEBUG_AST(std::cout << "  Member: ");
 
                 bool pointer = false;
-                QualType BT = FD->getType().getNonReferenceType();
-                if (const auto *PT = BT->getAs<PointerType>()) {
-                    BT = PT->getPointeeType();
+                QualType QT = FD->getType().getNonReferenceType();
+                if (const auto *PT = QT->getAs<PointerType>()) {
+                    QT = PT->getPointeeType();
                     pointer = true;
                 }
-                BT = BT.getCanonicalType();
+                QT = QT.getCanonicalType();
                 std::string str;
                 llvm::raw_string_ostream OS(str);
-                BT.print(OS, Context->getPrintingPolicy());
+                QT.print(OS, Context->getPrintingPolicy());
                 OS.flush();
 
                 cpphdl::Expr expr;
-                const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(BT->getAsCXXRecordDecl());
+                const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(QT->getAsCXXRecordDecl());
                 if (SD) {
+                    DEBUG_AST(std::cout << " [template] ");
                     str = SD->getQualifiedNameAsString();
                     expr.value = str;
                     expr.type = cpphdl::Expr::EXPR_TEMPLATE;
-                    templateToExpr(SD->getTemplateArgs(), expr, *Context);
                     ASSERT(SD->getTemplateArgs().asArray().size()>0);
+                    std::vector<std::string> params;
+                    getParametersFromInstantiation(FD, "", *Context, params);
+                    templateToExpr(SD, &params, expr, *Context);
                 }
                 else {
+                    DEBUG_AST(std::cout << " [type] ");
                     expr.value = str;
                     expr.type = cpphdl::Expr::EXPR_TYPE;
                 }

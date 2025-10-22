@@ -40,7 +40,7 @@ struct Expr
                 ASSERT(sub.size() >= 1);
                 return typeToSV(value, flags, prefix, suffix, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str(flags,prefix,suffix));
             case EXPR_VALUE:
-                return typeToSV(value, flags, prefix, suffix);
+                return value;//, flags, prefix, suffix);
             case EXPR_CALL:
                 return "unsupported";
             case EXPR_BINARY:
@@ -63,63 +63,75 @@ struct Expr
         FLAG_REG = 2,
     };
 
-    std::string typeToSV(std::string type, unsigned flags, const std::string& prefix, const std::string& suffix, std::string size = "")
+    std::string typeToSV(std::string name, unsigned flags, const std::string& prefix, const std::string& suffix, std::string size = "")
     {
         std::string logic = (flags&FLAG_PORT) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
-        std::string str = "unknown: " + type;
-        if (type == "cpphdl::logic") {
+        std::string str = name;
+        if (type == EXPR_TEMPLATE) {
+            str += " #(";
+            bool first = true;
+            for (auto& param : sub) {
+                if (!first) {
+                    str += ",";
+                }
+                str += param.str();
+                first = false;
+            }
+            str += ")";
+        }
+        if (name == "cpphdl::logic") {
             str = logic + suffix + "[" + size + "-1:0]";
         } else
-        if (type == "cpphdl::u") {
+        if (name == "cpphdl::u") {
             str = logic + suffix + "[" + size + "-1:0]";
         } else
-        if (type == "cpphdl::u1") {
+        if (name == "cpphdl::u1") {
             str = logic + suffix;
         } else
-        if (type == "cpphdl::u8") {
+        if (name == "cpphdl::u8") {
             str = logic + suffix + "[7:0]";
         } else
-        if (type == "cpphdl::u16") {
+        if (name == "cpphdl::u16") {
             str = logic + suffix + "[15:0]";
         } else
-        if (type == "cpphdl::u32") {
+        if (name == "cpphdl::u32") {
             str = logic + suffix + "[31:0]";
         } else
-        if (type == "cpphdl::u64") {
+        if (name == "cpphdl::u64") {
             str = logic + suffix + "[63:0]";
         } else
-        if (type == "bool") {
+        if (name == "bool") {
             str = logic;
         } else
-        if (type == "uint8_t") {
+        if (name == "uint8_t") {
             str = logic + "[7:0]";
         } else
-        if (type == "uint16_t") {
+        if (name == "uint16_t") {
             str = logic + "[15:0]";
         } else
-        if (type == "uint32_t") {
+        if (name == "uint32_t") {
             str = logic + "[31:0]";
         } else
-        if (type == "uint64_t") {
+        if (name == "uint64_t") {
             str = logic + "[63:0]";
         } else
-        if (type.compare(0, 4, "short") == 0) {
+        if (name.compare(0, 4, "short") == 0) {
             str = "shortint";
         } else
-        if (type == "int") {
+        if (name == "int") {
             str = "integer";
         } else
-        if (type.compare(0, 4, "long") == 0) {
+        if (name.compare(0, 4, "long") == 0) {
             str = "longint";
         } else
-        if (type == "unsigned short") {
+        if (name == "unsigned short") {
             str = "unsigned shortint";
         } else
-        if (type == "unsigned long") {
+        if (name == "unsigned long") {
             str = "unsigned longint";
         } else
-        if (type.compare(0, 8, "unsigned") == 0) {
+        if (name.compare(0, 8, "unsigned") == 0) {
             str = "unsigned int";
         }
         return std::string() + prefix + str;
