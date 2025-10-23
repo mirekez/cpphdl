@@ -24,7 +24,7 @@ struct Module
 
     bool print(std::ofstream& out)
     {
-        out << "module ";
+        out << "module";
         if (parameters.size()) {
             out <<  " #(\n";
             bool first = true;
@@ -34,7 +34,7 @@ struct Module
             }
             out <<  " )\n";
         }
-        out << name << "(\n";
+        out << name << " (\n";
         bool first = true;
         for (auto& port : ports) {
             out << (first?"    ":",   ");

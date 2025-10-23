@@ -54,6 +54,14 @@ Conversion tool provides creation of readable and structured SystemVerilog files
 &nbsp;&nbsp;&nbsp;&nbsp;Since C++HDL goal is to precisely repeat behaviour of SystemVerilog in C++, it is recommended to understand SystemVerilog code and it's behaviour
 corresponding to each C++HDL line of code (each C++HDL line of code is translated directly into SystemVerilog line of code).
 
+# Who needs C++HDL
+
+* Digital IC development companies (ASIC,IP,libraries,FPGA) - 100 times faster development and testing of complex digital designs, 10 times better quality of RTL output
+* Digital IC developers - use modern C++ environment and smart IDEs, powerful C++ debug, static analysis and linting tools
+* Software developers who want to deliver hardware but not spending time to study new languages - use C++HDL and deliver hardware from scratch today
+* CAD/Tool developers (especially AI-coding/training) - 100 times more train cycles per day, C++ allows code generation, C++ is more AI-learned
+* Talents searchers - involve the most popular programming language speakers into plenty of modern projects which experience lack of labor force
+
 # Limitations
 
 * C++HDL supports only digital design components, written using blocking assignments

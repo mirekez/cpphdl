@@ -33,7 +33,12 @@ struct Method
         }
 
         for (auto& stmt : statements) {
-            out << stmt.str() << "\n";
+            out << "        ";
+            stmt.indent = 2;
+            out << stmt.str();
+            if (!stmt.isMultiline()) {
+                out << ";\n";
+            }
         }
 
         if (ret == "void") {

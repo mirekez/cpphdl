@@ -10,241 +10,9 @@
 
 #include "Debug.h"
 #include "Project.h"
+#include "main.h"
 
 cpphdl::Project prj;
-
-using namespace clang;
-using namespace clang::tooling;
-
-bool getParametersFromInstantiation(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params)
-{
-    if (FD) {
-        clang::SourceRange SR = FD->getSourceRange();
-        str = clang::Lexer::getSourceText(
-            clang::CharSourceRange::getTokenRange(SR),
-            Ctx.getSourceManager(),
-            Ctx.getLangOpts()).str();
-    }
-
-    auto lt = str.find('<');
-    if (lt == (size_t)-1) {
-        return false;
-    }
-    str = str.substr(lt+1);
-    unsigned openCnt = 0;
-    bool quiot1 = false;
-    bool quiot2 = false;
-    bool escape = false;
-
-    size_t pos = 0;
-    while ((pos = str.find_first_of("<>\"'\\,", pos)) != (size_t)-1) {
-        escape = false;
-        if (str[pos] == ',') {
-            if (quiot1 || quiot2) {
-            } else
-            if (openCnt == 0) {
-                if (pos > 0) {
-                    params.push_back(str.substr(0, pos));
-                }
-                str = str.substr(pos+1);
-                pos = 0;
-            }
-        } else
-        if (str[pos] == '>') {
-            if (quiot1 || quiot2) {
-            }
-            else {
-                if (openCnt == 0) {
-                    if (pos > 0) {
-                        params.push_back(str.substr(0, pos));
-                    }
-                    return true;
-                }
-                --openCnt;
-            }
-        } else
-        if (str[pos] == '<') {
-            if (!quiot1 && !quiot2) {
-                ++openCnt;
-            }
-        } else
-        if (str[pos] == '\'') {
-            if (quiot2 || escape) {
-            } else
-            if (quiot1) {
-                quiot1 = false;
-            }
-            else {
-                quiot1 = true;
-            }
-        } else
-        if (str[pos] == '"') {
-            if (quiot1 || escape) {
-            } else
-            if (quiot2) {
-                quiot2 = false;
-            }
-            else {
-                quiot2 = true;
-            }
-        } else
-        if (str[pos] == '\\') {
-            escape = true;
-        }
-        ++pos;
-    }
-    return false;
-}
-
-cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx);
-
-bool templateToExpr(const ClassTemplateSpecializationDecl *SD, std::vector<std::string>* params, cpphdl::Expr& expr, ASTContext& Ctx)
-{
-    const TemplateArgumentList& Args = SD->getTemplateArgs();
-    const TemplateParameterList* Params = SD->getSpecializedTemplate()->getTemplateParameters();
-    DEBUG_AST(std::cout << " templateToExpr: ");
-    for (unsigned i = 0; i < Args.size(); ++i) {
-        const TemplateArgument& Arg = Args[i];
-//        printTemplateArgs(SD/*dyn_cast<clang::NonTypeTemplateParmDecl>(Params->getParam(i))->getTypeSourceInfo()*/, Ctx);
-
-        cpphdl::Expr expr1;
-
-        switch (Arg.getKind()) {
-            case TemplateArgument::Type:  // sub template is a type
-            {
-                std::string str;
-                llvm::raw_string_ostream OS(str);
-                Arg.getAsType().print(OS, Ctx.getPrintingPolicy());
-                OS.flush();
-                DEBUG_AST(std::cout << " type " << str);
-                const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()->getAsCXXRecordDecl());
-                if (SD) {
-                    str = SD->getQualifiedNameAsString();
-                    expr1.value = str;
-                    expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                    std::vector<std::string> params1;
-                    getParametersFromInstantiation(nullptr, (params && params->size()) > i ? (*params)[i] : "", Ctx, params1);
-                    templateToExpr(SD, &params1, expr1, Ctx);
-                    expr.sub.emplace_back(std::move(expr1));
-                }
-                else {
-                    expr1.value = str;
-                    expr1.type = cpphdl::Expr::EXPR_TYPE;
-                    expr.sub.emplace_back(std::move(expr1));
-                }
-                break;
-            }
-            case TemplateArgument::Template:
-            {
-                const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()->getAsCXXRecordDecl());
-                ASSERT(SD);
-                expr1.value = SD->getQualifiedNameAsString();
-                expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
-                templateToExpr(SD, nullptr, expr1, Ctx);
-                DEBUG_AST(std::cout << " template  " << expr1.value);
-                expr.sub.emplace_back(std::move(expr1));
-                break;
-            }
-            case TemplateArgument::Integral:
-            {
-                std::string str;
-                llvm::raw_string_ostream OS(str);
-                Arg.getAsIntegral().print(OS, true);
-                OS.flush();
-                DEBUG_AST(std::cout << " integral " << str);
-                if (params && params->size() > i) {
-                    DEBUG_AST(std::cout << "(" << (*params)[i] << ")");
-                    expr1.value = (*params)[i];
-                    expr1.sub.push_back(cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE});
-                }
-                else {
-                    expr1.value = str;
-                }
-                expr1.type = cpphdl::Expr::EXPR_VALUE;
-                expr.sub.emplace_back(std::move(expr1));
-                break;
-            }
-            case TemplateArgument::Declaration:
-            {
-                std::string str;
-                llvm::raw_string_ostream OS(str);
-                Arg.print(Ctx.getPrintingPolicy(), OS, true);
-                expr1.value = str;
-                DEBUG_AST(std::cout << " decl " << str);
-                break;
-            }
-            case TemplateArgument::Expression:
-            {
-                DEBUG_AST(std::cout << " expression ");
-                expr.sub.emplace_back(exprToExpr(Arg.getAsExpr(), Ctx));
-                break;
-            }
-            case TemplateArgument::Pack:
-            default:
-            {
-                std::string str;
-                llvm::raw_string_ostream OS(str);
-                Arg.print(Ctx.getPrintingPolicy(), OS, true);
-                expr1.value = str;
-                DEBUG_AST(std::cout << " unhandled");
-                break;
-            }
-        }
-    }
-    return true;
-}
-
-cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx)
-{
-    DEBUG_AST(std::cout << " exprToExpr ");
-    E = E->IgnoreParenImpCasts();
-
-    if (auto *BO = dyn_cast<BinaryOperator>(E)) {
-        DEBUG_AST(std::cout << " binary " << BO->getOpcodeStr().data());
-        return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS(),Ctx),exprToExpr(BO->getRHS(),Ctx)}};
-    }
-    else if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
-        DEBUG_AST(std::cout << " decl " << DRE->getNameInfo().getAsString());
-        return cpphdl::Expr{DRE->getNameInfo().getAsString(), cpphdl::Expr::EXPR_DECLARE};
-    }
-    else if (auto *IL = dyn_cast<IntegerLiteral>(E)) {
-        DEBUG_AST(std::cout << " value " << std::to_string(IL->getValue().getSExtValue()));
-        return cpphdl::Expr{std::to_string(IL->getValue().getSExtValue()), cpphdl::Expr::EXPR_VALUE};
-    }
-    else if (auto *CE = dyn_cast<CallExpr>(E)) {
-        if (const FunctionDecl *FD = CE->getDirectCallee()) {
-            DEBUG_AST(std::cout << " expr " << FD->getNameAsString());
-            cpphdl::Expr call = cpphdl::Expr{FD->getNameAsString(), cpphdl::Expr::EXPR_CALL};
-            for (auto *arg : CE->arguments()) {
-                call.sub.push_back(exprToExpr(arg, Ctx));
-            }
-            return call;
-        }
-    }
-    else if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
-        DEBUG_AST(std::cout << " binary operator");
-
-        if (OCE->getNumArgs() == 2) {
-            return cpphdl::Expr{"=", cpphdl::Expr::EXPR_BINARY, {exprToExpr(OCE->getArg(0),Ctx),exprToExpr(OCE->getArg(1),Ctx)}};
-        } else if (OCE->getNumArgs() == 1) {
-            return cpphdl::Expr{"=", cpphdl::Expr::EXPR_BINARY, {exprToExpr(OCE->getArg(0), Ctx)}};
-        }
-    }
-    else {
-        SourceManager &SM = Ctx.getSourceManager();
-        LangOptions LangOpts = Ctx.getLangOpts();
-
-        SourceLocation StartLoc = E->getBeginLoc();
-        SourceLocation EndLoc   = Lexer::getLocForEndOfToken(E->getEndLoc(), 0, SM, LangOpts);
-
-        CharSourceRange Range = CharSourceRange::getCharRange(StartLoc, EndLoc);
-
-        DEBUG_AST(std::cout << " unknown " << std::string(Lexer::getSourceText(Range, SM, LangOpts)));
-
-        return cpphdl::Expr{std::string(Lexer::getSourceText(Range, SM, LangOpts)), cpphdl::Expr::EXPR_UNKNOWN};
-    }
-    return cpphdl::Expr{"", cpphdl::Expr::EXPR_UNKNOWN};
-}
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 {
@@ -265,61 +33,121 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
             bool VisitBinaryOperator(BinaryOperator *BO)
             {
-//                llvm::outs() << "Assignment:";
-//                BO->getExprLoc().print(llvm::outs(), Ctx.getSourceManager());
-                clang::Expr *RHS = BO->getRHS();
-                if (RHS) {
-                    llvm::outs() << "        BO: "
-                     << Lexer::getSourceText(
-                          CharSourceRange::getTokenRange(RHS->getSourceRange()),
-                          Ctx.getSourceManager(),
-                          Ctx.getLangOpts());
-                }
-                llvm::outs() << "\n";
-
                 method.statements.emplace_back(exprToExpr(BO, Ctx));
                 return false;
             }
 
             bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *OCE)
             {
-//                llvm::outs() << "Assignment:";
-//                OCE->getExprLoc().print(llvm::outs(), Ctx.getSourceManager());
-                clang::OverloadedOperatorKind OpKind = OCE->getOperator();
-                llvm::outs() << "        OC: "
-                    << Lexer::getSourceText(
-                        CharSourceRange::getTokenRange(OCE->getSourceRange()),
-                        Ctx.getSourceManager(),
-                        Ctx.getLangOpts());
-                llvm::outs() << ", found operator: " << clang::getOperatorSpelling(OpKind) << "\n";
-                llvm::outs() << "\n";
-
                 method.statements.emplace_back(exprToExpr(OCE, Ctx));
                 return false;
             }
 
             bool VisitForStmt(clang::ForStmt *FS)
             {
-                clang::SourceManager &SM = Ctx.getSourceManager();
-                clang::SourceLocation Loc = FS->getForLoc();
+                DEBUG_AST(std::cout << " ForStmt " << "\n");
 
-                llvm::outs() << "        FS: "
-                             << Loc.printToString(SM);
+                cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
 
-                // Optional: inspect parts
-                if (clang::Stmt *Init = FS->getInit()) {
-                    llvm::outs() << "  Has init statement";
+                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getInit())) {
+                    expr.sub.push_back(exprToExpr(E, Ctx));
                 }
-                if (clang::Expr *Cond = FS->getCond()) {
-                    llvm::outs() << "  Has condition: ";
-                    Cond->dumpColor();
+                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getCond())) {
+                    expr.sub.push_back(exprToExpr(E, Ctx));
                 }
-                if (clang::Expr *Inc = FS->getInc()) {
-                    llvm::outs() << "  Has increment: ";
-                    Inc->dumpColor();
+                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getInc())) {
+                    expr.sub.push_back(exprToExpr(E, Ctx));
                 }
-                llvm::outs() << "\n";
 
+                cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
+                if (auto *CS = dyn_cast_or_null<CompoundStmt>(FS->getBody())) {
+                    for (auto *S : CS->body()) {
+                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
+                            expr1.sub.push_back(exprToExpr(E, Ctx));
+                        }
+                    }
+                    expr.sub.emplace_back(std::move(expr1));
+                } else {
+                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(FS->getBody())) {
+                        expr1.sub.push_back(exprToExpr(E, Ctx));
+                        expr.sub.emplace_back(std::move(expr1));
+                    }
+                }
+
+                method.statements.emplace_back(expr);
+                return false;
+            }
+
+            bool VisitWhileStmt(clang::WhileStmt *WS)
+            {
+                DEBUG_AST(std::cout << " WhileStmt " << "\n");
+
+                cpphdl::Expr expr = cpphdl::Expr{"while", cpphdl::Expr::EXPR_WHILE};
+
+                if (auto *E = llvm::dyn_cast<clang::Expr>(WS->getCond())) {
+                    expr.sub.push_back(exprToExpr(E, Ctx));
+                }
+
+                cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
+                if (auto *CS = dyn_cast_or_null<CompoundStmt>(WS->getBody())) {
+                    for (auto *S : CS->body()) {
+                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
+                            expr1.sub.push_back(exprToExpr(E, Ctx));
+                        }
+                    }
+                    expr.sub.emplace_back(std::move(expr1));
+                } else {
+                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(WS->getBody())) {
+                        expr1.sub.push_back(exprToExpr(E, Ctx));
+                        expr.sub.emplace_back(std::move(expr1));
+                    }
+                }
+
+                method.statements.emplace_back(expr);
+                return false;
+            }
+
+            bool VisitIfStmt(clang::IfStmt *IS)
+            {
+                DEBUG_AST(std::cout << " IfStmt " << "\n");
+
+                cpphdl::Expr expr = cpphdl::Expr{"if", cpphdl::Expr::EXPR_IF};
+
+                if (auto *E = llvm::dyn_cast<clang::Expr>(IS->getCond())) {
+                    expr.sub.push_back(exprToExpr(E, Ctx));
+                }
+
+                cpphdl::Expr expr1 = cpphdl::Expr{"then", cpphdl::Expr::EXPR_BODY};
+                if (auto *CS = dyn_cast_or_null<CompoundStmt>(IS->getThen())) {
+                    for (auto *S : CS->body()) {
+                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
+                            expr1.sub.push_back(exprToExpr(E, Ctx));
+                        }
+                    }
+                    expr.sub.emplace_back(std::move(expr1));
+                } else {
+                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(IS->getThen())) {
+                        expr1.sub.push_back(exprToExpr(E, Ctx));
+                        expr.sub.emplace_back(std::move(expr1));
+                    }
+                }
+
+                cpphdl::Expr expr2 = cpphdl::Expr{"else", cpphdl::Expr::EXPR_BODY};
+                if (auto *CS = dyn_cast_or_null<CompoundStmt>(IS->getElse())) {
+                    for (auto *S : CS->body()) {
+                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
+                            expr2.sub.push_back(exprToExpr(E, Ctx));
+                        }
+                    }
+                    expr.sub.emplace_back(std::move(expr2));
+                } else {
+                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(IS->getElse())) {
+                        expr2.sub.push_back(exprToExpr(E, Ctx));
+                        expr.sub.emplace_back(std::move(expr2));
+                    }
+                }
+
+                method.statements.emplace_back(expr);
                 return false;
             }
 
