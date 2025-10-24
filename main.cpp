@@ -31,131 +31,102 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             cpphdl::Method& method;
             LocalVisitor(ASTContext &Ctx, cpphdl::Method& method) : Ctx(Ctx), method(method) {}
 
+            bool TraverseBinaryOperator(BinaryOperator *E)
+            {
+                VisitBinaryOperator(E);
+                return true;
+            }
+
             bool VisitBinaryOperator(BinaryOperator *BO)
             {
                 method.statements.emplace_back(exprToExpr(BO, Ctx));
-                return false;
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
+            bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr *E)
+            {
+                VisitCXXOperatorCallExpr(E);
+                return true;
             }
 
             bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *OCE)
             {
                 method.statements.emplace_back(exprToExpr(OCE, Ctx));
-                return false;
+                DEBUG_AST(std::cout << "\n");
+                return true;
             }
 
-            bool VisitForStmt(clang::ForStmt *FS)
+            bool TraverseCXXMemberCallExpr(CXXMemberCallExpr *E)
             {
-                DEBUG_AST(std::cout << " ForStmt " << "\n");
-
-                cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
-
-                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getInit())) {
-                    expr.sub.push_back(exprToExpr(E, Ctx));
-                }
-                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getCond())) {
-                    expr.sub.push_back(exprToExpr(E, Ctx));
-                }
-                if (auto *E = llvm::dyn_cast<clang::Expr>(FS->getInc())) {
-                    expr.sub.push_back(exprToExpr(E, Ctx));
-                }
-
-                cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
-                if (auto *CS = dyn_cast_or_null<CompoundStmt>(FS->getBody())) {
-                    for (auto *S : CS->body()) {
-                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
-                            expr1.sub.push_back(exprToExpr(E, Ctx));
-                        }
-                    }
-                    expr.sub.emplace_back(std::move(expr1));
-                } else {
-                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(FS->getBody())) {
-                        expr1.sub.push_back(exprToExpr(E, Ctx));
-                        expr.sub.emplace_back(std::move(expr1));
-                    }
-                }
-
-                method.statements.emplace_back(expr);
-                return false;
+                VisitCXXMemberCallExpr(E);
+                return true;
             }
 
-            bool VisitWhileStmt(clang::WhileStmt *WS)
+            bool VisitCXXMemberCallExpr(CXXMemberCallExpr *MCE)
             {
-                DEBUG_AST(std::cout << " WhileStmt " << "\n");
-
-                cpphdl::Expr expr = cpphdl::Expr{"while", cpphdl::Expr::EXPR_WHILE};
-
-                if (auto *E = llvm::dyn_cast<clang::Expr>(WS->getCond())) {
-                    expr.sub.push_back(exprToExpr(E, Ctx));
-                }
-
-                cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
-                if (auto *CS = dyn_cast_or_null<CompoundStmt>(WS->getBody())) {
-                    for (auto *S : CS->body()) {
-                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
-                            expr1.sub.push_back(exprToExpr(E, Ctx));
-                        }
-                    }
-                    expr.sub.emplace_back(std::move(expr1));
-                } else {
-                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(WS->getBody())) {
-                        expr1.sub.push_back(exprToExpr(E, Ctx));
-                        expr.sub.emplace_back(std::move(expr1));
-                    }
-                }
-
-                method.statements.emplace_back(expr);
-                return false;
+                method.statements.emplace_back(exprToExpr(MCE, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
             }
 
-            bool VisitIfStmt(clang::IfStmt *IS)
+            bool TraverseMemberExpr(MemberExpr *E)
             {
-                DEBUG_AST(std::cout << " IfStmt " << "\n");
-
-                cpphdl::Expr expr = cpphdl::Expr{"if", cpphdl::Expr::EXPR_IF};
-
-                if (auto *E = llvm::dyn_cast<clang::Expr>(IS->getCond())) {
-                    expr.sub.push_back(exprToExpr(E, Ctx));
-                }
-
-                cpphdl::Expr expr1 = cpphdl::Expr{"then", cpphdl::Expr::EXPR_BODY};
-                if (auto *CS = dyn_cast_or_null<CompoundStmt>(IS->getThen())) {
-                    for (auto *S : CS->body()) {
-                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
-                            expr1.sub.push_back(exprToExpr(E, Ctx));
-                        }
-                    }
-                    expr.sub.emplace_back(std::move(expr1));
-                } else {
-                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(IS->getThen())) {
-                        expr1.sub.push_back(exprToExpr(E, Ctx));
-                        expr.sub.emplace_back(std::move(expr1));
-                    }
-                }
-
-                cpphdl::Expr expr2 = cpphdl::Expr{"else", cpphdl::Expr::EXPR_BODY};
-                if (auto *CS = dyn_cast_or_null<CompoundStmt>(IS->getElse())) {
-                    for (auto *S : CS->body()) {
-                        if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(S)) {
-                            expr2.sub.push_back(exprToExpr(E, Ctx));
-                        }
-                    }
-                    expr.sub.emplace_back(std::move(expr2));
-                } else {
-                    if (auto *E = llvm::dyn_cast_or_null<clang::Expr>(IS->getElse())) {
-                        expr2.sub.push_back(exprToExpr(E, Ctx));
-                        expr.sub.emplace_back(std::move(expr2));
-                    }
-                }
-
-                method.statements.emplace_back(expr);
-                return false;
+                VisitMemberExpr(E);
+                return true;
             }
 
-//            bool shouldVisitImplicitCode() const { return false; }
+            bool VisitMemberExpr(MemberExpr *ME)
+            {
+                method.statements.emplace_back(exprToExpr(ME, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
+            bool TraverseForStmt(ForStmt *E)
+            {
+                VisitForStmt(E);
+                return true;
+            }
+
+            bool VisitForStmt(ForStmt *FS)
+            {
+                method.statements.emplace_back(exprToExpr(FS, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
+            bool TraverseWhileStmt(WhileStmt *E)
+            {
+                VisitWhileStmt(E);
+                return true;
+            }
+
+            bool VisitWhileStmt(WhileStmt *WS)
+            {
+                method.statements.emplace_back(exprToExpr(WS, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
+            bool TraverseIfStmt(IfStmt *E)
+            {
+                VisitIfStmt(E);
+                return true;
+            }
+
+            bool VisitIfStmt(IfStmt *IS)
+            {
+                method.statements.emplace_back(exprToExpr(IS, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
+            bool shouldVisitTemplateInstantiations() const { return true; }
         };
 
         cpphdl::Method method = cpphdl::Method{MD->getNameAsString(), MD->getReturnType().getAsString()};
-        for (const clang::ParmVarDecl *Param : MD->parameters()) {
+        for (const ParmVarDecl *Param : MD->parameters()) {
             method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(),cpphdl::Expr{Param->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}});
         }
 
@@ -293,7 +264,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (auto *TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
                 llvm::outs() << "  Type alias: " << TypeAlias->getNameAsString() << "\n";
             } else
-            if (auto *MD = llvm::dyn_cast<clang::CXXMethodDecl>(D)) {
+            if (auto *MD = llvm::dyn_cast<CXXMethodDecl>(D)) {
                 llvm::outs() << "  Method: " << MD->getQualifiedNameAsString() << "\n";
                 if (!putMethod(MD, mod)) {
                     return false;
@@ -396,24 +367,50 @@ struct MyFrontendAction : public ASTFrontendAction
 
 int main(int argc, const char **argv)
 {
-    auto ExpectedParser = CommonOptionsParser::create(argc, argv, MyToolCategory);
+    int argc1 = 0;
+    char args1[8192];
+    char* argv1[256];
+    char* ptr = args1;
+    bool wasSplitter = false;
+    for (int i=0; i < argc; ++i) {
+        if (i > 0 && !wasSplitter
+            && strstr(argv[i], ".cpp") != argv[i] + strlen(argv[i]) - 4
+            && strstr(argv[i], ".cc") != argv[i] + strlen(argv[i]) - 3
+            && strstr(argv[i], ".h") != argv[i] + strlen(argv[i]) - 2
+            && strstr(argv[i], ".hpp") != argv[i] + strlen(argv[i]) - 4
+            && strcmp(argv[i], "--") != 0) {
+            memcpy(ptr, "--", 2+1);
+            argv1[argc1++] = ptr;
+            ptr += 2+1;
+        }
+
+        if (strcmp(argv[i], "--") == 0) {
+            wasSplitter = true;
+        }
+
+        memcpy(ptr, argv[i], strlen(argv[i])+1);
+        argv1[argc1++] = ptr;
+        ptr += strlen(argv[i])+1;
+    }
+
+    auto ExpectedParser = tooling::CommonOptionsParser::create(argc1, (const char**)argv1, MyToolCategory);
     if (!ExpectedParser) {
         llvm::errs() << ExpectedParser.takeError();
         return 1;
     }
-    CommonOptionsParser& Options = ExpectedParser.get();
+    tooling::CommonOptionsParser& Options = ExpectedParser.get();
 
-    ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
+    tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    Tool.appendArgumentsAdjuster(clang::tooling::getInsertArgumentAdjuster(
+    Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
         {"-nostdinc", //"-x", "c++",
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/include/c++/v1").str(),
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/lib/clang/21/include").str(),
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/x86_64-conda-linux-gnu/sysroot/usr/include").str(),
          "-std=c++26"},
-        clang::tooling::ArgumentInsertPosition::BEGIN));
+        tooling::ArgumentInsertPosition::BEGIN));
 
-    int ret = Tool.run(newFrontendActionFactory<MyFrontendAction>().get());
+    int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
     prj.generate("generated");
     return ret;
 }

@@ -1,44 +1,140 @@
 #pragma once
 
 using namespace clang;
-using namespace clang::tooling;
 
 inline bool getParametersFromInstantiation(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params);
 
-inline cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx)
+inline cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
 {
-    DEBUG_AST(std::cout << " exprToExpr ");
-    E = E->IgnoreParenImpCasts();
+    SourceManager &SM = Ctx.getSourceManager();
+    LangOptions LangOpts = Ctx.getLangOpts();
+    SourceLocation StartLoc = E->getBeginLoc();
+    SourceLocation EndLoc   = Lexer::getLocForEndOfToken(E->getEndLoc(), 0, SM, LangOpts);
+    CharSourceRange Range = CharSourceRange::getCharRange(StartLoc, EndLoc);
+    DEBUG_AST(std::cout << " exprToExpr(" << std::string(Lexer::getSourceText(Range, SM, LangOpts)) << "): ");
+
+    if (auto *FS = dyn_cast<ForStmt>(E)) {
+        DEBUG_AST(std::cout << " ForStmt ");
+
+        cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
+
+        if (FS->getInit()) {
+            expr.sub.push_back(exprToExpr(FS->getInit(), Ctx));
+        }
+        if (FS->getCond()) {
+            expr.sub.push_back(exprToExpr(FS->getCond(), Ctx));
+        }
+        if (FS->getInc()) {
+            expr.sub.push_back(exprToExpr(FS->getInc(), Ctx));
+        }
+
+        if (FS->getBody()) {
+            cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
+            if (auto *CS = dyn_cast<CompoundStmt>(FS->getBody())) {
+                    for (auto *S : CS->body()) {
+                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                }
+            } else {
+                expr1.sub.push_back(exprToExpr(FS->getBody(), Ctx));
+            }
+            expr.sub.emplace_back(std::move(expr1));
+        }
+
+
+        return expr;
+    }
+
+    if (auto *WS = dyn_cast<WhileStmt>(E)) {
+        DEBUG_AST(std::cout << " WhileStmt ");
+
+        cpphdl::Expr expr = cpphdl::Expr{"while", cpphdl::Expr::EXPR_WHILE};
+
+        if (WS->getCond()) {
+            expr.sub.push_back(exprToExpr(WS->getCond(), Ctx));
+        }
+
+        if (WS->getBody()) {
+            cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
+            if (auto *CS = dyn_cast<CompoundStmt>(WS->getBody())) {
+                for (auto *S : CS->body()) {
+                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                }
+            } else {
+                expr1.sub.push_back(exprToExpr(WS->getBody(), Ctx));
+            }
+            expr.sub.emplace_back(std::move(expr1));
+        }
+
+        return expr;
+    }
+
+    if (auto *IS = dyn_cast<IfStmt>(E)) {
+        DEBUG_AST(std::cout << " IfStmt ");
+
+        cpphdl::Expr expr = cpphdl::Expr{"if", cpphdl::Expr::EXPR_IF};
+
+        if (IS->getCond()) {
+            expr.sub.push_back(exprToExpr(IS->getCond(), Ctx));
+        }
+
+        if (IS->getThen()) {
+            cpphdl::Expr expr1 = cpphdl::Expr{"then", cpphdl::Expr::EXPR_BODY};
+            if (auto *CS = dyn_cast<CompoundStmt>(IS->getThen())) {
+                for (auto *S : CS->body()) {
+                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                }
+            } else {
+                expr1.sub.push_back(exprToExpr(IS->getThen(), Ctx));
+            }
+            expr.sub.emplace_back(std::move(expr1));
+        }
+
+        if (IS->getElse()) {
+            cpphdl::Expr expr2 = cpphdl::Expr{"else", cpphdl::Expr::EXPR_BODY};
+            if (auto *CS = dyn_cast<CompoundStmt>(IS->getElse())) {
+                for (auto *S : CS->body()) {
+                    expr2.sub.push_back(exprToExpr(S, Ctx));
+                }
+            } else {
+                expr2.sub.push_back(exprToExpr(IS->getElse(), Ctx));
+            }
+            expr.sub.emplace_back(std::move(expr2));
+        }
+
+        return expr;
+    }
+
+//    E = E->IgnoreParenImpCasts();  //?
 
     if (auto *BO = dyn_cast<BinaryOperator>(E)) {
-        DEBUG_AST(std::cout << " BinaryOperator " << BO->getOpcodeStr().data());
+        DEBUG_AST(std::cout << " BinaryOperator, " << BO->getOpcodeStr().data());
         return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS(),Ctx),exprToExpr(BO->getRHS(),Ctx)}};
     }
-    else if (auto *CAO = dyn_cast<CompoundAssignOperator>(E)) {
-        DEBUG_AST(std::cout << " CompoundAssignOperator");
+    if (auto *CAO = dyn_cast<CompoundAssignOperator>(E)) {
+        DEBUG_AST(std::cout << " CompoundAssignOperator, " << CAO->getOpcodeStr().data());
         return cpphdl::Expr{CAO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(CAO->getLHS(),Ctx),exprToExpr(CAO->getRHS(),Ctx)}};
     }
-    else if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
-        DEBUG_AST(std::cout << " DeclRefExpr " << DRE->getNameInfo().getAsString());
+    if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+        DEBUG_AST(std::cout << " DeclRefExpr, " << DRE->getNameInfo().getAsString());
         return cpphdl::Expr{DRE->getNameInfo().getAsString(), cpphdl::Expr::EXPR_DECLARE};
     }
-    else if (auto *IL = dyn_cast<IntegerLiteral>(E)) {
-        DEBUG_AST(std::cout << " IntegerLiteral " << std::to_string(IL->getValue().getSExtValue()));
+    if (auto *IL = dyn_cast<IntegerLiteral>(E)) {
+        DEBUG_AST(std::cout << " IntegerLiteral, " << std::to_string(IL->getValue().getSExtValue()));
         return cpphdl::Expr{std::to_string(IL->getValue().getSExtValue()), cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXOperatorCallExpr");
+    if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXOperatorCallExpr, ");
         cpphdl::Expr call = cpphdl::Expr{getOperatorSpelling(OCE->getOperator()), cpphdl::Expr::EXPR_CALL};
         for (unsigned i = 0; i < OCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(OCE->getArg(i), Ctx));
         }
         return call;
     }
-    else if (auto *MCE = dyn_cast<CXXMemberCallExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXMemberCallExpr");
+    if (auto *MCE = dyn_cast<CXXMemberCallExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXMemberCallExpr, ");
         if (MCE->getNumArgs() == 0) {
             if (auto *ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
-                return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}};
+                return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBERCALL, {exprToExpr(ME->getBase(), Ctx)}};
             }
         }
 
@@ -48,12 +144,12 @@ inline cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx)
         }
         return call;
     }
-    else if (auto *ME = dyn_cast<MemberExpr>(E)) {
-        DEBUG_AST(std::cout << " MemberExpr");
+    if (auto *ME = dyn_cast<MemberExpr>(E)) {
+        DEBUG_AST(std::cout << " MemberExpr, ");
         return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}};
     }
-    else if (auto *CE = dyn_cast<CallExpr>(E)) {
-        DEBUG_AST(std::cout << " CallExpr " << (CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""));
+    if (auto *CE = dyn_cast<CallExpr>(E)) {
+        DEBUG_AST(std::cout << " CallExpr, " << (CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""));
 
         cpphdl::Expr call = cpphdl::Expr{(CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_CALL};
         for (auto *arg : CE->arguments()) {
@@ -61,149 +157,174 @@ inline cpphdl::Expr exprToExpr(const Expr *E, ASTContext& Ctx)
         }
         return call;
     }
-    else if (auto *CL = dyn_cast<CharacterLiteral>(E)) {
-        DEBUG_AST(std::cout << " CharacterLiteral");
+    if (auto *CL = dyn_cast<CharacterLiteral>(E)) {
+        DEBUG_AST(std::cout << " CharacterLiteral, ");
         return cpphdl::Expr{std::to_string(CL->getValue()), cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E)) {
-        DEBUG_AST(std::cout << " CompoundLiteralExpr");
+    if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E)) {
+        DEBUG_AST(std::cout << " CompoundLiteralExpr, ");
         return cpphdl::Expr{CLE->getType().getAsString(), cpphdl::Expr::EXPR_INIT, {{exprToExpr(CLE->getInitializer(), Ctx)}}};
     }
-    else if (auto *SL = dyn_cast<StringLiteral>(E)) {
-        DEBUG_AST(std::cout << " StringLiteral");
+    if (auto *SL = dyn_cast<StringLiteral>(E)) {
+        DEBUG_AST(std::cout << " StringLiteral, ");
         return cpphdl::Expr{SL->getString().str(), cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *BLE = dyn_cast<CXXBoolLiteralExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXBoolLiteralExpr");
+    if (auto *BLE = dyn_cast<CXXBoolLiteralExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXBoolLiteralExpr, ");
         return cpphdl::Expr{BLE->getValue()?"1":"0", cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
-        DEBUG_AST(std::cout << " DeclRefExpr");
+    if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+        DEBUG_AST(std::cout << " DeclRefExpr, ");
         return cpphdl::Expr{DRE->getDecl()->getNameAsString(), cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *ME = dyn_cast<CXXThisExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXThisExpr" << (ME?"":""));
+    if (auto *ME = dyn_cast<CXXThisExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXThisExpr, " << (ME?"":""));
         return cpphdl::Expr{"this", cpphdl::Expr::EXPR_VAR};
     }
-    else if (auto *UO = dyn_cast<UnaryOperator>(E)) {
-        DEBUG_AST(std::cout << " UnaryOperator");
+    if (auto *UO = dyn_cast<UnaryOperator>(E)) {
+        DEBUG_AST(std::cout << " UnaryOperator, ");
         return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {exprToExpr(UO->getSubExpr(),Ctx)}};
     }
-    else if (auto *CO = dyn_cast<ConditionalOperator>(E)) {
-        DEBUG_AST(std::cout << " ConditionalOperator");
+    if (auto *CO = dyn_cast<ConditionalOperator>(E)) {
+        DEBUG_AST(std::cout << " ConditionalOperator, ");
         return cpphdl::Expr{"", cpphdl::Expr::EXPR_COND, {exprToExpr(CO->getCond(),Ctx),exprToExpr(CO->getTrueExpr(),Ctx),exprToExpr(CO->getFalseExpr(),Ctx)}};
     }
-    else if (auto *ASE = dyn_cast<ArraySubscriptExpr>(E)) {
-        DEBUG_AST(std::cout << " ArraySubscriptExpr");
+    if (auto *ASE = dyn_cast<ArraySubscriptExpr>(E)) {
+        DEBUG_AST(std::cout << " ArraySubscriptExpr, ");
         return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase(),Ctx),exprToExpr(ASE->getIdx(),Ctx)}};
     }
-    else if (auto *FCE = dyn_cast<ImplicitCastExpr>(E)) {
-        DEBUG_AST(std::cout << " ImplicitCastExpr");
+    if (auto *FCE = dyn_cast<ImplicitCastExpr>(E)) {
+        DEBUG_AST(std::cout << " ImplicitCastExpr, ");
         return cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXFunctionalCastExpr");
+    if (auto *FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXFunctionalCastExpr, ");
         return cpphdl::Expr{"functional_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *SCE = dyn_cast<CXXStaticCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXStaticCastExpr");
+    if (auto *SCE = dyn_cast<CXXStaticCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXStaticCastExpr, ");
         return cpphdl::Expr{"static_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *DCE = dyn_cast<CXXDynamicCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXDynamicCastExpr");
+    if (auto *DCE = dyn_cast<CXXDynamicCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXDynamicCastExpr, ");
         return cpphdl::Expr{"dynamic_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(DCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *RCE = dyn_cast<CXXReinterpretCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXReinterpretCastExpr");
+    if (auto *RCE = dyn_cast<CXXReinterpretCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXReinterpretCastExpr, ");
         return cpphdl::Expr{"reinterpret_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(RCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *CCE = dyn_cast<CXXConstCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CXXConstCastExpr");
+    if (auto *CCE = dyn_cast<CXXConstCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CXXConstCastExpr, ");
         return cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(CCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *SCE = dyn_cast<CStyleCastExpr>(E)) {
-        DEBUG_AST(std::cout << " CStyleCastExpr");
+    if (auto *SCE = dyn_cast<CStyleCastExpr>(E)) {
+        DEBUG_AST(std::cout << " CStyleCastExpr, ");
         return cpphdl::Expr{"cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr(), Ctx)}};
     }
-    else if (auto *MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
-        DEBUG_AST(std::cout << " MaterializeTemporaryExpr");
+    if (auto *MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
+        DEBUG_AST(std::cout << " MaterializeTemporaryExpr, ");
         return cpphdl::Expr{"MaterializeTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(MTE->getSubExpr(), Ctx)}};
     }
+    if (auto *EWC = dyn_cast<ExprWithCleanups>(E)) {
+        DEBUG_AST(std::cout << " ExprWithCleanups");
+        return cpphdl::Expr{"ExprWithCleanups", cpphdl::Expr::EXPR_CAST, {exprToExpr(EWC->getSubExpr(), Ctx)}};
+    }
+    if (auto *CE = dyn_cast<ConstantExpr>(E)) {
+        DEBUG_AST(std::cout << " ConstantExpr");
+        return cpphdl::Expr{"ConstantExpr", cpphdl::Expr::EXPR_CONST, {exprToExpr(CE->getSubExpr(), Ctx)}};
+    }
+    if (auto *UETTE = dyn_cast<UnaryExprOrTypeTraitExpr>(E)) {
+        DEBUG_AST(std::cout << " UnaryExprOrTypeTraitExpr");
+
+        std::string op;
+        switch (UETTE->getKind()) {
+            case UETT_SizeOf:   op = "sizeof"; break;
+            case UETT_AlignOf:  op = "alignof"; break;
+            case UETT_VecStep:  op = "vecstep"; break;
+            case UETT_PreferredAlignOf: op = "preferred_alignof"; break;
+            case UETT_OpenMPRequiredSimdAlign:
+                op = "omp required simd align"; break;
+            default: op = "unknown_trait"; break;
+        }
+
+        if (UETTE->isArgumentType()) {
+            return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {cpphdl::Expr{UETTE->getArgumentType().getAsString(),cpphdl::Expr::EXPR_TYPE}}};
+        } else {
+            if (UETTE->getArgumentExpr()) {
+                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {exprToExpr(UETTE->getArgumentExpr(), Ctx)}};
+            }
+        }
+    }
+    if (auto *PE = dyn_cast<ParenExpr>(E)) {
+        DEBUG_AST(std::cout << " ParenExpr");
+        return cpphdl::Expr{"paren", cpphdl::Expr::EXPR_PAREN, {exprToExpr(PE->getSubExpr(), Ctx)}};
+    }
+    if (auto *SNTTPE = dyn_cast<SubstNonTypeTemplateParmExpr>(E)) {
+        DEBUG_AST(std::cout << " SubstNonTypeTemplateParmExpr");
+        return cpphdl::Expr{SNTTPE->getParameter()->getName().str(), cpphdl::Expr::EXPR_PARAM, {exprToExpr(SNTTPE->getReplacement(), Ctx)}};
+    }
+    if (auto *RS = dyn_cast<ReturnStmt>(E)) {
+        DEBUG_AST(std::cout << " ReturnStmt");
+        if (RS->getRetValue()) {
+            return cpphdl::Expr{"return", cpphdl::Expr::EXPR_RETURN, {exprToExpr(RS->getRetValue(), Ctx)}};
+        }
+        return cpphdl::Expr{"return", cpphdl::Expr::EXPR_RETURN};
+    }
 /*
-    else if (auto *FL = dyn_cast<FloatingLiteral>(E)) {
+    if (auto *FL = dyn_cast<FloatingLiteral>(E)) {
         DEBUG_AST(std::cout << " FloatingLiteral");
 //        return cpphdl::Expr{std::to_string(FL->getValue()), cpphdl::Expr::EXPR_VALUE};
     }
-    else if (auto *ULE = dyn_cast<UnresolvedLookupExpr>(E)) {
+    if (auto *ULE = dyn_cast<UnresolvedLookupExpr>(E)) {
         DEBUG_AST(std::cout << " UnresolvedLookupExpr");
     }
-    else if (auto *DIE = dyn_cast<DesignatedInitExpr>(E)) {
+    if (auto *DIE = dyn_cast<DesignatedInitExpr>(E)) {
         DEBUG_AST(std::cout << " DesignatedInitExpr");
     }
-    else if (auto *TOE = dyn_cast<CXXTemporaryObjectExpr>(E)) {
+    if (auto *TOE = dyn_cast<CXXTemporaryObjectExpr>(E)) {
         DEBUG_AST(std::cout << " CXXTemporaryObjectExpr");
     }
-    else if (auto *CE = dyn_cast<CXXConstructExpr>(E)) {
+    if (auto *CE = dyn_cast<CXXConstructExpr>(E)) {
         DEBUG_AST(std::cout << " CXXConstructExpr");
     }
-    else if (auto *BCO = dyn_cast<BinaryConditionalOperator>(E)) {
+    if (auto *BCO = dyn_cast<BinaryConditionalOperator>(E)) {
         DEBUG_AST(std::cout << " BinaryConditionalOperator");
     }
-    else if (auto *PE = dyn_cast<ParenExpr>(E)) {
-        DEBUG_AST(std::cout << " ParenExpr");
-    }
-    else if (auto *EWC = dyn_cast<ExprWithCleanups>(E)) {
-        DEBUG_AST(std::cout << " ExprWithCleanups");
-    }
-    else if (auto *ILE = dyn_cast<InitListExpr>(E)) {
+    if (auto *ILE = dyn_cast<InitListExpr>(E)) {
         DEBUG_AST(std::cout << " InitListExpr");
     }
-    else if (auto *SILE = dyn_cast<CXXStdInitializerListExpr>(E)) {
+    if (auto *SILE = dyn_cast<CXXStdInitializerListExpr>(E)) {
         DEBUG_AST(std::cout << " CXXStdInitializerListExpr");
     }
-    else if (auto *DIE = dyn_cast<DesignatedInitExpr>(E)) {
+    if (auto *DIE = dyn_cast<DesignatedInitExpr>(E)) {
         DEBUG_AST(std::cout << " DesignatedInitExpr");
     }
-    else if (auto *DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
+    if (auto *DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
         DEBUG_AST(std::cout << " DependentScopeDeclRefExpr");
     }
-    else if (auto *DSME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
+    if (auto *DSME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
         DEBUG_AST(std::cout << " CXXDependentScopeMemberExpr");
     }
-    else if (auto *DDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
+    if (auto *DDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
         DEBUG_AST(std::cout << " DependentScopeDeclRefExpr");
     }
-    else if (auto *SOPE = dyn_cast<SizeOfPackExpr>(E)) {
+    if (auto *SOPE = dyn_cast<SizeOfPackExpr>(E)) {
         DEBUG_AST(std::cout << " SizeOfPackExpr");
     }
-    else if (auto *OOE = dyn_cast<OffsetOfExpr>(E)) {
+    if (auto *OOE = dyn_cast<OffsetOfExpr>(E)) {
         DEBUG_AST(std::cout << " OffsetOfExpr");
     }
-    else if (auto *BTE = dyn_cast<CXXBindTemporaryExpr>(E)) {
+    if (auto *BTE = dyn_cast<CXXBindTemporaryExpr>(E)) {
         DEBUG_AST(std::cout << " CXXBindTemporaryExpr");
     }
-    else if (auto *CE = dyn_cast<ConstantExpr>(E)) {
-        DEBUG_AST(std::cout << " ConstantExpr");
-    }
-    else if (auto *FE = dyn_cast<FullExpr>(E)) {
+    if (auto *FE = dyn_cast<FullExpr>(E)) {
         DEBUG_AST(std::cout << " FullExpr");
-    }
-    else if (auto *EWC = dyn_cast<ExprWithCleanups>(E)) {
-        DEBUG_AST(std::cout << " ExprWithCleanups");
     }
 */
     else {
-        SourceManager &SM = Ctx.getSourceManager();
-        LangOptions LangOpts = Ctx.getLangOpts();
-
-        SourceLocation StartLoc = E->getBeginLoc();
-        SourceLocation EndLoc   = Lexer::getLocForEndOfToken(E->getEndLoc(), 0, SM, LangOpts);
-
-        CharSourceRange Range = CharSourceRange::getCharRange(StartLoc, EndLoc);
-
         DEBUG_AST(std::cout << " unknown: " << std::string(Lexer::getSourceText(Range, SM, LangOpts)) << "(" << E->getStmtClassName() << ")");
 
-        return cpphdl::Expr{std::string(Lexer::getSourceText(Range, SM, LangOpts)), cpphdl::Expr::EXPR_UNKNOWN};
+        return cpphdl::Expr{std::string(Lexer::getSourceText(Range, SM, LangOpts)) + "(" + E->getStmtClassName() + ")", cpphdl::Expr::EXPR_UNKNOWN};
     }
     ASSERT(0);
     return cpphdl::Expr{"", cpphdl::Expr::EXPR_UNKNOWN};

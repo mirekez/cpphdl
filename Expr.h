@@ -15,17 +15,23 @@ struct Expr
         EXPR_TYPE,
         EXPR_VAR,
         EXPR_VALUE,
+        EXPR_CONST,
+        EXPR_PARAM,
         EXPR_TEMPLATE,
         EXPR_CALL,
+        EXPR_MEMBERCALL,
+        EXPR_MEMBER,
+        EXPR_RETURN,
         EXPR_BINARY,
         EXPR_UNARY,
         EXPR_COND,
         EXPR_INDEX,
         EXPR_CAST,
+        EXPR_PAREN,
         EXPR_INIT,
-        EXPR_MEMBER,
         EXPR_ASSIGN,
         EXPR_DECLARE,
+        EXPR_TRAIT,
         EXPR_FOR,
         EXPR_WHILE,
         EXPR_IF,
@@ -40,28 +46,38 @@ struct Expr
 
     std::string str(unsigned flags = 0, std::string prefix = "", std::string suffix = "")
     {
+        std::string indent_str;
+        if (indent) {
+            for (int i=0; i < indent; ++i) {
+                indent_str += "    ";
+            }
+        }
         switch (type)
         {
             case EXPR_EMPTY:
-                return "";
+                return indent_str + "";
             case EXPR_TYPE:
-                return typeToSV(value, flags, prefix, suffix);
+                return indent_str + typeToSV(value, flags, prefix, suffix);
             case EXPR_VAR:
-                return value;
+                return indent_str + value;
             case EXPR_VALUE:
-                return value;//, flags, prefix, suffix);
+                return indent_str + value;
+            case EXPR_CONST:
+                return indent_str + value;
+            case EXPR_PARAM:
+                return indent_str + value;
             case EXPR_TEMPLATE:
                 ASSERT(sub.size() >= 1);
-                return typeToSV(value, flags, prefix, suffix, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str(flags,prefix,suffix));
+                return indent_str + typeToSV(value, flags, prefix, suffix, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str(flags,prefix,suffix));
             case EXPR_CALL:
             {
                  if (value == "=") {
                      ASSERT(sub.size() >= 2);
-                     return sub[0].str() + " " + "=" + " " + sub[1].str();
+                     return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
                  }
                  if (value == "[]") {
                      ASSERT(sub.size() >= 2);
-                     return sub[0].str() + "[" + sub[1].str() + "]";
+                     return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
                  }
 
                  std::string str = value + "(";
@@ -71,79 +87,110 @@ struct Expr
                      first = false;
                  }
                  str += ")";
-                 return str;
+                 return indent_str + str;
             }
-            case EXPR_BINARY:
-                ASSERT(sub.size()==2);
-                return sub[0].str() + " " + value + " " + sub[1].str();
-            case EXPR_UNARY:
+            case EXPR_MEMBERCALL:
                 ASSERT(sub.size()==1);
-                if (value == "*") {
-                    return sub[0].str();
+                if (value.find("operator") == 0) {
+                    return indent_str + sub[0].str();
                 }
-                if (value == "&") {
-                    return sub[0].str();
+                if (sub[0].str() == "this") {
+                    return indent_str + value + "()";
                 }
-                return value + sub[0].str();
-            case EXPR_COND:
-                ASSERT(sub.size()==3);
-                return sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
-            case EXPR_INDEX:
-                ASSERT(sub.size()==2);
-                return sub[0].str() + "[" + sub[1].str() + "]";
-            case EXPR_CAST:
-                ASSERT(sub.size()==1);
-                return sub[0].str();
-            case EXPR_INIT:
-                ASSERT(sub.size()==1);
-                return sub[0].str();
+                return indent_str + sub[0].str() + "." + value + "()";
             case EXPR_MEMBER:
                 ASSERT(sub.size()==1);
                 if (value.find("operator") == 0) {
-                    return sub[0].str();
+                    return indent_str + sub[0].str();
                 }
                 if (sub[0].str() == "this") {
-                    return value + "()";
+                    return indent_str + value;
                 }
-                return sub[0].str() + "." + value;
+                return indent_str + sub[0].str() + "." + value;
+            case EXPR_RETURN:
+                return indent_str + (sub.size()==1 ? "return " + sub[0].str() : "return");
+            case EXPR_BINARY:
+                ASSERT(sub.size()==2);
+                return indent_str + sub[0].str() + " " + value + " " + sub[1].str();
+            case EXPR_UNARY:
+                ASSERT(sub.size()==1);
+                if (value == "*") {
+                    return indent_str + sub[0].str();
+                }
+                if (value == "&") {
+                    return indent_str + sub[0].str();
+                }
+                return indent_str + value + sub[0].str();
+            case EXPR_COND:
+                ASSERT(sub.size()==3);
+                return indent_str + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
+            case EXPR_INDEX:
+                ASSERT(sub.size()==2);
+                return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+            case EXPR_CAST:
+                ASSERT(sub.size()==1);
+                return indent_str + sub[0].str();
+            case EXPR_PAREN:
+                ASSERT(sub.size()==1);
+                return indent_str + "(" + sub[0].str() + ")";
+            case EXPR_INIT:
+                ASSERT(sub.size()==1);
+                return indent_str + sub[0].str();
             case EXPR_ASSIGN:
                 ASSERT(sub.size()==2);
-                return std::string("(assign: ") + sub[0].str() + " = " + sub[1].str() + ")";
+                return indent_str + std::string("(assign: ") + sub[0].str() + " = " + sub[1].str() + ")";
             case EXPR_DECLARE:
-                return value;
+                return indent_str + value;
+            case EXPR_TRAIT:
+                ASSERT(sub.size()==1);
+                return indent_str + value + "(" + sub[0].str() + ")";
             case EXPR_FOR:
             {
-                std::string str = "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
+                ASSERT(sub.size()==4);
+                std::string str;
+                str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
                 sub[3].indent = indent + 1;
                 str += sub[3].str();
-                doIndent(str);
-                str += "end\n";
+                if (!sub[3].isMultiline()) {
+                    str += ";\n";
+                }
+                str += indent_str + "end\n";
                 return str;
             }
             case EXPR_WHILE:
             {
-                std::string str = "while (" + sub[0].str() + ") begin\n";
+                ASSERT(sub.size()==2);
+                std::string str;
+                str += indent_str + "while (" + sub[0].str() + ") begin\n";
                 sub[1].indent = indent + 1;
                 str += sub[1].str();
-                doIndent(str);
-                str += "end\n";
+                if (!sub[1].isMultiline()) {
+                    str += ";\n";
+                }
+                str += indent_str + "end\n";
                 return str;
             }
             case EXPR_IF:
             {
-                std::string str = "if (" + sub[0].str() + ") begin\n";
+                ASSERT(sub.size()>=1);
+                std::string str;
+                str += indent_str + "if (" + sub[0].str() + ") begin\n";
                 if (sub.size() > 1) {
                     sub[1].indent = indent + 1;
                     str += sub[1].str();
+                    if (!sub[1].isMultiline()) {
+                        str += ";\n";
+                    }
                 }
-                doIndent(str);
-                str += "end\n";
+                str += indent_str + "end\n";
                 if (sub.size() > 2) {
-                    str += "else begin\n";
+                    str += indent_str + "else begin\n";
                     sub[2].indent = indent + 1;
                     str += sub[2].str();
-                    doIndent(str);
-                    str += "end\n";
+                    if (!sub[2].isMultiline()) {
+                        str += ";\n";
+                    }
+                    str += indent_str + "end\n";
                 }
                 return str;
             }
@@ -151,8 +198,11 @@ struct Expr
             {
                 std::string str;
                 for (auto& stmt : sub) {
-                    doIndent(str);
-                    str += stmt.str() + ";\n";
+                    stmt.indent = indent;
+                    str += stmt.str();
+                    if (!stmt.isMultiline()) {
+                        str += ";\n";
+                    }
                 }
                 return str;
             }
@@ -163,13 +213,6 @@ struct Expr
         }
         ASSERT(0);
         return "";
-    }
-
-    void doIndent(std::string& str)
-    {
-        for (int i=0; i < indent; ++i) {
-            str += "    ";
-        }
     }
 
     bool isMultiline()

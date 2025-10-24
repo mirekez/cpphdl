@@ -20,20 +20,20 @@ struct Method
     bool print(std::ofstream& out)
     {
         if (ret == "void") {
-            out << "    task " << name << "(" << (parameters.size() > 1 ? "\n" : "");
-            bool first = true;
-            for (auto& param : parameters) {
-                out << (first ? "    " : ",    ") << param.type.str() << " " << param.name << " " << (parameters.size() > 1 ? "\n" : "");
-                first = false;
-            }
-            out << ")" << "\n";
+            out << "    task " << name << " (" << (parameters.size() > 1 ? "\n" : "");
         }
         else {
-            out << "    function " << ret << " " << name << "("  << ")" << "\n";
+            out << "    function " << ret << " " << name << " (" << (parameters.size() > 1 ? "\n" : "");
         }
 
+        bool first = true;
+        for (auto& param : parameters) {
+            out << (parameters.size() > 1 ? (first ? "    " : ",    ") : (first ? "" : ", ")) << param.type.str() << " " << param.name << (parameters.size() > 1 ? "\n" : "");
+            first = false;
+        }
+        out << ")" << "\n";
+
         for (auto& stmt : statements) {
-            out << "        ";
             stmt.indent = 2;
             out << stmt.str();
             if (!stmt.isMultiline()) {
