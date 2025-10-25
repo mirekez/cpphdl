@@ -403,11 +403,14 @@ int main(int argc, const char **argv)
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
     Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-        {"-nostdinc", //"-x", "c++",
+        {"-nostdinc",
+         "-x",
+         "c++",
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/include/c++/v1").str(),
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/lib/clang/21/include").str(),
          "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/x86_64-conda-linux-gnu/sysroot/usr/include").str(),
-         "-std=c++26"},
+         "-std=c++26",
+         "-DSYNTHESIS"},
         tooling::ArgumentInsertPosition::BEGIN));
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
