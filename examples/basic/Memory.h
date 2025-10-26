@@ -4,10 +4,11 @@
 
 using namespace cpphdl;
 
-template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
 class Memory : public Module
 {
     logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
     memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
 
     size_t i;
@@ -18,6 +19,7 @@ public:
     logic<MEM_WIDTH_BYTES*8>* data_in         = nullptr;
 
     u<clog2(MEM_DEPTH)>*      read_addr_in    = nullptr;
+    bool*                     read_in         = nullptr;
     logic<MEM_WIDTH_BYTES*8>* data_out        = &data_out_comb;
 
     void connect() {}
@@ -25,6 +27,9 @@ public:
     void data_out_comb_func()
     {
         data_out_comb = buffer[*read_addr_in];
+        if (!SHOWAHEAD) {
+            data_out_comb = data_out_reg;
+        }
     }
 
     void reset()
@@ -38,11 +43,15 @@ public:
         if (*write_in) {
             buffer[*write_addr_in] = *data_in;
         }
+        if (!SHOWAHEAD) {
+            data_out_reg.next = buffer[*read_addr_in];
+        }
     }
 
     void strobe()
     {
         buffer.apply();
+        data_out_reg.strobe();
     }
 
     void comb() {}
@@ -52,7 +61,7 @@ template struct Memory<32,1024>;
 
 #ifndef SYNTHESIS
 
-template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
 {
     Memory<MEM_WIDTH_BYTES,MEM_DEPTH> mem;

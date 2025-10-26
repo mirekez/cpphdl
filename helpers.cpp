@@ -1,10 +1,18 @@
-#pragma once
+#include "clang/AST/AST.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/FrontendActions.h"
+
+#include "Expr.h"
+#include "Debug.h"
+
+#include <iostream>
 
 using namespace clang;
 
-inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params);
+//inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params);
 
-inline cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
+cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
 {
     SourceManager &SM = Ctx.getSourceManager();
     LangOptions LangOpts = Ctx.getLangOpts();
@@ -179,7 +187,7 @@ inline cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (/*auto *ME = */dyn_cast<CXXThisExpr>(E)) {
         DEBUG_AST(std::cout << "CXXThisExpr, ");
-        return cpphdl::Expr{"this", cpphdl::Expr::EXPR_VAR};
+        return cpphdl::Expr{"this", cpphdl::Expr::EXPR_CONST};
     }
     if (auto *UO = dyn_cast<UnaryOperator>(E)) {
         DEBUG_AST(std::cout << "UnaryOperator, ");
@@ -334,13 +342,11 @@ inline cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     return cpphdl::Expr{"", cpphdl::Expr::EXPR_UNKNOWN};
 }
 
-inline bool templateToExpr(QualType& QT, cpphdl::Expr& expr, ASTContext& Ctx)
+bool templateToExpr(QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
 {
-    QT = QT.getDesugaredType(Ctx);
-    if (const auto *ET = llvm::dyn_cast<ElaboratedType>(QT)) {
-        QT = ET->getNamedType();
-    }
-//                QT = QT.getCanonicalType();
+//    if (const auto *ET = llvm::dyn_cast<ElaboratedType>(QT)) {
+//        QT = ET->getNamedType();
+//    }
     cpphdl::Expr expr1;
     if (const auto* TST = QT->getAs<TemplateSpecializationType>()) {
 
@@ -358,11 +364,13 @@ inline bool templateToExpr(QualType& QT, cpphdl::Expr& expr, ASTContext& Ctx)
                 DEBUG_AST(std::cout << "(expression),");
             } else
             if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
-                QualType QT = Arg.getAsType();
+                QualType QT = Arg.getAsType().getNonReferenceType();
                 if (templateToExpr(QT, expr1, Ctx)) {
                     DEBUG_AST(std::cout << "(template) " << expr1.value);
                 }
                 else {
+                    QT = QT.getCanonicalType();
+                    QT = QT.getDesugaredType(Ctx);
                     str = QT.getAsString(Ctx.getPrintingPolicy());
                     DEBUG_AST(std::cout << "(type) " << str << ",");
                     expr1.value = str;
@@ -476,7 +484,7 @@ inline bool templateToExpr(QualType& QT, cpphdl::Expr& expr, ASTContext& Ctx)
     return false;
 }
 */
-inline CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
+CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
 {
     SmallVector<StringRef, 4> Parts;
     QualifiedName.split(Parts, "::");
@@ -506,6 +514,6 @@ inline CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef Qua
             }
             return nullptr;
         }
-        }
+    }
     return nullptr;
 }

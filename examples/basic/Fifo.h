@@ -3,10 +3,10 @@
 #include "cpphdl.h"
 #include "Memory.h"
 
-template<size_t FIFO_WIDTH, size_t FIFO_DEPTH>
+template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : cpphdl::Module
 {
-    Memory<(FIFO_WIDTH+FIFO_WIDTH-1)/8*8,FIFO_DEPTH> mem;
+    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
 
     u1 full_comb;
     u1 empty_comb;
@@ -19,23 +19,23 @@ class Fifo : cpphdl::Module
 
 
 public:
-    bool*                write_in  = nullptr;
-    logic<FIFO_WIDTH>*   data_in   = nullptr;
+    bool*                        write_in  = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>*   data_in   = nullptr;
 
-    bool*                read_in   = nullptr;
-    logic<FIFO_WIDTH>*   data_out  = mem.data_out;
+    bool*                        read_in   = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>*   data_out  = mem.data_out;
 
-    bool*                empty_out = &empty_comb;
-    bool*                full_out  = &full_comb;
-    bool*                clear_in  = &ZERO;
-    bool*                afull_out = &afull_reg;
+    bool*                        empty_out = &empty_comb;
+    bool*                        full_out  = &full_comb;
+    bool*                        clear_in  = &ZERO;
+    bool*                        afull_out = &afull_reg;
 
     void connect()
     {
         mem.data_in       = data_in;
         mem.write_in      = write_in;
-        mem.read_in       = read_in;
         mem.write_addr_in = &wp_reg;
+        mem.read_in       = read_in;
         mem.read_addr_in  = &rp_reg;
         mem.connect();
     }
@@ -100,7 +100,7 @@ public:
             full_reg.next = 0;
         }
 
-        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/SIZE_N /*heuristic*/;
+        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
 
         mem.work(clk);
     }

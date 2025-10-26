@@ -3,10 +3,11 @@
 #include <vector>
 #include <string>
 
-#include "Expr.h"
-
 namespace cpphdl
 {
+
+struct Field;
+struct Expr;
 
 struct Method
 {
@@ -17,38 +18,8 @@ struct Method
 
     // methods
 
-    bool print(std::ofstream& out)
-    {
-        if (ret == "void") {
-            out << "    task " << name << " (" << (parameters.size() > 1 ? "\n" : "");
-        }
-        else {
-            out << "    function " << ret << " " << name << " (" << (parameters.size() > 1 ? "\n" : "");
-        }
-
-        bool first = true;
-        for (auto& param : parameters) {
-            out << (parameters.size() > 1 ? (first ? "    " : ",    ") : (first ? "" : ", ")) << param.type.str() << " " << param.name << (parameters.size() > 1 ? "\n" : "");
-            first = false;
-        }
-        out << ")" << "\n";
-
-        for (auto& stmt : statements) {
-            stmt.indent = 2;
-            out << stmt.str();
-            if (!stmt.isMultiline()) {
-                out << ";\n";
-            }
-        }
-
-        if (ret == "void") {
-            out << "    endtask" << "\n";
-        }
-        else {
-            out << "    endfunction" << "\n";
-        }
-        return true;
-    }
+    bool print(std::ofstream& out);
+    bool printConns(std::ofstream& out);
 
 };
 

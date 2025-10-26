@@ -4,17 +4,28 @@
 
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
-#include "clang/Frontend/FrontendActions.h"
-#include "llvm/Support/CommandLine.h"
 #include "clang/Tooling/ArgumentsAdjusters.h"
+#include "llvm/Support/CommandLine.h"
+#include "clang/Frontend/FrontendActions.h"
 
 #include "Debug.h"
 #include "Project.h"
-#include "main.h"
+#include "Module.h"
+#include "Method.h"
+#include "Field.h"
+#include "Expr.h"
+#include "Comb.h"
 
 #include <map>
 
 cpphdl::Project prj;
+
+using namespace clang;
+
+cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx);
+bool templateToExpr(QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
+CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
+
 std::map<std::string,CXXRecordDecl*> abstractDefs;
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
@@ -163,6 +174,8 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     DEBUG_AST(std::cout << " (template) " << expr.value);
                 }
                 else {
+                    QT = QT.getCanonicalType();
+                    QT = QT.getDesugaredType(*Context);
                     std::string str = QT.getAsString(Context->getPrintingPolicy());
                     DEBUG_AST(std::cout << " (type) " << str);
                     expr.value = str;
@@ -178,7 +191,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         expr.has_initializer = true;
                     }
 
-                    mod.ports.emplace_back(cpphdl::Port{FD->getNameAsString(), std::move(expr)});
+                    mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
                     DEBUG_AST(std::cout << "\n");
                 }
                 else {
