@@ -12,7 +12,10 @@
 #include "Project.h"
 #include "main.h"
 
+#include <map>
+
 cpphdl::Project prj;
+std::map<std::string,CXXRecordDecl*> abstractDefs;
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 {
@@ -139,9 +142,61 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     bool putModule(CXXRecordDecl *RD)
     {
-        DEBUG_AST(std::cout << "\nClass: " << RD->getQualifiedNameAsString());
+        DEBUG_AST(std::cout << "\nClass: " << RD->getQualifiedNameAsString() << "\n");
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
+        // First extract fields from abstract class
+        ASSERT(abstractDefs.find(RD->getQualifiedNameAsString()) != abstractDefs.end());
+        for (Decl *D : abstractDefs[RD->getQualifiedNameAsString()]->decls()) {
+            if (auto *FD = dyn_cast<FieldDecl>(D)) {
+                DEBUG_AST(std::cout << "  Field: ");
+
+                bool pointer = false;
+                QualType QT = FD->getType().getNonReferenceType();
+                if (QT->isPointerType()) {
+                    QT = QT->getPointeeType();
+                    pointer = true;
+                }
+
+                cpphdl::Expr expr;
+                if (templateToExpr(QT, expr, *Context)) {
+                    DEBUG_AST(std::cout << " (template) " << expr.value);
+                }
+                else {
+                    std::string str = QT.getAsString(Context->getPrintingPolicy());
+                    DEBUG_AST(std::cout << " (type) " << str);
+                    expr.value = str;
+                    expr.type = cpphdl::Expr::EXPR_TYPE;
+                }
+
+                if (pointer) {
+                    DEBUG_AST(std::cout << " (port) " << FD->getNameAsString());
+
+                    if (FD->getInClassInitializer()) {
+                        DEBUG_AST(std::cout << ", initializer " << FD->getInClassInitializer()->getStmtClassName());
+                        expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
+                        expr.has_initializer = true;
+                    }
+
+                    mod.ports.emplace_back(cpphdl::Port{FD->getNameAsString(), std::move(expr)});
+                    DEBUG_AST(std::cout << "\n");
+                }
+                else {
+                    DEBUG_AST(std::cout << " (var) " << FD->getNameAsString());
+
+                    if (FD->getInClassInitializer()) {
+                        DEBUG_AST(std::cout << ", initializer " << FD->getInClassInitializer()->getStmtClassName());
+                        expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
+                        expr.has_initializer = true;
+                    }
+
+                    mod.fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                    DEBUG_AST(std::cout << "\n");
+                }
+            }
+        }
+
+        // Then extract types and methods from specialization
         if (auto *SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
             DEBUG_AST(std::cout << " (template), parameters: ");
 
@@ -206,110 +261,41 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         for (Decl *D : RD->decls()) {
-            if (auto *FD = dyn_cast<FieldDecl>(D)) {
-                DEBUG_AST(std::cout << "  Member: ");
-
-                bool pointer = false;
-                QualType QT = FD->getType().getNonReferenceType();
-                if (const auto *PT = QT->getAs<PointerType>()) {
-                    QT = PT->getPointeeType();
-                    pointer = true;
-                }
-                QT = QT.getCanonicalType();
-                std::string str;
-                llvm::raw_string_ostream OS(str);
-                QT.print(OS, Context->getPrintingPolicy());
-                OS.flush();
-
-                cpphdl::Expr expr;
-                const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(QT->getAsCXXRecordDecl());
-                if (SD) {
-                    DEBUG_AST(std::cout << " [template] ");
-                    str = SD->getQualifiedNameAsString();
-                    expr.value = str;
-                    expr.type = cpphdl::Expr::EXPR_TEMPLATE;
-                    ASSERT(SD->getTemplateArgs().asArray().size()>0);
-                    std::vector<std::string> params;
-                    getParametersFromInstantiation(FD, "", *Context, params);
-                    templateToExpr(SD, &params, expr, *Context);
-                }
-                else {
-                    DEBUG_AST(std::cout << " [type] ");
-                    expr.value = str;
-                    expr.type = cpphdl::Expr::EXPR_TYPE;
-                }
-
-                if (pointer) {
-                    DEBUG_AST(std::cout << " (port) " << str << ", " << FD->getNameAsString() << "\n");
-                    mod.ports.emplace_back(cpphdl::Port{FD->getNameAsString(), std::move(expr)});
-                }
-                else {
-                    DEBUG_AST(std::cout << " (var) " << str << ", " << FD->getNameAsString() << "\n");
-                    mod.fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
-                }
-            } else
             if (auto *VD = dyn_cast<VarDecl>(D)) {
                 if (VD->isStaticDataMember()) {
 //                    DEBUG_AST(std::cout << " (var) " << VD->getNameAsString() << " : ");
-//                    VD->getType().print(llvm::outs(), RD->getASTContext().getPrintingPolicy());
-//                    llvm::outs() << "\n";
+//                    VD->getType().print(std::cout, RD->getASTContext().getPrintingPolicy());
+//                    std::cout << "\n";
                 }
             } else
             if (auto *Nested = dyn_cast<CXXRecordDecl>(D)) {
-                llvm::outs() << "  Nested class: " << Nested->getNameAsString() << "\n";
+                DEBUG_AST(std::cout << "  Nested class: " << Nested->getNameAsString() << "\n");
             } else
             if (auto *EnumD = dyn_cast<EnumDecl>(D)) {
-                llvm::outs() << "  Enum: " << EnumD->getNameAsString() << "\n";
+                DEBUG_AST(std::cout << "  Enum: " << EnumD->getNameAsString() << "\n");
             } else
             if (auto *TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
-                llvm::outs() << "  Type alias: " << TypeAlias->getNameAsString() << "\n";
+                DEBUG_AST(std::cout << "  Type alias: " << TypeAlias->getNameAsString() << "\n");
             } else
             if (auto *MD = llvm::dyn_cast<CXXMethodDecl>(D)) {
-                llvm::outs() << "  Method: " << MD->getQualifiedNameAsString() << "\n";
+                DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << "\n");
                 if (!putMethod(MD, mod)) {
                     return false;
                 }
             }
+//                if (const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()/*->getAsCXXRecordDecl()*/)) {
+//                    expr1.value = SD->getQualifiedNameAsString();
+//                    expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
+//                    getParamsFromSourceOrStr
+//                    templateToExpr(SD, nullptr, expr1, Ctx);
+//                    DEBUG_AST(std::cout << " [template spec]  " << expr1.value);
+//                    expr.sub.emplace_back(std::move(expr1));
+//                }
         }
 
         prj.modules.emplace_back(std::move(mod));
         return true;
     }
-
-    CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
-    {
-        SmallVector<StringRef, 4> Parts;
-        QualifiedName.split(Parts, "::");
-
-        DeclContext* DC = Ctx->getTranslationUnitDecl();
-
-        for (unsigned i = 0; i < Parts.size(); ++i) {
-            IdentifierInfo& Id = Ctx->Idents.get(Parts[i]);
-            auto strs = DC->lookup(&Id);
-
-            if (strs.empty()) {
-                return nullptr;
-            }
-
-            NamedDecl* ND = strs.front();
-
-            if (i < Parts.size()-1) {
-                if (auto* NS = dyn_cast<NamespaceDecl>(ND)) {
-                    DC = NS;
-                }
-                else {
-                    return nullptr;
-                }
-            } else {
-                if (auto* CXX = dyn_cast<CXXRecordDecl>(ND)) {
-                    return CXX;
-                }
-                return nullptr;
-            }
-        }
-        return nullptr;
-    }
-
 
 //    CXXRecordDecl *currentClass = nullptr;
 
@@ -325,6 +311,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         if (RD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+            abstractDefs[RD->getQualifiedNameAsString()] = RD;
             return true;
         }
 

@@ -40,6 +40,7 @@ struct Expr
     } type = EXPR_EMPTY;
 
     std::vector<Expr> sub;
+    bool has_initializer = false;
 
     // methods
     int indent = 0;
@@ -111,7 +112,7 @@ struct Expr
                 return indent_str + (sub.size()==1 ? "return " + sub[0].str() : "return");
             case EXPR_BINARY:
                 ASSERT(sub.size()==2);
-                return indent_str + sub[0].str() + " " + value + " " + sub[1].str();
+                return indent_str + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
             case EXPR_UNARY:
                 ASSERT(sub.size()==1);
                 if (value == "*") {
