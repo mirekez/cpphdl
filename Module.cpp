@@ -57,8 +57,9 @@ bool Module::printWires(std::ofstream& out)
     for (auto& field : fields) {
         if (field.name.compare(0, 6, "cpphdl") != 0) {
             for (auto& port : ports) {
-                out << "wire " << field.name << "__" << port.name << "\n";
+                out << "wire " << field.name << "__" << port.name << ";\n";
             }
         }
     }
+    return true;
 }
