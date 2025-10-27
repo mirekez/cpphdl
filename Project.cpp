@@ -22,3 +22,14 @@ void Project::generate(const std::string& outDir)
         std::cout << "Generated: " << filePath << "\n";
     }
 }
+
+
+Module* Project::findModule(const std::string& name)
+{
+    for (auto& module : modules) {
+        if (module.name == name) {
+            return &module;
+        }
+    }
+    return nullptr;
+}

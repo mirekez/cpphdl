@@ -15,7 +15,8 @@ struct Module
     std::string name;
     std::vector<Field> parameters;
     std::vector<Field> ports;
-    std::vector<Field> fields;
+    std::vector<Field> vars;
+    std::vector<Field> members;
     std::vector<Method> methods;
     std::vector<Comb> combs;
 

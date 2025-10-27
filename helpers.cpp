@@ -175,7 +175,7 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *SL = dyn_cast<StringLiteral>(E)) {
         DEBUG_AST(std::cout << "StringLiteral, ");
-        return cpphdl::Expr{SL->getString().str(), cpphdl::Expr::EXPR_VALUE};
+        return cpphdl::Expr{SL->getString().str(), cpphdl::Expr::EXPR_STRING};
     }
     if (auto *BLE = dyn_cast<CXXBoolLiteralExpr>(E)) {
         DEBUG_AST(std::cout << "CXXBoolLiteralExpr, ");
@@ -187,7 +187,7 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (/*auto *ME = */dyn_cast<CXXThisExpr>(E)) {
         DEBUG_AST(std::cout << "CXXThisExpr, ");
-        return cpphdl::Expr{"this", cpphdl::Expr::EXPR_CONST};
+        return cpphdl::Expr{"this", cpphdl::Expr::EXPR_VALUE};
     }
     if (auto *UO = dyn_cast<UnaryOperator>(E)) {
         DEBUG_AST(std::cout << "UnaryOperator, ");
@@ -243,7 +243,7 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (/*auto *CE = */dyn_cast<CXXNullPtrLiteralExpr>(E)) {
         DEBUG_AST(std::cout << "CXXNullPtrLiteralExpr");
-        return cpphdl::Expr{"nullptr", cpphdl::Expr::EXPR_CONST};
+        return cpphdl::Expr{"nullptr", cpphdl::Expr::EXPR_VALUE};
     }
     if (auto *UETTE = dyn_cast<UnaryExprOrTypeTraitExpr>(E)) {
         DEBUG_AST(std::cout << "UnaryExprOrTypeTraitExpr");
@@ -360,19 +360,21 @@ bool templateToExpr(QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
             OS.flush();
 
             if (Arg.getKind() == TemplateArgument::Expression) {
+                DEBUG_AST(std::cout << "(");
                 expr.sub.push_back(exprToExpr(Arg.getAsExpr(), Ctx));
-                DEBUG_AST(std::cout << "(expression),");
+                DEBUG_AST(std::cout << " expression),");
             } else
             if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
                 QualType QT = Arg.getAsType().getNonReferenceType();
+                DEBUG_AST(std::cout << "(");
                 if (templateToExpr(QT, expr1, Ctx)) {
-                    DEBUG_AST(std::cout << "(template) " << expr1.value);
+                    DEBUG_AST(std::cout << " template " << expr1.value << "),");
                 }
                 else {
                     QT = QT.getCanonicalType();
                     QT = QT.getDesugaredType(Ctx);
                     str = QT.getAsString(Ctx.getPrintingPolicy());
-                    DEBUG_AST(std::cout << "(type) " << str << ",");
+                    DEBUG_AST(std::cout << " type " << str << "),");
                     expr1.value = str;
                     expr1.type = cpphdl::Expr::EXPR_TYPE;
                 }
@@ -389,14 +391,14 @@ bool templateToExpr(QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
                 expr1.value = str;
                 expr1.type = cpphdl::Expr::EXPR_VALUE;
                 expr.sub.emplace_back(std::move(expr1));
-                DEBUG_AST(std::cout << "(integral) " << str << ",");
+                DEBUG_AST(std::cout << "(integral " << str << "),");
             } else
             if (Arg.getKind() == TemplateArgument::Declaration) {
                 expr1.value = str;
-                DEBUG_AST(std::cout << "(decl) " << str << ",");
+                DEBUG_AST(std::cout << "(decl " << str << "),");
             } else {
                 expr1.value = str;
-                DEBUG_AST(std::cout << "(unhandled) " << str << ",");
+                DEBUG_AST(std::cout << "(unhandled " << str << "),");
             }
         }
         return true;

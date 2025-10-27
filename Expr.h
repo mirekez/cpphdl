@@ -14,9 +14,10 @@ struct Expr
         EXPR_EMPTY,
         EXPR_TYPE,
         EXPR_VALUE,
-        EXPR_CONST,
+        EXPR_STRING,
         EXPR_PARAM,
         EXPR_TEMPLATE,
+        EXPR_ARRAY,
         EXPR_CALL,
         EXPR_MEMBERCALL,
         EXPR_MEMBER,
@@ -28,7 +29,6 @@ struct Expr
         EXPR_CAST,
         EXPR_PAREN,
         EXPR_INIT,
-        EXPR_ASSIGN,
         EXPR_DECLARE,
         EXPR_TRAIT,
         EXPR_FOR,
@@ -50,12 +50,13 @@ struct Expr
     }
 
     enum : unsigned {
-        FLAG_PORT = 1,
+        FLAG_NONE = 0,
+        FLAG_WIRE = 1,
         FLAG_REG = 2,
-    };
+    } flags = FLAG_NONE;
 
-    std::string str(unsigned flags = 0, std::string prefix = "", std::string suffix = "");
-    std::string typeToSV(std::string name, unsigned flags, const std::string& prefix, const std::string& suffix, std::string size = "");
+    std::string str(std::string prefix = "", std::string size = "");
+    std::string typeToSV(std::string name, std::string size = "");
 
 };
 

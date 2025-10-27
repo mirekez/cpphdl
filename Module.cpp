@@ -6,6 +6,9 @@
 
 #include <fstream>
 
+#include "Project.h"
+extern cpphdl::Project prj;
+
 using namespace cpphdl;
 
 bool Module::print(std::ofstream& out)
@@ -31,7 +34,7 @@ bool Module::print(std::ofstream& out)
     }
     out << ");\n";
     out << "\n";
-    for (auto& field : fields) {
+    for (auto& field : vars) {
         if (!field.print(out)) {
             return false;
         }
@@ -54,11 +57,17 @@ bool Module::print(std::ofstream& out)
 
 bool Module::printWires(std::ofstream& out)
 {
-    for (auto& field : fields) {
-        if (field.name.compare(0, 6, "cpphdl") != 0) {
-            for (auto& port : ports) {
-                out << "wire " << field.name << "__" << port.name << ";\n";
+    for (auto& field : members) {
+        Module* mod = prj.findModule(field.type.value);
+        if (mod) {
+            for (auto& port : mod->ports) {
+                port.type.flags = Expr::FLAG_WIRE;
+                out << "    " << port.type.str() << " " << field.name << "__" << port.name << ";\n";  // cant be reg or memory
             }
+        }
+        else {
+            std::cerr << "ERROR: cant find module '" << field.type.value << "' declaration\n";
+            return false;
         }
     }
     return true;

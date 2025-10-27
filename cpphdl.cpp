@@ -160,50 +160,97 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         ASSERT(abstractDefs.find(RD->getQualifiedNameAsString()) != abstractDefs.end());
         for (Decl *D : abstractDefs[RD->getQualifiedNameAsString()]->decls()) {
             if (auto *FD = dyn_cast<FieldDecl>(D)) {
-                DEBUG_AST(std::cout << "  Field: ");
+                DEBUG_AST(std::cout << "  Field:");
 
                 bool pointer = false;
                 QualType QT = FD->getType().getNonReferenceType();
                 if (QT->isPointerType()) {
                     QT = QT->getPointeeType();
                     pointer = true;
+                    DEBUG_AST(std::cout << " *pointer*");
+                }
+
+                cpphdl::Expr arrayExpr;
+                bool array = false;
+                while (const clang::ArrayType *AT = Context->getAsArrayType(QT)) {
+                    if (const auto *CAT = llvm::dyn_cast<clang::ConstantArrayType>(AT)) {
+                        DEBUG_AST(std::cout << " [c_array" << std::to_string(CAT->getSize().getLimitedValue()) << "]");
+                        arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_VALUE});
+                        arrayExpr.value = "c_array";
+                    }
+                    else if (const auto *VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
+                        DEBUG_AST(std::cout << " [v_array");
+                        arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr(), *Context));
+                        DEBUG_AST(std::cout << "] ");
+                        arrayExpr.value = "v_array";
+                    }
+                    else if (const auto *DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
+                        DEBUG_AST(std::cout << " [d_array");
+                        arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr(), *Context));
+                        DEBUG_AST(std::cout << "] ");
+                        arrayExpr.value = "d_array";
+                    }
+
+                    arrayExpr.type = cpphdl::Expr::EXPR_ARRAY;
+                    QT = AT->getElementType();
+                    array = true;
                 }
 
                 cpphdl::Expr expr;
+                DEBUG_AST(std::cout << " (");
                 if (templateToExpr(QT, expr, *Context)) {
-                    DEBUG_AST(std::cout << " (template) " << expr.value);
+                    DEBUG_AST(std::cout << " template) " << expr.value);
                 }
                 else {
                     QT = QT.getCanonicalType();
                     QT = QT.getDesugaredType(*Context);
                     std::string str = QT.getAsString(Context->getPrintingPolicy());
-                    DEBUG_AST(std::cout << " (type) " << str);
+                    DEBUG_AST(std::cout << str << " type) " << str);
                     expr.value = str;
                     expr.type = cpphdl::Expr::EXPR_TYPE;
                 }
 
-                if (pointer) {
-                    DEBUG_AST(std::cout << " (port) " << FD->getNameAsString());
+                if (array) {
+                    arrayExpr.sub.push_back(std::move(expr));
+                    expr = std::move(arrayExpr);
+                }
 
-                    if (FD->getInClassInitializer()) {
-                        DEBUG_AST(std::cout << ", initializer " << FD->getInClassInitializer()->getStmtClassName());
-                        expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
-                        expr.has_initializer = true;
-                    }
+                if (FD->getInClassInitializer()) {
+                    DEBUG_AST(std::cout << ", <initializer ");
+                    expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
+                    DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
+                    expr.has_initializer = true;
+                }
+                if (pointer || (FD->getNameAsString().length() > 3
+                            && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
+                            || FD->getNameAsString().rfind("_out") == FD->getNameAsString().length()-4))) {
+                    DEBUG_AST(std::cout << " {port " << FD->getNameAsString() << "}");
 
                     mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
                     DEBUG_AST(std::cout << "\n");
                 }
                 else {
-                    DEBUG_AST(std::cout << " (var) " << FD->getNameAsString());
+                    auto *ModuleClass = lookupQualifiedRecord(Context, "cpphdl::Module");
+                    ASSERT(ModuleClass);
+                    auto* CRD = FD->getType()->getAsCXXRecordDecl();
 
-                    if (FD->getInClassInitializer()) {
-                        DEBUG_AST(std::cout << ", initializer " << FD->getInClassInitializer()->getStmtClassName());
-                        expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
-                        expr.has_initializer = true;
+                    if (auto *TST = FD->getType()->getAs<clang::TemplateSpecializationType>()) {  // check if template is derived from cpphdl::Module
+                        clang::TemplateName TN = TST->getTemplateName();
+                        if (auto *TD = TN.getAsTemplateDecl()) {
+                            if (auto *CTD = llvm::dyn_cast<clang::ClassTemplateDecl>(TD)) {
+                                CRD = CTD->getTemplatedDecl();
+                            }
+                        }
                     }
 
-                    mod.fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                    if (CRD && CRD->hasDefinition() && CRD->isDerivedFrom(ModuleClass)) {
+                        DEBUG_AST(std::cout << " {member " << FD->getNameAsString() << "}");
+                        mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                    }
+                    else {
+                        DEBUG_AST(std::cout << " {var " << FD->getNameAsString() << "}");
+                        mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                    }
                     DEBUG_AST(std::cout << "\n");
                 }
             }
@@ -211,7 +258,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         // Then extract types and methods from specialization
         if (auto *SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-            DEBUG_AST(std::cout << " (template), parameters: ");
+            DEBUG_AST(std::cout << " Module parameters: ");
 
             const TemplateArgumentList& Args = SD->getTemplateArgs();
             const TemplateParameterList *Params = SD->getSpecializedTemplate()->getTemplateParameters();

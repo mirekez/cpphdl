@@ -15,6 +15,8 @@ struct Project
     std::vector<Module> modules;
 
     void generate(const std::string& outDir);
+
+    Module* findModule(const std::string& name);
 };
 
 

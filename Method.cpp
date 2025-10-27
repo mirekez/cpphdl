@@ -8,7 +8,7 @@ using namespace cpphdl;
 bool Method::print(std::ofstream& out)
 {
     if (name == "connect") {
-        printConns(out);
+        return printConns(out);
     }
 
     if (ret == "void") {
@@ -44,5 +44,15 @@ bool Method::print(std::ofstream& out)
 
 bool Method::printConns(std::ofstream& out)
 {
+    out << "    generate\n";
+    out << "    genvar gi, gj, gz;\n";
+    for (auto& stmt : statements) {
+        stmt.indent = 2;
+        out << stmt.str("assign ");
+        if (!stmt.isMultiline()) {
+            out << ";\n";
+        }
+    }
+    out << "    endgenerate\n";
     return true;
 }

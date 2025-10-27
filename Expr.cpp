@@ -3,7 +3,7 @@
 
 using namespace cpphdl;
 
-std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
+std::string Expr::str(std::string prefix, std::string size)
 {
     std::string indent_str;
     if (indent) {
@@ -11,21 +11,30 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             indent_str += "    ";
         }
     }
+    indent_str += prefix;
+
     switch (type)
     {
         case EXPR_EMPTY:
             return indent_str + "";
         case EXPR_TYPE:
-            return indent_str + typeToSV(value, flags, prefix, suffix);
+            return indent_str + typeToSV(value, size);
         case EXPR_VALUE:
             return indent_str + value;
-        case EXPR_CONST:
-            return indent_str + value;
+        case EXPR_STRING:
+            return indent_str + "\"" + value + "\"";
         case EXPR_PARAM:
             return indent_str + value;
         case EXPR_TEMPLATE:
+            if (value == "cpphdl::array") {
+                ASSERT(sub.size() >= 2);
+                return indent_str + sub[0].str("", size + "[" + sub[1].str() + "-1:0]");
+            }
             ASSERT(sub.size() >= 1);
-            return indent_str + typeToSV(value, flags, prefix, suffix, sub[0].type == EXPR_VALUE ? sub[0].value : sub[0].str(flags,prefix,suffix));
+            return indent_str + typeToSV(value, size + "[" + sub[0].str() + "-1:0]");
+        case EXPR_ARRAY:
+            ASSERT(sub.size() >= 2);
+            return indent_str + sub[1].str("", size + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
              if (value == "=") {
@@ -34,10 +43,18 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
              }
              if (value == "[]") {
                  ASSERT(sub.size() >= 2);
-                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+                 return indent_str + sub[0].str() + "[" + sub[1].str() + "-1:0]";
              }
 
-             std::string str = value + "(";
+             std::string func = value;
+             if (func == "clog2") {
+                 func = "$clog2";
+             }
+             if (func == "printf") {
+                 func = "$write";
+             }
+
+             std::string str = func + "(";
              bool first = true;
              for (auto& arg : sub) {
                  str += (first?"":", ") + arg.str();
@@ -54,7 +71,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             if (sub[0].str() == "this") {
                 return indent_str + value + "()";
             }
-            return indent_str + sub[0].str() + "." + value + "()";
+            return "//" + indent_str + sub[0].str() + "." + value + "()";
         case EXPR_MEMBER:
             ASSERT(sub.size()==1);
             if (value.find("operator") == 0) {
@@ -63,7 +80,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             if (sub[0].str() == "this") {
                 return indent_str + value;
             }
-            return indent_str + sub[0].str() + "." + value;
+            return indent_str + sub[0].str() + "__" + value;
         case EXPR_RETURN:
             return indent_str + (sub.size()==1 ? "return " + sub[0].str() : "return");
         case EXPR_BINARY:
@@ -93,9 +110,6 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
         case EXPR_INIT:
             ASSERT(sub.size()==1);
             return indent_str + sub[0].str();
-        case EXPR_ASSIGN:
-            ASSERT(sub.size()==2);
-            return indent_str + std::string("(assign: ") + sub[0].str() + " = " + sub[1].str() + ")";
         case EXPR_DECLARE:
             return indent_str + value;
         case EXPR_TRAIT:
@@ -107,7 +121,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
-            str += sub[3].str();
+            str += sub[3].str(prefix);
             if (!sub[3].isMultiline()) {
                 str += ";\n";
             }
@@ -120,7 +134,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "while (" + sub[0].str() + ") begin\n";
             sub[1].indent = indent + 1;
-            str += sub[1].str();
+            str += sub[1].str(prefix);
             if (!sub[1].isMultiline()) {
                 str += ";\n";
             }
@@ -134,7 +148,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
                 sub[1].indent = indent + 1;
-                str += sub[1].str();
+                str += sub[1].str(prefix);
                 if (!sub[1].isMultiline()) {
                     str += ";\n";
                 }
@@ -143,7 +157,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             if (sub.size() > 2) {
                 str += indent_str + "else begin\n";
                 sub[2].indent = indent + 1;
-                str += sub[2].str();
+                str += sub[2].str(prefix);
                 if (!sub[2].isMultiline()) {
                     str += ";\n";
                 }
@@ -156,7 +170,7 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
             std::string str;
             for (auto& stmt : sub) {
                 stmt.indent = indent;
-                str += stmt.str();
+                str += stmt.str(prefix);
                 if (!stmt.isMultiline()) {
                     str += ";\n";
                 }
@@ -172,9 +186,9 @@ std::string Expr::str(unsigned flags, std::string prefix, std::string suffix)
     return "";
 }
 
-std::string Expr::typeToSV(std::string name, unsigned flags, const std::string& prefix, const std::string& suffix, std::string size)
+std::string Expr::typeToSV(std::string name, std::string size)
 {
-    std::string logic = (flags&FLAG_PORT) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
+    std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
     std::string str = name;
     if (type == EXPR_TEMPLATE) {
@@ -190,58 +204,58 @@ std::string Expr::typeToSV(std::string name, unsigned flags, const std::string& 
         str += ")";
     }
     if (name == "cpphdl::logic") {
-        str = logic + suffix + "[" + size + "-1:0]";
+        str = logic + size;
     } else
     if (name == "cpphdl::u") {
-        str = logic + suffix + "[" + size + "-1:0]";
+        str = logic + size;
     } else
     if (name == "cpphdl::u1") {
-        str = logic + suffix;
+        str = logic + size;
     } else
     if (name == "cpphdl::u8") {
-        str = logic + suffix + "[7:0]";
+        str = logic + size + "[7:0]";
     } else
     if (name == "cpphdl::u16") {
-        str = logic + suffix + "[15:0]";
+        str = logic + size + "[15:0]";
     } else
     if (name == "cpphdl::u32") {
-        str = logic + suffix + "[31:0]";
+        str = logic + size + "[31:0]";
     } else
     if (name == "cpphdl::u64") {
-        str = logic + suffix + "[63:0]";
+        str = logic + size + "[63:0]";
     } else
     if (name == "bool") {
-        str = logic;
+        str = logic + size;
     } else
     if (name == "uint8_t") {
-        str = logic + "[7:0]";
+        str = logic + size + "[7:0]";
     } else
     if (name == "uint16_t") {
-        str = logic + "[15:0]";
+        str = logic + size + "[15:0]";
     } else
     if (name == "uint32_t") {
-        str = logic + "[31:0]";
+        str = logic + size + "[31:0]";
     } else
     if (name == "uint64_t") {
-        str = logic + "[63:0]";
+        str = logic + size + "[63:0]";
     } else
     if (name.compare(0, 4, "short") == 0) {
-        str = "shortint";
+        str = "shortint" + size;
     } else
     if (name == "int") {
-        str = "integer";
+        str = "integer" + size;
     } else
     if (name.compare(0, 4, "long") == 0) {
-        str = "longint";
+        str = "longint" + size;
     } else
     if (name == "unsigned short") {
-        str = "unsigned shortint";
+        str = "unsigned shortint" + size;
     } else
     if (name == "unsigned long") {
-        str = "unsigned longint";
+        str = "unsigned longint" + size;
     } else
     if (name.compare(0, 8, "unsigned") == 0) {
-        str = "unsigned int";
+        str = "unsigned int" + size;
     }
-    return std::string() + prefix + str;
+    return str;
 }
