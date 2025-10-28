@@ -175,7 +175,16 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *SL = dyn_cast<StringLiteral>(E)) {
         DEBUG_AST(std::cout << "StringLiteral, ");
-        return cpphdl::Expr{SL->getString().str(), cpphdl::Expr::EXPR_STRING};
+
+        clang::SourceRange Range = SL->getSourceRange();
+        clang::LangOptions LO = Ctx.getLangOpts();
+
+        llvm::StringRef RawText = clang::Lexer::getSourceText(
+            clang::CharSourceRange::getTokenRange(Range),
+            Ctx.getSourceManager(),
+            LO);
+
+        return cpphdl::Expr{RawText.str(), cpphdl::Expr::EXPR_STRING};
     }
     if (auto *BLE = dyn_cast<CXXBoolLiteralExpr>(E)) {
         DEBUG_AST(std::cout << "CXXBoolLiteralExpr, ");

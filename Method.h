@@ -12,7 +12,7 @@ struct Expr;
 struct Method
 {
     std::string name;
-    std::string ret;
+    std::vector<Expr> ret;
     std::vector<Field> parameters;
     std::vector<Expr> statements;
 

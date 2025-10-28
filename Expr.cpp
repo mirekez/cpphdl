@@ -22,7 +22,11 @@ std::string Expr::str(std::string prefix, std::string size)
         case EXPR_VALUE:
             return indent_str + value;
         case EXPR_STRING:
-            return indent_str + "\"" + value + "\"";
+            size_t pos;
+            if ((pos = value.find("%s")) != (size_t)-1) {
+                value = value.replace(pos, 2, "%m");
+            }
+            return indent_str + value;
         case EXPR_PARAM:
             return indent_str + value;
         case EXPR_TEMPLATE:
@@ -53,12 +57,17 @@ std::string Expr::str(std::string prefix, std::string size)
              if (func == "printf") {
                  func = "$write";
              }
+             if (func == "exit") {
+                 return indent_str + "$finish()";
+             }
 
              std::string str = func + "(";
              bool first = true;
              for (auto& arg : sub) {
-                 str += (first?"":", ") + arg.str();
-                 first = false;
+                 if (arg.type != EXPR_MEMBERCALL) {
+                     str += (first?"":", ") + arg.str();
+                     first = false;
+                 }
              }
              str += ")";
              return indent_str + str;
@@ -71,7 +80,16 @@ std::string Expr::str(std::string prefix, std::string size)
             if (sub[0].str() == "this") {
                 return indent_str + value + "()";
             }
-            return "//" + indent_str + sub[0].str() + "." + value + "()";
+
+            if (value == "clr") {
+                return indent_str + sub[0].str() + " = '0";
+            }
+//            if (value == "set") {
+//                return indent_str + sub[0].str() + " = '0";
+//            }
+
+
+            return "/*" + indent_str + sub[0].str() + "." + value + "()" + "*/";
         case EXPR_MEMBER:
             ASSERT(sub.size()==1);
             if (value.find("operator") == 0) {
@@ -80,6 +98,11 @@ std::string Expr::str(std::string prefix, std::string size)
             if (sub[0].str() == "this") {
                 return indent_str + value;
             }
+
+            if (value == "next") {
+                return indent_str + sub[0].str();
+            }
+
             return indent_str + sub[0].str() + "__" + value;
         case EXPR_RETURN:
             return indent_str + (sub.size()==1 ? "return " + sub[0].str() : "return");
@@ -225,6 +248,9 @@ std::string Expr::typeToSV(std::string name, std::string size)
         str = logic + size + "[63:0]";
     } else
     if (name == "bool") {
+        str = logic + size;
+    } else
+    if (name == "_Bool") {
         str = logic + size;
     } else
     if (name == "uint8_t") {

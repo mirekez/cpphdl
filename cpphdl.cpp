@@ -136,10 +136,29 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 return true;
             }
 
+            bool TraverseReturnStmt(ReturnStmt *E)
+            {
+                VisitReturnStmt(E);
+                return true;
+            }
+
+            bool VisitReturnStmt(ReturnStmt *RS)
+            {
+                method.statements.emplace_back(exprToExpr(RS, Ctx));
+                DEBUG_AST(std::cout << "\n");
+                return true;
+            }
+
             bool shouldVisitTemplateInstantiations() const { return true; }
         };
 
-        cpphdl::Method method = cpphdl::Method{MD->getNameAsString(), MD->getReturnType().getAsString()};
+        cpphdl::Method method;
+        if (MD->getReturnType().getAsString() == "void") {
+            method = cpphdl::Method{MD->getNameAsString()};
+        }
+        else {
+            method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
+        }
         for (const ParmVarDecl *Param : MD->parameters()) {
             method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(),cpphdl::Expr{Param->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}});
         }

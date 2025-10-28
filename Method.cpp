@@ -11,11 +11,11 @@ bool Method::print(std::ofstream& out)
         return printConns(out);
     }
 
-    if (ret == "void") {
+    if (ret.size() == 0) {
         out << "    task " << name << " (" << (parameters.size() > 1 ? "\n" : "");
     }
     else {
-        out << "    function " << ret << " " << name << " (" << (parameters.size() > 1 ? "\n" : "");
+        out << "    function " << ret[0].str() << " " << name << " (" << (parameters.size() > 1 ? "\n" : "");
     }
 
     bool first = true;
@@ -33,7 +33,7 @@ bool Method::print(std::ofstream& out)
         }
     }
 
-    if (ret == "void") {
+    if (ret.size() == 0) {
         out << "    endtask" << "\n";
     }
     else {
