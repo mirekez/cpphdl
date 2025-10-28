@@ -3,8 +3,8 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/FrontendActions.h"
 
-#include "Expr.h"
 #include "Debug.h"
+#include "Expr.h"
 
 #include <iostream>
 
@@ -124,7 +124,7 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
         DEBUG_AST(std::cout << "DeclRefExpr, " << DRE->getNameInfo().getAsString());
-        return cpphdl::Expr{DRE->getNameInfo().getAsString(), cpphdl::Expr::EXPR_DECLARE};
+        return cpphdl::Expr{DRE->getNameInfo().getAsString(), cpphdl::Expr::EXPR_VAR};
     }
     if (auto *IL = dyn_cast<IntegerLiteral>(E)) {
         DEBUG_AST(std::cout << "IntegerLiteral, " << std::to_string(IL->getValue().getSExtValue()));
@@ -140,13 +140,10 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *MCE = dyn_cast<CXXMemberCallExpr>(E)) {
         DEBUG_AST(std::cout << "CXXMemberCallExpr, ");
-        if (MCE->getNumArgs() == 0) {
-            if (auto *ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
-                return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBERCALL, {exprToExpr(ME->getBase(), Ctx)}};
-            }
+        cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
+        if (auto *ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
+             call.sub.push_back(cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}});
         }
-
-        cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_CALL};
         for (unsigned i = 0; i < MCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(MCE->getArg(i), Ctx));
         }

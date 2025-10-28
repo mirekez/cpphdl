@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
+#include <string>
 
 namespace cpphdl
 {
@@ -21,3 +22,5 @@ struct Project
 
 
 }
+
+extern cpphdl::Project* currProject;

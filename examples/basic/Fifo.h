@@ -52,19 +52,19 @@ public:
         return empty_comb;
     }
 
-    void reset()
-    {
-        wp_reg.clr();
-        rp_reg.clr();
-        full_reg.clr();
-        afull_reg.clr();
-
-        mem.reset();
-    }
-
-    void work(int clk)
+    void work(bool clk, bool reset)
     {
         if (!clk) return;
+        mem.work(clk, reset);
+
+        if (reset) {
+            wp_reg.clr();
+            rp_reg.clr();
+            full_reg.clr();
+            afull_reg.clr();
+
+            return;
+        }
 
         if (*read_in) {
 
@@ -101,8 +101,6 @@ public:
         }
 
         afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
-
-        mem.work(clk);
     }
 
     void strobe()

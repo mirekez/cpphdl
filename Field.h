@@ -18,3 +18,5 @@ struct Field
 
 
 }
+
+extern cpphdl::Field* currField;

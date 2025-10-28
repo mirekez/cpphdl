@@ -5,8 +5,12 @@
 
 using namespace cpphdl;
 
+Field* currField;
+
 bool Field::print(std::ofstream& out)
 {
+    currField = this;
+
     if (type.value == "cpphdl::memory") {
         ASSERT1(type.sub.size() >= 3, std::string("cpphdl::memory subs size = ") + std::to_string(type.sub.size()) );
         type.flags = Expr::FLAG_REG;
@@ -25,6 +29,8 @@ bool Field::print(std::ofstream& out)
 
 bool Field::printPort(std::ofstream& out)
 {
+    currField = this;
+
     type.flags = Expr::FLAG_WIRE;
     out << type.str(name.find("_out") == (size_t)-1 ? "input " : "output ") << " " << name << "\n";
     return true;

@@ -32,11 +32,7 @@ public:
         }
     }
 
-    void reset()
-    {
-    }
-
-    void work(int clk)
+    void work(bool clk, bool reset)
     {
         if (!clk) return;
 

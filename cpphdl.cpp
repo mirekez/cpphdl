@@ -18,8 +18,6 @@
 
 #include <map>
 
-cpphdl::Project prj;
-
 using namespace clang;
 
 cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx);
@@ -238,7 +236,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     DEBUG_AST(std::cout << ", <initializer ");
                     expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
                     DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
-                    expr.has_initializer = true;
+                    expr.hasInitializer = true;
                 }
                 if (pointer || (FD->getNameAsString().length() > 3
                             && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
@@ -372,7 +370,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 //                }
         }
 
-        prj.modules.emplace_back(std::move(mod));
+        currProject->modules.emplace_back(std::move(mod));
         return true;
     }
 
@@ -480,6 +478,6 @@ int main(int argc, const char **argv)
         tooling::ArgumentInsertPosition::BEGIN));
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
-    prj.generate("generated");
+    currProject->generate("generated");
     return ret;
 }

@@ -26,5 +26,6 @@ struct Module
     bool printWires(std::ofstream& out);
 };
 
-
 }
+
+extern cpphdl::Module* currModule;

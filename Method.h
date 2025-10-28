@@ -18,10 +18,13 @@ struct Method
 
     // methods
 
+    std::string currModule;
     bool print(std::ofstream& out);
     bool printConns(std::ofstream& out);
-
+    bool printComb(std::ofstream& out);
 };
 
 
 }
+
+extern cpphdl::Method* currMethod;

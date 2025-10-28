@@ -14,6 +14,7 @@ struct Expr
         EXPR_EMPTY,
         EXPR_TYPE,
         EXPR_VALUE,
+        EXPR_VAR,
         EXPR_STRING,
         EXPR_PARAM,
         EXPR_TEMPLATE,
@@ -29,7 +30,6 @@ struct Expr
         EXPR_CAST,
         EXPR_PAREN,
         EXPR_INIT,
-        EXPR_DECLARE,
         EXPR_TRAIT,
         EXPR_FOR,
         EXPR_WHILE,
@@ -39,7 +39,7 @@ struct Expr
     } type = EXPR_EMPTY;
 
     std::vector<Expr> sub;
-    bool has_initializer = false;
+    bool hasInitializer = false;
 
     // methods
     int indent = 0;
@@ -53,11 +53,24 @@ struct Expr
         FLAG_NONE = 0,
         FLAG_WIRE = 1,
         FLAG_REG = 2,
+        FLAG_NORETURN = 4,
     } flags = FLAG_NONE;
 
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");
 
+    template <typename Func>
+    bool traverseIf(Func&& checker) {
+        if (checker(*this)) {
+            return true;
+        }
+        for (auto& expr : sub) {
+            if (expr.traverseIf(checker)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 

@@ -1,7 +1,14 @@
 #include "Project.h"
 #include "Module.h"
+#include "Method.h"
+#include "Field.h"
+#include "Expr.h"
+#include "Comb.h"
 
 using namespace cpphdl;
+
+Project prj;
+Project* currProject = &prj;
 
 void Project::generate(const std::string& outDir)
 {

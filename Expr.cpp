@@ -1,4 +1,6 @@
 #include "Expr.h"
+#include "Method.h"
+#include "Module.h"
 #include "Debug.h"
 
 using namespace cpphdl;
@@ -21,6 +23,8 @@ std::string Expr::str(std::string prefix, std::string size)
             return indent_str + typeToSV(value, size);
         case EXPR_VALUE:
             return indent_str + value;
+        case EXPR_VAR:
+            return indent_str + value;
         case EXPR_STRING:
             size_t pos;
             if ((pos = value.find("%s")) != (size_t)-1) {
@@ -41,55 +45,77 @@ std::string Expr::str(std::string prefix, std::string size)
             return indent_str + sub[1].str("", size + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
-             if (value == "=") {
-                 ASSERT(sub.size() >= 2);
-                 return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
-             }
-             if (value == "[]") {
-                 ASSERT(sub.size() >= 2);
-                 return indent_str + sub[0].str() + "[" + sub[1].str() + "-1:0]";
-             }
+            if (value == "=") {
+                ASSERT(sub.size() >= 2);
+                return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
+            }
+            if (value == "[]") {
+                ASSERT(sub.size() >= 2);
+                return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+            }
 
-             std::string func = value;
-             if (func == "clog2") {
-                 func = "$clog2";
-             }
-             if (func == "printf") {
+            std::string func = value;
+            if (func == "clog2") {
+                func = "$clog2";
+            }
+            if (func == "printf") {
                  func = "$write";
-             }
-             if (func == "exit") {
-                 return indent_str + "$finish()";
-             }
+            }
+            if (func == "exit") {
+                return indent_str + "$finish()";
+            }
 
-             std::string str = func + "(";
-             bool first = true;
-             for (auto& arg : sub) {
-                 if (arg.type != EXPR_MEMBERCALL) {
-                     str += (first?"":", ") + arg.str();
-                     first = false;
-                 }
-             }
-             str += ")";
-             return indent_str + str;
+            std::string str = func + "(";
+            bool first = true;
+            for (auto& arg : sub) {
+                if (arg.value != "clk") { //arg.type != EXPR_MEMBERCALL) {
+                    str += (first?"":", ") + arg.str();
+                    first = false;
+                }
+            }
+            str += ")";
+            return indent_str + str;
         }
+        // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
-            ASSERT(sub.size()==1);
+        {
+//            ASSERT(sub.size()>=1);
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].str() == "this") {
-                return indent_str + value + "()";
-            }
+//            if (sub[0].str() == "this") {
+//                return indent_str + value + "()";
+//            }
 
-            if (value == "clr") {
-                return indent_str + sub[0].str() + " = '0";
+            if (sub.size() != 0 && sub[0].sub.size() != 0 && sub[0].value == "clr") {
+                return indent_str + sub[0].sub[0].str() + " = '0";
             }
 //            if (value == "set") {
 //                return indent_str + sub[0].str() + " = '0";
 //            }
 
+            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls
+                return "";
+            }
 
-            return "/*" + indent_str + sub[0].str() + "." + value + "()" + "*/";
+            std::string member = value;
+            std::string str = "(";
+            bool first = true;
+            for (auto& arg : sub) {
+                if (arg.type == EXPR_MEMBER) {
+                    member = arg.str();
+                    continue;
+                }
+
+                if (arg.value != "clk") { //arg.type != EXPR_MEMBERCALL) {
+                    str += (first?"":", ") + arg.str();
+                    first = false;
+                }
+            }
+            str += ")";
+
+            return indent_str + member + str;
+        }
         case EXPR_MEMBER:
             ASSERT(sub.size()==1);
             if (value.find("operator") == 0) {
@@ -105,7 +131,7 @@ std::string Expr::str(std::string prefix, std::string size)
 
             return indent_str + sub[0].str() + "__" + value;
         case EXPR_RETURN:
-            return indent_str + (sub.size()==1 ? "return " + sub[0].str() : "return");
+            return (flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name;//(sub.size()==1 ? "return " + sub[0].str() : "return");
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
             return indent_str + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
@@ -133,8 +159,6 @@ std::string Expr::str(std::string prefix, std::string size)
         case EXPR_INIT:
             ASSERT(sub.size()==1);
             return indent_str + sub[0].str();
-        case EXPR_DECLARE:
-            return indent_str + value;
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
             return indent_str + value + "(" + sub[0].str() + ")";
@@ -144,6 +168,7 @@ std::string Expr::str(std::string prefix, std::string size)
             std::string str;
             str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
+            sub[3].flags = flags;
             str += sub[3].str(prefix);
             if (!sub[3].isMultiline()) {
                 str += ";\n";
@@ -157,6 +182,7 @@ std::string Expr::str(std::string prefix, std::string size)
             std::string str;
             str += indent_str + "while (" + sub[0].str() + ") begin\n";
             sub[1].indent = indent + 1;
+            sub[1].flags = flags;
             str += sub[1].str(prefix);
             if (!sub[1].isMultiline()) {
                 str += ";\n";
@@ -167,10 +193,14 @@ std::string Expr::str(std::string prefix, std::string size)
         case EXPR_IF:
         {
             ASSERT(sub.size()>=1);
+            if (sub[0].traverseIf( [](Expr& t) { return t.value == "clk";} )) {
+                return "";
+            }
             std::string str;
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
                 sub[1].indent = indent + 1;
+                sub[1].flags = flags;
                 str += sub[1].str(prefix);
                 if (!sub[1].isMultiline()) {
                     str += ";\n";
@@ -180,6 +210,7 @@ std::string Expr::str(std::string prefix, std::string size)
             if (sub.size() > 2) {
                 str += indent_str + "else begin\n";
                 sub[2].indent = indent + 1;
+                sub[2].flags = flags;
                 str += sub[2].str(prefix);
                 if (!sub[2].isMultiline()) {
                     str += ";\n";
@@ -193,10 +224,11 @@ std::string Expr::str(std::string prefix, std::string size)
             std::string str;
             for (auto& stmt : sub) {
                 stmt.indent = indent;
-                str += stmt.str(prefix);
-                if (!stmt.isMultiline()) {
-                    str += ";\n";
+                auto s = stmt.str(prefix);
+                if (s.length() && !stmt.isMultiline()) {
+                    s += ";\n";
                 }
+                str += s;
             }
             return str;
         }

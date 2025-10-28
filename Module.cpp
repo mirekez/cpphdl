@@ -7,12 +7,15 @@
 #include <fstream>
 
 #include "Project.h"
-extern cpphdl::Project prj;
 
 using namespace cpphdl;
 
+Module* currModule = nullptr;
+
 bool Module::print(std::ofstream& out)
 {
+    currModule = this;
+
     out << "module";
     if (parameters.size()) {
         out <<  " #(\n";
@@ -24,13 +27,18 @@ bool Module::print(std::ofstream& out)
         out <<  " )\n";
     }
     out << name << " (\n";
-    bool first = true;
+
+    out << "    input wire clk\n";
+    out << ",   input wire reset\n";
+
+
+//    bool first = true;
     for (auto& port : ports) {
-        out << (first?"    ":",   ");
+        out << ",   ";
         if (!port.printPort(out)) {
             return false;
         }
-        first = false;
+//        first = false;
     }
     out << ");\n";
     out << "\n";
@@ -45,10 +53,16 @@ bool Module::print(std::ofstream& out)
 
     for (auto& method : methods) {
         out << "\n";
+        method.currModule = name;
         if (!method.print(out)) {
             return false;
         }
     }
+
+
+    out << "always @(posedge clk) begin\n";
+    out << "    work(reset);\n";
+    out << "end\n";
 
     out << "\n";
     out << "endmodule\n";
@@ -57,8 +71,10 @@ bool Module::print(std::ofstream& out)
 
 bool Module::printWires(std::ofstream& out)
 {
+    currModule = this;
+
     for (auto& field : members) {
-        Module* mod = prj.findModule(field.type.value);
+        Module* mod = currProject->findModule(field.type.value);
         if (mod) {
             for (auto& port : mod->ports) {
                 port.type.flags = Expr::FLAG_WIRE;
