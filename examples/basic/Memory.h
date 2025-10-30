@@ -93,16 +93,16 @@ public:
         data_in           = mem.data_out;
     }
 
-    void reset()
+    void work(bool clk_in, bool reset_in)
     {
-        clean.set(1);
-        test.clr();
-        to_write.clr();
-    }
+        if (!clk_in) return;
 
-    void work(int clk)
-    {
-        if (!clk) return;
+        if (reset_in) {
+            clean.set(1);
+            test.clr();
+            to_write.clr();
+            return;
+        }
 
         write_reg.next = 0;
         if (clean) {

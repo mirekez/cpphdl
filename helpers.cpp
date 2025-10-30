@@ -132,7 +132,7 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
         DEBUG_AST(std::cout << "CXXOperatorCallExpr, ");
-        cpphdl::Expr call = cpphdl::Expr{getOperatorSpelling(OCE->getOperator()), cpphdl::Expr::EXPR_CALL};
+        cpphdl::Expr call = cpphdl::Expr{getOperatorSpelling(OCE->getOperator()), cpphdl::Expr::EXPR_OPERATORCALL};
         for (unsigned i = 0; i < OCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(OCE->getArg(i), Ctx));
         }
@@ -152,6 +152,10 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     if (auto *ME = dyn_cast<MemberExpr>(E)) {
         DEBUG_AST(std::cout << "MemberExpr, ");
         return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}};
+    }
+    if (auto *ME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
+        DEBUG_AST(std::cout << "MemberExpr, ");
+        return cpphdl::Expr{ME->getMember().getAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}};
     }
     if (auto *CE = dyn_cast<CallExpr>(E)) {
         DEBUG_AST(std::cout << "CallExpr, " << (CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""));
@@ -319,9 +323,6 @@ cpphdl::Expr exprToExpr(const Stmt *E, ASTContext& Ctx)
     }
     if (auto *DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
         DEBUG_AST(std::cout << "DependentScopeDeclRefExpr");
-    }
-    if (auto *DSME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
-        DEBUG_AST(std::cout << "CXXDependentScopeMemberExpr");
     }
     if (auto *DDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
         DEBUG_AST(std::cout << "DependentScopeDeclRefExpr");

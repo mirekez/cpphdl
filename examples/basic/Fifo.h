@@ -52,17 +52,16 @@ public:
         return empty_comb;
     }
 
-    void work(bool clk, bool reset)
+    void work(bool clk_in, bool reset_in)
     {
-        if (!clk) return;
-        mem.work(clk, reset);
+        if (!clk_in) return;
+        mem.work(clk_in, reset_in);
 
-        if (reset) {
+        if (reset_in) {
             wp_reg.clr();
             rp_reg.clr();
             full_reg.clr();
             afull_reg.clr();
-
             return;
         }
 

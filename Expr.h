@@ -21,6 +21,7 @@ struct Expr
         EXPR_ARRAY,
         EXPR_CALL,
         EXPR_MEMBERCALL,
+        EXPR_OPERATORCALL,
         EXPR_MEMBER,
         EXPR_RETURN,
         EXPR_BINARY,

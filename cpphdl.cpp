@@ -232,18 +232,20 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     expr = std::move(arrayExpr);
                 }
 
-                if (FD->getInClassInitializer()) {
-                    DEBUG_AST(std::cout << ", <initializer ");
-                    expr.sub.push_back(exprToExpr(FD->getInClassInitializer(), *Context));
-                    DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
-                    expr.hasInitializer = true;
-                }
                 if (pointer || (FD->getNameAsString().length() > 3
                             && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
                             || FD->getNameAsString().rfind("_out") == FD->getNameAsString().length()-4))) {
                     DEBUG_AST(std::cout << " {port " << FD->getNameAsString() << "}");
 
                     mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+
+                    if (FD->getInClassInitializer()) {
+                        DEBUG_AST(std::cout << ", <initializer ");
+                        mod.ports.back().initializer = exprToExpr(FD->getInClassInitializer(), *Context);
+                        DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
+                        expr.hasInitializer = true;
+                    }
+
                     DEBUG_AST(std::cout << "\n");
                 }
                 else {

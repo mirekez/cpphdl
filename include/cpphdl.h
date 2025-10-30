@@ -39,5 +39,4 @@ struct cpphdl_exception
 #include "cpphdl_memory.h"
 #include "cpphdl_Model.h"
 
-static bool ONE = 1;
 static bool ZERO = 0;

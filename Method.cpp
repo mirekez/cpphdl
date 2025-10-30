@@ -1,5 +1,6 @@
 #include "Method.h"
 #include "Field.h"
+#include "Module.h"
 
 #include <fstream>
 
@@ -86,6 +87,15 @@ bool Method::printConns(std::ofstream& out)
         out << s;
     }
     out << "    endgenerate\n";
+
+
+    for (auto& port : currModule->ports) {
+        if (port.initializer.type != Expr::EXPR_EMPTY
+            && port.initializer.sub.size() >= 1 && port.initializer.sub[0].value != "ZERO" && port.initializer.sub[0].value != "nullptr") {
+            out << "    assign " << port.name << " = " << port.initializer.str() << ";\n";
+        }
+    }
+
     return true;
 }
 

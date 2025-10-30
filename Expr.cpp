@@ -45,15 +45,6 @@ std::string Expr::str(std::string prefix, std::string size)
             return indent_str + sub[1].str("", size + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
-            if (value == "=") {
-                ASSERT(sub.size() >= 2);
-                return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
-            }
-            if (value == "[]") {
-                ASSERT(sub.size() >= 2);
-                return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
-            }
-
             std::string func = value;
             if (func == "clog2") {
                 func = "$clog2";
@@ -68,7 +59,37 @@ std::string Expr::str(std::string prefix, std::string size)
             std::string str = func + "(";
             bool first = true;
             for (auto& arg : sub) {
-                if (arg.value != "clk") { //arg.type != EXPR_MEMBERCALL) {
+                if (arg.value != "clk") {
+                    str += (first?"":", ") + arg.str();
+                    first = false;
+                }
+            }
+            str += ")";
+            return indent_str + str;
+        }
+        case EXPR_OPERATORCALL:
+        {
+            if (value == "=") {
+                ASSERT(sub.size() >= 2);
+                return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
+            }
+            if (value == "[]") {
+                ASSERT(sub.size() >= 2);
+                return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+            }
+            if (value == "*") {  // we dont need pointers int Verilog
+                ASSERT(sub.size() >= 1);
+                return indent_str + sub[0].str();
+            }
+            if (value == "&") {  // we dont need pointers int Verilog
+                ASSERT(sub.size() >= 1);
+                return indent_str + sub[0].str();
+            }
+
+            std::string str = value + "(";
+            bool first = true;
+            for (auto& arg : sub) {
+                if (arg.value != "clk") {
                     str += (first?"":", ") + arg.str();
                     first = false;
                 }
@@ -137,10 +158,10 @@ std::string Expr::str(std::string prefix, std::string size)
             return indent_str + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
-            if (value == "*") {
+            if (value == "*") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
-            if (value == "&") {
+            if (value == "&") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
             return indent_str + value + sub[0].str();

@@ -9,6 +9,7 @@ struct Field
 {
     std::string name;
     Expr type;
+    Expr initializer;
 
     // methods
 

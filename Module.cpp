@@ -53,7 +53,6 @@ bool Module::print(std::ofstream& out)
 
     for (auto& method : methods) {
         out << "\n";
-        method.currModule = name;
         if (!method.print(out)) {
             return false;
         }
@@ -85,6 +84,14 @@ bool Module::printWires(std::ofstream& out)
             std::cerr << "ERROR: cant find module '" << field.type.value << "' declaration\n";
             return false;
         }
+
+        out << "    " << field.type.value << " " << field.name << "(" << "\n";
+            out << "        .clk(clk)\n" ;
+            out << ",       .reset(reset)\n" ;
+            for (auto& port : mod->ports) {
+                out << ",       ." << port.name << "(" << field.name << "__" << port.name << ")" << "\n";  // cant be reg or memory
+            }
+        out << "    );\n";
     }
     return true;
 }
