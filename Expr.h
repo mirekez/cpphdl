@@ -23,7 +23,6 @@ struct Expr
         EXPR_MEMBERCALL,
         EXPR_OPERATORCALL,
         EXPR_MEMBER,
-        EXPR_RETURN,
         EXPR_BINARY,
         EXPR_UNARY,
         EXPR_COND,
@@ -32,6 +31,7 @@ struct Expr
         EXPR_PAREN,
         EXPR_INIT,
         EXPR_TRAIT,
+        EXPR_RETURN,
         EXPR_FOR,
         EXPR_WHILE,
         EXPR_IF,
@@ -60,18 +60,20 @@ struct Expr
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");
 
-    template <typename Func>
-    bool traverseIf(Func&& checker) {
-        if (checker(*this)) {
+    template <typename Func, typename Param>
+    bool traverseIf(Func&& checker, Param& param) {
+        if (checker(*this, param)) {
             return true;
         }
         for (auto& expr : sub) {
-            if (expr.traverseIf(checker)) {
+            if (expr.traverseIf(checker, param)) {
                 return true;
             }
         }
         return false;
     }
+
+    std::string debug();
 };
 
 

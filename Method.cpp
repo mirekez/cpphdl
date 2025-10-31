@@ -75,8 +75,47 @@ bool Method::printConns(std::ofstream& out)
 {
     currMethod = this;
 
+    std::vector<std::string> vars;
+    for (auto& stmt : statements) {  // collecting vars from for
+        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+            {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
+                if (e.type == Expr::EXPR_FOR
+                    && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
+                    && e.sub[0].sub.size() > 0 && e.sub[0].sub[0].type == Expr::EXPR_MEMBER) {
+                    for (auto& str : vars) {
+                        if (str == e.sub[0].sub[0].value) {
+                            return false;
+                        }
+                    }
+                    vars.push_back(e.sub[0].sub[0].value);
+                }
+                return false;
+            }, vars );
+    }
+    for (auto& stmt : statements) {  // replacing index names
+        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+            {
+                if (e.type == Expr::EXPR_MEMBER) {
+                    for (auto& str : vars) {
+                        if (str == e.value) {
+                            e.value = std::string("g") + str;
+                            return false;
+                        }
+                    }
+                }
+                return false;
+            }, vars );
+    }
+
+
     out << "    generate\n";
-    out << "    genvar gi, gj, gz;\n";
+    out << "    genvar ";
+    bool first = true;
+    for (auto& var : vars) {
+        out << (!first?",":"") << "g" << var;
+        first = false;
+    }
+    out << ";\n";
     for (auto& stmt : statements) {
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_NORETURN;

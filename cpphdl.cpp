@@ -53,6 +53,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(BO, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -66,6 +67,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(OCE, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -79,6 +81,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(MCE, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -92,6 +95,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(ME, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -105,6 +109,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(FS, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -118,6 +123,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(WS, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -131,6 +137,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(IS, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -144,6 +151,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             {
                 method.statements.emplace_back(exprToExpr(RS, Ctx));
                 DEBUG_AST(std::cout << "\n");
+                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
                 return true;
             }
 
@@ -174,8 +182,8 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
         // First extract fields from abstract class
-        ASSERT(abstractDefs.find(RD->getQualifiedNameAsString()) != abstractDefs.end());
-        for (Decl *D : abstractDefs[RD->getQualifiedNameAsString()]->decls()) {
+        for (Decl *D : (abstractDefs.find(RD->getQualifiedNameAsString()) != abstractDefs.end() ?
+                        abstractDefs[RD->getQualifiedNameAsString()]->decls() : RD->decls())) {
             if (auto *FD = dyn_cast<FieldDecl>(D)) {
                 DEBUG_AST(std::cout << "  Field:");
 
@@ -191,7 +199,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 bool array = false;
                 while (const clang::ArrayType *AT = Context->getAsArrayType(QT)) {
                     if (const auto *CAT = llvm::dyn_cast<clang::ConstantArrayType>(AT)) {
-                        DEBUG_AST(std::cout << " [c_array" << std::to_string(CAT->getSize().getLimitedValue()) << "]");
+                        DEBUG_AST(std::cout << " [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
                         arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_VALUE});
                         arrayExpr.value = "c_array";
                     }
@@ -247,11 +255,23 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     }
 
                     DEBUG_AST(std::cout << "\n");
+                    DEBUG_EXPR(std::cout << "        Expr: " << mod.ports.back().type.debug() << "\n");
                 }
                 else {
                     auto *ModuleClass = lookupQualifiedRecord(Context, "cpphdl::Module");
                     ASSERT(ModuleClass);
+
                     auto* CRD = FD->getType()->getAsCXXRecordDecl();
+
+                    QT = QT.getNonReferenceType();
+                    QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
+                    QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+
+                    if (const auto *RT = QT->getAs<RecordType>()) {
+                        if (cast<CXXRecordDecl>(RT->getDecl())) {
+                            CRD = cast<CXXRecordDecl>(RT->getDecl());
+                        }
+                    }
 
                     if (auto *TST = FD->getType()->getAs<clang::TemplateSpecializationType>()) {  // check if template is derived from cpphdl::Module
                         clang::TemplateName TN = TST->getTemplateName();
@@ -265,12 +285,15 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     if (CRD && CRD->hasDefinition() && CRD->isDerivedFrom(ModuleClass)) {
                         DEBUG_AST(std::cout << " {member " << FD->getNameAsString() << "}");
                         mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                        DEBUG_AST(std::cout << "\n");
+                        DEBUG_EXPR(std::cout << "        Expr: " << mod.members.back().type.debug() << "\n");
                     }
                     else {
                         DEBUG_AST(std::cout << " {var " << FD->getNameAsString() << "}");
                         mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+                        DEBUG_AST(std::cout << "\n");
+                        DEBUG_EXPR(std::cout << "        Expr: " << mod.vars.back().type.debug() << "\n");
                     }
-                    DEBUG_AST(std::cout << "\n");
                 }
             }
         }
@@ -291,7 +314,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         llvm::raw_string_ostream OS(str);
                         QT.print(OS, Context->getPrintingPolicy());
                         OS.flush();
-                        DEBUG_AST(std::cout << " type: " << OS.str());
+                        DEBUG_AST(std::cout << " type: " << OS.str() << "\n");
                         break;
                     }
                     case TemplateArgument::Integral:
@@ -301,12 +324,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         Arg.getAsIntegral().print(OS, true);
                         OS.flush();
                         DEBUG_AST(std::cout << " integral: " << OS.str());
-
                         mod.parameters.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(),cpphdl::Expr{OS.str(),cpphdl::Expr::EXPR_VALUE}});
+                        DEBUG_AST(std::cout << "\n");
+                        DEBUG_EXPR(std::cout << "        Expr: " << mod.parameters.back().type.debug() << "\n");
                         break;
                     }
                     case TemplateArgument::Declaration:
-                        DEBUG_AST(std::cout << " declaration: " << Arg.getAsDecl()->getNameAsString());
+                        DEBUG_AST(std::cout << " declaration: " << Arg.getAsDecl()->getNameAsString()) << "\n";
                         break;
                     case TemplateArgument::Template:
                     {
@@ -315,7 +339,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         llvm::raw_string_ostream OS(str);
                         TN.print(OS, Context->getPrintingPolicy());
                         OS.flush();
-                        DEBUG_AST(std::cout << " template: " << OS.str());
+                        DEBUG_AST(std::cout << " template: " << OS.str() << "\n");
                         break;
                     }
                     case TemplateArgument::Expression:
@@ -327,16 +351,20 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         if (!Range.isInvalid()) {
                             llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
                             DEBUG_AST(std::cout << " expression: " << SR.str());
+                            DEBUG_AST(std::cout << "\n");
+                            DEBUG_EXPR(std::cout << "        Expr: " << exprToExpr(E,*Context).debug() << "\n");
+                        }
+                        else {
+                            DEBUG_AST(std::cout << "\n");
                         }
                         break;
                     }
                     case TemplateArgument::Pack:
                     default:
-                        DEBUG_AST(std::cout << " unhandled");
+                        DEBUG_AST(std::cout << " unhandled\n");
                     break;
                 }
             }
-            DEBUG_AST(std::cout << "\n");
         }
 
         for (Decl *D : RD->decls()) {

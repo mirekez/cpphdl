@@ -20,6 +20,9 @@ bool Field::print(std::ofstream& out)
         ASSERT1(type.sub.size() >= 1, std::string("cpphdl::reg subs size = ") + std::to_string(type.sub.size()) );
         type.flags = Expr::FLAG_REG;
         out << "    " << type.sub[0].str() << " " << name << ";\n";
+    } else
+    if (type.type == Expr::EXPR_ARRAY && type.sub[1].type == Expr::EXPR_TYPE && type.sub.size() >= 2) {
+        out << "    " << type.sub[1].str() << " " << name << "[" << type.sub[0].str() << "]" << ";\n";
     }
     else {
         out << "    " << type.str() << " " << name << ";\n";

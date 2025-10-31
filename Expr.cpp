@@ -5,7 +5,7 @@
 
 using namespace cpphdl;
 
-std::string Expr::str(std::string prefix, std::string size)
+std::string Expr::str(std::string prefix, std::string suffix)
 {
     std::string indent_str;
     if (indent) {
@@ -13,36 +13,35 @@ std::string Expr::str(std::string prefix, std::string size)
             indent_str += "    ";
         }
     }
-    indent_str += prefix;
 
     switch (type)
     {
         case EXPR_EMPTY:
-            return indent_str + "";
+            return indent_str + prefix + "";
         case EXPR_TYPE:
-            return indent_str + typeToSV(value, size);
+            return indent_str + prefix + typeToSV(value, suffix);
         case EXPR_VALUE:
-            return indent_str + value;
+            return indent_str + prefix + value;
         case EXPR_VAR:
-            return indent_str + value;
+            return indent_str + prefix + value;
         case EXPR_STRING:
             size_t pos;
             if ((pos = value.find("%s")) != (size_t)-1) {
                 value = value.replace(pos, 2, "%m");
             }
-            return indent_str + value;
+            return indent_str + prefix + value;
         case EXPR_PARAM:
-            return indent_str + value;
+            return indent_str + prefix + value;
         case EXPR_TEMPLATE:
             if (value == "cpphdl::array") {
                 ASSERT(sub.size() >= 2);
-                return indent_str + sub[0].str("", size + "[" + sub[1].str() + "-1:0]");
+                return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
             ASSERT(sub.size() >= 1);
-            return indent_str + typeToSV(value, size + "[" + sub[0].str() + "-1:0]");
+            return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
-            return indent_str + sub[1].str("", size + "[" + sub[0].str() + "-1:0]");
+            return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
             std::string func = value;
@@ -65,7 +64,7 @@ std::string Expr::str(std::string prefix, std::string size)
                 }
             }
             str += ")";
-            return indent_str + str;
+            return indent_str + prefix + str;
         }
         case EXPR_OPERATORCALL:
         {
@@ -95,7 +94,7 @@ std::string Expr::str(std::string prefix, std::string size)
                 }
             }
             str += ")";
-            return indent_str + str;
+            return indent_str + prefix + str;
         }
         // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
@@ -135,7 +134,7 @@ std::string Expr::str(std::string prefix, std::string size)
             }
             str += ")";
 
-            return indent_str + member + str;
+            return indent_str + prefix + member + str;
         }
         case EXPR_MEMBER:
             ASSERT(sub.size()==1);
@@ -149,13 +148,13 @@ std::string Expr::str(std::string prefix, std::string size)
             if (value == "next") {
                 return indent_str + sub[0].str();
             }
-
-            return indent_str + sub[0].str() + "__" + value;
-        case EXPR_RETURN:
-            return (flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name;//(sub.size()==1 ? "return " + sub[0].str() : "return");
+            if (sub[0].type == EXPR_INDEX) {
+                return indent_str + prefix + sub[0].str("", "__" + value);
+            }
+            return indent_str + prefix + sub[0].str() + "__" + value;
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
-            return indent_str + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
+            return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
             if (value == "*") {  // we dont need pointers int Verilog
@@ -164,13 +163,16 @@ std::string Expr::str(std::string prefix, std::string size)
             if (value == "&") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
-            return indent_str + value + sub[0].str();
+            if (value == "++") {
+                return indent_str + sub[0].str() + "=" + sub[0].str() + "+1";
+            }
+            return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
-            return indent_str + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
+            return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
             ASSERT(sub.size()==2);
-            return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+            return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         case EXPR_CAST:
             ASSERT(sub.size()==1);
             return indent_str + sub[0].str();
@@ -183,6 +185,8 @@ std::string Expr::str(std::string prefix, std::string size)
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
             return indent_str + value + "(" + sub[0].str() + ")";
+        case EXPR_RETURN:
+            return (flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name;//(sub.size()==1 ? "return " + sub[0].str() : "return");
         case EXPR_FOR:
         {
             ASSERT(sub.size()==4);
@@ -214,7 +218,8 @@ std::string Expr::str(std::string prefix, std::string size)
         case EXPR_IF:
         {
             ASSERT(sub.size()>=1);
-            if (sub[0].traverseIf( [](Expr& t) { return t.value == "clk";} )) {
+            std::string param;
+            if (sub[0].traverseIf( [](Expr& e, std::string& param) { return e.value == "clk";}, param )) {
                 return "";
             }
             std::string str;
@@ -335,6 +340,50 @@ std::string Expr::typeToSV(std::string name, std::string size)
     } else
     if (name.compare(0, 8, "unsigned") == 0) {
         str = "unsigned int" + size;
+    }
+    return str;
+}
+
+std::string Expr::debug()
+{
+    std::string str = value + ": ";
+
+    switch(type) {
+        case EXPR_EMPTY: str += "EXPR_EMPTY"; break;
+        case EXPR_TYPE: str += "EXPR_TYPE"; break;
+        case EXPR_VALUE: str += "EXPR_VALUE"; break;
+        case EXPR_VAR: str += "EXPR_VAR"; break;
+        case EXPR_STRING: str += "EXPR_STRING"; break;
+        case EXPR_PARAM: str += "EXPR_PARAM"; break;
+        case EXPR_TEMPLATE: str += "EXPR_TEMPLATE"; break;
+        case EXPR_ARRAY: str += "EXPR_ARRAY"; break;
+        case EXPR_CALL: str += "EXPR_CALL"; break;
+        case EXPR_MEMBERCALL: str += "EXPR_MEMBERCALL"; break;
+        case EXPR_OPERATORCALL: str += "EXPR_OPERATORCALL"; break;
+        case EXPR_MEMBER: str += "EXPR_MEMBER"; break;
+        case EXPR_BINARY: str += "EXPR_BINARY"; break;
+        case EXPR_UNARY: str += "EXPR_UNARY"; break;
+        case EXPR_COND: str += "EXPR_COND"; break;
+        case EXPR_INDEX: str += "EXPR_INDEX"; break;
+        case EXPR_CAST: str += "EXPR_CAST"; break;
+        case EXPR_PAREN: str += "EXPR_PAREN"; break;
+        case EXPR_INIT: str += "EXPR_INIT"; break;
+        case EXPR_TRAIT: str += "EXPR_TRAIT"; break;
+        case EXPR_RETURN: str += "EXPR_RETURN"; break;
+        case EXPR_FOR: str += "EXPR_FOR"; break;
+        case EXPR_WHILE: str += "EXPR_WHILE"; break;
+        case EXPR_IF: str += "EXPR_IF"; break;
+        case EXPR_BODY: str += "EXPR_BODY"; break;
+        case EXPR_UNKNOWN: str += "EXPR_UNKNOWN"; break;
+        default: str += "EXPR_???"; break;
+    }
+
+    bool first = true;
+    for (auto& expr : sub) {
+        str += (!first ? ", (" : " (");
+        str += expr.debug();
+        str += ")";
+        first = false;
     }
     return str;
 }

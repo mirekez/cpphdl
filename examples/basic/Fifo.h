@@ -4,7 +4,7 @@
 #include "Memory.h"
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
-class Fifo : cpphdl::Module
+class Fifo : public Module
 {
     Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
 

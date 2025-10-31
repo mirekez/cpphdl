@@ -73,25 +73,53 @@ bool Module::printWires(std::ofstream& out)
     currModule = this;
 
     for (auto& field : members) {
-        Module* mod = currProject->findModule(field.type.value);
-        if (mod) {
-            for (auto& port : mod->ports) {
-                port.type.flags = Expr::FLAG_WIRE;
-                out << "    " << port.type.str() << " " << field.name << "__" << port.name << ";\n";  // cant be reg or memory
+        if (field.type.type == Expr::EXPR_ARRAY && field.type.sub.size() >= 2) {
+            Module* mod = currProject->findModule(field.type.sub[1].str());
+            if (mod) {
+                for (auto& port : mod->ports) {
+                    port.type.flags = Expr::FLAG_WIRE;
+                    out << "      " << port.type.str() << " " << field.name << "__" << port.name << "[" << field.type.sub[0].str() << "]" << ";\n";  // cant be reg or memory
+                }
             }
+            else {
+                std::cerr << "ERROR: cant find module '" << field.type.value << "' declaration\n";
+                return false;
+            }
+
+            out << "    generate\n";
+            out << "    genvar gi;\n";
+            out << "    for (gi=0; gi < " << field.type.sub[0].str() << "; gi = gi + 1) begin\n";
+            out << "        " << field.type.sub[1].str() << " " << field.name << "(" << "\n";
+            out << "            .clk(clk)\n" ;
+            out << ",           .reset(reset)\n" ;
+            for (auto& port : mod->ports) {
+                out << ",           ." << port.name << "(" << field.name << "__" << port.name << "[gi]" << ")" << "\n";  // cant be reg or memory
+            }
+            out << "        );\n";
+            out << "    end\n";
+            out << "    endgenerate\n";
         }
         else {
-            std::cerr << "ERROR: cant find module '" << field.type.value << "' declaration\n";
-            return false;
-        }
+            Module* mod = currProject->findModule(field.type.value);
+            if (mod) {
+                for (auto& port : mod->ports) {
+                    port.type.flags = Expr::FLAG_WIRE;
+                    out << "      " << port.type.str() << " " << field.name << "__" << port.name << ";\n";  // cant be reg or memory
+                }
+            }
+            else {
+                std::cerr << "ERROR: cant find module '" << field.type.value << "' declaration\n";
+                return false;
+            }
 
-        out << "    " << field.type.value << " " << field.name << "(" << "\n";
+            out << "    " << field.type.value << " " << field.name << "(" << "\n";
             out << "        .clk(clk)\n" ;
             out << ",       .reset(reset)\n" ;
             for (auto& port : mod->ports) {
                 out << ",       ." << port.name << "(" << field.name << "__" << port.name << ")" << "\n";  // cant be reg or memory
             }
-        out << "    );\n";
+            out << "    );\n";
+        }
     }
     return true;
 }
