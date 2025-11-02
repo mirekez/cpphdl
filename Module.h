@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <set>
 
 namespace cpphdl
 {
@@ -19,6 +20,7 @@ struct Module
     std::vector<Field> members;
     std::vector<Method> methods;
     std::vector<Comb> combs;
+    std::set<std::string> imports;
 
     // methods
 

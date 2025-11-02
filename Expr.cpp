@@ -92,9 +92,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_OPERATORCALL:
         {
-            if (value == "=") {
+            if (value == "=" || value == "+" || value == "-" || value == "*" || value == "/") {
                 ASSERT(sub.size() >= 2);
-                return indent_str + prefix + sub[0].str() + " " + "=" + " " + sub[1].str();
+                return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
             }
             if (value == "[]") {
                 ASSERT(sub.size() >= 2);
@@ -175,7 +175,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub[0].type == EXPR_INDEX) {
                 ASSERT(sub[0].sub.size() > 1);
-                std::string delim = ".";
+                std::string delim = "";
                 if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].sub[0].str(); } )) {
                     delim = "__";
                 }
@@ -213,6 +213,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + sub[0].str();
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
+            if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
+                return indent_str + sub[0].str();
+            }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()==1);
@@ -224,7 +227,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
-            return (flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name;//(sub.size()==1 ? "return " + sub[0].str() : "return");
+            ASSERT(sub.size()==1);
+            return (flags&FLAG_RETURN) ? (indent_str + "return " + sub[0].str()) : ((flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name);//(sub.size()==1 ? "return " + sub[0].str() : "return");
         case EXPR_FOR:
         {
             ASSERT(sub.size()==4);
@@ -361,8 +365,8 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if (name == "uint64_t") {
         str = logic + size + "[63:0]";
     } else
-    if (name == "char") {
-        str = "signed byte" + size;
+    if (name == "signed char") {
+        str = "byte" + size;
     } else
     if (name.compare(0, 4, "short") == 0) {
         str = "shortint" + size;
@@ -374,16 +378,20 @@ std::string Expr::typeToSV(std::string name, std::string size)
         str = "longint" + size;
     } else
     if (name == "unsigned char") {
-        str = "byte" + size;
+        str = "logic" + size + "[7:0]";
     } else
     if (name == "unsigned short") {
-        str = "unsigned shortint" + size;
+        str = "logic" + size + "[15:0]";
     } else
     if (name == "unsigned long") {
-        str = "unsigned longint" + size;
+        str = "logic" + size + "[63:0]";
     } else
     if (name.compare(0, 8, "unsigned") == 0) {
-        str = "unsigned int" + size;
+        str = "logic" + size + "[31:0]";
+    }
+    size_t pos;
+    while ((pos = str.find("::")) != (size_t)-1) {
+        str.replace(pos, 2, "__");
     }
     return str;
 }

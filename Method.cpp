@@ -43,18 +43,18 @@ bool Method::print(std::ofstream& out)
     }
 
     bool first = true;
-
     for (auto& param : parameters) {
         if (param.name != "clk") {
             out << (params_cnt > 1 ? (first ? "    " : ",    ") : (first ? "" : ", "))
-                << param.type.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
+                << (param.name.find("_out") == param.name.size()-4 ? "output " : "input ") << param.type.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
-    out << ")" << "\n";
+    out << ");" << "\n";
 
     for (auto& stmt : statements) {
         stmt.indent = 2;
+        stmt.flags = Expr::FLAG_RETURN;
         auto s = stmt.str();
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";

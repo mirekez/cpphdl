@@ -15,6 +15,7 @@ bool Module::print(std::ofstream& out)
 {
     currModule = this;
 
+    out << "`default_nettype none\n\n";
     out << "module ";
     if (parameters.size()) {
         out <<  " #(\n";
@@ -40,6 +41,10 @@ bool Module::print(std::ofstream& out)
 //        first = false;
     }
     out << ");\n";
+    out << "\n";
+    for (auto& import : imports) {
+        out << "    import " << import << "_pkg" << "::*;\n";
+    }
     out << "\n";
     for (auto& field : vars) {
         if (!field.print(out)) {

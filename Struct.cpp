@@ -26,7 +26,7 @@ bool Struct::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "typedef " << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
+    out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
     for (int i=fields.size()-1; i >= 0; --i) {
         if (fields[i].definition.type != STRUCT_EMPTY) {
             fields[i].definition.indent = indent + 1;

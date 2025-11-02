@@ -66,6 +66,7 @@ void Project::generate(const std::string& outDir)
             continue;
         }
         out << "package " << fname << "_pkg;\n\n";
+        out << "typedef ";
         str.print(out);
         out << "\n\nendpackage\n";
 

@@ -22,9 +22,9 @@
 using namespace clang;
 
 cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx);
-bool templateToExpr(QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
+bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
-cpphdl::Struct exportStruct(CXXRecordDecl* RD, ASTContext& Ctx);
+cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
 
 std::map<std::string,CXXRecordDecl*> abstractDefs;
 
@@ -168,7 +168,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
         }
         for (const ParmVarDecl* Param : MD->parameters()) {
-            method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(),cpphdl::Expr{Param->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}});
+            method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(),cpphdl::Expr{Param->getType().getNonReferenceType().getAsString(),cpphdl::Expr::EXPR_TYPE}});
         }
 
         LocalVisitor(*Context, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
@@ -225,7 +225,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
                 cpphdl::Expr expr;
                 DEBUG_AST(std::cout << " (");
-                if (templateToExpr(QT, expr, *Context)) {
+                if (templateToExpr(mod, QT, expr, *Context)) {
                     DEBUG_AST(std::cout << " template) " << expr.value);
                 }
                 else {
@@ -295,8 +295,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
                         DEBUG_AST(std::cout << "\n");
                         DEBUG_EXPR(std::cout << "    Expr: " << mod.vars.back().type.debug() << "\n");
-                        if (QT.getAsString(Context->getPrintingPolicy()).find("cpphdl::") == (size_t)-1 && QT->getAsCXXRecordDecl()) {
-                            currProject->structs.emplace_back(exportStruct(QT->getAsCXXRecordDecl(), *Context));
+                        if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
+                            currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), *Context));
+                            DEBUG_AST(std::cout << "\n");
                         }
                     }
                 }
@@ -399,7 +400,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 //                    expr1.value = SD->getQualifiedNameAsString();
 //                    expr1.type = cpphdl::Expr::EXPR_TEMPLATE;
 //                    getParamsFromSourceOrStr
-//                    templateToExpr(SD, nullptr, expr1, Ctx);
+//                    templateToExpr(mod, SD, nullptr, expr1, Ctx);
 //                    DEBUG_AST(std::cout << " [template spec]  " << expr1.value);
 //                    expr.sub.emplace_back(std::move(expr1));
 //                }
