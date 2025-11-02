@@ -1,6 +1,7 @@
 #include "Expr.h"
 #include "Method.h"
 #include "Module.h"
+#include "Field.h"
 #include "Debug.h"
 
 using namespace cpphdl;
@@ -44,6 +45,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
+            bool noBrackets = false;
+            int skipArgs = 0;
             std::string func = value;
             if (func == "clog2") {
                 func = "$clog2";
@@ -51,26 +54,47 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "printf") {
                  func = "$write";
             }
+            if (func == "fprintf") {
+                 skipArgs = 1;
+                 func = "$write";
+            }
+            if (func == "print") {
+                 func = "$write";
+            }
             if (func == "exit") {
                 return indent_str + "$finish()";
             }
+            if (func == "fflush") {
+                return "";
+            }
+            if (func.find("std::basic_format_string") == 0) {
+                ASSERT(sub.size()>0);
+                replacePrint(sub[0].value);
+                noBrackets = true;
+                func = "";
+            }
 
-            std::string str = func + "(";
+            std::string str = func;
+            if (!noBrackets) {
+                str += "(";
+            }
             bool first = true;
-            for (auto& arg : sub) {
-                if (arg.value != "clk") {
-                    str += (first?"":", ") + arg.str();
+            for (size_t i=skipArgs; i < sub.size(); ++i) {
+                if (sub[i].value != "clk") {
+                    str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
             }
-            str += ")";
+            if (!noBrackets) {
+                str += ")";
+            }
             return indent_str + prefix + str;
         }
         case EXPR_OPERATORCALL:
         {
             if (value == "=") {
                 ASSERT(sub.size() >= 2);
-                return indent_str + sub[0].str() + " " + "=" + " " + sub[1].str();
+                return indent_str + prefix + sub[0].str() + " " + "=" + " " + sub[1].str();
             }
             if (value == "[]") {
                 ASSERT(sub.size() >= 2);
@@ -137,6 +161,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + member + str;
         }
         case EXPR_MEMBER:
+        {
             ASSERT(sub.size()==1);
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
@@ -149,9 +174,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str();
             }
             if (sub[0].type == EXPR_INDEX) {
-                return indent_str + prefix + sub[0].str("", "__" + value);
+                ASSERT(sub[0].sub.size() > 1);
+                std::string delim = ".";
+                if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].sub[0].str(); } )) {
+                    delim = "__";
+                }
+                return indent_str + prefix + sub[0].str("", delim + value);
             }
-            return indent_str + prefix + sub[0].str() + "__" + value;
+            std::string delim = ".";
+            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].value; } )) {
+                delim = "__";
+            }
+            return indent_str + prefix + sub[0].str() + delim + value;
+        }
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
             return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
@@ -184,6 +219,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + sub[0].str();
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
+            if (value == "sizeof") {
+                return indent_str + "($bits" + "(" + sub[0].str() + ")/8)";
+            }
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
             return (flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name;//(sub.size()==1 ? "return " + sub[0].str() : "return");
@@ -323,6 +361,9 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if (name == "uint64_t") {
         str = logic + size + "[63:0]";
     } else
+    if (name == "char") {
+        str = "signed byte" + size;
+    } else
     if (name.compare(0, 4, "short") == 0) {
         str = "shortint" + size;
     } else
@@ -331,6 +372,9 @@ std::string Expr::typeToSV(std::string name, std::string size)
     } else
     if (name.compare(0, 4, "long") == 0) {
         str = "longint" + size;
+    } else
+    if (name == "unsigned char") {
+        str = "byte" + size;
     } else
     if (name == "unsigned short") {
         str = "unsigned shortint" + size;
@@ -386,4 +430,28 @@ std::string Expr::debug()
         first = false;
     }
     return str;
+}
+
+void Expr::replacePrint(std::string& str)
+{
+    size_t index = 0;
+    while (true) {
+         if ((index = str.find("{}", index)) != std::string::npos) {
+             str.replace(index, 2, "%x");
+             index += 2;
+         }
+         else
+         if ((index = str.find("{:x}", index)) != std::string::npos) {
+             str.replace(index, 4, "%x");
+             index += 2;
+         }
+         else
+         if ((index = str.find("{:d}", index)) != std::string::npos) {
+             str.replace(index, 4, "%d");
+             index += 2;
+         }
+         else {
+             break;
+         }
+    }
 }

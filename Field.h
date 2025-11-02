@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Expr.h"
+#include "Struct.h"
 
 namespace cpphdl
 {
@@ -10,8 +11,11 @@ struct Field
     std::string name;
     Expr type;
     Expr initializer;
+    Expr bitwidth;
+    Struct definition;
 
     // methods
+    int indent = 0;
 
     bool print(std::ofstream& out);
     bool printPort(std::ofstream& out);

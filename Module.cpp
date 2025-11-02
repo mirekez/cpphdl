@@ -1,12 +1,11 @@
 #include "Module.h"
+#include "Project.h"
 #include "Method.h"
 #include "Field.h"
 #include "Expr.h"
 #include "Comb.h"
 
 #include <fstream>
-
-#include "Project.h"
 
 using namespace cpphdl;
 
@@ -16,7 +15,7 @@ bool Module::print(std::ofstream& out)
 {
     currModule = this;
 
-    out << "module";
+    out << "module ";
     if (parameters.size()) {
         out <<  " #(\n";
         bool first = true;
@@ -59,9 +58,10 @@ bool Module::print(std::ofstream& out)
     }
 
 
-    out << "always @(posedge clk) begin\n";
-    out << "    work(reset);\n";
-    out << "end\n";
+    out << "\n";
+    out << "    always @(posedge clk) begin\n";
+    out << "        work(reset);\n";
+    out << "    end\n";
 
     out << "\n";
     out << "endmodule\n";

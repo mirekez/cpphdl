@@ -118,8 +118,6 @@ public:
     }
 };
 
-template struct Fifo<32,1024>;
-
 #ifndef SYNTHESIS
 
 struct FifoTest

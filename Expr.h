@@ -73,6 +73,7 @@ struct Expr
         return false;
     }
 
+    void replacePrint(std::string& str);
     std::string debug();
 };
 

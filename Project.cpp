@@ -4,6 +4,7 @@
 #include "Field.h"
 #include "Expr.h"
 #include "Comb.h"
+#include "Struct.h"
 
 using namespace cpphdl;
 
@@ -20,7 +21,7 @@ void Project::generate(const std::string& outDir)
 
         std::ofstream out(filePath);
         if (!out) {
-            std::cerr << "Failed to open " << filePath << " for writing\n";
+            std::cerr << "Failed to open '" << filePath << "' for writing\n";
             continue;
         }
 
@@ -28,8 +29,49 @@ void Project::generate(const std::string& outDir)
 
         std::cout << "Generated: " << filePath << "\n";
     }
-}
 
+    for (auto& str : structs) {
+        std::string fname = str.name;
+        size_t pos;
+        while (true) {
+            if ((pos = fname.find("::")) != (size_t)-1) {
+                fname.replace(pos, 2, "__");
+            }
+            else
+            if ((pos = fname.find("(")) != (size_t)-1) {
+                fname.replace(pos, 1, "_");
+            }
+            else
+            if ((pos = fname.find(")")) != (size_t)-1) {
+                fname.replace(pos, 1, "_");
+            }
+            else
+            if ((pos = fname.find(" ")) != (size_t)-1) {
+                fname.replace(pos, 1, "_");
+            }
+            else
+            if ((pos = fname.find("_at")) != (size_t)-1) {
+                fname.replace(pos, -1, "");
+            }
+            else {
+                break;
+            }
+        };
+
+        fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
+
+        std::ofstream out(filePath);
+        if (!out) {
+            std::cerr << "Failed to open '" << filePath << "' for writing\n";
+            continue;
+        }
+        out << "package " << fname << "_pkg;\n\n";
+        str.print(out);
+        out << "\n\nendpackage\n";
+
+        std::cout << "Generated: " << filePath << "\n";
+    }
+}
 
 Module* Project::findModule(const std::string& name)
 {

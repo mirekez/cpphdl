@@ -109,13 +109,17 @@ bool Method::printConns(std::ofstream& out)
 
 
     out << "    generate\n";
-    out << "    genvar ";
+    if (vars.size()) {
+        out << "    genvar ";
+    }
     bool first = true;
     for (auto& var : vars) {
         out << (!first?",":"") << "g" << var;
         first = false;
     }
-    out << ";\n";
+    if (vars.size()) {
+        out << ";\n";
+    }
     for (auto& stmt : statements) {
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_NORETURN;

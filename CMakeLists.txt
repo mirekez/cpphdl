@@ -46,7 +46,7 @@ find_package(Clang REQUIRED CONFIG PATHS .conda/lib/cmake/clang)
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${CLANG_INCLUDE_DIRS})
 
-add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Comb.cpp)
+add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Comb.cpp Struct.cpp)
 target_link_libraries(cpphdl
   PRIVATE
   clangTooling

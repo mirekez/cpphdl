@@ -10,10 +10,12 @@ namespace cpphdl
 {
 
 struct Module;
+struct Struct;
 
 struct Project
 {
     std::vector<Module> modules;
+    std::vector<Struct> structs;
 
     void generate(const std::string& outDir);
 
