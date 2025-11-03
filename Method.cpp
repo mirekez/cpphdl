@@ -45,12 +45,12 @@ bool Method::print(std::ofstream& out)
     bool first = true;
     for (auto& param : parameters) {
         if (param.name != "clk") {
-            out << (params_cnt > 1 ? (first ? "    " : ",    ") : (first ? "" : ", "))
+            out << (params_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
                 << (param.name.find("_out") == param.name.size()-4 ? "output " : "input ") << param.type.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
-    out << ");" << "\n";
+    out << (params_cnt>1?"    ":"") << ");" << "\n";
 
     for (auto& stmt : statements) {
         stmt.indent = 2;

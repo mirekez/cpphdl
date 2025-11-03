@@ -26,10 +26,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_VAR:
             return indent_str + prefix + value;
         case EXPR_STRING:
-            size_t pos;
-            if ((pos = value.find("%s")) != (size_t)-1) {
-                value = value.replace(pos, 2, "%m");
-            }
+            replacePrint(value);
             return indent_str + prefix + value;
         case EXPR_PARAM:
             return indent_str + prefix + value;
@@ -38,8 +35,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
-            ASSERT(sub.size() >= 1);
-            return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
+            if (sub.size()) {
+                return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
+            }
+            return indent_str + prefix + typeToSV(value);
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
@@ -131,14 +130,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                return indent_str + value + "()";
 //            }
 
-            if (sub.size() != 0 && sub[0].sub.size() != 0 && sub[0].value == "clr") {
+            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value == "clr") {
                 return indent_str + sub[0].sub[0].str() + " = '0";
             }
-//            if (value == "set") {
-//                return indent_str + sub[0].str() + " = '0";
-//            }
-
-            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls
+            if (sub.size() >= 2 && sub[0].sub.size() != 0 && sub[0].value == "set") {
+                return indent_str + sub[0].sub[0].str() + " = " + sub[1].str();
+            }
+            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value == "format") {
+                return indent_str + sub[0].sub[0].str();
+            }
+            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
                 return "";
             }
 
@@ -181,7 +182,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return indent_str + prefix + sub[0].str("", delim + value);
             }
-            std::string delim = ".";
+            std::string delim = std::string(anonymous?".anon":"") + ".";
             if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].value; } )) {
                 delim = "__";
             }
@@ -227,8 +228,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
-            ASSERT(sub.size()==1);
-            return (flags&FLAG_RETURN) ? (indent_str + "return " + sub[0].str()) : ((flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name);//(sub.size()==1 ? "return " + sub[0].str() : "return");
+            return ((flags&FLAG_RETURN) && sub.size()==1) ? (indent_str + "return " + sub[0].str()) : ((flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name);//(sub.size()==1 ? "return " + sub[0].str() : "return");
         case EXPR_FOR:
         {
             ASSERT(sub.size()==4);
@@ -393,13 +393,16 @@ std::string Expr::typeToSV(std::string name, std::string size)
     while ((pos = str.find("::")) != (size_t)-1) {
         str.replace(pos, 2, "__");
     }
+    if ((pos = str.find("struct ")) != (size_t)-1) {
+        str.replace(pos, 7, "");
+    }
+    str += size;
     return str;
 }
 
 std::string Expr::debug()
 {
-    std::string str = value + ": ";
-
+    std::string str;
     switch(type) {
         case EXPR_EMPTY: str += "EXPR_EMPTY"; break;
         case EXPR_TYPE: str += "EXPR_TYPE"; break;
@@ -430,36 +433,41 @@ std::string Expr::debug()
         default: str += "EXPR_???"; break;
     }
 
+    str += " " + value + (sub.size()?"(":"");
     bool first = true;
     for (auto& expr : sub) {
-        str += (!first ? ", (" : " (");
+        str += (!first ? ", " : " ");
         str += expr.debug();
-        str += ")";
         first = false;
     }
+    str += (sub.size()?")":"");
     return str;
 }
 
 void Expr::replacePrint(std::string& str)
 {
-    size_t index = 0;
+    size_t pos = 0;
     while (true) {
-         if ((index = str.find("{}", index)) != std::string::npos) {
-             str.replace(index, 2, "%x");
-             index += 2;
-         }
-         else
-         if ((index = str.find("{:x}", index)) != std::string::npos) {
-             str.replace(index, 4, "%x");
-             index += 2;
-         }
-         else
-         if ((index = str.find("{:d}", index)) != std::string::npos) {
-             str.replace(index, 4, "%d");
-             index += 2;
-         }
-         else {
-             break;
-         }
+        if ((pos = str.find("{}", pos)) != (size_t)-1) {
+            str.replace(pos, 2, "%x");
+            pos += 2;
+        } else
+        if ((pos = str.find("{:x}", pos)) != (size_t)-1) {
+            str.replace(pos, 4, "%x");
+            pos += 2;
+        } else
+        if ((pos = str.find("{:d}", pos)) != (size_t)-1) {
+            str.replace(pos, 4, "%d");
+            pos += 2;
+        } else
+        if ((pos = str.find("%s")) != (size_t)-1) {
+            str.replace(pos, 2, "%m");
+        } else
+        if ((pos = str.find("%s")) != (size_t)-1) {
+            str.replace(pos, 2, "%m");
+        }
+        else {
+            break;
+        }
     }
 }

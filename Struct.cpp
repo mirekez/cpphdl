@@ -39,6 +39,6 @@ bool Struct::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "} " << name << ";\n";
+    out << "} " << (name.length()?name:"anon") << ";\n";
     return true;
 }

@@ -43,7 +43,13 @@ bool Module::print(std::ofstream& out)
     out << ");\n";
     out << "\n";
     for (auto& import : imports) {
-        out << "    import " << import << "_pkg" << "::*;\n";
+        std::string str = import;
+        size_t pos;
+        while ((pos = str.find("::")) != (size_t)-1) {
+            str.replace(pos, 2, "__");
+        }
+
+        out << "    import " << str << "_pkg" << "::*;\n";
     }
     out << "\n";
     for (auto& field : vars) {

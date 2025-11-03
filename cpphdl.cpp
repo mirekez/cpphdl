@@ -25,6 +25,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx);
 bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
 cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
+cpphdl::Expr typeToExpr(cpphdl::Module& mod, QualType QT, ASTContext& Ctx);
 
 std::map<std::string,CXXRecordDecl*> abstractDefs;
 
@@ -33,8 +34,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     explicit MethodVisitor(ASTContext* Context)
         : Context(Context), SM(Context->getSourceManager()) {}
 
-    bool putMethod(const CXXMethodDecl* MD, cpphdl::Module& mod)
+    bool putMethod(cpphdl::Module& mod, const CXXMethodDecl* MD)
     {
+        DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << " ");
 //        if (!MD->hasBody()) {
 //            return true;
 //        }
@@ -168,13 +170,30 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
         }
         for (const ParmVarDecl* Param : MD->parameters()) {
-            method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(),cpphdl::Expr{Param->getType().getNonReferenceType().getAsString(),cpphdl::Expr::EXPR_TYPE}});
+            QualType QT = Param->getType().getNonReferenceType();;
+
+            cpphdl::Expr expr = typeToExpr(mod, QT, *Context);
+
+            QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
+            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+            DEBUG_AST(std::cout << "  Param: " << Param->getNameAsString() << " (" << QT.getAsString() << ")");
+
+            method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(), std::move(expr)});
+            if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
+                auto ret = mod.imports.emplace(QT->getAsCXXRecordDecl()->getQualifiedNameAsString());
+                if (ret.second) {
+                    currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), *Context));
+                }
+            }
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "    Expr: " << method.parameters.back().type.debug() << "\n");
         }
 
         LocalVisitor(*Context, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
         if (MD->getNameAsString() != mod.name && MD->getNameAsString() != std::string("~") + mod.name && MD->getNameAsString().find("operator") != 0) {
             mod.methods.emplace_back(std::move(method));
         }
+        DEBUG_AST(std::cout << "\n");
         return true;
     }
 
@@ -197,50 +216,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     DEBUG_AST(std::cout << " *pointer*");
                 }
 
-                cpphdl::Expr arrayExpr;
-                bool array = false;
-                while (const clang::ArrayType* AT = Context->getAsArrayType(QT)) {
-                    if (const auto* CAT = llvm::dyn_cast<clang::ConstantArrayType>(AT)) {
-                        DEBUG_AST(std::cout << " [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
-                        arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_VALUE});
-                        arrayExpr.value = "c_array";
-                    }
-                    else if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
-                        DEBUG_AST(std::cout << " [v_array");
-                        arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr(), *Context));
-                        DEBUG_AST(std::cout << "] ");
-                        arrayExpr.value = "v_array";
-                    }
-                    else if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
-                        DEBUG_AST(std::cout << " [d_array");
-                        arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr(), *Context));
-                        DEBUG_AST(std::cout << "] ");
-                        arrayExpr.value = "d_array";
-                    }
-
-                    arrayExpr.type = cpphdl::Expr::EXPR_ARRAY;
-                    QT = AT->getElementType();
-                    array = true;
-                }
-
-                cpphdl::Expr expr;
-                DEBUG_AST(std::cout << " (");
-                if (templateToExpr(mod, QT, expr, *Context)) {
-                    DEBUG_AST(std::cout << " template) " << expr.value);
-                }
-                else {
-                    QT = QT.getCanonicalType();
-                    QT = QT.getDesugaredType(*Context);
-                    std::string str = QT.getAsString(Context->getPrintingPolicy());
-                    DEBUG_AST(std::cout << str << " type) " << str);
-                    expr.value = str;
-                    expr.type = cpphdl::Expr::EXPR_TYPE;
-                }
-
-                if (array) {
-                    arrayExpr.sub.push_back(std::move(expr));
-                    expr = std::move(arrayExpr);
-                }
+                cpphdl::Expr expr = typeToExpr(mod, QT, *Context);
 
                 if (pointer || (FD->getNameAsString().length() > 3
                             && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
@@ -296,7 +272,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         DEBUG_AST(std::cout << "\n");
                         DEBUG_EXPR(std::cout << "    Expr: " << mod.vars.back().type.debug() << "\n");
                         if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                            currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), *Context));
+                            auto ret = mod.imports.emplace(QT->getAsCXXRecordDecl()->getQualifiedNameAsString());
+                            if (ret.second) {
+                                currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), *Context));
+                            }
                             DEBUG_AST(std::cout << "\n");
                         }
                     }
@@ -391,9 +370,12 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 DEBUG_AST(std::cout << "  Type alias: " << TypeAlias->getNameAsString() << "\n");
             } else
             if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {
-                DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << "\n");
-                if (!putMethod(MD, mod)) {
-                    return false;
+                if (MD->getQualifiedNameAsString() != mod.name + "::" + mod.name
+                    && MD->getQualifiedNameAsString() != mod.name + "::~" + mod.name
+                    && MD->getQualifiedNameAsString() != mod.name + "::operator=") {
+                    if (!putMethod(mod, MD)) {
+                        return false;
+                    }
                 }
             }
 //                if (const auto* SD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(Arg.getAsType()/*->getAsCXXRecordDecl()*/)) {

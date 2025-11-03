@@ -40,6 +40,7 @@ struct Expr
     } type = EXPR_EMPTY;
 
     std::vector<Expr> sub;
+    bool anonymous = false;
     bool hasInitializer = false;
 
     // methods
