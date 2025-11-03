@@ -16,7 +16,19 @@ bool Module::print(std::ofstream& out)
     currModule = this;
 
     out << "`default_nettype none\n\n";
+    out << "import Predef_pkg::*;\n";
+    for (auto& import : imports) {
+        std::string str = import;
+        size_t pos;
+        while ((pos = str.find("::")) != (size_t)-1) {
+            str.replace(pos, 2, "__");
+        }
+
+        out << "import " << str << "_pkg::*;\n";
+    }
+    out << "\n\n";
     out << "module ";
+    out << name;
     if (parameters.size()) {
         out <<  " #(\n";
         bool first = true;
@@ -26,8 +38,7 @@ bool Module::print(std::ofstream& out)
         }
         out <<  " )\n";
     }
-    out << name << " (\n";
-
+    out << " (\n";
     out << "    input wire clk\n";
     out << ",   input wire reset\n";
 
@@ -42,16 +53,6 @@ bool Module::print(std::ofstream& out)
     }
     out << ");\n";
     out << "\n";
-    for (auto& import : imports) {
-        std::string str = import;
-        size_t pos;
-        while ((pos = str.find("::")) != (size_t)-1) {
-            str.replace(pos, 2, "__");
-        }
-
-        out << "    import " << str << "_pkg" << "::*;\n";
-    }
-    out << "\n";
     for (auto& field : vars) {
         if (!field.print(out)) {
             return false;
@@ -59,7 +60,7 @@ bool Module::print(std::ofstream& out)
     }
     out << "\n";
 
-    printWires(out);
+    printMembers(out);
 
     for (auto& method : methods) {
         out << "\n";
@@ -79,7 +80,7 @@ bool Module::print(std::ofstream& out)
     return true;
 }
 
-bool Module::printWires(std::ofstream& out)
+bool Module::printMembers(std::ofstream& out)
 {
     currModule = this;
 
@@ -88,8 +89,17 @@ bool Module::printWires(std::ofstream& out)
             Module* mod = currProject->findModule(field.type.sub[1].str());
             if (mod) {
                 for (auto& port : mod->ports) {
-                    port.type.flags = Expr::FLAG_WIRE;
-                    out << "      " << port.type.str() << " " << field.name << "__" << port.name << "[" << field.type.sub[0].str() << "]" << ";\n";  // cant be reg or memory
+                    Expr type = port.type;
+                    type.flags = Expr::FLAG_WIRE;
+                    for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
+                        type.traverseIf( [&](Expr& e, auto& param) {
+                                if (e.value == param.name) {
+                                    e.value = std::string("(") + field.type.sub[i].str() + ")";
+                                }
+                                return false;
+                            }, mod->parameters[i] );
+                    }
+                    out << "      " << type.str() << " " << field.name << "__" << port.name << "[" << field.type.sub[0].str() << "]" << ";\n";  // cant be reg or memory
                 }
             }
             else {
@@ -100,7 +110,22 @@ bool Module::printWires(std::ofstream& out)
             out << "    generate\n";
             out << "    genvar gi;\n";
             out << "    for (gi=0; gi < " << field.type.sub[0].str() << "; gi = gi + 1) begin\n";
-            out << "        " << field.type.sub[1].str() << " " << field.name << "(" << "\n";
+            out << "        " << field.type.sub[1].value << " ";
+            if (field.type.sub[0].sub.size()) {
+                out << "#(\n";
+            }
+            bool first = true;
+            for (auto& param : field.type.sub[0].sub) {
+                out << (first?"        ":",       ") << param.str() << "\n";
+                first = false;
+            }
+            if (field.type.sub[0].sub.size()) {
+                out << "    )";
+            }
+            else {
+                out << "    ";
+            }
+            out << " " << field.name << " (" << "\n";
             out << "            .clk(clk)\n" ;
             out << ",           .reset(reset)\n" ;
             for (auto& port : mod->ports) {
@@ -114,8 +139,17 @@ bool Module::printWires(std::ofstream& out)
             Module* mod = currProject->findModule(field.type.value);
             if (mod) {
                 for (auto& port : mod->ports) {
-                    port.type.flags = Expr::FLAG_WIRE;
-                    out << "      " << port.type.str() << " " << field.name << "__" << port.name << ";\n";  // cant be reg or memory
+                    Expr type = port.type;
+                    type.flags = Expr::FLAG_WIRE;
+                    for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
+                        type.traverseIf( [&](Expr& e, auto& param) {
+                                if (e.value == param.name) {
+                                    e.value = std::string("(") + field.type.sub[i].str() + ")";
+                                }
+                                return false;
+                            }, mod->parameters[i] );
+                    }
+                    out << "      " << type.str() << " " << field.name << "__" << port.name << ";\n";  // cant be reg or memory
                 }
             }
             else {
@@ -123,7 +157,22 @@ bool Module::printWires(std::ofstream& out)
                 return false;
             }
 
-            out << "    " << field.type.value << " " << field.name << "(" << "\n";
+            out << "    " << field.type.value << " ";
+            if (field.type.sub.size()) {
+                out << "#(\n";
+            }
+            bool first = true;
+            for (auto& param : field.type.sub) {
+                out << (first?"        ":",       ") << param.str() << "\n";
+                first = false;
+            }
+            if (field.type.sub.size()) {
+                out << "    )";
+            }
+            else {
+                out << "    ";
+            }
+            out << " " << field.name << " (" << "\n";
             out << "        .clk(clk)\n" ;
             out << ",       .reset(reset)\n" ;
             for (auto& port : mod->ports) {

@@ -142,12 +142,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
                 return "";
             }
+            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value.size() > 10 && sub[0].value.find("_comb_func") == sub[0].value.size()-10) {
+                std::string str = sub[0].value;
+                return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
+            }
 
             std::string member = value;
             std::string str = "(";
             bool first = true;
             for (auto& arg : sub) {
-                if (arg.type == EXPR_MEMBER) {
+                if (first && arg.type == EXPR_MEMBER) {
                     member = arg.str();
                     continue;
                 }
@@ -170,7 +174,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub[0].str() == "this") {
                 return indent_str + value;
             }
-
             if (value == "next") {
                 return indent_str + sub[0].str();
             }
@@ -388,7 +391,10 @@ std::string Expr::typeToSV(std::string name, std::string size)
     } else
     if (name.compare(0, 8, "unsigned") == 0) {
         str = "logic" + size + "[31:0]";
+    } else {
+        str += size;
     }
+
     size_t pos;
     while ((pos = str.find("::")) != (size_t)-1) {
         str.replace(pos, 2, "__");
@@ -396,7 +402,6 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if ((pos = str.find("struct ")) != (size_t)-1) {
         str.replace(pos, 7, "");
     }
-    str += size;
     return str;
 }
 

@@ -25,7 +25,7 @@ struct Module
     // methods
 
     bool print(std::ofstream& out);
-    bool printWires(std::ofstream& out);
+    bool printMembers(std::ofstream& out);
 };
 
 }

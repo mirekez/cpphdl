@@ -3,6 +3,8 @@
 #include "cpphdl.h"
 #include "Memory.h"
 
+using namespace cpphdl;
+
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
 {
@@ -117,6 +119,8 @@ public:
         mem.data_out_comb_func();
     }
 };
+
+template struct Fifo<32,1024>;
 
 #ifndef SYNTHESIS
 

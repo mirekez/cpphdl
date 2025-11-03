@@ -25,7 +25,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx);
 bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
 cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
-cpphdl::Expr typeToExpr(cpphdl::Module& mod, QualType QT, ASTContext& Ctx);
+cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx);
 
 std::map<std::string,CXXRecordDecl*> abstractDefs;
 
@@ -36,7 +36,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     bool putMethod(cpphdl::Module& mod, const CXXMethodDecl* MD)
     {
-        DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << " ");
+        DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << "\n");
 //        if (!MD->hasBody()) {
 //            return true;
 //        }
@@ -172,7 +172,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         for (const ParmVarDecl* Param : MD->parameters()) {
             QualType QT = Param->getType().getNonReferenceType();;
 
-            cpphdl::Expr expr = typeToExpr(mod, QT, *Context);
+            cpphdl::Expr expr = digQT(mod, QT, *Context);
 
             QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
             QT = QT.getCanonicalType();        // ensure you have the actual canonical form
@@ -210,13 +210,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
                 bool pointer = false;
                 QualType QT = FD->getType().getNonReferenceType();
-                if (QT->isPointerType()) {
+                if (QT->isPointerType()) {  // while?
                     QT = QT->getPointeeType();
                     pointer = true;
                     DEBUG_AST(std::cout << " *pointer*");
                 }
 
-                cpphdl::Expr expr = typeToExpr(mod, QT, *Context);
+                cpphdl::Expr expr = digQT(mod, QT, *Context);
 
                 if (pointer || (FD->getNameAsString().length() > 3
                             && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
@@ -239,7 +239,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     auto* ModuleClass = lookupQualifiedRecord(Context, "cpphdl::Module");
                     ASSERT(ModuleClass);
 
-                    auto* CRD = FD->getType()->getAsCXXRecordDecl();
+                    auto* CRD = /*FD->getType()*/QT->getAsCXXRecordDecl();
 
                     QT = QT.getNonReferenceType();
                     QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
@@ -283,8 +283,8 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             }
         }
 
-        // Then extract types and methods from specialization
-/*        if (auto* SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        // extracting parameters of the template  // should we use TemplateSpecializationType here too?
+        if (auto* SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
             DEBUG_AST(std::cout << " Module parameters: ");
 
             const TemplateArgumentList& Args = SD->getTemplateArgs();
@@ -351,7 +351,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 }
             }
         }
-*/
+
         for (Decl* D : RD->decls()) {
             if (auto* VD = dyn_cast<VarDecl>(D)) {
                 if (VD->isStaticDataMember()) {
@@ -370,9 +370,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 DEBUG_AST(std::cout << "  Type alias: " << TypeAlias->getNameAsString() << "\n");
             } else
             if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {
-                if (MD->getQualifiedNameAsString() != mod.name + "::" + mod.name
-                    && MD->getQualifiedNameAsString() != mod.name + "::~" + mod.name
-                    && MD->getQualifiedNameAsString() != mod.name + "::operator=") {
+                if (MD->getQualifiedNameAsString().find("::" + mod.name) == (size_t)-1
+                    && MD->getQualifiedNameAsString().find("::~" + mod.name) == (size_t)-1
+                    && MD->getQualifiedNameAsString().find("::operator=") == (size_t)-1) {
                     if (!putMethod(mod, MD)) {
                         return false;
                     }

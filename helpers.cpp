@@ -16,7 +16,7 @@ using namespace clang;
 
 extern std::map<std::string,CXXRecordDecl*> abstractDefs;
 cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
-cpphdl::Expr typeToExpr(cpphdl::Module& mod, QualType QT, ASTContext& Ctx);
+cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx);
 
 //inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params);
 
@@ -446,7 +446,7 @@ bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTCon
 //                    expr1.value = str;
 //                    expr1.type = cpphdl::Expr::EXPR_TYPE;
 //                }
-                cpphdl::Expr expr1 = typeToExpr(mod, QT, Ctx);
+                cpphdl::Expr expr1 = digQT(mod, QT, Ctx);
                 expr.sub.emplace_back(std::move(expr1));
 
                 if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
@@ -481,7 +481,7 @@ bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTCon
     return false;
 }
 
-cpphdl::Expr typeToExpr(cpphdl::Module& mod, QualType QT, ASTContext& Ctx)
+cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
 {
     cpphdl::Expr arrayExpr;
     bool array = false;
@@ -515,8 +515,8 @@ cpphdl::Expr typeToExpr(cpphdl::Module& mod, QualType QT, ASTContext& Ctx)
         DEBUG_AST(std::cout << " template) " << expr.value);
     }
     else {
-        QT = QT.getCanonicalType();
         QT = QT.getDesugaredType(Ctx);
+        QT = QT.getCanonicalType();
         std::string str = QT.getAsString(Ctx.getPrintingPolicy());
         DEBUG_AST(std::cout << str << " type) " << str);
         expr.value = str;
@@ -631,75 +631,6 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
     }
 
     return st;
-
-    // Then extract types and methods from specialization
-/*    if (auto* SD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-        DEBUG_AST(std::cout << " Module parameters: ");
-
-        const TemplateArgumentList& Args = SD->getTemplateArgs();
-            const TemplateParameterList* Params = SD->getSpecializedTemplate()->getTemplateParameters();
-        for (unsigned i = 0; i < Args.size(); ++i) {
-            const TemplateArgument& Arg = Args[i];
-            switch (Arg.getKind()) {
-                case TemplateArgument::Type:
-                {
-                    QualType QT = Arg.getAsType();
-                    std::string str;
-                    llvm::raw_string_ostream OS(str);
-                    QT.print(OS, Ctx.getPrintingPolicy());
-                    OS.flush();
-                    DEBUG_AST(std::cout << " type: " << OS.str() << "\n");
-                    break;
-                }
-                case TemplateArgument::Integral:
-                {
-                    std::string str;
-                    llvm::raw_string_ostream OS(str);
-                    Arg.getAsIntegral().print(OS, true);
-                    OS.flush();
-                    DEBUG_AST(std::cout << " integral: " << OS.str());
-                    mod.parameters.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(),cpphdl::Expr{OS.str(),cpphdl::Expr::EXPR_VALUE}});
-                    DEBUG_AST(std::cout << "\n");
-                    DEBUG_EXPR(std::cout << "        Expr: " << mod.parameters.back().type.debug() << "\n");
-                    break;
-                }
-                case TemplateArgument::Declaration:
-                    DEBUG_AST(std::cout << " declaration: " << Arg.getAsDecl()->getNameAsString()) << "\n";
-                    break;
-                case TemplateArgument::Template:
-                {
-                    TemplateName TN = Arg.getAsTemplate();
-                    std::string str;
-                    llvm::raw_string_ostream OS(str);
-                    TN.print(OS, Ctx.getPrintingPolicy());
-                    OS.flush();
-                    DEBUG_AST(std::cout << " template: " << OS.str() << "\n");
-                    break;
-                }
-                case TemplateArgument::Expression:
-                {
-                    const Expr* E = Arg.getAsExpr();
-                    SourceManager &SM = Ctx.getSourceManager();
-                    LangOptions LO = Ctx.getLangOpts();
-                    SourceRange Range = E->getSourceRange();
-                    if (!Range.isInvalid()) {
-                        llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
-                        DEBUG_AST(std::cout << " expression: " << SR.str());
-                        DEBUG_AST(std::cout << "\n");
-                        DEBUG_EXPR(std::cout << "        Expr: " << exprToExpr(E,Ctx).debug() << "\n");
-                    }
-                    else {
-                        DEBUG_AST(std::cout << "\n");
-                    }
-                    break;
-                }
-                case TemplateArgument::Pack:
-                default:
-                    DEBUG_AST(std::cout << " unhandled\n");
-                break;
-            }
-        }
-    }*/
 }
 
 /*inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params)

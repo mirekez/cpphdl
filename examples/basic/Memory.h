@@ -53,6 +53,8 @@ public:
     void comb() {}
 };
 
+template struct Memory<32,1024>;
+
 #ifndef SYNTHESIS
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
