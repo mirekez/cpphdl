@@ -1,6 +1,11 @@
 #pragma once
+#ifdef MAIN_FILE_INCLUDED
+#define NO_MAINFILE
+#endif
+#define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
+#include <print>
 
 using namespace cpphdl;
 
@@ -166,16 +171,31 @@ public:
 
     bool run()
     {
-        int clk = 0;
+        std::print("TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+        work(1, 1);
         int cycles = 10000;
+        int clk = 0;
         while (--cycles && !error) {
             comb();
-            work(clk);
+            work(clk, 0);
             strobe();
             clk = !clk;
         }
+        std::print("{}\n", !error?"PASSED":"FAILED");
         return !error;
     }
 };
 
+#ifndef NO_MAINFILE
+int main ()
+{
+    TestMemory<32,1024,true>().run();
+    TestMemory<32,1024,false>().run();
+}
+#endif
+
+#endif  //SYNTHESIS
+
+#ifdef MAIN_FILE_INCLUDED
+#undef NO_MAINFILE
 #endif

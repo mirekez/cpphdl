@@ -17,7 +17,7 @@ struct Field
     // methods
     int indent = 0;
 
-    bool print(std::ofstream& out);
+    bool print(std::ofstream& out, bool forcePacked = false);
     bool printPort(std::ofstream& out);
 };
 

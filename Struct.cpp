@@ -27,13 +27,13 @@ bool Struct::print(std::ofstream& out)
         out << "    ";
     }
     out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
-    for (int i=fields.size()-1; i >= 0; --i) {
-        if (fields[i].definition.type != STRUCT_EMPTY) {
+    for (int i=fields.size()-1; i >= 0; --i) {  // reverse order in SystemVerilog
+        if (fields[i].definition.type != STRUCT_EMPTY) {  // inline struct/union
             fields[i].definition.indent = indent + 1;
             fields[i].definition.print(out);
         } else {
             fields[i].indent = indent;
-            fields[i].print(out);
+            fields[i].print(out, true);
         }
     }
     for (int i=0; i < indent; ++i) {

@@ -1,7 +1,11 @@
 #pragma once
+#ifdef MAIN_FILE_INCLUDED
+#define NO_MAINFILE
+#endif
+#define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
-#include "Memory.h"
+#include "Memory.cpp"
 
 using namespace cpphdl;
 
@@ -18,7 +22,6 @@ class Fifo : public Module
     reg<u1> full_reg;
 
     reg<u1> afull_reg;
-
 
 public:
     bool*                        write_in  = nullptr;
@@ -128,4 +131,14 @@ struct FifoTest
 {
 };
 
+#ifndef NO_MAINFILE
+int main ()
+{
+}
+#endif
+
+#endif // SYNTHESIS
+
+#ifdef MAIN_FILE_INCLUDED
+#undef NO_MAINFILE
 #endif

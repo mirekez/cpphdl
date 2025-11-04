@@ -7,7 +7,7 @@ using namespace cpphdl;
 
 Field* currField;
 
-bool Field::print(std::ofstream& out)
+bool Field::print(std::ofstream& out, bool forcePacked)
 {
     currField = this;
 
@@ -30,6 +30,10 @@ bool Field::print(std::ofstream& out)
             type.sub[1].flags = Expr::FLAG_REG;
             type.sub[1].sub[0].indent = indent + 1;
             out << type.sub[1].sub[0].str() << " " << name << "[" << type.sub[0].str() << "]" << ";\n";
+        } else
+        if (forcePacked) {
+            type.sub[1].indent = indent + 1;
+            out << type.str() << " " << name << ";\n";
         }
         else {
             type.sub[1].indent = indent + 1;

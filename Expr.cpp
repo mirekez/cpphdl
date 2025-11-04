@@ -147,16 +147,21 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
             }
 
+            bool skipfirst = false;
             std::string member = value;
+            if (sub[0].type == EXPR_MEMBER) {
+                member = sub[0].str();
+                skipfirst = true;
+            }
+
             std::string str = "(";
             bool first = true;
             for (auto& arg : sub) {
-                if (first && arg.type == EXPR_MEMBER) {
-                    member = arg.str();
+                if (skipfirst) {
+                    skipfirst = false;
                     continue;
                 }
-
-                if (arg.value != "clk") { //arg.type != EXPR_MEMBERCALL) {
+                if (arg.value != "clk") {
                     str += (first?"":", ") + arg.str();
                     first = false;
                 }
@@ -335,20 +340,35 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if (name == "cpphdl::u") {
         str = logic + size;
     } else
+    if (name == "cpphdl::s") {
+        str = logic + " signed" + size;
+    } else
     if (name == "cpphdl::u1") {
         str = logic + size;
     } else
     if (name == "cpphdl::u8") {
         str = logic + size + "[7:0]";
     } else
+    if (name == "cpphdl::s8") {
+        str = logic + " signed" + size + "[7:0]";
+    } else
     if (name == "cpphdl::u16") {
         str = logic + size + "[15:0]";
+    } else
+    if (name == "cpphdl::s16") {
+        str = logic + " signed" + size + "[15:0]";
     } else
     if (name == "cpphdl::u32") {
         str = logic + size + "[31:0]";
     } else
+    if (name == "cpphdl::s32") {
+        str = logic + " signed" + size + "[31:0]";
+    } else
     if (name == "cpphdl::u64") {
         str = logic + size + "[63:0]";
+    } else
+    if (name == "cpphdl::s64") {
+        str = logic + " signed" + size + "[63:0]";
     } else
     if (name == "bool") {
         str = logic + size;

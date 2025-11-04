@@ -56,3 +56,5 @@ target_link_libraries(cpphdl
   clangRewrite
   LLVM
 )
+
+add_subdirectory(examples)
