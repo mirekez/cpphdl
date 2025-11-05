@@ -79,7 +79,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool first = true;
             for (size_t i=skipArgs; i < sub.size(); ++i) {
-                if (sub[i].value != "clk") {
+                if (sub[i].value != "clk" && sub[i].value != "__inst_name") {
                     str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
@@ -219,7 +219,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         case EXPR_CAST:
             ASSERT(sub.size()==1);
-            return indent_str + sub[0].str();
+            return indent_str + sub[0].str(prefix, suffix);
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
@@ -473,6 +473,10 @@ void Expr::replacePrint(std::string& str)
 {
     size_t pos = 0;
     while (true) {
+        if ((pos = str.find("{:s}", pos)) != (size_t)-1) {
+            str.replace(pos, 4, "%m");
+            pos += 2;
+        } else
         if ((pos = str.find("{}", pos)) != (size_t)-1) {
             str.replace(pos, 2, "%x");
             pos += 2;

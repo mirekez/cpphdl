@@ -1,14 +1,14 @@
 #pragma once
 #ifdef MAIN_FILE_INCLUDED
 #define NO_MAINFILE
+#else
+static bool g_debug_en = 0;
+#define DEBUG(a...) if (g_debug_en) { std::print(a); }
 #endif
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
 #include <print>
-
-static bool g_debugen = 0;
-#define DEBUG(a...) if (g_debugen) { std::print(a); }
 
 using namespace cpphdl;
 
@@ -46,7 +46,7 @@ public:
     {
         if (!clk) return;
 
-        DEBUG("{}: input: ({}){}@{}, output: ({}){}@{}\n", inst_name, (int)*write_in, *data_in, *write_addr_in, (int)*read_in, *data_out, *read_addr_in);
+        DEBUG("{:s}: input: ({}){}@{}, output: ({}){}@{}\n", __inst_name, (int)*write_in, *data_in, *write_addr_in, (int)*read_in, *data_out, *read_addr_in);
 
         if (*write_in) {
             buffer[*write_addr_in] = *data_in;
@@ -67,12 +67,20 @@ public:
 
 template struct Memory<32,1024>;
 
-#ifndef SYNTHESIS
+#ifndef SYNTHESIS  // TEST FOLLOWS
+
+#ifdef VERILATOR
+#include "VMemory.h"
+#endif
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
 {
+#ifdef VERILATOR
+    VMemory mem;
+#else
     Memory<MEM_WIDTH_BYTES,MEM_DEPTH,SHOWAHEAD> mem;
+#endif
 
     reg<u<clog2(MEM_DEPTH)>>       write_addr_reg;
     reg<logic<MEM_WIDTH_BYTES*8>>  data_reg;
@@ -99,7 +107,8 @@ public:
 
     void connect()
     {
-        mem.inst_name = inst_name + "/mem";
+#ifndef VERILATOR
+        mem.__inst_name = __inst_name + "/mem";
 
         mem.write_addr_in = write_addr_out;
         mem.write_in      = write_out;
@@ -109,12 +118,25 @@ public:
         mem.connect();
 
         data_in           = mem.data_out;
+#endif
     }
 
     void work(bool clk, bool reset)
     {
+#ifdef VERILATOR
+        mem.write_addr_in = *write_addr_out;
+        mem.write_in      = *write_out;
+        memcpy(&mem.data_in, data_out, sizeof(mem.data_in));
+        mem.read_addr_in  = *read_addr_out;
+        mem.read_in       = *read_out;
+
+        data_in           = (logic<MEM_WIDTH_BYTES*8>*) &mem.data_out;
+#endif
+
         if (!clk) return;
+#ifndef VERILATOR
         mem.work(clk, reset);
+#endif
 
         if (reset) {
             clean.set(1);
@@ -157,8 +179,8 @@ public:
             }
         }
         if (memcmp(data_in, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(data_in)) != 0 && (was_read || SHOWAHEAD)) {
-            std::print("{}: {} was read instead of {} from address {}\n",
-                inst_name,
+            std::print("{:s}: {} was read instead of {} from address {}\n",
+                __inst_name,
                 *(logic<MEM_WIDTH_BYTES*8>*)data_in,
                 *(logic<MEM_WIDTH_BYTES*8>*)&mem_copy[read_addr_reg],
                 SHOWAHEAD?read_addr_reg:was_read_addr);
@@ -174,7 +196,9 @@ public:
 
     void strobe()
     {
+#ifndef VERILATOR
         mem.strobe();
+#endif
 
         write_addr_reg.strobe();
         data_reg.strobe();
@@ -191,14 +215,20 @@ public:
 
     void comb()
     {
+#ifndef VERILATOR
         mem.comb();
         mem.data_out_comb_func();
+#endif
     }
 
     bool run()
     {
-        std::print("TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
-        inst_name = "mem_test";
+#ifdef VERILATOR
+        std::print("VERILATOR TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+#else
+        std::print("C++HDL TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+#endif
+        __inst_name = "mem_test";
         connect();
         work(1, 1);
         int cycles = 10000;
@@ -215,15 +245,31 @@ public:
 };
 
 #ifndef NO_MAINFILE
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
 int main (int argc, char** argv)
 {
     if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
-        g_debugen = 1;
+        g_debug_en = 1;
     }
-    TestMemory<32,1024,true>().run();
-    TestMemory<32,1024,false>().run();
-}
+
+#ifndef VERILATOR
+    std::cout << "Building verilator simulation...\n";
+    VerilatorCompile("Memory", 32, 1024, 1);
+    VerilatorCompile("Memory", 32, 1024, 0);
+    std::cout << "Executing verilator simulation...\n";
+    // todo
 #endif
+
+    std::cout << "Executing C++HLS simulation...\n";
+    TestMemory<32,1024,1>().run();
+    TestMemory<32,1024,0>().run();
+
+}
+#endif  //NO_MAINFILE
 
 #endif  //SYNTHESIS
 

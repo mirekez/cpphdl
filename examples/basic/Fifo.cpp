@@ -1,6 +1,9 @@
 #pragma once
 #ifdef MAIN_FILE_INCLUDED
 #define NO_MAINFILE
+#else
+static bool g_debug_en = 0;
+#define DEBUG(a...) if (g_debug_en) { std::print(a); }
 #endif
 #define MAIN_FILE_INCLUDED
 
@@ -44,7 +47,7 @@ public:
         mem.read_addr_in  = &rp_reg;
         mem.connect();
 
-        mem.inst_name = inst_name + "/mem";
+        mem.__inst_name = __inst_name + "/mem";
     }
 
     bool full_comb_func()
@@ -59,14 +62,14 @@ public:
         return empty_comb;
     }
 
-    void work(bool clk_in, bool reset_in)
+    void work(bool clk, bool reset)
     {
-        if (!clk_in) return;
-        mem.work(clk_in, reset_in);
+        if (!clk) return;
+        mem.work(clk, reset);
 
-        DEBUG("{}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", inst_name, (int)*write_in, *data_in, (int)*read_in, *data_out, (int)*full_out, (int)*empty_out);
+        DEBUG("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name, (int)*write_in, *data_in, (int)*read_in, *data_out, (int)*full_out, (int)*empty_out);
 
-        if (reset_in) {
+        if (reset) {
             wp_reg.clr();
             rp_reg.clr();
             full_reg.clr();
@@ -77,7 +80,7 @@ public:
         if (*read_in) {
 
             if (empty_comb_func()) {
-                printf("%s: reading from an empty fifo\n", inst_name.c_str());
+                printf("%s: reading from an empty fifo\n", __inst_name.c_str());
                 exit(1);
             }
             if (!empty_comb_func()) {
@@ -91,7 +94,7 @@ public:
         if (*write_in) {
 
             if (full_comb_func()) {
-                printf("%s: writing to a full fifo\n", inst_name.c_str());
+                printf("%s: writing to a full fifo\n", __inst_name.c_str());
                 exit(1);
             }
             if (!full_comb_func()) {
@@ -163,7 +166,7 @@ public:
 
     void connect()
     {
-        fifo.inst_name = inst_name + "/fifo";
+        fifo.__inst_name = __inst_name + "/fifo";
 
         fifo.write_in      = write_out;
         fifo.data_in       = data_out;
@@ -208,8 +211,8 @@ public:
             to_write_cnt.next = random()%100;
         }
         if (memcmp(data_in, &mem_ref[read_addr], sizeof(data_in)) != 0 && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
-            std::print("{}: {} was read instead of {} from address {}\n",
-                inst_name,
+            std::print("{:s}: {} was read instead of {} from address {}\n",
+                __inst_name,
                 *(logic<FIFO_WIDTH_BYTES*8>*)data_in,
                 *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
                 read_addr);
@@ -255,7 +258,7 @@ public:
             }
         }
         std::print("TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
-        inst_name = "fifo_test";
+        __inst_name = "fifo_test";
         connect();
         work(1, 1);
         int cycles = 10000;
@@ -275,7 +278,7 @@ public:
 int main (int argc, char** argv)
 {
     if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
-        g_debugen = 1;
+        g_debug_en = 1;
     }
     TestFifo<32,1024,true>().run();
     TestFifo<32,1024,false>().run();

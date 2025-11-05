@@ -53,7 +53,7 @@ bool Method::print(std::ofstream& out)
     out << (params_cnt>1?"    ":"") << ");" << "\n";
 
     if (ret.size() == 0) {
-        out << "    begin " << name << ":\n";
+        out << "    begin: " << name << "\n";
     }
 
     for (auto& stmt : statements) {
@@ -125,6 +125,11 @@ bool Method::printConns(std::ofstream& out)
         out << ";\n";
     }
     for (auto& stmt : statements) {
+        std::string param;
+        if (stmt.traverseIf( [](Expr& e, std::string& param) { return e.value == "__inst_name";}, param )) {
+            continue;
+        }
+
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_NORETURN;
         auto s = stmt.str("assign ");

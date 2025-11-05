@@ -17,3 +17,5 @@ dependencies:
     - make==4.4.1
 #    - lld==14.0.6
     - git==2.45
+    - verilator=5.034
+    - gawk=5.3.1

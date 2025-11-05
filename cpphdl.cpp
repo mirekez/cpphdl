@@ -315,7 +315,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         break;
                     }
                     case TemplateArgument::Declaration:
-                        DEBUG_AST(std::cout << " declaration: " << Arg.getAsDecl()->getNameAsString()) << "\n";
+                        DEBUG_AST(std::cout << " declaration: " << Arg.getAsDecl()->getNameAsString() << "\n");
                         break;
                     case TemplateArgument::Template:
                     {

@@ -1,0 +1,22 @@
+#pragma once
+
+inline void VerilatorCompile(std::string name, auto&&... args)
+{
+    std::ostringstream oss;
+    ((oss << args << "_"), ...);
+    std::string folder_name = name + "_" + oss.str();
+    folder_name.pop_back();
+    std::filesystem::remove_all(folder_name);
+    std::filesystem::create_directory(folder_name);
+    std::filesystem::copy_file(std::string("generated/") + name + ".sv", folder_name + "/" + name + ".sv", std::filesystem::copy_options::overwrite_existing);
+    size_t n = 0;
+    // SV parameters substitution
+    ((std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
+        " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + name + ".sv").c_str())), ...);
+    // running Verilator
+    std::system((std::string("cd ") + folder_name +
+        "; $CONDA_PREFIX/bin/verilator -cc ../../../examples/Predef.sv " + name + ".sv --exe ../../" + name + ".cpp --top-module " + name +
+        " --Wno-fatal --CFLAGS \"-DVERILATOR -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -I../../../../include\"").c_str());
+    std::system((std::string("cd ") + folder_name + "/obj_dir" +
+        "; make -f VMemory.mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str());
+};

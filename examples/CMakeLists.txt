@@ -6,6 +6,7 @@ file(GLOB_RECURSE EXAMPLE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
 
+
 foreach(src ${EXAMPLE_SOURCES})
     get_filename_component(name ${src} NAME_WE)
     # prefix with relative path for uniqueness
@@ -22,4 +23,13 @@ foreach(src ${EXAMPLE_SOURCES})
     )
 
     include_directories("../include")
+
+    # verilator tests
+    add_custom_command(
+        TARGET ${target_name}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I../../include"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples
+    )
+
 endforeach()
