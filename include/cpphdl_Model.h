@@ -6,7 +6,7 @@ namespace cpphdl
 class Module
 {
 public:
-    std::string name;
+    std::string inst_name;
 };
 
 

@@ -46,7 +46,7 @@ public:
     {
         if (!clk) return;
 
-        DEBUG("input: ({}){}@{}, output: ({}){}@{}\n", (int)*write_in, *data_in, *write_addr_in, (int)*read_in, *data_out, *read_addr_in);
+        DEBUG("{}: input: ({}){}@{}, output: ({}){}@{}\n", inst_name, (int)*write_in, *data_in, *write_addr_in, (int)*read_in, *data_out, *read_addr_in);
 
         if (*write_in) {
             buffer[*write_addr_in] = *data_in;
@@ -79,13 +79,12 @@ class TestMemory : Module
     reg<u1>                        write_reg;
     reg<u<clog2(MEM_DEPTH)>>       read_addr_reg;
     reg<u1>                        read_reg;
-
-    reg<u1> clean;
-    reg<u1> was_read;
+    reg<u1>                  clean;
+    reg<u1>                  was_read;
     reg<u<clog2(MEM_DEPTH)>> was_read_addr;
-    reg<u16> to_write_cnt;
-    reg<u16> to_read_cnt;
-    bool error = false;
+    reg<u16>                 to_write_cnt;
+    reg<u16>                 to_read_cnt;
+    bool                     error = false;
 
     std::array<std::array<uint8_t,MEM_WIDTH_BYTES>,MEM_DEPTH> mem_copy;
 
@@ -100,6 +99,8 @@ public:
 
     void connect()
     {
+        mem.inst_name = inst_name + "/mem";
+
         mem.write_addr_in = write_addr_out;
         mem.write_in      = write_out;
         mem.data_in       = data_out;
@@ -156,7 +157,8 @@ public:
             }
         }
         if (memcmp(data_in, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(data_in)) != 0 && (was_read || SHOWAHEAD)) {
-            std::print(" {} was read instead of {} from address {}\n",
+            std::print("{}: {} was read instead of {} from address {}\n",
+                inst_name,
                 *(logic<MEM_WIDTH_BYTES*8>*)data_in,
                 *(logic<MEM_WIDTH_BYTES*8>*)&mem_copy[read_addr_reg],
                 SHOWAHEAD?read_addr_reg:was_read_addr);
@@ -196,6 +198,7 @@ public:
     bool run()
     {
         std::print("TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+        inst_name = "mem_test";
         connect();
         work(1, 1);
         int cycles = 10000;
