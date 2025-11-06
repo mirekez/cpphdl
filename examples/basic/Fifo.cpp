@@ -26,16 +26,16 @@ class Fifo : public Module
     reg<u1> afull_reg;
 
 public:
-    bool*                        write_in  = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>*   data_in   = nullptr;
+    bool                         *write_in  = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>    *data_in   = nullptr;
 
-    bool*                        read_in   = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>*   data_out  = mem.data_out;
+    bool                         *read_in   = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>    *data_out  = mem.data_out;
 
-    bool*                        empty_out = &empty_comb;
-    bool*                        full_out  = &full_comb;
-    bool*                        clear_in  = &ZERO;
-    bool*                        afull_out = &afull_reg;
+    bool                         *empty_out = &empty_comb;
+    bool                         *full_out  = &full_comb;
+    bool                         *clear_in  = &ZERO;
+    bool                         *afull_out = &afull_reg;
 
     bool                         debugen_in;
 
@@ -119,11 +119,11 @@ public:
 
     void strobe()
     {
+        mem.strobe();
         wp_reg.strobe();
         rp_reg.strobe();
         full_reg.strobe();
         afull_reg.strobe();
-        mem.strobe();
     }
 
     void comb()
@@ -173,16 +173,16 @@ class TestFifo : public Module
     std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
 public:
-    bool*                     write_out      = &write_reg;
-    logic<FIFO_WIDTH_BYTES*8>* data_out       = &data_reg;
+    bool                      *write_out      = &write_reg;
+    logic<FIFO_WIDTH_BYTES*8> *data_out       = &data_reg;
 
-    bool*                     read_out       = &read_reg;
-    logic<FIFO_WIDTH_BYTES*8>* data_in        = nullptr;
+    bool                      *read_out       = &read_reg;
+    logic<FIFO_WIDTH_BYTES*8> *data_in        = nullptr;
 
-    bool*            empty_in = nullptr;
-    bool*            full_in  = nullptr;
-    bool*            clear_out  = &clear_reg;
-    bool*            afull_in = nullptr;
+    bool            *empty_in = nullptr;
+    bool            *full_in  = nullptr;
+    bool            *clear_out  = &clear_reg;
+    bool            *afull_in = nullptr;
 
     bool             debugen_in;
 
@@ -227,9 +227,9 @@ public:
         fifo.debugen_in    = debugen_in;
 
         data_in           = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.data_out.m_storage;
-        empty_in          = fifo.empty_out;
-        full_in           = fifo.full_out;
-        afull_in          = fifo.afull_out;
+        empty_in          = (bool*)&fifo.empty_out;
+        full_in           = (bool*)&fifo.full_out;
+        afull_in          = (bool*)&fifo.afull_out;
 
         fifo.clk = clk;
         fifo.reset = reset;

@@ -20,13 +20,13 @@ class Memory : public Module
     size_t i;
 
 public:
-    u<clog2(MEM_DEPTH)>*      write_addr_in   = nullptr;
-    bool*                     write_in        = nullptr;
-    logic<MEM_WIDTH_BYTES*8>* data_in         = nullptr;
+    u<clog2(MEM_DEPTH)>       *write_addr_in   = nullptr;
+    bool                      *write_in        = nullptr;
+    logic<MEM_WIDTH_BYTES*8>  *data_in         = nullptr;
 
-    u<clog2(MEM_DEPTH)>*      read_addr_in    = nullptr;
-    bool*                     read_in         = nullptr;
-    logic<MEM_WIDTH_BYTES*8>* data_out        = &data_out_comb;
+    u<clog2(MEM_DEPTH)>       *read_addr_in    = nullptr;
+    bool                      *read_in         = nullptr;
+    logic<MEM_WIDTH_BYTES*8>  *data_out        = &data_out_comb;
 
     bool                      debugen_in;
 
@@ -108,13 +108,13 @@ class TestMemory : Module
     std::array<uint8_t,MEM_WIDTH_BYTES>* mem_copy;
 
 public:
-    u<clog2(MEM_DEPTH)>*      write_addr_out = &write_addr_reg;
-    bool*                     write_out      = &write_reg;
-    logic<MEM_WIDTH_BYTES*8>* data_out       = &data_reg;
+    u<clog2(MEM_DEPTH)>      *write_addr_out = &write_addr_reg;
+    bool                     *write_out      = &write_reg;
+    logic<MEM_WIDTH_BYTES*8> *data_out       = &data_reg;
 
-    u<clog2(MEM_DEPTH)>*      read_addr_out  = &read_addr_reg;
-    bool*                     read_out       = &read_reg;
-    logic<MEM_WIDTH_BYTES*8>* data_in        = nullptr;
+    u<clog2(MEM_DEPTH)>      *read_addr_out  = &read_addr_reg;
+    bool                     *read_out       = &read_reg;
+    logic<MEM_WIDTH_BYTES*8> *data_in        = nullptr;
 
     bool                      debugen_in;
 
