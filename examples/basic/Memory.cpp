@@ -299,8 +299,8 @@ int main (int argc, char** argv)
     ok &= VerilatorCompile("Memory", {}, 64, 65535, 1);
     ok &= VerilatorCompile("Memory", {}, 64, 65535, 0);
     std::cout << "Executing tests... ===========================================================================\n";
-    std::system((std::string("Memory_64_65535_1/obj_dir/VMemory") + (debug?"--debug":"") + " 0").c_str());
-    std::system((std::string("Memory_64_65535_0/obj_dir/VMemory") + (debug?"--debug":"") + " 1").c_str());
+    std::system((std::string("Memory_64_65535_1/obj_dir/VMemory") + (debug?" --debug":"") + " 0").c_str());
+    std::system((std::string("Memory_64_65535_0/obj_dir/VMemory") + (debug?" --debug":"") + " 1").c_str());
 #else
     Verilated::commandArgs(argc, argv);
 #endif
