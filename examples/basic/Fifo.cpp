@@ -206,6 +206,7 @@ public:
         fifo.data_in       = data_out;
         fifo.read_in       = read_out;
         fifo.clear_in      = clear_out;
+        fifo.debugen_in    = debugen_in;
         fifo.connect();
 
         data_in           = fifo.data_out;
@@ -241,6 +242,8 @@ public:
             read_addr.clr();
             write_addr.clr();
             was_read.clr();
+            write_reg.clr();
+            read_reg.clr();
             return;
         }
 
@@ -353,12 +356,12 @@ int main (int argc, char** argv)
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
-//    std::cout << "Building verilator simulation... =============================================================\n";
-//    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 1);
-//    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 0);
-//    std::cout << "Executing tests... ===========================================================================\n";
-//    std::system((std::string("Fifo_64_65535_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
-//    std::system((std::string("Fifo_64_65535_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
+    std::cout << "Building verilator simulation... =============================================================\n";
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 1);
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 0);
+    std::cout << "Executing tests... ===========================================================================\n";
+    std::system((std::string("Fifo_64_65535_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
+    std::system((std::string("Fifo_64_65535_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
 #else
     Verilated::commandArgs(argc, argv);
 #endif
