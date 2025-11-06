@@ -28,6 +28,8 @@ bool format_to(bool, const char*, T& t)
 }
 #endif
 
+//     u& operator= (const u& v) = default;
+
 namespace cpphdl
 {
 
@@ -37,7 +39,6 @@ struct u
     uint64_t value:WIDTH;
     u() = default;
     u(uint64_t v) : value(v) {}
-    u& operator= (const u& v) = default;
     u& operator= (uint64_t v) { value = v; return *this; };
 //    u* operator&() { return (u*)this; }
     u& operator++() { value = value+1; return *this; }
@@ -92,6 +93,9 @@ struct std::formatter<cpphdl::u<WIDTH>>
     }
 };
 
+//    class& operator= (type v) { value = v; return *this; };
+//    class& operator= (const class& v) = default;
+
 #define DEFINE_REGULAR_TYPE_CLASS(type, class, size, text) \
 namespace cpphdl \
 { \
@@ -99,8 +103,6 @@ struct class : public u<size> \
 { \
     class() = default; \
     class(type v) : u(v) {}  \
-    class& operator= (const class& v) = default; \
-    class& operator= (type v) { value = v; return *this; }; \
     type* operator&() { return (type*)this; } \
 }; \
 } \

@@ -133,7 +133,8 @@ struct memory
     void apply()
     {
         for (auto entry : changes) {
-            memcpy(&data[entry.pos], &entry.data, sizeof(entry.data));
+//            memcpy(&data[entry.pos], &entry.data, sizeof(entry.data));
+            data[entry.pos] = entry.data;
         }
         changes.clear();
     }

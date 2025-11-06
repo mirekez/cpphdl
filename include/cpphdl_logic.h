@@ -10,7 +10,7 @@ namespace cpphdl
 {
 
 template<typename T, size_t S>
-class array;
+struct array;
 
 template<size_t WIDTH>
 struct logic_bits;
@@ -285,13 +285,13 @@ struct logic_bits : public logic<WIDTH>
             if ((first%8)==0) {
                 memcpy(&parent->bytes[first/8], logic<WIDTH>::bytes, (last+1-first)/8);
                 size_t j = (last-first)/8*8;
-                for (size_t i=last/8*8; i <= last; ++i) {  // optimize with ulong
+                for (size_t i=last/8*8; i <= last; ++i) {  // rest bits
                     parent->set(i, this->get(j++));
                 }
             }
             else {
                 size_t j = 0;
-                for (size_t i=first; i <= last; ++i) {  // optimize with ulong
+                for (size_t i=first; i <= last; ++i) {  // todo? optimize with ulong
                     parent->set(i, this->get(j++));
                 }
             }

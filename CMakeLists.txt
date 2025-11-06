@@ -34,7 +34,7 @@ set(CMAKE_CXX_FLAGS "-std=c++2c -g -fno-strict-aliasing -Wall -Wextra -Wno-unuse
 
 project(
   cpphdl
-  VERSION 1.0
+  VERSION 0.8
   LANGUAGES CXX)
 
 add_definitions(-DSTATIC_BUILD)

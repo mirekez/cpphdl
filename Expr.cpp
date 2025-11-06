@@ -139,6 +139,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value == "format") {
                 return indent_str + sub[0].sub[0].str();
             }
+            if (sub.size() >= 3 && sub[0].sub.size() != 0 && sub[0].value == "bits") {
+                return indent_str + sub[0].sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
+            }
             if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
                 return "";
             }
@@ -473,24 +476,17 @@ void Expr::replacePrint(std::string& str)
 {
     size_t pos = 0;
     while (true) {
-        if ((pos = str.find("{:s}", pos)) != (size_t)-1) {
+        if ((pos = str.find("{:s}")) != (size_t)-1) {
             str.replace(pos, 4, "%m");
-            pos += 2;
         } else
-        if ((pos = str.find("{}", pos)) != (size_t)-1) {
+        if ((pos = str.find("{}")) != (size_t)-1) {
             str.replace(pos, 2, "%x");
-            pos += 2;
         } else
-        if ((pos = str.find("{:x}", pos)) != (size_t)-1) {
+        if ((pos = str.find("{:x}")) != (size_t)-1) {
             str.replace(pos, 4, "%x");
-            pos += 2;
         } else
-        if ((pos = str.find("{:d}", pos)) != (size_t)-1) {
+        if ((pos = str.find("{:d}")) != (size_t)-1) {
             str.replace(pos, 4, "%d");
-            pos += 2;
-        } else
-        if ((pos = str.find("%s")) != (size_t)-1) {
-            str.replace(pos, 2, "%m");
         } else
         if ((pos = str.find("%s")) != (size_t)-1) {
             str.replace(pos, 2, "%m");

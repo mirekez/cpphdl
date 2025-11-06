@@ -1,6 +1,8 @@
 #pragma once
 
-inline void VerilatorCompile(std::string name, auto&&... args)
+const std::string disableWarnings = "-Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
+
+inline bool VerilatorCompile(std::string name, auto&&... args)
 {
     std::ostringstream oss;
     ((oss << args << "_"), ...);
@@ -15,8 +17,8 @@ inline void VerilatorCompile(std::string name, auto&&... args)
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + name + ".sv").c_str())), ...);
     // running Verilator
     std::system((std::string("cd ") + folder_name +
-        "; $CONDA_PREFIX/bin/verilator -cc ../../../examples/Predef.sv " + name + ".sv --exe ../../" + name + ".cpp --top-module " + name +
-        " --Wno-fatal --CFLAGS \"-DVERILATOR -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -I../../../../include\"").c_str());
-    std::system((std::string("cd ") + folder_name + "/obj_dir" +
-        "; make -f VMemory.mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str());
+        "; verilator -cc ../../../examples/predef.sv " + name + ".sv --exe ../../" + name + ".cpp --top-module " + name +
+        " --Wno-fatal --CFLAGS \"-DVERILATOR -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -I../../../../include " + disableWarnings + "\"").c_str());
+    return std::system((std::string("cd ") + folder_name + "/obj_dir" +
+        "; make -j4 -f VMemory.mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };

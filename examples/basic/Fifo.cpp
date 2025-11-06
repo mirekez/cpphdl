@@ -1,16 +1,15 @@
-#pragma once
 #ifdef MAIN_FILE_INCLUDED
 #define NO_MAINFILE
-#else
-static bool g_debug_en = 0;
-#define DEBUG(a...) if (g_debug_en) { std::print(a); }
 #endif
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
 #include "Memory.cpp"
+#include <print>
 
 using namespace cpphdl;
+
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
@@ -37,6 +36,8 @@ public:
     bool*                        full_out  = &full_comb;
     bool*                        clear_in  = &ZERO;
     bool*                        afull_out = &afull_reg;
+
+    bool                         debugen_in;
 
     void connect()
     {
@@ -66,8 +67,6 @@ public:
     {
         if (!clk) return;
         mem.work(clk, reset);
-
-        DEBUG("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name, (int)*write_in, *data_in, (int)*read_in, *data_out, (int)*full_out, (int)*empty_out);
 
         if (reset) {
             wp_reg.clr();
@@ -112,6 +111,10 @@ public:
         }
 
         afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name, (int)*write_in, *data_in, (int)*read_in, *data_out, (int)*full_out, (int)*empty_out);
+        }
     }
 
     void strobe()
@@ -129,15 +132,27 @@ public:
         mem.data_out_comb_func();
     }
 };
+/////////////////////////////////////////////////////////////////////////
 
-template struct Fifo<32,1024>;
+template class Fifo<64,65536>;
 
-#ifndef SYNTHESIS
+// C++HDL TEST //////////////////////////////////////////////////////////
+
+#ifndef SYNTHESIS  // TEST FOLLOWS
+
+#include <chrono>
+#ifdef VERILATOR
+#include "VMemory.h"
+#endif
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
 {
+#ifdef VERILATOR
+    VFifo fifo;
+#else
     Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
+#endif
 
     reg<u<clog2(FIFO_DEPTH)>>       read_addr;
     reg<u<clog2(FIFO_DEPTH)>>       write_addr;
@@ -150,7 +165,7 @@ class TestFifo : public Module
     reg<u16> to_read_cnt;
     bool     error = false;
 
-    std::array<uint8_t,FIFO_WIDTH_BYTES> mem_ref[FIFO_DEPTH];
+    std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
 public:
     bool*                     write_out      = &write_reg;
@@ -164,8 +179,22 @@ public:
     bool*            clear_out  = &clear_reg;
     bool*            afull_in = nullptr;
 
+    bool             debugen_in;
+
+    TestFifo(bool debug)
+    {
+        debugen_in = debug;
+        mem_ref = new std::array<uint8_t,FIFO_WIDTH_BYTES>[FIFO_DEPTH];
+    }
+
+    ~TestFifo()
+    {
+        delete[] mem_ref;
+    }
+
     void connect()
     {
+#ifndef VERILATOR
         fifo.__inst_name = __inst_name + "/fifo";
 
         fifo.write_in      = write_out;
@@ -178,18 +207,47 @@ public:
         empty_in          = fifo.empty_out;
         full_in           = fifo.full_out;
         afull_in          = fifo.afull_out;
+#endif
     }
 
     void work(bool clk, bool reset)
     {
-        if (!clk) return;
+#ifndef VERILATOR
         fifo.work(clk, reset);
+#else
+        fifo.write_in      = *write_out;
+        memcpy(&fifo.data_in.m_storage, data_out, sizeof(fifo.data_in.m_storage));
+        fifo.read_in       = *read_out;
+        fifo.clear_in      = clear_out;
+        fifo.debugen_in    = debugen_in;
+
+        data_in           = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.data_out.m_storage;
+        empty_in          = &fifo.empty_out;
+        full_in           = &fifo.full_out;
+        afull_in          = &fifo.afull_out;
+
+        fifo.clk = clk;
+        fifo.reset = reset;
+        fifo.eval();  // eval of verilator should be in the end
+#endif
 
         if (reset) {
             clear_reg.clr();
             read_addr.clr();
             write_addr.clr();
             was_read.clr();
+            return;
+        }
+
+        if (!clk) {  // all checks on negedge edge
+            if (!reset && to_read_cnt && memcmp(data_in, &mem_ref[read_addr], sizeof(*data_in)) != 0 && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
+                std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
+                    __inst_name,
+                    *(logic<FIFO_WIDTH_BYTES*8>*)data_in,
+                    *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
+                    read_addr);
+                error = true;
+            }
             return;
         }
 
@@ -210,14 +268,6 @@ public:
         if (!to_write_cnt) {
             to_write_cnt.next = random()%100;
         }
-        if (memcmp(data_in, &mem_ref[read_addr], sizeof(data_in)) != 0 && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
-            std::print("{:s}: {} was read instead of {} from address {}\n",
-                __inst_name,
-                *(logic<FIFO_WIDTH_BYTES*8>*)data_in,
-                *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
-                read_addr);
-            error = true;
-        }
         was_read.next = 0;
         if (read_reg && !SHOWAHEAD) {
             was_read.next = 1;
@@ -229,7 +279,9 @@ public:
 
     void strobe()
     {
+#ifndef VERILATOR
         fifo.strobe();
+#endif
 
         read_addr.strobe();
         write_addr.strobe();
@@ -245,9 +297,11 @@ public:
 
     void comb()
     {
+#ifndef VERILATOR
         fifo.comb();
         fifo.full_comb_func();
         fifo.empty_comb_func();
+#endif
     }
 
     bool run()
@@ -257,11 +311,17 @@ public:
                 mem_ref[i][j] = random();
             }
         }
-        std::print("TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+#ifdef VERILATOR
+        std::print("VERILATOR TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+#else
+        std::print("C++HDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+#endif
+        auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
         connect();
+        work(0, 1);
         work(1, 1);
-        int cycles = 10000;
+        int cycles = 100000;
         int clk = 0;
         while (--cycles && !error) {
             comb();
@@ -269,23 +329,51 @@ public:
             strobe();
             clk = !clk;
         }
-        std::print(" {}\n", !error?"PASSED":"FAILED");
+        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+            (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }
 };
 
 #ifndef NO_MAINFILE
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
 int main (int argc, char** argv)
 {
+    bool debug = false;
     if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
-        g_debug_en = 1;
+        debug = true;
     }
-    TestFifo<32,1024,true>().run();
-    TestFifo<32,1024,false>().run();
-}
+    int only = -1;
+    if (argc > 1) {
+        only = atoi(argv[argc-1]);
+    }
+
+    bool ok = true;
+#ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
+    std::cout << "Building verilator simulation... =============================================================\n";
+    ok &= VerilatorCompile("Fifo", 64, 65535, 1);
+    ok &= VerilatorCompile("Fifo", 64, 65535, 0);
+    std::cout << "Executing tests... ===========================================================================\n";
+    std::system((std::string("Fifo_64_65535_1/obj_dir/VFifo") + (debug?"--debug":"") + " 0").c_str());
+    std::system((std::string("Fifo_64_65535_0/obj_dir/VFifo") + (debug?"--debug":"") + " 1").c_str());
+#else
+    Verilated::commandArgs(argc, argv);
 #endif
 
+    return !( ok
+    && ((only != -1 && only != 0) || TestFifo<64,65535,1>(debug).run())
+    && ((only != -1 && only != 1) || TestFifo<64,65535,0>(debug).run())
+    );
+}
+#endif  //NO_MAINFILE
+
 #endif  //SYNTHESIS
+
+/////////////////////////////////////////////////////////////////////////
 
 #ifdef MAIN_FILE_INCLUDED
 #undef NO_MAINFILE

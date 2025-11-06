@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
-project(Examples LANGUAGES CXX)
+project(examples LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 26)
 
 file(GLOB_RECURSE EXAMPLE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
-
 
 foreach(src ${EXAMPLE_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -15,6 +14,8 @@ foreach(src ${EXAMPLE_SOURCES})
     string(REPLACE ".cpp" "" target_name ${target_name})
 
     add_executable(${target_name} ${src})
+
+    target_compile_options(${target_name} PRIVATE "-O2")
 
     set_target_properties(${target_name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
@@ -31,5 +32,10 @@ foreach(src ${EXAMPLE_SOURCES})
         COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I../../include"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples
     )
+
+    target_compile_options(${target_name} PRIVATE "-mavx2")
+    target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
+
+    add_dependencies(${target_name} cpphdl)
 
 endforeach()

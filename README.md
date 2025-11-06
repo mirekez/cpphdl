@@ -1,5 +1,6 @@
 # cpphdl
 C++HDL Hardware Description Language
+Please read the doc/cpphdl.pdf
 
 # development
 Win64 requires the following to be done:
@@ -15,4 +16,5 @@ Then for both Win&Lin:
 
 # author
 
-This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-reznikov)
+This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-reznikov) based on the results of own research.
+This work is not subsidized or paid.

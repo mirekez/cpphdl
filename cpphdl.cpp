@@ -334,7 +334,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         LangOptions LO = Context->getLangOpts();
                         SourceRange Range = E->getSourceRange();
                         if (!Range.isInvalid()) {
-                            llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
+                            [[maybe_unused]] llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
                             DEBUG_AST(std::cout << " expression: " << SR.str());
                             DEBUG_AST(std::cout << "\n");
                             DEBUG_EXPR(std::cout << "        Expr: " << exprToExpr(E,*Context).debug() << "\n");
@@ -360,13 +360,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 //                    std::cout << "\n";
                 }
             } else
-            if (auto* Nested = dyn_cast<CXXRecordDecl>(D)) {
+            if ([[maybe_unused]] auto* Nested = dyn_cast<CXXRecordDecl>(D)) {
                 DEBUG_AST(std::cout << "  Nested class: " << Nested->getNameAsString() << "\n");
             } else
-            if (auto* EnumD = dyn_cast<EnumDecl>(D)) {
+            if ([[maybe_unused]] auto* EnumD = dyn_cast<EnumDecl>(D)) {
                 DEBUG_AST(std::cout << "  Enum: " << EnumD->getNameAsString() << "\n");
             } else
-            if (auto* TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
+            if ([[maybe_unused]] auto* TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
                 DEBUG_AST(std::cout << "  Type alias: " << TypeAlias->getNameAsString() << "\n");
             } else
             if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {
