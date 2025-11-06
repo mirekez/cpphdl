@@ -340,15 +340,15 @@ Forgotten registers will be reported by *cpphdl* tool.
 &nbsp;&nbsp;&nbsp;&nbsp;**In brief: *cpphdl* tool checks combinational dependencies and gives advices how to fix them.**
 
 &nbsp;&nbsp;&nbsp;&nbsp;Combinational functions declaration is the most complicated part of the RTL development process
- because of lots of ambiguity in behaviour of generic combinational logic circuits.
-Their evaluation happens directly during the line execution in simulation, and after synthesis RTL should repeat same behaviour.
+ because of lots of ambiguity in behavior of generic combinational logic circuits.
+Their evaluation happens directly during the line execution in simulation, and after synthesis RTL should repeat same behavior.
 Combinational functions can be defined stanalone and being connected to each other.
 This possibility makes a variety of complex logic circuits achievable, including loops and oscillators.
 SystemVerilog RTL development process has a number of rules to avoid loops and overcomplicated combinational circuits (google it),
 C++HDL inherits same rule set. C++HDL uses only blocking assignments as coding technique (as well as other programming languages).
 
 &nbsp;&nbsp;&nbsp;&nbsp;Since SystemVerilog simulation (and synthesis) refreshes all combinational function values after each line of blocking assignments,
-to achieve same behaviour, all C++HDL combinational functions should operate register's *.next* values and be called each time when they are used
+to achieve same behavior, all C++HDL combinational functions should operate register's *.next* values and be called each time when they are used
 inside an owner module. Third module function insertion in the middle of two module's combinational chain is prohibited.
 
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL simulation is only capable of runninng a limited number of combinational functions from input A to output B, making loops and oscillators impossible.
@@ -374,7 +374,7 @@ by mistake.
 
 ## Data types
 
-&nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behaviour C++HDL implements a number of basic data types, responding to a specific
+&nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behavior C++HDL implements a number of basic data types, responding to a specific
 SystemVerilog datatype each. Currently the list of C++HDL datatypes includes:
 
 * *logic`<WIDTH>`* - any width variable, optimized for bit-access
