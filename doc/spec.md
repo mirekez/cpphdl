@@ -17,69 +17,59 @@ Content may change significantly before final approval.
 
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL is an C++ Hardware Definition Language extension for digital Integrated Circuits development, designed for two purposes:
 
-1. Building a full cycle of digital RTL development using C++ language
-2. Allowing extra fast simulation of an blocking Verilog-style written RTL
+1. Building a full cycle of digital RTL development and testing using C++ language
+2. Allowing extra fast simulation of a blocking-assignments defined RTL
 
 &nbsp;&nbsp;&nbsp;&nbsp;In all operations C++HDL works as a reflection of SystemVerilog model,
 which means that, on all stages, 100% register-to-register copy of any C++HDL
 code exists in SystemVerilog domain.
-This allows C++HDL to SystemVerilog conversion for the purposes of
+This allows live C++HDL to SystemVerilog conversion to
 
-* Connection of C++HDL developer teams to classical verification and testing teams
-* Final RTL delivery to fabrication processes and tools or third-party companies
+* Connect C++HDL teams to classical verification and testing teams
+* Deliver SV RTL to fabrication processes and tools or third-party companies
 
-&nbsp;&nbsp;&nbsp;&nbsp;The main idea of using C++ in RTL development is in replacing **simulation** with **execution**
-to provide ~20 times faster compilation (according to author's tests) and running of a model during code writing.
-The following properties of C++ language provide strong foundation for RTL development process:
+&nbsp;&nbsp;&nbsp;&nbsp;The main benefits of using C++ for RTL development are in replacing of slow **simulation**
+with up to 100 times faster compilation and execution and in involvement of a modern language and new people in RTL modelling.
+Following properties of C++ language listed provide strong foundation for RTL development process:
 
-* C++ provides ability to use any of plenty of IDEs/tools for development and debugging,
-including a lot of professional tools, supporting all necessary stages for huge projects management
+* Ability to use any of plenty of professional IDEs and tools for development and debugging, supporting huge projects management
 * C++ is a one of the most popular and powerful programming languages in the World, having extra wide community
-and potentially all specific features of all compilers/tool described in minute details
-* C++HDL is shifting hardware development to software development (at least as one of the stages of a process)
-which makes a lot of software developers potentially accessible on the labor market
-* C++ is extra fast. There is no another language with same abilities which can run RTL faster
+* C++HDL makes many C++ developers accessible for chipmaking industry
+* C++ is extrimely fast in compilation and in execution
+* It's free and does not require paying for each instance
 
-&nbsp;&nbsp;&nbsp;&nbsp;RTL modelling using C++HDL should be made together with verification and testing, using all power and speed of
-C++ language in modelling of digital signalling and digital systems interaction. It is also possible to involve
-third-party SystemVerilog code in C++HDL development project using Verilator tool.
-Therefore, C++HDL is intended to make Verification process much more simple, flexible, fast, and only containing programming
-tasks, avoiding complex and expensive proprietary simulators and allowing running of up to millions tests each day.
+&nbsp;&nbsp;&nbsp;&nbsp;RTL modelling using C++HDL includes verification and testing, providing all power and speed of
+C++ language in modelling of digital signalling and digital systems interaction.
+It allows to make Verification process more simple, flexible, fast, and only containing programming.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Same C++ testing and verification software then can be used to prove functionality in SV domain (despite it's 20-100 times slower than
-C++HDL verification, it can be run once a week or a month just to prove SV generated files are still fully qualified).
-Generated SystemVerilog files can be taken at any moment and used as the main source code for next stage of ASIC/FPGA/other production process.
-Conversion tool provides creation of readable and structured SystemVerilog files containing all source comments and data structures.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL generates pure SystemVerilog output which mostly a reflection, providing line to line visibility.
+(it is even possible to apply patches synchronously to both representations of RTL during finalization stages)
+Generated SystemVerilog files can be frozen at any moment and used as the main source code for next stage of ASIC/FPGA production process.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Since C++HDL goal is to precisely repeat behaviour of SystemVerilog in C++, it is recommended to understand SystemVerilog code and it's behaviour
-corresponding to each C++HDL line of code (each C++HDL line of code is translated directly into SystemVerilog line of code).
+\newpage
 
-# Who needs C++HDL
+# Who is C++HDL for
 
-* Digital IC development companies (ASIC,IP,libraries,FPGA) - 100 times faster development and testing of complex digital designs, 10 times better quality of RTL output
-* Digital IC developers - use modern C++ environment and smart IDEs, powerful C++ debug, static analysis and linting tools
-* Software developers who want to deliver hardware but not spending time to study new languages - use C++HDL and deliver hardware from scratch today
-* CAD/Tool developers (especially AI-coding/training) - 100 times more train cycles per day, C++ allows code generation, C++ is more AI-learned
-* Talents searchers - involve the most popular programming language speakers into plenty of modern projects which experience lack of labor force
+* Digital IC development teams (ASIC,IP,libraries,FPGA) - faster development and testing of complex digital designs, free of charge
+* Digital IC developers - use modern C++ environment and smart IDEs, powerful C++ debug tools, static analysis and linting
+* Software developers who want to deliver hardware and use powerful and modern language with OOP, templates, abstraction, recursion, etc
+* CAD/Tool developers (especially AI-coding/training) - 100 times more work cycles per day + C++ is more AI-learned by GPTs
+* Talent seekers - involving the most popular programming language speakers into variety of modern projects
 
 # Limitations
 
 * C++HDL supports only digital design components, written using blocking assignments
 * Currently no multiclock or CDC is supported. Each clock domain should be developed separately
-* Only clock-synchronous logic is supported currently
 
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL is intended to bring ease and speed in development of various digital circuits like controllers,
 multiplexors, cache and memory functions, mathematics functions, digital data processing, transmitting circuits, etc.
 
 # Requirements
 
-&nbsp;&nbsp;&nbsp;&nbsp;C++HDL is being delivered in two parts:
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL is delivered in two parts:
 
-* C++ headers which contain some classes for C++HDL datatypes
-* Conversion/checking tool which provides C++HDL to SystemVerilog conversion and syntax checking
-
-C++HDL is actively using std::format during debug printing so GCC 14 or CLANG 18 is recommended, while it's still possible to
-achieve execution using older compilators.
+* C++ headers which contain definitions of C++HDL datatypes
+* Conversion/linter tool which provides C++HDL to SystemVerilog conversion
 
 &nbsp;&nbsp;&nbsp;&nbsp;Since C++HDL works as a reflection of SystemVerilog RTL model, strong understanding of SystemVerilog modelling techniques is required,
 in particular:
@@ -93,16 +83,14 @@ in particular:
 
 # C++HDL syntax
 
-&nbsp;&nbsp;&nbsp;&nbsp;C++HDL source file can be written as .h C++ header or .cpp object file.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL source file can be written as an .h header or a .cpp object file.
 Each header file should describe a module or auxiliary information like datatypes, constants, inline functions definitions, etc.
 
-## Auxiliary constructions
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL provides ability of using of C++ structures and own data types in order to build
+comfortable and harmonious ecosystem for the project development. All types and constants will be translated into
+SystemVerilog datatypes during conversion process.
 
-&nbsp;&nbsp;&nbsp;&nbsp;C++HDL provides ability of using of any C++ data structures and definition or own data types in order to build
-comfortable and harmonious ecosystem for the development of your project. All introduced types and constants will be translated into
-SystemVerilog datatypes during conversion process. (usage of enums and packages is under development)
-
-An example is provided to show appropriate usage of C++ defines and structures in C++HDL.
+&nbsp;&nbsp;&nbsp;&nbsp;The following example is provided to show appropriate usage of C++ defines and structures in C++HDL.
 
 ```cpp
 #pragma once
@@ -118,34 +106,23 @@ using namespace cpphdl;
 
 struct CmdConfig
 {
-    uint8_t cmd_id:4;
-    uint8_t cmd_id_rsv:4;
+    uint8_t cmd_id;
     uint8_t units:6;
     uint8_t flags:2;
     uint16_t address;
-
-#ifdef USE_FORMAT_H
-    std::string format()
-    {
-        return std::format("cmd: {}, units: {}, address: {}", (uint8_t)cmd_id, (uint8_t)units, address);
-    }
-#endif
 }__PACKED;
 static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 ```
 
 ## Module description format
 
-&nbsp;&nbsp;&nbsp;&nbsp;Module definition is represented by C++ class and strictly splitted into 5 main sections and 1 optional:
+&nbsp;&nbsp;&nbsp;&nbsp;Module is defined by C++ class, based on cpphdl::Module, which includes:
 
-1. Private: nested instances members list
-2. Public: I/O ports definition and *connect()* function body
-3. Private: full list of variables: registers, combinational values and all temporary variables
-4. Public: combinational functions bodies
-5. Public: *reset()*, *work()*, *strobe()* and *comb()* functions bodies (same order is strongly recommended)
-6. Public: std::string name variable to handle instance name during hierarchy inferring
+1. Private zone with variables, registers and nested modules
+2. Public zone with I/O ports definitions and *connect()* function body
+3. *work()*, *strobe()* and combinational functions bodies
 
-&nbsp;&nbsp;&nbsp;&nbsp;Simple FIFO RTL model description using C++HDL is provided as an example:
+&nbsp;&nbsp;&nbsp;&nbsp;In the following block of code the simple FIFO RTL model description using C++HDL is provided as an example:
 
 ```cpp
 
@@ -157,30 +134,10 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 
 using namespace cpphdl;
 
-template<size_t FIFO_WIDTH_BYTES=BUS_WIDTH, size_t FIFO_DEPTH=FIFO_ROWS>
-class Fifo
+template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH>
+class Fifo: public Model
 {
     Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH> mem;
-public:
-    logic<FIFO_WIDTH_BYTES*8>* data_in   = nullptr;
-    bool*                      write_in  = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>* data_out  = mem.data_out;
-    bool*                      read_in   = nullptr;
-    bool*                      empty_out = &empty_comb;
-    bool*                      full_out  = &full_comb;
-    bool*                      clear_in  = &ZERO;
-    bool*                      afull_out = &afull_reg;
-
-    void connect()
-    {
-        mem.data_in = data_in;
-        mem.write_in = write_in;
-        mem.read_in = read_in;
-        mem.write_addr_in = &wp_reg;
-        mem.read_addr_in = &rp_reg;
-        mem.connect();
-    }
-private:
 
     u1 full_comb;
     u1 empty_comb;
@@ -188,11 +145,31 @@ private:
     reg<u<clog2(FIFO_DEPTH)>> wp_reg;
     reg<u<clog2(FIFO_DEPTH)>> rp_reg;
     reg<u1> full_reg;
-
     reg<u1> afull_reg;
 
     size_t i;
+
 public:
+    logic<FIFO_WIDTH_BYTES*8> *data_in   = nullptr;
+    bool                      *write_in  = nullptr;
+    logic<FIFO_WIDTH_BYTES*8> *data_out  = mem.data_out;
+    bool                      *read_in   = nullptr;
+    bool                      *empty_out = &empty_comb;
+    bool                      *full_out  = &full_comb;
+    bool                      *clear_in  = nullptr;
+    bool                      *afull_out = &afull_reg;
+
+    void connect()
+    {
+        mem.data_in = data_in;
+        mem.write_in = write_in;
+        mem.write_addr_in = &wp_reg;
+        mem.read_in = read_in;
+        mem.read_addr_in = &rp_reg;
+        mem.connect();
+
+        mem.__inst_name = __inst_name + "/mem";
+    }
 
     bool full_comb_func()
     {
@@ -206,24 +183,23 @@ public:
         return empty_comb;
     }
 
-    void reset()
-    {
-        wp_reg.clr();
-        rp_reg.clr();
-        full_reg.clr();
-        afull_reg.clr();
-
-        mem.reset();
-    }
-
-    void work(int clk)
+    void work(bool clk, bool reset)
     {
         if (!clk) return;
+        mem.work(clk, reset);
+
+        if (reset) {
+            wp_reg.clr();
+            rp_reg.clr();
+            full_reg.clr();
+            afull_reg.clr();
+            return;
+        }
 
         if (*read_in) {
 
             if (empty_comb_func()) {
-                printf("%s: reading from an empty fifo\n", name.c_str());
+                printf("%s: reading from an empty fifo\n", __inst_name.c_str());
                 exit(1);
             }
             if (!empty_comb_func()) {
@@ -234,12 +210,10 @@ public:
             }
         }
 
-        // rp_reg.next could be changed, lowering full_comb down
-
         if (*write_in) {
 
             if (full_comb_func()) {
-                printf("%s: writing to a full fifo\n", name.c_str());
+                printf("%s: writing to a full fifo\n", __inst_name.c_str());
                 exit(1);
             }
             if (!full_comb_func()) {
@@ -256,19 +230,19 @@ public:
             full_reg.next = 0;
         }
 
-        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
-
-        mem.work(clk);
+        afull_reg.next = full_reg ||
+            (wp_reg >= rp_reg ?
+                wp_reg - rp_reg :
+                FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
     }
 
     void strobe()
     {
+        mem.strobe();
         wp_reg.strobe();
         rp_reg.strobe();
         full_reg.strobe();
         afull_reg.strobe();
-
-        mem.strobe();
     }
 
     void comb()
@@ -276,60 +250,52 @@ public:
         mem.comb();
         mem.data_out_comb_func();
     }
-
-    std::string name;
 };
 
 ```
 
-* Module class definition can use template parameters. (currently supported only default values)
+* Module class definition can use template parameters
 
-* Only *work()* function body is recommended to be offloaded to .cpp object file, while all other bodies should be filled in .h file.
+* It is allowed to use integrated C++ types like bool, unsigned, unsigned long, etc in all places except reg<>
 
-* Only positive edge clocking is supported now, but supporting of both edges requires minor changes.
+* Each of *connect()*, *work()*, *strobe()* and *comb()* functions should call corresponding functions of nested modules
 
-* It is allowed to use compatible native C++ types like bool, unsigned, unsigned long, etc in all places except reg<>
+* Only *reg_name.next* value can be changed in all places except reset. Both reg and *reg.next* values can be used on right side of expressions
 
-* Each of *connect()*, *reset()*, *work()*, *strobe()* and *comb()* functions should call corresponding functions of module's nested instances
+* During reset *.clr()* and *.set(val)* methods are used to set up both current and next register's values
 
-* Only reg_name.next value should be changed in *work()* function. Both reg and reg.next values can be used on right side of expressions
+* *[f]printf()*, *std::print*, *\$write()*, *exit()* functions are converted to their SV synonyms and parameters are changed approprietly
 
-* In *reset()* function methods only *.clr()* and *.set(val)* are used to set up both current and next register's values
+## Input/output ports
 
-* *[f]printf()* functions are converted to *\$write()* during SV conversion, *exit()* becomes *\$finish()*, DEBUG_NAME macroses are converted to *`` ` ``DEBUG_NAME*
-and *{}* are replaced with *%x* in debug format string
+&nbsp;&nbsp;&nbsp;&nbsp;Ports are basically pointers in C++HDL. It allows instant value update on change.
+For combinational variables change *name_comb_func()* call is required. This topic will be discussed in corresponding chapter.
 
-## Input/output ports (bidir?)
+&nbsp;&nbsp;&nbsp;&nbsp;The following naming convention is used for input/output ports:
 
-&nbsp;&nbsp;&nbsp;&nbsp;Input and output ports are always pointers in C++HDL. It allows instant value update on change.
-For combinational variables pointer to value is used, but value change requires *name_comb_func()* call. This question will be discussed in corresponding chapter.
+* port_in or obj_port_in - generic input port name
+* port_out or obj_port_out - generic output port name
 
-&nbsp;&nbsp;&nbsp;&nbsp;The strict naming convention is used for input/output ports:
-
-* property_in or obj_property_in - generic input port name
-* property_out or obj_property_out - generic output port name
-
-&nbsp;&nbsp;&nbsp;&nbsp;It is strongly recommended to initialize all ports pointers right away in class description. All output ports should take address
-of particular variables of the module or it's nested instances. All input ports should be assigned *nullptr* value to make uninitialization visible.
+&nbsp;&nbsp;&nbsp;&nbsp;It is recommended to initialize all ports pointers right away in class description. All output ports should take address
+of particular registers/variables of the module or it's nested instances. All input ports should be assigned *nullptr* value to make uninitialization visible.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Since pointers are used to connect ports, any pair of connected ports must have similar variable types or variable sizes in bytes.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Any port size is multiple of 8 bit. There is no way to use less size of a variable in C++.
 Size reduction happens after SystemVerilog conversion and uses one of the following ways:
 
-* Standalone types of `<8b`it size (like reg`<u1>`) are translated to corresponding SystemVerilog types (like logic[0:0])
-* Structs should be packed and can have integral-type fields of any bit size (not more than maximum possible size in C++)
-* Composite types (structs with non-integral types) always align their subtypes size to 8 bit.
-Unused bits should be removed after SV generation, during optimization.
+* Standalone types of `<8`bit size (like reg`<u1>`) are translated to corresponding SystemVerilog types (like logic[0:0])
+* Structs should be packed and can have integral-type fields of any bit size (not more than maximum possible size in C++ each)
+* Composite types (structs with non-integral types) align their subtypes size to 8 bit.
+Unused bits should be removed after SV generation and during optimization.
 
-&nbsp;&nbsp;&nbsp;&nbsp;NOTE! If you build a complex bus joint point between C++HDL/SV module with third-party SV module,
-you should use packed *structs* to achieve proper `<8b`it fields placing.
+&nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus joint point between C++HDL module with third-party SV module,
+use packed *structs* to achieve proper `<8`bit fields placing.
 
 
-## Clock (and reset)
+## Clock and reset
 
-&nbsp;&nbsp;&nbsp;&nbsp;The only one clock is used currently, always named clk. Each *work()* function currently 
-checks that only positive edge condition is called. (more abbilities for custom clock and reset should be delivered later)
+&nbsp;&nbsp;&nbsp;&nbsp;The only one clock is used currently, named *clk*. Reset is the main *reset* parameter to work function.
 
 
 ## Variables list
@@ -337,73 +303,74 @@ checks that only positive edge condition is called. (more abbilities for custom 
 &nbsp;&nbsp;&nbsp;&nbsp;Variables are module class members and can be of 3 types:
 
 * **registers**
-* **combinational values**
-* **temporary variables**
+* **combinational**
+* **temporary**
 
-&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg`<TYPE>` and always contain value, updated on last clock edge. To access next value of register *reg_name.next* property is used.
-It is recommended to give register variable names a *reg* suffix in case when register is used as output port or in parent modules.
+&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg`<TYPE>` and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.next* property is used.
+It is recommended to give register names with a *reg* suffix in case when register is used as output port or in parent modules.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Combinational variable can be of any type.
+* Registers can carry structs, arrays, and single values.
 
-&nbsp;&nbsp;&nbsp;&nbsp;In cases when you need temporary variables inside *work()* or another function they should be declared in variables list as class member.
+* Combinational variable can be of any type.
 
-## Connect function
+* Declaration of variables inside methods is prohibited.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Function *connect()* is used to assign nested instance's inputs to data sources in the module.
+## Connect method
 
-## Work function
+&nbsp;&nbsp;&nbsp;&nbsp;Method *connect()* is used to assign nested instance's inputs to data sources in the module and backwards.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Work function can make any changes to variables. Definition of stack variables is prohibited (same as in Verilog).
-Only *.next* value of registers should be changed.
-Work function can call other functions to make code well-structured.
-Function with return value becomes function SystemVerilog, function with void return becomes task in Verilog.
-It is mandatory to give all changable member values by reference to a void function. It is prohibited to change member values in non-void functions.
+## Work method
 
-## Strobe function
+&nbsp;&nbsp;&nbsp;&nbsp;Work method can make any changes to registers and temporary variables.
+Only *.next* value of registers should be changed directly.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Strobe function should contain all registers of the module calling, .strobe() functions for them.
+* Work method can call other methods to make code well-structured.
+* Methods with return value become functions SystemVerilog, methods with void return become tasks in Verilog.
+* It is possible to change registers only from void methods.
+* Methods can take references to registers as parameters.
+
+## Strobe method
+
+&nbsp;&nbsp;&nbsp;&nbsp;Strobe function should contain all registers of the module and call .strobe() functions for them.
 Also strobe() should be called for each of nested instances of the class.
-The full list of registers and nested instances can be also generated and checked with C++HDL conversion tool.
+Forgotten registers will be reported by *cpphdl* tool.
 
-## Comb function
+## Comb method
 
-&nbsp;&nbsp;&nbsp;&nbsp;Combinational functions declaration is the most complicated part of the C++HDL-driven development process
-(as well as SystemVerilog-driven development process) because of lots of ambiguity in behaviour of generic combinational logic circuits.
-Combinational functions are used implicitly in any mathematical or logical expression in blocking or non-blocking Verilog code line.
-Their evaluation happens directly during the line execution in simulation, and after synthesis RTL should repeat same well-defined behaviour.
-At the same time, combinational functions can be defined stanalone and being connected to each other.
+&nbsp;&nbsp;&nbsp;&nbsp;**In brief: *cpphdl* tool checks combinational dependencies and gives advices how to fix them.**
+
+&nbsp;&nbsp;&nbsp;&nbsp;Combinational functions declaration is the most complicated part of the RTL development process
+ because of lots of ambiguity in behaviour of generic combinational logic circuits.
+Their evaluation happens directly during the line execution in simulation, and after synthesis RTL should repeat same behaviour.
+Combinational functions can be defined stanalone and being connected to each other.
 This possibility makes a variety of complex logic circuits achievable, including loops and oscillators.
-Since SystemVerilog RTL development process has a number of rules to avoid loops and overcomplicated combinational circuits (google it),
-C++HDL inherits same rule set. With this, C++HDL uses only blocking assignments as default coding technique (as well as other programming languages).
+SystemVerilog RTL development process has a number of rules to avoid loops and overcomplicated combinational circuits (google it),
+C++HDL inherits same rule set. C++HDL uses only blocking assignments as coding technique (as well as other programming languages).
 
 &nbsp;&nbsp;&nbsp;&nbsp;Since SystemVerilog simulation (and synthesis) refreshes all combinational function values after each line of blocking assignments,
 to achieve same behaviour, all C++HDL combinational functions should operate register's *.next* values and be called each time when they are used
-inside an owner module. Third module function insertion in the middle of module's combinational functions chain is prohibited.
+inside an owner module. Third module function insertion in the middle of two module's combinational chain is prohibited.
 
-&nbsp;&nbsp;&nbsp;&nbsp;From the fact that C++HDL builds a reflection of SystemVerilog RTL model, the obvious conclusion follows, that
-C++HDL similarly allows forming of loops and oscillators, using standalone combinational functions definition. With this, C++HDL simulation is only capable
-of runninng a limited number of combinational functions from input A to output B (not backwards), making loops and oscillators impossible.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL simulation is only capable of runninng a limited number of combinational functions from input A to output B, making loops and oscillators impossible.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Basically, in C++HDL each standalone combinational function should be represented by a C++ method with a *comb_func()* suffix and
+&nbsp;&nbsp;&nbsp;&nbsp;Basically, in C++HDL, each standalone combinational function should be represented by a C++ method with a *comb_func()* suffix and
 an output variable with a *comb* suffix, always accesible by an address. All module's combinational functions should be executed by a main *comb()* function,
 which is always called after full system strobing or reset. All nested instance's *comb()* functions should be called at the same place.
 
 &nbsp;&nbsp;&nbsp;&nbsp;More combinational functions complexity follows from the two additional circumstances:
 
 1. Often the only one specific order of their execution provides right calculation of an output during simulation (bacause of cross-dependencies)
-2. Several combinational functions from different modules can be connected together and make combinational circuit to be intermodular
+2. Combinational functions from different modules can be connected together and make combinational circuit to be intermodular
 
 &nbsp;&nbsp;&nbsp;&nbsp;This two possible complexities are handled in C++HDL with the following two rules of combinational logic development:
 
-1. At the beginning of design iteration, developer is responsible for minimization of combinational logic complexity, especially cross modules borders
-2. After code is designed, C++HDL SV conversion tool builds combinational function's dependencies tree, checks the order of functions calling and gives
-the feedback on how to fix the problems found.
+1. At the beginning of design iteration, developer is responsible for minimization of combinational logic complexity, especially cross module's borders
+2. C++HDL conversion tool builds combinational function's dependencies tree and checks the order of functions calling, suggesting the right order or calls
 
 &nbsp;&nbsp;&nbsp;&nbsp;In conclusion of the most important chapter of this specification, the note should be made, that everything said
-above is also a permament headache of the most of all RTL developers. Such signalling techniques as "valid/ready" require a lot of
-intermodule combinational signalling, which lead to a necessity of combinational function definition in SystemVerilog, even if
-the author applied a lot of effords into avoiding of it. Therefore, C++HDL role here is to compensate complexities of
-combinational functions designing process with automatic tools possibilities, which help in building of a correct calculation order and avoiding loops.
+above is also a permament headache of many of RTL developers. Such signalling techniques as "valid/ready" may require
+intermodule combinational signalling, which lead to a necessity of combinational function definition. Sometimes it happens to make loop or oscillator
+by mistake.
 
 ## Data types
 
@@ -413,9 +380,9 @@ SystemVerilog datatype each. Currently the list of C++HDL datatypes includes:
 * *logic`<WIDTH>`* - any width variable, optimized for bit-access
 * *u`<WIDTH>`*, u1, u8, u16, u32, u64 - unsigned variables
 * *s`<WIDTH>`*, s1, s8, s16, s32, s64 - signed variables (reserved but not implemented because of lack of demand and examples)
-* *reg`<TYPE>`* - register definition, works only with C++HDL types or any data structures
-* *array`<TYPE,SIZE>`* - variable, optimized for large arrays and access and changing by elements
-* *memory`<TYPE,SIZE>`* - special registered container implementing optimal access with strobing changing of one element
+* *reg`<TYPE>`* - register definition, works only with C++HDL types or any structs
+* *array`<TYPE,SIZE>`* - variable, optimized for large arrays access and changing by elements
+* *memory`<TYPE,SIZE>`* - special registered container implementing optimal memory access with strobing
 
 ### logic`<WIDTH>`
 
@@ -431,10 +398,10 @@ logic<MEM_WIDTH_BYTES*8> data_out_comb;
 &nbsp;&nbsp;&nbsp;&nbsp;Example of usage as port:
 
 ```cpp
-logic<MEM_WIDTH_BYTES*8>* data_in = nullptr;
+logic<MEM_WIDTH_BYTES*8> *data_in = nullptr;
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` type provides read/write access to particular bits using operator[] and to partial bitmap using method .bits(hi,lo):
+&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` type provides read/write access to particular bits using *operator[]* and to partial bitmap using method *.bits(hi,lo)*:
 
 ```cpp
 buffer1_byteenable.next[addr_sub+i] = 1;
@@ -444,7 +411,7 @@ host_addr.bits(39,32) = *s_writedata_in >> 32;
 ### u`<WIDTH>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;*u`<>`* is a basic unsigned value of variable size which supports all math operators and castable to a logic`<>` variable.
-Despite *u`<>`* can be of any size, tit supports maximum 64-bit math. Example of *u`<>`* usage:
+Despite *u`<>`* can be of any size, it supports maximum 64-bit math. Example of *u`<>`* usage:
 
 ```cpp
 u<STEPS_SIZE> cmd_steps;
@@ -457,8 +424,8 @@ u<STEPS_SIZE> cmd_steps;
 ### reg`<TYPE>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;reg`<>` template is intended to make variable to be a register. It adds *.next* property to be changed in a *work()* function as well as
-.strobe() method which synchronize current value with next. Despite it should never be used as port definition, it is allowed to take address of register
-to assign it to a port. Examples of reg`<>` usage are provided further:
+.strobe() method which synchronizes current value with next. It should not be used as port definition, but it can provide data to a port.
+Examples of reg`<>` usage are provided below:
 
 ```cpp
 reg<State> state;
@@ -468,9 +435,9 @@ reg<logic<WIDTH/8>> buffer1_byteenable;
 ```
 
 ```cpp
-state.next.steps = state.steps - 1;
-if (state.steps == 0) {
-    state.next.steps = 255;
+state_struct.next.steps = state_struct.steps - 1;
+if (state_struct.steps == 0) {
+    state_struct.next.steps = 255;
 }
 
 size.next = 0xFFFF;
@@ -478,11 +445,13 @@ size.next = 0xFFFF;
 buffer1.next |= buffer1_precalc;
 
 buffer1_byteenable.next[i] = buffer2_byteenable[i];
+
+mask.next.bits((i+1)*32-1,i*32) = 0;
 ```
 
 ### array`<SIZE>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;array`<>` type is used for storing a vector of similar types. It should be used with reg`<>` template in case if registered access is required.
+&nbsp;&nbsp;&nbsp;&nbsp;array`<>` type is used for storing a vector of similar types. It can be used with reg`<>` template.
 
 ```cpp
 array<u8,WIDTH/8>* avmm_writedata_out = &buffer1;
@@ -490,9 +459,9 @@ array<u8,WIDTH/8>* avmm_writedata_out = &buffer1;
 
 ### memory`<TYPE,SIZE>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;memory`<>` type is developed for optimal performance of access to registered memory with ability to change one word at a clock cycle.
-It is special container which is always registered and cant be used as a port. It uses apply() method for strobing data. The following example shows how memory`<>`
-type should be used to organize simple one r/w port memory.
+&nbsp;&nbsp;&nbsp;&nbsp;The *memory`<>`* type is developed for optimal performance of access to registered memory with ability to change one word at a clock cycle.
+It cant be used as a port. It uses *apply()* method for strobing data. The following example shows how memory`<>`
+type should be used to organize simple memory with one read and one write port.
 
 ```cpp
 #pragma once
@@ -503,8 +472,13 @@ type should be used to organize simple one r/w port memory.
 using namespace cpphdl;
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
-class Memory
+class Memory: public Module
 {
+    logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
+
+    size_t i;
+
 public:
     u<clog2(MEM_DEPTH)>*      write_addr_in = nullptr;
     logic<MEM_WIDTH_BYTES*8>* data_in       = nullptr;
@@ -514,23 +488,13 @@ public:
     bool*                     read_in       = nullptr;
 
     void connect() {}
-private:
-    logic<MEM_WIDTH_BYTES*8> data_out_comb;
-    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
-
-    size_t i;
-public:
 
     void data_out_comb_func()
     {
         data_out_comb = buffer[*read_addr_in];
     }
 
-    void reset()
-    {
-    }
-
-    void work(int clk)
+    void work(bool clk, bool reset)
     {
         if (!clk) return;
 
@@ -552,12 +516,31 @@ public:
 
 ```
 
+# C++HDL SV Conversion tool
+
+&nbsp;&nbsp;&nbsp;&nbsp;The main purposes of *cpphdl* tool is to
+
+* Provide conversion of C++HDL code to SystemVerilog models
+* Check dependencies in combinational chains and forgotten strobe calls in C++HDL source code
+
+## Structures
+
+* Each structure or union is converted into SystemVerilog package in a separate file
+* The order of fields is reversed due to differences between C++ and SystemVerilog
+* Anonymous structures and unions declared inside other structures get 'anon' name substitution
+
 ## Templates
 
-* C++HDL is trying to use templates parameters as SystemVerilog Module parameters, passing parameters through hierarchy with const variables if possible
-* C++HDL creates special Modules with fixed parameters values per C++ instantiation for all other cases
-* C++HDL creates special Module for each instantiation where template parameter is a type
+* During conversion cpphdl uses Module class template parameters as SystemVerilog module parameters, if they are numerical
+* cpphdl creates separate SV module per each instantiated combination of data types used as template parameters
 
-# C++HDL SV Conversion tool User Guide
+## Syntax
 
-To be continued...
+&nbsp;&nbsp;&nbsp;&nbsp;The *generated* folder is created after *cpphdl* call, containing .sv files. The syntax of *cpphdl* tool is the following:
+
+```bash
+cpphdl <source.h> <source.cpp> ... [compilation parameters]
+```
+
+&nbsp;&nbsp;&nbsp;&nbsp;The cpphdl tool is based on llvm clang and supports all usual C++ command line parameters.
+
