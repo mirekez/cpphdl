@@ -225,7 +225,6 @@ public:
         fifo.read_in       = *read_out;
         fifo.clear_in      = *clear_out;
         fifo.debugen_in    = debugen_in;
-printf("--- %d ---\n", );
 
         data_in           = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.data_out.m_storage;
         empty_in          = (bool*)&fifo.empty_out;
