@@ -136,13 +136,18 @@ public:
 
 template class Fifo<64,65536>;
 
-// C++HDL TEST //////////////////////////////////////////////////////////
+#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
-#ifndef SYNTHESIS  // TEST FOLLOWS
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #include <chrono>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
 #ifdef VERILATOR
-#include "VMemory.h"
+#include "VFifo.h"
 #endif
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
@@ -218,13 +223,13 @@ public:
         fifo.write_in      = *write_out;
         memcpy(&fifo.data_in.m_storage, data_out, sizeof(fifo.data_in.m_storage));
         fifo.read_in       = *read_out;
-        fifo.clear_in      = clear_out;
+        fifo.clear_in      = *clear_out;
         fifo.debugen_in    = debugen_in;
 
         data_in           = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.data_out.m_storage;
-        empty_in          = &fifo.empty_out;
-        full_in           = &fifo.full_out;
-        afull_in          = &fifo.afull_out;
+        empty_in          = fifo.empty_out;
+        full_in           = fifo.full_out;
+        afull_in          = fifo.afull_out;
 
         fifo.clk = clk;
         fifo.reset = reset;
@@ -335,12 +340,6 @@ public:
     }
 };
 
-#ifndef NO_MAINFILE
-#include <iostream>
-#include <filesystem>
-#include <string>
-#include <sstream>
-#include "../examples/tools.h"
 int main (int argc, char** argv)
 {
     bool debug = false;
@@ -355,8 +354,8 @@ int main (int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Fifo", 64, 65535, 1);
-    ok &= VerilatorCompile("Fifo", 64, 65535, 0);
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 1);
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 0);
     std::cout << "Executing tests... ===========================================================================\n";
     std::system((std::string("Fifo_64_65535_1/obj_dir/VFifo") + (debug?"--debug":"") + " 0").c_str());
     std::system((std::string("Fifo_64_65535_0/obj_dir/VFifo") + (debug?"--debug":"") + " 1").c_str());
@@ -369,11 +368,10 @@ int main (int argc, char** argv)
     && ((only != -1 && only != 1) || TestFifo<64,65535,0>(debug).run())
     );
 }
-#endif  //NO_MAINFILE
-
-#endif  //SYNTHESIS
 
 /////////////////////////////////////////////////////////////////////////
+
+#endif  // !SYNTHESIS && !NO_MAINFILE
 
 #ifdef MAIN_FILE_INCLUDED
 #undef NO_MAINFILE

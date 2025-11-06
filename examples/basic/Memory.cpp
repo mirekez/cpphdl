@@ -70,11 +70,16 @@ public:
 
 template class Memory<64,65535>;
 
-// C++HDL TEST //////////////////////////////////////////////////////////
+#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
-#ifndef SYNTHESIS  // TEST FOLLOWS
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #include <chrono>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
 #ifdef VERILATOR
 #include "VMemory.h"
 #endif
@@ -277,12 +282,6 @@ public:
     }
 };
 
-#ifndef NO_MAINFILE
-#include <iostream>
-#include <filesystem>
-#include <string>
-#include <sstream>
-#include "../examples/tools.h"
 int main (int argc, char** argv)
 {
     bool debug = false;
@@ -297,8 +296,8 @@ int main (int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Memory", 64, 65535, 1);
-    ok &= VerilatorCompile("Memory", 64, 65535, 0);
+    ok &= VerilatorCompile("Memory", {}, 64, 65535, 1);
+    ok &= VerilatorCompile("Memory", {}, 64, 65535, 0);
     std::cout << "Executing tests... ===========================================================================\n";
     std::system((std::string("Memory_64_65535_1/obj_dir/VMemory") + (debug?"--debug":"") + " 0").c_str());
     std::system((std::string("Memory_64_65535_0/obj_dir/VMemory") + (debug?"--debug":"") + " 1").c_str());
@@ -311,11 +310,10 @@ int main (int argc, char** argv)
     && ((only != -1 && only != 1) || TestMemory<64,65535,0>(debug).run())
     );
 }
-#endif  //NO_MAINFILE
-
-#endif  //SYNTHESIS
 
 /////////////////////////////////////////////////////////////////////////
+
+#endif  // !SYNTHESIS && !NO_MAINFILE
 
 #ifdef MAIN_FILE_INCLUDED
 #undef NO_MAINFILE

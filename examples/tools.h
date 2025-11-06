@@ -2,7 +2,7 @@
 
 const std::string disableWarnings = "-Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
 
-inline bool VerilatorCompile(std::string name, auto&&... args)
+inline bool VerilatorCompile(std::string name, const std::vector<std::string>& modules, auto&&... args)
 {
     std::ostringstream oss;
     ((oss << args << "_"), ...);
@@ -11,14 +11,19 @@ inline bool VerilatorCompile(std::string name, auto&&... args)
     std::filesystem::remove_all(folder_name);
     std::filesystem::create_directory(folder_name);
     std::filesystem::copy_file(std::string("generated/") + name + ".sv", folder_name + "/" + name + ".sv", std::filesystem::copy_options::overwrite_existing);
+    std::string modules_list;
+    for (const auto& module : modules) {
+        std::filesystem::copy_file(std::string("generated/") + module + ".sv", folder_name + "/" + module + ".sv", std::filesystem::copy_options::overwrite_existing);
+        modules_list += module + ".sv ";;
+    }
     size_t n = 0;
     // SV parameters substitution
     ((std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + name + ".sv").c_str())), ...);
     // running Verilator
     std::system((std::string("cd ") + folder_name +
-        "; verilator -cc ../../../examples/predef.sv " + name + ".sv --exe ../../" + name + ".cpp --top-module " + name +
+        "; verilator -cc ../../../examples/predef.sv " + name + ".sv " + modules_list + " --exe ../../" + name + ".cpp --top-module " + name +
         " --Wno-fatal --CFLAGS \"-DVERILATOR -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -I../../../../include " + disableWarnings + "\"").c_str());
     return std::system((std::string("cd ") + folder_name + "/obj_dir" +
-        "; make -j4 -f VMemory.mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
+        "; make -j4 -f V" + name + ".mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };
