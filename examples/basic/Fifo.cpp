@@ -46,6 +46,7 @@ public:
         mem.write_addr_in = &wp_reg;
         mem.read_in       = read_in;
         mem.read_addr_in  = &rp_reg;
+        mem.debugen_in    = debugen_in;
         mem.connect();
 
         mem.__inst_name = __inst_name + "/mem";

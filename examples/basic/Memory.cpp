@@ -289,7 +289,7 @@ int main (int argc, char** argv)
         debug = true;
     }
     int only = -1;
-    if (argc > 1) {
+    if (argc > 1 && strcmp(argv[argc-1], "--debug") != 0) {
         only = atoi(argv[argc-1]);
     }
 
