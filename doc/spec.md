@@ -480,12 +480,12 @@ class Memory: public Module
     size_t i;
 
 public:
-    u<clog2(MEM_DEPTH)>*      write_addr_in = nullptr;
-    logic<MEM_WIDTH_BYTES*8>* data_in       = nullptr;
-    bool*                     write_in      = nullptr;
-    u<clog2(MEM_DEPTH)>*      read_addr_in  = nullptr;
-    logic<MEM_WIDTH_BYTES*8>* data_out      = &data_out_comb;
-    bool*                     read_in       = nullptr;
+    u<clog2(MEM_DEPTH)>       *write_addr_in = nullptr;
+    logic<MEM_WIDTH_BYTES*8>  *data_in       = nullptr;
+    bool                      *write_in      = nullptr;
+    u<clog2(MEM_DEPTH)>       *read_addr_in  = nullptr;
+    logic<MEM_WIDTH_BYTES*8>  *data_out      = &data_out_comb;
+    bool                      *read_in       = nullptr;
 
     void connect() {}
 
