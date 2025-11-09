@@ -56,6 +56,11 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 * CAD/Tool developers (especially AI-coding/training) - 100 times more work cycles per day + C++ is more AI-learned by GPTs
 * Talent seekers - involving the most popular programming language speakers into variety of modern projects
 
+# What is the difference from other C++ to Verilog products
+
+* C++HDL is not HLS, it is a representation of SystemVerilog, register to register, clock to clock, completely repeating model behavior, line by line
+* C++HDL module is a single-process activity without waits, notifies, streams and cooperative multitasking. Multi-threading is possible only for many modules/instances
+
 # Limitations
 
 * C++HDL supports only digital design components, written using blocking assignments
