@@ -11,7 +11,6 @@ struct Field;
 struct Struct
 {
     std::string name;
-//    std::vector<Field> parameters;
     enum {
         STRUCT_EMPTY,
         STRUCT_STRUCT,
@@ -19,6 +18,7 @@ struct Struct
 //        STRUCT_ENUM,
     } type = STRUCT_EMPTY;
 
+    std::vector<Field> parameters;
     std::vector<Field> fields;
 
     // methods

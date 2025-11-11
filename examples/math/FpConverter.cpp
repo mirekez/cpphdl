@@ -1,0 +1,334 @@
+#ifdef MAIN_FILE_INCLUDED
+#define NO_MAINFILE
+#endif
+#define MAIN_FILE_INCLUDED
+
+#include "cpphdl.h"
+#include <print>
+
+using namespace cpphdl;
+
+#include <cstdint>
+#include <type_traits>
+
+template<size_t W, size_t EW>
+struct FP
+{
+    static constexpr size_t WIDTH = W;
+    static constexpr size_t EXP_WIDTH = EW;
+    static constexpr size_t MANT_WIDTH = W-EW-1;
+    using RAW = std::conditional_t<(WIDTH<=8), uint8_t,std::conditional_t<(WIDTH<=16), uint16_t,std::conditional_t<(WIDTH<=32), uint32_t,uint64_t>>>;
+
+    union {
+        RAW raw : W;
+        struct {
+            RAW mantissa : W-EW-1;
+            RAW exponent : EW;
+            RAW sign : 1;
+        }__attribute__((packed));
+    };
+
+    static_assert(WIDTH <= 64, "WIDTH too large");
+    static_assert(EXP_WIDTH <= WIDTH-2, "EXP_WIDTH too large");
+    static_assert(EXP_WIDTH <= 11, "EXP_WIDTH too large");
+    static_assert(MANT_WIDTH <= 52, "MANT_WIDTH too large");
+
+    template<typename TYPE>
+    void convert(TYPE& to)
+    {
+        to.sign = sign;
+        to.exponent = exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(to.EXP_WIDTH-1))-1);
+
+        if (exponent == ((1ULL<<EXP_WIDTH)-1) || (exponent > ((1ULL<<(EXP_WIDTH-1))-1) && exponent - ((1ULL<<(EXP_WIDTH-1))-1) > ((1ULL<<to.EXP_WIDTH)/2))) {
+            to.exponent = ((1ULL<<to.EXP_WIDTH)-1);
+        }
+        if (exponent == 0 || (exponent < ((1ULL<<(EXP_WIDTH-1))-1) && ((1ULL<<(EXP_WIDTH-1))-1) - exponent >= ((1ULL<<to.EXP_WIDTH)/2))) {
+            to.exponent = 0;
+        }
+
+        if (to.MANT_WIDTH >= MANT_WIDTH) {
+            to.mantissa = mantissa << (to.MANT_WIDTH - MANT_WIDTH);
+        }
+        else {
+            if (MANT_WIDTH - to.MANT_WIDTH < MANT_WIDTH) {
+                to.mantissa = mantissa >> (MANT_WIDTH - to.MANT_WIDTH);
+            }
+            else {
+                to.mantissa = 0;
+            }
+        }
+    }
+
+#ifndef SYNTHESIS
+    double to_double()
+    {
+        uint64_t ret = 0;
+        ret |= (uint64_t)sign << 63;
+        uint16_t exp = exponent == 0 ? 0 : (exponent == ((1ULL<<EXP_WIDTH)-1) ? ((1ULL<<11)-1) : (exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(11-1))-1)));
+        ret |= (uint64_t)exp << 52;
+        ret |= (uint64_t)mantissa << (52 - MANT_WIDTH);
+        return ret;
+    }
+
+    bool cmp(double ref, double threshold)
+    {
+        return to_double() >= ref - threshold && to_double() <= ref + threshold;
+    }
+#endif
+};
+
+template<size_t W, size_t EW>
+struct std::formatter<FP<W,EW>>
+{
+    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); }
+    template <typename FormatContext>
+    auto format(const FP<W,EW>& fp, FormatContext& ctx) const
+    {
+        auto out = ctx.out();
+        out = std::format_to(out, "{}", fp.raw);
+        return out;
+    }
+};
+
+// C++HDL MODEL /////////////////////////////////////////////////////////
+template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
+class FpConverter : public Module
+{
+    array<DTYPE,LENGTH> out_comb;
+    reg<array<DTYPE,LENGTH>> out_reg;
+
+    DTYPE conv_comb;
+
+public:
+    array<STYPE,LENGTH>    *data_in  = nullptr;
+    array<DTYPE,LENGTH>    *data_out = &out_comb;
+
+    bool     debugen_in;
+
+    void connect() {}
+
+    size_t i;
+    array<DTYPE,LENGTH>& conv_comb_func()
+    {
+        if (!USE_REG) {
+            for (i=0; i < LENGTH; ++i) {
+                (*data_in)[i].convert(out_comb[i]);
+            }
+        }
+        else {
+            out_comb = out_reg;
+        }
+        return out_comb;
+    }
+
+    void work(bool clk, bool reset)
+    {
+        if (!clk) return;
+
+//        if (reset) {
+//            return;
+//        }
+
+        out_reg = out_comb;
+
+        if (debugen_in) {
+            std::print("{:s}: input: {}, output: {}\n", __inst_name, *data_in, *data_out);
+        }
+    }
+
+    void strobe()
+    {
+        out_reg.strobe();
+    }
+
+    void comb()
+    {
+    }
+};
+/////////////////////////////////////////////////////////////////////////
+
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
+
+template class FpConverter<FP<32,8>,FP<16,5>,8,1>;
+template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
+
+#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
+
+#include <chrono>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
+#ifdef VERILATOR
+#include "VFpConverter.h"
+#endif
+
+template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
+class TestFpConverter : public Module
+{
+#ifdef VERILATOR
+    VFpConverter converter;
+#else
+    FpConverter<STYPE,DTYPE,LENGTH,USE_REG> converter;
+#endif
+
+    double refs[LENGTH];
+    reg<array<STYPE,LENGTH>> out_reg;
+    reg<array<double,LENGTH>> was_refs1;
+    reg<array<double,LENGTH>> was_refs2;
+    bool error;
+
+    size_t i;
+
+public:
+    array<DTYPE,LENGTH>    *data_in  = nullptr;
+    array<STYPE,LENGTH>    *data_out = &out_reg;
+
+    bool             debugen_in;
+
+    TestFpConverter(bool debug)
+    {
+        debugen_in = debug;
+    }
+
+    ~TestFpConverter()
+    {
+    }
+
+    void connect()
+    {
+#ifndef VERILATOR
+        converter.__inst_name = __inst_name + "/converter";
+
+        converter.data_in      = data_out;
+        converter.connect();
+
+        data_in           = converter.data_out;
+#endif
+    }
+
+    void work(bool clk, bool reset)
+    {
+#ifndef VERILATOR
+        converter.work(clk, reset);
+#else
+        memcpy(&converter.data_in.m_storage, data_out, sizeof(converter.data_in.m_storage));
+        converter.debugen_in    = debugen_in;
+
+        data_in           = (array<DTYPE,LENGTH>*) &converter.data_out.m_storage;
+
+        converter.clk = clk;
+        converter.reset = reset;
+        converter.eval();  // eval of verilator should be in the end
+#endif
+
+        if (reset) {
+            error = false;
+            return;
+        }
+
+        if (!clk) {  // all checks on negedge edge
+            for (i=0; i < LENGTH; ++i) {
+                if (!reset && ((!USE_REG && !(*data_in)[i].cmp(was_refs1[i], 0.1)) || (USE_REG && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
+                    std::print("{:s} ERROR: {}({}) was read instead of {}\n",
+                        __inst_name,
+                        (*data_in)[i].to_double(),
+                        (*data_in)[i],
+                        USE_REG?was_refs2[i]:was_refs1[i]);
+                    error = true;
+                }
+            }
+            return;
+        }
+
+        for (i=0; i < LENGTH; ++i) {
+            refs[i] = random()*random()/1000000.0;
+            out_reg.next[i].mantissa = (*(uint64_t*)&refs[i])&((1ULL<<52)-1);
+            out_reg.next[i].exponent = ((*(uint64_t*)&refs[i])&~(1ULL<<63))>>52;
+            out_reg.next[i].sign = (*(uint64_t*)&refs[i])>>63;
+        }
+        was_refs1.next = refs;
+        was_refs2.next = was_refs1;
+    }
+
+    void strobe()
+    {
+#ifndef VERILATOR
+        converter.strobe();
+#endif
+
+        out_reg.strobe();
+        was_refs1.strobe();
+        was_refs2.strobe();
+    }
+
+    void comb()
+    {
+#ifndef VERILATOR
+        converter.conv_comb_func();
+#endif
+    }
+
+    bool run()
+    {
+#ifdef VERILATOR
+        std::print("VERILATOR TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), DTYPE).name(), LENGTH, USE_REG);
+#else
+        std::print("C++HDL TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), typeid(DTYPE).name(), LENGTH, USE_REG);
+#endif
+        auto start = std::chrono::high_resolution_clock::now();
+        __inst_name = "converter_test";
+        connect();
+        work(0, 1);
+        work(1, 1);
+        int cycles = 100000;
+        int clk = 0;
+        while (--cycles && !error) {
+            comb();
+            work(clk, 0);
+            strobe();
+            clk = !clk;
+        }
+        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+            (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
+        return !error;
+    }
+};
+
+int main (int argc, char** argv)
+{
+    bool debug = false;
+    if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
+        debug = true;
+    }
+    int only = -1;
+    if (argc > 1 && strcmp(argv[argc-1], "--debug") != 0) {
+        only = atoi(argv[argc-1]);
+    }
+
+    bool ok = true;
+#ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
+//    std::cout << "Building verilator simulation... =============================================================\n";
+//    ok &= VerilatorCompile("Converter", {}, 8, 1);
+//    ok &= VerilatorCompile("Converter", {}, 8, 0);
+//    std::cout << "Executing tests... ===========================================================================\n";
+//    std::system((std::string("Converter_64_65535_1/obj_dir/VConverter") + (debug?" --debug":"") + " 0").c_str());
+//    std::system((std::string("Converter_64_65535_0/obj_dir/VConverter") + (debug?" --debug":"") + " 1").c_str());
+#else
+    Verilated::commandArgs(argc, argv);
+#endif
+
+    return !( ok
+    && ((only != -1 && only != 0) || TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run())
+    && ((only != -1 && only != 1) || TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run())
+    );
+}
+
+/////////////////////////////////////////////////////////////////////////
+
+#endif  // !SYNTHESIS && !NO_MAINFILE
+
+#ifdef MAIN_FILE_INCLUDED
+#undef NO_MAINFILE
+#endif

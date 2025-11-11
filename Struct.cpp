@@ -12,16 +12,6 @@ bool Struct::print(std::ofstream& out)
 {
     currStruct = this;
 
-/*    if (parameters.size()) {
-        out <<  " #(\n";
-        bool first = true;
-        for (auto& param : parameters) {
-            out << (first?"    ":",   ") << "parameter " << param.name << "\n";
-            first = false;
-        }
-        out <<  " )\n";
-    }
-    out << name << " (\n";*/
 
     for (int i=0; i < indent; ++i) {
         out << "    ";
@@ -39,6 +29,8 @@ bool Struct::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "} " << (name.length()?name:"anon") << ";\n";
+    out << "} " << (name.length()?name:"anon");
+
+    out << ";\n";
     return true;
 }

@@ -29,7 +29,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             replacePrint(value);
             return indent_str + prefix + value;
         case EXPR_PARAM:
-            return indent_str + prefix + value;
+            return indent_str + prefix + (((flags&FLAG_STRUCT)&&sub.size())?sub[0].str():value);
         case EXPR_TEMPLATE:
             if (value == "cpphdl::array") {
                 ASSERT(sub.size() >= 2);
@@ -201,9 +201,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
+            sub[0].flags = flags;
+            sub[1].flags = flags;
             return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
+            sub[0].flags = flags;
             if (value == "*") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
@@ -216,24 +219,33 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
+            sub[0].flags = flags;
+            sub[1].flags = flags;
+            sub[2].flags = flags;
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
             ASSERT(sub.size()==2);
+            sub[0].flags = flags;
+            sub[1].flags = flags;
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         case EXPR_CAST:
             ASSERT(sub.size()==1);
+            sub[0].flags = flags;
             return indent_str + sub[0].str(prefix, suffix);
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
+            sub[0].flags = flags;
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
                 return indent_str + sub[0].str();
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()==1);
+            sub[0].flags = flags;
             return indent_str + sub[0].str();
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
+            sub[0].flags = flags;
             if (value == "sizeof") {
                 return indent_str + "($bits" + "(" + sub[0].str() + ")/8)";
             }

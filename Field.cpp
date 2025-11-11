@@ -7,7 +7,7 @@ using namespace cpphdl;
 
 Field* currField;
 
-bool Field::print(std::ofstream& out, bool forcePacked)
+bool Field::print(std::ofstream& out, bool isStruct)
 {
     currField = this;
 
@@ -31,7 +31,7 @@ bool Field::print(std::ofstream& out, bool forcePacked)
             type.sub[1].sub[0].indent = indent + 1;
             out << type.sub[1].sub[0].str() << " " << name << "[" << type.sub[0].str() << "]" << ";\n";
         } else
-        if (forcePacked) {
+        if (isStruct) {
             type.sub[1].indent = indent + 1;
             out << type.str() << " " << name << ";\n";
         }
@@ -44,6 +44,7 @@ bool Field::print(std::ofstream& out, bool forcePacked)
         type.indent = indent + 1;
         type.type = Expr::EXPR_TYPE;
         type.value = "cpphdl::logic";
+        bitwidth.flags = Expr::FLAG_STRUCT;
         out << type.str("", std::string("[") + bitwidth.str() + "-1:0]") << " " << name << ";\n";
     }
     else {

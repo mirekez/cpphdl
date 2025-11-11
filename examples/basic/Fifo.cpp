@@ -135,11 +135,12 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-template class Fifo<64,65536>;
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
+
+template class Fifo<64,65536,1>;
+template class Fifo<64,65536,0>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
-
-// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #include <chrono>
 #include <iostream>
@@ -358,18 +359,18 @@ int main (int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 1);
-    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65535, 0);
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65536, 1);
+    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65536, 0);
     std::cout << "Executing tests... ===========================================================================\n";
-    std::system((std::string("Fifo_64_65535_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
-    std::system((std::string("Fifo_64_65535_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
+    std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
+    std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
     return !( ok
-    && ((only != -1 && only != 0) || TestFifo<64,65535,1>(debug).run())
-    && ((only != -1 && only != 1) || TestFifo<64,65535,0>(debug).run())
+    && ((only != -1 && only != 0) || TestFifo<64,65536,1>(debug).run())
+    && ((only != -1 && only != 1) || TestFifo<64,65536,0>(debug).run())
     );
 }
 
