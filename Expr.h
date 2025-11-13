@@ -58,6 +58,7 @@ struct Expr
         FLAG_NORETURN = 4,
         FLAG_RETURN = 8,
         FLAG_STRUCT = 16,
+//        FLAG_MEMBER = 32,
     } flags = FLAG_NONE;
 
     std::string str(std::string prefix = "", std::string size = "");

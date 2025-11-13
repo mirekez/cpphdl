@@ -21,6 +21,7 @@ struct Module
     std::vector<Method> methods;
     std::vector<Comb> combs;
     std::set<std::string> imports;
+    std::string origName;
 
     // methods
 

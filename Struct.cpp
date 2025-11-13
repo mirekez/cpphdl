@@ -12,7 +12,6 @@ bool Struct::print(std::ofstream& out)
 {
     currStruct = this;
 
-
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }

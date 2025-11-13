@@ -35,10 +35,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
-            if (sub.size()) {
-                return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
-            }
-            return indent_str + prefix + typeToSV(value);
+//            if (sub.size()) {
+//                return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
+//            }
+            return indent_str + prefix + typeToSV(value, suffix);
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
@@ -338,16 +338,18 @@ std::string Expr::typeToSV(std::string name, std::string size)
 
     std::string str = name;
     if (type == EXPR_TEMPLATE) {
-        str += " #(";
-        bool first = true;
-        for (auto& param : sub) {
-            if (!first) {
-                str += ",";
+//        if ((flags&FLAG_MEMBER)) {
+//            str += "#(";
+            bool first = true;
+            for (auto& param : sub) {
+                if (!first) {
+                    str += "_";
+                }
+                str += param.str();
+                first = false;
             }
-            str += param.str();
-            first = false;
-        }
-        str += ")";
+//            str += ")";
+//        }
     }
     if (name == "cpphdl::logic") {
         str = logic + size;

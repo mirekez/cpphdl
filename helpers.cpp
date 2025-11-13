@@ -14,7 +14,6 @@
 
 using namespace clang;
 
-extern std::map<std::string,CXXRecordDecl*> abstractDefs;
 cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
 cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx);
 
@@ -410,80 +409,10 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
     return cpphdl::Expr{"", cpphdl::Expr::EXPR_UNKNOWN};
 }
 
-bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
-{
-//    if (const auto* ET = llvm::dyn_cast<ElaboratedType>(QT)) {
-//        QT = ET->getNamedType();
-//    }
-    if (const auto* TST = QT->getAs<TemplateSpecializationType>()) {
-
-        expr.type = cpphdl::Expr::EXPR_TEMPLATE;
-        expr.value = TST->getTemplateName().getAsTemplateDecl()->getQualifiedNameAsString();
-
-        for (const auto &Arg : TST->template_arguments()) {
-            std::string str;
-            llvm::raw_string_ostream OS(str);
-            Arg.print(Ctx.getPrintingPolicy(), OS, true);
-            OS.flush();
-
-            if (Arg.getKind() == TemplateArgument::Expression) {
-                DEBUG_AST(std::cout << " (");
-                expr.sub.push_back(exprToExpr(Arg.getAsExpr(), Ctx));
-                DEBUG_AST(std::cout << " expression),");
-            } else
-            if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
-                QualType QT = Arg.getAsType().getNonReferenceType();
-                DEBUG_AST(std::cout << "(");
-
-//                if (templateToExpr(mod, QT, expr1, Ctx)) {
-//                    DEBUG_AST(std::cout << " template " << expr1.value << "),");
-//                }
-//                else {
-//                    QT = QT.getCanonicalType();
-//                    QT = QT.getDesugaredType(Ctx);
-//                    str = QT.getAsString(Ctx.getPrintingPolicy());
-//                    DEBUG_AST(std::cout << " type " << str << "),");
-//                    expr1.value = str;
-//                    expr1.type = cpphdl::Expr::EXPR_TYPE;
-//                }
-                cpphdl::Expr expr1 = digQT(mod, QT, Ctx);
-                expr.sub.emplace_back(std::move(expr1));
-
-                if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                    auto ret = mod.imports.emplace(QT->getAsCXXRecordDecl()->getQualifiedNameAsString());
-                    if (ret.second) {
-                        currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx));
-                    }
-                }
-            } else
-            if (Arg.getKind() == TemplateArgument::Integral) {
-/*                if (params && params->size() > i) {
-                    DEBUG_AST(std::cout << "(" << (*params)[i] << ")");
-                    expr1.value = (*params)[i];
-                    expr1.sub.push_back(cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE});
-                }
-                else {
-                }*/
-                cpphdl::Expr expr1 = cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE};
-                expr.sub.emplace_back(std::move(expr1));
-                DEBUG_AST(std::cout << "(integral " << str << "),");
-            } else
-            if (Arg.getKind() == TemplateArgument::Declaration) {
-//                expr1.value = str;
-                DEBUG_AST(std::cout << "(decl " << str << "),");
-            } else {
-//                expr1.value = str;
-                DEBUG_AST(std::cout << "(unhandled " << str << "),");
-            }
-        }
-        return true;
-    }
-    return false;
-}
-
-bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl*RD, std::vector<cpphdl::Field>& params, ASTContext& Ctx)
+bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vector<cpphdl::Field>& params, ASTContext& Ctx)
 {
     if (auto* TSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        DEBUG_AST(std::cout << " Specialization parameters: \n");
 
         const TemplateArgumentList& Args = TSD->getTemplateArgs();
         const TemplateParameterList* Params = TSD->getSpecializedTemplate()->getTemplateParameters();
@@ -502,24 +431,25 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl*RD, std::vect
                         DEBUG_AST(std::cout << " *pointer*");
                     }
 
-                QT = QT.getNonReferenceType();
-                QT = QT.getDesugaredType(Ctx); // remove typedefs, aliases, etc.
-                QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-
-                    cpphdl::Expr expr = digQT(mod, QT, Ctx);
+//                QT = QT.getNonReferenceType();
+//                QT = QT.getDesugaredType(Ctx); // remove typedefs, aliases, etc.
+//                QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+//digQT(mod, QT, Ctx);
 
                     std::string str;
                     llvm::raw_string_ostream OS(str);
                     QT.print(OS, Ctx.getPrintingPolicy());
                     OS.flush();
+                    cpphdl::Expr expr = cpphdl::Expr{str, cpphdl::Expr::EXPR_TYPE};
                     DEBUG_AST(std::cout << " type: " << OS.str() << "\n");
                     params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), expr});
                     DEBUG_AST(std::cout << "\n");
                     DEBUG_EXPR(std::cout << "        Expr: " << params.back().type.debug() << "\n");
                     if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                        auto ret = mod.imports.emplace(QT->getAsCXXRecordDecl()->getQualifiedNameAsString());
+                        auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx);
+                        auto ret = mod.imports.emplace(st.name);
                         if (ret.second) {
-                            currProject->structs.emplace_back(exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx));
+                            currProject->structs.emplace_back(std::move(st));
                         }
                     }
                     break;
@@ -530,8 +460,12 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl*RD, std::vect
                     llvm::raw_string_ostream OS(str);
                     Arg.getAsIntegral().print(OS, true);
                     OS.flush();
-                    DEBUG_AST(std::cout << " integral: " << OS.str());
-                    params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(),cpphdl::Expr{OS.str(),cpphdl::Expr::EXPR_VALUE}});
+                    DEBUG_AST(std::cout << " integral: " << str);
+                    if (str.length() > 2 && str.find("UL") == str.length()-2) {
+                        str = str.replace(str.find("UL"), 2, "");
+                    }
+                    params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(),
+                        cpphdl::Expr{Arg.getIntegralType()->isBooleanType() ? (Arg.getAsIntegral().isZero() ? "false" : "true") : str, cpphdl::Expr::EXPR_VALUE}});
                     DEBUG_AST(std::cout << "\n");
                     DEBUG_EXPR(std::cout << "        Expr: " << params.back().type.debug() << "\n");
                     break;
@@ -577,6 +511,82 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl*RD, std::vect
     return false;
 }
 
+bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
+{
+    auto* TSD = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(QT->getAsCXXRecordDecl());
+    auto* TST = QT->getAs<TemplateSpecializationType>();
+    if (TSD || TST) {
+
+        expr.type = cpphdl::Expr::EXPR_TEMPLATE;
+        expr.value = TSD ? TSD->getSpecializedTemplate()->getQualifiedNameAsString()
+                         : TST->getTemplateName().getAsTemplateDecl()->getQualifiedNameAsString();
+
+        size_t i = 0;
+        for (const auto &Arg : (TSD ? ArrayRef<TemplateArgument>(TSD->getTemplateArgs().asArray()) : TST->template_arguments())) {
+            std::string str;
+            llvm::raw_string_ostream OS(str);
+            Arg.print(Ctx.getPrintingPolicy(), OS, true);
+            OS.flush();
+
+            if (Arg.getKind() == TemplateArgument::Expression) {
+                DEBUG_AST(std::cout << " (");
+                expr.sub.push_back(exprToExpr(Arg.getAsExpr(), Ctx));
+                DEBUG_AST(std::cout << " expression),");
+            } else
+            if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
+                QualType QT = TSD ? TSD->getTemplateArgs()[i].getAsType().getNonReferenceType() : Arg.getAsType().getNonReferenceType();
+                DEBUG_AST(std::cout << "(" << TST << " " << TSD << " ");
+
+//                if (templateToExpr(mod, QT, expr1, Ctx)) {
+//                    DEBUG_AST(std::cout << " template " << expr1.value << "),");
+//                }
+//                else {
+//                    QT = QT.getCanonicalType();
+//                    QT = QT.getDesugaredType(Ctx);
+//                    str = QT.getAsString(Ctx.getPrintingPolicy());
+//                    DEBUG_AST(std::cout << " type " << str << "),");
+//                    expr1.value = str;
+//                    expr1.type = cpphdl::Expr::EXPR_TYPE;
+//                }
+                cpphdl::Expr expr1 = digQT(mod, QT, Ctx);
+                expr.sub.emplace_back(std::move(expr1));
+
+                if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
+                    auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx);
+                    auto ret = mod.imports.emplace(st.name);
+                    if (ret.second) {
+                        currProject->structs.emplace_back(std::move(st));
+                    }
+                }
+            } else
+            if (Arg.getKind() == TemplateArgument::Integral) {
+/*                if (params && params->size() > i) {
+                    DEBUG_AST(std::cout << "(" << (*params)[i] << ")");
+                    expr1.value = (*params)[i];
+                    expr1.sub.push_back(cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE});
+                }
+                else {
+                }*/
+                if (str.length() > 2 && str.find("UL") == str.length()-2) {
+                    str = str.replace(str.find("UL"), 2, "");
+                }
+                cpphdl::Expr expr1 = cpphdl::Expr{str, cpphdl::Expr::EXPR_VALUE};
+                expr.sub.emplace_back(std::move(expr1));
+                DEBUG_AST(std::cout << "(integral " << str << "),");
+            } else
+            if (Arg.getKind() == TemplateArgument::Declaration) {
+//                expr1.value = str;
+                DEBUG_AST(std::cout << "(decl " << str << "),");
+            } else {
+//                expr1.value = str;
+                DEBUG_AST(std::cout << "(unhandled " << str << "),");
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
 {
     cpphdl::Expr arrayExpr;
@@ -611,8 +621,8 @@ cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
         DEBUG_AST(std::cout << " template) " << expr.value);
     }
     else {
-        QT = QT.getDesugaredType(Ctx);
-        QT = QT.getCanonicalType();
+//        QT = QT.getDesugaredType(Ctx);
+//        QT = QT.getCanonicalType();
         std::string str = QT.getAsString(Ctx.getPrintingPolicy());
         DEBUG_AST(std::cout << str << " type) " << str);
         expr.value = str;
@@ -626,6 +636,28 @@ cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
     return expr;
 }
 
+void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true)
+{
+    bool first = true;
+    for (auto& param : params) {
+        if (!onlyTypes || param.type.type != cpphdl::Expr::EXPR_VALUE) {
+            std::string str = param.type.value;
+            size_t pos;
+            while ((pos = str.find("<")) != (size_t)-1 || (pos = str.find(">")) != (size_t)-1 || (pos = str.find(" ")) != (size_t)-1) {
+                str.replace(pos, 1, "");
+            }
+            while ((pos = str.find(",")) != (size_t)-1) {
+                str.replace(pos, 1, "_");
+            }
+            while ((pos = str.find("-")) != (size_t)-1) {
+                str.replace(pos, 1, "m");
+            }
+            name += (!first?std::string("_"):"") + str;
+            first = false;
+        }
+    }
+}
+
 cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx)
 {
     std::string sname = RD->getQualifiedNameAsString();
@@ -636,23 +668,14 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
 
     // extracting parameters of the template
     std::vector<cpphdl::Field> params;
-    if (auto* TSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-        DEBUG_AST(std::cout << " Struct parameters: \n");
-        specializationToParameters(mod, RD, params, Ctx);
-    }
+    specializationToParameters(mod, RD, params, Ctx);
+    addSpecializationName(sname, params, false);
 
-    if (params.size()) {
-        for (auto& param : params) {
-            sname += std::string("_") + param.type.value;
-        }
-    }
-
-    cpphdl::Struct st{sname, (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT), std::move(params)};
+    cpphdl::Struct st{sname, (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT)};
+    st.origName = RD->getQualifiedNameAsString();
     DEBUG_AST(std::cout << "    exportStruct(" << RD->getQualifiedNameAsString() << "):\n");
 
-    // extract fields from abstract class
-    for (Decl* D : (abstractDefs.find(RD->getQualifiedNameAsString()) != abstractDefs.end() ?
-                    abstractDefs[RD->getQualifiedNameAsString()]->decls() : RD->decls())) {
+    for (Decl* D : RD->decls()) {
         if (auto* FD = dyn_cast<FieldDecl>(D)) {
             DEBUG_AST(std::cout << "    SField:");
 
@@ -734,7 +757,7 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
                         st.fields.back().definition = std::move(st1);
                     }
                     else {
-                        auto ret = mod.imports.emplace(QT->getAsCXXRecordDecl()->getQualifiedNameAsString());
+                        auto ret = mod.imports.emplace(st1.name);
                         if (ret.second) {
                             currProject->structs.emplace_back(std::move(st1));
                         }

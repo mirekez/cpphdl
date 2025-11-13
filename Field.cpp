@@ -15,7 +15,7 @@ bool Field::print(std::ofstream& out, bool isStruct)
         ASSERT1(type.sub.size() >= 3, std::string("cpphdl::memory subs size = ") + std::to_string(type.sub.size()) );
         type.sub[0].flags = Expr::FLAG_REG;
         type.sub[0].indent = indent + 1;
-        out << type.sub[0].str("", std::string("[") + type.sub[1].value + "-1:0]") << " " << name << "[" << type.sub[2].value << "]" << ";\n";
+        out << type.sub[0].str("", std::string("[") + type.sub[1].str() + "-1:0]") << " " << name << "[" << type.sub[2].str() << "]" << ";\n";
     } else
     if (type.value == "cpphdl::reg") {
         ASSERT1(type.sub.size() >= 1, std::string("cpphdl::reg subs size = ") + std::to_string(type.sub.size()) );
