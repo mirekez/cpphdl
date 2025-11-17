@@ -40,7 +40,20 @@ struct Expr
     } type = EXPR_EMPTY;
 
     std::vector<Expr> sub;
-    bool anonymous = false;
+
+    enum {
+        FLAG_NONE = 0,
+        FLAG_WIRE = 1,
+        FLAG_REG = 2,
+        FLAG_NORETURN = 4,
+        FLAG_RETURN = 8,
+        FLAG_STRUCT = 16,
+        FLAG_CALL = 32,
+        FLAG_ANON = 64,
+        FLAG_NOTHIS = 128
+    };
+    unsigned flags = FLAG_NONE;
+
     bool hasInitializer = false;
 
     // methods
@@ -50,16 +63,6 @@ struct Expr
     {
         return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY;
     }
-
-    enum : unsigned {
-        FLAG_NONE = 0,
-        FLAG_WIRE = 1,
-        FLAG_REG = 2,
-        FLAG_NORETURN = 4,
-        FLAG_RETURN = 8,
-        FLAG_STRUCT = 16,
-//        FLAG_MEMBER = 32,
-    } flags = FLAG_NONE;
 
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");

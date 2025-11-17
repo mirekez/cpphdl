@@ -8,6 +8,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "clang/Frontend/FrontendActions.h"
 
+#include "helpers.h"
+
 #include "Debug.h"
 #include "Project.h"
 #include "Module.h"
@@ -21,130 +23,220 @@
 
 using namespace clang;
 
-cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx);
-bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx);
-CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
-cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
-cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx);
-void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true);
-bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl*RD, std::vector<cpphdl::Field>& params, ASTContext& Ctx);
-
 std::vector<CXXRecordDecl*> abstractDefs;
 
-void updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2)
+CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
 {
-    if (expr1.type == expr2.type && expr1.sub.size() == expr2.sub.size()) {
-        for (size_t i=0; i < expr1.sub.size(); ++i) {
-            updateExpr(expr1.sub[0], expr2.sub[0]);
+    SmallVector<StringRef, 4> Parts;
+    QualifiedName.split(Parts, "::");
+
+    DeclContext* DC = Ctx->getTranslationUnitDecl();
+
+    for (unsigned i = 0; i < Parts.size(); ++i) {
+        IdentifierInfo& Id = Ctx->Idents.get(Parts[i]);
+        auto strs = DC->lookup(&Id);
+
+        if (strs.empty()) {
+            return nullptr;
+        }
+
+        NamedDecl* ND = strs.front();
+
+        if (i < Parts.size()-1) {
+            if (auto* NS = dyn_cast<NamespaceDecl>(ND)) {
+                DC = NS;
+            }
+            else {
+                return nullptr;
+            }
+        } else {
+            if (auto* CXX = dyn_cast<CXXRecordDecl>(ND)) {
+                return CXX;
+            }
+            return nullptr;
         }
     }
-    if (expr1.type == cpphdl::Expr::EXPR_VALUE && expr2.type != cpphdl::Expr::EXPR_VALUE) {
-         expr1 = std::move(expr2);
-    }
+    return nullptr;
 }
 
-bool putField(cpphdl::Module& mod, FieldDecl* FD, ASTContext* Context)
+void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 {
-    DEBUG_AST(std::cout << "  Field:");
+    DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << "\n");
+//    if (!MD->hasBody()) {
+//        return true;
+//    }
 
-    bool pointer = false;
-    QualType QT = FD->getType().getNonReferenceType();
-    if (QT->isPointerType()) {  // while?
-        QT = QT->getPointeeType();
-        pointer = true;
-        DEBUG_AST(std::cout << " *pointer*");
-    }
+    struct LocalVisitor : RecursiveASTVisitor<LocalVisitor>
+    {
+        Helpers& hlp;
+        cpphdl::Method& method;
+        LocalVisitor(Helpers& helpers, cpphdl::Method& method) : hlp(helpers), method(method) {}
 
-    cpphdl::Expr expr = digQT(mod, QT, *Context);
-
-    if (pointer || (FD->getNameAsString().length() > 3
-                && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
-                || FD->getNameAsString().rfind("_out") == FD->getNameAsString().length()-4))) {
-        DEBUG_AST(std::cout << " {port " << FD->getNameAsString() << "}");
-
-        cpphdl::Field* field = 0;
-        auto it = std::find_if(mod.ports.begin(), mod.ports.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
-        if (it != mod.ports.end()) {
-            field = &*it;
-            updateExpr(field->type, expr);
-        }
-        else {
-            field = &mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+        bool TraverseBinaryOperator(BinaryOperator* E)
+        {
+            VisitBinaryOperator(E);
+            return true;
         }
 
-        if (FD->getInClassInitializer()) {
-            DEBUG_AST(std::cout << ", <initializer ");
-            field->initializer = exprToExpr(FD->getInClassInitializer(), *Context);
-            DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
-            expr.hasInitializer = true;
+        bool VisitBinaryOperator(BinaryOperator* BO)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(BO));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
         }
 
-        DEBUG_AST(std::cout << "\n");
-        DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
+        bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr* E)
+        {
+            VisitCXXOperatorCallExpr(E);
+            return true;
+        }
+
+        bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr* OCE)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(OCE));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseCXXMemberCallExpr(CXXMemberCallExpr* E)
+        {
+            VisitCXXMemberCallExpr(E);
+            return true;
+        }
+
+        bool VisitCXXMemberCallExpr(CXXMemberCallExpr* MCE)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(MCE));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseMemberExpr(MemberExpr* E)
+        {
+            VisitMemberExpr(E);
+            return true;
+        }
+
+        bool VisitMemberExpr(MemberExpr* ME)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(ME));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseForStmt(ForStmt* E)
+        {
+            VisitForStmt(E);
+            return true;
+        }
+
+        bool VisitForStmt(ForStmt* FS)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(FS));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseWhileStmt(WhileStmt* E)
+        {
+            VisitWhileStmt(E);
+            return true;
+        }
+
+        bool VisitWhileStmt(WhileStmt* WS)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(WS));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseIfStmt(IfStmt* E)
+        {
+            VisitIfStmt(E);
+            return true;
+        }
+
+        bool VisitIfStmt(IfStmt* IS)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(IS));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool TraverseReturnStmt(ReturnStmt* E)
+        {
+            VisitReturnStmt(E);
+            return true;
+        }
+
+        bool VisitReturnStmt(ReturnStmt* RS)
+        {
+            method.statements.emplace_back(hlp.exprToExpr(RS));
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
+            return true;
+        }
+
+        bool shouldVisitTemplateInstantiations() const { return true; }
+    };
+
+    cpphdl::Method method;
+    if (MD->getReturnType().getAsString() == "void") {
+        method = cpphdl::Method{MD->getNameAsString()};
     }
     else {
-        auto* ModuleClass = lookupQualifiedRecord(Context, "cpphdl::Module");
-        ASSERT(ModuleClass);
-
-        auto* CRD = /*FD->getType()*/QT->getAsCXXRecordDecl();
-
-        QT = QT.getNonReferenceType();
-        QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
-        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-
-        if (const auto* RT = QT->getAs<RecordType>()) {
-            if (cast<CXXRecordDecl>(RT->getDecl())) {
-                CRD = cast<CXXRecordDecl>(RT->getDecl());
-            }
-        }
-
-        if (auto* TST = FD->getType()->getAs<clang::TemplateSpecializationType>()) {
-            clang::TemplateName TN = TST->getTemplateName();
-            if (auto* TD = TN.getAsTemplateDecl()) {
-                if (auto* CTD = llvm::dyn_cast<clang::ClassTemplateDecl>(TD)) {
-                    CRD = CTD->getTemplatedDecl();
-                }
-            }
-        }
-
-        if (CRD && CRD->hasDefinition() && CRD->isDerivedFrom(ModuleClass)) {  // check if template is derived from cpphdl::Module
-            DEBUG_AST(std::cout << " {member " << FD->getNameAsString() << "}");
-            cpphdl::Field* field = 0;
-            auto it = std::find_if(mod.members.begin(), mod.members.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
-            if (it != mod.members.end()) {
-                field = &*it;
-                updateExpr(field->type, expr);
-            }
-            else {
-                field = &mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
-            }
-            DEBUG_AST(std::cout << "\n");
-            DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
-        }
-        else {
-            DEBUG_AST(std::cout << " {var " << FD->getNameAsString() << "}");
-            cpphdl::Field* field = 0;
-            auto it = std::find_if(mod.vars.begin(), mod.vars.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
-            if (it != mod.vars.end()) {
-                field = &*it;
-                updateExpr(field->type, expr);
-            }
-            else {
-                field = &mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
-            }
-            DEBUG_AST(std::cout << "\n");
-            DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
-            if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), *Context);
-                auto ret = mod.imports.emplace(st.name);
-                if (ret.second) {
-                    currProject->structs.emplace_back(std::move(st));
-                }
-                DEBUG_AST(std::cout << "\n");
-            }
-        }
+        method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
     }
-    return true;
+
+    hlp.thisIsModule = true;
+    if (MD->getParent()->getQualifiedNameAsString() != hlp.mod.name) {
+        hlp.thisIsModule = false;
+        QualType QT = MD->getThisType()->getPointeeType();
+
+        cpphdl::Expr expr = hlp.digQT(QT);
+
+        QT = QT.getDesugaredType(hlp.Ctx); // remove typedefs, aliases, etc.
+        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+        DEBUG_AST(std::cout << "  Param: this (" << QT.getAsString() << ")");
+
+        method.parameters.emplace_back(cpphdl::Field{"__this", std::move(expr)});
+        DEBUG_AST(std::cout << "\n");
+        DEBUG_EXPR(std::cout << "    Expr: " << method.parameters.back().type.debug() << "\n");
+    }
+
+    for (const ParmVarDecl* Param : MD->parameters()) {
+        QualType QT = Param->getType().getNonReferenceType();
+
+        cpphdl::Expr expr = hlp.digQT(QT);
+
+        QT = QT.getDesugaredType(hlp.Ctx); // remove typedefs, aliases, etc.
+        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+        DEBUG_AST(std::cout << "  Param: " << Param->getNameAsString() << " (" << QT.getAsString() << ")");
+
+        method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(), std::move(expr)});
+        if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
+            auto st = hlp.exportStruct(QT->getAsCXXRecordDecl());
+            auto ret = hlp.mod.imports.emplace(st.name);
+            if (ret.second) {
+                currProject->structs.emplace_back(std::move(st));
+            }
+        }
+        DEBUG_AST(std::cout << "\n");
+        DEBUG_EXPR(std::cout << "    Expr: " << method.parameters.back().type.debug() << "\n");
+    }
+
+    LocalVisitor(hlp, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
+    if (MD->getNameAsString() != hlp.mod.name && MD->getNameAsString() != std::string("~") + hlp.mod.name && MD->getNameAsString().find("operator") != 0) {
+        hlp.mod.methods.emplace_back(std::move(method));
+    }
+    DEBUG_AST(std::cout << "\n");
 }
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
@@ -152,169 +244,6 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     explicit MethodVisitor(ASTContext* Context)
         : Context(Context), SM(Context->getSourceManager()) {}
 
-    bool putMethod(cpphdl::Module& mod, const CXXMethodDecl* MD)
-    {
-        DEBUG_AST(std::cout << "  Method: " << MD->getQualifiedNameAsString() << "\n");
-//        if (!MD->hasBody()) {
-//            return true;
-//        }
-
-        struct LocalVisitor : RecursiveASTVisitor<LocalVisitor>
-        {
-            ASTContext& Ctx;
-            cpphdl::Method& method;
-            LocalVisitor(ASTContext &Ctx, cpphdl::Method& method) : Ctx(Ctx), method(method) {}
-
-            bool TraverseBinaryOperator(BinaryOperator* E)
-            {
-                VisitBinaryOperator(E);
-                return true;
-            }
-
-            bool VisitBinaryOperator(BinaryOperator* BO)
-            {
-                method.statements.emplace_back(exprToExpr(BO, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr* E)
-            {
-                VisitCXXOperatorCallExpr(E);
-                return true;
-            }
-
-            bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr* OCE)
-            {
-                method.statements.emplace_back(exprToExpr(OCE, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseCXXMemberCallExpr(CXXMemberCallExpr* E)
-            {
-                VisitCXXMemberCallExpr(E);
-                return true;
-            }
-
-            bool VisitCXXMemberCallExpr(CXXMemberCallExpr* MCE)
-            {
-                method.statements.emplace_back(exprToExpr(MCE, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseMemberExpr(MemberExpr* E)
-            {
-                VisitMemberExpr(E);
-                return true;
-            }
-
-            bool VisitMemberExpr(MemberExpr* ME)
-            {
-                method.statements.emplace_back(exprToExpr(ME, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseForStmt(ForStmt* E)
-            {
-                VisitForStmt(E);
-                return true;
-            }
-
-            bool VisitForStmt(ForStmt* FS)
-            {
-                method.statements.emplace_back(exprToExpr(FS, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseWhileStmt(WhileStmt* E)
-            {
-                VisitWhileStmt(E);
-                return true;
-            }
-
-            bool VisitWhileStmt(WhileStmt* WS)
-            {
-                method.statements.emplace_back(exprToExpr(WS, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseIfStmt(IfStmt* E)
-            {
-                VisitIfStmt(E);
-                return true;
-            }
-
-            bool VisitIfStmt(IfStmt* IS)
-            {
-                method.statements.emplace_back(exprToExpr(IS, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool TraverseReturnStmt(ReturnStmt* E)
-            {
-                VisitReturnStmt(E);
-                return true;
-            }
-
-            bool VisitReturnStmt(ReturnStmt* RS)
-            {
-                method.statements.emplace_back(exprToExpr(RS, Ctx));
-                DEBUG_AST(std::cout << "\n");
-                DEBUG_EXPR(std::cout << "        Expr: " << method.statements.back().debug() << "\n");
-                return true;
-            }
-
-            bool shouldVisitTemplateInstantiations() const { return true; }
-        };
-
-        cpphdl::Method method;
-        if (MD->getReturnType().getAsString() == "void") {
-            method = cpphdl::Method{MD->getNameAsString()};
-        }
-        else {
-            method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
-        }
-        for (const ParmVarDecl* Param : MD->parameters()) {
-            QualType QT = Param->getType().getNonReferenceType();;
-
-            cpphdl::Expr expr = digQT(mod, QT, *Context);
-
-            QT = QT.getDesugaredType(*Context); // remove typedefs, aliases, etc.
-            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-            DEBUG_AST(std::cout << "  Param: " << Param->getNameAsString() << " (" << QT.getAsString() << ")");
-
-            method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(), std::move(expr)});
-            if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), *Context);
-                auto ret = mod.imports.emplace(st.name);
-                if (ret.second) {
-                    currProject->structs.emplace_back(std::move(st));
-                }
-            }
-            DEBUG_AST(std::cout << "\n");
-            DEBUG_EXPR(std::cout << "    Expr: " << method.parameters.back().type.debug() << "\n");
-        }
-
-        LocalVisitor(*Context, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
-        if (MD->getNameAsString() != mod.name && MD->getNameAsString() != std::string("~") + mod.name && MD->getNameAsString().find("operator") != 0) {
-            mod.methods.emplace_back(std::move(method));
-        }
-        DEBUG_AST(std::cout << "\n");
-        return true;
-    }
 
     bool putModule(CXXRecordDecl* RD)
     {
@@ -324,17 +253,19 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
+        Helpers hlp(Context, &mod);
+
         // specialization
         std::vector<cpphdl::Field> params;
-        specializationToParameters(mod, RD, params, *Context);
-        addSpecializationName(mod.name, params);
+        hlp.specializationToParameters(RD, params);
+        hlp.addSpecializationName(mod.name, params);
         std::erase_if(params, [](cpphdl::Field& field) { return field.type.type != cpphdl::Expr::EXPR_VALUE; });
         mod.parameters = std::move(params);
         mod.origName = RD->getQualifiedNameAsString();
 
         for (Decl* D : RD->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
-                putField(mod, FD, Context);
+                hlp.putField(FD);
             }
         }
 
@@ -359,26 +290,24 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 if (MD->getQualifiedNameAsString().find("::" + mod.origName) == (size_t)-1
                     && MD->getQualifiedNameAsString().find("::~" + mod.origName) == (size_t)-1
                     && MD->getQualifiedNameAsString().find("::operator=") == (size_t)-1) {
-                    if (!putMethod(mod, MD)) {
-                        return false;
+                    putMethod(MD, hlp);
+                }
+            }
+        }
+
+        for (auto* RD : abstractDefs) {
+            if (mod.name.find(RD->getQualifiedNameAsString()) == 0) {
+                DEBUG_AST(std::cout << "  Applying abstract: " << RD->getQualifiedNameAsString() << " to " << mod.name << "\n");
+
+                for (Decl* D : RD->decls()) {
+                    if (auto* FD = dyn_cast<FieldDecl>(D)) {
+                        hlp.putField(FD);
                     }
                 }
             }
         }
 
         currProject->modules.emplace_back(std::move(mod));
-
-        for (auto* RD : abstractDefs) {
-            if (currProject->modules.back().name.find(RD->getQualifiedNameAsString()) == 0) {
-                DEBUG_AST(std::cout << "  Applying abstract: " << RD->getQualifiedNameAsString() << " to " << currProject->modules.back().name << "\n");
-
-                for (Decl* D : RD->decls()) {
-                    if (auto* FD = dyn_cast<FieldDecl>(D)) {
-                        putField(currProject->modules.back(), FD, Context);
-                    }
-                }
-            }
-        }
 
         return true;
     }

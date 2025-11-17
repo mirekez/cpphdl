@@ -142,23 +142,29 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 3 && sub[0].sub.size() != 0 && sub[0].value == "bits") {
                 return indent_str + sub[0].sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
             }
-            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
-                return "";
-            }
+//            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
+//                return "";
+//            }
             if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value.size() > 10 && sub[0].value.find("_comb_func") == sub[0].value.size()-10) {
                 std::string str = sub[0].value;
                 return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
             }
 
+            std::string str = "(";
+
             bool skipfirst = false;
+            bool first = true;
             std::string member = value;
             if (sub[0].type == EXPR_MEMBER) {
+                if (sub[0].sub[0].str() != "__this") {
+                    sub[0].flags |= FLAG_CALL;  // it will swap places of member and method, and add "("
+                    str = "";
+                    first = false;
+                }
                 member = sub[0].str();
                 skipfirst = true;
             }
 
-            std::string str = "(";
-            bool first = true;
             for (auto& arg : sub) {
                 if (skipfirst) {
                     skipfirst = false;
@@ -179,7 +185,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].str() == "this") {
+            if (sub[0].str() == "__this" && (flags&FLAG_NOTHIS)) {
                 return indent_str + value;
             }
             if (value == "next") {
@@ -193,7 +199,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return indent_str + prefix + sub[0].str("", delim + value);
             }
-            std::string delim = std::string(anonymous?".anon":"") + ".";
+            if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function
+                return indent_str + prefix + value + "(" + sub[0].str();
+            }
+            std::string delim = std::string((flags&FLAG_ANON)?"anon":"") + ".";
             if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].value; } )) {
                 delim = "__";
             }
@@ -201,12 +210,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
-            sub[0].flags = flags;
-            sub[1].flags = flags;
+            sub[0].flags |= flags;
+            sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
-            sub[0].flags = flags;
+            sub[0].flags |= flags;
             if (value == "*") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
@@ -219,33 +228,33 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
-            sub[0].flags = flags;
-            sub[1].flags = flags;
-            sub[2].flags = flags;
+            sub[0].flags |= flags;
+            sub[1].flags |= flags;
+            sub[2].flags |= flags;
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
             ASSERT(sub.size()==2);
-            sub[0].flags = flags;
-            sub[1].flags = flags;
+            sub[0].flags |= flags;
+            sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         case EXPR_CAST:
             ASSERT(sub.size()==1);
-            sub[0].flags = flags;
+            sub[0].flags |= flags;
             return indent_str + sub[0].str(prefix, suffix);
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
-            sub[0].flags = flags;
+            sub[0].flags |= flags;
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
                 return indent_str + sub[0].str();
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()==1);
-            sub[0].flags = flags;
+            sub[0].flags |= flags;
             return indent_str + sub[0].str();
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
-            sub[0].flags = flags;
+            sub[0].flags |= flags;
             if (value == "sizeof") {
                 return indent_str + "($bits" + "(" + sub[0].str() + ")/8)";
             }
@@ -258,7 +267,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
-            sub[3].flags = flags;
+            sub[3].flags |= flags;
             str += sub[3].str(prefix);
             if (!sub[3].isMultiline()) {
                 str += ";\n";
@@ -272,7 +281,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "while (" + sub[0].str() + ") begin\n";
             sub[1].indent = indent + 1;
-            sub[1].flags = flags;
+            sub[1].flags |= flags;
             str += sub[1].str(prefix);
             if (!sub[1].isMultiline()) {
                 str += ";\n";
@@ -291,7 +300,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
                 sub[1].indent = indent + 1;
-                sub[1].flags = flags;
+                sub[1].flags |= flags;
                 str += sub[1].str(prefix);
                 if (!sub[1].isMultiline()) {
                     str += ";\n";
@@ -301,7 +310,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() > 2) {
                 str += indent_str + "else begin\n";
                 sub[2].indent = indent + 1;
-                sub[2].flags = flags;
+                sub[2].flags |= flags;
                 str += sub[2].str(prefix);
                 if (!sub[2].isMultiline()) {
                     str += ";\n";

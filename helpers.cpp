@@ -1,7 +1,8 @@
-#include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/FrontendActions.h"
+
+#include "helpers.h"
 
 #include "Project.h"
 #include "Module.h"
@@ -12,14 +13,10 @@
 
 #include <iostream>
 
-using namespace clang;
+bool putMethod(const CXXMethodDecl* MD, Helpers& hlp);
+CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
 
-cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx);
-cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx);
-
-//inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params);
-
-cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
+cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 {
     SourceManager &SM = Ctx.getSourceManager();
     LangOptions LangOpts = Ctx.getLangOpts();
@@ -38,23 +35,23 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
         cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
 
         if (FS->getInit()) {
-            expr.sub.push_back(exprToExpr(FS->getInit(), Ctx));
+            expr.sub.push_back(exprToExpr(FS->getInit()));
         }
         if (FS->getCond()) {
-            expr.sub.push_back(exprToExpr(FS->getCond(), Ctx));
+            expr.sub.push_back(exprToExpr(FS->getCond()));
         }
         if (FS->getInc()) {
-            expr.sub.push_back(exprToExpr(FS->getInc(), Ctx));
+            expr.sub.push_back(exprToExpr(FS->getInc()));
         }
 
         if (FS->getBody()) {
             cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
             if (auto* CS = dyn_cast<CompoundStmt>(FS->getBody())) {
                     for (auto* S : CS->body()) {
-                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                    expr1.sub.push_back(exprToExpr(S));
                 }
             } else {
-                expr1.sub.push_back(exprToExpr(FS->getBody(), Ctx));
+                expr1.sub.push_back(exprToExpr(FS->getBody()));
             }
             expr.sub.emplace_back(std::move(expr1));
         }
@@ -68,17 +65,17 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
         cpphdl::Expr expr = cpphdl::Expr{"while", cpphdl::Expr::EXPR_WHILE};
 
         if (WS->getCond()) {
-            expr.sub.push_back(exprToExpr(WS->getCond(), Ctx));
+            expr.sub.push_back(exprToExpr(WS->getCond()));
         }
 
         if (WS->getBody()) {
             cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
             if (auto* CS = dyn_cast<CompoundStmt>(WS->getBody())) {
                 for (auto* S : CS->body()) {
-                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                    expr1.sub.push_back(exprToExpr(S));
                 }
             } else {
-                expr1.sub.push_back(exprToExpr(WS->getBody(), Ctx));
+                expr1.sub.push_back(exprToExpr(WS->getBody()));
             }
             expr.sub.emplace_back(std::move(expr1));
         }
@@ -92,17 +89,17 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
         cpphdl::Expr expr = cpphdl::Expr{"if", cpphdl::Expr::EXPR_IF};
 
         if (IS->getCond()) {
-            expr.sub.push_back(exprToExpr(IS->getCond(), Ctx));
+            expr.sub.push_back(exprToExpr(IS->getCond()));
         }
 
         if (IS->getThen()) {
             cpphdl::Expr expr1 = cpphdl::Expr{"then", cpphdl::Expr::EXPR_BODY};
             if (auto* CS = dyn_cast<CompoundStmt>(IS->getThen())) {
                 for (auto* S : CS->body()) {
-                    expr1.sub.push_back(exprToExpr(S, Ctx));
+                    expr1.sub.push_back(exprToExpr(S));
                 }
             } else {
-                expr1.sub.push_back(exprToExpr(IS->getThen(), Ctx));
+                expr1.sub.push_back(exprToExpr(IS->getThen()));
             }
             expr.sub.emplace_back(std::move(expr1));
         }
@@ -111,10 +108,10 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
             cpphdl::Expr expr2 = cpphdl::Expr{"else", cpphdl::Expr::EXPR_BODY};
             if (auto* CS = dyn_cast<CompoundStmt>(IS->getElse())) {
                 for (auto* S : CS->body()) {
-                    expr2.sub.push_back(exprToExpr(S, Ctx));
+                    expr2.sub.push_back(exprToExpr(S));
                 }
             } else {
-                expr2.sub.push_back(exprToExpr(IS->getElse(), Ctx));
+                expr2.sub.push_back(exprToExpr(IS->getElse()));
             }
             expr.sub.emplace_back(std::move(expr2));
         }
@@ -127,7 +124,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
 
         cpphdl::Expr expr = cpphdl::Expr{"compound", cpphdl::Expr::EXPR_BODY};
         for (auto* S : CS->body()) {
-            expr.sub.push_back(exprToExpr(S, Ctx));
+            expr.sub.push_back(exprToExpr(S));
         }
         return expr;
     }
@@ -143,11 +140,11 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
 
     if (auto* BO = dyn_cast<BinaryOperator>(E)) {
         DEBUG_AST(std::cout << " BinaryOperator " << BO->getOpcodeStr().data() << ",");
-        return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS(),Ctx),exprToExpr(BO->getRHS(),Ctx)}};
+        return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
     }
     if (auto* CAO = dyn_cast<CompoundAssignOperator>(E)) {
         DEBUG_AST(std::cout << " CompoundAssignOperator " << CAO->getOpcodeStr().data() << ",");
-        return cpphdl::Expr{CAO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(CAO->getLHS(),Ctx),exprToExpr(CAO->getRHS(),Ctx)}};
+        return cpphdl::Expr{CAO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(CAO->getLHS()),exprToExpr(CAO->getRHS())}};
     }
     if (auto* DRE = dyn_cast<DeclRefExpr>(E)) {
         DEBUG_AST(std::cout << " DeclRefExpr " << DRE->getNameInfo().getAsString() << ",");
@@ -161,7 +158,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
         DEBUG_AST(std::cout << " CXXOperatorCallExpr");
         cpphdl::Expr call = cpphdl::Expr{getOperatorSpelling(OCE->getOperator()), cpphdl::Expr::EXPR_OPERATORCALL};
         for (unsigned i = 0; i < OCE->getNumArgs(); ++i) {
-            call.sub.push_back(exprToExpr(OCE->getArg(i), Ctx));
+            call.sub.push_back(exprToExpr(OCE->getArg(i)));
         }
         return call;
     }
@@ -169,11 +166,18 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
         DEBUG_AST(std::cout << " CXXMemberCallExpr");
         cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
-             call.sub.push_back(cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}});
+             call.sub.push_back(cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}});
         }
         for (unsigned i = 0; i < MCE->getNumArgs(); ++i) {
-            call.sub.push_back(exprToExpr(MCE->getArg(i), Ctx));
+            call.sub.push_back(exprToExpr(MCE->getArg(i)));
         }
+
+        if (auto *MD = MCE->getMethodDecl()) {
+            llvm::outs() << "Called method: " << MD->getQualifiedNameAsString() << "\n";
+            putMethod(MD, *this);
+        }
+
+
         return call;
     }
     if (auto* ME = dyn_cast<MemberExpr>(E)) {
@@ -189,18 +193,19 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
             }
         }
 
-        return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}, anon};
+        return cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())},
+                static_cast<decltype(cpphdl::Expr::flags)>((anon?cpphdl::Expr::FLAG_ANON:0) | (thisIsModule?cpphdl::Expr::FLAG_NOTHIS:0)) };
     }
     if (auto* ME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
         DEBUG_AST(std::cout << " MemberExpr");
-        return cpphdl::Expr{ME->getMember().getAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase(), Ctx)}};
+        return cpphdl::Expr{ME->getMember().getAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}};
     }
     if (auto* CE = dyn_cast<CallExpr>(E)) {
         DEBUG_AST(std::cout << " CallExpr" << (CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():"") << ",");
 
         cpphdl::Expr call = cpphdl::Expr{(CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_CALL};
         for (auto* arg : CE->arguments()) {
-            call.sub.push_back(exprToExpr(arg, Ctx));
+            call.sub.push_back(exprToExpr(arg));
         }
         return call;
     }
@@ -216,11 +221,11 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
 
 //            cpphdl::Expr call = cpphdl::Expr{str, cpphdl::Expr::EXPR_CALL};
 //            for (unsigned i = 0; i < CE->getNumArgs(); ++i) {
-//                call.sub.push_back(exprToExpr(CE->getArg(i), Ctx));
+//                call.sub.push_back(exprToExpr(CE->getArg(i)));
 //            }
 //            return call;
             if (CE->getNumArgs()) {
-                return cpphdl::Expr{"constructor", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0), Ctx)}};
+                return cpphdl::Expr{"constructor", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
             }
             else {
                 return cpphdl::Expr{"constructor", cpphdl::Expr::EXPR_CAST};
@@ -233,7 +238,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
     }
     if (auto* CLE = dyn_cast<CompoundLiteralExpr>(E)) {
         DEBUG_AST(std::cout << " CompoundLiteralExpr");
-        return cpphdl::Expr{CLE->getType().getAsString(), cpphdl::Expr::EXPR_INIT, {{exprToExpr(CLE->getInitializer(), Ctx)}}};
+        return cpphdl::Expr{CLE->getType().getAsString(), cpphdl::Expr::EXPR_INIT, {{exprToExpr(CLE->getInitializer())}}};
     }
     if (auto* SL = dyn_cast<StringLiteral>(E)) {
         DEBUG_AST(std::cout << " StringLiteral");
@@ -258,63 +263,63 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
     }
     if (/*auto* ME =*/dyn_cast<CXXThisExpr>(E)) {
         DEBUG_AST(std::cout << " CXXThisExpr");
-        return cpphdl::Expr{"this", cpphdl::Expr::EXPR_VALUE};
+        return cpphdl::Expr{"__this", cpphdl::Expr::EXPR_VALUE};
     }
     if (auto* UO = dyn_cast<UnaryOperator>(E)) {
         DEBUG_AST(std::cout << " UnaryOperator");
-        return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {exprToExpr(UO->getSubExpr(),Ctx)}};
+        return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {exprToExpr(UO->getSubExpr())}};
     }
     if (auto* CO = dyn_cast<ConditionalOperator>(E)) {
         DEBUG_AST(std::cout << " ConditionalOperator");
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_COND, {exprToExpr(CO->getCond(),Ctx),exprToExpr(CO->getTrueExpr(),Ctx),exprToExpr(CO->getFalseExpr(),Ctx)}};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_COND, {exprToExpr(CO->getCond()),exprToExpr(CO->getTrueExpr()),exprToExpr(CO->getFalseExpr())}};
     }
     if (auto* ASE = dyn_cast<ArraySubscriptExpr>(E)) {
         DEBUG_AST(std::cout << " ArraySubscriptExpr");
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase(),Ctx),exprToExpr(ASE->getIdx(),Ctx)}};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase()),exprToExpr(ASE->getIdx())}};
     }
     if (auto* FCE = dyn_cast<ImplicitCastExpr>(E)) {
         DEBUG_AST(std::cout << " ImplicitCastExpr");
-        return cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
     }
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
         DEBUG_AST(std::cout << " CXXFunctionalCastExpr");
-        return cpphdl::Expr{"functional_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"functional_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
     }
     if (auto* SCE = dyn_cast<CXXStaticCastExpr>(E)) {
         DEBUG_AST(std::cout << " CXXStaticCastExpr");
-        return cpphdl::Expr{"static_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"static_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
     if (auto* DCE = dyn_cast<CXXDynamicCastExpr>(E)) {
         DEBUG_AST(std::cout << " CXXDynamicCastExpr");
-        return cpphdl::Expr{"dynamic_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(DCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"dynamic_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(DCE->getSubExpr())}};
     }
     if (auto* RCE = dyn_cast<CXXReinterpretCastExpr>(E)) {
         DEBUG_AST(std::cout << " CXXReinterpretCastExpr");
-        return cpphdl::Expr{"reinterpret_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(RCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"reinterpret_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(RCE->getSubExpr())}};
     }
     if (auto* CCE = dyn_cast<CXXConstCastExpr>(E)) {
         DEBUG_AST(std::cout << " CXXConstCastExpr");
-        return cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(CCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(CCE->getSubExpr())}};
     }
     if (auto* SCE = dyn_cast<CStyleCastExpr>(E)) {
         DEBUG_AST(std::cout << " CStyleCastExpr");
-        return cpphdl::Expr{"cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
     if (auto* MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
         DEBUG_AST(std::cout << " MaterializeTemporaryExpr");
-        return cpphdl::Expr{"MaterializeTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(MTE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"MaterializeTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(MTE->getSubExpr())}};
     }
     if (auto* EWC = dyn_cast<ExprWithCleanups>(E)) {
         DEBUG_AST(std::cout << " ExprWithCleanups");
-        return cpphdl::Expr{"ExprWithCleanups", cpphdl::Expr::EXPR_CAST, {exprToExpr(EWC->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"ExprWithCleanups", cpphdl::Expr::EXPR_CAST, {exprToExpr(EWC->getSubExpr())}};
     }
     if (auto* CE = dyn_cast<ConstantExpr>(E)) {
         DEBUG_AST(std::cout << " ConstantExpr");
-        return cpphdl::Expr{"ConstantExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"ConstantExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getSubExpr())}};
     }
     if (auto* BTE = dyn_cast<CXXBindTemporaryExpr>(E)) {
         DEBUG_AST(std::cout << " CXXBindTemporaryExpr");
-        return cpphdl::Expr{"CXXBindTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(BTE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"CXXBindTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(BTE->getSubExpr())}};
     }
     if (/*auto* CE = */dyn_cast<CXXNullPtrLiteralExpr>(E)) {
         DEBUG_AST(std::cout << " CXXNullPtrLiteralExpr");
@@ -342,22 +347,22 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
             return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {cpphdl::Expr{UETTE->getArgumentType().getAsString(),cpphdl::Expr::EXPR_TYPE}}};
         } else {
             if (UETTE->getArgumentExpr()) {
-                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {exprToExpr(UETTE->getArgumentExpr(), Ctx)}};
+                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {exprToExpr(UETTE->getArgumentExpr())}};
             }
         }
     }
     if (auto* PE = dyn_cast<ParenExpr>(E)) {
         DEBUG_AST(std::cout << " ParenExpr");
-        return cpphdl::Expr{"paren", cpphdl::Expr::EXPR_PAREN, {exprToExpr(PE->getSubExpr(), Ctx)}};
+        return cpphdl::Expr{"paren", cpphdl::Expr::EXPR_PAREN, {exprToExpr(PE->getSubExpr())}};
     }
     if (auto* SNTTPE = dyn_cast<SubstNonTypeTemplateParmExpr>(E)) {
         DEBUG_AST(std::cout << " SubstNonTypeTemplateParmExpr");
-        return cpphdl::Expr{SNTTPE->getParameter()->getName().str(), cpphdl::Expr::EXPR_PARAM, {exprToExpr(SNTTPE->getReplacement(), Ctx)}};
+        return cpphdl::Expr{SNTTPE->getParameter()->getName().str(), cpphdl::Expr::EXPR_PARAM, {exprToExpr(SNTTPE->getReplacement())}};
     }
     if (auto* RS = dyn_cast<ReturnStmt>(E)) {
         DEBUG_AST(std::cout << " ReturnStmt");
         if (RS->getRetValue()) {
-            return cpphdl::Expr{"return", cpphdl::Expr::EXPR_RETURN, {exprToExpr(RS->getRetValue(), Ctx)}};
+            return cpphdl::Expr{"return", cpphdl::Expr::EXPR_RETURN, {exprToExpr(RS->getRetValue())}};
         }
         return cpphdl::Expr{"return", cpphdl::Expr::EXPR_RETURN};
     }
@@ -409,7 +414,7 @@ cpphdl::Expr exprToExpr(const Stmt* E, ASTContext& Ctx)
     return cpphdl::Expr{"", cpphdl::Expr::EXPR_UNKNOWN};
 }
 
-bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vector<cpphdl::Field>& params, ASTContext& Ctx)
+bool Helpers::specializationToParameters(CXXRecordDecl* RD, std::vector<cpphdl::Field>& params)
 {
     if (auto* TSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
         DEBUG_AST(std::cout << " Specialization parameters: \n");
@@ -423,7 +428,7 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vec
                 {
                     QualType QT = Arg.getAsType();
 
-                    bool pointer = false;
+                    [[maybe_unused]] bool pointer = false;
                     QT.getNonReferenceType();
                     if (QT->isPointerType()) {  // while?
                         QT = QT->getPointeeType();
@@ -434,7 +439,7 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vec
 //                QT = QT.getNonReferenceType();
 //                QT = QT.getDesugaredType(Ctx); // remove typedefs, aliases, etc.
 //                QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-//digQT(mod, QT, Ctx);
+//digQT(mod, QT);
 
                     std::string str;
                     llvm::raw_string_ostream OS(str);
@@ -446,7 +451,7 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vec
                     DEBUG_AST(std::cout << "\n");
                     DEBUG_EXPR(std::cout << "        Expr: " << params.back().type.debug() << "\n");
                     if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                        auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx);
+                        auto st = exportStruct(QT->getAsCXXRecordDecl());
                         auto ret = mod.imports.emplace(st.name);
                         if (ret.second) {
                             currProject->structs.emplace_back(std::move(st));
@@ -493,7 +498,7 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vec
                         [[maybe_unused]] llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
                         DEBUG_AST(std::cout << " expression: " << SR.str());
                         DEBUG_AST(std::cout << "\n");
-                        DEBUG_EXPR(std::cout << "        Expr: " << exprToExpr(E,Ctx).debug() << "\n");
+                        DEBUG_EXPR(std::cout << "        Expr: " << exprToExpr(E).debug() << "\n");
                     }
                     else {
                         DEBUG_AST(std::cout << "\n");
@@ -511,7 +516,7 @@ bool specializationToParameters(cpphdl::Module& mod, CXXRecordDecl* RD, std::vec
     return false;
 }
 
-bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTContext& Ctx)
+bool Helpers::templateToExpr(QualType QT, cpphdl::Expr& expr)
 {
     auto* TSD = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(QT->getAsCXXRecordDecl());
     auto* TST = QT->getAs<TemplateSpecializationType>();
@@ -530,14 +535,14 @@ bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTCon
 
             if (Arg.getKind() == TemplateArgument::Expression) {
                 DEBUG_AST(std::cout << " (");
-                expr.sub.push_back(exprToExpr(Arg.getAsExpr(), Ctx));
+                expr.sub.push_back(exprToExpr(Arg.getAsExpr()));
                 DEBUG_AST(std::cout << " expression),");
             } else
             if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
                 QualType QT = TSD ? TSD->getTemplateArgs()[i].getAsType().getNonReferenceType() : Arg.getAsType().getNonReferenceType();
                 DEBUG_AST(std::cout << "(" << TST << " " << TSD << " ");
 
-//                if (templateToExpr(mod, QT, expr1, Ctx)) {
+//                if (templateToExpr(mod, QT, expr1)) {
 //                    DEBUG_AST(std::cout << " template " << expr1.value << "),");
 //                }
 //                else {
@@ -548,11 +553,11 @@ bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTCon
 //                    expr1.value = str;
 //                    expr1.type = cpphdl::Expr::EXPR_TYPE;
 //                }
-                cpphdl::Expr expr1 = digQT(mod, QT, Ctx);
+                cpphdl::Expr expr1 = digQT(QT);
                 expr.sub.emplace_back(std::move(expr1));
 
                 if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
-                    auto st = exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx);
+                    auto st = exportStruct(QT->getAsCXXRecordDecl());
                     auto ret = mod.imports.emplace(st.name);
                     if (ret.second) {
                         currProject->structs.emplace_back(std::move(st));
@@ -587,7 +592,7 @@ bool templateToExpr(cpphdl::Module& mod, QualType QT, cpphdl::Expr& expr, ASTCon
     return false;
 }
 
-cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
+cpphdl::Expr Helpers::digQT(QualType& QT)
 {
     cpphdl::Expr arrayExpr;
     bool array = false;
@@ -599,13 +604,13 @@ cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
         }
         else if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
             DEBUG_AST(std::cout << " [v_array");
-            arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr(), Ctx));
+            arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr()));
             DEBUG_AST(std::cout << "] ");
             arrayExpr.value = "v_array";
         }
         else if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
             DEBUG_AST(std::cout << " [d_array");
-            arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr(), Ctx));
+            arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr()));
             DEBUG_AST(std::cout << "] ");
             arrayExpr.value = "d_array";
         }
@@ -617,7 +622,7 @@ cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
 
     cpphdl::Expr expr;
     DEBUG_AST(std::cout << " (");
-    if (templateToExpr(mod, QT, expr, Ctx)) {
+    if (templateToExpr(QT, expr)) {
         DEBUG_AST(std::cout << " template) " << expr.value);
     }
     else {
@@ -636,7 +641,7 @@ cpphdl::Expr digQT(cpphdl::Module& mod, QualType& QT, ASTContext& Ctx)
     return expr;
 }
 
-void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true)
+void Helpers::addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes)
 {
     bool first = true;
     for (auto& param : params) {
@@ -658,7 +663,7 @@ void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params
     }
 }
 
-cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& Ctx)
+cpphdl::Struct Helpers::exportStruct(CXXRecordDecl* RD)
 {
     std::string sname = RD->getQualifiedNameAsString();
     size_t pos;
@@ -668,7 +673,7 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
 
     // extracting parameters of the template
     std::vector<cpphdl::Field> params;
-    specializationToParameters(mod, RD, params, Ctx);
+    specializationToParameters(RD, params);
     addSpecializationName(sname, params, false);
 
     cpphdl::Struct st{sname, (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT)};
@@ -697,13 +702,13 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
                 }
                 else if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
                     DEBUG_AST(std::cout << " [v_array");
-                    arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr(), Ctx));
+                    arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr()));
                     DEBUG_AST(std::cout << "] ");
                     arrayExpr.value = "v_array";
                 }
                 else if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
                     DEBUG_AST(std::cout << " [d_array");
-                    arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr(), Ctx));
+                    arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr()));
                     DEBUG_AST(std::cout << "] ");
                     arrayExpr.value = "d_array";
                 }
@@ -715,9 +720,9 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
 
             cpphdl::Expr expr;
             DEBUG_AST(std::cout << " (");
-//            if (templateToExpr(mod, QT, expr, Ctx)) {
+//            if (templateToExpr(QT, expr)) {
 //            std::vector<cpphdl::Field> params;
-//            if (specializationToParameters(mod, FD, params, Ctx)) {
+//            if (specializationToParameters(FD, params)) {
 //                DEBUG_AST(std::cout << " template) " << expr.value);
 //            }
 //            else {
@@ -730,7 +735,7 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
 //            }
 
             if (array) {
-                arrayExpr.sub.push_back(std::move(expr));
+                arrayExpr.sub.emplace_back(std::move(expr));
                 expr = std::move(arrayExpr);
             }
 
@@ -744,13 +749,13 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
                 st.fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
                 if (FD->isBitField()) {
                     DEBUG_AST(std::cout << " |bitfield ");
-                    st.fields.back().bitwidth = exprToExpr(FD->getBitWidth(), Ctx);
+                    st.fields.back().bitwidth = exprToExpr(FD->getBitWidth());
                     DEBUG_AST(std::cout << "|");
                 }
 //                DEBUG_EXPR(std::cout << "    Expr: " << st.fields.back().type.debug());
                 if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1 &&
                     QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("std::") == (size_t)-1) {  // we need std containers in structs?
-                    auto st1 = exportStruct(mod, QT->getAsCXXRecordDecl(), Ctx);
+                    auto st1 = exportStruct(QT->getAsCXXRecordDecl());
 
                     if (QT->getAsCXXRecordDecl()->isAnonymousStructOrUnion() || !QT->getAsCXXRecordDecl()->getIdentifier()) {
                         st1.name = FD->getNameAsString();
@@ -763,10 +768,11 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
                         }
                     }
                 }
-            }
-            DEBUG_EXPR(std::cout << "    Expr: " << st.fields.back().type.debug());
-            if (FD->isBitField()) {
-                DEBUG_EXPR(std::cout << "    Expr(bitfield): " << st.fields.back().bitwidth.debug());
+
+                DEBUG_EXPR(std::cout << "    Expr: " << st.fields.back().type.debug());
+                if (FD->isBitField()) {
+                    DEBUG_EXPR(std::cout << "    Expr(bitfield): " << st.fields.back().bitwidth.debug());
+                }
             }
         }
         DEBUG_AST(std::cout << "    ");
@@ -776,116 +782,118 @@ cpphdl::Struct exportStruct(cpphdl::Module& mod, CXXRecordDecl* RD, ASTContext& 
     return st;
 }
 
-/*inline bool getParamsFromSourceOrStr(FieldDecl* FD, std::string str, const ASTContext &Ctx, std::vector<std::string>& params)
+void Helpers::updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2)
 {
-    if (FD) {
-        clang::SourceRange SR = FD->getSourceRange();
-        str = clang::Lexer::getSourceText(
-            clang::CharSourceRange::getTokenRange(SR),
-            Ctx.getSourceManager(),
-            Ctx.getLangOpts()).str();
-    }
-
-    auto lt = str.find('<');
-    if (lt == (size_t)-1) {
-        return false;
-    }
-    str = str.substr(lt+1);
-    unsigned openCnt = 0;
-    bool quiot1 = false;
-    bool quiot2 = false;
-    bool escape = false;
-
-    size_t pos = 0;
-    while ((pos = str.find_first_of("<>\"'\\,", pos)) != (size_t)-1) {
-        escape = false;
-        if (str[pos] == ',') {
-            if (quiot1 || quiot2) {
-            } else
-            if (openCnt == 0) {
-                if (pos > 0) {
-                    params.push_back(str.substr(0, pos));
-                }
-                str = str.substr(pos+1);
-                pos = 0;
-            }
-        } else
-        if (str[pos] == '>') {
-            if (quiot1 || quiot2) {
-            }
-            else {
-                if (openCnt == 0) {
-                    if (pos > 0) {
-                        params.push_back(str.substr(0, pos));
-                    }
-                    return true;
-                }
-                --openCnt;
-            }
-        } else
-        if (str[pos] == '<') {
-            if (!quiot1 && !quiot2) {
-                ++openCnt;
-            }
-        } else
-        if (str[pos] == '\'') {
-            if (quiot2 || escape) {
-            } else
-            if (quiot1) {
-                quiot1 = false;
-            }
-            else {
-                quiot1 = true;
-            }
-        } else
-        if (str[pos] == '"') {
-            if (quiot1 || escape) {
-            } else
-            if (quiot2) {
-                quiot2 = false;
-            }
-            else {
-                quiot2 = true;
-            }
-        } else
-        if (str[pos] == '\\') {
-            escape = true;
+    if (expr1.type == expr2.type && expr1.sub.size() == expr2.sub.size()) {
+        for (size_t i=0; i < expr1.sub.size(); ++i) {
+            updateExpr(expr1.sub[0], expr2.sub[0]);
         }
-        ++pos;
     }
-    return false;
+    if (expr1.type == cpphdl::Expr::EXPR_VALUE && expr2.type != cpphdl::Expr::EXPR_VALUE) {
+         expr1 = std::move(expr2);
+    }
 }
-*/
-CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
+
+bool Helpers::putField(FieldDecl* FD)
 {
-    SmallVector<StringRef, 4> Parts;
-    QualifiedName.split(Parts, "::");
+    DEBUG_AST(std::cout << "  Field:");
 
-    DeclContext* DC = Ctx->getTranslationUnitDecl();
+    bool pointer = false;
+    QualType QT = FD->getType().getNonReferenceType();
+    if (QT->isPointerType()) {  // while?
+        QT = QT->getPointeeType();
+        pointer = true;
+        DEBUG_AST(std::cout << " *pointer*");
+    }
 
-    for (unsigned i = 0; i < Parts.size(); ++i) {
-        IdentifierInfo& Id = Ctx->Idents.get(Parts[i]);
-        auto strs = DC->lookup(&Id);
+    cpphdl::Expr expr = digQT(QT);
 
-        if (strs.empty()) {
-            return nullptr;
+    if (pointer || (FD->getNameAsString().length() > 3
+                && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
+                || FD->getNameAsString().rfind("_out") == FD->getNameAsString().length()-4))) {
+        DEBUG_AST(std::cout << " {port " << FD->getNameAsString() << "}");
+
+        cpphdl::Field* field = 0;
+        auto it = std::find_if(mod.ports.begin(), mod.ports.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
+        if (it != mod.ports.end()) {
+            field = &*it;
+            updateExpr(field->type, expr);
+        }
+        else {
+            field = &mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
         }
 
-        NamedDecl* ND = strs.front();
+        if (FD->getInClassInitializer()) {
+            DEBUG_AST(std::cout << ", <initializer ");
+            field->initializer = exprToExpr(FD->getInClassInitializer());
+            DEBUG_AST(std::cout << FD->getInClassInitializer()->getStmtClassName() << ">");
+            expr.hasInitializer = true;
+        }
 
-        if (i < Parts.size()-1) {
-            if (auto* NS = dyn_cast<NamespaceDecl>(ND)) {
-                DC = NS;
+        DEBUG_AST(std::cout << "\n");
+        DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
+    }
+    else {
+        auto* ModuleClass = lookupQualifiedRecord(&Ctx, "cpphdl::Module");
+        ASSERT(ModuleClass);
+
+        auto* CRD = /*FD->getType()*/QT->getAsCXXRecordDecl();
+
+        QT = QT.getNonReferenceType();
+        QT = QT.getDesugaredType(Ctx); // remove typedefs, aliases, etc.
+        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+
+        if (const auto* RT = QT->getAs<RecordType>()) {
+            if (cast<CXXRecordDecl>(RT->getDecl())) {
+                CRD = cast<CXXRecordDecl>(RT->getDecl());
+            }
+        }
+
+        if (auto* TST = FD->getType()->getAs<clang::TemplateSpecializationType>()) {
+            clang::TemplateName TN = TST->getTemplateName();
+            if (auto* TD = TN.getAsTemplateDecl()) {
+                if (auto* CTD = llvm::dyn_cast<clang::ClassTemplateDecl>(TD)) {
+                    CRD = CTD->getTemplatedDecl();
+                }
+            }
+        }
+
+        if (CRD && CRD->hasDefinition() && CRD->isDerivedFrom(ModuleClass)) {  // check if template is derived from cpphdl::Module
+            DEBUG_AST(std::cout << " {member " << FD->getNameAsString() << "}");
+            cpphdl::Field* field = 0;
+            auto it = std::find_if(mod.members.begin(), mod.members.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
+            if (it != mod.members.end()) {
+                field = &*it;
+                updateExpr(field->type, expr);
             }
             else {
-                return nullptr;
+                field = &mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
             }
-        } else {
-            if (auto* CXX = dyn_cast<CXXRecordDecl>(ND)) {
-                return CXX;
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
+        }
+        else {
+            DEBUG_AST(std::cout << " {var " << FD->getNameAsString() << "}");
+            cpphdl::Field* field = 0;
+            auto it = std::find_if(mod.vars.begin(), mod.vars.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
+            if (it != mod.vars.end()) {
+                field = &*it;
+                updateExpr(field->type, expr);
             }
-            return nullptr;
+            else {
+                field = &mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
+            }
+            DEBUG_AST(std::cout << "\n");
+            DEBUG_EXPR(std::cout << "    Expr: " << field->type.debug() << "\n");
+            if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
+                auto st = exportStruct(QT->getAsCXXRecordDecl());
+                auto ret = mod.imports.emplace(st.name);
+                if (ret.second) {
+                    currProject->structs.emplace_back(std::move(st));
+                }
+                DEBUG_AST(std::cout << "\n");
+            }
         }
     }
-    return nullptr;
+    return true;
 }
