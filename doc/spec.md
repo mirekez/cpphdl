@@ -65,6 +65,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 * C++HDL supports only digital design components, written using blocking assignments
 * Currently no multiclock or CDC is supported. Each clock domain should be developed separately
+* Timing or power critical sections should be isolated on architectural level
 
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL is intended to bring ease and speed in development of various digital circuits like controllers,
 multiplexors, cache and memory functions, mathematics functions, digital data processing, transmitting circuits, etc.
