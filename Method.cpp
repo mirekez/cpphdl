@@ -58,7 +58,9 @@ bool Method::print(std::ofstream& out)
 
     for (auto& stmt : statements) {
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_RETURN;
+        if (ret.size() != 0) {
+            stmt.flags = Expr::FLAG_RETURN;
+        }
         auto s = stmt.str();
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";
@@ -131,7 +133,7 @@ bool Method::printConns(std::ofstream& out)
         }
 
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_NORETURN;
+        stmt.flags = Expr::FLAG_NORETURN | Expr::FLAG_NOCALLS;
         auto s = stmt.str("assign ");
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";

@@ -12,15 +12,30 @@ struct Helpers
 
     ASTContext& Ctx;
     cpphdl::Module& mod;
-    bool thisIsModule = false;
+
+    enum {
+        FLAG_NONE = 0,
+        FLAG_EXTERNAL_THIS = 1
+    };
+    unsigned flags;
 
     cpphdl::Expr exprToExpr(const Stmt* E);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
-    cpphdl::Struct exportStruct(CXXRecordDecl* RD);
     cpphdl::Expr digQT(QualType& QT);
     void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true);
     bool specializationToParameters(CXXRecordDecl*RD, std::vector<cpphdl::Field>& params);
-    void updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2);
-    bool putField(FieldDecl* FD);
 
+};
+
+extern unsigned debugIndent;
+
+#include <functional>
+
+class on_return {
+public:
+    on_return(std::function<void()> lambda) : lambda_(std::move(lambda)) {}
+    ~on_return() { lambda_(); }
+
+private:
+    std::function<void()> lambda_;
 };

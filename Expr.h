@@ -41,16 +41,17 @@ struct Expr
 
     std::vector<Expr> sub;
 
-    enum {
+    enum : unsigned {
         FLAG_NONE = 0,
         FLAG_WIRE = 1,
         FLAG_REG = 2,
-        FLAG_NORETURN = 4,
-        FLAG_RETURN = 8,
-        FLAG_STRUCT = 16,
-        FLAG_CALL = 32,
-        FLAG_ANON = 64,
-        FLAG_NOTHIS = 128
+        FLAG_NORETURN = 4,  // translating connect() function into generate assign block
+        FLAG_RETURN = 8,  // it's function and can return (not disable task)
+        FLAG_STRUCT = 16,  // inside struct declaration
+        FLAG_CALL = 32,  // member inside call
+        FLAG_ANON = 64,  // anonymous struct or union
+        FLAG_USETHIS = 128,  // methods of structs
+        FLAG_NOCALLS = 256,  // calls forbidden in connect() assign
     };
     unsigned flags = FLAG_NONE;
 

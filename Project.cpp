@@ -27,7 +27,7 @@ void Project::generate(const std::string& outDir)
 
         mod.print(out);
 
-        std::cout << "Generated: " << filePath << "\n";
+        std::cout << "\n" << "Generated: " << filePath << "\n";
     }
 
     for (auto& str : structs) {
@@ -70,7 +70,7 @@ void Project::generate(const std::string& outDir)
         str.print(out);
         out << "\n\nendpackage\n";
 
-        std::cout << "Generated: " << filePath << "\n";
+        std::cout << "\n" << "Generated: " << filePath << "\n";
     }
 }
 

@@ -31,14 +31,30 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_PARAM:
             return indent_str + prefix + (((flags&FLAG_STRUCT)&&sub.size())?sub[0].str():value);
         case EXPR_TEMPLATE:
+        {
             if (value == "cpphdl::array") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
-//            if (sub.size()) {
-//                return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
-//            }
-            return indent_str + prefix + typeToSV(value, suffix);
+            if (value.find("cpphdl::") == 0 && sub.size()) {
+                return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
+            }
+
+            std::string typeSpec;
+//        if ((flags&FLAG_MEMBER)) {
+//            str += "#(";
+            bool first = true;
+            for (auto& param : sub) {
+                if (!first) {
+                    typeSpec += "_";
+                }
+                typeSpec += param.str();
+                first = false;
+            }
+//            str += ")";
+//        }
+            return indent_str + prefix + typeToSV(value, typeSpec + suffix);
+        }
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
@@ -79,7 +95,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool first = true;
             for (size_t i=skipArgs; i < sub.size(); ++i) {
-                if (sub[i].value != "clk" && sub[i].value != "__inst_name") {
+                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1) {
                     str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
@@ -122,6 +138,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
         {
+            if ((flags&FLAG_NOCALLS)) {
+                return "";
+            }
 //            ASSERT(sub.size()>=1);
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
@@ -142,9 +161,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 3 && sub[0].sub.size() != 0 && sub[0].value == "bits") {
                 return indent_str + sub[0].sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
             }
-//            if (sub.size() == 0 || sub[0].sub.size() == 0 || sub[0].sub[0].value != "this") {  // we need only this->calls, no member calls like work(), connect()
-//                return "";
-//            }
+            if (sub[0].value == "work" || sub[0].value == "connect" || sub[0].value == "strobe" || sub[0].value == "comb") {  // forbidden calls
+                return "";
+            }
             if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value.size() > 10 && sub[0].value.find("_comb_func") == sub[0].value.size()-10) {
                 std::string str = sub[0].value;
                 return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
@@ -185,7 +204,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].str() == "__this" && (flags&FLAG_NOTHIS)) {
+            if (sub[0].str() == "__this" && !(flags&FLAG_USETHIS)) {
                 return indent_str + value;
             }
             if (value == "next") {
@@ -346,20 +365,6 @@ std::string Expr::typeToSV(std::string name, std::string size)
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
     std::string str = name;
-    if (type == EXPR_TEMPLATE) {
-//        if ((flags&FLAG_MEMBER)) {
-//            str += "#(";
-            bool first = true;
-            for (auto& param : sub) {
-                if (!first) {
-                    str += "_";
-                }
-                str += param.str();
-                first = false;
-            }
-//            str += ")";
-//        }
-    }
     if (name == "cpphdl::logic") {
         str = logic + size;
     } else
@@ -432,7 +437,7 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if (name == "unsigned short") {
         str = "logic" + size + "[15:0]";
     } else
-    if (name == "unsigned long") {
+    if (name == "unsigned long" || name == "size_t") {
         str = "logic" + size + "[63:0]";
     } else
     if (name.compare(0, 8, "unsigned") == 0) {
