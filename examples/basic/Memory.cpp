@@ -81,15 +81,12 @@ template class Memory<64,65536,0>;
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
-#ifdef VERILATOR
-#include "VMemory.h"
-#endif
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
 {
 #ifdef VERILATOR
-    VMemory mem;
+    VERILATOR_MODEL mem;
 #else
     Memory<MEM_WIDTH_BYTES,MEM_DEPTH,SHOWAHEAD> mem;
 #endif
@@ -264,6 +261,9 @@ public:
 #else
         std::print("C++HDL TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
 #endif
+        if (debugen_in) {
+            std::print("\n");
+        }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "mem_test";
         connect();
@@ -297,8 +297,8 @@ int main (int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Memory", {}, 64, 65536, 1);
-    ok &= VerilatorCompile("Memory", {}, 64, 65536, 0);
+    ok &= VerilatorCompile("Memory.cpp", "Memory", {}, 64, 65536, 1);
+    ok &= VerilatorCompile("Memory.cpp", "Memory", {}, 64, 65536, 0);
     std::cout << "Executing tests... ===========================================================================\n";
     std::system((std::string("Memory_64_65536_1/obj_dir/VMemory") + (debug?" --debug":"") + " 0").c_str());
     std::system((std::string("Memory_64_65536_0/obj_dir/VMemory") + (debug?" --debug":"") + " 1").c_str());

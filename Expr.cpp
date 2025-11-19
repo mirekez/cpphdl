@@ -29,7 +29,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             replacePrint(value);
             return indent_str + prefix + value;
         case EXPR_PARAM:
-            return indent_str + prefix + (((flags&FLAG_STRUCT)&&sub.size())?sub[0].str():value);
+            return indent_str + prefix + (((flags&FLAG_SPECVAL)&&sub.size())?sub[0].str():value);
         case EXPR_TEMPLATE:
         {
             if (value == "cpphdl::array") {
@@ -149,23 +149,23 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                return indent_str + value + "()";
 //            }
 
-            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value == "clr") {
-                return indent_str + sub[0].sub[0].str() + " = '0";
+            if (sub.size() >= 1 && value == "clr") {
+                return indent_str + sub[0].str() + " = '0";
             }
-            if (sub.size() >= 2 && sub[0].sub.size() != 0 && sub[0].value == "set") {
-                return indent_str + sub[0].sub[0].str() + " = " + sub[1].str();
+            if (sub.size() >= 2 && value == "set") {
+                return indent_str + sub[0].str() + " = " + sub[1].str();
             }
-            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value == "format") {
-                return indent_str + sub[0].sub[0].str();
+            if (sub.size() >= 1 && value == "format") {
+                return indent_str + sub[0].str();
             }
-            if (sub.size() >= 3 && sub[0].sub.size() != 0 && sub[0].value == "bits") {
-                return indent_str + sub[0].sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
+            if (sub.size() >= 3 && value == "bits") {
+                return indent_str + sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
             }
-            if (sub[0].value == "work" || sub[0].value == "connect" || sub[0].value == "strobe" || sub[0].value == "comb") {  // forbidden calls
+            if (value == "work" || value == "connect" || value == "strobe" || value == "comb") {  // forbidden calls
                 return "";
             }
-            if (sub.size() >= 1 && sub[0].sub.size() != 0 && sub[0].value.size() > 10 && sub[0].value.find("_comb_func") == sub[0].value.size()-10) {
-                std::string str = sub[0].value;
+            if (sub.size() >= 1 && value.size() > 10 && value.find("_comb_func") == value.size()-10) {
+                std::string str = value;
                 return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
             }
 
@@ -174,15 +174,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
             bool skipfirst = false;
             bool first = true;
             std::string member = value;
-            if (sub[0].type == EXPR_MEMBER) {
-                if (sub[0].sub[0].str() != "__this") {
-                    sub[0].flags |= FLAG_CALL;  // it will swap places of member and method, and add "("
+/*            if (sub[0].type == EXPR_MEMBER) {
+                if (sub[0].str() != "_this") {
+                    flags |= FLAG_CALL;  // it will swap places of member and method, and add "("
                     str = "";
                     first = false;
                 }
                 member = sub[0].str();
                 skipfirst = true;
-            }
+            }*/
 
             for (auto& arg : sub) {
                 if (skipfirst) {
@@ -204,10 +204,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].str() == "__this" && !(flags&FLAG_USETHIS)) {
+            if ((sub[0].str() == "_this" && !(flags&FLAG_USETHIS)) || (flags&FLAG_NOBASE)) {
                 return indent_str + value;
             }
-            if (value == "next") {
+            if (value == "next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
                 return indent_str + sub[0].str();
             }
             if (sub[0].type == EXPR_INDEX) {
@@ -221,7 +221,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function
                 return indent_str + prefix + value + "(" + sub[0].str();
             }
-            std::string delim = std::string((flags&FLAG_ANON)?"anon":"") + ".";
+            std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
             if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].value; } )) {
                 delim = "__";
             }
@@ -312,7 +312,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT(sub.size()>=1);
             std::string param;
-            if (sub[0].traverseIf( [](Expr& e, std::string& param) { return e.value == "clk";}, param )) {
+            if (sub[0].traverseIf( [&](Expr& e/*, std::string& param*/) { return e.value == "clk";}/*, param*/ )) {
                 return "";
             }
             std::string str;

@@ -9,7 +9,7 @@ namespace cpphdl
 struct Field
 {
     std::string name;
-    Expr type;
+    Expr expr;
     Expr initializer;
     Expr bitwidth;
     Struct definition;

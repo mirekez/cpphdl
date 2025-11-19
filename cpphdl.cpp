@@ -178,10 +178,17 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
                     }
                 }
 
-                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().type.debug());
+                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().expr.debug());
                 if (FD->isBitField()) {
-                    DEBUG_EXPR(debugIndent, "Expr(bitfield): " << st.fields.back().bitwidth.debug());
+                    DEBUG_EXPR(debugIndent, " Expr(bitfield): " << st.fields.back().bitwidth.debug());
                 }
+            }
+        }
+        if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
+            if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
+                DEBUG_AST(debugIndent, "Const(" << VD->getNameAsString() << "): ");
+                st.parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
+                DEBUG_EXPR(debugIndent, " Expr: " << st.parameters.back().expr.debug());
             }
         }
     }
@@ -213,7 +220,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
         auto it = std::find_if(hlp.mod.ports.begin(), hlp.mod.ports.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
         if (it != hlp.mod.ports.end()) {
             field = &*it;
-            updateExpr(field->type, expr);
+            updateExpr(field->expr, expr);
         }
         else {
             field = &hlp.mod.ports.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
@@ -226,7 +233,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             expr.hasInitializer = true;
         }
 
-        DEBUG_EXPR1(" [Expr: " << field->type.debug() << "]");
+        DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
     }
     else {
         auto* ModuleClass = lookupQualifiedRecord(&hlp.Ctx, "cpphdl::Module");
@@ -259,12 +266,12 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             auto it = std::find_if(hlp.mod.members.begin(), hlp.mod.members.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
             if (it != hlp.mod.members.end()) {
                 field = &*it;
-                updateExpr(field->type, expr);
+                updateExpr(field->expr, expr);
             }
             else {
                 field = &hlp.mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
             }
-            DEBUG_EXPR1(" [Expr: " << field->type.debug() << "]");
+            DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
         }
         else {
             DEBUG_AST1(" {var " << FD->getNameAsString() << "}");
@@ -272,12 +279,12 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             auto it = std::find_if(hlp.mod.vars.begin(), hlp.mod.vars.end(), [&](auto& elem){ return elem.name == FD->getNameAsString(); } );
             if (it != hlp.mod.vars.end()) {
                 field = &*it;
-                updateExpr(field->type, expr);
+                updateExpr(field->expr, expr);
             }
             else {
                 field = &hlp.mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
             }
-            DEBUG_EXPR1(" [Expr: " << field->type.debug() << "]");
+            DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
             if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
                 auto st = exportStruct(QT->getAsCXXRecordDecl(), hlp);
                 auto ret = hlp.mod.imports.emplace(st.name);
@@ -290,7 +297,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
     return true;
 }
 
-void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
+std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 {
     auto* ModuleClass = lookupQualifiedRecord(&hlp.Ctx, "cpphdl::Module");
     ASSERT(ModuleClass);
@@ -301,7 +308,7 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
     || MD->getQualifiedNameAsString().find("cpphdl::") != (size_t)-1
     || MD->getQualifiedNameAsString().find("std::") != (size_t)-1
     || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod.name.find(MD->getParent()->getQualifiedNameAsString())) != 0) {  // module's class method but not current module
-        return;
+        return "";
     }
 
     DEBUG_AST(debugIndent++, "# putMethod: " << MD->getQualifiedNameAsString());
@@ -441,6 +448,11 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 
     unsigned savedFlags = hlp.flags;
     if (hlp.mod.name.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of structure, adding first parameter this
+        // extracting parameters of the template
+        std::vector<cpphdl::Field> params;
+        hlp.specializationToParameters(MD->getParent(), params);
+        hlp.addSpecializationName(method.name, params, false);
+
         DEBUG_AST1(" - not Module method: (" << hlp.mod.name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
         QualType QT = MD->getThisType()->getPointeeType();
@@ -451,8 +463,8 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         QT = QT.getCanonicalType();        // ensure you have the actual canonical form
         DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
 
-        method.parameters.emplace_back(cpphdl::Field{"__this", std::move(expr)});
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().type.debug());
+        method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
+        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug());
     }
 
     for (const ParmVarDecl* Param : MD->parameters()) {
@@ -472,13 +484,14 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
                 currProject->structs.emplace_back(std::move(st));
             }
         }
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().type.debug());
+        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug());
     }
 
     LocalVisitor(hlp, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
 //    if (MD->getNameAsString() != hlp.mod.name
 ////     && MD->getNameAsString() != std::string("~") + hlp.mod.name
 //     && MD->getNameAsString().find("operator") != 0) {
+    std::string ret = method.name;
     auto it = std::find_if(hlp.mod.methods.begin(), hlp.mod.methods.end(), [&](auto& elem){ return elem.name == method.name; } );
     if (it != hlp.mod.methods.end()) {
         if (it->ret.size() == method.ret.size()) {
@@ -490,7 +503,7 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         if (it->parameters.size() == method.parameters.size()) {
             for (size_t i=0; i < it->parameters.size(); ++i) {
                 DEBUG_AST(debugIndent, "updating parameters...");
-                updateExpr(it->parameters[i].type, method.parameters[i].type);
+                updateExpr(it->parameters[i].expr, method.parameters[i].expr);
                 updateExpr(it->parameters[i].initializer, method.parameters[i].initializer);
                 updateExpr(it->parameters[i].bitwidth, method.parameters[i].bitwidth);
             }
@@ -507,6 +520,7 @@ void putMethod(const CXXMethodDecl* MD, Helpers& hlp)
     }
 //    }
     hlp.flags = savedFlags;
+    return ret;
 }
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
@@ -515,7 +529,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         : Context(Context), SM(Context->getSourceManager()) {}
 
 
-    bool putModule(CXXRecordDecl* RD)
+    void putModule(CXXRecordDecl* RD)
     {
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString());
         on_return ret_debug([](){ --debugIndent; });
@@ -530,7 +544,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         std::vector<cpphdl::Field> params;
         hlp.specializationToParameters(RD, params);
         hlp.addSpecializationName(mod.name, params);
-        std::erase_if(params, [](cpphdl::Field& field) { return field.type.type != cpphdl::Expr::EXPR_VALUE; });
+        std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_VALUE; });
         mod.parameters = std::move(params);
         mod.origName = RD->getQualifiedNameAsString();
 
@@ -575,8 +589,6 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         currProject->modules.emplace_back(std::move(mod));
-
-        return true;
     }
 
 //    CXXRecordDecl* currentClass = nullptr;
@@ -594,14 +606,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         if (RD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
             abstractDefs.push_back(RD);
-            return true;
         }
-
-//        if (currentClass != RD) {
-            if (!putModule(RD)) {
-                return false;
-            }
-//        }
+        else {
+            putModule(RD);
+        }
 
         return true;
     }

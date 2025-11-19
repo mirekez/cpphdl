@@ -148,15 +148,12 @@ template class Fifo<64,65536,0>;
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
-#ifdef VERILATOR
-#include "VFifo.h"
-#endif
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
 {
 #ifdef VERILATOR
-    VFifo fifo;
+    VERILATOR_MODEL fifo;
 #else
     Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
 #endif
@@ -326,6 +323,9 @@ public:
 #else
         std::print("C++HDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
 #endif
+        if (debugen_in) {
+            std::print("\n");
+        }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
         connect();
@@ -359,8 +359,8 @@ int main (int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65536, 1);
-    ok &= VerilatorCompile("Fifo", {"Memory"}, 64, 65536, 0);
+    ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 1);
+    ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 0);
     std::cout << "Executing tests... ===========================================================================\n";
     std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
     std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());

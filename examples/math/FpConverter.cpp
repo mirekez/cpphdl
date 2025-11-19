@@ -20,10 +20,10 @@ struct FP
     using RAW = std::conditional_t<(WIDTH<=8), uint8_t,std::conditional_t<(WIDTH<=16), uint16_t,std::conditional_t<(WIDTH<=32), uint32_t,uint64_t>>>;
 
     union {
-        RAW raw : W;
+        RAW raw : WIDTH;
         struct {
-            RAW mantissa : W-EW-1;
-            RAW exponent : EW;
+            RAW mantissa : MANT_WIDTH;
+            RAW exponent : EXP_WIDTH;
             RAW sign : 1;
         }__attribute__((packed));
     };
@@ -70,6 +70,13 @@ struct FP
         return ret;
     }
 
+    void from_double(double in)
+    {
+        mantissa = (*(uint64_t*)&in)&((1ULL<<52)-1);
+        exponent = (((*(uint64_t*)&in)&~(1ULL<<63))>>52) - (((1ULL<<(11-1))-1)) + ((1ULL<<(EXP_WIDTH-1))-1);
+        sign = (*(uint64_t*)&in)>>63;
+    }
+
     bool cmp(double ref, double threshold)
     {
         return to_double() >= ref - threshold && to_double() <= ref + threshold;
@@ -85,7 +92,12 @@ struct std::formatter<FP<W,EW>>
     auto format(const FP<W,EW>& fp, FormatContext& ctx) const
     {
         auto out = ctx.out();
-        out = std::format_to(out, "{}", fp.raw);
+        if (W == 16) {
+            out = std::format_to(out, "{:04x}", fp.raw);
+        }
+        else {
+            out = std::format_to(out, "{:08x}", fp.raw);
+        }
         return out;
     }
 };
@@ -160,15 +172,12 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
-#ifdef VERILATOR
-#include "VFpConverter.h"
-#endif
 
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class TestFpConverter : public Module
 {
 #ifdef VERILATOR
-    VFpConverter converter;
+    VERILATOR_MODEL converter;
 #else
     FpConverter<STYPE,DTYPE,LENGTH,USE_REG> converter;
 #endif
@@ -177,6 +186,8 @@ class TestFpConverter : public Module
     reg<array<STYPE,LENGTH>> out_reg;
     reg<array<double,LENGTH>> was_refs1;
     reg<array<double,LENGTH>> was_refs2;
+    reg<u1> can_check1;
+    reg<u1> can_check2;
     bool error;
 
     size_t i;
@@ -225,12 +236,14 @@ public:
 
         if (reset) {
             error = false;
+            can_check1.clr();
+            can_check2.clr();
             return;
         }
 
         if (!clk) {  // all checks on negedge edge
             for (i=0; i < LENGTH; ++i) {
-                if (!reset && ((!USE_REG && !(*data_in)[i].cmp(was_refs1[i], 0.1)) || (USE_REG && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
+                if (!reset && ((!USE_REG && can_check1 && !(*data_in)[i].cmp(was_refs1[i], 0.1)) || (USE_REG && can_check2 && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
                     std::print("{:s} ERROR: {}({}) was read instead of {}\n",
                         __inst_name,
                         (*data_in)[i].to_double(),
@@ -244,12 +257,12 @@ public:
 
         for (i=0; i < LENGTH; ++i) {
             refs[i] = random()*random()/1000000.0;
-            out_reg.next[i].mantissa = (*(uint64_t*)&refs[i])&((1ULL<<52)-1);
-            out_reg.next[i].exponent = ((*(uint64_t*)&refs[i])&~(1ULL<<63))>>52;
-            out_reg.next[i].sign = (*(uint64_t*)&refs[i])>>63;
+            out_reg.next[i].from_double(refs[i]);
         }
         was_refs1.next = refs;
         was_refs2.next = was_refs1;
+        can_check1.next = 1;
+        can_check2.next = can_check1;
     }
 
     void strobe()
@@ -273,10 +286,14 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), DTYPE).name(), LENGTH, USE_REG);
+        std::print("VERILATOR TestFpConverter, MODEL: {}, LENGTH: {}, USE_REG: {}...", STRINGIFY(VERILATOR_MODEL), LENGTH, USE_REG);
 #else
         std::print("C++HDL TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), typeid(DTYPE).name(), LENGTH, USE_REG);
 #endif
+        if (debugen_in) {
+            std::print("\n");
+        }
+
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "converter_test";
         connect();
@@ -309,12 +326,12 @@ int main (int argc, char** argv)
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
-//    std::cout << "Building verilator simulation... =============================================================\n";
-//    ok &= VerilatorCompile("Converter", {}, 8, 1);
-//    ok &= VerilatorCompile("Converter", {}, 8, 0);
-//    std::cout << "Executing tests... ===========================================================================\n";
-//    std::system((std::string("Converter_64_65535_1/obj_dir/VConverter") + (debug?" --debug":"") + " 0").c_str());
-//    std::system((std::string("Converter_64_65535_0/obj_dir/VConverter") + (debug?" --debug":"") + " 1").c_str());
+    std::cout << "Building verilator simulation... =============================================================\n";
+    ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
+    ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
+    std::cout << "Executing tests... ===========================================================================\n";
+    std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VConverter") + (debug?" --debug":"") + " 0").c_str());
+    std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VConverter") + (debug?" --debug":"") + " 1").c_str());
 #else
     Verilated::commandArgs(argc, argv);
 #endif

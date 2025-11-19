@@ -47,11 +47,12 @@ struct Expr
         FLAG_REG = 2,
         FLAG_NORETURN = 4,  // translating connect() function into generate assign block
         FLAG_RETURN = 8,  // it's function and can return (not disable task)
-        FLAG_STRUCT = 16,  // inside struct declaration
+        FLAG_SPECVAL = 16,  // show number values from specialization if possible
         FLAG_CALL = 32,  // member inside call
         FLAG_ANON = 64,  // anonymous struct or union
         FLAG_USETHIS = 128,  // methods of structs
         FLAG_NOCALLS = 256,  // calls forbidden in connect() assign
+        FLAG_NOBASE = 512  // dont use base of member expr (for constexpr of structs)
     };
     unsigned flags = FLAG_NONE;
 
@@ -68,13 +69,13 @@ struct Expr
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");
 
-    template <typename Func, typename Param>
-    bool traverseIf(Func&& checker, Param& param) {
-        if (checker(*this, param)) {
+    template <typename Func/*, typename Param*/>
+    bool traverseIf(Func&& checker/*, Param& param*/) {
+        if (checker(*this/*, param*/)) {
             return true;
         }
         for (auto& expr : sub) {
-            if (expr.traverseIf(checker, param)) {
+            if (expr.traverseIf(checker/*, param*/)) {
                 return true;
             }
         }

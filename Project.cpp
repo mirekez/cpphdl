@@ -27,7 +27,7 @@ void Project::generate(const std::string& outDir)
 
         mod.print(out);
 
-        std::cout << "\n" << "Generated: " << filePath << "\n";
+        std::cout << "\n" << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
     }
 
     for (auto& str : structs) {
@@ -66,6 +66,10 @@ void Project::generate(const std::string& outDir)
             continue;
         }
         out << "package " << fname << "_pkg;\n\n";
+        for (auto& param : str.parameters) {
+            param.expr.flags = Expr::FLAG_SPECVAL;
+            out << "parameter " << param.name << " = " << param.expr.str() << ";\n";
+        }
         out << "typedef ";
         str.print(out);
         out << "\n\nendpackage\n";

@@ -15,6 +15,7 @@ bool Struct::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
+
     out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
     for (int i=fields.size()-1; i >= 0; --i) {  // reverse order in SystemVerilog
         if (fields[i].definition.type != STRUCT_EMPTY) {  // inline struct/union
@@ -28,7 +29,7 @@ bool Struct::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "} " << (name.length()?name:"anon");
+    out << "} " << (name.length()?name:"_");
 
     out << ";\n";
     return true;

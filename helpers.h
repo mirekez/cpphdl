@@ -15,7 +15,7 @@ struct Helpers
 
     enum {
         FLAG_NONE = 0,
-        FLAG_EXTERNAL_THIS = 1
+        FLAG_EXTERNAL_THIS = 1  // method from other struct (not Module)
     };
     unsigned flags;
 
@@ -23,7 +23,7 @@ struct Helpers
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);
     void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true);
-    bool specializationToParameters(CXXRecordDecl*RD, std::vector<cpphdl::Field>& params);
+    bool specializationToParameters(const CXXRecordDecl* RD, std::vector<cpphdl::Field>& params);
 
 };
 

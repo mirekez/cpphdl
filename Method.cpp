@@ -46,7 +46,7 @@ bool Method::print(std::ofstream& out)
     for (auto& param : parameters) {
         if (param.name != "clk") {
             out << (params_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
-                << (param.name.find("_out") == param.name.size()-4 ? "output " : "input ") << param.type.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
+                << (param.name.find("_out") == param.name.size()-4 ? "output " : "input ") << param.expr.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
@@ -84,7 +84,7 @@ bool Method::printConns(std::ofstream& out)
 
     std::vector<std::string> vars;
     for (auto& stmt : statements) {  // collecting vars from for
-        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+        stmt.traverseIf( [&](Expr& e/*, std::vector<std::string>& vars*/)
             {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
                 if (e.type == Expr::EXPR_FOR
                     && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
@@ -97,10 +97,10 @@ bool Method::printConns(std::ofstream& out)
                     vars.push_back(e.sub[0].sub[0].value);
                 }
                 return false;
-            }, vars );
+            }/*, vars*/ );
     }
     for (auto& stmt : statements) {  // replacing index names
-        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+        stmt.traverseIf( [&](Expr& e/*, std::vector<std::string>& vars*/)
             {
                 if (e.type == Expr::EXPR_MEMBER) {
                     for (auto& str : vars) {
@@ -111,7 +111,7 @@ bool Method::printConns(std::ofstream& out)
                     }
                 }
                 return false;
-            }, vars );
+            }/*, vars*/ );
     }
 
     out << "    generate\n";
@@ -127,8 +127,8 @@ bool Method::printConns(std::ofstream& out)
         out << ";\n";
     }
     for (auto& stmt : statements) {
-        std::string param;
-        if (stmt.traverseIf( [](Expr& e, std::string& param) { return e.value == "__inst_name";}, param )) {
+//        std::string param;
+        if (stmt.traverseIf( [](Expr& e/*, std::string& param*/) { return e.value == "__inst_name";}/*, param*/ )) {
             continue;
         }
 
@@ -156,9 +156,9 @@ bool Method::printComb(std::ofstream& out)
 {
     currMethod = this;
 
-    std::vector<std::string> vars;
+/*    std::vector<std::string> vars;
     for (auto& stmt : statements) {  // collecting vars from for
-        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+        stmt.traverseIf( [&](Expr& e)
             {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
                 if (e.type == Expr::EXPR_FOR
                     && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
@@ -171,10 +171,10 @@ bool Method::printComb(std::ofstream& out)
                     vars.push_back(e.sub[0].sub[0].value);
                 }
                 return false;
-            }, vars );
+            } );
     }
     for (auto& stmt : statements) {  // replacing index names
-        stmt.traverseIf( [](Expr& e, std::vector<std::string>& vars)
+        stmt.traverseIf( [&](Expr& e)
             {
                 if (e.type == Expr::EXPR_MEMBER) {
                     for (auto& str : vars) {
@@ -185,31 +185,20 @@ bool Method::printComb(std::ofstream& out)
                     }
                 }
                 return false;
-            }, vars );
+            } );
     }
-
-    out << "    generate\n";
-    if (vars.size()) {
-        out << "    genvar ";
-    }
-    bool first = true;
-    for (auto& var : vars) {
-        out << (!first?",":"") << "g" << var;
-        first = false;
-    }
-    if (vars.size()) {
-        out << ";\n";
-    }
+*/
+    out << "    always @(*) begin\n";
     for (auto& stmt : statements) {
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_NORETURN;
-        auto s = stmt.str("assign ");
+        auto s = stmt.str();
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";
         }
         out << s;
     }
-    out << "    endgenerate\n";
+    out << "    end\n";
 
     return true;
 }
