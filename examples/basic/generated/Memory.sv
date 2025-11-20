@@ -30,14 +30,14 @@ module Memory #(
     endgenerate
     assign data_out = data_out_comb;
 
-    generate
+    always @(*) begin
         if (SHOWAHEAD) begin
-            assign data_out_comb = buffer[read_addr_in];
+            data_out_comb = buffer[read_addr_in];
         end
         else begin
-            assign data_out_comb = data_out_reg;
+            data_out_comb = data_out_reg;
         end
-    endgenerate
+    end
 
     task work (input logic reset);
     begin: work

@@ -29,27 +29,29 @@ module FpConverterFP32_8_FP16_5 #(
 
     task convert32_8 (
         input FP32_8 _this
-,       input FP16_5 to
+,       output FP16_5 to_out
     );
     begin: convert32_8
-        to._._.sign = _this._._.sign;
-        to._._.exponent = _this._._.exponent - ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) + ((1 << (FP16_5_pkg::EXP_WIDTH - 1)) - 1);
-        if (_this._._.exponent == ((1 << FP32_8_pkg::EXP_WIDTH) - 1) || (_this._._.exponent > ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) && _this._._.exponent - ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) > ((1 << FP16_5_pkg::EXP_WIDTH)/2))) begin
-            to._._.exponent = ((1 << FP16_5_pkg::EXP_WIDTH) - 1);
-        end
-        if (_this._._.exponent == 0 || (_this._._.exponent < ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) && ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) - _this._._.exponent >= ((1 << FP16_5_pkg::EXP_WIDTH)/2))) begin
-            to._._.exponent = 0;
-        end
+        to_out._._.sign = _this._._.sign;
+        to_out._._.exponent = _this._._.exponent - ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) + ((1 << (FP16_5_pkg::EXP_WIDTH - 1)) - 1);
         if (FP16_5_pkg::MANT_WIDTH >= FP32_8_pkg::MANT_WIDTH) begin
-            to._._.mantissa = _this._._.mantissa << (FP16_5_pkg::MANT_WIDTH - FP32_8_pkg::MANT_WIDTH);
+            to_out._._.mantissa = _this._._.mantissa << (FP16_5_pkg::MANT_WIDTH - FP32_8_pkg::MANT_WIDTH);
         end
         else begin
             if (FP32_8_pkg::MANT_WIDTH - FP16_5_pkg::MANT_WIDTH < FP32_8_pkg::MANT_WIDTH) begin
-                to._._.mantissa = _this._._.mantissa >> (FP32_8_pkg::MANT_WIDTH - FP16_5_pkg::MANT_WIDTH);
+                to_out._._.mantissa = _this._._.mantissa >> (FP32_8_pkg::MANT_WIDTH - FP16_5_pkg::MANT_WIDTH);
             end
             else begin
-                to._._.mantissa = 0;
+                to_out._._.mantissa = 0;
             end
+        end
+        if (_this._._.exponent == ((1 << FP32_8_pkg::EXP_WIDTH) - 1) || (_this._._.exponent > ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) && _this._._.exponent - ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) > (1 << (FP16_5_pkg::EXP_WIDTH - 1)))) begin
+            to_out._._.exponent = ((1 << FP16_5_pkg::EXP_WIDTH) - 1);
+            to_out._._.mantissa = 0;
+        end
+        if (_this._._.exponent == 0 || (_this._._.exponent < ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) && ((1 << (FP32_8_pkg::EXP_WIDTH - 1)) - 1) - _this._._.exponent >= (1 << (FP16_5_pkg::EXP_WIDTH - 1)))) begin
+            to_out._._.exponent = 0;
+            to_out._._.mantissa = 0;
         end
     end
     endtask
@@ -67,7 +69,14 @@ module FpConverterFP32_8_FP16_5 #(
 
     task work (input logic reset);
     begin: work
-        out_reg = out_comb;
+        if (USE_REG) begin
+            for (i = 0;i < LENGTH;i=i+1) begin
+                convert32_8(data_in[i], out_reg[i]);
+            end
+        end
+        if (reset) begin
+            disable work;
+        end
         if (debugen_in) begin
             $write("%m: input: %x, output: %x\n", data_in, data_out);
         end

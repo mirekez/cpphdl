@@ -233,7 +233,7 @@ public:
 
         fifo.clk = clk;
         fifo.reset = reset;
-        fifo.eval();  // eval of verilator should be in the end
+        fifo.eval();
 #endif
 
         if (reset) {
@@ -348,22 +348,28 @@ public:
 int main (int argc, char** argv)
 {
     bool debug = false;
+    bool noveril = false;
     if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
         debug = true;
     }
+    if (argc > 2 && strcmp(argv[2], "--noveril") == 0) {
+        noveril = true;
+    }
     int only = -1;
-    if (argc > 1 && strcmp(argv[argc-1], "--debug") != 0) {
+    if (argc > 1 && argv[argc-1][0] != '-') {
         only = atoi(argv[argc-1]);
     }
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
-    std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 1);
-    ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 0);
-    std::cout << "Executing tests... ===========================================================================\n";
-    std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
-    std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
+    if (!noveril) {
+        std::cout << "Building verilator simulation... =============================================================\n";
+        ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 1);
+        ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 0);
+        std::cout << "Executing tests... ===========================================================================\n";
+        std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
+        std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
+    }
 #else
     Verilated::commandArgs(argc, argv);
 #endif

@@ -58,19 +58,20 @@ module Fifo #(
         assign mem__write_addr_in = wp_reg;
         assign mem__read_in = read_in;
         assign mem__read_addr_in = rp_reg;
+        assign mem__debugen_in = debugen_in;
     endgenerate
     assign data_out = mem__data_out;
     assign empty_out = empty_comb;
     assign full_out = full_comb;
     assign afull_out = afull_reg;
 
-    generate
-        assign full_comb = (wp_reg == rp_reg) && full_reg;
-    endgenerate
+    always @(*) begin
+        full_comb = (wp_reg == rp_reg) && full_reg;
+    end
 
-    generate
-        assign empty_comb = (wp_reg == rp_reg) && !full_reg;
-    endgenerate
+    always @(*) begin
+        empty_comb = (wp_reg == rp_reg) && !full_reg;
+    end
 
     task work (input logic reset);
     begin: work
@@ -83,7 +84,7 @@ module Fifo #(
         end
         if (read_in) begin
             if (empty_comb) begin
-                $write("%m: reading from an empty fifo\n", );
+                $write("%m: reading from an empty fifo\n");
                 $finish();
             end
             if (!empty_comb) begin
@@ -95,7 +96,7 @@ module Fifo #(
         end
         if (write_in) begin
             if (full_comb) begin
-                $write("%m: writing to a full fifo\n", );
+                $write("%m: writing to a full fifo\n");
                 $finish();
             end
             if (!full_comb) begin

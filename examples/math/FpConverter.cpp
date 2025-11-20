@@ -6,6 +6,8 @@
 #include "cpphdl.h"
 #include <print>
 
+// we
+
 using namespace cpphdl;
 
 #include <cstdint>
@@ -34,29 +36,39 @@ struct FP
     static_assert(MANT_WIDTH <= 52, "MANT_WIDTH too large");
 
     template<typename TYPE>
-    void convert(TYPE& to)
+    void convert(TYPE& to_out)
     {
-        to.sign = sign;
-        to.exponent = exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(to.EXP_WIDTH-1))-1);
+        to_out.sign = sign;
+        to_out.exponent = exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(to_out.EXP_WIDTH-1))-1);
 
-        if (exponent == ((1ULL<<EXP_WIDTH)-1) || (exponent > ((1ULL<<(EXP_WIDTH-1))-1) && exponent - ((1ULL<<(EXP_WIDTH-1))-1) > ((1ULL<<to.EXP_WIDTH)/2))) {
-            to.exponent = ((1ULL<<to.EXP_WIDTH)-1);
-        }
-        if (exponent == 0 || (exponent < ((1ULL<<(EXP_WIDTH-1))-1) && ((1ULL<<(EXP_WIDTH-1))-1) - exponent >= ((1ULL<<to.EXP_WIDTH)/2))) {
-            to.exponent = 0;
-        }
-
-        if (to.MANT_WIDTH >= MANT_WIDTH) {
-            to.mantissa = mantissa << (to.MANT_WIDTH - MANT_WIDTH);
+        if (to_out.MANT_WIDTH >= MANT_WIDTH) {
+            to_out.mantissa = mantissa << (to_out.MANT_WIDTH - MANT_WIDTH);
         }
         else {
-            if (MANT_WIDTH - to.MANT_WIDTH < MANT_WIDTH) {
-                to.mantissa = mantissa >> (MANT_WIDTH - to.MANT_WIDTH);
+            if (MANT_WIDTH - to_out.MANT_WIDTH < MANT_WIDTH) {
+                to_out.mantissa = mantissa >> (MANT_WIDTH - to_out.MANT_WIDTH);
             }
             else {
-                to.mantissa = 0;
+                to_out.mantissa = 0;
             }
         }
+
+        if (exponent == ((1ULL<<EXP_WIDTH)-1)
+        || (exponent > ((1ULL<<(EXP_WIDTH-1))-1) && exponent - ((1ULL<<(EXP_WIDTH-1))-1) > (1ULL<<(to_out.EXP_WIDTH-1)))) {  // overflow
+            to_out.exponent = ((1ULL<<to_out.EXP_WIDTH)-1);
+            to_out.mantissa = 0;
+        }
+        if (exponent == 0
+        || (exponent < ((1ULL<<(EXP_WIDTH-1))-1) && ((1ULL<<(EXP_WIDTH-1))-1) - exponent >= (1ULL<<(to_out.EXP_WIDTH-1)))) {  // underflow
+            to_out.exponent = 0;
+            to_out.mantissa = 0;
+        }
+
+        // TODO: rounding
+
+#ifndef SYNTHESIS
+//        std::print("{}({}) => {}({})\n", *this, this->to_double(), to, to.to_double());
+#endif
     }
 
 #ifndef SYNTHESIS
@@ -64,16 +76,31 @@ struct FP
     {
         uint64_t ret = 0;
         ret |= (uint64_t)sign << 63;
-        uint16_t exp = exponent == 0 ? 0 : (exponent == ((1ULL<<EXP_WIDTH)-1) ? ((1ULL<<11)-1) : (exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(11-1))-1)));
+        uint16_t exp = exponent - ((1ULL<<(EXP_WIDTH-1))-1) + ((1ULL<<(11-1))-1);
+        if (exponent == ((1ULL<<EXP_WIDTH)-1)) {
+            exp = ((1ULL<<11)-1);
+        }
+        if (exponent == 0) {
+            exp = 0;
+        }
         ret |= (uint64_t)exp << 52;
         ret |= (uint64_t)mantissa << (52 - MANT_WIDTH);
-        return ret;
+        return *(double*)&ret;
     }
 
     void from_double(double in)
     {
-        mantissa = (*(uint64_t*)&in)&((1ULL<<52)-1);
-        exponent = (((*(uint64_t*)&in)&~(1ULL<<63))>>52) - (((1ULL<<(11-1))-1)) + ((1ULL<<(EXP_WIDTH-1))-1);
+        mantissa = ((*(uint64_t*)&in)&((1ULL<<52)-1)) >> (52 - MANT_WIDTH);
+        uint64_t exp = (((*(uint64_t*)&in)&~(1ULL<<63))>>52);
+        exponent = exp - (((1ULL<<(11-1))-1)) + ((1ULL<<(EXP_WIDTH-1))-1);
+        if (exp == (((1ULL<<11)-1)) || (exp > (((1ULL<<(11-1))-1)) && exp - (((1ULL<<(11-1))-1)) > (1ULL<<(EXP_WIDTH-1)))) {
+            exponent = ((1ULL<<EXP_WIDTH)-1);
+            mantissa = 0;
+        }
+        if (exp == 0 || (exp < (((1ULL<<(11-1))-1)) && (((1ULL<<(11-1))-1)) - exp >= (1ULL<<(EXP_WIDTH-1)))) {
+            exponent = 0;
+            mantissa = 0;
+        }
         sign = (*(uint64_t*)&in)>>63;
     }
 
@@ -137,11 +164,15 @@ public:
     {
         if (!clk) return;
 
-//        if (reset) {
-//            return;
-//        }
+        if (USE_REG) {
+            for (i=0; i < LENGTH; ++i) {
+                (*data_in)[i].convert(out_reg.next[i]);
+            }
+        }
 
-        out_reg = out_comb;
+        if (reset) {
+            return;
+        }
 
         if (debugen_in) {
             std::print("{:s}: input: {}, output: {}\n", __inst_name, *data_in, *data_out);
@@ -213,6 +244,7 @@ public:
         converter.__inst_name = __inst_name + "/converter";
 
         converter.data_in      = data_out;
+        converter.debugen_in   = debugen_in;
         converter.connect();
 
         data_in           = converter.data_out;
@@ -243,7 +275,8 @@ public:
 
         if (!clk) {  // all checks on negedge edge
             for (i=0; i < LENGTH; ++i) {
-                if (!reset && ((!USE_REG && can_check1 && !(*data_in)[i].cmp(was_refs1[i], 0.1)) || (USE_REG && can_check2 && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
+                if (!reset && ((!USE_REG && can_check1 && !(*data_in)[i].cmp(was_refs1[i], 0.1))
+                             || (USE_REG && can_check2 && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
                     std::print("{:s} ERROR: {}({}) was read instead of {}\n",
                         __inst_name,
                         (*data_in)[i].to_double(),
@@ -256,7 +289,7 @@ public:
         }
 
         for (i=0; i < LENGTH; ++i) {
-            refs[i] = random()*random()/1000000.0;
+            refs[i] = ((double)random() - RAND_MAX/2) / (RAND_MAX/2);
             out_reg.next[i].from_double(refs[i]);
         }
         was_refs1.next = refs;
@@ -274,12 +307,15 @@ public:
         out_reg.strobe();
         was_refs1.strobe();
         was_refs2.strobe();
+        can_check1.strobe();
+        can_check2.strobe();
     }
 
     void comb()
     {
 #ifndef VERILATOR
         converter.conv_comb_func();
+        converter.comb();
 #endif
     }
 
@@ -316,22 +352,28 @@ public:
 int main (int argc, char** argv)
 {
     bool debug = false;
+    bool noveril = false;
     if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
         debug = true;
     }
+    if (argc > 2 && strcmp(argv[2], "--noveril") == 0) {
+        noveril = true;
+    }
     int only = -1;
-    if (argc > 1 && strcmp(argv[argc-1], "--debug") != 0) {
+    if (argc > 1 && argv[argc-1][0] != '-') {
         only = atoi(argv[argc-1]);
     }
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
-    std::cout << "Building verilator simulation... =============================================================\n";
-    ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
-    ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
-    std::cout << "Executing tests... ===========================================================================\n";
-    std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VConverter") + (debug?" --debug":"") + " 0").c_str());
-    std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VConverter") + (debug?" --debug":"") + " 1").c_str());
+    if (!noveril) {
+        std::cout << "Building verilator simulation... =============================================================\n";
+        ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
+        ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
+        std::cout << "Executing tests... ===========================================================================\n";
+        std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str());
+        std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8") + (debug?" --debug":"") + " 1").c_str());
+    }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
