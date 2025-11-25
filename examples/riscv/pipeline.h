@@ -5,50 +5,88 @@
 #include <type_traits>
 #include <tuple>
 #include <utility>
+//      ::State  ::State  ::State
+//     ┌────────┐
+//  y  │Stage0-0│
+//     ├────────┼────────┐
+//     │Stage0-1│Stage1-0│
+//     ├────────┼────────┼────────┐
+//     │Stage0-2│Stage1-1│Stage2-0│   <-  STATE
+//     └────────┴────────┴────────┘
+//                  x
 
-// pipeline stages auto-enumerator - gives ID and LENGTH to all pipeline stages
-
-template <size_t LENGTH, size_t ID, template<size_t,size_t> class T>
-struct StageHolder
-{
-    using type = T<ID,LENGTH>;
-};
-
-template <size_t LENGTH, typename IndexSeq, template<size_t,size_t> class... Ts>
-struct MakeStagesTupleImpl;
-
-template <size_t LENGTH, size_t... I, template<size_t,size_t> class... Ts>
-struct MakeStagesTupleImpl<LENGTH, std::index_sequence<I...>, Ts...>
-{
-    using type = std::tuple<typename StageHolder<LENGTH, I, Ts>::type...>;
-};
-
-template <template<size_t,size_t> class... Ts>
-using PipelineStages = MakeStagesTupleImpl<sizeof...(Ts),std::make_index_sequence<sizeof...(Ts)>, Ts...>;
-
-// states merger - builds overal state
+#define STAGE_PARAMS typename,size_t,size_t
 
 template <typename... Ts>
 struct MergeState : Ts... {};
 
+/////////////////////////////////////////////// Pipeline Stages auto-enumerator - gives ID and LENGTH to all pipeline stages
+
+template <typename STATE,
+          size_t LENGTH,
+          size_t ID,
+          template<STAGE_PARAMS> class T>
+struct StageHolder
+{
+    using type = T<STATE,ID,LENGTH>;
+};
+
+template <typename STATE,
+          size_t LENGTH,
+          typename IndexSeq,
+          template<STAGE_PARAMS> class... Ts>
+struct MakeStagesTupleImpl;
+
+template <typename STATE,
+          size_t LENGTH,
+          size_t... I,
+          template<STAGE_PARAMS> class... Ts>
+struct MakeStagesTupleImpl<STATE,LENGTH,std::index_sequence<I...>,Ts...>
+{
+    using type = std::tuple<typename StageHolder<STATE,LENGTH,I,Ts>::type...>;
+};
+
+template <template<STAGE_PARAMS> class... Ts>
+using PipelineStages = MakeStagesTupleImpl<
+                           MergeState<typename Ts<void,0,0>::State...>,
+                           sizeof...(Ts),
+                           std::make_index_sequence<sizeof...(Ts)>,
+                           Ts...>;
+
+/////////////////////////////////////////////// Pipeline primitive
+
 template <typename>
 struct Pipeline;
 
-template <template<size_t,size_t> class... Ts>
+template <template<STAGE_PARAMS> class... Ts>
 struct Pipeline<PipelineStages<Ts...>>
 {
-    using STATE = MergeState<typename Ts<0,0>::State...>;
+    using STATE = MergeState<typename Ts<void,0,0>::State...>;
     using STAGES = PipelineStages<Ts...>;
 
-    static constexpr std::size_t COUNT = sizeof...(Ts);
-    STATE stages[COUNT];
+    static constexpr std::size_t LENGTH = sizeof...(Ts);
+    STATE prev_comb[LENGTH];
+    STATE diagonal_comb;
     STAGES::type members;
 
 public:
     void connect()
     {
-        std::apply([](auto&... stage){
-            (stage.connect(), ...);
+        std::apply([&](auto&... stage) {
+            size_t y = 0;
+            (
+                (
+                    [&]{
+                        using Stage = std::remove_reference_t<decltype(stage)>;
+                        using State = typename Stage::State;
+
+                        stage.prev_in = &prev_comb[y++];
+                        stage.diagonal_in = &diagonal_comb;
+                        stage.connect();
+                    }()
+                ),
+                ...
+            );
         }, members);
     }
 
@@ -63,9 +101,34 @@ public:
 
     void comb()
     {
+        std::apply([&](auto&... stage) {
+            for (size_t y = 0; y < LENGTH; ++y) {
+                size_t x = 0;
+                size_t offset = 0;
+                prev_comb[y] = {};
+                (
+                    (
+                        [&]{
+                            using Stage = std::remove_reference_t<decltype(stage)>;
+                            using State = typename Stage::State;
+
+                            if (x < y) {
+                                *(State*)((uint8_t*)&prev_comb[y] + offset) = (*stage.state_out)[y-x];
+                            }
+                            *(State*)((uint8_t*)&diagonal_comb + offset) = (*stage.state_out)[0];
+                            ++x;
+                            offset += sizeof(State);
+                        }()
+                    ),
+                    ...
+                );
+            }
+        }, members);
     }
 
 };
+
+// PipelineStage primitive
 
 class PipelineStage : public cpphdl::Module
 {

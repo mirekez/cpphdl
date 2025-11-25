@@ -2,18 +2,23 @@
 
 using namespace cpphdl;
 
-template<size_t ID, size_t LENGTH>
+template<typename STATE, size_t ID, size_t LENGTH>
 class DecodeFetch: public PipelineStage
 {
 public:
-//    array<ExecuteCalc::State,>* 
-
     struct State
     {
         int what_to_do;
         int reg0;
         int reg1;
     };
+    array<State,LENGTH-ID> state_reg;
+
+public:
+    STATE                     *prev_in;
+    STATE                     *diagonal_in;
+    array<State,LENGTH-ID>    *state_out = &state_reg;
+
 
     void connect()
     {
@@ -22,7 +27,7 @@ public:
 
 };
 
-template<size_t ID, size_t LENGTH>
+template<typename STATE, size_t ID, size_t LENGTH>
 class ExecuteCalc
 {
 public:
@@ -31,6 +36,13 @@ public:
         int res0;
         int res1;
     };
+    array<State,LENGTH-ID> state_reg;
+
+public:
+    STATE                     *prev_in;
+    STATE                     *diagonal_in;
+    array<State,LENGTH-ID>    *state_out = &state_reg;
+
 
     void connect()
     {
@@ -38,7 +50,7 @@ public:
     }
 };
 
-template<size_t ID, size_t LENGTH>
+template<typename STATE, size_t ID, size_t LENGTH>
 class MemoryAccess: public PipelineStage
 {
 public:
@@ -49,6 +61,13 @@ public:
         bool write;
         bool read;
     };
+    array<State,LENGTH-ID> state_reg;
+
+public:
+    STATE                     *prev_in;
+    STATE                     *diagonal_in;
+    array<State,LENGTH-ID>    *state_out = &state_reg;
+
 
     void connect()
     {
@@ -56,7 +75,7 @@ public:
     }
 };
 
-template<size_t ID, size_t LENGTH>
+template<typename STATE, size_t ID, size_t LENGTH>
 class WriteBack: public PipelineStage
 {
 public:
@@ -65,6 +84,13 @@ public:
         uint64_t data;
         int write_to_reg;
     };
+    array<State,LENGTH-ID> state_reg;
+
+public:
+    STATE                     *prev_in;
+    STATE                     *diagonal_in;
+    array<State,LENGTH-ID>    *state_out = &state_reg;
+
 
     void connect()
     {
