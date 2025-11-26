@@ -96,32 +96,30 @@ union Instr
     }
 };
 
+enum AluOp
+{
+    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASS_RS1,
+};
+
+enum MemOp
+{
+    MNONE, LOAD, STORE
+};
+
+enum WbSel
+{
+    WNONE, ALU, MEMORY, PC_PLUS_4,
+};
+
+enum BrType
+{
+    BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR
+};
 
 template<typename STATE, size_t ID, size_t LENGTH>
 class DecodeFetch: public PipelineStage
 {
 public:
-
-    enum AluOp
-    {
-        NONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASS_RS1,
-    };
-
-    enum MemOp
-    {
-        NONE, LOAD, STORE
-    };
-
-    enum WbSel
-    {
-        NONE, ALU, MEMORY, PC_PLUS_4,
-    };
-
-    enum BrType
-    {
-        NONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR
-    };
-
     struct State
     {
         AluOp alu;
@@ -184,7 +182,7 @@ public:
                 regs_rdid_comb[0] = instr_in->i.rs1;
                 break;
         }
-        return regs_rdid1_comb;
+        return regs_rdid_comb;
     }
 
     void do_decode()
@@ -198,7 +196,7 @@ public:
         {
             case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
                 state_reg.next[0].rd  = instr_in->i.rd;
-                state_reg.next[0].imm = imm_I(*instr_in);
+                state_reg.next[0].imm = instr_in->imm_I();
                 state_reg.next[0].mem_op = MemOp::LOAD;
                 state_reg.next[0].alu_op = AluOp::ADD;    // address = rs1 + imm
                 state_reg.next[0].wb_sel = WbSel::MEMORY;
@@ -206,14 +204,14 @@ public:
                 break;
 
             case 0b0100011:  // STORE  // SB, SH, SW
-                state_reg.next[0].imm = imm_S(*instr_in);
+                state_reg.next[0].imm = instr_in->imm_S();
                 state_reg.next[0].mem_op = MemOp::STORE;
                 state_reg.next[0].alu_op = AluOp::ADD;    // base + offset
                 break;
 
             case 0b0010011:  // OP-IMM (immediate ALU)
                 state_reg.next[0].rd  = instr_in->i.rd;
-                state_reg.next[0].imm = imm_I(*instr_in);
+                state_reg.next[0].imm = instr_in->imm_I();
                 state_reg.next[0].writes_rd = true;
                 state_reg.next[0].wb_sel = WbSel::ALU;
 
@@ -233,7 +231,7 @@ public:
                 break;
 
             case 0b0110011:  // OP (register ALU)
-                state_reg.next[0].rd  = instr_in->r.rd;
+                state_reg.next[0].rd = instr_in->r.rd;
                 state_reg.next[0].writes_rd = true;
                 state_reg.next[0].wb_sel = WbSel::ALU;
 
@@ -253,39 +251,39 @@ public:
                 break;
 
             case 0b1100011:  // BRANCH
-                state_reg.next[0].imm = imm_B(*instr_in);
-                state_reg.next[0].branch = BranchType::NONE;
+                state_reg.next[0].imm = instr_in->imm_B();
+                state_reg.next[0].branch = BrType::BNONE;
 
                 switch (instr_in->b.funct3)
                 {
-                    case 0b000: state_reg.next[0].branch = BranchType::BEQ; break;
-                    case 0b001: state_reg.next[0].branch = BranchType::BNE; break;
-                    case 0b100: state_reg.next[0].branch = BranchType::BLT; break;
-                    case 0b101: state_reg.next[0].branch = BranchType::BGE; break;
-                    case 0b110: state_reg.next[0].branch = BranchType::BLTU; break;
-                    case 0b111: state_reg.next[0].branch = BranchType::BGEU; break;
+                    case 0b000: state_reg.next[0].branch = BrType::BEQ; break;
+                    case 0b001: state_reg.next[0].branch = BrType::BNE; break;
+                    case 0b100: state_reg.next[0].branch = BrType::BLT; break;
+                    case 0b101: state_reg.next[0].branch = BrType::BGE; break;
+                    case 0b110: state_reg.next[0].branch = BrType::BLTU; break;
+                    case 0b111: state_reg.next[0].branch = BrType::BGEU; break;
                 }
                 break;
 
             case 0b1101111:  // JAL
                 state_reg.next[0].rd  = instr_in->j.rd;
-                state_reg.next[0].imm = imm_J(*instr_in);
-                state_reg.next[0].branch = BranchType::JAL;
+                state_reg.next[0].imm = instr_in->imm_J();
+                state_reg.next[0].branch = BrType::JAL;
                 state_reg.next[0].wb_sel = WbSel::PC_PLUS_4;
                 state_reg.next[0].writes_rd = true;
                 break;
 
             case 0b1100111:  // JALR
                 state_reg.next[0].rd  = instr_in->i.rd;
-                state_reg.next[0].imm = imm_I(*instr_in);
-                state_reg.next[0].branch = BranchType::JALR;
+                state_reg.next[0].imm = instr_in->imm_I();
+                state_reg.next[0].branch = BrType::JALR;
                 state_reg.next[0].wb_sel = WbSel::PC_PLUS_4;
                 state_reg.next[0].writes_rd = true;
                 break;
 
             case 0b0110111:  // LUI
                 state_reg.next[0].rd  = instr_in->u.rd;
-                state_reg.next[0].imm = imm_U(*instr_in);
+                state_reg.next[0].imm = instr_in->imm_U();
                 state_reg.next[0].alu_op = AluOp::PASS_RS1;   // or NONE, since result = imm
                 state_reg.next[0].wb_sel = WbSel::ALU;
                 state_reg.next[0].writes_rd = true;
@@ -293,7 +291,7 @@ public:
 
             case 0b0010111:  // AUIPC
                 state_reg.next[0].rd  = instr_in->u.rd;
-                state_reg.next[0].imm = imm_U(*instr_in);
+                state_reg.next[0].imm = instr_in->imm_U();
                 state_reg.next[0].alu_op = AluOp::ADD;  // PC + imm
                 state_reg.next[0].wb_sel = WbSel::ALU;
                 state_reg.next[0].writes_rd = true;
@@ -303,9 +301,9 @@ public:
 
     void do_fetch()
     {
-        state_reg.next[0].pc = pc;
-        state_reg.next[0].rs1_val = regs_in[0];
-        state_reg.next[0].rs2_val = regs_in[1];
+        state_reg.next[0].pc = *pc_in;
+        state_reg.next[0].rs1_val = (*regs_in)[0];
+        state_reg.next[0].rs2_val = (*regs_in)[1];
     }
 };
 
@@ -337,10 +335,10 @@ public:
     {
         state_reg.next[0] = {};
 
-        uint32_t a = rs1_val;
-        uint32_t b = (prev_in->alu_op == AluOp::ADD && prev_in->mem_op != MemOp::NONE)
+        uint32_t a = prev_in->rs1_val;
+        uint32_t b = (prev_in->alu_op == AluOp::ADD && prev_in->mem_op != MemOp::MNONE)
                         ? uint32_t(prev_in->imm)      // load/store address calc uses imm
-                        : prev_in->rs2 ? rs2_val : uint32_t(prev_in->imm);
+                        : prev_in->rs2 ? prev_in->rs2_val : uint32_t(prev_in->imm);
 
         switch (prev_in->alu_op)
         {
@@ -355,7 +353,7 @@ public:
             case AluOp::SLT:  state_reg.next[0].alu_result = (int32_t(a) < int32_t(b)); break;
             case AluOp::SLTU: state_reg.next[0].alu_result = (a < b); break;
             case AluOp::PASS_RS1: state_reg.next[0].alu_result = a; break;
-            case AluOp::NONE: break;
+            case AluOp::ANONE: break;
         }
 
         // -----------------------------------------
@@ -363,43 +361,43 @@ public:
         // -----------------------------------------
         switch (prev_in->branch)
         {
-            case BranchType::BEQ:
-                state_reg.next[0].branch_taken = (rs1_val == rs2_val);
+            case BrType::BEQ:
+                state_reg.next[0].branch_taken = (prev_in->rs1_val == prev_in->rs2_val);
                 break;
-            case BranchType::BNE:
-                state_reg.next[0].branch_taken = (rs1_val != rs2_val);
+            case BrType::BNE:
+                state_reg.next[0].branch_taken = (prev_in->rs1_val != prev_in->rs2_val);
                 break;
-            case BranchType::BLT:
-                state_reg.next[0].branch_taken = (int32_t(rs1_val) < int32_t(rs2_val));
+            case BrType::BLT:
+                state_reg.next[0].branch_taken = (int32_t(prev_in->rs1_val) < int32_t(prev_in->rs2_val));
                 break;
-            case BranchType::BGE:
-                state_reg.next[0].branch_taken = (int32_t(rs1_val) >= int32_t(rs2_val));
+            case BrType::BGE:
+                state_reg.next[0].branch_taken = (int32_t(prev_in->rs1_val) >= int32_t(prev_in->rs2_val));
                 break;
-            case BranchType::BLTU:
-                state_reg.next[0].branch_taken = (rs1_val < rs2_val);
+            case BrType::BLTU:
+                state_reg.next[0].branch_taken = (prev_in->rs1_val < prev_in->rs2_val);
                 break;
-            case BranchType::BGEU:
-                state_reg.next[0].branch_taken = (rs1_val >= rs2_val);
+            case BrType::BGEU:
+                state_reg.next[0].branch_taken = (prev_in->rs1_val >= prev_in->rs2_val);
                 break;
-            case BranchType::JAL:
+            case BrType::JAL:
                 state_reg.next[0].branch_taken = true;
                 break;
-            case BranchType::JALR:
+            case BrType::JALR:
                 state_reg.next[0].branch_taken = true;
                 break;
-            case BranchType::NONE:
+            case BrType::BNONE:
                 break;
         }
 
         // Branch / jump target address
-        if (prev_in->branch != BranchType::NONE)
+        if (prev_in->branch != BrType::BNONE)
         {
-            if (prev_in->branch == BranchType::JAL)
-                state_reg.next[0].branch_target = pc + prev_in->imm;
-            else if (prev_in->branch == BranchType::JALR)
-                state_reg.next[0].branch_target = (rs1_val + prev_in->imm) & ~1u;
+            if (prev_in->branch == BrType::JAL)
+                state_reg.next[0].branch_target = prev_in->pc + prev_in->imm;
+            else if (prev_in->branch == BrType::JALR)
+                state_reg.next[0].branch_target = (prev_in->rs1_val + prev_in->imm) & ~1u;
             else     // conditional branch
-                state_reg.next[0].branch_target = pc + prev_in->imm;
+                state_reg.next[0].branch_target = prev_in->pc + prev_in->imm;
         }
     }
 
@@ -419,7 +417,6 @@ public:
     array<State,LENGTH-ID> state_reg;
 
     uint32_t mem_addr_comb;
-    uint32_t mem_write_comb;
     uint32_t mem_out_comb;
     uint8_t mem_mask_comb;
     bool mem_write_comb;
@@ -446,7 +443,7 @@ public:
 
     uint32_t mem_out_comb_func()
     {
-        return mem_out_comb = rs2_val;
+        return mem_out_comb = prev_in->rs2_val;
     }
 
     uint8_t mem_mask_comb_func()
@@ -465,8 +462,9 @@ public:
     {
         state_reg.next[0] = {};
 
-        if (prev_in->mem_op == MemOp::NONE)
-            return out;
+        if (prev_in->mem_op == MemOp::MNONE) {
+            return;
+        }
 
         if (prev_in->mem_op == MemOp::LOAD)
         {
@@ -496,7 +494,7 @@ public:
         }
         else
 
-        if (ex.branch_taken) {
+        if (prev_in->branch_taken) {
             state_reg.next[0].next_pc = prev_in->branch_target;
         }
         else {
@@ -528,7 +526,7 @@ public:
     STATE                     *diagonal_in   = nullptr;
     array<State,LENGTH-ID>    *state_out     = &state_reg;
     uint32_t                  *regs_out      = &regs_out_comb;
-    uint8_t                   *regs_wrid_out   = &regs_id_comb;
+    uint8_t                   *regs_wrid_out = &regs_wrid_comb;
     bool                      *regs_write_out = &regs_write_comb;
 
     void connect()
@@ -536,20 +534,20 @@ public:
         std::print("WriteBack: {} of {}\n", ID, LENGTH);
     }
 
-    uint32_t regs_out_comb()
+    uint32_t regs_out_comb_func()
     {
         return regs_out_comb = prev_in->writes_rd ? prev_in->wb_sel == WbSel::ALU ? prev_in->alu_result :
                                                    (prev_in->wb_sel == WbSel::MEMORY && prev_in->load_valid ? prev_in->load_data :
                                                    (prev_in->wb_sel == WbSel::PC_PLUS_4 ? prev_in->branch_target : 0) ) : 0;  // can we use "full_case" or "parallel_case" here?
     }
 
-    uint8_t regs_wrid_comb()
+    uint8_t regs_wrid_comb_func()
     {
         // NOTE! reg0 is ZERO, never write it
         return regs_wrid_comb = prev_in->rd;
     }
 
-    bool regs_write_comb()
+    bool regs_write_comb_func()
     {
         // NOTE! reg0 is ZERO, never write it
         return regs_write_comb = prev_in->writes_rd ? prev_in->wb_sel == WbSel::ALU ? true :
@@ -576,21 +574,25 @@ public:
 
     bool             debugen_in;
 
-//    void connect()
-//    {
-//    }
+    void connect()
+    {
+        Pipeline::connect();
+    }
 
-//    void work(bool clk, bool reset)
-//    {
-//    }
+    void work(bool clk, bool reset)
+    {
+        Pipeline::work(clk, reset);
+    }
 
-//    void strobe()
-//    {
-//    }
+    void strobe()
+    {
+        Pipeline::strobe();
+    }
 
-//    void comb()
-//    {
-//    }
+    void comb()
+    {
+        Pipeline::comb();
+    }
 
 };
 
