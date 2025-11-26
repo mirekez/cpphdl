@@ -32,7 +32,7 @@ public:
 
     void connect() {}
 
-    void data_out_comb_func()
+    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
     {
         if (SHOWAHEAD) {
             data_out_comb = buffer[*read_addr_in];
@@ -40,6 +40,7 @@ public:
         else {
             data_out_comb = data_out_reg;
         }
+        return data_out_comb;
     }
 
     void work(bool clk, bool reset)
