@@ -23,7 +23,6 @@
 
 using namespace clang;
 
-std::vector<CXXRecordDecl*> abstractDefs;
 
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName)
 {
@@ -526,7 +525,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 {
     explicit MethodVisitor(ASTContext* Context)
-        : Context(Context), SM(Context->getSourceManager()) {}
+        : Context(Context)/*, SM(Context->getSourceManager())*/ {}
 
 
     void putModule(CXXRecordDecl* RD)
@@ -617,7 +616,8 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     bool shouldVisitTemplateInstantiations() const { return true; }
 
     ASTContext* Context;
-    const SourceManager &SM;
+//    const SourceManager &SM;
+    std::vector<CXXRecordDecl*> abstractDefs;
 };
 
 struct MethodConsumer : public ASTConsumer

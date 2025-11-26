@@ -130,3 +130,10 @@ DEFINE_REGULAR_TYPE_CLASS(int8_t, s8, 8, "{:+4}");
 DEFINE_REGULAR_TYPE_CLASS(int16_t, s16, 16, "{:+6}");
 DEFINE_REGULAR_TYPE_CLASS(int32_t, s32, 32, "{:+11}");
 DEFINE_REGULAR_TYPE_CLASS(int64_t, s64, 64, "{:+21}");
+
+static char ZERO1024[1024] = {};
+static const bool* BZERO = (bool*)&ZERO1024;
+static const uint8_t* U8ZERO = (uint8_t*)&ZERO1024;
+static const uint16_t* U16ZERO = (uint16_t*)&ZERO1024;
+static const uint32_t* U32ZERO = (uint32_t*)&ZERO1024;
+static const uint64_t* U63ZERO = (uint64_t*)&ZERO1024;
