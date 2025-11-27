@@ -96,22 +96,22 @@ union Instr
     }
 };
 
-enum AluOp
+enum Alu
 {
     ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASS_RS1,
 };
 
-enum MemOp
+enum Mem
 {
     MNONE, LOAD, STORE
 };
 
-enum WbSel
+enum Wb
 {
-    WNONE, ALU, MEMORY, PC_PLUS_4,
+    WNONE, ALU, MEMORY, PC,
 };
 
-enum BrType
+enum Br
 {
     BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR
 };
@@ -122,33 +122,41 @@ class DecodeFetch: public PipelineStage
 public:
     struct State
     {
-        AluOp alu;
-        MemOp mem;
-        WbSel wb;
-        BrType br;
+        uint32_t pc;
+        uint32_t rs1_val;
+        uint32_t rs2_val;
 
-        uint8_t    rd;
-        uint8_t    rs1;
-        uint8_t    rs2;
-        int32_t    imm;   // sign-extended immediate
-        bool       writes_rd;  // Writeback enable
+        int32_t imm;
 
-        uint32_t  rs1_val;
-        uint32_t  rs2_val;
-        uint32_t  pc;
-    };
+        uint8_t valid:1;
+        uint8_t alu_op:4;
+        uint8_t mem_op:2;
+        uint8_t wb_op:2;
+        uint8_t br_op:4;
+        uint8_t rsv:3;
+
+        uint8_t rd:5;
+        uint8_t rs1:5;
+        uint8_t rs2:5;
+        uint8_t rsv1:1;
+    };//__PACKED;
     array<State,LENGTH-ID> state_reg;
 
     array<uint8_t,2> regs_rdid_comb;
 
+    bool stall_comb;
+
 public:
     uint32_t                  *pc_in       = nullptr;
+    bool                      *instr_valid = nullptr;
     Instr                     *instr_in    = nullptr;
-    STATE                     *prev_in     = nullptr;
-    STATE                     *diagonal_in = nullptr;
+    array<STATE,LENGTH>       *state_in    = nullptr;
     array<State,LENGTH-ID>    *state_out   = &state_reg;
     array<uint32_t,2>         *regs_in     = nullptr;  // this input works from combinationsl path of another module from regs_rdid_comb
     array<uint8_t,2>          *regs_rdid_out = &regs_rdid_comb;
+    uint32_t                  *alu_result_in = nullptr;  // forwarding from Ex
+    uint32_t                  *mem_in        = nullptr;  // forwarding from Mem
+    bool                      *stall_out     = &stall_comb;  // comb !ready
 
     void connect()
     {
@@ -185,7 +193,25 @@ public:
         return regs_rdid_comb;
     }
 
-    void do_decode()
+    bool stall_comb_func()
+    {
+        // hazard
+        stall_comb = 0;
+        if (state_reg[0].wb_op == Wb::MEMORY && state_reg[0].rd != 0) {  // Ex
+            if (state_reg[0].rd == state_reg.next[0].rs1) {
+                stall_comb = 1;
+            }
+            if (state_reg[0].rd == state_reg.next[0].rs2) {
+                stall_comb = 1;
+            }
+        }
+        if (state_reg[0].wb_op == Wb::PC) {  // Ex
+            stall_comb = 1;
+        }
+        return stall_comb;
+    }
+
+    void do_decode_fetch()
     {
         state_reg.next[0] = {};
 
@@ -197,209 +223,235 @@ public:
             case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
                 state_reg.next[0].rd  = instr_in->i.rd;
                 state_reg.next[0].imm = instr_in->imm_I();
-                state_reg.next[0].mem_op = MemOp::LOAD;
-                state_reg.next[0].alu_op = AluOp::ADD;    // address = rs1 + imm
-                state_reg.next[0].wb_sel = WbSel::MEMORY;
-                state_reg.next[0].writes_rd = true;
+                state_reg.next[0].mem_op = Mem::LOAD;
+                state_reg.next[0].alu_op = Alu::ADD;    // address = rs1 + imm
+                state_reg.next[0].wb_op = Wb::MEMORY;
                 break;
 
             case 0b0100011:  // STORE  // SB, SH, SW
                 state_reg.next[0].imm = instr_in->imm_S();
-                state_reg.next[0].mem_op = MemOp::STORE;
-                state_reg.next[0].alu_op = AluOp::ADD;    // base + offset
+                state_reg.next[0].mem_op = Mem::STORE;
+                state_reg.next[0].alu_op = Alu::ADD;    // base + offset
                 break;
 
             case 0b0010011:  // OP-IMM (immediate ALU)
                 state_reg.next[0].rd  = instr_in->i.rd;
                 state_reg.next[0].imm = instr_in->imm_I();
-                state_reg.next[0].writes_rd = true;
-                state_reg.next[0].wb_sel = WbSel::ALU;
+                state_reg.next[0].wb_op = Wb::ALU;
 
                 switch (instr_in->i.funct3)
                 {
-                    case 0b000: state_reg.next[0].alu_op = AluOp::ADD; break;     // ADDI
-                    case 0b010: state_reg.next[0].alu_op = AluOp::SLT; break;     // SLTI
-                    case 0b011: state_reg.next[0].alu_op = AluOp::SLTU; break;    // SLTIU
-                    case 0b100: state_reg.next[0].alu_op = AluOp::XOR; break;
-                    case 0b110: state_reg.next[0].alu_op = AluOp::OR; break;
-                    case 0b111: state_reg.next[0].alu_op = AluOp::AND; break;
-                    case 0b001: state_reg.next[0].alu_op = AluOp::SLL; break;
+                    case 0b000: state_reg.next[0].alu_op = Alu::ADD; break;     // ADDI
+                    case 0b010: state_reg.next[0].alu_op = Alu::SLT; break;     // SLTI
+                    case 0b011: state_reg.next[0].alu_op = Alu::SLTU; break;    // SLTIU
+                    case 0b100: state_reg.next[0].alu_op = Alu::XOR; break;
+                    case 0b110: state_reg.next[0].alu_op = Alu::OR; break;
+                    case 0b111: state_reg.next[0].alu_op = Alu::AND; break;
+                    case 0b001: state_reg.next[0].alu_op = Alu::SLL; break;
                     case 0b101:
-                        state_reg.next[0].alu_op = (instr_in->i.imm11_0 >> 10) & 1 ? AluOp::SRA : AluOp::SRL;
+                        state_reg.next[0].alu_op = (instr_in->i.imm11_0 >> 10) & 1 ? Alu::SRA : Alu::SRL;
                         break;
                 }
                 break;
 
             case 0b0110011:  // OP (register ALU)
                 state_reg.next[0].rd = instr_in->r.rd;
-                state_reg.next[0].writes_rd = true;
-                state_reg.next[0].wb_sel = WbSel::ALU;
+                state_reg.next[0].wb_op = Wb::ALU;
 
                 switch (instr_in->r.funct3)
                 {
                     case 0b000:
-                        state_reg.next[0].alu_op = (instr_in->r.funct7 == 0b0100000) ? AluOp::SUB : AluOp::ADD;
+                        state_reg.next[0].alu_op = (instr_in->r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD;
                         break;
-                    case 0b111: state_reg.next[0].alu_op = AluOp::AND; break;
-                    case 0b110: state_reg.next[0].alu_op = AluOp::OR;  break;
-                    case 0b100: state_reg.next[0].alu_op = AluOp::XOR; break;
-                    case 0b001: state_reg.next[0].alu_op = AluOp::SLL; break;
-                    case 0b101: state_reg.next[0].alu_op = (instr_in->r.funct7 == 0b0100000) ? AluOp::SRA : AluOp::SRL; break;
-                    case 0b010: state_reg.next[0].alu_op = AluOp::SLT;  break;
-                    case 0b011: state_reg.next[0].alu_op = AluOp::SLTU; break;
+                    case 0b111: state_reg.next[0].alu_op = Alu::AND; break;
+                    case 0b110: state_reg.next[0].alu_op = Alu::OR;  break;
+                    case 0b100: state_reg.next[0].alu_op = Alu::XOR; break;
+                    case 0b001: state_reg.next[0].alu_op = Alu::SLL; break;
+                    case 0b101: state_reg.next[0].alu_op = (instr_in->r.funct7 == 0b0100000) ? Alu::SRA : Alu::SRL; break;
+                    case 0b010: state_reg.next[0].alu_op = Alu::SLT;  break;
+                    case 0b011: state_reg.next[0].alu_op = Alu::SLTU; break;
                 }
                 break;
 
             case 0b1100011:  // BRANCH
                 state_reg.next[0].imm = instr_in->imm_B();
-                state_reg.next[0].branch = BrType::BNONE;
+                state_reg.next[0].branch = Br::BNONE;
 
                 switch (instr_in->b.funct3)
                 {
-                    case 0b000: state_reg.next[0].branch = BrType::BEQ; break;
-                    case 0b001: state_reg.next[0].branch = BrType::BNE; break;
-                    case 0b100: state_reg.next[0].branch = BrType::BLT; break;
-                    case 0b101: state_reg.next[0].branch = BrType::BGE; break;
-                    case 0b110: state_reg.next[0].branch = BrType::BLTU; break;
-                    case 0b111: state_reg.next[0].branch = BrType::BGEU; break;
+                    case 0b000: state_reg.next[0].branch = Br::BEQ; break;
+                    case 0b001: state_reg.next[0].branch = Br::BNE; break;
+                    case 0b100: state_reg.next[0].branch = Br::BLT; break;
+                    case 0b101: state_reg.next[0].branch = Br::BGE; break;
+                    case 0b110: state_reg.next[0].branch = Br::BLTU; break;
+                    case 0b111: state_reg.next[0].branch = Br::BGEU; break;
                 }
                 break;
 
             case 0b1101111:  // JAL
                 state_reg.next[0].rd  = instr_in->j.rd;
                 state_reg.next[0].imm = instr_in->imm_J();
-                state_reg.next[0].branch = BrType::JAL;
-                state_reg.next[0].wb_sel = WbSel::PC_PLUS_4;
-                state_reg.next[0].writes_rd = true;
+                state_reg.next[0].branch = Br::JAL;
+                state_reg.next[0].wb_op = Wb::PC;
                 break;
 
             case 0b1100111:  // JALR
                 state_reg.next[0].rd  = instr_in->i.rd;
                 state_reg.next[0].imm = instr_in->imm_I();
-                state_reg.next[0].branch = BrType::JALR;
-                state_reg.next[0].wb_sel = WbSel::PC_PLUS_4;
-                state_reg.next[0].writes_rd = true;
+                state_reg.next[0].branch = Br::JALR;
+                state_reg.next[0].wb_op = Wb::PC;
                 break;
 
             case 0b0110111:  // LUI
                 state_reg.next[0].rd  = instr_in->u.rd;
                 state_reg.next[0].imm = instr_in->imm_U();
-                state_reg.next[0].alu_op = AluOp::PASS_RS1;   // or NONE, since result = imm
-                state_reg.next[0].wb_sel = WbSel::ALU;
-                state_reg.next[0].writes_rd = true;
+                state_reg.next[0].alu_op = Alu::PASS_RS1;   // or NONE, since result = imm
+                state_reg.next[0].wb_op = Wb::ALU;
                 break;
 
             case 0b0010111:  // AUIPC
                 state_reg.next[0].rd  = instr_in->u.rd;
                 state_reg.next[0].imm = instr_in->imm_U();
-                state_reg.next[0].alu_op = AluOp::ADD;  // PC + imm
-                state_reg.next[0].wb_sel = WbSel::ALU;
-                state_reg.next[0].writes_rd = true;
+                state_reg.next[0].alu_op = Alu::ADD;  // PC + imm
+                state_reg.next[0].wb_op = Wb::ALU;
                 break;
         }
-    }
 
-    void do_fetch()
-    {
+        // fetch
+
         state_reg.next[0].pc = *pc_in;
         state_reg.next[0].rs1_val = (*regs_in)[0];
         state_reg.next[0].rs2_val = (*regs_in)[1];
+
+        // forwarding
+        if (state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex
+            if (state_reg[0].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = *alu_result_in;
+            }
+            if (state_reg[0].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = *alu_result_in;
+            }
+        }
+
+        if (state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem
+            if (state_reg[1].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = (*state_in)[ID+1].result_in;
+            }
+            if (state_reg[1].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = (*state_in)[ID+1].result_in;
+            }
+        }
+
+        if (state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb
+            if (state_reg[2].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = (*state_in)[ID+2].result_in;
+            }
+            if (state_reg[2].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = (*state_in)[ID+2].result_in;
+            }
+        }
+
+        if (state_reg[1].wb_op == Wb::MEMORY && state_reg[1].rd != 0) {  // Mem
+            if (state_reg[0].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = *mem_in;
+            }
+            if (state_reg[0].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = *mem_in;
+            }
+        }
+
+        state_reg.next[0].valid = *instr_valid && stall_comb_func();
     }
+
 };
 
 template<typename STATE, size_t ID, size_t LENGTH>
 class ExecuteCalc
 {
 public:
-
     struct State
     {
-        uint32_t alu_result;   // result of ALU (or branch target)
-        bool     branch_taken;
-        uint32_t branch_target;
+        uint32_t alu_result;
     };
+
+    bool     branch_taken_comb;
+    uint32_t branch_target_comb;
 
     array<State,LENGTH-ID> state_reg;
 
 public:
-    STATE                     *prev_in = nullptr;
-    STATE                     *diagonal_in = nullptr;
+    array<STATE,LENGTH>       *state_in  = nullptr;
     array<State,LENGTH-ID>    *state_out = &state_reg;
+    uint32_t                  *alu_result_out = (uint32_t*)&state_reg;
+    bool                      *branch_taken_out = &branch_taken_comb;
+    uint32_t                  *branch_target_out = &branch_target_comb;
 
     void connect()
     {
         std::print("ExecuteCalc: {} of {}\n", ID, LENGTH);
     }
 
+    bool branch_taken_comb_func()
+    {
+        branch_taken_comb = false;
+        switch ((*state_in)[ID-1].branch)
+        {
+            case Br::BEQ: state_reg.next[0].branch_taken_comb = ((*state_in)[ID-1].rs1_val == (*state_in)[ID-1].rs2_val); break;
+            case Br::BNE: state_reg.next[0].branch_taken_comb = ((*state_in)[ID-1].rs1_val != (*state_in)[ID-1].rs2_val); break;
+            case Br::BLT: state_reg.next[0].branch_taken_comb = (int32_t((*state_in)[ID-1].rs1_val) < int32_t((*state_in)[ID-1].rs2_val)); break;
+            case Br::BGE: state_reg.next[0].branch_taken_comb = (int32_t((*state_in)[ID-1].rs1_val) >= int32_t((*state_in)[ID-1].rs2_val)); break;
+            case Br::BLTU: state_reg.next[0].branch_taken_comb = ((*state_in)[ID-1].rs1_val < (*state_in)[ID-1].rs2_val); break;
+            case Br::BGEU: state_reg.next[0].branch_taken_comb = ((*state_in)[ID-1].rs1_val >= (*state_in)[ID-1].rs2_val); break;
+            case Br::JAL: state_reg.next[0].branch_taken_comb = true; break;
+            case Br::JALR: state_reg.next[0].branch_taken_comb = true; break;
+            case Br::BNONE: break;
+        }
+        return branch_taken_comb && (*state_in)[ID-1].valid;
+    }
+
+    bool branch_target_comb_func()
+    {
+        branch_target_comb = 0;
+        if ((*state_in)[ID-1].branch != Br::BNONE)
+        {
+            if ((*state_in)[ID-1].branch == Br::JAL)
+                state_reg.next[0].branch_target_comb = (*state_in)[ID-1].pc + (*state_in)[ID-1].imm;
+            else if ((*state_in)[ID-1].branch == Br::JALR)
+                state_reg.next[0].branch_target_comb = ((*state_in)[ID-1].rs1_val + (*state_in)[ID-1].imm) & ~1u;
+            else     // conditional branch
+                state_reg.next[0].branch_target_comb = (*state_in)[ID-1].pc + (*state_in)[ID-1].imm;
+        }
+        return branch_target_comb;
+    }
+
     void do_execute()
     {
         state_reg.next[0] = {};
 
-        uint32_t a = prev_in->rs1_val;
-        uint32_t b = (prev_in->alu_op == AluOp::ADD && prev_in->mem_op != MemOp::MNONE)
-                        ? uint32_t(prev_in->imm)      // load/store address calc uses imm
-                        : prev_in->rs2 ? prev_in->rs2_val : uint32_t(prev_in->imm);
+        uint32_t a = (*state_in)[ID-1].rs1_val;
+        uint32_t b = ((*state_in)[ID-1].alu_op == Alu::ADD && (*state_in)[ID-1].mem_op != Mem::MNONE)
+                        ? uint32_t((*state_in)[ID-1].imm)      // load/store address calc uses imm
+                        : (*state_in)[ID-1].rs2 ? (*state_in)[ID-1].rs2_val : uint32_t((*state_in)[ID-1].imm);
 
-        switch (prev_in->alu_op)
+        switch ((*state_in)[ID-1].alu_op)
         {
-            case AluOp::ADD:  state_reg.next[0].alu_result = a + b; break;
-            case AluOp::SUB:  state_reg.next[0].alu_result = a - b; break;
-            case AluOp::AND:  state_reg.next[0].alu_result = a & b; break;
-            case AluOp::OR:   state_reg.next[0].alu_result = a | b; break;
-            case AluOp::XOR:  state_reg.next[0].alu_result = a ^ b; break;
-            case AluOp::SLL:  state_reg.next[0].alu_result = a << (b & 0x1F); break;
-            case AluOp::SRL:  state_reg.next[0].alu_result = a >> (b & 0x1F); break;
-            case AluOp::SRA:  state_reg.next[0].alu_result = uint32_t(int32_t(a) >> (b & 0x1F)); break;
-            case AluOp::SLT:  state_reg.next[0].alu_result = (int32_t(a) < int32_t(b)); break;
-            case AluOp::SLTU: state_reg.next[0].alu_result = (a < b); break;
-            case AluOp::PASS_RS1: state_reg.next[0].alu_result = a; break;
-            case AluOp::ANONE: break;
+            case Alu::ADD:  state_reg.next[0].alu_result = a + b; break;
+            case Alu::SUB:  state_reg.next[0].alu_result = a - b; break;
+            case Alu::AND:  state_reg.next[0].alu_result = a & b; break;
+            case Alu::OR:   state_reg.next[0].alu_result = a | b; break;
+            case Alu::XOR:  state_reg.next[0].alu_result = a ^ b; break;
+            case Alu::SLL:  state_reg.next[0].alu_result = a << (b & 0x1F); break;
+            case Alu::SRL:  state_reg.next[0].alu_result = a >> (b & 0x1F); break;
+            case Alu::SRA:  state_reg.next[0].alu_result = uint32_t(int32_t(a) >> (b & 0x1F)); break;
+            case Alu::SLT:  state_reg.next[0].alu_result = (int32_t(a) < int32_t(b)); break;
+            case Alu::SLTU: state_reg.next[0].alu_result = (a < b); break;
+            case Alu::PASS_RS1: state_reg.next[0].alu_result = a; break;
+            case Alu::ANONE: break;
         }
 
-        // -----------------------------------------
-        // Branch handling (PC calculation happens here)
-        // -----------------------------------------
-        switch (prev_in->branch)
-        {
-            case BrType::BEQ:
-                state_reg.next[0].branch_taken = (prev_in->rs1_val == prev_in->rs2_val);
-                break;
-            case BrType::BNE:
-                state_reg.next[0].branch_taken = (prev_in->rs1_val != prev_in->rs2_val);
-                break;
-            case BrType::BLT:
-                state_reg.next[0].branch_taken = (int32_t(prev_in->rs1_val) < int32_t(prev_in->rs2_val));
-                break;
-            case BrType::BGE:
-                state_reg.next[0].branch_taken = (int32_t(prev_in->rs1_val) >= int32_t(prev_in->rs2_val));
-                break;
-            case BrType::BLTU:
-                state_reg.next[0].branch_taken = (prev_in->rs1_val < prev_in->rs2_val);
-                break;
-            case BrType::BGEU:
-                state_reg.next[0].branch_taken = (prev_in->rs1_val >= prev_in->rs2_val);
-                break;
-            case BrType::JAL:
-                state_reg.next[0].branch_taken = true;
-                break;
-            case BrType::JALR:
-                state_reg.next[0].branch_taken = true;
-                break;
-            case BrType::BNONE:
-                break;
-        }
 
-        // Branch / jump target address
-        if (prev_in->branch != BrType::BNONE)
-        {
-            if (prev_in->branch == BrType::JAL)
-                state_reg.next[0].branch_target = prev_in->pc + prev_in->imm;
-            else if (prev_in->branch == BrType::JALR)
-                state_reg.next[0].branch_target = (prev_in->rs1_val + prev_in->imm) & ~1u;
-            else     // conditional branch
-                state_reg.next[0].branch_target = prev_in->pc + prev_in->imm;
-        }
     }
+
 
 
 };
@@ -408,97 +460,85 @@ template<typename STATE, size_t ID, size_t LENGTH>
 class MemoryAccess: public PipelineStage
 {
 public:
-
     struct State
     {
-        uint32_t load_data = 0;   // valid only if MemOp::LOAD
-        bool     load_valid = false;
+        uint32_t load_data = 0;   // valid only if Mem::LOAD
     };
     array<State,LENGTH-ID> state_reg;
 
-    uint32_t mem_addr_comb;
-    uint32_t mem_out_comb;
-    uint8_t mem_mask_comb;
-    bool mem_write_comb;
+    reg<u32> mem_addr_reg;
+    reg<u32> mem_out_reg;
+    reg<u8> mem_mask_reg;
+    reg<u1> mem_write_reg;
+    reg<u1> mem_read_reg;
 
 public:
-    STATE                     *prev_in      = nullptr;
-    STATE                     *diagonal_in  = nullptr;
+    array<STATE,LENGTH>       *state_in     = nullptr;
     array<State,LENGTH-ID>    *state_out    = &state_reg;
-    uint32_t                  *mem_addr_out = &mem_addr_comb;
-    uint32_t                  *mem_in       = nullptr;
-    uint32_t                  *mem_out      = &mem_out_comb;
-    uint8_t                   *mem_mask_out = &mem_mask_comb;
-    bool                      *mem_write_out = &mem_write_comb;
+    uint32_t                  *mem_addr_out = &mem_addr_reg;
+    uint32_t                  *mem_out      = &mem_out_reg;
+    uint8_t                   *mem_mask_out = &mem_mask_reg;
+    bool                      *mem_write_out = &mem_write_reg;
+    bool                      *mem_read_out = &mem_read_reg;
 
     void connect()
     {
         std::print("MemoryAccess: {} of {}\n", ID, LENGTH);
     }
 
-    uint32_t mem_addr_comb_func()
-    {
-        return mem_addr_comb = prev_in->alu_result;
-    }
-
-    uint32_t mem_out_comb_func()
-    {
-        return mem_out_comb = prev_in->rs2_val;
-    }
-
-    uint8_t mem_mask_comb_func()
-    {
-        return mem_mask_comb == MemOp::STORE ? (prev_in->funct3 == 0b000 ? 0x1 :
-                                               (prev_in->funct3 == 0b001 ? 0x3 :
-                                               (prev_in->funct3 == 0b010 ? 0xF : 0))) : 0;
-    }
-
-    bool mem_write_comb_func()
-    {
-        return mem_write_comb = prev_in->mem_op == MemOp::STORE && (prev_in->funct3 == 0b000 || prev_in->funct3 == 0b001 || prev_in->funct3 == 0b010);
-    }
-
     void do_memory()
     {
         state_reg.next[0] = {};
 
-        if (prev_in->mem_op == MemOp::MNONE) {
+        mem_addr_reg.next = (*state_in)[ID-1].alu_result;
+        mem_out_reg.next = (*state_in)[ID-1].rs2_val;
+
+
+        if ((*state_in)[ID-1].mem_op == Mem::MNONE) {
             return;
         }
 
-        if (prev_in->mem_op == MemOp::LOAD)
+        mem_write_reg.next = 0;
+        if ((*state_in)[ID-1].mem_op == Mem::STORE)  // parallel case, full case
         {
-            state_reg.next[0].load_valid = true;
-
-            switch (prev_in->funct3)   // load width/type is in funct3
+            switch ((*state_in)[ID-1].funct3)
             {
                 case 0b000: // LB
-                    state_reg.next[0].load_data = int8_t(*mem_in);
+                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_mask_reg.next = 0x1;
                     break;
                 case 0b001: // LH
-                    state_reg.next[0].load_data = int16_t(*mem_in);
+                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_mask_reg.next = 0x3;
                     break;
                 case 0b010: // LW
-                    state_reg.next[0].load_data = int32_t(*mem_in);
-                    break;
-                case 0b100: // LBU
-                    state_reg.next[0].load_data = uint8_t(*mem_in);
-                    break;
-                case 0b101: // LHU
-                    state_reg.next[0].load_data = uint16_t(*mem_in);
+                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_mask_reg.next = 0xF;
                     break;
                 default:
-                    state_reg.next[0].load_valid = false; // unsupported
                     break;
             }
         }
-        else
 
-        if (prev_in->branch_taken) {
-            state_reg.next[0].next_pc = prev_in->branch_target;
+        mem_read_reg.next = 0;
+        if ((*state_in)[ID-1].mem_op == Mem::LOAD)
+        {
+            switch ((*state_in)[ID-1].funct3)
+            {
+                case 0b000: mem_read_reg.next = 1; break;
+                case 0b001: mem_read_reg.next = 1; break;
+                case 0b010: mem_read_reg.next = 1; break;
+                case 0b100: mem_read_reg.next = 1; break;
+                case 0b101: mem_read_reg.next = 1; break;
+                default: break;
+            }
+        }
+
+        if ((*state_in)[ID-1].branch_taken) {
+            state_reg.next[0].next_pc = (*state_in)[ID-1].branch_target;
         }
         else {
-            state_reg.next[0].next_pc = prev_in->pc + 4;
+            state_reg.next[0].next_pc = (*state_in)[ID-1].pc + 4;
         }
     }
 
@@ -508,56 +548,54 @@ template<typename STATE, size_t ID, size_t LENGTH>
 class WriteBack: public PipelineStage
 {
 public:
-
     struct State
     {
-        WbSel op;
+        Wb op;
         uint64_t data;
         int write_to_reg;
     };
     array<State,LENGTH-ID> state_reg;
 
-    uint32_t regs_out_comb;
-    uint8_t regs_wrid_comb;
-    bool    regs_write_comb;
+    reg<u32> regs_out_reg;
+    reg<u8> regs_wrid_reg;
+    reg<u1> regs_write_reg;
 
 public:
-    STATE                     *prev_in       = nullptr;
-    STATE                     *diagonal_in   = nullptr;
+    array<STATE,LENGTH>       *state_in      = nullptr;
     array<State,LENGTH-ID>    *state_out     = &state_reg;
-    uint32_t                  *regs_out      = &regs_out_comb;
-    uint8_t                   *regs_wrid_out = &regs_wrid_comb;
-    bool                      *regs_write_out = &regs_write_comb;
+    uint32_t                  *mem_in        = nullptr;
+    uint32_t                  *regs_out      = &regs_out_reg;
+    uint8_t                   *regs_wrid_out = &regs_wrid_reg;
+    bool                      *regs_write_out = &regs_write_reg;
 
     void connect()
     {
         std::print("WriteBack: {} of {}\n", ID, LENGTH);
     }
 
-    uint32_t regs_out_comb_func()
-    {
-        return regs_out_comb = prev_in->writes_rd ? prev_in->wb_sel == WbSel::ALU ? prev_in->alu_result :
-                                                   (prev_in->wb_sel == WbSel::MEMORY && prev_in->load_valid ? prev_in->load_data :
-                                                   (prev_in->wb_sel == WbSel::PC_PLUS_4 ? prev_in->branch_target : 0) ) : 0;  // can we use "full_case" or "parallel_case" here?
-    }
-
-    uint8_t regs_wrid_comb_func()
-    {
-        // NOTE! reg0 is ZERO, never write it
-        return regs_wrid_comb = prev_in->rd;
-    }
-
-    bool regs_write_comb_func()
-    {
-        // NOTE! reg0 is ZERO, never write it
-        return regs_write_comb = prev_in->writes_rd ? prev_in->wb_sel == WbSel::ALU ? true :
-                                                   (prev_in->wb_sel == WbSel::MEMORY && prev_in->load_valid ? true :
-                                                   (prev_in->wb_sel == WbSel::PC_PLUS_4 ? true : false) ) : false;
-    }
-
     void do_writeback()
     {
+        // NOTE! reg0 is ZERO, never write it
+        regs_wrid_reg.next = (*state_in)[ID-1].rd;
 
+        regs_write_reg.next = 0;
+        switch ((*state_in)[ID-1].wb_op) {
+            case Wb::ALU:
+                regs_out_reg.next = (*state_in)[ID-1].alu_result;
+                regs_write_reg.next = (*state_in)[ID-1].valid;
+            break;
+            case Wb::MEMORY:
+                switch ((*state_in)[ID-1].funct3) {
+                    case 0b000: regs_out_reg.next = int8_t(*mem_in); break;
+                    case 0b001: regs_out_reg.next = int16_t(*mem_in); break;
+                    case 0b010: regs_out_reg.next = int32_t(*mem_in); break;
+                    case 0b100: regs_out_reg.next = uint8_t(*mem_in); break;
+                    case 0b101: regs_out_reg.next = uint16_t(*mem_in); break;
+                    default: regs_write_reg.next = 0; break;
+                }
+                regs_write_reg.next = (*state_in)[ID-1].valid;
+            break;
+        }
     }
 };
 

@@ -65,23 +65,17 @@ struct Pipeline<PipelineStages<Ts...>>
     using STAGES = PipelineStages<Ts...>;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
-    STATE prev_comb[LENGTH];
-    STATE diagonal_comb;
     STAGES::type members;
+    cpphdl::array<STATE,LENGTH> state_comb;
 
 public:
     void connect()
     {
         std::apply([&](auto&... stage) {
-            size_t y = 0;
             (
                 (
                     [&]{
-                        using Stage = std::remove_reference_t<decltype(stage)>;
-                        using State = typename Stage::State;
-
-                        stage.prev_in = &prev_comb[y++];
-                        stage.diagonal_in = &diagonal_comb;
+                        stage.state_in = &state_comb;
                         stage.connect();
                     }()
                 ),
@@ -105,17 +99,16 @@ public:
             for (size_t y = 0; y < LENGTH; ++y) {
                 size_t x = 0;
                 size_t offset = 0;
-                prev_comb[y] = {};
+                state_comb[y] = {};
                 (
                     (
                         [&]{
                             using Stage = std::remove_reference_t<decltype(stage)>;
                             using State = typename Stage::State;
 
-                            if (x < y) {
-                                *(State*)((uint8_t*)&prev_comb[y] + offset) = (*stage.state_out)[y-x];
+                            if (x <= y) {
+                                *(State*)((uint8_t*)&state_comb[y] + offset) = (*stage.state_out)[y-x];
                             }
-                            *(State*)((uint8_t*)&diagonal_comb + offset) = (*stage.state_out)[0];
                             ++x;
                             offset += sizeof(State);
                         }()
