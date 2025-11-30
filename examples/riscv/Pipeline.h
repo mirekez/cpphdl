@@ -59,13 +59,13 @@ template <typename>
 struct Pipeline;
 
 template <template<STAGE_PARAMS> class... Ts>
-struct Pipeline<PipelineStages<Ts...>>
+struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
 {
     using STATE = MergeState<typename Ts<void,0,0>::State...>;
-    using STAGES = PipelineStages<Ts...>;
+    using STAGES = PipelineStages<Ts...>::type;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
-    STAGES::type members;
+    STAGES members;
     cpphdl::array<STATE,LENGTH> state_comb;
 
 public:
@@ -86,11 +86,31 @@ public:
 
     void work(bool clk, bool reset)
     {
+        std::apply([&](auto&... stage) {
+            (
+                (
+                    [&]{
+                        stage.work(clk, reset);
+                    }()
+                ),
+                ...
+            );
+        }, members);
     }
 
 
     void strobe()
     {
+        std::apply([&](auto&... stage) {
+            (
+                (
+                    [&]{
+                        stage.strobe();
+                    }()
+                ),
+                ...
+            );
+        }, members);
     }
 
     void comb()

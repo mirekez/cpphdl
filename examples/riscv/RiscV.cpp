@@ -1,11 +1,17 @@
-#include "pipeline.h"
+#ifdef MAIN_FILE_INCLUDED
+#define NO_MAINFILE
+#endif
+#define MAIN_FILE_INCLUDED
+
+#include "Pipeline.h"
+#include "File.h"
+#include "../basic/Memory.cpp"
 
 using namespace cpphdl;
 
 union Instr
 {
     uint32_t raw;
-
     struct
     {
         uint32_t opcode : 7;
@@ -15,7 +21,6 @@ union Instr
         uint32_t rs2    : 5;
         uint32_t funct7 : 7;
     } r;
-
     struct
     {
         uint32_t opcode : 7;
@@ -24,7 +29,6 @@ union Instr
         uint32_t rs1    : 5;
         uint32_t imm11_0: 12;
     } i;
-
     struct
     {
         uint32_t opcode  : 7;
@@ -34,7 +38,6 @@ union Instr
         uint32_t rs2     : 5;
         uint32_t imm11_5 : 7;
     } s;
-
     struct
     {
         uint32_t opcode    : 7;
@@ -46,14 +49,12 @@ union Instr
         uint32_t imm10_5   : 6;
         uint32_t imm12     : 1;
     } b;
-
     struct
     {
         uint32_t opcode    : 7;
         uint32_t rd        : 5;
         uint32_t imm31_12  : 20;
     } u;
-
     struct
     {
         uint32_t opcode     : 7;
@@ -94,6 +95,52 @@ union Instr
     {
         return sext((j.imm10_1 << 1) | (j.imm11   << 11) | (j.imm19_12 << 12) | (j.imm20   << 20), 21);
     }
+
+#ifndef SYNTHESIS
+    std::string format()
+    {
+        auto decode_mnemonic = [&](uint32_t op, uint32_t f3, uint32_t f7) -> std::string {
+            switch (op) {
+            case 0b0110011: // R-type
+                if (f3 == 0 && f7 == 0b0000000) return "add";
+                if (f3 == 0 && f7 == 0b0100000) return "sub";
+                if (f3 == 7) return "and";
+                if (f3 == 6) return "or";
+                if (f3 == 4) return "xor";
+                if (f3 == 1) return "sll";
+                if (f3 == 5 && f7 == 0b0000000) return "srl";
+                if (f3 == 5 && f7 == 0b0100000) return "sra";
+                if (f3 == 2) return "slt";
+                if (f3 == 3) return "sltu";
+                return "r-type";
+            case 0b0010011: // I-type ALU
+                if (f3 == 0) return "addi";
+                if (f3 == 7) return "andi";
+                if (f3 == 6) return "ori";
+                if (f3 == 4) return "xori";
+                if (f3 == 1) return "slli";
+                if (f3 == 5 && f7 == 0) return "srli";
+                if (f3 == 5 && f7 == 0b0100000) return "srai";
+                if (f3 == 2) return "slti";
+                if (f3 == 3) return "sltiu";
+                return "alu-imm";
+            case 0b0000011: return "load";
+            case 0b0100011: return "store";
+            case 0b1100011: return "branch";
+            case 0b1101111: return "jal";
+            case 0b1100111: return "jalr";
+            case 0b0110111: return "lui";
+            case 0b0010111: return "auipc";
+            default:        return "unknown";
+            }
+        };
+
+        auto m = decode_mnemonic(r.opcode, r.funct3, r.funct7);
+        return std::format("[{:08X}]({}){:#04x},rd:{},rs1:{},rs2:{},f3:{:#03x},f7:{:#04x},imm:{:x}/{:x}/{:x}/{:x}/{:x}\n",
+            raw, m, (uint32_t)r.opcode, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7,
+            imm_I(), imm_S(), imm_B(), imm_U(), imm_J());
+    }
+#endif
 };
 
 enum Alu
@@ -133,29 +180,30 @@ public:
         uint8_t mem_op:2;
         uint8_t wb_op:2;
         uint8_t br_op:4;
-        uint8_t rsv:3;
+        uint8_t funct3:3;
 
         uint8_t rd:5;
         uint8_t rs1:5;
         uint8_t rs2:5;
         uint8_t rsv1:1;
     };//__PACKED;
-    array<State,LENGTH-ID> state_reg;
+    reg<array<State,LENGTH-ID>> state_reg;
 
-    array<uint8_t,2> regs_rdid_comb;
+    array<uint8_t,2> regs_rd_id_comb;
 
     bool stall_comb;
 
 public:
     uint32_t                  *pc_in       = nullptr;
-    bool                      *instr_valid = nullptr;
+    bool                      *instr_valid_in = nullptr;
     Instr                     *instr_in    = nullptr;
     array<STATE,LENGTH>       *state_in    = nullptr;
     array<State,LENGTH-ID>    *state_out   = &state_reg;
-    array<uint32_t,2>         *regs_in     = nullptr;  // this input works from combinationsl path of another module from regs_rdid_comb
-    array<uint8_t,2>          *regs_rdid_out = &regs_rdid_comb;
+    uint32_t                  *regs_data0_in  = nullptr;  // this input works from combinationsl path of another module from regs_rd_id_comb
+    uint32_t                  *regs_data1_in  = nullptr;  // this input works from combinationsl path of another module from regs_rd_id_comb
+    array<uint8_t,2>          *regs_rd_id_out = &regs_rd_id_comb;
     uint32_t                  *alu_result_in = nullptr;  // forwarding from Ex
-    uint32_t                  *mem_in        = nullptr;  // forwarding from Mem
+    uint32_t                  *mem_data_in   = nullptr;  // forwarding from Mem
     bool                      *stall_out     = &stall_comb;  // comb !ready
 
     void connect()
@@ -163,34 +211,34 @@ public:
         std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
     }
 
-    array<uint8_t,2> regs_rdid_comb_func()
+    array<uint8_t,2> regs_rd_id_comb_func()
     {
-        regs_rdid_comb = {};
+        regs_rd_id_comb = {};
         switch (instr_in->r.opcode)
         {
             case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
-                regs_rdid_comb[0] = instr_in->i.rs1;
+                regs_rd_id_comb[0] = instr_in->i.rs1;
                 break;
             case 0b0100011:  // STORE  // SB, SH, SW
-                regs_rdid_comb[0] = instr_in->s.rs1;
-                regs_rdid_comb[1] = instr_in->s.rs2;
+                regs_rd_id_comb[0] = instr_in->s.rs1;
+                regs_rd_id_comb[1] = instr_in->s.rs2;
                 break;
             case 0b0010011:  // OP-IMM (immediate ALU)
-                regs_rdid_comb[0] = instr_in->i.rs1;
+                regs_rd_id_comb[0] = instr_in->i.rs1;
                 break;
             case 0b0110011:  // OP (register ALU)
-                regs_rdid_comb[0] = instr_in->r.rs1;
-                regs_rdid_comb[1] = instr_in->r.rs2;
+                regs_rd_id_comb[0] = instr_in->r.rs1;
+                regs_rd_id_comb[1] = instr_in->r.rs2;
                 break;
             case 0b1100011:  // BRANCH
-                regs_rdid_comb[0] = instr_in->b.rs1;
-                regs_rdid_comb[1] = instr_in->b.rs2;
+                regs_rd_id_comb[0] = instr_in->b.rs1;
+                regs_rd_id_comb[1] = instr_in->b.rs2;
                 break;
             case 0b1100111:  // JALR
-                regs_rdid_comb[0] = instr_in->i.rs1;
+                regs_rd_id_comb[0] = instr_in->i.rs1;
                 break;
         }
-        return regs_rdid_comb;
+        return regs_rd_id_comb;
     }
 
     bool stall_comb_func()
@@ -213,11 +261,16 @@ public:
 
     void do_decode_fetch()
     {
+#ifndef SYNTHESIS
+        std::print("{}\n", instr_in->format());
+#endif
+
         state_reg.next[0] = {};
 
-        state_reg.next[0].rs1 = regs_rdid_comb_func()[0];
-        state_reg.next[0].rs2 = regs_rdid_comb_func()[1];
+        state_reg.next[0].rs1 = regs_rd_id_comb_func()[0];
+        state_reg.next[0].rs2 = regs_rd_id_comb_func()[1];
 
+        state_reg.next[0].funct3 = 7;
         switch (instr_in->r.opcode)
         {
             case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
@@ -226,12 +279,14 @@ public:
                 state_reg.next[0].mem_op = Mem::LOAD;
                 state_reg.next[0].alu_op = Alu::ADD;    // address = rs1 + imm
                 state_reg.next[0].wb_op = Wb::MEMORY;
+                state_reg.next[0].funct3 = instr_in->i.funct3;
                 break;
 
             case 0b0100011:  // STORE  // SB, SH, SW
                 state_reg.next[0].imm = instr_in->imm_S();
                 state_reg.next[0].mem_op = Mem::STORE;
                 state_reg.next[0].alu_op = Alu::ADD;    // base + offset
+                state_reg.next[0].funct3 = instr_in->i.funct3;
                 break;
 
             case 0b0010011:  // OP-IMM (immediate ALU)
@@ -252,6 +307,7 @@ public:
                         state_reg.next[0].alu_op = (instr_in->i.imm11_0 >> 10) & 1 ? Alu::SRA : Alu::SRL;
                         break;
                 }
+                state_reg.next[0].funct3 = instr_in->i.funct3;
                 break;
 
             case 0b0110011:  // OP (register ALU)
@@ -271,34 +327,36 @@ public:
                     case 0b010: state_reg.next[0].alu_op = Alu::SLT;  break;
                     case 0b011: state_reg.next[0].alu_op = Alu::SLTU; break;
                 }
+                state_reg.next[0].funct3 = instr_in->r.funct3;
                 break;
 
             case 0b1100011:  // BRANCH
                 state_reg.next[0].imm = instr_in->imm_B();
-                state_reg.next[0].branch = Br::BNONE;
+                state_reg.next[0].br_op = Br::BNONE;
 
                 switch (instr_in->b.funct3)
                 {
-                    case 0b000: state_reg.next[0].branch = Br::BEQ; break;
-                    case 0b001: state_reg.next[0].branch = Br::BNE; break;
-                    case 0b100: state_reg.next[0].branch = Br::BLT; break;
-                    case 0b101: state_reg.next[0].branch = Br::BGE; break;
-                    case 0b110: state_reg.next[0].branch = Br::BLTU; break;
-                    case 0b111: state_reg.next[0].branch = Br::BGEU; break;
+                    case 0b000: state_reg.next[0].br_op = Br::BEQ; break;
+                    case 0b001: state_reg.next[0].br_op = Br::BNE; break;
+                    case 0b100: state_reg.next[0].br_op = Br::BLT; break;
+                    case 0b101: state_reg.next[0].br_op = Br::BGE; break;
+                    case 0b110: state_reg.next[0].br_op = Br::BLTU; break;
+                    case 0b111: state_reg.next[0].br_op = Br::BGEU; break;
                 }
+                state_reg.next[0].funct3 = instr_in->b.funct3;
                 break;
 
             case 0b1101111:  // JAL
                 state_reg.next[0].rd  = instr_in->j.rd;
                 state_reg.next[0].imm = instr_in->imm_J();
-                state_reg.next[0].branch = Br::JAL;
+                state_reg.next[0].br_op = Br::JAL;
                 state_reg.next[0].wb_op = Wb::PC;
                 break;
 
             case 0b1100111:  // JALR
                 state_reg.next[0].rd  = instr_in->i.rd;
                 state_reg.next[0].imm = instr_in->imm_I();
-                state_reg.next[0].branch = Br::JALR;
+                state_reg.next[0].br_op = Br::JALR;
                 state_reg.next[0].wb_op = Wb::PC;
                 break;
 
@@ -320,11 +378,29 @@ public:
         // fetch
 
         state_reg.next[0].pc = *pc_in;
-        state_reg.next[0].rs1_val = (*regs_in)[0];
-        state_reg.next[0].rs2_val = (*regs_in)[1];
+        state_reg.next[0].rs1_val = *regs_data0_in;
+        state_reg.next[0].rs2_val = *regs_data1_in;
 
         // forwarding
-        if (state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex
+        if (state_reg[2].valid && state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb
+            if (state_reg[2].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = (*state_in)[ID+2].alu_result;
+            }
+            if (state_reg[2].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = (*state_in)[ID+2].alu_result;
+            }
+        }
+
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem
+            if (state_reg[1].rd == state_reg.next[0].rs1) {
+                state_reg.next[0].rs1_val = (*state_in)[ID+1].alu_result;
+            }
+            if (state_reg[1].rd == state_reg.next[0].rs2) {
+                state_reg.next[0].rs2_val = (*state_in)[ID+1].alu_result;
+            }
+        }
+
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex
             if (state_reg[0].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = *alu_result_in;
             }
@@ -333,51 +409,41 @@ public:
             }
         }
 
-        if (state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem
-            if (state_reg[1].rd == state_reg.next[0].rs1) {
-                state_reg.next[0].rs1_val = (*state_in)[ID+1].result_in;
-            }
-            if (state_reg[1].rd == state_reg.next[0].rs2) {
-                state_reg.next[0].rs2_val = (*state_in)[ID+1].result_in;
-            }
-        }
-
-        if (state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb
-            if (state_reg[2].rd == state_reg.next[0].rs1) {
-                state_reg.next[0].rs1_val = (*state_in)[ID+2].result_in;
-            }
-            if (state_reg[2].rd == state_reg.next[0].rs2) {
-                state_reg.next[0].rs2_val = (*state_in)[ID+2].result_in;
-            }
-        }
-
-        if (state_reg[1].wb_op == Wb::MEMORY && state_reg[1].rd != 0) {  // Mem
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEMORY && state_reg[1].rd != 0) {  // Mem
             if (state_reg[0].rd == state_reg.next[0].rs1) {
-                state_reg.next[0].rs1_val = *mem_in;
+                state_reg.next[0].rs1_val = *mem_data_in;
             }
             if (state_reg[0].rd == state_reg.next[0].rs2) {
-                state_reg.next[0].rs2_val = *mem_in;
+                state_reg.next[0].rs2_val = *mem_data_in;
             }
         }
 
-        state_reg.next[0].valid = *instr_valid && stall_comb_func();
+        state_reg.next[0].valid = *instr_valid_in && stall_comb_func();
     }
 
+    void work(bool clk, bool reset)
+    {
+        do_decode_fetch();
+    }
+
+    void strobe()
+    {
+        state_reg.strobe();
+    }
 };
 
 template<typename STATE, size_t ID, size_t LENGTH>
-class ExecuteCalc
+class ExecuteCalc: public PipelineStage
 {
 public:
     struct State
     {
         uint32_t alu_result;
     };
+    reg<array<State,LENGTH-ID>> state_reg;
 
     bool     branch_taken_comb;
     uint32_t branch_target_comb;
-
-    array<State,LENGTH-ID> state_reg;
 
 public:
     array<STATE,LENGTH>       *state_in  = nullptr;
@@ -452,8 +518,15 @@ public:
 
     }
 
+    void work(bool clk, bool reset)
+    {
+        do_execute();
+    }
 
-
+    void strobe()
+    {
+        state_reg.strobe();
+    }
 };
 
 template<typename STATE, size_t ID, size_t LENGTH>
@@ -464,10 +537,10 @@ public:
     {
         uint32_t load_data = 0;   // valid only if Mem::LOAD
     };
-    array<State,LENGTH-ID> state_reg;
+    reg<array<State,LENGTH-ID>> state_reg;
 
     reg<u32> mem_addr_reg;
-    reg<u32> mem_out_reg;
+    reg<u32> mem_data_reg;
     reg<u8> mem_mask_reg;
     reg<u1> mem_write_reg;
     reg<u1> mem_read_reg;
@@ -476,7 +549,7 @@ public:
     array<STATE,LENGTH>       *state_in     = nullptr;
     array<State,LENGTH-ID>    *state_out    = &state_reg;
     uint32_t                  *mem_addr_out = &mem_addr_reg;
-    uint32_t                  *mem_out      = &mem_out_reg;
+    uint32_t                  *mem_data_out = &mem_data_reg;
     uint8_t                   *mem_mask_out = &mem_mask_reg;
     bool                      *mem_write_out = &mem_write_reg;
     bool                      *mem_read_out = &mem_read_reg;
@@ -491,7 +564,7 @@ public:
         state_reg.next[0] = {};
 
         mem_addr_reg.next = (*state_in)[ID-1].alu_result;
-        mem_out_reg.next = (*state_in)[ID-1].rs2_val;
+        mem_data_reg.next = (*state_in)[ID-1].rs2_val;
 
 
         if ((*state_in)[ID-1].mem_op == Mem::MNONE) {
@@ -533,15 +606,22 @@ public:
                 default: break;
             }
         }
-
-        if ((*state_in)[ID-1].branch_taken) {
-            state_reg.next[0].next_pc = (*state_in)[ID-1].branch_target;
-        }
-        else {
-            state_reg.next[0].next_pc = (*state_in)[ID-1].pc + 4;
-        }
     }
 
+    void work(bool clk, bool reset)
+    {
+        do_memory();
+    }
+
+    void strobe()
+    {
+        state_reg.strobe();
+        mem_addr_reg.strobe();
+        mem_data_reg.strobe();
+        mem_mask_reg.strobe();
+        mem_write_reg.strobe();
+        mem_read_reg.strobe();
+    }
 };
 
 template<typename STATE, size_t ID, size_t LENGTH>
@@ -550,22 +630,19 @@ class WriteBack: public PipelineStage
 public:
     struct State
     {
-        Wb op;
-        uint64_t data;
-        int write_to_reg;
     };
-    array<State,LENGTH-ID> state_reg;
+    reg<array<State,LENGTH-ID>> state_reg;
 
     reg<u32> regs_out_reg;
-    reg<u8> regs_wrid_reg;
+    reg<u8> regs_wr_id_reg;
     reg<u1> regs_write_reg;
 
 public:
     array<STATE,LENGTH>       *state_in      = nullptr;
     array<State,LENGTH-ID>    *state_out     = &state_reg;
-    uint32_t                  *mem_in        = nullptr;
-    uint32_t                  *regs_out      = &regs_out_reg;
-    uint8_t                   *regs_wrid_out = &regs_wrid_reg;
+    uint32_t                  *mem_data_in   = nullptr;
+    uint32_t                  *regs_data_out = &regs_out_reg;
+    uint8_t                   *regs_wr_id_out = &regs_wr_id_reg;
     bool                      *regs_write_out = &regs_write_reg;
 
     void connect()
@@ -576,7 +653,7 @@ public:
     void do_writeback()
     {
         // NOTE! reg0 is ZERO, never write it
-        regs_wrid_reg.next = (*state_in)[ID-1].rd;
+        regs_wr_id_reg.next = (*state_in)[ID-1].rd;
 
         regs_write_reg.next = 0;
         switch ((*state_in)[ID-1].wb_op) {
@@ -586,16 +663,29 @@ public:
             break;
             case Wb::MEMORY:
                 switch ((*state_in)[ID-1].funct3) {
-                    case 0b000: regs_out_reg.next = int8_t(*mem_in); break;
-                    case 0b001: regs_out_reg.next = int16_t(*mem_in); break;
-                    case 0b010: regs_out_reg.next = int32_t(*mem_in); break;
-                    case 0b100: regs_out_reg.next = uint8_t(*mem_in); break;
-                    case 0b101: regs_out_reg.next = uint16_t(*mem_in); break;
+                    case 0b000: regs_out_reg.next = int8_t(*mem_data_in); break;
+                    case 0b001: regs_out_reg.next = int16_t(*mem_data_in); break;
+                    case 0b010: regs_out_reg.next = int32_t(*mem_data_in); break;
+                    case 0b100: regs_out_reg.next = uint8_t(*mem_data_in); break;
+                    case 0b101: regs_out_reg.next = uint16_t(*mem_data_in); break;
                     default: regs_write_reg.next = 0; break;
                 }
                 regs_write_reg.next = (*state_in)[ID-1].valid;
             break;
         }
+    }
+
+    void work(bool clk, bool reset)
+    {
+        do_writeback();
+    }
+
+    void strobe()
+    {
+        state_reg.strobe();
+        regs_out_reg.strobe();
+        regs_wr_id_reg.strobe();
+        regs_write_reg.strobe();
     }
 };
 
@@ -604,22 +694,68 @@ public:
 template<size_t WIDTH>
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemoryAccess,WriteBack>>
 {
-
-
+    File<32/8,32>       regs;
+    reg<u32>            pc;
+    reg<u1>             valid;
 
 public:
 
-
-    bool             debugen_in;
+    bool     *dmem_read_out;
+    bool     *dmem_write_out;
+    uint8_t  *dmem_write_mask_out;
+    uint32_t *dmem_write_addr_out;
+    uint32_t *dmem_write_data_out;
+    uint32_t *dmem_read_data_in;
+    uint32_t *imem_read_addr_out;
+    uint32_t *imem_read_data_in;
+    bool      debugen_in;
 
     void connect()
     {
+        std::get<0>(members).__inst_name = Pipeline::__inst_name + "/decode_fetch";
+        std::get<1>(members).__inst_name = Pipeline::__inst_name + "/execute_calc";
+        std::get<2>(members).__inst_name = Pipeline::__inst_name + "/memory_access";
+        std::get<3>(members).__inst_name = Pipeline::__inst_name + "/write_back";
+
+        std::get<0>(members).pc_in = &pc;
+        std::get<0>(members).instr_valid_in = &valid;
+        std::get<0>(members).instr_in = (Instr*) imem_read_data_in;
+        std::get<0>(members).regs_data0_in = (uint32_t *) regs.read_data0_out;
+        std::get<0>(members).regs_data1_in = (uint32_t *) regs.read_data1_out;
+        std::get<0>(members).alu_result_in = std::get<1>(members).alu_result_out;
+        std::get<0>(members).mem_data_in = dmem_read_data_in;
+
         Pipeline::connect();
+
+        regs.read_addr0_in = &(*std::get<0>(members).regs_rd_id_out)[0];
+        regs.read_addr1_in = &(*std::get<0>(members).regs_rd_id_out)[1];
+
+        imem_read_addr_out = &pc;
+
+        dmem_read_out = std::get<2>(members).mem_read_out;
+        dmem_write_out = std::get<2>(members).mem_write_out;
+        dmem_write_mask_out = std::get<2>(members).mem_mask_out;
+        dmem_write_addr_out = std::get<2>(members).mem_addr_out;
+        dmem_write_data_out = std::get<2>(members).mem_data_out;
+//        dmem.read_in = std::get<2>(members).mem_read_out;
+
+        regs.write_in = std::get<3>(members).regs_write_out;
+        regs.write_addr_in = std::get<3>(members).regs_wr_id_out;
+        regs.write_data_in = (logic<4UL*8>*) std::get<3>(members).regs_data_out;
     }
 
     void work(bool clk, bool reset)
     {
         Pipeline::work(clk, reset);
+
+        if (!*std::get<0>(members).stall_out) {
+            if (*std::get<1>(members).branch_taken_out) {
+                pc.next = *std::get<1>(members).branch_target_out;
+            }
+            else {
+                pc.next = pc + 4;
+            }
+        }
     }
 
     void strobe()
@@ -651,21 +787,27 @@ template class RiscV<64>;
 template<size_t WIDTH>
 class TestRiscV : public Module
 {
+    Memory<32/8,1024>   imem;
+    Memory<32/8,1024>   dmem;
 #ifdef VERILATOR
     VERILATOR_MODEL riscv;
 #else
     RiscV<WIDTH> riscv;
 #endif
 
+    bool imem_write;
+    uint8_t imem_write_addr;
+    uint32_t imem_write_data;
     bool error;
 
     size_t i;
 
 public:
-//    array<DTYPE,LENGTH>    *data_in  = nullptr;
-//    array<STYPE,LENGTH>    *data_out = &out_reg;
+    uint32_t *dmem_read_data_out = (uint32_t*) dmem.read_data_out;
+    uint32_t *imem_read_data_out = (uint32_t*) imem.read_data_out;
+    uint8_t  *imem_write_mask_in = (uint8_t*)&ONES1024;
 
-    bool             debugen_in;
+    bool      debugen_in;
 
     TestRiscV(bool debug)
     {
@@ -679,13 +821,24 @@ public:
     void connect()
     {
 #ifndef VERILATOR
-//        riscv.__inst_name = __inst_name + "/riscv";
+        riscv.__inst_name = __inst_name + "/riscv";
 
-//        riscv.data_in      = data_out;
-        riscv.debugen_in   = debugen_in;
+        dmem.read_in = riscv.dmem_read_out;
+        dmem.write_in = riscv.dmem_write_out;
+        dmem.write_mask_in = (logic<4>*) riscv.dmem_write_mask_out;
+        dmem.write_addr_in = (u<clog2(1024)>*)riscv.dmem_write_addr_out;
+        dmem.write_data_in = (logic<32>*)riscv.dmem_write_data_out;
+        imem.read_addr_in = (u<clog2(1024UL)>*) riscv.imem_read_addr_out;
+        imem.read_in = ONE;
+        imem.write_in = &imem_write;
+        riscv.debugen_in = debugen_in;
+
         riscv.connect();
+        dmem.connect();
+        imem.connect();
 
-//        data_in           = riscv.data_out;
+        riscv.dmem_read_data_in = (uint32_t*)dmem.read_data_out;
+        riscv.imem_read_data_in = (uint32_t*)imem.read_data_out;
 #endif
     }
 
@@ -694,10 +847,10 @@ public:
 #ifndef VERILATOR
         riscv.work(clk, reset);
 #else
-        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
+//        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
         riscv.debugen_in    = debugen_in;
 
-        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
+//        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
 
         riscv.clk = clk;
         riscv.reset = reset;
@@ -749,7 +902,7 @@ public:
 #endif
     }
 
-    bool run()
+    bool run(std::string filename, size_t start_offset)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestRiscV, WIDTH: {}...", WiDTH);
@@ -759,6 +912,25 @@ public:
         if (debugen_in) {
             std::print("\n");
         }
+
+        uint32_t ram[1024];
+        FILE* fbin = fopen(filename.c_str(), "r");
+        if (!fbin) {
+            std::print("can't open file '{}'\n", filename);
+            return false;
+        }
+        fseek(fbin, start_offset, SEEK_SET);
+        fread(ram, 4*1024, 1, fbin);
+        std::print("Filling memory with program\n");
+        imem_write = true;
+        imem.work(1, 1);
+        for (size_t addr = 0; addr < 1024; ++addr) {
+            imem_write_addr = addr;
+            imem_write_data = ram[addr];
+            imem.work(1, 0);
+        }
+        imem_write = false;
+        fclose(fbin);
 
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "riscv_test";
@@ -809,7 +981,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-    && ((only != -1 && only != 0) || TestRiscV<32>(debug).run())
+    && ((only != -1 && only != 0) || TestRiscV<32>(debug).run("rv32i.bin", 0x1312))
 //    && ((only != -1 && only != 1) || TestRiscV<64>(debug).run())
     );
 }
