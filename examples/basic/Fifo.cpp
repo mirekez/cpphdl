@@ -26,23 +26,24 @@ class Fifo : public Module
     reg<u1> afull_reg;
 
 public:
-    bool                         *write_in  = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>    *data_in   = nullptr;
+    bool                         *write_in       = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>    *write_data_in  = nullptr;
 
-    bool                         *read_in   = nullptr;
-    logic<FIFO_WIDTH_BYTES*8>    *data_out  = mem.data_out;
+    bool                         *read_in        = nullptr;
+    logic<FIFO_WIDTH_BYTES*8>    *read_data_out  = mem.read_data_out;
 
     bool                         *empty_out = &empty_comb;
     bool                         *full_out  = &full_comb;
-    bool                         *clear_in  = &ZERO;
+    bool                         *clear_in  = __ZERO;
     bool                         *afull_out = &afull_reg;
 
     bool                         debugen_in;
 
     void connect()
     {
-        mem.data_in       = data_in;
+        mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
+        mem.write_mask_in = (logic<FIFO_WIDTH_BYTES>*)&__ONES1024;
         mem.write_addr_in = &wp_reg;
         mem.read_in       = read_in;
         mem.read_addr_in  = &rp_reg;
@@ -114,7 +115,7 @@ public:
         afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
 
         if (debugen_in) {
-            std::print("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name, (int)*write_in, *data_in, (int)*read_in, *data_out, (int)*full_out, (int)*empty_out);
+            std::print("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name, (int)*write_in, *write_data_in, (int)*read_in, *read_data_out, (int)*full_out, (int)*empty_out);
         }
     }
 
@@ -130,7 +131,7 @@ public:
     void comb()
     {
         mem.comb();
-        mem.data_out_comb_func();
+        mem.read_data_out_comb_func();
     }
 };
 /////////////////////////////////////////////////////////////////////////
@@ -161,29 +162,19 @@ class TestFifo : public Module
     reg<u<clog2(FIFO_DEPTH)>>       read_addr;
     reg<u<clog2(FIFO_DEPTH)>>       write_addr;
     reg<logic<FIFO_WIDTH_BYTES*8>>  data_reg;
-    reg<u1>                         write_reg;
-    reg<u1>                         read_reg;
-    reg<u1>  was_read;
-    reg<u1>  clear_reg;
-    reg<u16> to_write_cnt;
-    reg<u16> to_read_cnt;
-    bool     error = false;
+    reg<u1>     write_reg;
+    reg<u1>     read_reg;
+    reg<u1>     was_read;
+    reg<u1>     clear_reg;
+    reg<u16>    to_write_cnt;
+    reg<u16>    to_read_cnt;
+    bool        error = false;
 
     std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
 public:
-    bool                      *write_out      = &write_reg;
-    logic<FIFO_WIDTH_BYTES*8> *data_out       = &data_reg;
-
-    bool                      *read_out       = &read_reg;
-    logic<FIFO_WIDTH_BYTES*8> *data_in        = nullptr;
-
-    bool            *empty_in = nullptr;
-    bool            *full_in  = nullptr;
-    bool            *clear_out  = &clear_reg;
-    bool            *afull_in = nullptr;
-
-    bool             debugen_in;
+    logic<FIFO_WIDTH_BYTES*8>* fifo_read_data_out;
+    bool                       debugen_in;
 
     TestFifo(bool debug)
     {
@@ -201,17 +192,14 @@ public:
 #ifndef VERILATOR
         fifo.__inst_name = __inst_name + "/fifo";
 
-        fifo.write_in      = write_out;
-        fifo.data_in       = data_out;
-        fifo.read_in       = read_out;
-        fifo.clear_in      = clear_out;
+        fifo.write_in      = &write_reg;
+        fifo.write_data_in = &data_reg;
+        fifo.read_in       = &read_reg;
+        fifo.clear_in      = &clear_reg;
         fifo.debugen_in    = debugen_in;
         fifo.connect();
 
-        data_in           = fifo.data_out;
-        empty_in          = fifo.empty_out;
-        full_in           = fifo.full_out;
-        afull_in          = fifo.afull_out;
+        fifo_read_data_out = fifo.read_data_out;
 #endif
     }
 
@@ -220,16 +208,13 @@ public:
 #ifndef VERILATOR
         fifo.work(clk, reset);
 #else
-        fifo.write_in      = *write_out;
-        memcpy(&fifo.data_in.m_storage, data_out, sizeof(fifo.data_in.m_storage));
-        fifo.read_in       = *read_out;
-        fifo.clear_in      = *clear_out;
+        fifo.write_in      = write_reg;
+        memcpy(&fifo.write_data_in, &data_reg, sizeof(fifo.write_data_in));
+        fifo.read_in       = read_reg;
+        fifo.clear_in      = clear_reg;
         fifo.debugen_in    = debugen_in;
 
-        data_in           = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.data_out.m_storage;
-        empty_in          = (bool*)&fifo.empty_out;
-        full_in           = (bool*)&fifo.full_out;
-        afull_in          = (bool*)&fifo.afull_out;
+        fifo_read_data_out = (logic<FIFO_WIDTH_BYTES*8>*) &fifo.read_data_out;
 
         fifo.clk = clk;
         fifo.reset = reset;
@@ -247,10 +232,11 @@ public:
         }
 
         if (!clk) {  // all checks on negedge edge
-            if (!reset && to_read_cnt && memcmp(data_in, &mem_ref[read_addr], sizeof(*data_in)) != 0 && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
+            if (!reset && to_read_cnt && memcmp(fifo.read_data_out, &mem_ref[read_addr], sizeof(*fifo.read_data_out)) != 0
+                && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
                 std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
                     __inst_name,
-                    *(logic<FIFO_WIDTH_BYTES*8>*)data_in,
+                    *(logic<FIFO_WIDTH_BYTES*8>*)fifo_read_data_out,
                     *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
                     read_addr);
                 error = true;
@@ -333,10 +319,15 @@ public:
         work(1, 1);
         int cycles = 100000;
         int clk = 0;
-        while (--cycles && !error) {
+        while (--cycles) {
             comb();
             work(clk, 0);
             strobe();
+
+            if (clk && error) {
+                break;
+            }
+
             clk = !clk;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
@@ -349,15 +340,17 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
-        debug = true;
-    }
-    if (argc > 2 && strcmp(argv[2], "--noveril") == 0) {
-        noveril = true;
-    }
     int only = -1;
-    if (argc > 1 && argv[argc-1][0] != '-') {
-        only = atoi(argv[argc-1]);
+    for (int i=1; i < argc; ++i) {
+        if (strcmp(argv[i], "--debug") == 0) {
+            debug = true;
+        }
+        if (strcmp(argv[i], "--noveril") == 0) {
+            noveril = true;
+        }
+        if (argv[i][0] != '-') {
+            only = atoi(argv[argc-1]);
+        }
     }
 
     bool ok = true;
@@ -367,16 +360,18 @@ int main (int argc, char** argv)
         ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 1);
         ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 0);
         std::cout << "Executing tests... ===========================================================================\n";
-        std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str());
-        std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str());
+        ok = ( ok
+            && ((only != -1 && only != 0) || std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && ((only != -1 && only != 1) || std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str()) == 0)
+        );
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
     return !( ok
-    && ((only != -1 && only != 0) || TestFifo<64,65536,1>(debug).run())
-    && ((only != -1 && only != 1) || TestFifo<64,65536,0>(debug).run())
+        && ((only != -1 && only != 0) || TestFifo<64,65536,1>(debug).run())
+        && ((only != -1 && only != 1) || TestFifo<64,65536,0>(debug).run())
     );
 }
 

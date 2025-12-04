@@ -1,6 +1,16 @@
 #pragma once
 
-#include <stdint.h>
+//#include <stdint.h>
+
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned uint32_t;
+typedef unsigned long uint64_t;
+typedef signed char int8_t;
+typedef signed short int16_t;
+typedef signed int int32_t;
+typedef signed long int64_t;
+
 #include <type_traits>
 #include <string>
 
@@ -38,5 +48,3 @@ struct cpphdl_exception
 #include "cpphdl_cat.h"
 #include "cpphdl_memory.h"
 #include "cpphdl_Model.h"
-
-static bool ZERO = 0;

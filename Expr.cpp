@@ -24,6 +24,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_VALUE:
             return indent_str + prefix + value;
         case EXPR_VAR:
+            if (value.find("__ONE") == 0) {
+                return indent_str + prefix + "'1";
+            }
+            if (value.find("__ZERO") == 0) {
+                return indent_str + prefix + "'0";
+            }
             return indent_str + prefix + value;
         case EXPR_STRING:
             replacePrint(value);
@@ -115,13 +121,21 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
             }
-            if (value == "*") {  // we dont need pointers int Verilog
+            if (value == "*" && sub.size() == 1) {  // we dont need pointers int Verilog
                 ASSERT(sub.size() >= 1);
                 return indent_str + sub[0].str();
             }
-            if (value == "&") {  // we dont need pointers int Verilog
-                ASSERT(sub.size() >= 1);
+            if (value == "&" && sub.size() == 1) {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
+            }
+            if (value == "&" && sub.size() == 2) {
+                return indent_str + sub[0].str() + " & " + sub[1].str();
+            }
+            if (value == "|" && sub.size() == 2) {
+                return indent_str + sub[0].str() + " | " + sub[1].str();
+            }
+            if (value == "^" && sub.size() == 2) {
+                return indent_str + sub[0].str() + " ^ " + sub[1].str();
             }
 
             std::string str = value + "(";
@@ -159,7 +173,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str();
             }
             if (sub.size() >= 3 && value == "bits") {
-                return indent_str + sub[0].str() + "[" + sub[1].str() + ":" + sub[2].str() + "]";
+                return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
             }
             if (value == "work" || value == "connect" || value == "strobe" || value == "comb") {  // forbidden calls
                 return "";
@@ -257,6 +271,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         case EXPR_CAST:
+if (sub.size() == 0) return "??????";
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
             return indent_str + sub[0].str(prefix, suffix);
@@ -456,7 +471,49 @@ std::string Expr::typeToSV(std::string name, std::string size)
     return str;
 }
 
-std::string Expr::debug()
+Expr Expr::simplify()
+{
+    Expr expr = *this;
+    while (
+        expr.traverseIf( [&](Expr& e) {
+            if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
+                if ((e.sub[0].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[0].sub.size() >= 1) {
+                    e.sub[0] = e.sub[0].sub[0];
+                }
+                if ((e.sub[1].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[1].sub.size() >= 1) {
+                    e.sub[1] = e.sub[1].sub[0];
+                }
+                if ((e.sub[0].type == EXPR_OPERATORCALL || e.sub[0].type == EXPR_BINARY) && (e.sub[0].value == "+" || e.sub[0].value == "-") && e.sub[0].sub.size() == 2) {
+                    e = Expr{e.sub[0].value, EXPR_OPERATORCALL, {Expr{"*", EXPR_BINARY, {e.sub[0].sub[0],e.sub[1]}},Expr{"*", EXPR_OPERATORCALL, {e.sub[0].sub[1],e.sub[1]}}}};
+                    return true;
+                }
+                if ((e.sub[1].type == EXPR_OPERATORCALL || e.sub[1].type == EXPR_BINARY) && (e.sub[1].value == "+" || e.sub[1].value == "-") && e.sub[1].sub.size() == 2) {
+                    e = Expr{e.sub[1].value, EXPR_OPERATORCALL, {Expr{"*", EXPR_BINARY, {e.sub[0],e.sub[1].sub[0]}},Expr{"*", EXPR_OPERATORCALL, {e.sub[0],e.sub[1].sub[1]}}}};
+                    return true;
+                }
+            }
+            return false;
+        })
+    );
+    while (
+        expr.traverseIf( [&](Expr& e) {
+            if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
+                if (e.sub[0].type == EXPR_MEMBER) {
+                    e = Expr{"0", EXPR_VALUE};
+                    return true;
+                }
+                if (e.sub[1].type == EXPR_MEMBER) {
+                    e = Expr{"0", EXPR_VALUE};
+                    return true;
+                }
+            }
+            return false;
+        })
+    );
+    return expr;
+}
+
+std::string Expr::debug(int debug_indent)
 {
     std::string str;
     switch(type) {
@@ -489,11 +546,16 @@ std::string Expr::debug()
         default: str += "EXPR_???"; break;
     }
 
-    str += " " + value + (sub.size()?"(":"");
+    ++debug_indent;
+
+    str += ": " + value + (sub.size()?"(":"");
     bool first = true;
     for (auto& expr : sub) {
         str += (!first ? ", " : " ");
-        str += expr.debug();
+        if (sub.size() > 1) {
+            str += "\n" + std::string(debug_indent*4, ' ');
+        }
+        str += expr.debug(debug_indent);
         first = false;
     }
     str += (sub.size()?")":"");

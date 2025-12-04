@@ -2,6 +2,7 @@
 
 #include "cpphdl_logic.h"
 #include "cpphdl_array.h"
+#include "cpphdl_memory.h"
 
 #ifdef USE_FORMAT_H
 //////////////////////////////////////// just to print pretty
@@ -73,6 +74,19 @@ struct std::formatter<cpphdl::logic<SIZE>>
     auto format(const cpphdl::logic<SIZE>& logic, FormatContext& ctx) const {
         auto out = ctx.out();
         out = std::format_to(out, "{}", logic.to_hex());
+        return out;
+    }
+};
+
+// logic
+template<typename T, size_t SIZE>
+struct std::formatter<cpphdl::memory_row<T,SIZE>>
+{
+    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); }
+    template <typename FormatContext>
+    auto format(const cpphdl::memory_row<T,SIZE>& row, FormatContext& ctx) const {
+        auto out = ctx.out();
+        out = std::format_to(out, "{}", (const cpphdl::logic<sizeof(T)*8*SIZE>)row);
         return out;
     }
 };

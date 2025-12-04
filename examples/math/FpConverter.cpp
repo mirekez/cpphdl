@@ -353,15 +353,17 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    if (argc > 1 && strcmp(argv[1], "--debug") == 0) {
-        debug = true;
-    }
-    if (argc > 2 && strcmp(argv[2], "--noveril") == 0) {
-        noveril = true;
-    }
     int only = -1;
-    if (argc > 1 && argv[argc-1][0] != '-') {
-        only = atoi(argv[argc-1]);
+    for (int i=1; i < argc; ++i) {
+        if (strcmp(argv[i], "--debug") == 0) {
+            debug = true;
+        }
+        if (strcmp(argv[i], "--noveril") == 0) {
+            noveril = true;
+        }
+        if (argv[i][0] != '-') {
+            only = atoi(argv[argc-1]);
+        }
     }
 
     bool ok = true;
@@ -371,16 +373,18 @@ int main (int argc, char** argv)
         ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
         ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
         std::cout << "Executing tests... ===========================================================================\n";
-        std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str());
-        std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8") + (debug?" --debug":"") + " 1").c_str());
+        ok = ( ok
+            && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8") + (debug?" --debug":"") + " 1").c_str()) == 0)
+        );
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
     return !( ok
-    && ((only != -1 && only != 0) || TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run())
-    && ((only != -1 && only != 1) || TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run())
+        && ((only != -1 && only != 0) || TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run())
+        && ((only != -1 && only != 1) || TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run())
     );
 }
 

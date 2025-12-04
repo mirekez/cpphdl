@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string.h>
+#include <vector>
 
 #include "cpphdl_logic.h"
 
@@ -30,82 +31,48 @@ struct memory_row
         return *this;
     }
 
-    operator array<T,SIZE>&()
+    operator array<T,SIZE>() const
     {
         return data;
     }
 
-    operator logic<SIZE*sizeof(T)*8>()
+    operator logic<SIZE*sizeof(T)*8>() const
     {
         return *(logic<SIZE*sizeof(T)*8>*)&data;
     }
 
-/*    logic<N*sizeof(T)*8> bits(size_t last, size_t first)
+    logic<SIZE*sizeof(T)*8> operator<<(uint64_t shift)
     {
-        cpphdl_assert(first < N*sizeof(T)*8 && last < N*sizeof(T)*8 && first <= last, "wrong first or last bitnumber");
-        return logic<N*sizeof(T)*8>((logic<N*sizeof(T)*8>*)this, first, last);
+        return (logic<SIZE*sizeof(T)*8>)data << shift;
     }
 
-    operator bitset<N*sizeof(T)> ()
+    logic<SIZE*sizeof(T)*8> operator>>(uint64_t shift)
     {
-        bitset<N*sizeof(T)> bs;
-        memcpy(&bs.data, this->data, sizeof(this->data));
-        return bs;
+        return (logic<SIZE*sizeof(T)*8>)data >> shift;
     }
 
-    operator uint64_t()
+    logic<SIZE*sizeof(T)*8> operator|(const logic<SIZE*sizeof(T)*8>& other)
     {
-        return *(uint64_t*)data;
+        return (logic<SIZE*sizeof(T)*8>)data | other;
     }
 
-    memory<T,N> operator<<(uint64_t shift)
+    logic<SIZE*sizeof(T)*8> operator&(const logic<SIZE*sizeof(T)*8>& other)
     {
-        uint64_t tmp = 0;
-        memory<T,N> arr_tmp = {0};
-
-        for (int i=N-1; i >= 0; --i) {
-            tmp = (*this)[i];
-            if (i+shift/(sizeof(T)*8) < N) {
-                arr_tmp[i+shift/(sizeof(T)*8)] = arr_tmp[i+shift/(sizeof(T)*8)] | tmp<<(shift%(sizeof(T)*8));
-            }
-            if (i+shift/(sizeof(T)*8)+1 < N) {
-                arr_tmp[i+shift/(sizeof(T)*8)+1] = arr_tmp[i+shift/(sizeof(T)*8)+1] | tmp>>((sizeof(T)*8)-shift%(sizeof(T)*8));
-            }
-        }
-        return arr_tmp;
+        return (logic<SIZE*sizeof(T)*8>)data & other;
     }
 
-    memory<T,N> operator>>(uint64_t shift)
+    logic<SIZE*sizeof(T)*8> operator|=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        uint64_t tmp = 0;
-        memory<T,N> arr_tmp = 0;
-
-        for (int i=0; i < (int)N; ++i) {
-            tmp = (*this)[i];
-            if (i-(int)(shift/(sizeof(T)*8)) >= 0) {
-                arr_tmp[i-shift/(sizeof(T)*8)] = arr_tmp[i-shift/(sizeof(T)*8)] | tmp>>(shift%(sizeof(T)*8));
-            }
-            if (i-(int)(shift/(sizeof(T)*8))-1 >= 0) {
-                arr_tmp[i-shift/(sizeof(T)*8)-1] = arr_tmp[i-shift/(sizeof(T)*8)-1] | tmp<<((sizeof(T)*8)-shift%(sizeof(T)*8));
-            }
-        }
-        return arr_tmp;
+        *(logic<SIZE*sizeof(T)*8>*)data |= other;
+        return *(logic<SIZE*sizeof(T)*8>*)this;
     }
 
-    memory<T,N> operator|(const memory<T,N>& other)
+    logic<SIZE*sizeof(T)*8> operator&=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        memory<T,N> arr_tmp = *this;
-        for (size_t i=0; i < N; ++i) {
-            arr_tmp[i] = arr_tmp[i] | other[i];
-        }
-        return arr_tmp;
+        *(logic<SIZE*sizeof(T)*8>*)data &= other;
+        return *(logic<SIZE*sizeof(T)*8>*)this;
     }
-    memory<T,N> operator|=(const memory<T,N>& other)
-    {
-        *this = *this | other;
-        return *this;
-    }
-*/};
+};
 
 template<typename T, size_t SIZE, size_t DEPTH>
 struct memory
@@ -127,12 +94,14 @@ struct memory
 
     memory_row<T,SIZE> operator[](std::size_t i)
     {
+        cpphdl_assert(i < DEPTH, "index " + std::to_string(i) + "is out of size " + std::to_string(DEPTH));
         return memory_row<T,SIZE>{data[i], &changes, i};
     }
 
     void apply()
     {
         for (auto entry : changes) {
+//std::print("!!! {} !!!\n", entry.data);
 //            memcpy(&data[entry.pos], &entry.data, sizeof(entry.data));
             data[entry.pos] = entry.data;
         }

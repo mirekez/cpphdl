@@ -2,8 +2,6 @@
 
 #include "cpphdl_logic.h"
 
-#include <stdint.h>
-
 #define __PACKED __attribute__((packed))
 
 #if __cplusplus >= 202302L
@@ -58,7 +56,7 @@ struct u
         return logic<WIDTH>((logic<WIDTH>*)this, first, last);
     }
 
-    operator logic<WIDTH>()
+    operator logic<WIDTH>() const
     {
         logic<WIDTH> bs;
         memcpy(&bs, value, sizeof(bs));
@@ -131,9 +129,24 @@ DEFINE_REGULAR_TYPE_CLASS(int16_t, s16, 16, "{:+6}");
 DEFINE_REGULAR_TYPE_CLASS(int32_t, s32, 32, "{:+11}");
 DEFINE_REGULAR_TYPE_CLASS(int64_t, s64, 64, "{:+21}");
 
-static char ZERO1024[1024] = {};
-static const bool* BZERO = (bool*)&ZERO1024;
-static const uint8_t* U8ZERO = (uint8_t*)&ZERO1024;
-static const uint16_t* U16ZERO = (uint16_t*)&ZERO1024;
-static const uint32_t* U32ZERO = (uint32_t*)&ZERO1024;
-static const uint64_t* U63ZERO = (uint64_t*)&ZERO1024;
+// to assign '0 or '1 to ports up to 1024B size easily
+
+static char __ZERO1024[1024] = {};
+static bool* __ZERO = (bool*)&__ZERO1024;
+static uint8_t* __U8ZERO = (uint8_t*)&__ZERO1024;
+static uint16_t* __U16ZERO = (uint16_t*)&__ZERO1024;
+static uint32_t* __U32ZERO = (uint32_t*)&__ZERO1024;
+static uint64_t* __U64ZERO = (uint64_t*)&__ZERO1024;
+
+template<size_t WIDTH>
+struct __ONES
+{
+    unsigned char data[WIDTH/8];
+    constexpr __ONES() { memset(data, 0xFF, sizeof(data)); }
+};
+static __ONES<1024> __ONES1024;
+static bool* __ONE = (bool*)&__ONES1024;
+static uint8_t* __U8ONES = (uint8_t*)&__ONES1024;
+static uint16_t* __U16ONES = (uint16_t*)&__ONES1024;
+static uint32_t* __U32ONES = (uint32_t*)&__ONES1024;
+static uint64_t* __U64ONES = (uint64_t*)&__ONES1024;

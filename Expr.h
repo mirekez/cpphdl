@@ -66,6 +66,8 @@ struct Expr
         return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY;
     }
 
+    Expr simplify();
+
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");
 
@@ -83,7 +85,7 @@ struct Expr
     }
 
     void replacePrint(std::string& str);
-    std::string debug();
+    std::string debug(int debug_indent = 0);
 };
 
 

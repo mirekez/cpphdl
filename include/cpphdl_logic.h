@@ -1,6 +1,5 @@
 #pragma once
 
-#include <stdint.h>
 #include <cstddef>
 #include <cassert>
 #include <string>
@@ -18,7 +17,7 @@ struct logic_bits;
 template<size_t WIDTH>
 struct logic
 {
-    constexpr static size_t SIZE = WIDTH>=8?(WIDTH+7)/8:1;
+    constexpr static size_t SIZE = (WIDTH+7)/8;
     uint8_t bytes[SIZE];
 
     logic() = default;
@@ -210,12 +209,12 @@ struct logic
         return *this;
     }
 
-    operator uint64_t()
+    operator uint64_t() const
     {
         return to_ullong();
     }
 
-    uint64_t to_ullong()
+    uint64_t to_ullong() const
     {
         uint64_t ullong = 0;
         size_t bits = WIDTH;

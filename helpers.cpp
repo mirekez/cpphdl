@@ -508,7 +508,7 @@ bool Helpers::specializationToParameters(const CXXRecordDecl* RD, std::vector<cp
                     cpphdl::Expr expr = cpphdl::Expr{str, cpphdl::Expr::EXPR_TYPE};
                     DEBUG_AST1(" type: " << OS.str());
                     params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), expr});
-                    DEBUG_EXPR1(" [Expr: " << params.back().expr.debug() << "]");
+                    DEBUG_EXPR1(" Expr: " << params.back().expr.debug(debugIndent));
                     if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
                         auto st = exportStruct(QT->getAsCXXRecordDecl(), *this);
                         auto ret = mod.imports.emplace(st.name);
@@ -530,7 +530,7 @@ bool Helpers::specializationToParameters(const CXXRecordDecl* RD, std::vector<cp
                     }
                     params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(),
                         cpphdl::Expr{Arg.getIntegralType()->isBooleanType() ? (Arg.getAsIntegral().isZero() ? "false" : "true") : str, cpphdl::Expr::EXPR_VALUE}});
-                    DEBUG_EXPR1(" [Expr: " << params.back().expr.debug() << "]");
+                    DEBUG_EXPR1(" Expr: " << params.back().expr.debug(debugIndent));
                     break;
                 }
                 case TemplateArgument::Declaration:
@@ -555,7 +555,7 @@ bool Helpers::specializationToParameters(const CXXRecordDecl* RD, std::vector<cp
                     if (!Range.isInvalid()) {
                         [[maybe_unused]] llvm::StringRef SR = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, LO);
                         DEBUG_AST1(" expression: " << SR.str());
-                        DEBUG_EXPR1(" [Expr: " << exprToExpr(E).debug() << "]");
+                        DEBUG_EXPR1(" Expr: " << exprToExpr(E).debug(debugIndent));
                     }
                     break;
                 }

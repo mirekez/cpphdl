@@ -144,7 +144,8 @@ bool Method::printConns(std::ofstream& out)
 
     for (auto& port : currModule->ports) {  // outport initializers
         if (port.initializer.type != Expr::EXPR_EMPTY
-            && port.initializer.sub.size() >= 1 && port.initializer.sub[0].value != "ZERO" && port.initializer.sub[0].value != "nullptr") {
+            && port.initializer.sub.size() >= 1 && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
+            && port.initializer.sub[0].value != "nullptr") {
             out << "    assign " << port.name << " = " << port.initializer.str() << ";\n";
         }
     }

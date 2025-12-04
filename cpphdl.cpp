@@ -160,7 +160,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
                     st.fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
                     DEBUG_AST1("|");
                 }
-//                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().type.debug());
+//                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().type.debug(debugIndent));
                 if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1 &&
                     QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("std::") == (size_t)-1) {  // we need std containers in structs?
                     auto st1 = exportStruct(QT->getAsCXXRecordDecl(), hlp);
@@ -177,9 +177,9 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
                     }
                 }
 
-                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().expr.debug());
+                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().expr.debug(debugIndent));
                 if (FD->isBitField()) {
-                    DEBUG_EXPR(debugIndent, " Expr(bitfield): " << st.fields.back().bitwidth.debug());
+                    DEBUG_EXPR(debugIndent, " Expr(bitfield): " << st.fields.back().bitwidth.debug(debugIndent));
                 }
             }
         }
@@ -187,7 +187,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
             if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
                 DEBUG_AST(debugIndent, "Const(" << VD->getNameAsString() << "): ");
                 st.parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                DEBUG_EXPR(debugIndent, " Expr: " << st.parameters.back().expr.debug());
+                DEBUG_EXPR(debugIndent, " Expr: " << st.parameters.back().expr.debug(debugIndent));
             }
         }
     }
@@ -232,7 +232,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             expr.hasInitializer = true;
         }
 
-        DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
+        DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
     }
     else {
         auto* ModuleClass = lookupQualifiedRecord(&hlp.Ctx, "cpphdl::Module");
@@ -270,7 +270,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             else {
                 field = &hlp.mod.members.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
             }
-            DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
+            DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
         }
         else {
             DEBUG_AST1(" {var " << FD->getNameAsString() << "}");
@@ -283,7 +283,7 @@ bool putField(FieldDecl* FD, Helpers& hlp)
             else {
                 field = &hlp.mod.vars.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)});
             }
-            DEBUG_EXPR1(" [Expr: " << field->expr.debug() << "]");
+            DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
             if (QT->getAsCXXRecordDecl() && QT->getAsCXXRecordDecl()->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1) {
                 auto st = exportStruct(QT->getAsCXXRecordDecl(), hlp);
                 auto ret = hlp.mod.imports.emplace(st.name);
@@ -332,7 +332,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitBinaryOperator");
             method.statements.emplace_back(hlp.exprToExpr(BO));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -346,7 +346,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitCXXOperatorCallExpr");
             method.statements.emplace_back(hlp.exprToExpr(OCE));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -360,7 +360,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitCXXMemberCallExpr");
             method.statements.emplace_back(hlp.exprToExpr(MCE));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -374,7 +374,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitMemberExpr");
             method.statements.emplace_back(hlp.exprToExpr(ME));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -388,7 +388,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitForStmt");
             method.statements.emplace_back(hlp.exprToExpr(FS));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -402,7 +402,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitWhileStmt");
             method.statements.emplace_back(hlp.exprToExpr(WS));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -416,7 +416,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitIfStmt");
             method.statements.emplace_back(hlp.exprToExpr(IS));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -430,7 +430,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitReturnStmt");
             method.statements.emplace_back(hlp.exprToExpr(RS));
-            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug());
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }
 
@@ -463,7 +463,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
 
         method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug());
+        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
     for (const ParmVarDecl* Param : MD->parameters()) {
@@ -483,7 +483,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
                 currProject->structs.emplace_back(std::move(st));
             }
         }
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug());
+        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
     LocalVisitor(hlp, method).TraverseStmt(const_cast<Stmt*>(MD->getBody()));
