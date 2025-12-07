@@ -4,10 +4,15 @@ using namespace cpphdl;
 
 #include "Instr.h"
 
-template<typename STATE, size_t ID, size_t LENGTH>
-class DecodeFetch: public PipelineStage
+
+template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
+class DecodeFetch: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {
 public:
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_reg;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
+
     struct State
     {
         uint32_t pc;
@@ -28,7 +33,6 @@ public:
         uint8_t rs2:5;
         uint8_t rsv1:1;
     };//__PACKED;
-    reg<array<State,LENGTH-ID>> state_reg;
 
     array<uint8_t,2> regs_rd_id_comb;
 
@@ -38,8 +42,6 @@ public:
     uint32_t                  *pc_in       = nullptr;
     bool                      *instr_valid_in = nullptr;
     Instr                     *instr_in    = nullptr;
-    array<STATE,LENGTH>       *state_in    = nullptr;
-    array<State,LENGTH-ID>    *state_out   = &state_reg;
     uint32_t                  *regs_data0_in  = nullptr;  // this input works from combinationsl path of another module from regs_rd_id_comb
     uint32_t                  *regs_data1_in  = nullptr;  // this input works from combinationsl path of another module from regs_rd_id_comb
     array<uint8_t,2>          *regs_rd_id_out = &regs_rd_id_comb;
@@ -102,18 +104,13 @@ public:
 
     void do_decode_fetch()
     {
-#ifndef SYNTHESIS
-        std::print("{}\n", instr_in->format());
-#endif
-
         state_reg.next[0] = {};
 
         state_reg.next[0].rs1 = regs_rd_id_comb_func()[0];
         state_reg.next[0].rs2 = regs_rd_id_comb_func()[1];
 
         state_reg.next[0].funct3 = 7;
-        switch (instr_in->r.opcode)
-        {
+        switch (instr_in->r.opcode) {
             case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
                 state_reg.next[0].rd  = instr_in->i.rd;
                 state_reg.next[0].imm = instr_in->imm_I();
@@ -135,8 +132,7 @@ public:
                 state_reg.next[0].imm = instr_in->imm_I();
                 state_reg.next[0].wb_op = Wb::ALU;
 
-                switch (instr_in->i.funct3)
-                {
+                switch (instr_in->i.funct3) {
                     case 0b000: state_reg.next[0].alu_op = Alu::ADD; break;     // ADDI
                     case 0b010: state_reg.next[0].alu_op = Alu::SLT; break;     // SLTI
                     case 0b011: state_reg.next[0].alu_op = Alu::SLTU; break;    // SLTIU
@@ -155,8 +151,7 @@ public:
                 state_reg.next[0].rd = instr_in->r.rd;
                 state_reg.next[0].wb_op = Wb::ALU;
 
-                switch (instr_in->r.funct3)
-                {
+                switch (instr_in->r.funct3) {
                     case 0b000:
                         state_reg.next[0].alu_op = (instr_in->r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD;
                         break;
@@ -175,8 +170,7 @@ public:
                 state_reg.next[0].imm = instr_in->imm_B();
                 state_reg.next[0].br_op = Br::BNONE;
 
-                switch (instr_in->b.funct3)
-                {
+                switch (instr_in->b.funct3) {
                     case 0b000: state_reg.next[0].br_op = Br::BEQ; break;
                     case 0b001: state_reg.next[0].br_op = Br::BNE; break;
                     case 0b100: state_reg.next[0].br_op = Br::BLT; break;
@@ -223,7 +217,7 @@ public:
         state_reg.next[0].rs2_val = *regs_data1_in;
 
         // forwarding
-        if (state_reg[2].valid && state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb
+        if (state_reg[2].valid && state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb alu
             if (state_reg[2].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = (*state_in)[ID+2].alu_result;
             }
@@ -232,7 +226,7 @@ public:
             }
         }
 
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem alu
             if (state_reg[1].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = (*state_in)[ID+1].alu_result;
             }
@@ -241,7 +235,7 @@ public:
             }
         }
 
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex alu
             if (state_reg[0].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = *alu_result_in;
             }
@@ -264,11 +258,21 @@ public:
 
     void work(bool clk, bool reset)
     {
+        if (!clk) {
+            return;
+        }
+        if (reset) {
+            state_reg.next[0].valid = 0;
+            state_reg.next[1].valid = 0;
+            state_reg.next[2].valid = 0;
+            state_reg.next[3].valid = 0;
+        }
         do_decode_fetch();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);
     }
 
     void strobe()
     {
-        state_reg.strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
     }
 };

@@ -2,15 +2,19 @@
 
 using namespace cpphdl;
 
-template<typename STATE, size_t ID, size_t LENGTH>
-class MemoryAccess: public PipelineStage
+
+template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
+class MemoryAccess: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {
 public:
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_reg;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
+
     struct State
     {
         uint32_t load_data = 0;   // valid only if Mem::LOAD
     };
-    reg<array<State,LENGTH-ID>> state_reg;
 
     reg<u32> mem_addr_reg;
     reg<u32> mem_data_reg;
@@ -19,13 +23,12 @@ public:
     reg<u1> mem_read_reg;
 
 public:
-    array<STATE,LENGTH>       *state_in     = nullptr;
-    array<State,LENGTH-ID>    *state_out    = &state_reg;
-    uint32_t                  *mem_addr_out = &mem_addr_reg;
-    uint32_t                  *mem_data_out = &mem_data_reg;
-    uint8_t                   *mem_mask_out = &mem_mask_reg;
     bool                      *mem_write_out = &mem_write_reg;
-    bool                      *mem_read_out = &mem_read_reg;
+    uint32_t                  *mem_write_addr_out = &mem_addr_reg;
+    uint32_t                  *mem_write_data_out = &mem_data_reg;
+    uint8_t                   *mem_write_mask_out = &mem_mask_reg;
+    bool                      *mem_read_out       = &mem_read_reg;
+    uint32_t                  *mem_read_addr_out  = &mem_addr_reg;
 
     void connect()
     {
@@ -83,12 +86,20 @@ public:
 
     void work(bool clk, bool reset)
     {
+        if (!clk) {
+            return;
+        }
+        if (reset) {
+            mem_write_reg.clr();
+            mem_read_reg.clr();
+        }
         do_memory();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);
     }
 
     void strobe()
     {
-        state_reg.strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
         mem_addr_reg.strobe();
         mem_data_reg.strobe();
         mem_mask_reg.strobe();

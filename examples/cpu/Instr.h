@@ -95,43 +95,43 @@ union Instr
         auto decode_mnemonic = [&](uint32_t op, uint32_t f3, uint32_t f7) -> std::string {
             switch (op) {
             case 0b0110011: // R-type
-                if (f3 == 0 && f7 == 0b0000000) return "add";
-                if (f3 == 0 && f7 == 0b0100000) return "sub";
-                if (f3 == 7) return "and";
-                if (f3 == 6) return "or";
-                if (f3 == 4) return "xor";
-                if (f3 == 1) return "sll";
-                if (f3 == 5 && f7 == 0b0000000) return "srl";
-                if (f3 == 5 && f7 == 0b0100000) return "sra";
-                if (f3 == 2) return "slt";
-                if (f3 == 3) return "sltu";
+                if (f3 == 0 && f7 == 0b0000000) return "add   ";
+                if (f3 == 0 && f7 == 0b0100000) return "sub   ";
+                if (f3 == 7) return "and   ";
+                if (f3 == 6) return "or    ";
+                if (f3 == 4) return "xor   ";
+                if (f3 == 1) return "sll   ";
+                if (f3 == 5 && f7 == 0b0000000) return "srl   ";
+                if (f3 == 5 && f7 == 0b0100000) return "sra   ";
+                if (f3 == 2) return "slt   ";
+                if (f3 == 3) return "sltu  ";
                 return "r-type";
             case 0b0010011: // I-type ALU
-                if (f3 == 0) return "addi";
-                if (f3 == 7) return "andi";
-                if (f3 == 6) return "ori";
-                if (f3 == 4) return "xori";
-                if (f3 == 1) return "slli";
-                if (f3 == 5 && f7 == 0) return "srli";
-                if (f3 == 5 && f7 == 0b0100000) return "srai";
-                if (f3 == 2) return "slti";
-                if (f3 == 3) return "sltiu";
-                return "alu-imm";
-            case 0b0000011: return "load";
-            case 0b0100011: return "store";
+                if (f3 == 0) return "addi  ";
+                if (f3 == 7) return "andi  ";
+                if (f3 == 6) return "ori   ";
+                if (f3 == 4) return "xori  ";
+                if (f3 == 1) return "slli  ";
+                if (f3 == 5 && f7 == 0) return "srli  ";
+                if (f3 == 5 && f7 == 0b0100000) return "srai  ";
+                if (f3 == 2) return "slti  ";
+                if (f3 == 3) return "sltiu ";
+                return "aluimm";
+            case 0b0000011: return "load  ";
+            case 0b0100011: return "store ";
             case 0b1100011: return "branch";
-            case 0b1101111: return "jal";
-            case 0b1100111: return "jalr";
-            case 0b0110111: return "lui";
-            case 0b0010111: return "auipc";
-            default:        return "unknown";
+            case 0b1101111: return "jal   ";
+            case 0b1100111: return "jalr  ";
+            case 0b0110111: return "lui   ";
+            case 0b0010111: return "auipc ";
+            default:        return "unknwn";
             }
         };
 
         auto m = decode_mnemonic(r.opcode, r.funct3, r.funct7);
-        return std::format("[{:08X}]({}){:#04x},rd:{},rs1:{},rs2:{},f3:{:#03x},f7:{:#04x},imm:{:x}/{:x}/{:x}/{:x}/{:x}\n",
-            raw, m, (uint32_t)r.opcode, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7,
-            imm_I(), imm_S(), imm_B(), imm_U(), imm_J());
+        return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:{:#04x},imm:{:04x}/{:04x}/{:04x}/{:04x}/{:04x}",
+            raw, m, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7,
+            (uint16_t)imm_I(), (uint16_t)imm_S(), (uint16_t)imm_B(), (uint16_t)imm_U(), (uint16_t)imm_J());
     }
 #endif
 };

@@ -2,22 +2,24 @@
 
 using namespace cpphdl;
 
-template<typename STATE, size_t ID, size_t LENGTH>
-class WriteBack: public PipelineStage
+
+template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
+class WriteBack: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {
 public:
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_reg;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
+    using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
+
     struct State
     {
     };
-    reg<array<State,LENGTH-ID>> state_reg;
 
     reg<u32> regs_out_reg;
     reg<u8> regs_wr_id_reg;
     reg<u1> regs_write_reg;
 
 public:
-    array<STATE,LENGTH>       *state_in      = nullptr;
-    array<State,LENGTH-ID>    *state_out     = &state_reg;
     uint32_t                  *mem_data_in   = nullptr;
     uint32_t                  *regs_data_out = &regs_out_reg;
     uint8_t                   *regs_wr_id_out = &regs_wr_id_reg;
@@ -55,12 +57,19 @@ public:
 
     void work(bool clk, bool reset)
     {
+        if (!clk) {
+            return;
+        }
+        if (reset) {
+            regs_write_reg.clr();
+        }
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);
         do_writeback();
     }
 
     void strobe()
     {
-        state_reg.strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
         regs_out_reg.strobe();
         regs_wr_id_reg.strobe();
         regs_write_reg.strobe();
