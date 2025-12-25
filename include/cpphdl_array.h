@@ -88,10 +88,10 @@ struct array
         return bs;
     }
 
-    operator uint64_t() const
-    {
-        return *(uint64_t*)data;
-    }
+//    operator uint64_t() const
+//    {
+//        return *(uint64_t*)data;
+//    }
 
     array<T,COUNT> operator<<(uint64_t shift)
     {
@@ -152,5 +152,8 @@ struct array
         return str;
     }
 };
+
+template<size_t COUNT>
+struct array<void,COUNT> {};
 
 }

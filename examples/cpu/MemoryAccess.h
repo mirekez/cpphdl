@@ -23,12 +23,12 @@ public:
     reg<u1> mem_read_reg;
 
 public:
-    bool                      *mem_write_out = &mem_write_reg;
-    uint32_t                  *mem_write_addr_out = &mem_addr_reg;
-    uint32_t                  *mem_write_data_out = &mem_data_reg;
-    uint8_t                   *mem_write_mask_out = &mem_mask_reg;
-    bool                      *mem_read_out       = &mem_read_reg;
-    uint32_t                  *mem_read_addr_out  = &mem_addr_reg;
+    __PORT(bool)        mem_write_out      = __VAL( mem_write_reg );
+    __PORT(uint32_t)    mem_write_addr_out = __VAL( mem_addr_reg );
+    __PORT(uint32_t)    mem_write_data_out = __VAL( mem_data_reg );
+    __PORT(uint8_t)     mem_write_mask_out = __VAL( mem_mask_reg );
+    __PORT(bool)        mem_read_out       = __VAL( mem_read_reg );
+    __PORT(uint32_t)    mem_read_addr_out  = __VAL( mem_addr_reg );
 
     void connect()
     {
@@ -39,29 +39,29 @@ public:
     {
         state_reg.next[0] = {};
 
-        mem_addr_reg.next = (*state_in)[ID-1].alu_result;
-        mem_data_reg.next = (*state_in)[ID-1].rs2_val;
+        mem_addr_reg.next = state_in()[ID-1].alu_result;
+        mem_data_reg.next = state_in()[ID-1].rs2_val;
 
 
-        if ((*state_in)[ID-1].mem_op == Mem::MNONE) {
+        if (state_in()[ID-1].mem_op == Mem::MNONE) {
             return;
         }
 
         mem_write_reg.next = 0;
-        if ((*state_in)[ID-1].mem_op == Mem::STORE)  // parallel case, full case
+        if (state_in()[ID-1].mem_op == Mem::STORE)  // parallel case, full case
         {
-            switch ((*state_in)[ID-1].funct3)
+            switch (state_in()[ID-1].funct3)
             {
                 case 0b000: // LB
-                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_write_reg.next = state_in()[ID-1].valid;
                     mem_mask_reg.next = 0x1;
                     break;
                 case 0b001: // LH
-                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_write_reg.next = state_in()[ID-1].valid;
                     mem_mask_reg.next = 0x3;
                     break;
                 case 0b010: // LW
-                    mem_write_reg.next = (*state_in)[ID-1].valid;
+                    mem_write_reg.next = state_in()[ID-1].valid;
                     mem_mask_reg.next = 0xF;
                     break;
                 default:
@@ -70,9 +70,9 @@ public:
         }
 
         mem_read_reg.next = 0;
-        if ((*state_in)[ID-1].mem_op == Mem::LOAD)
+        if (state_in()[ID-1].mem_op == Mem::LOAD)
         {
-            switch ((*state_in)[ID-1].funct3)
+            switch (state_in()[ID-1].funct3)
             {
                 case 0b000: mem_read_reg.next = 1; break;
                 case 0b001: mem_read_reg.next = 1; break;
@@ -93,8 +93,8 @@ public:
             mem_write_reg.clr();
             mem_read_reg.clr();
         }
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
         do_memory();
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);
     }
 
     void strobe()

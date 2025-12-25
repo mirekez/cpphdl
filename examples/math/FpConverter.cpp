@@ -133,14 +133,13 @@ struct std::formatter<FP<W,EW>>
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
 {
-    array<DTYPE,LENGTH> out_comb;
     reg<array<DTYPE,LENGTH>> out_reg;
 
-    DTYPE conv_comb;
+    array<DTYPE,LENGTH> conv_comb;
 
 public:
-    array<STYPE,LENGTH>    *data_in  = nullptr;
-    array<DTYPE,LENGTH>    *data_out = &out_comb;
+    __PORT(array<STYPE,LENGTH>)    data_in;
+    __PORT(array<DTYPE,LENGTH>)    data_out = __VAL( USE_REG ? out_reg : conv_comb_func() );
 
     bool     debugen_in;
 
@@ -149,15 +148,10 @@ public:
     size_t i;
     array<DTYPE,LENGTH>& conv_comb_func()
     {
-        if (!USE_REG) {
-            for (i=0; i < LENGTH; ++i) {
-                (*data_in)[i].convert(out_comb[i]);
-            }
+        for (i=0; i < LENGTH; ++i) {
+            data_in()[i].convert(conv_comb[i]);
         }
-        else {
-            out_comb = out_reg;
-        }
-        return out_comb;
+        return conv_comb;
     }
 
     void work(bool clk, bool reset)
@@ -165,9 +159,7 @@ public:
         if (!clk) return;
 
         if (USE_REG) {
-            for (i=0; i < LENGTH; ++i) {
-                (*data_in)[i].convert(out_reg.next[i]);
-            }
+            out_reg.next = conv_comb_func();
         }
 
         if (reset) {
@@ -175,7 +167,7 @@ public:
         }
 
         if (debugen_in) {
-            std::print("{:s}: input: {}, output: {}\n", __inst_name, *data_in, *data_out);
+            std::print("{:s}: input: {}, output: {}\n", __inst_name, data_in(), data_out());
         }
     }
 
@@ -221,13 +213,13 @@ class TestFpConverter : public Module
     reg<u1> can_check2;
     bool error;
 
+    array<DTYPE,LENGTH>    read_data;  // to support Verilator
+
     size_t i;
 
 public:
-    array<DTYPE,LENGTH>    *data_in  = nullptr;
-    array<STYPE,LENGTH>    *data_out = &out_reg;
 
-    bool             debugen_in;
+    bool debugen_in;
 
     TestFpConverter(bool debug)
     {
@@ -243,23 +235,20 @@ public:
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
-        converter.data_in      = data_out;
+        converter.data_in      = __VAL( out_reg );
         converter.debugen_in   = debugen_in;
         converter.connect();
-
-        data_in           = converter.data_out;
 #endif
     }
 
     void work(bool clk, bool reset)
     {
 #ifndef VERILATOR
+        read_data = converter.data_out();
         converter.work(clk, reset);
 #else
-        memcpy(&converter.data_in.m_storage, data_out, sizeof(converter.data_in.m_storage));
+        memcpy(&read_data, &data_out, sizeof(out_reg));
         converter.debugen_in    = debugen_in;
-
-        data_in           = (array<DTYPE,LENGTH>*) &converter.data_out.m_storage;
 
         converter.clk = clk;
         converter.reset = reset;
@@ -275,12 +264,12 @@ public:
 
         if (!clk) {  // all checks on negedge edge
             for (i=0; i < LENGTH; ++i) {
-                if (!reset && ((!USE_REG && can_check1 && !(*data_in)[i].cmp(was_refs1[i], 0.1))
-                             || (USE_REG && can_check2 && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
+                if (!reset && ((!USE_REG && can_check1 && !read_data[i].cmp(was_refs1[i], 0.1))
+                             || (USE_REG && can_check2 && !read_data[i].cmp(was_refs2[i], 0.1))) ) {
                     std::print("{:s} ERROR: {}({}) was read instead of {}\n",
                         __inst_name,
-                        (*data_in)[i].to_double(),
-                        (*data_in)[i],
+                        read_data[i].to_double(),
+                        read_data[i],
                         USE_REG?was_refs2[i]:was_refs1[i]);
                     error = true;
                 }

@@ -9,16 +9,16 @@ namespace cpphdl
 {
 
 template<typename T, size_t SIZE>
-struct memory_row
+struct memory_row: public array<T,SIZE>
 {
-    array<T,SIZE> data = 0;
+//    array<T,SIZE> data = 0;
     std::vector<memory_row<T,SIZE>>* changes = 0;
     size_t pos = 0;
 
     template<size_t SIZE1>
     memory_row& operator=(const array<T,SIZE1>& other)
     {
-        data = other;
+        array<T,SIZE>::operator=(other);
         changes->push_back(*this);
         return *this;
     }
@@ -26,50 +26,57 @@ struct memory_row
     template<size_t SIZE1>
     memory_row& operator=(const logic<SIZE1>& other)
     {
-        data = other;
+        array<T,SIZE>::operator=(other);
         changes->push_back(*this);
         return *this;
     }
 
-    operator array<T,SIZE>() const
+    memory_row& operator=(uint64_t other)
     {
-        return data;
+        array<T,SIZE>::operator=(other);
+        changes->push_back(*this);
+        return *this;
     }
 
-    operator logic<SIZE*sizeof(T)*8>() const
-    {
-        return *(logic<SIZE*sizeof(T)*8>*)&data;
-    }
+//    operator array<T,SIZE>() const
+//    {
+//        return data;
+//    }
+
+//    operator logic<SIZE*sizeof(T)*8>() const
+//    {
+//        return *this;
+//    }
 
     logic<SIZE*sizeof(T)*8> operator<<(uint64_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>)data << shift;
+        return (logic<SIZE*sizeof(T)*8>)*this << shift;
     }
 
     logic<SIZE*sizeof(T)*8> operator>>(uint64_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>)data >> shift;
+        return (logic<SIZE*sizeof(T)*8>)*this >> shift;
     }
 
     logic<SIZE*sizeof(T)*8> operator|(const logic<SIZE*sizeof(T)*8>& other)
     {
-        return (logic<SIZE*sizeof(T)*8>)data | other;
+        return (logic<SIZE*sizeof(T)*8>)*this | other;
     }
 
     logic<SIZE*sizeof(T)*8> operator&(const logic<SIZE*sizeof(T)*8>& other)
     {
-        return (logic<SIZE*sizeof(T)*8>)data & other;
+        return (logic<SIZE*sizeof(T)*8>)*this & other;
     }
 
     logic<SIZE*sizeof(T)*8> operator|=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        *(logic<SIZE*sizeof(T)*8>*)data |= other;
+        *(logic<SIZE*sizeof(T)*8>*)*this |= other;
         return *(logic<SIZE*sizeof(T)*8>*)this;
     }
 
     logic<SIZE*sizeof(T)*8> operator&=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        *(logic<SIZE*sizeof(T)*8>*)data &= other;
+        *(logic<SIZE*sizeof(T)*8>*)*this &= other;
         return *(logic<SIZE*sizeof(T)*8>*)this;
     }
 };
@@ -110,5 +117,8 @@ struct memory
 
 
 };
+
+template<size_t SIZE,size_t DEPTH>
+struct memory<void,SIZE,DEPTH> {};
 
 }

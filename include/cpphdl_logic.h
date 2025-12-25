@@ -103,7 +103,12 @@ struct logic
     }
 */
 
-    logic<WIDTH> operator<<(uint64_t shift)
+    operator uint64_t() const
+    {
+        return to_ullong();
+    }
+
+    logic<WIDTH> operator<<(uint64_t shift) const
     {
         uint64_t tmp = 0;
         logic<WIDTH> logic_tmp = {0};
@@ -120,7 +125,7 @@ struct logic
         return logic_tmp;
     }
 
-    logic<WIDTH> operator>>(uint64_t shift)
+    logic<WIDTH> operator>>(uint64_t shift) const
     {
         uint64_t tmp = 0;
         logic<WIDTH> logic_tmp = 0;
@@ -137,7 +142,7 @@ struct logic
         return logic_tmp;
     }
 
-    logic operator~()
+    logic operator~() const
     {
         logic bs;
         for (size_t i=0; i < logic<WIDTH>::SIZE; ++i) {  // optimize with ulong
@@ -147,7 +152,7 @@ struct logic
     }
 
     template<size_t WIDTH1>
-    logic operator&(const logic<WIDTH1>& in)
+    logic operator&(const logic<WIDTH1>& in) const
     {
         auto bs = *this;
         for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
@@ -157,7 +162,7 @@ struct logic
     }
 
     template<size_t WIDTH1>
-    logic operator|(const logic<WIDTH1>& in)
+    logic operator|(const logic<WIDTH1>& in) const
     {
         auto bs = *this;
         for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
@@ -167,7 +172,7 @@ struct logic
     }
 
     template<size_t WIDTH1>
-    logic operator^(const logic<WIDTH1>& in)
+    logic operator^(const logic<WIDTH1>& in) const
     {
         auto bs = *this;
         for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
@@ -207,11 +212,6 @@ struct logic
     {
         *this = *this ^ in;
         return *this;
-    }
-
-    operator uint64_t() const
-    {
-        return to_ullong();
     }
 
     uint64_t to_ullong() const

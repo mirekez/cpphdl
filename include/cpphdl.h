@@ -48,3 +48,8 @@ struct cpphdl_exception
 #include "cpphdl_cat.h"
 #include "cpphdl_memory.h"
 #include "cpphdl_Model.h"
+
+#include <functional>
+#define __PORT(a...) std::function<a()>
+#define __VAL(a...)  [this](){ (void)this; return a; }
+#define __FUNC(a...) [this](){ (void)this; a }

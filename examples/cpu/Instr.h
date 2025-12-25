@@ -2,9 +2,30 @@
 
 #include <stdint.h>
 
+enum Alu
+{
+    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASS,
+};
+
+enum Mem
+{
+    MNONE, LOAD, STORE
+};
+
+enum Wb
+{
+    WNONE, ALU, MEM, PC,
+};
+
+enum Br
+{
+    BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, JR
+};
+
 union Instr
 {
     uint32_t raw;
+
     struct
     {
         uint32_t opcode : 7;
@@ -64,29 +85,337 @@ union Instr
         return (val ^ m) - m; 
     }
 
-    int32_t imm_I()
+    int32_t imm_I() { return sext(i.imm11_0, 12); }
+    int32_t imm_S() { return sext(s.imm4_0 | (s.imm11_5 << 5), 12); }
+    int32_t imm_B() { return sext((b.imm4_1 << 1) | (b.imm11  << 11) | (b.imm10_5 << 5) | (b.imm12  << 12), 13); }
+    int32_t imm_U() { return int32_t(u.imm31_12 << 12); }
+    int32_t imm_J() { return sext((j.imm10_1 << 1) | (j.imm11   << 11) | (j.imm19_12 << 12) | (j.imm20   << 20), 21); }
+
+    template<typename STATE>
+    void decode(STATE& state)
     {
-        return sext(i.imm11_0, 12);
+        state.valid = 0;
+        state.rs1 = 0;  // means no need to read
+        state.rs2 = 0;
+        state.funct3 = 7;
+        state.alu_op = 0;
+        state.mem_op = 0;
+        state.wb_op = 0;
+        state.br_op = 0;
+
+        switch (r.opcode) {
+            case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
+                state.rd  = i.rd;
+                state.imm = imm_I();
+                state.mem_op = Mem::LOAD;
+                state.alu_op = Alu::ADD;    // address = rs1 + imm
+                state.wb_op = Wb::MEM;
+                state.funct3 = i.funct3;
+                state.rs1 = i.rs1;
+                break;
+
+            case 0b0100011:  // STORE  // SB, SH, SW
+                state.imm = imm_S();
+                state.mem_op = Mem::STORE;
+                state.alu_op = Alu::ADD;    // base + offset
+                state.funct3 = s.funct3;
+                state.rs1 = s.rs1;
+                state.rs2 = s.rs2;
+                break;
+
+            case 0b0010011:  // OP-IMM (immediate ALU)
+                state.rd  = i.rd;
+                state.imm = imm_I();
+                state.wb_op = Wb::ALU;
+
+                switch (i.funct3) {
+                    case 0b000: state.alu_op = Alu::ADD; break;     // ADDI
+                    case 0b010: state.alu_op = Alu::SLT; break;     // SLTI
+                    case 0b011: state.alu_op = Alu::SLTU; break;    // SLTIU
+                    case 0b100: state.alu_op = Alu::XOR; break;
+                    case 0b110: state.alu_op = Alu::OR; break;
+                    case 0b111: state.alu_op = Alu::AND; break;
+                    case 0b001: state.alu_op = Alu::SLL; break;
+                    case 0b101:
+                        state.alu_op = (i.imm11_0 >> 10) & 1 ? Alu::SRA : Alu::SRL;
+                        break;
+                }
+                state.funct3 = i.funct3;
+                state.rs1 = i.rs1;
+                break;
+
+            case 0b0110011:  // OP (register ALU)
+                state.rd = r.rd;
+                state.wb_op = Wb::ALU;
+
+                switch (r.funct3) {
+                    case 0b000:
+                        state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD;
+                        break;
+                    case 0b111: state.alu_op = Alu::AND; break;
+                    case 0b110: state.alu_op = Alu::OR;  break;
+                    case 0b100: state.alu_op = Alu::XOR; break;
+                    case 0b001: state.alu_op = Alu::SLL; break;
+                    case 0b101: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SRA : Alu::SRL; break;
+                    case 0b010: state.alu_op = Alu::SLT;  break;
+                    case 0b011: state.alu_op = Alu::SLTU; break;
+                }
+                state.funct3 = r.funct3;
+                state.rs1 = r.rs1;
+                state.rs2 = r.rs2;
+                break;
+
+            case 0b1100011:  // BRANCH
+                state.imm = imm_B();
+                state.br_op = Br::BNONE;
+
+                switch (b.funct3) {
+                    case 0b000: state.br_op = Br::BEQ; break;
+                    case 0b001: state.br_op = Br::BNE; break;
+                    case 0b100: state.br_op = Br::BLT; break;
+                    case 0b101: state.br_op = Br::BGE; break;
+                    case 0b110: state.br_op = Br::BLTU; break;
+                    case 0b111: state.br_op = Br::BGEU; break;
+                }
+                state.funct3 = b.funct3;
+                state.rs1 = b.rs1;
+                state.rs2 = b.rs2;
+                break;
+
+            case 0b1101111:  // JAL
+                state.rd  = j.rd;
+                state.imm = imm_J();
+                state.br_op = Br::JAL;
+                state.wb_op = Wb::PC;
+                // ?
+                break;
+
+            case 0b1100111:  // JALR
+                state.rd  = i.rd;
+                state.imm = imm_I();
+                state.br_op = Br::JALR;
+                state.wb_op = Wb::PC;
+                state.rs1 = i.rs1;
+                break;
+
+            case 0b0110111:  // LUI
+                state.rd  = u.rd;
+                state.imm = imm_U();
+                state.alu_op = Alu::PASS;   // or NONE, since result = imm
+                state.wb_op = Wb::ALU;
+                break;
+
+            case 0b0010111:  // AUIPC
+                state.rd  = u.rd;
+                state.imm = imm_U();
+                state.alu_op = Alu::ADD;  // PC + imm
+                state.wb_op = Wb::ALU;
+                break;
+//            case 0b1110011:  // CSR
+//                switch (i.funct3) {
+//                case 0b001: // CSRRW
+//                case 0b010: // CSRRS
+//                case 0b011: // CSRRC
+//                    regs_rd_id_comb[0] = i.rs1;
+//                break;
+        }
     }
 
-    int32_t imm_S()
+    ///////////////////////////////////////////////// compressed
+
+    struct {
+        uint16_t opcode : 2;
+        uint16_t funct3 : 3;
+        uint16_t rest   : 11;
+    } common;
+
+    // C.ADDI4SPN, C.LW, C.SW
+    struct {
+        uint16_t opcode  : 2;   // 00
+        uint16_t imm3_2  : 2;
+        uint16_t imm9_6  : 4;
+        uint16_t rd_p   : 3;   // rd' = x8..x15
+        uint16_t funct3 : 3;
+    } q0;
+
+    // C.ADDI, C.JAL, C.LI, C.LUI, C.BEQZ, C.BNEZ
+    struct {
+        uint16_t opcode  : 2;   // 01
+        uint16_t imm4_0  : 5;
+        uint16_t rd     : 5;
+        uint16_t funct3 : 3;
+    } q1;
+
+    struct {
+        uint16_t opcode  : 2;   // 01
+        uint16_t imm1_5  : 5;
+        uint16_t rs1_p  : 3;   // rs1' = x8..x15
+        uint16_t imm6_8  : 3;
+        uint16_t funct3 : 3;
+    } q1_branch;
+
+    // C.SLLI, C.LWSP, C.SWSP, C.ADD
+    struct {
+        uint16_t opcode  : 2;   // 10
+        uint16_t shamt   : 5;
+        uint16_t rs1     : 5;
+        uint16_t funct3  : 3;
+    } q2_shift;
+
+    struct {
+        uint16_t opcode  : 2;   // 10
+        uint16_t imm4_0  : 5;
+        uint16_t rs2     : 5;
+        uint16_t funct3  : 3;
+    } q2_store;
+
+    uint8_t _opcode() { return raw&0b11; }
+    uint8_t _funct3() { return (raw>>13)&0b111; }
+    uint8_t _rd()  { return (raw>>7)&0b11111; }
+    uint8_t _rs2() { return (raw>>2)&0b11111; }
+    uint8_t _rd_p()  { return 8 + ((raw>>2)&0b111); }
+    uint8_t _rs1_p() { return 8 + ((raw>>7)&0b111); }
+    uint8_t _rs2_p() { return 8 + ((raw>>2)&0b111); }
+    uint8_t _b12() { return (raw>>12)&1; }
+    uint32_t bit(int lo)
     {
-        return sext(s.imm4_0 | (s.imm11_5 << 5), 12);
+        return (raw >> lo) & 1;
+    }
+    uint32_t bits(int hi, int lo)
+    {
+        return (raw >> lo) & ((1u << (hi - lo + 1)) - 1);
     }
 
-    int32_t imm_B()
+    template<typename STATE>
+    void decode16(STATE& state)
     {
-        return sext((b.imm4_1 << 1) | (b.imm11  << 11) | (b.imm10_5 << 5) | (b.imm12  << 12), 13);
-    }
+        state.valid = 1;
+        state.funct3 = _funct3();
 
-    int32_t imm_U()
-    {
-        return int32_t(u.imm31_12 << 12);
-    }
+        switch (_opcode())
+        {
+            case 0b00:
+                switch (_funct3())
+                {
+                    case 0b000: // ADDI4SPN
+                        state.rd  = _rd_p();
+                        state.rs1 = 2; // sp
+                        state.imm = (bits(10,7)<<6) | (bits(12,11)<<4) | (bit(5)<<3) | (bit(6)<<2);
+                        state.alu_op = Alu::ADD;
+                        state.wb_op  = Wb::ALU;
+                        break;
+                    case 0b010: // LW
+                        state.rd  = _rd_p();
+                        state.rs1 = _rs1_p();
+                        state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                        state.mem_op = Mem::LOAD;
+                        state.wb_op  = Wb::MEM;
+                        break;
+                    case 0b110: // SW
+                        state.rs1 = _rs1_p();
+                        state.rs2 = _rs2_p();
+                        state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                        state.mem_op = Mem::STORE;
+                        break;
+                }
+                break;
 
-    int32_t imm_J()
-    {
-        return sext((j.imm10_1 << 1) | (j.imm11   << 11) | (j.imm19_12 << 12) | (j.imm20   << 20), 21);
+            case 0b01:
+                switch (_funct3())
+                {
+                    case 0b000: // ADDI
+                        state.rd  = _rd();
+                        state.rs1 = _rd();
+                        state.imm = (bit(12)<<5) | bits(6,2);
+                        state.alu_op = Alu::ADD;
+                        state.wb_op  = Wb::ALU;
+                        break;
+                    case 0b001: // JAL
+                        state.br_op = Br::JAL;
+                        state.wb_op = Wb::PC;
+                        state.imm = (bit(12)<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+                        break;
+                    case 0b010: // LI
+                        state.rd  = _rd();
+                        state.imm = ((int32_t)(raw<<20)) >> 26;
+                        state.wb_op = Wb::ALU;
+                        break;
+                    case 0b101: // J
+                        state.br_op = Br::JAL;
+                        state.imm = (bit(12)<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+                        break;
+                    case 0b110: // BEQZ
+                        state.rs1 = _rs1_p();
+                        state.br_op = Br::BEQ;
+                        state.imm = (bit(12)<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
+                        if (bit(12)) {
+                            state.imm |= ~0x1FF;
+                        }
+                        break;
+                    case 0b111: // BNEZ
+                        state.rs1 = _rs1_p();
+                        state.br_op = Br::BNE;
+                        state.imm = (bit(12)<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
+                        if (bit(12)) {
+                            state.imm |= ~0x1FF;
+                        }
+                        break;
+                }
+                break;
+            case 0b10:
+                switch (_funct3())
+                {
+                    case 0b000: // SLLI
+                        state.rd  = _rd();
+                        state.rs1 = _rd();
+                        state.imm = (bit(12)<<5) | bits(6,2);
+                        state.alu_op = Alu::SLL;
+                        state.wb_op  = Wb::ALU;
+                        break;
+                    case 0b100: {
+                        if (_b12() == 0) {
+                            if (_rs2() == 0) {  // C.JR
+                                state.br_op = Br::JR;
+                                state.rs1   = _rd();
+                            }
+                            else {  // C.MV
+                                state.alu_op = Alu::PASS;
+                                state.rd     = _rd();
+                                state.rs2    = _rs2();
+                            }
+                        }
+                        else {
+                            if (_rs2() == 0) {  // C.JALR
+                                state.br_op  = Br::JALR;
+                                state.rd     = 1;   // ra
+                                state.rs1    = _rd();
+                            }
+                            else {  // C.ADD
+                                state.alu_op = Alu::ADD;
+                                state.rd     = _rd();
+                                state.rs1    = _rd();
+                                state.rs2    = _rs2();
+                            }
+                        }
+                        break;
+                    }
+                    case 0b010: // LWSP
+                        state.rd = _rd();
+                        state.rs1 = 2;
+                        state.mem_op = Mem::LOAD;
+                        state.wb_op  = Wb::MEM;
+                        state.imm = (bit(12)<<5) | (bits(6,4)<<2) | (bits(3,2)<<6);
+                        break;
+
+                    case 0b110: // SWSP
+                        state.rs1 = 2;
+                        state.rs2 = _rs2();
+                        state.mem_op = Mem::STORE;
+                        state.imm = (bits(8,7)<<6) | (bits(12,9)<<2);
+                        break;
+                }
+                break;
+        }
     }
 
 #ifndef SYNTHESIS
@@ -128,30 +457,69 @@ union Instr
             }
         };
 
-        auto m = decode_mnemonic(r.opcode, r.funct3, r.funct7);
-        return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:{:#04x},imm:{:04x}/{:04x}/{:04x}/{:04x}/{:04x}",
-            raw, m, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7,
-            (uint16_t)imm_I(), (uint16_t)imm_S(), (uint16_t)imm_B(), (uint16_t)imm_U(), (uint16_t)imm_J());
+        auto decode_mnemonic16 = [&](uint16_t op, uint16_t f3, uint16_t bit12, uint16_t rs2) -> std::string
+        {
+            uint32_t quadrant = op & 0b11;
+            switch (quadrant)
+            {
+                case 0b00:
+                    switch (f3)
+                    {
+                        case 0b000: return "addi4s";
+                        case 0b010: return "lw    ";
+                        case 0b110: return "sw    ";
+                        case 0b011: return "ld    ";   // RV64/128
+                        case 0b111: return "sd    ";   // RV64/128
+                        default:    return "rsrvd ";
+                    }
+                case 0b01:
+                    switch (f3)
+                    {
+                        case 0b000: return "addi  ";
+                        case 0b001: return "jal   ";      // RV32 only
+                        case 0b010: return "li    ";
+                        case 0b011: return "addisp"; // or lui
+                        case 0b100:
+                            // Further decoding depends on bits [11:10] and [6:5]
+                            return "alu";
+                        case 0b101: return "j     ";
+                        case 0b110: return "beqz  ";
+                        case 0b111: return "bnez  ";
+                    }
+                case 0b10:
+                    switch (f3)
+                    {
+                        case 0b000: return "slli  ";
+                        case 0b010: return "lwsp  ";
+                        case 0b100:
+                            if (op == 0b10 && f3 == 0b100) {
+                                if (bit12 == 0 && rs2 == 0) return "jr    ";
+                                if (bit12 == 0 && rs2 != 0) return "mv    ";
+                                if (bit12 == 1 && rs2 == 0) return "jalr  ";
+                                if (bit12 == 1 && rs2 != 0) return "add   ";
+                                return "illgl ";
+                            }
+                        case 0b110: return "swsp  ";
+                        case 0b011: return "ldsp  ";  // RV64/128
+                        case 0b111: return "sdsp  ";  // RV64/128
+                        default:    return "rsrvd ";
+                    }
+            }
+            return "unknwn";
+        };
+
+        std::string name;
+        if ((raw&3) == 3) {
+            name = decode_mnemonic(r.opcode, r.funct3, r.funct7);
+            return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:{:#04x}",
+                raw, name, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7);
+        }
+        else {
+            name = decode_mnemonic16(_opcode(), _funct3(), _b12(), _rs2_p());
+            return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:xxxx",
+                raw, name, (uint8_t)(_opcode()==0b00&&(_funct3()==0b000||_funct3()==0b010)?_rd_p():_rd()),
+                (uint8_t)_rs1_p(), (uint8_t)(_opcode()==0b01?_rs2():_rs2_p()), (uint8_t)_funct3());
+        }
     }
 #endif
-};
-
-enum Alu
-{
-    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASS_RS1,
-};
-
-enum Mem
-{
-    MNONE, LOAD, STORE
-};
-
-enum Wb
-{
-    WNONE, ALU, MEMORY, PC,
-};
-
-enum Br
-{
-    BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR
-};
+}__PACKED;

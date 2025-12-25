@@ -25,8 +25,8 @@ struct PipelineStage : public cpphdl::Module
     using STATE = OWN_STATE;
     cpphdl::reg<cpphdl::array<STATE,LENGTH-ID>> state_reg;
 
-    cpphdl::array<BIG_STATE,LENGTH>               *state_in    = nullptr;
-    cpphdl::array<STATE,LENGTH-ID>                *state_out   = &state_reg;
+    __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
+    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAL( state_reg );
 
     size_t i;
 
@@ -67,12 +67,12 @@ struct MakeStagesTupleImpl;
 template <typename BIG_STATE, size_t LENGTH, size_t... I, template<__PARAMS__> class... Ts>
 struct MakeStagesTupleImpl<BIG_STATE,LENGTH,std::index_sequence<I...>,Ts...>
 {
-    using type = std::tuple<typename StageHolder<typename Ts<void,void,0,0>::State,BIG_STATE,LENGTH,I,Ts>::type...>;
+    using type = std::tuple<typename StageHolder<typename Ts<int,int,0,0>::State,BIG_STATE,LENGTH,I,Ts>::type...>;
 };
 
 template <template<__PARAMS__> class... Ts>
 using PipelineStages = MakeStagesTupleImpl<
-                           MakeBigState<typename Ts<void,void,0,0>::State...>,  // combine all states into one
+                           MakeBigState<typename Ts<int,int,0,0>::State...>,  // combine all states into one
                            sizeof...(Ts),
                            std::make_index_sequence<sizeof...(Ts)>,  // give ID to each stage
                            Ts...>;
@@ -85,12 +85,16 @@ struct Pipeline;
 template <template<__PARAMS__> class... Ts>
 struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
 {
-    using BIG_STATE = MakeBigState<typename Ts<void,void,0,0>::State...>;
+    using BIG_STATE = MakeBigState<typename Ts<int,int,0,0>::State...>;
     using STAGES = PipelineStages<Ts...>::type;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
     STAGES members;
     cpphdl::array<BIG_STATE,LENGTH> state_comb;
+    cpphdl::array<BIG_STATE,LENGTH>& state_comb_func()
+    {
+        return state_comb;
+    }
 
 public:
     void connect()
@@ -99,7 +103,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = &state_comb;
+                        stage.state_in = __VAL( state_comb );
                         stage.connect();
                     }()
                 ),
@@ -151,7 +155,9 @@ public:
                     (
                         [&]{
                             using State = typename std::remove_reference_t<decltype(stage)>::STATE;
-                            *(State*)((uint8_t*)&state_comb[y] + offset) = (*stage.state_out)[y-x];  // assemble big state from own states for each y
+                            if (x <= y) {
+                                *(State*)((uint8_t*)&state_comb[y] + offset) = stage.state_out()[y-x];  // assemble big state from own states for each y
+                            }
                             ++x;
                             offset += sizeof(State);
                         }()
@@ -160,6 +166,9 @@ public:
                 );
             }
         }, members);
+
+        state_comb_func();
+//        std::print("~~~ {} == {}", (uint8_t)state_comb[0].alu_op, (uint8_t)std::get<0>(members).state_reg[0].alu_op);
     }
 
 };

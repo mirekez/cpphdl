@@ -298,6 +298,8 @@ Unused bits should be removed after SV generation and during optimization.
 &nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus joint point between C++HDL module with third-party SV module,
 use packed *structs* to achieve proper `<8`bit fields placing.
 
+* Output port should be always assigned register, comb_value or member module output port
+
 
 ## Clock and reset
 

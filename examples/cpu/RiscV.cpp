@@ -5,7 +5,6 @@
 
 #include "Pipeline.h"
 #include "File.h"
-#include "../basic/Memory.cpp"
 
 #include "DecodeFetch.h"
 #include "ExecuteCalc.h"
@@ -15,23 +14,22 @@
 template<size_t WIDTH>
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemoryAccess,WriteBack>>
 {
-    File<32/8,32>       regs;
+    File<32,32>         regs;
     reg<u32>            pc;
     reg<u1>             valid;
 
 public:
-
-    bool     *dmem_read_out;
-    uint32_t *dmem_read_addr_out;
-    uint32_t *dmem_read_data_in;
-    bool     *dmem_write_out;
-    uint32_t *dmem_write_addr_out;
-    uint32_t *dmem_write_data_out;
-    uint8_t  *dmem_write_mask_out;
-    uint32_t *imem_read_addr_out;
-    uint32_t *imem_read_data_in;
-    bool      debugen_in;
-
+                                          // it's better to always assign all outputs inline
+    __PORT(bool)      dmem_write_out =      std::get<2>(members).mem_write_out;
+    __PORT(uint32_t)  dmem_write_addr_out = std::get<2>(members).mem_write_addr_out;
+    __PORT(uint32_t)  dmem_write_data_out = std::get<2>(members).mem_write_data_out;
+    __PORT(uint8_t)   dmem_write_mask_out = std::get<2>(members).mem_write_mask_out;
+    __PORT(bool)      dmem_read_out =       std::get<2>(members).mem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out =  std::get<2>(members).mem_read_addr_out;
+    __PORT(uint32_t)  dmem_read_data_in;
+    __PORT(uint32_t)  imem_read_addr_out = __VAL( pc );
+    __PORT(uint32_t)  imem_read_data_in;
+    bool              debugen_in;
 
     void connect()
     {
@@ -45,31 +43,22 @@ public:
         ma.__inst_name = Pipeline::__inst_name + "/memory_access";
         wb.__inst_name = Pipeline::__inst_name + "/write_back";
 
-        df.pc_in = &pc;
-        df.instr_valid_in = &valid;
-        df.instr_in = (Instr*) imem_read_data_in;
-        df.regs_data0_in = (uint32_t *) regs.read_data0_out;
-        df.regs_data1_in = (uint32_t *) regs.read_data1_out;
-        df.alu_result_in = ex.alu_result_out;
-        df.mem_data_in = dmem_read_data_in;
+        df.pc_in          = __VAL( pc );
+        df.instr_valid_in = __VAL( valid );
+        df.instr_in       = imem_read_data_in;
+        df.regs_data0_in  = regs.read_data0_out;
+        df.regs_data1_in  = regs.read_data1_out;
+        df.alu_result_in  = ex.alu_result_out;
+        df.mem_data_in    = dmem_read_data_in;
 
         Pipeline::connect();
 
-        regs.read_addr0_in = &(*df.regs_rd_id_out)[0];
-        regs.read_addr1_in = &(*df.regs_rd_id_out)[1];
-
-        imem_read_addr_out = &pc;
-
-        dmem_write_out = ma.mem_write_out;
-        dmem_write_mask_out = ma.mem_write_mask_out;
-        dmem_write_addr_out = ma.mem_write_addr_out;
-        dmem_write_data_out = ma.mem_write_data_out;
-        dmem_read_out = ma.mem_read_out;
-        dmem_read_addr_out = ma.mem_read_addr_out;
+        regs.read_addr0_in = df.rs1_out;
+        regs.read_addr1_in = df.rs2_out;
 
         regs.write_in = wb.regs_write_out;
         regs.write_addr_in = wb.regs_wr_id_out;
-        regs.write_data_in = (logic<4UL*8>*) wb.regs_data_out;
+        regs.write_data_in = wb.regs_data_out;
     }
 
     void work(bool clk, bool reset)
@@ -86,31 +75,33 @@ public:
             valid.clr();
             return;
         }
-
         #ifndef SYNTHESIS
-            std::print("({}/{}){}: {} r(:02d)/(:02d):{:08x}/{:08x}, reg1/2:{:08x}/{:08x} => aop({:x}),alu:{:08x} => mop{:x},{:08x}@({}/{}){:08x}/{:08x}, bop{},({}){:08x} => wop({:x}),rd:({:02d}){}\n",
-                (int)valid, (int)*df.stall_out, pc, df.instr_in->format(), (*df.regs_rd_id_out)[0], (*df.regs_rd_id_out)[1],
-                state_comb[0].rs1_val, state_comb[0].rs2_val, *df.regs_data0_in, *df.regs_data1_in,
-                (uint8_t)state_comb[1].alu_op, ex.alu_result_comb_func(),
-                (uint8_t)state_comb[2].mem_op, *ma.mem_write_addr_out, (int)*ma.mem_read_out, (int)*ma.mem_write_out, *ma.mem_write_data_out, *ma.mem_write_mask_out,
-                (uint8_t)state_comb[2].br_op, (int)*ex.branch_taken_out, *ex.branch_target_out,
-                (uint8_t)state_comb[3].wb_op, *wb.regs_wr_id_out, *wb.regs_data_out);
+        Instr instr = {df.instr_in()};
+        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{}/{}/{}/{},alu:{:08x},val1/2:{:08x}/{:08x} => "
+                       "({})mop{:x},({}/{}@{:08x}){:08x}/{:08x}, bop{},({}){:08x} => ({})wop({:x}) => r({}){:08x}\n",
+                (int)valid, (int)df.stall_out(), pc, instr.format(),
+                df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
+                (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
+                ex.alu_result_comb_func(), state_comb[0].rs1_val, state_comb[0].rs2_val,
+                (int)state_comb[1].valid, (uint8_t)state_comb[1].mem_op, (int)ma.mem_read_out(), (int)ma.mem_write_out(), ma.mem_write_addr_out(), ma.mem_write_data_out(), ma.mem_write_mask_out(),
+                (uint8_t)state_comb[1].br_op, (int)ex.branch_taken_out(), ex.branch_target_out(),
+                (int)state_comb[2].valid, (uint8_t)state_comb[2].wb_op, (int)wb.regs_write_out(), wb.regs_wr_id_out(), wb.regs_data_out());
         #endif
 
 
         regs.work(clk, reset);
         Pipeline::work(clk, reset);
 
-        if (!*df.stall_out) {
-            if (*ex.branch_taken_out) {
-                pc.next = *ex.branch_target_out/4;
+        if (!df.stall_out()) {
+            if (ex.branch_taken_out()) {
+                pc.next = ex.branch_target_out();
             }
             else {
-                pc.next = pc + 1;
+                pc.next = pc + ((df.instr_in()&3)==3?4:2);
             }
         }
 
-        valid.next = !*df.stall_out;
+        valid.next = !df.stall_out();
     }
 
     void strobe()
@@ -128,13 +119,12 @@ public:
 //        auto& ma = std::get<2>(members);
 //        auto& wb = std::get<3>(members);
 
+        Pipeline::comb();
+        df.state_comb_func();
         regs.comb();
-        df.regs_rd_id_comb_func();
-        df.do_decode_fetch();
         ex.alu_result_comb_func();
         ex.branch_taken_comb_func();
         ex.branch_target_comb_func();
-        Pipeline::comb();
     }
 
 };
@@ -153,29 +143,33 @@ template class RiscV<64>;
 #include <sstream>
 #include "../examples/tools.h"
 
+#include "Ram.h"
+
 #define PROG_SIZE 128
+#define RAM_SIZE 1024
 
 template<size_t WIDTH>
 class TestRiscV : public Module
 {
-    Memory<32/8,PROG_SIZE>   imem;
-    Memory<32/8,PROG_SIZE>   dmem;
+    Ram<32,PROG_SIZE>   imem;
+    Ram<32,RAM_SIZE>   dmem;
 #ifdef VERILATOR
     VERILATOR_MODEL riscv;
 #else
     RiscV<WIDTH> riscv;
 #endif
 
-    bool imem_write;
+    bool imem_write = false;
     uint32_t imem_write_addr;
     uint32_t imem_write_data;
     bool error;
 
+    uint32_t dmem_read_data;
+    uint32_t imem_read_data;
+
     size_t i;
 
 public:
-    uint32_t *dmem_read_data_out = (uint32_t*) dmem.read_data_out;
-    uint32_t *imem_read_data_out = (uint32_t*) imem.read_data_out;
 
     bool      debugen_in;
 
@@ -191,38 +185,46 @@ public:
     void connect()
     {
 #ifndef VERILATOR
-        riscv.__inst_name = __inst_name + "/riscv";
-
-        riscv.dmem_read_data_in = (uint32_t*)dmem.read_data_out;
-        riscv.imem_read_data_in = (uint32_t*)imem.read_data_out;
-        riscv.debugen_in = debugen_in;
-        riscv.connect();
-
         dmem.read_in = riscv.dmem_read_out;
-        dmem.read_addr_in = (u<clog2(PROG_SIZE)>*) riscv.dmem_read_addr_out;
+        dmem.read_addr_in = riscv.dmem_read_addr_out;
         dmem.write_in = riscv.dmem_write_out;
-        dmem.write_mask_in = (logic<4>*) riscv.dmem_write_mask_out;
-        dmem.write_addr_in = (u<clog2(PROG_SIZE)>*)riscv.dmem_write_addr_out;
-        dmem.write_data_in = (logic<32>*)riscv.dmem_write_data_out;
+        dmem.write_addr_in = riscv.dmem_write_addr_out;
+        dmem.write_data_in = riscv.dmem_write_data_out;
+        dmem.write_mask_in = riscv.dmem_write_mask_out;
+        dmem.debugen_in = debugen_in;
+        dmem.__inst_name = __inst_name + "/dmem";
         dmem.connect();
 
-        imem.read_in = __ONE;
-        imem.read_addr_in = (u<clog2(PROG_SIZE)>*) riscv.imem_read_addr_out;
-        imem.write_in = &imem_write;
-        imem.write_mask_in = (logic<4>*)&__ONES1024;
-        imem.write_addr_in = (u<clog2(PROG_SIZE)>*)&imem_write_addr;
-        imem.write_data_in = (logic<32>*)&imem_write_data;
+        imem.read_in = __VAL(1);
+        imem.read_addr_in = riscv.imem_read_addr_out;
+        imem.write_in = __VAL( imem_write );
+        imem.write_addr_in = __VAL( imem_write_addr );
+        imem.write_data_in = __VAL( imem_write_data );
+        imem.write_mask_in = __VAL( 0xFFFFFFFFU );
+        imem.debugen_in = debugen_in;
+        imem.__inst_name = __inst_name + "/imem";
         imem.connect();
 
+        riscv.dmem_read_data_in = dmem.read_data_out;
+        riscv.imem_read_data_in = imem.read_data_out;
+        riscv.debugen_in = debugen_in;
+        riscv.__inst_name = __inst_name + "/riscv";
+        riscv.connect();
 #endif
     }
 
     void work(bool clk, bool reset)
     {
 #ifndef VERILATOR
+        dmem_read_data = dmem.read_data_out();
+        imem_read_data = imem.read_data_out();
         riscv.work(clk, reset);
+        dmem.work(clk, reset);
+        imem.work(clk, reset);
 #else
 //        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
+        dmem_read_data = dmem.read_data_out;
+        imem_read_data = imem.read_data_out;
         riscv.debugen_in    = debugen_in;
 
 //        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
@@ -230,6 +232,8 @@ public:
         riscv.clk = clk;
         riscv.reset = reset;
         riscv.eval();  // eval of verilator should be in the end
+        dmem.work(clk, reset);
+        imem.work(clk, reset);
 #endif
 
         if (reset) {
@@ -276,8 +280,8 @@ public:
     {
 #ifndef VERILATOR
         riscv.comb();
-        dmem.read_data_out_comb_func();
-        imem.read_data_out_comb_func();
+        dmem.comb();
+        imem.comb();
 #endif
     }
 
@@ -311,10 +315,12 @@ public:
         imem_write = true;
         imem.work(1, 1);
         for (size_t addr = 0; addr < PROG_SIZE; ++addr) {
-            imem_write_addr = addr;
+            imem_write_addr = addr*4;
             imem_write_data = ram[addr];
             imem.work(1, 0);
-//            std::print("{:04x}: {:08x}\n", addr, ram[addr]);
+            if (debugen_in) {
+                std::print("{:04x}: {:08x}\n", addr, ram[addr]);
+            }
         }
         imem_write = false;
         fclose(fbin);

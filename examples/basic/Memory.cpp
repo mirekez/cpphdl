@@ -20,14 +20,14 @@ class Memory : public Module
     size_t i;
 
 public:
-    u<clog2(MEM_DEPTH)>       *write_addr_in   = nullptr;
-    logic<MEM_WIDTH_BYTES>    *write_mask_in   = nullptr;
-    bool                      *write_in        = nullptr;
-    logic<MEM_WIDTH_BYTES*8>  *write_data_in   = nullptr;
+    __PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
+    __PORT(bool)                      write_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
+    __PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
 
-    u<clog2(MEM_DEPTH)>       *read_addr_in    = nullptr;
-    bool                      *read_in         = nullptr;
-    logic<MEM_WIDTH_BYTES*8>  *read_data_out   = &data_out_comb;
+    __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
+    __PORT(bool)                      read_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( read_data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -36,7 +36,7 @@ public:
     logic<MEM_WIDTH_BYTES*8>& read_data_out_comb_func()
     {
         if (SHOWAHEAD) {
-            data_out_comb = buffer[*read_addr_in];
+            data_out_comb = buffer[read_addr_in()];
         }
         else {
             data_out_comb = data_out_reg;
@@ -49,22 +49,22 @@ public:
     void work(bool clk, bool reset)
     {
         if (!clk) return;
-        if (*write_in) {
+        if (write_in()) {
             mask = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
-                mask.bits((i+1)*8-1,i*8) = (*write_mask_in)[i] ? 0xFF : 0 ;
+                mask.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
             }
-            buffer[*write_addr_in] = (buffer[*write_addr_in]&~mask) | (*write_data_in&mask);
+            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
         }
 
         if (!SHOWAHEAD) {
-            data_out_reg.next = buffer[*read_addr_in];
+            data_out_reg.next = buffer[read_addr_in()];
         }
 
         if (debugen_in) {
             std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
-                (int)*write_in, *write_data_in, *write_addr_in, *write_mask_in,
-                (int)*read_in, *read_data_out, *read_addr_in);
+                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
+                (int)read_in(), read_data_out(), read_addr_in());
         }
     }
 
@@ -113,10 +113,11 @@ class TestMemory : Module
     reg<u16>                 to_read_cnt;
     bool                     error = false;
 
+    logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
+
     std::array<uint8_t,MEM_WIDTH_BYTES>* mem_copy;
 
 public:
-    logic<MEM_WIDTH_BYTES*8>* mem_read_data_out;
     bool                      debugen_in;
 
     TestMemory(bool debug)
@@ -133,24 +134,22 @@ public:
     void connect()
     {
 #ifndef VERILATOR
+        mem.write_addr_in = __VAL( write_addr_reg; );
+        mem.write_in =      __VAL( write_reg; );
+        mem.write_data_in = __VAL( data_reg; );
+        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL; );
+        mem.read_addr_in =  __VAL( read_addr_reg; );
+        mem.read_in =       __VAL( read_reg; );
         mem.__inst_name = __inst_name + "/mem";
-
-        mem.write_addr_in = &write_addr_reg;
-        mem.write_mask_in = (logic<MEM_WIDTH_BYTES>*)&__ONES1024;
-        mem.write_in      = &write_reg;
-        mem.write_data_in = &data_reg;
-        mem.read_addr_in  = &read_addr_reg;
-        mem.read_in       = &read_reg;
-        mem.debugen_in    = debugen_in;
-        mem.connect();
-
-        mem_read_data_out = mem.read_data_out;
 #endif
+        mem.debugen_in  = debugen_in;
+        mem.connect();
     }
 
     void work(bool clk, bool reset)
     {
 #ifndef VERILATOR
+        mem_read_data = mem.read_data_out();
         mem.work(clk, reset);
 #else
         mem.write_addr_in = write_addr_reg;
@@ -161,7 +160,7 @@ public:
         mem.read_in       = read_reg;
         mem.debugen_in    = debugen_in;
 
-        mem_read_data_out = (logic<MEM_WIDTH_BYTES*8>*) &mem.read_data_out;
+        mem_read_data = *(logic<MEM_WIDTH_BYTES*8>*)&mem.read_data_out;
 
         mem.clk = clk;
         mem.reset = reset;
@@ -170,6 +169,8 @@ public:
 
         if (reset) {
 //            clean.set(1);
+            write_reg.clr();
+            read_reg.clr();
             to_write_cnt.clr();
             to_read_cnt.clr();
             was_read.clr();
@@ -177,17 +178,14 @@ public:
         }
 
         if (!clk) {  // all checks on negedge edge
-            if (!reset && to_read_cnt && memcmp(mem_read_data_out, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(*mem_read_data_out)) != 0
+            if (!reset && to_read_cnt && memcmp(&mem_read_data, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(mem_read_data)) != 0
                 && (was_read || SHOWAHEAD)) {
                 std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
                     __inst_name,
-                    *(logic<MEM_WIDTH_BYTES*8>*)mem_read_data_out,
+                    mem_read_data,
                     *(logic<MEM_WIDTH_BYTES*8>*)&mem_copy[read_addr_reg],
                     SHOWAHEAD?read_addr_reg:was_read_addr);
                 error = true;
-            }
-            if (write_reg) {  // change after all checks
-                memcpy(&mem_copy[write_addr_reg], &data_reg, sizeof(mem_copy[write_addr_reg]));
             }
             return;
         }
@@ -230,6 +228,9 @@ public:
 //        }
         if (was_read) {
             was_read_addr.next = read_addr_reg;
+        }
+        if (write_reg) {  // change after all checks since we use simple (not strobed) memory in test
+            memcpy(&mem_copy[write_addr_reg], &data_reg, sizeof(mem_copy[write_addr_reg]));
         }
     }
 
