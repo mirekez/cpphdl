@@ -64,7 +64,7 @@ public:
         else {
             instr.decode16(state_comb);
         }
-        rs1_out_comb = state_comb.rs1;
+        rs1_out_comb = state_comb.rs1;  // ???
         rs2_out_comb = state_comb.rs2;
         return state_comb;
     }
@@ -106,7 +106,6 @@ public:
                 state_reg.next[0].rs2_val = state_in()[ID+2].alu_result;
             }
         }
-
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem alu
             if (state_reg[1].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = state_in()[ID+1].alu_result;
@@ -134,7 +133,7 @@ public:
             }
         }
 
-        state_reg.next[0].valid = instr_valid_in();
+        state_reg.next[0].valid = instr_valid_in() && !stall_comb_func();
     }
 
     void work(bool clk, bool reset)

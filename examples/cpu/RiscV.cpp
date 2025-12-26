@@ -11,7 +11,6 @@
 #include "MemoryAccess.h"
 #include "WriteBack.h"
 
-template<size_t WIDTH>
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemoryAccess,WriteBack>>
 {
     File<32,32>         regs;
@@ -51,6 +50,8 @@ public:
         df.alu_result_in  = ex.alu_result_out;
         df.mem_data_in    = dmem_read_data_in;
 
+        wb.mem_data_in    = dmem_read_data_in;
+
         Pipeline::connect();
 
         regs.read_addr0_in = df.rs1_out;
@@ -77,31 +78,29 @@ public:
         }
         #ifndef SYNTHESIS
         Instr instr = {df.instr_in()};
-        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{}/{}/{}/{},alu:{:08x},val1/2:{:08x}/{:08x} => "
-                       "({})mop{:x},({}/{}@{:08x}){:08x}/{:08x}, bop{},({}){:08x} => ({})wop({:x}) => r({}){:08x}\n",
+        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{},alu:{:08x},val1/2:{:08x}/{:08x}, bop{},({}){:08x} => "
+                       "({})mop{:x},({}/{}@{:08x}){:08x}/{:08x} => ({})wop({:x}),r({}){:08x}@{:02d}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.format(),
                 df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
                 (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
                 ex.alu_result_comb_func(), state_comb[0].rs1_val, state_comb[0].rs2_val,
-                (int)state_comb[1].valid, (uint8_t)state_comb[1].mem_op, (int)ma.mem_read_out(), (int)ma.mem_write_out(), ma.mem_write_addr_out(), ma.mem_write_data_out(), ma.mem_write_mask_out(),
-                (uint8_t)state_comb[1].br_op, (int)ex.branch_taken_out(), ex.branch_target_out(),
-                (int)state_comb[2].valid, (uint8_t)state_comb[2].wb_op, (int)wb.regs_write_out(), wb.regs_wr_id_out(), wb.regs_data_out());
+                (uint8_t)state_comb[0].br_op, (int)ex.branch_taken_out(), ex.branch_target_out(),
+                (int)state_comb[1].valid, (uint8_t)state_comb[1].mem_op, (int)ma.mem_write_out(), (int)ma.mem_read_out(), ma.mem_write_addr_out(), ma.mem_write_data_out(), ma.mem_write_mask_out(),
+                (int)state_comb[2].valid, (uint8_t)state_comb[2].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
         #endif
 
 
         regs.work(clk, reset);
         Pipeline::work(clk, reset);
 
-        if (!df.stall_out()) {
-            if (ex.branch_taken_out()) {
-                pc.next = ex.branch_target_out();
-            }
-            else {
-                pc.next = pc + ((df.instr_in()&3)==3?4:2);
-            }
+        if (valid && !df.stall_out()) {
+            pc.next = pc + ((df.instr_in()&3)==3?4:2);
+        }
+        if (state_comb[0].valid && ex.branch_taken_out()) {
+            pc.next = ex.branch_target_out();
         }
 
-        valid.next = !df.stall_out();
+        valid.next = true;
     }
 
     void strobe()
@@ -131,9 +130,6 @@ public:
 
 // C++HDL INLINE TEST ///////////////////////////////////////////////////
 
-template class RiscV<32>;
-template class RiscV<64>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>
@@ -145,10 +141,9 @@ template class RiscV<64>;
 
 #include "Ram.h"
 
-#define PROG_SIZE 128
+#define PROG_SIZE 256
 #define RAM_SIZE 1024
 
-template<size_t WIDTH>
 class TestRiscV : public Module
 {
     Ram<32,PROG_SIZE>   imem;
@@ -156,7 +151,7 @@ class TestRiscV : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL riscv;
 #else
-    RiscV<WIDTH> riscv;
+    RiscV riscv;
 #endif
 
     bool imem_write = false;
@@ -167,7 +162,7 @@ class TestRiscV : public Module
     uint32_t dmem_read_data;
     uint32_t imem_read_data;
 
-    size_t i;
+//    size_t i;
 
 public:
 
@@ -195,7 +190,7 @@ public:
         dmem.__inst_name = __inst_name + "/dmem";
         dmem.connect();
 
-        imem.read_in = __VAL(1);
+        imem.read_in = __VAL( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
         imem.write_in = __VAL( imem_write );
         imem.write_addr_in = __VAL( imem_write_addr );
@@ -288,9 +283,9 @@ public:
     bool run(std::string filename, size_t start_offset)
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestRiscV, WIDTH: {}...", WiDTH);
+        std::print("VERILATOR TestRiscV...");
 #else
-        std::print("C++HDL TestRiscV, WIDTH: {}...", WIDTH);
+        std::print("C++HDL TestRiscV...");
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -362,12 +357,10 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
 /*    if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {}, 32);
-        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {}, 64);
+        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {});
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("RiscV_32/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 0) || std::system((std::string("RiscV_64/obj_dir/VRiscV") + (debug?" --debug":"") + " 1").c_str()) == 0)
+            && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
         );
     }*/
 #else
@@ -375,8 +368,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestRiscV<32>(debug).run("rv32i.bin", 0x37c))
-//        && ((only != -1 && only != 1) || TestRiscV<64>(debug).run())
+        && ((only != -1 && only != 0) || TestRiscV(debug).run("rv32i.bin", 0x37c))
     );
 }
 

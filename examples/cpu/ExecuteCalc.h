@@ -47,17 +47,20 @@ public:
         return branch_taken_comb && state_in()[ID-1].valid;
     }
 
-    bool branch_target_comb_func()
+    uint32_t branch_target_comb_func()
     {
         branch_target_comb = 0;
         if (state_in()[ID-1].br_op != Br::BNONE)
         {
-            if (state_in()[ID-1].br_op == Br::JAL)
+            if (state_in()[ID-1].br_op == Br::JAL) {
                 branch_target_comb = state_in()[ID-1].pc + state_in()[ID-1].imm;
-            else if (state_in()[ID-1].br_op == Br::JALR)
+            }
+            else if (state_in()[ID-1].br_op == Br::JALR) {
                 branch_target_comb = (state_in()[ID-1].rs1_val + state_in()[ID-1].imm) & ~1u;
-            else     // conditional branch
+            }
+            else {     // conditional branch
                 branch_target_comb = state_in()[ID-1].pc + state_in()[ID-1].imm;
+            }
         }
         return branch_target_comb;
     }
@@ -79,7 +82,8 @@ public:
             case Alu::SRA:  alu_result_comb = uint32_t(int32_t(a) >> (b & 0x1F)); break;
             case Alu::SLT:  alu_result_comb = (int32_t(a) < int32_t(b)); break;
             case Alu::SLTU: alu_result_comb = (a < b); break;
-            case Alu::PASS: alu_result_comb = a; break;
+            case Alu::PASSA: alu_result_comb = a; break;
+            case Alu::PASSB: alu_result_comb = b; break;
             case Alu::ANONE: break;
         }
         return alu_result_comb;

@@ -15,44 +15,56 @@ public:
     {
     };
 
-    reg<u32> regs_out_reg;
-    reg<u8> regs_wr_id_reg;
-    reg<u1> regs_write_reg;
+    uint32_t regs_out_comb;
+    bool regs_write_comb;
 
 public:
     __PORT(uint32_t)   mem_data_in;
-    __PORT(uint32_t)   regs_data_out = __VAL( regs_out_reg );
-    __PORT(uint8_t)    regs_wr_id_out = __VAL( regs_wr_id_reg );
-    __PORT(bool)       regs_write_out = __VAL( regs_write_reg );
+    __PORT(uint32_t)   regs_data_out = __VAL( regs_out_comb_func() );
+    __PORT(uint8_t)    regs_wr_id_out = __VAL( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
+    __PORT(bool)       regs_write_out = __VAL( regs_write_comb_func() );
 
     void connect()
     {
         std::print("WriteBack: {} of {}\n", ID, LENGTH);
     }
 
-    void do_writeback()
+    uint32_t regs_out_comb_func()
     {
-        // NOTE! reg0 is ZERO, never write it
-        regs_wr_id_reg.next = state_in()[ID-1].rd;
-
-        regs_write_reg.next = 0;
+        regs_out_comb = 0;
         switch (state_in()[ID-1].wb_op) {
             case Wb::ALU:
-                regs_out_reg.next = state_in()[ID-1].alu_result;
-                regs_write_reg.next = state_in()[ID-1].valid;
+                regs_out_comb = state_in()[ID-1].alu_result;
             break;
             case Wb::MEM:
                 switch (state_in()[ID-1].funct3) {
-                    case 0b000: regs_out_reg.next = int8_t(mem_data_in()); break;
-                    case 0b001: regs_out_reg.next = int16_t(mem_data_in()); break;
-                    case 0b010: regs_out_reg.next = int32_t(mem_data_in()); break;
-                    case 0b100: regs_out_reg.next = uint8_t(mem_data_in()); break;
-                    case 0b101: regs_out_reg.next = uint16_t(mem_data_in()); break;
-                    default: regs_write_reg.next = 0; break;
+                    case 0b000: regs_out_comb = int8_t(mem_data_in()); break;
+                    case 0b001: regs_out_comb = int16_t(mem_data_in()); break;
+                    case 0b010: regs_out_comb = int32_t(mem_data_in()); break;
+                    case 0b100: regs_out_comb = uint8_t(mem_data_in()); break;
+                    case 0b101: regs_out_comb = uint16_t(mem_data_in()); break;
                 }
-                regs_write_reg.next = state_in()[ID-1].valid;
             break;
         }
+        return regs_out_comb;
+    }
+
+    bool regs_write_comb_func()
+    {
+        regs_write_comb = 0;
+        switch (state_in()[ID-1].wb_op) {
+            case Wb::ALU:
+                regs_write_comb = state_in()[ID-1].valid;
+            break;
+            case Wb::MEM:
+                regs_write_comb = state_in()[ID-1].valid;
+            break;
+        }
+        return regs_write_comb;
+    }
+
+    void do_writeback()
+    {
     }
 
     void work(bool clk, bool reset)
@@ -61,7 +73,6 @@ public:
             return;
         }
         if (reset) {
-            regs_write_reg.clr();
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
         do_writeback();
@@ -70,8 +81,5 @@ public:
     void strobe()
     {
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
-        regs_out_reg.strobe();
-        regs_wr_id_reg.strobe();
-        regs_write_reg.strobe();
     }
 };
