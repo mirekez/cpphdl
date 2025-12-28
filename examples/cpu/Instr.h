@@ -94,6 +94,7 @@ union Instr
     template<typename STATE>
     void decode(STATE& state)
     {
+        state.rd = 0;
         state.rs1 = 0;  // means no need to read
         state.rs2 = 0;
         state.funct3 = 7;
@@ -482,7 +483,12 @@ union Instr
         if ((raw&3) == 3) {
             name = decode_mnemonic(r.opcode, r.funct3, r.funct7);
             return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:{:#04x}",
-                raw, name, (uint8_t)r.rd, (uint8_t)r.rs1, (uint8_t)r.rs2, (uint8_t)r.funct3, (uint8_t)r.funct7);
+                raw, name,
+                r.opcode != 0b0100011 && r.opcode != 0b1100011 ? (uint8_t)r.rd : 0,
+                r.opcode != 0b1101111 && r.opcode != 0b0110111 && r.opcode != 0b0010111 ? (uint8_t)r.rs1 : 0,
+                r.opcode != 0b0000011 && r.opcode != 0b0010011 && r.opcode != 0b1101111 &&
+                r.opcode != 0b1100111 && r.opcode != 0b0110111 && r.opcode != 0b0010111 ? (uint8_t)r.rs2 : 0,
+                (uint8_t)r.funct3, (uint8_t)r.funct7);
         }
         else {
             name = decode_mnemonic16(c.opcode, c.funct3, c.b12, q2.rs2, c.bits6_5);

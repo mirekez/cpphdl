@@ -4,7 +4,7 @@ using namespace cpphdl;
 
 
 template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
-class WriteBack: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
+class MemWB: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {
 public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_reg;
@@ -26,7 +26,7 @@ public:
 
     void connect()
     {
-        std::print("WriteBack: {} of {}\n", ID, LENGTH);
+        std::print("MemWB: {} of {}\n", ID, LENGTH);
     }
 
     uint32_t regs_out_comb_func()
@@ -63,10 +63,6 @@ public:
         return regs_write_comb;
     }
 
-    void do_writeback()
-    {
-    }
-
     void work(bool clk, bool reset)
     {
         if (!clk) {
@@ -75,7 +71,6 @@ public:
         if (reset) {
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
-        do_writeback();
     }
 
     void strobe()

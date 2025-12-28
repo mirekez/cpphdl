@@ -64,6 +64,7 @@ public:
         else {
             instr.decode16(state_comb);
         }
+        state_comb.valid = instr_valid_in();
         rs1_out_comb = state_comb.rs1;  // ???
         rs2_out_comb = state_comb.rs2;
         return state_comb;
@@ -72,17 +73,20 @@ public:
     bool stall_comb_func()
     {
         // hazard
-        stall_comb = 0;
-        if (state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex
-            if (state_reg[0].rd == state_reg.next[0].rs1) {
-                stall_comb = 1;
+        auto s = state_comb_func();
+        stall_comb = false;
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM /*&& state_reg[0].rd != 0*/) {  // Ex
+            if (state_reg[0].rd == s.rs1) {
+                stall_comb = true;
             }
-            if (state_reg[0].rd == state_reg.next[0].rs2) {
-                stall_comb = 1;
+            if (state_reg[0].rd == s.rs2) {
+                stall_comb = true;
             }
         }
-        if (state_reg[0].wb_op == Wb::PC) {  // Ex
-            stall_comb = 1;
+        if ((state_reg[0].valid && state_reg[0].br_op != Br::BNONE)
+            || (s.valid && s.br_op != Br::BNONE && ((state_reg[1].valid && state_reg[1].wb_op && state_reg[1].br_op == Wb::PC)
+                                                 || (state_reg[2].valid && state_reg[2].wb_op && state_reg[2].br_op == Wb::PC)))) {
+            stall_comb = true;
         }
         return stall_comb;
     }
@@ -92,21 +96,17 @@ public:
         state_reg.next[0] = state_comb_func();
 
         // fetch
-
         state_reg.next[0].pc = pc_in();
-        state_reg.next[0].rs1_val = regs_data0_in();
-        state_reg.next[0].rs2_val = regs_data1_in();
+        state_reg.next[0].rs1_val = pc_in();
+        if (state_reg.next[0].rs1) {
+            state_reg.next[0].rs1_val = regs_data0_in();
+        }
+        if (state_reg.next[0].rs2) {
+            state_reg.next[0].rs2_val = regs_data1_in();
+        }
 
         // forwarding
-        if (state_reg[2].valid && state_reg[2].wb_op == Wb::ALU && state_reg[2].rd != 0) {  // Wb alu
-            if (state_reg[2].rd == state_reg.next[0].rs1) {
-                state_reg.next[0].rs1_val = state_in()[ID+2].alu_result;
-            }
-            if (state_reg[2].rd == state_reg.next[0].rs2) {
-                state_reg.next[0].rs2_val = state_in()[ID+2].alu_result;
-            }
-        }
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem alu
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU /*&& state_reg[1].rd != 0*/) {  // Mem/Wb alu
             if (state_reg[1].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = state_in()[ID+1].alu_result;
             }
@@ -115,7 +115,7 @@ public:
             }
         }
 
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex alu
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU /*&& state_reg[0].rd != 0*/) {  // Ex/Mem alu
             if (state_reg[0].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = alu_result_in();
             }
@@ -124,11 +124,11 @@ public:
             }
         }
 
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem
-            if (state_reg[0].rd == state_reg.next[0].rs1) {
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM /*&& state_reg[1].rd != 0*/) {  // Mem/Wb
+            if (state_reg[1].rd == state_reg.next[0].rs1) {
                 state_reg.next[0].rs1_val = mem_data_in();
             }
-            if (state_reg[0].rd == state_reg.next[0].rs2) {
+            if (state_reg[1].rd == state_reg.next[0].rs2) {
                 state_reg.next[0].rs2_val = mem_data_in();
             }
         }

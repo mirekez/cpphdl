@@ -8,10 +8,9 @@
 
 #include "DecodeFetch.h"
 #include "ExecuteCalc.h"
-#include "MemoryAccess.h"
-#include "WriteBack.h"
+#include "MemWB.h"
 
-class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemoryAccess,WriteBack>>
+class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
     File<32,32>         regs;
     reg<u32>            pc;
@@ -19,12 +18,12 @@ class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemoryAccess
 
 public:
                                           // it's better to always assign all outputs inline
-    __PORT(bool)      dmem_write_out =      std::get<2>(members).mem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out = std::get<2>(members).mem_write_addr_out;
-    __PORT(uint32_t)  dmem_write_data_out = std::get<2>(members).mem_write_data_out;
-    __PORT(uint8_t)   dmem_write_mask_out = std::get<2>(members).mem_write_mask_out;
-    __PORT(bool)      dmem_read_out =       std::get<2>(members).mem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out =  std::get<2>(members).mem_read_addr_out;
+    __PORT(bool)      dmem_write_out =      std::get<1>(members).mem_write_out;
+    __PORT(uint32_t)  dmem_write_addr_out = std::get<1>(members).mem_write_addr_out;
+    __PORT(uint32_t)  dmem_write_data_out = std::get<1>(members).mem_write_data_out;
+    __PORT(uint8_t)   dmem_write_mask_out = std::get<1>(members).mem_write_mask_out;
+    __PORT(bool)      dmem_read_out =       std::get<1>(members).mem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out =  std::get<1>(members).mem_read_addr_out;
     __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out = __VAL( pc );
     __PORT(uint32_t)  imem_read_data_in;
@@ -34,12 +33,10 @@ public:
     {
         auto& df = std::get<0>(members);
         auto& ex = std::get<1>(members);
-        auto& ma = std::get<2>(members);
-        auto& wb = std::get<3>(members);
+        auto& wb = std::get<2>(members);
 
         df.__inst_name = Pipeline::__inst_name + "/decode_fetch";
         ex.__inst_name = Pipeline::__inst_name + "/execute_calc";
-        ma.__inst_name = Pipeline::__inst_name + "/memory_access";
         wb.__inst_name = Pipeline::__inst_name + "/write_back";
 
         df.pc_in          = __VAL( pc );
@@ -69,8 +66,7 @@ public:
         }
         auto& df = std::get<0>(members);
         auto& ex = std::get<1>(members);
-        auto& ma = std::get<2>(members);
-        auto& wb = std::get<3>(members);
+        auto& wb = std::get<2>(members);
         if (reset) {
             pc.clr();
             valid.clr();
@@ -78,17 +74,17 @@ public:
         }
         #ifndef SYNTHESIS
         Instr instr = {df.instr_in()};
-        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{},alu:{:08x},val1/2:{:08x}/{:08x}, bop{},({}){:08x} => "
-                       "({})mop{:x},({}/{}@{:08x}){:08x}/{:08x} => ({})wop({:x}),r({}){:08x}@{:02d}\n",
+        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{}, alu:{:08x},val1/2:{:08x}/{:08x}, br({}){:08x} => "
+                       "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.format(),
                 df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
                 (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
                 ex.alu_result_comb_func(), state_comb[0].rs1_val, state_comb[0].rs2_val,
-                (uint8_t)state_comb[0].br_op, (int)ex.branch_taken_out(), ex.branch_target_out(),
-                (int)state_comb[1].valid, (uint8_t)state_comb[1].mem_op, (int)ma.mem_write_out(), (int)ma.mem_read_out(), ma.mem_write_addr_out(), ma.mem_write_data_out(), ma.mem_write_mask_out(),
-                (int)state_comb[2].valid, (uint8_t)state_comb[2].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
+                (int)ex.branch_taken_out(), ex.branch_target_out(),
+                (int)ex.mem_write_out(), (int)ex.mem_read_out(),
+                ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
+                (int)state_comb[1].valid, (uint8_t)state_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
         #endif
-
 
         regs.work(clk, reset);
         Pipeline::work(clk, reset);

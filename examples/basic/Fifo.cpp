@@ -55,14 +55,12 @@ public:
 
     bool full_comb_func()
     {
-        full_comb = (wp_reg.next == rp_reg.next) && full_reg.next;
-        return full_comb;
+        return full_comb = (wp_reg == rp_reg) && full_reg;
     }
 
     bool empty_comb_func()
     {
-        empty_comb = (wp_reg.next == rp_reg.next) && !full_reg.next;
-        return empty_comb;
+        return empty_comb = (wp_reg == rp_reg) && !full_reg;
     }
 
     void work(bool clk, bool reset)
@@ -78,10 +76,24 @@ public:
             return;
         }
 
+        if (write_in()) {
+
+            if (full_comb_func() && !read_in()) {
+                std::print("{:s}: writing to a full fifo\n", __inst_name);
+                exit(1);
+            }
+            if (!full_comb_func() || read_in()) {
+                wp_reg.next = wp_reg + 1;
+            }
+            if (wp_reg.next == rp_reg) {
+                full_reg.next = 1;
+            }
+        }
+
         if (read_in()) {
 
             if (empty_comb_func()) {
-                printf("%s: reading from an empty fifo\n", __inst_name.c_str());
+                std::print("{:s}: reading from an empty fifo\n", __inst_name);
                 exit(1);
             }
             if (!empty_comb_func()) {
@@ -89,20 +101,6 @@ public:
             }
             if (!write_in()) {
                 full_reg.next = 0;
-            }
-        }
-
-        if (write_in()) {
-
-            if (full_comb_func()) {
-                printf("%s: writing to a full fifo\n", __inst_name.c_str());
-                exit(1);
-            }
-            if (!full_comb_func()) {
-                wp_reg.next = wp_reg + 1;
-            }
-            if (wp_reg.next == rp_reg.next) {
-                full_reg.next = 1;
             }
         }
 
