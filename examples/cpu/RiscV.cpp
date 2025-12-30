@@ -74,12 +74,12 @@ public:
         }
         #ifndef SYNTHESIS
         Instr instr = {df.instr_in()};
-        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{}, alu:{:08x},val1/2:{:08x}/{:08x}, br({}){:08x} => "
+        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{}, alu:{:08x},rs{:02d}/{:02d}:{:08x}/{:08x}, br({}){:08x} => "
                        "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.format(),
                 df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
                 (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
-                ex.alu_result_comb_func(), state_comb[0].rs1_val, state_comb[0].rs2_val,
+                ex.alu_result_comb_func(), (int)state_comb[0].rs1, (int)state_comb[0].rs2, state_comb[0].rs1_val, state_comb[0].rs2_val,
                 (int)ex.branch_taken_out(), ex.branch_target_out(),
                 (int)ex.mem_write_out(), (int)ex.mem_read_out(),
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),

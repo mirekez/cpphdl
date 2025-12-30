@@ -103,107 +103,105 @@ union Instr
         state.wb_op = 0;
         state.br_op = 0;
 
-        switch (r.opcode) {
-            case 0b0000011:  // LOAD  // LB, LH, LW, LBU, LHU
-                state.rd  = i.rd;
-                state.imm = imm_I();
-                state.mem_op = Mem::LOAD;
-                state.alu_op = Alu::ADD;    // address = rs1 + imm
-                state.wb_op = Wb::MEM;
-                state.funct3 = i.funct3;
-                state.rs1 = i.rs1;
-            break;
-            case 0b0100011:  // STORE  // SB, SH, SW
-                state.imm = imm_S();
-                state.mem_op = Mem::STORE;
-                state.alu_op = Alu::ADD;    // base + offset
-                state.funct3 = s.funct3;
-                state.rs1 = s.rs1;
-                state.rs2 = s.rs2;
-            break;
-            case 0b0010011:  // OP-IMM (immediate ALU)
-                state.rd  = i.rd;
-                state.imm = imm_I();
-                state.wb_op = Wb::ALU;
-                switch (i.funct3) {
-                    case 0b000: state.alu_op = Alu::ADD; break;     // ADDI
-                    case 0b010: state.alu_op = Alu::SLT; break;     // SLTI
-                    case 0b011: state.alu_op = Alu::SLTU; break;    // SLTIU
-                    case 0b100: state.alu_op = Alu::XOR; break;
-                    case 0b110: state.alu_op = Alu::OR; break;
-                    case 0b111: state.alu_op = Alu::AND; break;
-                    case 0b001: state.alu_op = Alu::SLL; break;
-                    case 0b101: state.alu_op = (i.imm11_0>>10) & 1 ? Alu::SRA : Alu::SRL; break;
-                }
-                state.funct3 = i.funct3;
-                state.rs1 = i.rs1;
-            break;
-            case 0b0110011:  // OP (register ALU)
-                state.rd = r.rd;
-                state.wb_op = Wb::ALU;
-                switch (r.funct3) {
-                    case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD; break;
-                    case 0b111: state.alu_op = Alu::AND; break;
-                    case 0b110: state.alu_op = Alu::OR;  break;
-                    case 0b100: state.alu_op = Alu::XOR; break;
-                    case 0b001: state.alu_op = Alu::SLL; break;
-                    case 0b101: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SRA : Alu::SRL; break;
-                    case 0b010: state.alu_op = Alu::SLT;  break;
-                    case 0b011: state.alu_op = Alu::SLTU; break;
-                }
-                state.funct3 = r.funct3;
-                state.rs1 = r.rs1;
-                state.rs2 = r.rs2;
-            break;
-            case 0b1100011:  // BRANCH
-                state.imm = imm_B();
-                state.br_op = Br::BNONE;
-                switch (b.funct3) {
-                    case 0b000: state.br_op = Br::BEQ; break;
-                    case 0b001: state.br_op = Br::BNE; break;
-                    case 0b100: state.br_op = Br::BLT; break;
-                    case 0b101: state.br_op = Br::BGE; break;
-                    case 0b110: state.br_op = Br::BLTU; break;
-                    case 0b111: state.br_op = Br::BGEU; break;
-                }
-                state.funct3 = b.funct3;
-                state.rs1 = b.rs1;
-                state.rs2 = b.rs2;
-            break;
-            case 0b1101111:  // JAL
-                state.rd  = j.rd;
-                state.imm = imm_J();
-                state.br_op = Br::JAL;
-                state.wb_op = Wb::PC;
-                // ?
-            break;
-            case 0b1100111:  // JALR
-                state.rd  = i.rd;
-                state.imm = imm_I();
-                state.br_op = Br::JALR;
-                state.wb_op = Wb::PC;
-                state.rs1 = i.rs1;
-            break;
-            case 0b0110111:  // LUI
-                state.rd  = u.rd;
-                state.imm = imm_U();
-                state.alu_op = Alu::PASSA;   // or NONE, since result = imm
-                state.wb_op = Wb::ALU;
-            break;
-            case 0b0010111:  // AUIPC
-                state.rd  = u.rd;
-                state.imm = imm_U();
-                state.alu_op = Alu::ADD;  // PC + imm
-                state.wb_op = Wb::ALU;
-            break;
-//            case 0b1110011:  // CSR
-//                switch (i.funct3) {
-//                case 0b001:  // CSRRW
-//                case 0b010:  // CSRRS
-//                case 0b011:  // CSRRC
-//                    regs_rd_id_comb[0] = i.rs1;
-//                break;
+        if (r.opcode == 0b0000011) {  // LOAD  // LB, LH, LW, LBU, LHU
+            state.rd  = i.rd;
+            state.imm = imm_I();
+            state.mem_op = Mem::LOAD;
+            state.alu_op = Alu::ADD;    // address = rs1 + imm
+            state.wb_op = Wb::MEM;
+            state.funct3 = i.funct3;
+            state.rs1 = i.rs1;
         }
+        else if (r.opcode == 0b0100011) {  // STORE  // SB, SH, SW
+            state.imm = imm_S();
+            state.mem_op = Mem::STORE;
+            state.alu_op = Alu::ADD;    // base + offset
+            state.funct3 = s.funct3;
+            state.rs1 = s.rs1;
+            state.rs2 = s.rs2;
+        }
+        else if (r.opcode == 0b0010011) {  // OP-IMM (immediate ALU)
+            state.rd  = i.rd;
+            state.imm = imm_I();
+            state.wb_op = Wb::ALU;
+            switch (i.funct3) {
+                case 0b000: state.alu_op = Alu::ADD; break;     // ADDI
+                case 0b010: state.alu_op = Alu::SLT; break;     // SLTI
+                case 0b011: state.alu_op = Alu::SLTU; break;    // SLTIU
+                case 0b100: state.alu_op = Alu::XOR; break;
+                case 0b110: state.alu_op = Alu::OR; break;
+                case 0b111: state.alu_op = Alu::AND; break;
+                case 0b001: state.alu_op = Alu::SLL; break;
+                case 0b101: state.alu_op = (i.imm11_0>>10) & 1 ? Alu::SRA : Alu::SRL; break;
+            }
+            state.funct3 = i.funct3;
+            state.rs1 = i.rs1;
+        }
+        else if (r.opcode == 0b0110011) {  // OP (register ALU)
+            state.rd = r.rd;
+            state.wb_op = Wb::ALU;
+            switch (r.funct3) {
+                case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD; break;
+                case 0b111: state.alu_op = Alu::AND; break;
+                case 0b110: state.alu_op = Alu::OR;  break;
+                case 0b100: state.alu_op = Alu::XOR; break;
+                case 0b001: state.alu_op = Alu::SLL; break;
+                case 0b101: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SRA : Alu::SRL; break;
+                case 0b010: state.alu_op = Alu::SLT;  break;
+                case 0b011: state.alu_op = Alu::SLTU; break;
+            }
+            state.funct3 = r.funct3;
+            state.rs1 = r.rs1;
+            state.rs2 = r.rs2;
+        }
+        else if (r.opcode == 0b1100011) {  // BRANCH
+            state.imm = imm_B();
+            state.br_op = Br::BNONE;
+            switch (b.funct3) {
+                case 0b000: state.br_op = Br::BEQ; break;
+                case 0b001: state.br_op = Br::BNE; break;
+                case 0b100: state.br_op = Br::BLT; break;
+                case 0b101: state.br_op = Br::BGE; break;
+                case 0b110: state.br_op = Br::BLTU; break;
+                case 0b111: state.br_op = Br::BGEU; break;
+            }
+            state.funct3 = b.funct3;
+            state.rs1 = b.rs1;
+            state.rs2 = b.rs2;
+        }
+        else if (r.opcode == 0b1101111) {  // JAL
+            state.rd  = j.rd;
+            state.imm = imm_J();
+            state.br_op = Br::JAL;
+            state.wb_op = Wb::PC;
+        }
+        else if (r.opcode == 0b1100111) {  // JALR
+            state.rd  = i.rd;
+            state.imm = imm_I();
+            state.br_op = Br::JALR;
+            state.wb_op = Wb::PC;
+            state.rs1 = i.rs1;
+        }
+        else if (r.opcode == 0b0110111) {  // LUI
+            state.rd  = u.rd;
+            state.imm = imm_U();
+            state.alu_op = Alu::PASSA;   // or NONE, since result = imm
+            state.wb_op = Wb::ALU;
+        }
+        else if (r.opcode == 0b0010111) {  // AUIPC
+            state.rd  = u.rd;
+            state.imm = imm_U();
+            state.alu_op = Alu::ADD;  // PC + imm
+            state.wb_op = Wb::ALU;
+        }
+//      else if (r.opcode == 0b1110011) {  // CSR
+//            switch (i.funct3) {
+//            case 0b001:  // CSRRW
+//            case 0b010:  // CSRRS
+//            case 0b011:  // CSRRC
+//                regs_rd_id_comb[0] = i.rs1;
+//            break;
+//        }
     }
 
     ///////////////////////////////////////////////// compressed
@@ -257,131 +255,122 @@ union Instr
         state.br_op = 0;
         state.funct3 = 0b010;  // LW/SW
 
-        switch (c.opcode) {
-            case 0b00:
-                switch (c.funct3) {
-                    case 0b000:  // ADDI4SPN
-                        state.rd  = q0.rd_p+8;
-                        state.rs1 = 2; // sp
-                        state.imm = (bits(10,7)<<6) | (bits(12,11)<<4) | (bit(5)<<3) | (bit(6)<<2);
-                        state.alu_op = Alu::ADD;
-                        state.wb_op  = Wb::ALU;
-                    break;
-                    case 0b010:  // LW
-                        state.rd  = q0.rd_p+8;
-                        state.rs1 = q0.rd_p+8;
-                        state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
-                        state.mem_op = Mem::LOAD;
-                        state.wb_op  = Wb::MEM;
-                    break;
-                    case 0b110:  // SW
-                        state.rs1 = q0.rd_p+8;
-                        state.rs2 = q0.rs2;
-                        state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
-                        state.mem_op = Mem::STORE;
-                    break;
+        if (c.opcode == 0b00) {
+            if (c.funct3 == 0b000) {  // ADDI4SPN
+                state.rd  = q0.rd_p+8;
+                state.rs1 = 2; // sp
+                state.imm = (bits(10,7)<<6) | (bits(12,11)<<4) | (bit(5)<<3) | (bit(6)<<2);
+                state.alu_op = Alu::ADD;
+                state.wb_op  = Wb::ALU;
+            }
+            else if (c.funct3 == 0b010) {  // LW
+                state.rd  = q0.rd_p+8;
+                state.rs1 = q0.rd_p+8;
+                state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                state.mem_op = Mem::LOAD;
+                state.wb_op  = Wb::MEM;
+            }
+            else if (c.funct3 == 0b110) {  // SW
+                state.rs1 = q0.rd_p+8;
+                state.rs2 = q0.rs2;
+                state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                state.mem_op = Mem::STORE;
+            }
+        }
+        else if (c.opcode == 0b01) {
+            if (c.funct3 == 0b000) {  // ADDI
+                state.rd  = q1.rs1;
+                state.rs1 = q1.rs1;
+                state.imm = (c.b12<<5) | bits(6,2);
+                state.alu_op = Alu::ADD;
+                state.wb_op  = Wb::ALU;
+            }
+            else if (c.funct3 == 0b001) {  // JAL
+                state.br_op = Br::JAL;
+                state.wb_op = Wb::PC;
+                state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+            }
+            else if (c.funct3 == 0b010) {  // LI
+                state.rd  = q1.rd_p+8;
+                state.imm = ((int32_t)(raw<<20))>>26;
+                state.wb_op = Wb::ALU;
+            }
+            else if (c.funct3 == 0b100) {
+                if (c.b12 == 0) {  // C.ANDI
+                    state.rd   = q2.rs1;
+                    state.rs1  = q2.rs1;
+                    state.alu_op = Alu::AND;
+                    state.wb_op = Wb::ALU;
                 }
-            break;
-            case 0b01:
-                switch (c.funct3) {
-                    case 0b000:  // ADDI
-                        state.rd  = q1.rs1;
-                        state.rs1 = q1.rs1;
-                        state.imm = (c.b12<<5) | bits(6,2);
-                        state.alu_op = Alu::ADD;
-                        state.wb_op  = Wb::ALU;
-                    break;
-                    case 0b001:  // JAL
-                        state.br_op = Br::JAL;
-                        state.wb_op = Wb::PC;
-                        state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
-                    break;
-                    case 0b010:  // LI
-                        state.rd  = q1.rd_p+8;
-                        state.imm = ((int32_t)(raw<<20))>>26;
-                        state.wb_op = Wb::ALU;
-                    break;
-                    case 0b100: {
-                        if (c.b12 == 0) {  // C.ANDI
-                            state.rd   = q2.rs1;
-                            state.rs1  = q2.rs1;
-                            state.alu_op = Alu::AND;
-                            state.wb_op = Wb::ALU;
-                        }
-                        if (c.b12 == 1 && c.bits6_5 == 0) {  // C.SUB, C.XOR, C.OR, C.AND
-                            state.rd   = q2.rs1;
-                            state.rs1  = q2.rs1;
-                            state.rs2  = q2.rs2;
-                            state.alu_op = c.bits6_5 == 0 ? Alu::SUB : ( c.bits6_5 == 1 ? Alu::XOR : ( c.bits6_5 == 2 ? Alu::OR : Alu::AND ) );
-                            state.wb_op = Wb::ALU;
-                        }
-                    }
-                    case 0b101:  // J
-                        state.br_op = Br::JAL;
-                        state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
-                    break;
-                    case 0b110:  // BEQZ
-                        state.rs1 = c.rs1_p+8;
-                        state.br_op = Br::BEQ;
-                        state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
-                        if (c.b12) {
-                            state.imm |= ~0x1FF;
-                        }
-                    break;
-                    case 0b111:  // BNEZ
-                        state.rs1 = c.rs1_p+8;
-                        state.br_op = Br::BNE;
-                        state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
-                        if (c.b12) {
-                            state.imm |= ~0x1FF;
-                        }
-                    break;
+                else if (c.b12 == 1 && c.bits6_5 == 0) {  // C.SUB, C.XOR, C.OR, C.AND
+                    state.rd   = q2.rs1;
+                    state.rs1  = q2.rs1;
+                    state.rs2  = q2.rs2;
+                    state.alu_op = c.bits6_5 == 0 ? Alu::SUB : ( c.bits6_5 == 1 ? Alu::XOR : ( c.bits6_5 == 2 ? Alu::OR : Alu::AND ) );
+                    state.wb_op = Wb::ALU;
                 }
-            break;
-            case 0b10:
-                switch (c.funct3)
-                {
-                    case 0b000:  // SLLI
-                        state.rd  = q2.rs1;
-                        state.rs1 = q2.rs1;
-                        state.imm = (c.b12<<5) | bits(6,2);
-                        state.alu_op = Alu::SLL;
-                        state.wb_op  = Wb::ALU;
-                    break;
-                    case 0b010:  // LWSP
-                        state.rd  = q2.rs1;
-                        state.rs1 = 2;  // sp
-                        state.mem_op = Mem::LOAD;
-                        state.wb_op  = Wb::MEM;
-                        state.imm = (c.b12<<5) | (bits(6,4)<<2) | (bits(3,2)<<6);
-                    break;
-                    case 0b100: {
-                        if (q2.rs2 != 0) {  // C.MV
-                            state.rd  = q2.rs1;
-                            state.rs1 = q2.rs1;
-                            state.rs2 = q2.rs2;
-                            state.alu_op = c.b12 == 0 ? Alu::PASSB : Alu::ADD;
-                            state.wb_op  = Wb::ALU;
-                        }
-                        if (q2.rs2 == 0 && c.b12 == 0) {  // C.JR
-                            state.rs1 = q2.rs1;
-                            state.br_op = Br::JR;
-                        }
-                        if (q2.rs2 == 0 && c.b12 == 1) {  // C.JALR
-                            state.rs1 = q2.rs2;
-                            state.rd = 1;
-                            state.br_op = Br::JALR;
-                            state.wb_op = Wb::PC;
-                        }
-                    }
-                    case 0b110:  // SWSP
-                        state.rs1 = 2;  // sp
-                        state.rs2 = q2.rs2;
-                        state.mem_op = Mem::STORE;
-                        state.imm = (bits(8,7)<<6) | (bits(12,9)<<2);
-                    break;
+            }
+            else if (c.funct3 == 0b101) {  // J
+                state.br_op = Br::JAL;
+                state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+            }
+            else if (c.funct3 == 0b110) {  // BEQZ
+                state.rs1 = c.rs1_p+8;
+                state.br_op = Br::BEQ;
+                state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
+                if (c.b12) {
+                    state.imm |= ~0x1FF;
                 }
-            break;
+            }
+            else if (c.funct3 == 0b111) {  // BNEZ
+                state.rs1 = c.rs1_p+8;
+                state.br_op = Br::BNE;
+                state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
+                if (c.b12) {
+                    state.imm |= ~0x1FF;
+                }
+            }
+        }
+        else if (c.opcode == 0b10) {
+            if (c.funct3 == 0b000) {  // SLLI
+                state.rd  = q2.rs1;
+                state.rs1 = q2.rs1;
+                state.imm = (c.b12<<5) | bits(6,2);
+                state.alu_op = Alu::SLL;
+                state.wb_op  = Wb::ALU;
+            }
+            else if (c.funct3 == 0b010) {  // LWSP
+                state.rd  = q2.rs1;
+                state.rs1 = 2;  // sp
+                state.mem_op = Mem::LOAD;
+                state.wb_op  = Wb::MEM;
+                state.imm = (c.b12<<5) | (bits(6,4)<<2) | (bits(3,2)<<6);
+            }
+            else if (c.funct3 == 0b100) {
+                if (q2.rs2 != 0) {  // C.MV
+                    state.rd  = q2.rs1;
+                    state.rs1 = q2.rs1;
+                    state.rs2 = q2.rs2;
+                    state.alu_op = c.b12 == 0 ? Alu::PASSB : Alu::ADD;
+                    state.wb_op  = Wb::ALU;
+                }
+                else if (q2.rs2 == 0 && c.b12 == 0) {  // C.JR
+                    state.rs1 = q2.rs1;
+                    state.br_op = Br::JR;
+                }
+                else if (q2.rs2 == 0 && c.b12 == 1) {  // C.JALR
+                    state.rs1 = q2.rs2;
+                    state.rd = 1;
+                    state.br_op = Br::JALR;
+                    state.wb_op = Wb::PC;
+                }
+            }
+            else if (c.funct3 == 0b110) {  // SWSP
+                state.rs1 = 2;  // sp
+                state.rs2 = q2.rs2;
+                state.mem_op = Mem::STORE;
+                state.imm = (bits(8,7)<<6) | (bits(12,9)<<2);
+            }
         }
     }
 
