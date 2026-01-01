@@ -32,19 +32,23 @@ public:
     uint32_t regs_out_comb_func()
     {
         regs_out_comb = 0;
-        switch (state_in()[ID-1].wb_op) {
-            case Wb::ALU:
-                regs_out_comb = state_in()[ID-1].alu_result;
-            break;
-            case Wb::MEM:
-                switch (state_in()[ID-1].funct3) {
-                    case 0b000: regs_out_comb = int8_t(mem_data_in()); break;
-                    case 0b001: regs_out_comb = int16_t(mem_data_in()); break;
-                    case 0b010: regs_out_comb = int32_t(mem_data_in()); break;
-                    case 0b100: regs_out_comb = uint8_t(mem_data_in()); break;
-                    case 0b101: regs_out_comb = uint16_t(mem_data_in()); break;
-                }
-            break;
+        if (state_in()[ID-1].wb_op == Wb::PC2) {
+            regs_out_comb = state_in()[ID-1].pc + 2;
+        }
+        else if (state_in()[ID-1].wb_op == Wb::PC4) {
+            regs_out_comb = state_in()[ID-1].pc + 4;
+        }
+        else if (state_in()[ID-1].wb_op == Wb::ALU) {
+            regs_out_comb = state_in()[ID-1].alu_result;
+        }
+        else if (state_in()[ID-1].wb_op == Wb::MEM) {
+            switch (state_in()[ID-1].funct3) {
+                case 0b000: regs_out_comb = int8_t(mem_data_in()); break;
+                case 0b001: regs_out_comb = int16_t(mem_data_in()); break;
+                case 0b010: regs_out_comb = int32_t(mem_data_in()); break;
+                case 0b100: regs_out_comb = uint8_t(mem_data_in()); break;
+                case 0b101: regs_out_comb = uint16_t(mem_data_in()); break;
+            }
         }
         return regs_out_comb;
     }
@@ -52,13 +56,8 @@ public:
     bool regs_write_comb_func()
     {
         regs_write_comb = 0;
-        switch (state_in()[ID-1].wb_op) {
-            case Wb::ALU:
-                regs_write_comb = state_in()[ID-1].valid;
-            break;
-            case Wb::MEM:
-                regs_write_comb = state_in()[ID-1].valid;
-            break;
+        if (state_in()[ID-1].wb_op != Wb::WNONE) {
+            regs_write_comb = state_in()[ID-1].valid;
         }
         return regs_write_comb;
     }

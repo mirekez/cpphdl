@@ -72,7 +72,7 @@ public:
     {
         branch_taken_comb = false;
         switch (state_in()[ID-1].br_op) {
-            case Br::BEQ: branch_taken_comb = (state_in()[ID-1].rs1_val == state_in()[ID-1].rs2_val); break;  // USE ALU?
+            case Br::BEQ: branch_taken_comb = (state_in()[ID-1].rs1_val == state_in()[ID-1].rs2_val); break;
             case Br::BNE: branch_taken_comb = (state_in()[ID-1].rs1_val != state_in()[ID-1].rs2_val); break;
             case Br::BLT: branch_taken_comb = (int32_t(state_in()[ID-1].rs1_val) < int32_t(state_in()[ID-1].rs2_val)); break;
             case Br::BGE: branch_taken_comb = (int32_t(state_in()[ID-1].rs1_val) >= int32_t(state_in()[ID-1].rs2_val)); break;
@@ -80,6 +80,7 @@ public:
             case Br::BGEU: branch_taken_comb = (state_in()[ID-1].rs1_val >= state_in()[ID-1].rs2_val); break;
             case Br::JAL: branch_taken_comb = true; break;
             case Br::JALR: branch_taken_comb = true; break;
+            case Br::JR: branch_taken_comb = true; break;
             case Br::BNONE: break;
         }
         return branch_taken_comb && state_in()[ID-1].valid;
@@ -93,8 +94,8 @@ public:
             if (state_in()[ID-1].br_op == Br::JAL) {
                 branch_target_comb = state_in()[ID-1].pc + state_in()[ID-1].imm;
             }
-            else if (state_in()[ID-1].br_op == Br::JALR) {
-                branch_target_comb = (state_in()[ID-1].rs1_val + state_in()[ID-1].imm) & ~1u;
+            else if (state_in()[ID-1].br_op == Br::JALR || state_in()[ID-1].br_op == Br::JR) {
+                branch_target_comb = (state_in()[ID-1].rs1_val + state_in()[ID-1].imm) & ~1U;
             }
             else {     // conditional branch
                 branch_target_comb = state_in()[ID-1].pc + state_in()[ID-1].imm;

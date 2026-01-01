@@ -18,19 +18,17 @@ public:
         uint32_t rs1_val;
         uint32_t rs2_val;
 
-        int32_t imm;
+        uint32_t imm;
 
         uint8_t valid:1;
         uint8_t alu_op:4;
         uint8_t mem_op:2;
-        uint8_t wb_op:2;
+        uint8_t wb_op:3;
         uint8_t br_op:4;
         uint8_t funct3:3;
-
         uint8_t rd:5;
         uint8_t rs1:5;
         uint8_t rs2:5;
-        uint8_t rsv1:1;
     };//__PACKED;
 
     STATE state_comb;
@@ -84,8 +82,9 @@ public:
             }
         }
         if ((state_reg[0].valid && state_reg[0].br_op != Br::BNONE)
-            || (s.valid && s.br_op != Br::BNONE && ((state_reg[1].valid && state_reg[1].wb_op && state_reg[1].br_op == Wb::PC)
-                                                 || (state_reg[2].valid && state_reg[2].wb_op && state_reg[2].br_op == Wb::PC)))) {
+//            || (s.valid && s.br_op != Br::BNONE && ((state_reg[1].valid && (state_reg[1].wb_op == Br::PC2 || (state_reg[1].wb_op == Br::PC4))
+//                                                 || (state_reg[2].valid && state_reg[2].wb_op && state_reg[2].br_op != Br::NONE)))
+) {
             stall_comb = true;
         }
         return stall_comb;

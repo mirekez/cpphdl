@@ -42,8 +42,8 @@ public:
         df.pc_in          = __VAL( pc );
         df.instr_valid_in = __VAL( valid );
         df.instr_in       = imem_read_data_in;
-        df.regs_data0_in  = regs.read_data0_out;
-        df.regs_data1_in  = regs.read_data1_out;
+        df.regs_data0_in  = __VAL( df.rs1_out == 0 ? 0 : regs.read_data0_out() );
+        df.regs_data1_in  = __VAL( df.rs2_out == 0 ? 0 : regs.read_data1_out() );
         df.alu_result_in  = ex.alu_result_out;
         df.mem_data_in    = dmem_read_data_in;
 
@@ -74,12 +74,12 @@ public:
         }
         #ifndef SYNTHESIS
         Instr instr = {df.instr_in()};
-        std::print("({}/{}){}: {} r({:02d})/({:02d}):{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{}, alu:{:08x},rs{:02d}/{:02d}:{:08x}/{:08x}, br({}){:08x} => "
+        std::print("({}/{}){}: {} rs{:02d}/{:02d}:{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:08x},rd{:02d} br({}){:08x} => "
                        "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.format(),
                 df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
                 (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
-                ex.alu_result_comb_func(), (int)state_comb[0].rs1, (int)state_comb[0].rs2, state_comb[0].rs1_val, state_comb[0].rs2_val,
+                (int)state_comb[0].rs1, (int)state_comb[0].rs2, state_comb[0].rs1_val, state_comb[0].rs2_val, state_comb[0].imm, ex.alu_result_comb_func(), (int)state_comb[0].rd,
                 (int)ex.branch_taken_out(), ex.branch_target_out(),
                 (int)ex.mem_write_out(), (int)ex.mem_read_out(),
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
@@ -137,12 +137,11 @@ public:
 
 #include "Ram.h"
 
-#define PROG_SIZE 256
 #define RAM_SIZE 1024
 
 class TestRiscV : public Module
 {
-    Ram<32,PROG_SIZE>   imem;
+    Ram<32,RAM_SIZE>   imem;
     Ram<32,RAM_SIZE>   dmem;
 #ifdef VERILATOR
     VERILATOR_MODEL riscv;
@@ -293,19 +292,19 @@ public:
         work(1, 1);
 
         /////////////// read program to memory
-        uint32_t ram[PROG_SIZE];
+        uint32_t ram[RAM_SIZE];
         FILE* fbin = fopen(filename.c_str(), "r");
         if (!fbin) {
             std::print("can't open file '{}'\n", filename);
             return false;
         }
         fseek(fbin, start_offset, SEEK_SET);
-        int read_bytes = fread(ram, 1, 4*PROG_SIZE, fbin);
+        int read_bytes = fread(ram, 1, 4*RAM_SIZE, fbin);
         std::print("Reading program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
 
         imem_write = true;
         imem.work(1, 1);
-        for (size_t addr = 0; addr < PROG_SIZE; ++addr) {
+        for (size_t addr = 0; addr < RAM_SIZE; ++addr) {
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
             imem.work(1, 0);
@@ -315,6 +314,7 @@ public:
         }
         imem_write = false;
         fclose(fbin);
+        dmem.ram.buffer = imem.ram.buffer;  // we need data from binary
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();

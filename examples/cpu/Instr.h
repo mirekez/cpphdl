@@ -14,7 +14,7 @@ enum Mem
 
 enum Wb
 {
-    WNONE, ALU, MEM, PC,
+    WNONE, ALU, MEM, PC2, PC4
 };
 
 enum Br
@@ -173,13 +173,13 @@ union Instr
             state.rd  = j.rd;
             state.imm = imm_J();
             state.br_op = Br::JAL;
-            state.wb_op = Wb::PC;
+            state.wb_op = Wb::PC4;
         }
         else if (r.opcode == 0b1100111) {  // JALR
             state.rd  = i.rd;
             state.imm = imm_I();
             state.br_op = Br::JALR;
-            state.wb_op = Wb::PC;
+            state.wb_op = Wb::PC4;
             state.rs1 = i.rs1;
         }
         else if (r.opcode == 0b0110111) {  // LUI
@@ -254,6 +254,7 @@ union Instr
         state.wb_op = 0;
         state.br_op = 0;
         state.funct3 = 0b010;  // LW/SW
+        state.imm = 0;
 
         if (c.opcode == 0b00) {
             if (c.funct3 == 0b000) {  // ADDI4SPN
@@ -286,14 +287,22 @@ union Instr
                 state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b001) {  // JAL
+                state.rd = 1;
+                state.wb_op = Wb::PC2;
                 state.br_op = Br::JAL;
-                state.wb_op = Wb::PC;
                 state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
             }
             else if (c.funct3 == 0b010) {  // LI
                 state.rd  = q1.rd_p+8;
                 state.imm = ((int32_t)(raw<<20))>>26;
                 state.wb_op = Wb::ALU;
+            }
+            else if (c.funct3 == 0b011) {  // ADDISP
+                state.rd  = 2;
+                state.rs1 = 2; // sp
+                state.imm = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
+                state.alu_op = Alu::ADD;
+                state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b100) {
                 if (c.b12 == 0) {  // C.ANDI
@@ -333,22 +342,23 @@ union Instr
         }
         else if (c.opcode == 0b10) {
             if (c.funct3 == 0b000) {  // SLLI
-                state.rd  = q2.rs1;
+                state.rd = q2.rs1;
                 state.rs1 = q2.rs1;
                 state.imm = (c.b12<<5) | bits(6,2);
                 state.alu_op = Alu::SLL;
                 state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b010) {  // LWSP
-                state.rd  = q2.rs1;
+                state.rd = q2.rs1;
                 state.rs1 = 2;  // sp
+                state.imm = (c.b12<<5) | (bits(6,4)<<2) | (bits(3,2)<<6);
+                state.alu_op = Alu::ADD;
                 state.mem_op = Mem::LOAD;
                 state.wb_op  = Wb::MEM;
-                state.imm = (c.b12<<5) | (bits(6,4)<<2) | (bits(3,2)<<6);
             }
             else if (c.funct3 == 0b100) {
                 if (q2.rs2 != 0) {  // C.MV
-                    state.rd  = q2.rs1;
+                    state.rd = q2.rs1;
                     state.rs1 = q2.rs1;
                     state.rs2 = q2.rs2;
                     state.alu_op = c.b12 == 0 ? Alu::PASSB : Alu::ADD;
@@ -357,19 +367,21 @@ union Instr
                 else if (q2.rs2 == 0 && c.b12 == 0) {  // C.JR
                     state.rs1 = q2.rs1;
                     state.br_op = Br::JR;
+                    state.wb_op = Wb::PC2;
                 }
                 else if (q2.rs2 == 0 && c.b12 == 1) {  // C.JALR
                     state.rs1 = q2.rs2;
                     state.rd = 1;
                     state.br_op = Br::JALR;
-                    state.wb_op = Wb::PC;
+                    state.wb_op = Wb::PC2;
                 }
             }
             else if (c.funct3 == 0b110) {  // SWSP
                 state.rs1 = 2;  // sp
                 state.rs2 = q2.rs2;
-                state.mem_op = Mem::STORE;
                 state.imm = (bits(8,7)<<6) | (bits(12,9)<<2);
+                state.mem_op = Mem::STORE;
+                state.alu_op = Alu::ADD;
             }
         }
     }
@@ -451,6 +463,7 @@ union Instr
                     switch (f3)
                     {
                         case 0b000: return "slli  ";
+                        case 0b001: return "fldsp ";
                         case 0b010: return "lwsp  ";
                         case 0b100: {
                             if (rs2 != 0 && b12 == 0) { return "mv    "; }
