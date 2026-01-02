@@ -4,7 +4,7 @@
 
 enum Alu
 {
-    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASSA, PASSB
+    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASSA, PASSB, MUL
 };
 
 enum Mem
@@ -141,7 +141,7 @@ union Instr
             state.rd = r.rd;
             state.wb_op = Wb::ALU;
             switch (r.funct3) {
-                case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : Alu::ADD; break;
+                case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : ((r.funct7 == 0b0000001) ? Alu::MUL : Alu::ADD); break;
                 case 0b111: state.alu_op = Alu::AND; break;
                 case 0b110: state.alu_op = Alu::OR;  break;
                 case 0b100: state.alu_op = Alu::XOR; break;
@@ -293,8 +293,11 @@ union Instr
                 state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
             }
             else if (c.funct3 == 0b010) {  // LI
-                state.rd  = q1.rd_p+8;
-                state.imm = ((int32_t)(raw<<20))>>26;
+                state.rd = q1.rs1;
+                int32_t imm = (bit(12) << 5) | bits(6, 2);
+                imm = (imm << 26) >> 26;
+                state.imm = imm;
+                state.alu_op = Alu::PASSB;
                 state.wb_op = Wb::ALU;
             }
             else if (c.funct3 == 0b011) {  // ADDISP
@@ -394,6 +397,7 @@ union Instr
             case 0b0110011:  // R-type
                 if (f3 == 0 && f7 == 0b0000000) return "add   ";
                 if (f3 == 0 && f7 == 0b0100000) return "sub   ";
+                if (f3 == 0 && f7 == 0b0000001) return "mul   ";
                 if (f3 == 7) return "and   ";
                 if (f3 == 6) return "or    ";
                 if (f3 == 4) return "xor   ";

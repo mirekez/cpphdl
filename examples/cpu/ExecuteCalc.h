@@ -63,6 +63,7 @@ public:
             case Alu::SLTU: alu_result_comb = (a < b); break;
             case Alu::PASSA: alu_result_comb = a; break;
             case Alu::PASSB: alu_result_comb = b; break;
+            case Alu::MUL:  alu_result_comb = a * b; break;
             case Alu::ANONE: break;
         }
         return alu_result_comb;
