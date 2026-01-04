@@ -4,23 +4,27 @@
 
 enum Alu
 {
-    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASSA, PASSB, MUL
+    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASSA, PASSB, MUL, DIV
 };
+constexpr const char* AOPS[] = {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASSA", "PASSB", "MUL", "DIV"};
 
 enum Mem
 {
     MNONE, LOAD, STORE
 };
+constexpr const char* MOPS[] = {"MNONE", "LOAD", "STORE"};
 
 enum Wb
 {
     WNONE, ALU, MEM, PC2, PC4
 };
+constexpr const char* WOPS[] = {"WNONE", "ALU", "MEM", "PC2", "PC4"};
 
 enum Br
 {
     BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, JR
 };
+constexpr const char* BOPS[] = {"BNONE", "BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU", "JAL", "JALR", "JR"};
 
 union Instr
 {
@@ -94,14 +98,7 @@ union Instr
     template<typename STATE>
     void decode(STATE& state)
     {
-        state.rd = 0;
-        state.rs1 = 0;  // means no need to read
-        state.rs2 = 0;
-        state.funct3 = 7;
-        state.alu_op = 0;
-        state.mem_op = 0;
-        state.wb_op = 0;
-        state.br_op = 0;
+        state = {};
 
         if (r.opcode == 0b0000011) {  // LOAD  // LB, LH, LW, LBU, LHU
             state.rd  = i.rd;
@@ -158,12 +155,12 @@ union Instr
             state.imm = imm_B();
             state.br_op = Br::BNONE;
             switch (b.funct3) {
-                case 0b000: state.br_op = Br::BEQ; break;
-                case 0b001: state.br_op = Br::BNE; break;
-                case 0b100: state.br_op = Br::BLT; break;
-                case 0b101: state.br_op = Br::BGE; break;
-                case 0b110: state.br_op = Br::BLTU; break;
-                case 0b111: state.br_op = Br::BGEU; break;
+                case 0b000: state.br_op = Br::BEQ; state.alu_op = Alu::SLTU; break;
+                case 0b001: state.br_op = Br::BNE; state.alu_op = Alu::SLTU; break;
+                case 0b100: state.br_op = Br::BLT; state.alu_op = Alu::SLT; break;
+                case 0b101: state.br_op = Br::BGE; state.alu_op = Alu::SLT; break;
+                case 0b110: state.br_op = Br::BLTU; state.alu_op = Alu::SLTU; break;
+                case 0b111: state.br_op = Br::BGEU; state.alu_op = Alu::SLTU; break;
             }
             state.funct3 = b.funct3;
             state.rs1 = b.rs1;
@@ -260,7 +257,7 @@ union Instr
             if (c.funct3 == 0b000) {  // ADDI4SPN
                 state.rd  = q0.rd_p+8;
                 state.rs1 = 2; // sp
-                state.imm = (bits(10,7)<<6) | (bits(12,11)<<4) | (bit(5)<<3) | (bit(6)<<2);
+                state.imm = (bits(10,7) << 6) | (bits(12,11) << 4) | (bits(6,5) << 2);
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
@@ -282,7 +279,9 @@ union Instr
             if (c.funct3 == 0b000) {  // ADDI
                 state.rd  = q1.rs1;
                 state.rs1 = q1.rs1;
-                state.imm = (c.b12<<5) | bits(6,2);
+                int32_t imm = (bit(12) << 5) | bits(6,2);
+                imm = (imm << 26) >> 26;
+                state.imm = imm;
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
@@ -300,17 +299,22 @@ union Instr
                 state.alu_op = Alu::PASSB;
                 state.wb_op = Wb::ALU;
             }
-            else if (c.funct3 == 0b011) {  // ADDISP
+            else if (c.funct3 == 0b011) {  // ADDI16SP
                 state.rd  = 2;
                 state.rs1 = 2; // sp
-                state.imm = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
+                int32_t imm = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
+                imm = (imm << 22) >> 22;
+                state.imm = imm;
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b100) {
                 if (c.b12 == 0) {  // C.ANDI
-                    state.rd   = q2.rs1;
-                    state.rs1  = q2.rs1;
+                    state.rd   = c.rs1_p + 8;
+                    state.rs1  = c.rs1_p + 8;
+                    int32_t imm = (bit(12) << 5) | bits(6,2);
+                    imm = (imm << 26) >> 26;
+                    state.imm = imm;
                     state.alu_op = Alu::AND;
                     state.wb_op = Wb::ALU;
                 }
@@ -323,6 +327,7 @@ union Instr
                 }
             }
             else if (c.funct3 == 0b101) {  // J
+                state.rd = 0;
                 state.br_op = Br::JAL;
                 state.imm = (c.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
             }
@@ -390,7 +395,7 @@ union Instr
     }
 
 #ifndef SYNTHESIS
-    std::string format()
+    std::string mnemonic()
     {
         auto decode_mnemonic = [&](uint32_t op, uint32_t f3, uint32_t f7) -> std::string {
             switch (op) {
@@ -485,25 +490,11 @@ union Instr
             return "unknwn";
         };
 
-        std::string name;
         if ((raw&3) == 3) {
-            name = decode_mnemonic(r.opcode, r.funct3, r.funct7);
-            return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:{:#04x}",
-                raw, name,
-                r.opcode != 0b0100011 && r.opcode != 0b1100011 ? (uint8_t)r.rd : 0,
-                r.opcode != 0b1101111 && r.opcode != 0b0110111 && r.opcode != 0b0010111 ? (uint8_t)r.rs1 : 0,
-                r.opcode != 0b0000011 && r.opcode != 0b0010011 && r.opcode != 0b1101111 &&
-                r.opcode != 0b1100111 && r.opcode != 0b0110111 && r.opcode != 0b0010111 ? (uint8_t)r.rs2 : 0,
-                (uint8_t)r.funct3, (uint8_t)r.funct7);
+            return std::format("[{:08X}]({})", raw, decode_mnemonic(r.opcode, r.funct3, r.funct7));
         }
         else {
-            name = decode_mnemonic16(c.opcode, c.funct3, c.b12, q2.rs2, c.bits6_5);
-            return std::format("[{:08X}]({}), rd:{:02d},rs1:{:02d},rs2:{:02d},f3:{:#03x},f7:xxxx",
-                raw, name,
-                c.opcode == 0b00 ? q0.rd_p+8 : (c.opcode == 0b01 ? (c.funct3 == 0b100 ? q2.rs1 : (c.funct3 >= 0b110 ? c.rs1_p+8 : q1.rd_p+8 ) ) : q2.rs1 ),
-                c.opcode == 0b00 ? q0.rd_p+8 : (c.opcode == 0b01 ? (c.funct3 == 0b100 ? q2.rs1 : (c.funct3 >= 0b110 ? c.rs1_p+8 : q1.rs1 ) ) : q2.rs1 ),
-                c.opcode == 0b00 ? q0.rs2    : (c.opcode == 0b01 ? (c.funct3 == 0b100 ? q2.rs1 : (c.funct3 >= 0b110 ? c.rs1_p+8 : q1.rs1 ) ) : q2.rs2 ),
-                (uint8_t)c.funct3);
+            return std::format("[    {:04X}]({})", (uint16_t)raw, decode_mnemonic16(c.opcode, c.funct3, c.b12, q2.rs2, c.bits6_5));
         }
     }
 #endif

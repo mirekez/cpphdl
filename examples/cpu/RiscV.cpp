@@ -73,17 +73,46 @@ public:
             return;
         }
         #ifndef SYNTHESIS
+        BIG_STATE tmp;
         Instr instr = {df.instr_in()};
-        std::print("({}/{}){}: {} rs{:02d}/{:02d}:{:08x}/{:08x} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:08x},rd{:02d} br({}){:08x} => "
-                       "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}\n",
-                (int)valid, (int)df.stall_out(), pc, instr.format(),
-                df.rs1_out(), df.rs2_out(), df.regs_data0_in(), df.regs_data1_in(),
-                (int)state_comb[0].valid, (uint8_t)state_comb[0].alu_op, (uint8_t)state_comb[0].mem_op, (uint8_t)state_comb[0].br_op, (uint8_t)state_comb[0].wb_op,
-                (int)state_comb[0].rs1, (int)state_comb[0].rs2, state_comb[0].rs1_val, state_comb[0].rs2_val, state_comb[0].imm, ex.alu_result_comb_func(), (int)state_comb[0].rd,
+        if ((instr.raw&3) == 3) {
+            instr.decode(tmp);
+        }
+        else {
+            instr.decode16(tmp);
+        }
+
+        // delayed by 1 to align WB
+        std::string interpret;
+        if (states_comb[1].valid && states_comb[1].alu_op != Alu::ANONE) {
+            interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)states_comb[1].rs1, (int)states_comb[1].rs2, AOPS[states_comb[1].alu_op],
+                             states_comb[1].debug_alu_a, states_comb[1].debug_alu_b);
+        }
+        if (states_comb[1].valid && states_comb[1].br_op != Br::BNONE && states_comb[1].debug_branch_taken) {
+            interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[states_comb[1].br_op], states_comb[1].debug_branch_target, (int)states_comb[1].rd);
+        }
+        if (states_comb[1].valid && states_comb[1].mem_op == Mem::LOAD) {
+            interpret += std::format("LOAD({:08x}) ", states_comb[1].alu_result);
+        }
+        if (states_comb[1].valid && states_comb[1].mem_op == Mem::STORE) {
+            interpret += std::format("STOR({:08x},{:08x}) from r{:02d} ", states_comb[1].alu_result, states_comb[1].rs2_val, (int)states_comb[1].rs2);
+        }
+        if (states_comb[1].valid && states_comb[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
+            interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[states_comb[1].wb_op], wb.regs_wr_id_out());
+        }
+        //
+
+        std::print("({}/{}){}: {} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => "
+                       "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}: {}\n",
+                (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
+                (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
+                (int)states_comb[0].valid, (uint8_t)states_comb[0].alu_op, (uint8_t)states_comb[0].mem_op, (uint8_t)states_comb[0].br_op, (uint8_t)states_comb[0].wb_op,
+                (int)states_comb[0].rs1, (int)states_comb[0].rs2, states_comb[0].rs1_val, states_comb[0].rs2_val, states_comb[0].imm, ex.alu_result_comb_func(), (int)states_comb[0].rd,
                 (int)ex.branch_taken_out(), ex.branch_target_out(),
                 (int)ex.mem_write_out(), (int)ex.mem_read_out(),
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
-                (int)state_comb[1].valid, (uint8_t)state_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
+                (int)states_comb[1].valid, (uint8_t)states_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
+                interpret);
         #endif
 
         regs.work(clk, reset);
@@ -92,7 +121,7 @@ public:
         if (valid && !df.stall_out()) {
             pc.next = pc + ((df.instr_in()&3)==3?4:2);
         }
-        if (state_comb[0].valid && ex.branch_taken_out()) {
+        if (states_comb[0].valid && ex.branch_taken_out()) {
             pc.next = ex.branch_target_out();
         }
 
@@ -137,7 +166,7 @@ public:
 
 #include "Ram.h"
 
-#define RAM_SIZE 1024
+#define RAM_SIZE 2048
 
 class TestRiscV : public Module
 {
@@ -190,7 +219,7 @@ public:
         imem.write_in = __VAL( imem_write );
         imem.write_addr_in = __VAL( imem_write_addr );
         imem.write_data_in = __VAL( imem_write_data );
-        imem.write_mask_in = __VAL( 0xFFFFFFFFU );
+        imem.write_mask_in = __VAL( 0xFFFFFFFFu );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem.connect();

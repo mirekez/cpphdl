@@ -90,10 +90,10 @@ struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
     STAGES members;
-    cpphdl::array<BIG_STATE,LENGTH> state_comb;
-    cpphdl::array<BIG_STATE,LENGTH>& state_comb_func()
+    cpphdl::array<BIG_STATE,LENGTH> states_comb;
+    cpphdl::array<BIG_STATE,LENGTH>& states_comb_func()
     {
-        return state_comb;
+        return states_comb;
     }
 
 public:
@@ -103,7 +103,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = __VAL( state_comb );
+                        stage.state_in = __VAL( states_comb );
                         stage.connect();
                     }()
                 ),
@@ -150,13 +150,13 @@ public:
             for (size_t y = 0; y < LENGTH; ++y) {
                 size_t x = 0;
                 size_t offset = 0;
-                state_comb[y] = {};
+                states_comb[y] = {};
                 (
                     (
                         [&]{
                             using State = typename std::remove_reference_t<decltype(stage)>::STATE;
                             if (x <= y) {
-                                *(State*)((uint8_t*)&state_comb[y] + offset) = stage.state_out()[y-x];  // assemble big state from own states for each y
+                                *(State*)((uint8_t*)&states_comb[y] + offset) = stage.state_out()[y-x];  // assemble big state from own states for each y
                             }
                             ++x;
                             offset += sizeof(State);
@@ -167,8 +167,8 @@ public:
             }
         }, members);
 
-        state_comb_func();
-//        std::print("~~~ {} == {}", (uint8_t)state_comb[0].alu_op, (uint8_t)std::get<0>(members).state_reg[0].alu_op);
+        states_comb_func();
+//        std::print("~~~ {} == {}", (uint8_t)states_comb[0].alu_op, (uint8_t)std::get<0>(members).state_reg[0].alu_op);
     }
 
 };

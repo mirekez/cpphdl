@@ -58,11 +58,16 @@ public:
         Instr instr = {instr_in()};
         if ((instr.raw&3) == 3) {
             instr.decode(state_comb);
+            if (instr.r.opcode == 0b0010111) {  // auipc
+                state_comb.rs1_val = pc_in();
+            }
         }
         else {
             instr.decode16(state_comb);
         }
         state_comb.valid = instr_valid_in();
+        state_comb.pc = pc_in();
+
         rs1_out_comb = state_comb.rs1;  // ???
         rs2_out_comb = state_comb.rs2;
         return state_comb;
@@ -73,7 +78,7 @@ public:
         // hazard
         auto s = state_comb_func();
         stall_comb = false;
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM /*&& state_reg[0].rd != 0*/) {  // Ex
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex
             if (state_reg[0].rd == s.rs1) {
                 stall_comb = true;
             }
@@ -94,8 +99,6 @@ public:
     {
         auto s = state_comb_func();
 
-        s.pc = pc_in();
-        s.rs1_val = pc_in();
         // fetch
         if (s.rs1) {
             s.rs1_val = regs_data0_in();
@@ -105,7 +108,7 @@ public:
         }
 
         // forwarding
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU /*&& state_reg[1].rd != 0*/) {  // Mem/Wb alu
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem/Wb alu
             if (state_reg[1].rd == s.rs1) {
                 s.rs1_val = state_in()[ID+1].alu_result;
             }
@@ -114,7 +117,7 @@ public:
             }
         }
 
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU /*&& state_reg[0].rd != 0*/) {  // Ex/Mem alu
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
             if (state_reg[0].rd == s.rs1) {
                 s.rs1_val = alu_result_in();
             }
@@ -123,7 +126,7 @@ public:
             }
         }
 
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM /*&& state_reg[1].rd != 0*/) {  // Mem/Wb
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem/Wb
             if (state_reg[1].rd == s.rs1) {
                 s.rs1_val = mem_data_in();
             }
