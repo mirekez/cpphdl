@@ -115,6 +115,11 @@ struct memory
         changes.clear();
     }
 
+    memory& operator=(memory<T,SIZE,DEPTH>& other)
+    {
+        memcpy(data, other.data, sizeof(array<T,SIZE>[DEPTH]));
+        return *this;
+    }
 
 };
 

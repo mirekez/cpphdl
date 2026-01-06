@@ -39,7 +39,7 @@ public:
     __PORT(bool)      mem_read_out       = __VAL( mem_read_reg );
     __PORT(uint32_t)  mem_read_addr_out  = __VAL( mem_addr_reg );
 
-    __PORT(uint32_t)  alu_result_out    = __VAL( alu_result_comb_func() );
+    __PORT(uint64_t)  alu_result_out    = __VAL( alu_result_comb_func() );
     __PORT(bool)      branch_taken_out  = __VAL( branch_taken_comb_func() );
     __PORT(uint32_t)  branch_target_out = __VAL( branch_target_comb_func() );
 
@@ -57,9 +57,10 @@ public:
 
     uint32_t alu_b_comb_func()
     {
-        return alu_b = (state_in()[ID-1].alu_op == Alu::ADD && state_in()[ID-1].mem_op != Mem::MNONE)
-                        ? uint32_t(state_in()[ID-1].imm)      // load/store address calc uses imm
-                        : state_in()[ID-1].rs2 ? state_in()[ID-1].rs2_val : uint32_t(state_in()[ID-1].imm);
+        return alu_b = (state_in()[ID-1].alu_op == Alu::ADD && state_in()[ID-1].mem_op != Mem::MNONE) ?
+                            uint32_t(state_in()[ID-1].imm) :      // load/store address calc uses imm
+                            (state_in()[ID-1].rs2 || state_in()[ID-1].br_op == BEQZ || state_in()[ID-1].br_op == BNEZ) ?
+                                state_in()[ID-1].rs2_val : uint32_t(state_in()[ID-1].imm);
     }
 
     uint64_t alu_result_comb_func()
@@ -78,9 +79,10 @@ public:
             case Alu::SRA:  alu_result_comb = uint32_t(int32_t(a) >> (b & 0x1F)); break;
             case Alu::SLT:  alu_result_comb = (int32_t(a) < int32_t(b)); break;
             case Alu::SLTU: alu_result_comb = (a < b); break;
-            case Alu::PASSA: alu_result_comb = a; break;
-            case Alu::PASSB: alu_result_comb = b; break;
+            case Alu::PASS: alu_result_comb = b; break;
             case Alu::MUL:  alu_result_comb = a * b; break;
+            case Alu::MULH: alu_result_comb = ((uint64_t)a * b) >> 32; break;
+            case Alu::DIV:  alu_result_comb = a / b; break;
             case Alu::ANONE: break;
         }
         if (alu_op == Alu::SLT || alu_op == Alu::SLTU) {
@@ -94,6 +96,8 @@ public:
         uint64_t alu_result = alu_result_comb_func();
         branch_taken_comb = false;
         switch (state_in()[ID-1].br_op) {
+            case Br::BEQZ: branch_taken_comb = alu_result>>32; break;
+            case Br::BNEZ: branch_taken_comb = !(alu_result>>32); break;
             case Br::BEQ: branch_taken_comb = alu_result>>32; break;
             case Br::BNE: branch_taken_comb = !(alu_result>>32); break;
             case Br::BLT: branch_taken_comb = alu_result&0xFFFFFFFFu; break;

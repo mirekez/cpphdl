@@ -95,7 +95,7 @@ public:
             interpret += std::format("LOAD({:08x}) ", states_comb[1].alu_result);
         }
         if (states_comb[1].valid && states_comb[1].mem_op == Mem::STORE) {
-            interpret += std::format("STOR({:08x},{:08x}) from r{:02d} ", states_comb[1].alu_result, states_comb[1].rs2_val, (int)states_comb[1].rs2);
+            interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", states_comb[1].alu_result, states_comb[1].rs2_val, (int)states_comb[1].rs2);
         }
         if (states_comb[1].valid && states_comb[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
             interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[states_comb[1].wb_op], wb.regs_wr_id_out());
@@ -114,6 +114,10 @@ public:
                 (int)states_comb[1].valid, (uint8_t)states_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
                 interpret);
         #endif
+
+        if (dmem_write_addr_out() == 0x11223344) {
+            printf("PRINT: %c\n", dmem_write_data_out()&0xFF);
+        }
 
         regs.work(clk, reset);
         Pipeline::work(clk, reset);
@@ -337,6 +341,7 @@ public:
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
             imem.work(1, 0);
+            imem.strobe();
             if (debugen_in) {
                 std::print("{:04x}: {:08x}\n", addr, ram[addr]);
             }

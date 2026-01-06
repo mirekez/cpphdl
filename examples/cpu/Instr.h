@@ -2,29 +2,33 @@
 
 #include <stdint.h>
 
+constexpr const char* AOPS[] =
+  {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASS", "MUL", "MULH", "DIV"};
 enum Alu
 {
-    ANONE, ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, PASSA, PASSB, MUL, DIV
+    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   DIV
 };
-constexpr const char* AOPS[] = {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASSA", "PASSB", "MUL", "DIV"};
 
+constexpr const char* MOPS[] =
+  {"MNONE", "LOAD", "STORE"};
 enum Mem
 {
-    MNONE, LOAD, STORE
+    MNONE,   LOAD,   STORE
 };
-constexpr const char* MOPS[] = {"MNONE", "LOAD", "STORE"};
 
+constexpr const char* WOPS[] =
+  {"WNONE", "ALU", "MEM", "PC2", "PC4"};
 enum Wb
 {
-    WNONE, ALU, MEM, PC2, PC4
+    WNONE,   ALU,   MEM,   PC2,   PC4
 };
-constexpr const char* WOPS[] = {"WNONE", "ALU", "MEM", "PC2", "PC4"};
 
+constexpr const char* BOPS[] =
+  {"BNONE", "BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU", "JAL", "JALR", "JR", "BEQZ", "BNEZ"};
 enum Br
 {
-    BNONE, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, JR
+    BNONE,   BEQ,   BNE,   BLT,   BGE,   BLTU,   BGEU,   JAL,   JALR,   JR,   BEQZ,   BNEZ
 };
-constexpr const char* BOPS[] = {"BNONE", "BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU", "JAL", "JALR", "JR"};
 
 union Instr
 {
@@ -143,9 +147,9 @@ union Instr
                 case 0b110: state.alu_op = Alu::OR;  break;
                 case 0b100: state.alu_op = Alu::XOR; break;
                 case 0b001: state.alu_op = Alu::SLL; break;
-                case 0b101: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SRA : Alu::SRL; break;
+                case 0b101: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SRA : ((r.funct7 == 0b0000001) ? Alu::DIV : Alu::SRL); break;
                 case 0b010: state.alu_op = Alu::SLT;  break;
-                case 0b011: state.alu_op = Alu::SLTU; break;
+                case 0b011: state.alu_op = (r.funct7 == 0b0000001) ? Alu::MULH : Alu::SLTU; break;
             }
             state.funct3 = r.funct3;
             state.rs1 = r.rs1;
@@ -182,7 +186,7 @@ union Instr
         else if (r.opcode == 0b0110111) {  // LUI
             state.rd  = u.rd;
             state.imm = imm_U();
-            state.alu_op = Alu::PASSA;   // or NONE, since result = imm
+            state.alu_op = Alu::PASS;   // or NONE, since result = imm
             state.wb_op = Wb::ALU;
         }
         else if (r.opcode == 0b0010111) {  // AUIPC
@@ -208,7 +212,7 @@ union Instr
         uint16_t rd_p    : 3;
         uint16_t bits6_5 : 2;
         uint16_t rs1_p   : 3;
-        uint16_t generic1: 2;
+        uint16_t bits11_10: 2;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
     } c;
@@ -217,7 +221,7 @@ union Instr
         uint16_t rd_p    : 3;
         uint16_t generic : 2;
         uint16_t rs2     : 4;
-        uint16_t generic1: 1;
+        uint16_t bits11_10: 1;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
     } q0;
@@ -255,29 +259,30 @@ union Instr
 
         if (c.opcode == 0b00) {
             if (c.funct3 == 0b000) {  // ADDI4SPN
-                state.rd  = q0.rd_p+8;
+                state.rd = q0.rd_p+8;
                 state.rs1 = 2; // sp
                 state.imm = (bits(10,7) << 6) | (bits(12,11) << 4) | (bits(6,5) << 2);
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b010) {  // LW
-                state.rd  = q0.rd_p+8;
+                state.rd = q0.rd_p+8;
                 state.rs1 = q0.rd_p+8;
                 state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
                 state.mem_op = Mem::LOAD;
                 state.wb_op  = Wb::MEM;
             }
             else if (c.funct3 == 0b110) {  // SW
-                state.rs1 = q0.rd_p+8;
-                state.rs2 = q0.rs2;
+                state.rs1 = c.rs1_p+8;
+                state.rs2 = c.rd_p+8;
                 state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                state.alu_op = Alu::ADD;    // base + offset
                 state.mem_op = Mem::STORE;
             }
         }
         else if (c.opcode == 0b01) {
             if (c.funct3 == 0b000) {  // ADDI
-                state.rd  = q1.rs1;
+                state.rd = q1.rs1;
                 state.rs1 = q1.rs1;
                 int32_t imm = (bit(12) << 5) | bits(6,2);
                 imm = (imm << 26) >> 26;
@@ -296,32 +301,46 @@ union Instr
                 int32_t imm = (bit(12) << 5) | bits(6, 2);
                 imm = (imm << 26) >> 26;
                 state.imm = imm;
-                state.alu_op = Alu::PASSB;
+                state.alu_op = Alu::PASS;
                 state.wb_op = Wb::ALU;
             }
             else if (c.funct3 == 0b011) {  // ADDI16SP
-                state.rd  = 2;
+                state.rd = 2;
                 state.rs1 = 2; // sp
                 int32_t imm = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
                 imm = (imm << 22) >> 22;
                 state.imm = imm;
                 state.alu_op = Alu::ADD;
-                state.wb_op  = Wb::ALU;
+                state.wb_op = Wb::ALU;
             }
             else if (c.funct3 == 0b100) {
-                if (c.b12 == 0) {  // C.ANDI
-                    state.rd   = c.rs1_p + 8;
-                    state.rs1  = c.rs1_p + 8;
+                if (c.bits11_10 == 0) {  // C.SRLI
+                    state.rd = c.rs1_p + 8;
+                    state.rs1 = c.rs1_p + 8;
+                    state.imm = bits(6, 2);
+                    state.alu_op = Alu::SRL;
+                    state.wb_op = Wb::ALU;
+                }
+                else if (c.bits11_10 == 1) {  // C.SRAI
+                    state.rd = c.rs1_p + 8;
+                    state.rs1 = c.rs1_p + 8;
+                    state.imm = bits(6, 2);
+                    state.alu_op = Alu::SRA;
+                    state.wb_op = Wb::ALU;
+                }
+                else if (c.bits11_10 == 2) {  // C.ANDI
+                    state.rd = c.rs1_p + 8;
+                    state.rs1 = c.rs1_p + 8;
                     int32_t imm = (bit(12) << 5) | bits(6,2);
                     imm = (imm << 26) >> 26;
                     state.imm = imm;
                     state.alu_op = Alu::AND;
                     state.wb_op = Wb::ALU;
                 }
-                else if (c.b12 == 1 && c.bits6_5 == 0) {  // C.SUB, C.XOR, C.OR, C.AND
-                    state.rd   = q2.rs1;
-                    state.rs1  = q2.rs1;
-                    state.rs2  = q2.rs2;
+                else if (c.bits11_10 == 3 && c.b12 == 0) {  // C.SUB, C.XOR, C.OR, C.AND
+                    state.rd = q2.rs1;
+                    state.rs1 = q2.rs1;
+                    state.rs2 = q2.rs2;
                     state.alu_op = c.bits6_5 == 0 ? Alu::SUB : ( c.bits6_5 == 1 ? Alu::XOR : ( c.bits6_5 == 2 ? Alu::OR : Alu::AND ) );
                     state.wb_op = Wb::ALU;
                 }
@@ -333,7 +352,8 @@ union Instr
             }
             else if (c.funct3 == 0b110) {  // BEQZ
                 state.rs1 = c.rs1_p+8;
-                state.br_op = Br::BEQ;
+                state.br_op = Br::BEQZ;
+                state.alu_op = Alu::SLTU;
                 state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
                 if (c.b12) {
                     state.imm |= ~0x1FF;
@@ -341,7 +361,8 @@ union Instr
             }
             else if (c.funct3 == 0b111) {  // BNEZ
                 state.rs1 = c.rs1_p+8;
-                state.br_op = Br::BNE;
+                state.br_op = Br::BNEZ;
+                state.alu_op = Alu::SLTU;
                 state.imm = (c.b12<<8)|(bits(6,5)<<6)|(bit(2)<<5)|(bits(11,10)<<3)|(bits(4,3)<<1);
                 if (c.b12) {
                     state.imm |= ~0x1FF;
@@ -369,7 +390,7 @@ union Instr
                     state.rd = q2.rs1;
                     state.rs1 = q2.rs1;
                     state.rs2 = q2.rs2;
-                    state.alu_op = c.b12 == 0 ? Alu::PASSB : Alu::ADD;
+                    state.alu_op = c.b12 == 0 ? Alu::PASS : Alu::ADD;
                     state.wb_op  = Wb::ALU;
                 }
                 else if (q2.rs2 == 0 && c.b12 == 0) {  // C.JR
@@ -409,7 +430,9 @@ union Instr
                 if (f3 == 1) return "sll   ";
                 if (f3 == 5 && f7 == 0b0000000) return "srl   ";
                 if (f3 == 5 && f7 == 0b0100000) return "sra   ";
+                if (f3 == 5 && f7 == 0b0000001) return "divu  ";
                 if (f3 == 2) return "slt   ";
+                if (f3 == 3 && f7 == 0b0000001) return "mulhu ";
                 if (f3 == 3) return "sltu  ";
                 return "r-type";
             case 0b0010011:  // I-type ALU
@@ -457,11 +480,13 @@ union Instr
                         case 0b010: return "li    ";
                         case 0b011: return "addisp"; // or lui
                         case 0b100: {
-                            if (b12 == 0) { return "andi  "; }
-                            if (b12 == 1 && bits6_5 == 0) { return "sub   "; }
-                            if (b12 == 1 && bits6_5 == 1) { return "xor   "; }
-                            if (b12 == 1 && bits6_5 == 2) { return "or    "; }
-                            if (b12 == 1 && bits6_5 == 3) { return "and   "; }
+                            if (c.bits11_10 == 0) { return "srli  "; }
+                            if (c.bits11_10 == 1) { return "srai  "; }
+                            if (c.bits11_10 == 2) { return "andi  "; }
+                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 0) { return "sub   "; }
+                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 1) { return "xor   "; }
+                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 2) { return "or    "; }
+                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 3) { return "and   "; }
                             return "illgl ";
                         }
                         case 0b101: return "j     ";
