@@ -23,7 +23,7 @@ public:
     uint32_t branch_target_comb;
     uint32_t alu_a;
     uint32_t alu_b;
-    uint32_t alu_result_comb;
+    uint64_t alu_result_comb;
 
     reg<u32> mem_addr_reg;
     reg<u32> mem_data_reg;
@@ -67,7 +67,8 @@ public:
     {
         uint32_t a = alu_a_comb_func();
         uint32_t b = alu_b_comb_func();
-        uint8_t alu_op = state_in()[ID-1].alu_op;
+        alu_result_comb = 0;
+        uint32_t alu_op = state_in()[ID-1].alu_op;
         switch (alu_op) {
             case Alu::ADD:  alu_result_comb = a + b; break;
             case Alu::SUB:  alu_result_comb = a - b; break;
@@ -83,6 +84,7 @@ public:
             case Alu::MUL:  alu_result_comb = a * b; break;
             case Alu::MULH: alu_result_comb = ((uint64_t)a * b) >> 32; break;
             case Alu::DIV:  alu_result_comb = a / b; break;
+            case Alu::REM:  alu_result_comb = a % b; break;
             case Alu::ANONE: break;
         }
         if (alu_op == Alu::SLT || alu_op == Alu::SLTU) {

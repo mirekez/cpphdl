@@ -115,7 +115,7 @@ public:
                 interpret);
         #endif
 
-        if (dmem_write_addr_out() == 0x11223344) {
+        if (dmem_write_addr_out() == 0x11223344 && dmem_write_out() ) {
             printf("PRINT: %c\n", dmem_write_data_out()&0xFF);
         }
 

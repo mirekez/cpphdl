@@ -3,10 +3,10 @@
 #include <stdint.h>
 
 constexpr const char* AOPS[] =
-  {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASS", "MUL", "MULH", "DIV"};
+  {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASS", "MUL", "MULH", "DIV", "REM"};
 enum Alu
 {
-    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   DIV
+    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   DIV,   REM
 };
 
 constexpr const char* MOPS[] =
@@ -143,7 +143,7 @@ union Instr
             state.wb_op = Wb::ALU;
             switch (r.funct3) {
                 case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : ((r.funct7 == 0b0000001) ? Alu::MUL : Alu::ADD); break;
-                case 0b111: state.alu_op = Alu::AND; break;
+                case 0b111: state.alu_op = (r.funct7 == 0b0000001) ? Alu::REM : state.alu_op = Alu::AND; break;
                 case 0b110: state.alu_op = Alu::OR;  break;
                 case 0b100: state.alu_op = Alu::XOR; break;
                 case 0b001: state.alu_op = Alu::SLL; break;
@@ -269,6 +269,7 @@ union Instr
                 state.rd = q0.rd_p+8;
                 state.rs1 = q0.rd_p+8;
                 state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
+                state.alu_op = Alu::ADD;
                 state.mem_op = Mem::LOAD;
                 state.wb_op  = Wb::MEM;
             }
@@ -276,7 +277,7 @@ union Instr
                 state.rs1 = c.rs1_p+8;
                 state.rs2 = c.rd_p+8;
                 state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
-                state.alu_op = Alu::ADD;    // base + offset
+                state.alu_op = Alu::ADD;
                 state.mem_op = Mem::STORE;
             }
         }
@@ -424,6 +425,7 @@ union Instr
                 if (f3 == 0 && f7 == 0b0000000) return "add   ";
                 if (f3 == 0 && f7 == 0b0100000) return "sub   ";
                 if (f3 == 0 && f7 == 0b0000001) return "mul   ";
+                if (f3 == 7 && f7 == 0b0000001) return "remu  ";
                 if (f3 == 7) return "and   ";
                 if (f3 == 6) return "or    ";
                 if (f3 == 4) return "xor   ";
