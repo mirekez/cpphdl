@@ -116,7 +116,9 @@ public:
         #endif
 
         if (dmem_write_addr_out() == 0x11223344 && dmem_write_out() ) {
-            printf("PRINT: %c\n", dmem_write_data_out()&0xFF);
+            FILE* out = fopen("out.txt", "a");
+            fprintf(out, "%c", dmem_write_data_out()&0xFF);
+            fclose(out);
         }
 
         regs.work(clk, reset);
@@ -319,6 +321,9 @@ public:
             std::print("\n");
         }
 
+        FILE* out = fopen("out.txt", "w");
+        fclose(out);
+
         __inst_name = "riscv_test";
         connect();
         work(0, 1);
@@ -352,7 +357,7 @@ public:
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();
-        int cycles = 100000;
+        int cycles = 1000000;
         int clk = 0;
         while (--cycles && !error) {
             comb();

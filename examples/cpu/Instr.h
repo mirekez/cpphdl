@@ -220,15 +220,6 @@ union Instr
         uint16_t opcode  : 2;
         uint16_t rd_p    : 3;
         uint16_t generic : 2;
-        uint16_t rs2     : 4;
-        uint16_t bits11_10: 1;
-        uint16_t b12     : 1;
-        uint16_t funct3  : 3;
-    } q0;
-    struct {
-        uint16_t opcode  : 2;
-        uint16_t rd_p    : 3;
-        uint16_t generic : 2;
         uint16_t rs1     : 5;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
@@ -247,27 +238,21 @@ union Instr
     template<typename STATE>
     void decode16(STATE& state)
     {
-        state.rs1 = 0;  // means no need to read
-        state.rs2 = 0;
+        state = {};
         state.funct3 = 7;
-        state.alu_op = 0;
-        state.mem_op = 0;
-        state.wb_op = 0;
-        state.br_op = 0;
         state.funct3 = 0b010;  // LW/SW
-        state.imm = 0;
 
         if (c.opcode == 0b00) {
             if (c.funct3 == 0b000) {  // ADDI4SPN
-                state.rd = q0.rd_p+8;
+                state.rd = c.rd_p+8;
                 state.rs1 = 2; // sp
                 state.imm = (bits(10,7) << 6) | (bits(12,11) << 4) | (bits(6,5) << 2);
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
             else if (c.funct3 == 0b010) {  // LW
-                state.rd = q0.rd_p+8;
-                state.rs1 = q0.rd_p+8;
+                state.rd = c.rd_p+8;
+                state.rs1 = c.rs1_p+8;
                 state.imm = (bit(5)<<6) | (bits(12,10)<<3) | (bit(6)<<2);
                 state.alu_op = Alu::ADD;
                 state.mem_op = Mem::LOAD;
