@@ -208,11 +208,15 @@ bool putField(FieldDecl* FD, Helpers& hlp)
         DEBUG_AST1(" *pointer*");
     }
 
+    QT = QT.getDesugaredType(hlp.Ctx);
+//!!!    QT = QT.getCanonicalType();
+//    auto T = QT.getUnqualifiedType();
+
+    hlp.getStdFunctionType(QT);
+
     cpphdl::Expr expr = hlp.digQT(QT);
 
-    if (pointer || (FD->getNameAsString().length() > 3
-                && (FD->getNameAsString().rfind("_in") == FD->getNameAsString().length()-3
-                || FD->getNameAsString().rfind("_out") == FD->getNameAsString().length()-4))) {
+    if (str_ending(FD->getNameAsString(), "_in") || str_ending(FD->getNameAsString(), "_out")) {
         DEBUG_AST1(" {port " << FD->getNameAsString() << "}");
 
         cpphdl::Field* field = 0;
@@ -374,6 +378,19 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         {
             DEBUG_AST(debugIndent, "% VisitMemberExpr");
             method.statements.emplace_back(hlp.exprToExpr(ME));
+            DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
+            return true;
+        }
+
+        bool TraverseCallExpr(CallExpr* E)
+        {
+            VisitCallExpr(E);
+            return true;
+        }
+
+        bool VisitCallExpr(clang::CallExpr *CE) {
+            DEBUG_AST(debugIndent, "% VisitCallExpr");
+            method.statements.emplace_back(hlp.exprToExpr(CE));
             DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
             return true;
         }

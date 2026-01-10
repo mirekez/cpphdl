@@ -44,10 +44,10 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL; );
-        mem.write_addr_in = __VAL( wp_reg; );
+        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
+        mem.write_addr_in = __VAL( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = __VAL( rp_reg; );
+        mem.read_addr_in  = __VAL( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem.connect();
@@ -67,6 +67,11 @@ public:
     {
         if (!clk) return;
         mem.work(clk, reset);
+
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
+                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_out(), (int)empty_out(), reset);
+        }
 
         if (reset) {
             wp_reg.clr();
@@ -112,10 +117,6 @@ public:
 
         afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
 
-        if (debugen_in) {
-            std::print("{:s}: input: ({}){}, output: ({}){}, full: {}, empty: {}\n", __inst_name,
-                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), (int)full_out(), (int)empty_out());
-        }
     }
 
     void strobe()
@@ -130,7 +131,7 @@ public:
     void comb()
     {
         mem.comb();
-        mem.read_data_out_comb_func();
+        mem.data_out_comb_func();
     }
 };
 /////////////////////////////////////////////////////////////////////////
@@ -190,14 +191,14 @@ public:
     void connect()
     {
 #ifndef VERILATOR
-        fifo.write_in        = __VAL( write_reg; );
-        fifo.write_data_in   = __VAL( data_reg; );
-        fifo.read_in         = __VAL( read_reg; );
-        fifo.clear_in        = __VAL( clear_reg; );
+        fifo.write_in        = __VAL( write_reg );
+        fifo.write_data_in   = __VAL( data_reg );
+        fifo.read_in         = __VAL( read_reg );
+        fifo.clear_in        = __VAL( clear_reg );
         fifo.__inst_name = __inst_name + "/fifo";
+        fifo.connect();
 #endif
         fifo.debugen_in  = debugen_in;
-        fifo.connect();
     }
 
     void work(bool clk, bool reset)
@@ -218,7 +219,6 @@ public:
         fifo.reset = reset;
         fifo.eval();
 #endif
-
         if (reset) {
             clear_reg.clr();
             read_addr.clr();
@@ -226,10 +226,12 @@ public:
             was_read.clr();
             write_reg.clr();
             read_reg.clr();
+            to_read_cnt.clr();
+            to_write_cnt.clr();
             return;
         }
 
-        if (!clk) {  // all checks on negedge edge
+        if (clk) {
             if (!reset && to_read_cnt && memcmp(&fifo_read_data, &mem_ref[read_addr], sizeof(fifo_read_data)) != 0
                 && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
                 std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
@@ -239,7 +241,6 @@ public:
                     read_addr);
                 error = true;
             }
-            return;
         }
 
         write_reg.next = 0;
@@ -320,7 +321,10 @@ public:
         while (--cycles) {
             comb();
             work(clk, 0);
-            strobe();
+
+            if (clk) {
+                strobe();
+            }
 
             if (clk && error) {
                 break;

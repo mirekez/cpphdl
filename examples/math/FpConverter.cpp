@@ -247,14 +247,14 @@ public:
         read_data = converter.data_out();
         converter.work(clk, reset);
 #else
-        memcpy(&read_data, &data_out, sizeof(out_reg));
-        converter.debugen_in    = debugen_in;
+        memcpy(&read_data, &converter.data_out, sizeof(read_data));
+        memcpy(converter.data_in, &out_reg, sizeof(converter.data_in));
+        converter.debugen_in = debugen_in;
 
         converter.clk = clk;
         converter.reset = reset;
         converter.eval();  // eval of verilator should be in the end
 #endif
-
         if (reset) {
             error = false;
             can_check1.clr();
@@ -326,10 +326,18 @@ public:
         work(1, 1);
         int cycles = 100000;
         int clk = 0;
-        while (--cycles && !error) {
+        while (--cycles) {
             comb();
             work(clk, 0);
-            strobe();
+
+            if (clk) {
+                strobe();
+            }
+
+            if (clk && error) {
+                break;
+            }
+
             clk = !clk;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",

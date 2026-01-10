@@ -27,13 +27,13 @@ public:
 
     __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     __PORT(bool)                      read_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( read_data_out_comb_func() );
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( data_out_comb_func() );
 
     bool                      debugen_in;
 
     void connect() {}
 
-    logic<MEM_WIDTH_BYTES*8>& read_data_out_comb_func()
+    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
     {
         if (SHOWAHEAD) {
             data_out_comb = buffer[read_addr_in()];
@@ -49,6 +49,7 @@ public:
     void work(bool clk, bool reset)
     {
         if (!clk) return;
+
         if (write_in()) {
             mask = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
@@ -124,6 +125,7 @@ public:
     {
         debugen_in = debug;
         mem_copy = new std::array<uint8_t,MEM_WIDTH_BYTES>[MEM_DEPTH];
+        memset((void*)mem_copy, 0, sizeof(std::array<uint8_t,MEM_WIDTH_BYTES>[MEM_DEPTH]));
     }
 
     ~TestMemory()
@@ -134,16 +136,16 @@ public:
     void connect()
     {
 #ifndef VERILATOR
-        mem.write_addr_in = __VAL( write_addr_reg; );
-        mem.write_in =      __VAL( write_reg; );
-        mem.write_data_in = __VAL( data_reg; );
-        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL; );
-        mem.read_addr_in =  __VAL( read_addr_reg; );
-        mem.read_in =       __VAL( read_reg; );
+        mem.write_addr_in = __VAL( write_addr_reg );
+        mem.write_in =      __VAL( write_reg );
+        mem.write_data_in = __VAL( data_reg );
+        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
+        mem.read_addr_in =  __VAL( read_addr_reg );
+        mem.read_in =       __VAL( read_reg );
         mem.__inst_name = __inst_name + "/mem";
+        mem.connect();
 #endif
         mem.debugen_in  = debugen_in;
-        mem.connect();
     }
 
     void work(bool clk, bool reset)
@@ -166,7 +168,6 @@ public:
         mem.reset = reset;
         mem.eval();
 #endif
-
         if (reset) {
 //            clean.set(1);
             write_reg.clr();
@@ -177,7 +178,7 @@ public:
             return;
         }
 
-        if (!clk) {  // all checks on negedge edge
+        if (clk) {
             if (!reset && to_read_cnt && memcmp(&mem_read_data, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(mem_read_data)) != 0
                 && (was_read || SHOWAHEAD)) {
                 std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
@@ -187,7 +188,9 @@ public:
                     SHOWAHEAD?read_addr_reg:was_read_addr);
                 error = true;
             }
-            return;
+            if (write_reg) {  // change after all checks (we use simple, not registered memory here)
+                memcpy(&mem_copy[write_addr_reg], &data_reg, sizeof(mem_copy[write_addr_reg]));
+            }
         }
 
         write_reg.next = 0;
@@ -229,9 +232,6 @@ public:
         if (was_read) {
             was_read_addr.next = read_addr_reg;
         }
-        if (write_reg) {  // change after all checks since we use simple (not strobed) memory in test
-            memcpy(&mem_copy[write_addr_reg], &data_reg, sizeof(mem_copy[write_addr_reg]));
-        }
     }
 
     void strobe()
@@ -257,7 +257,7 @@ public:
     {
 #ifndef VERILATOR
         mem.comb();
-        mem.read_data_out_comb_func();
+        mem.data_out_comb_func();
 #endif
     }
 
@@ -281,7 +281,10 @@ public:
         while (--cycles) {
             comb();
             work(clk, 0);
-            strobe();
+
+            if (clk) {
+                strobe();
+            }
 
             if (clk && error) {
                 break;

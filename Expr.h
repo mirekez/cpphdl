@@ -45,8 +45,8 @@ struct Expr
         FLAG_NONE = 0,
         FLAG_WIRE = 1,
         FLAG_REG = 2,
-        FLAG_NORETURN = 4,  // translating connect() function into generate assign block
-        FLAG_RETURN = 8,  // it's function and can return (not disable task)
+        FLAG_ASSIGN = 4,  // translating connect() function into generate assign block
+        FLAG_COMB = 8,  // it's comb block and return should be skipped
         FLAG_SPECVAL = 16,  // show number values from specialization if possible
         FLAG_CALL = 32,  // member inside call
         FLAG_ANON = 64,  // anonymous struct or union

@@ -94,6 +94,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 noBrackets = true;
                 func = "";
             }
+            if (str_ending(value, "_comb_func")) {
+                std::string str = value;
+                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+            }
 
             std::string str = func;
             if (!noBrackets) {
@@ -120,6 +124,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "[]") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
+            }
+            if (value == "()") {
+                ASSERT(sub.size() >= 1);
+                return indent_str + sub[0].str();
             }
             if (value == "*" && sub.size() == 1) {  // we dont need pointers int Verilog
                 ASSERT(sub.size() >= 1);
@@ -178,9 +186,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "work" || value == "connect" || value == "strobe" || value == "comb") {  // forbidden calls
                 return "";
             }
-            if (sub.size() >= 1 && value.size() > 10 && value.find("_comb_func") == value.size()-10) {
+            if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
                 std::string str = value;
-                return indent_str + str.replace(str.find("_comb_func") + 5, 5, "");
+                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
 
             std::string str = "(";
@@ -294,7 +302,19 @@ if (sub.size() == 0) return "??????";
             }
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
-            return ((flags&FLAG_RETURN) && sub.size()==1) ? (indent_str + "return " + sub[0].str()) : ((flags&FLAG_NORETURN) ? "" : indent_str + "disable " + currMethod->name);//(sub.size()==1 ? "return " + sub[0].str() : "return");
+            if (sub.size() >= 1) {
+                return (flags&FLAG_ASSIGN) ? indent_str + sub[0].str() :
+                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER?"":indent_str + sub[0].str()) : indent_str + "return " + sub[0].str());
+            }
+            else {
+                return indent_str + "disable " + currMethod->name;
+            }
+
+/* ((flags&FLAG_RETURN) && sub.size()==1) ?
+                       (indent_str + "return " + sub[0].str()) :
+                       ((flags&FLAG_NORETURN) ?
+                           "" :
+                           indent_str + "disable " + currMethod->name);//(sub.size()==1 ? "return " + sub[0].str() : "return");*/
         case EXPR_FOR:
         {
             ASSERT(sub.size()==4);
@@ -327,7 +347,7 @@ if (sub.size() == 0) return "??????";
         {
             ASSERT(sub.size()>=1);
             std::string param;
-            if (sub[0].traverseIf( [&](Expr& e/*, std::string& param*/) { return e.value == "clk";}/*, param*/ )) {
+            if (sub[0].traverseIf( [&](Expr& e) { return e.value == "clk";} )) {
                 return "";
             }
             std::string str;
@@ -358,6 +378,7 @@ if (sub.size() == 0) return "??????";
             std::string str;
             for (auto& stmt : sub) {
                 stmt.indent = indent;
+                stmt.flags = flags;
                 auto s = stmt.str(prefix);
                 if (s.length() && !stmt.isMultiline()) {
                     s += ";\n";
@@ -471,7 +492,7 @@ std::string Expr::typeToSV(std::string name, std::string size)
     return str;
 }
 
-Expr Expr::simplify()
+Expr Expr::simplify()  // open brackets for *(+-)
 {
     Expr expr = *this;
     while (

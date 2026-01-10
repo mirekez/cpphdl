@@ -24,7 +24,7 @@ bool Method::print(std::ofstream& out)
         return printConns(out);
     }
 
-    if (name.length() > 10 && name.rfind("_comb_func") == name.length()-10) {
+    if (name.length() > 10 && str_ending(name, "_comb_func")) {
         return printComb(out);
     }
 
@@ -46,7 +46,7 @@ bool Method::print(std::ofstream& out)
     for (auto& param : parameters) {
         if (param.name != "clk") {
             out << (params_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
-                << (param.name.find("_out") == param.name.size()-4 ? "output " : "input ") << param.expr.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
+                << (str_ending(param.name, "_out") ? "output " : "input ") << param.expr.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
@@ -58,9 +58,9 @@ bool Method::print(std::ofstream& out)
 
     for (auto& stmt : statements) {
         stmt.indent = 2;
-        if (ret.size() != 0) {
-            stmt.flags = Expr::FLAG_RETURN;
-        }
+//        if (ret.size() != 0) {
+//            stmt.flags = Expr::FLAG_RETURN;
+//        }
         auto s = stmt.str();
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";
@@ -127,15 +127,23 @@ bool Method::printConns(std::ofstream& out)
         out << ";\n";
     }
     for (auto& stmt : statements) {
-//        std::string param;
-        if (stmt.traverseIf( [](Expr& e/*, std::string& param*/) { return e.value == "__inst_name";}/*, param*/ )) {
+        if (stmt.traverseIf( [](Expr& e) { return e.value == "__inst_name";} )) {
             continue;
         }
 
+        bool has_body = false;
+        stmt.traverseIf( [&](Expr& e) {
+                    e.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
+                    if (e.type == Expr::EXPR_BODY) {
+                        has_body = true;  // lambda
+                    }
+                    return false;
+                } );  // we set flags individually, not all Exprs propagate its flags
+
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_NORETURN | Expr::FLAG_NOCALLS;
+        stmt.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
         auto s = stmt.str("assign ");
-        if (s.length() && !stmt.isMultiline()) {
+        if (s.length() && !(stmt.isMultiline() || has_body)) {
             s += ";\n";
         }
         out << s;
@@ -144,9 +152,11 @@ bool Method::printConns(std::ofstream& out)
 
     for (auto& port : currModule->ports) {  // outport initializers
         if (port.initializer.type != Expr::EXPR_EMPTY
-            && port.initializer.sub.size() >= 1 && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
-            && port.initializer.sub[0].value != "nullptr") {
-            out << "    assign " << port.name << " = " << port.initializer.str() << ";\n";
+            && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
+            && port.initializer.sub.size() >= 1 /*outdated*/ && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
+            /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
+            port.initializer.flags = Expr::FLAG_ASSIGN;
+            out << "    assign " << port.name << " = " << port.initializer.str() << ( port.initializer.type == cpphdl::Expr::EXPR_BODY ? "" : ";\n");
         }
     }
 
@@ -192,7 +202,7 @@ bool Method::printComb(std::ofstream& out)
     out << "    always @(*) begin\n";
     for (auto& stmt : statements) {
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_NORETURN;
+        stmt.flags = Expr::FLAG_COMB;
         auto s = stmt.str();
         if (s.length() && !stmt.isMultiline()) {
             s += ";\n";

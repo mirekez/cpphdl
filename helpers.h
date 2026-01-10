@@ -24,6 +24,7 @@ struct Helpers
     cpphdl::Expr digQT(QualType& QT);
     void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true);
     bool specializationToParameters(const CXXRecordDecl* RD, std::vector<cpphdl::Field>& params);
+    bool getStdFunctionType(QualType& QT);
 
 };
 

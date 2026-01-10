@@ -52,4 +52,3 @@ struct cpphdl_exception
 #include <functional>
 #define __PORT(a...) std::function<a()>
 #define __VAL(a...)  [&](){ return a; }
-#define __FUNC(a...) [&](){ a }
