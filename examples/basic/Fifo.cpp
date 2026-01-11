@@ -127,12 +127,6 @@ public:
         full_reg.strobe();
         afull_reg.strobe();
     }
-
-    void comb()
-    {
-        mem.comb();
-        mem.data_out_comb_func();
-    }
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -287,15 +281,6 @@ public:
         to_read_cnt.strobe();
     }
 
-    void comb()
-    {
-#ifndef VERILATOR
-        fifo.comb();
-        fifo.full_comb_func();
-        fifo.empty_comb_func();
-#endif
-    }
-
     bool run()
     {
         for (size_t i=0; i < FIFO_DEPTH; ++i) {
@@ -319,7 +304,6 @@ public:
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            comb();
             work(clk, 0);
 
             if (clk) {

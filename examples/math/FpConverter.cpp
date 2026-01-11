@@ -175,10 +175,6 @@ public:
     {
         out_reg.strobe();
     }
-
-    void comb()
-    {
-    }
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -299,14 +295,6 @@ public:
         can_check2.strobe();
     }
 
-    void comb()
-    {
-#ifndef VERILATOR
-        converter.conv_comb_func();
-        converter.comb();
-#endif
-    }
-
     bool run()
     {
 #ifdef VERILATOR
@@ -326,7 +314,6 @@ public:
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            comb();
             work(clk, 0);
 
             if (clk) {

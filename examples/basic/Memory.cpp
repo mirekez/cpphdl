@@ -74,8 +74,6 @@ public:
         buffer.apply();
         data_out_reg.strobe();
     }
-
-    void comb() {}
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -253,14 +251,6 @@ public:
         to_read_cnt.strobe();
     }
 
-    void comb()
-    {
-#ifndef VERILATOR
-        mem.comb();
-        mem.data_out_comb_func();
-#endif
-    }
-
     bool run()
     {
 #ifdef VERILATOR
@@ -279,7 +269,6 @@ public:
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            comb();
             work(clk, 0);
 
             if (clk) {

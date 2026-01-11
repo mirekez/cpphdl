@@ -1,9 +1,11 @@
 # cpphdl
+
 C++HDL Hardware Description Language
 
 Please read the doc/cpphdl.pdf
 
-# development
+# build
+
 Win64 requires the following to be done:
  - Install msys2-x86_64-20240727.exe, Miniconda3-py39_24.7.1-0-Windows-x86_64.exe, run MSYS2 MSYS console
  - git clone https://github.com/mirekez/cpphdl; cd cpphdl
@@ -22,3 +24,8 @@ Then for both Win&Lin:
 This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-reznikov) based on the results of own research.
 
 This work is not subsidized or paid.
+
+# development plan
+
+- VCD file dumping
+- asynchronous resets

@@ -135,15 +135,17 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 #pragma once
 
 #include "cpphdl.h"
-#include "PrjConfig.h"
-#include "Memory.h"
+#include "Memory.cpp"
+#include <print>
 
 using namespace cpphdl;
 
-template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH>
-class Fifo: public Model
+// C++HDL MODEL /////////////////////////////////////////////////////////
+
+template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
+class Fifo : public Module
 {
-    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH> mem;
+    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
 
     u1 full_comb;
     u1 empty_comb;
@@ -151,48 +153,56 @@ class Fifo: public Model
     reg<u<clog2(FIFO_DEPTH)>> wp_reg;
     reg<u<clog2(FIFO_DEPTH)>> rp_reg;
     reg<u1> full_reg;
+
     reg<u1> afull_reg;
 
-    size_t i;
-
 public:
-    logic<FIFO_WIDTH_BYTES*8> *data_in   = nullptr;
-    bool                      *write_in  = nullptr;
-    logic<FIFO_WIDTH_BYTES*8> *data_out  = mem.data_out;
-    bool                      *read_in   = nullptr;
-    bool                      *empty_out = &empty_comb;
-    bool                      *full_out  = &full_comb;
-    bool                      *clear_in  = nullptr;
-    bool                      *afull_out = &afull_reg;
+    __PORT(bool)                         write_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
+
+    __PORT(bool)                         read_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
+
+    __PORT(bool)                         empty_out      = __VAL( empty_comb_func() );
+    __PORT(bool)                         full_out       = __VAL( full_comb_func() );
+    __PORT(bool)                         clear_in       = __VAL( false );
+    __PORT(bool)                         afull_out      = __VAL( afull_reg );
+
+    bool                         debugen_in;
 
     void connect()
     {
-        mem.data_in = data_in;
-        mem.write_in = write_in;
-        mem.write_addr_in = &wp_reg;
-        mem.read_in = read_in;
-        mem.read_addr_in = &rp_reg;
-        mem.connect();
-
+        mem.write_data_in = write_data_in;
+        mem.write_data_in = write_data_in;
+        mem.write_in      = write_in;
+        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
+        mem.write_addr_in = __VAL( wp_reg );
+        mem.read_in       = read_in;
+        mem.read_addr_in  = __VAL( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
+        mem.debugen_in  = debugen_in;
+        mem.connect();
     }
 
     bool full_comb_func()
     {
-        full_comb = (wp_reg.next == rp_reg.next) && full_reg.next;
-        return full_comb;
+        return full_comb = (wp_reg == rp_reg) && full_reg;
     }
 
     bool empty_comb_func()
     {
-        empty_comb = (wp_reg.next == rp_reg.next) && !full_reg.next;
-        return empty_comb;
+        return empty_comb = (wp_reg == rp_reg) && !full_reg;
     }
 
     void work(bool clk, bool reset)
     {
         if (!clk) return;
         mem.work(clk, reset);
+
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
+                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_out(), (int)empty_out(), reset);
+        }
 
         if (reset) {
             wp_reg.clr();
@@ -202,44 +212,42 @@ public:
             return;
         }
 
-        if (*read_in) {
+        if (write_in()) {
+
+            if (full_comb_func() && !read_in()) {
+                std::print("{:s}: writing to a full fifo\n", __inst_name);
+                exit(1);
+            }
+            if (!full_comb_func() || read_in()) {
+                wp_reg.next = wp_reg + 1;
+            }
+            if (wp_reg.next == rp_reg) {
+                full_reg.next = 1;
+            }
+        }
+
+        if (read_in()) {
 
             if (empty_comb_func()) {
-                printf("%s: reading from an empty fifo\n", __inst_name.c_str());
+                std::print("{:s}: reading from an empty fifo\n", __inst_name);
                 exit(1);
             }
             if (!empty_comb_func()) {
                 rp_reg.next = rp_reg + 1;
             }
-            if (!*write_in) {
+            if (!write_in()) {
                 full_reg.next = 0;
             }
         }
 
-        if (*write_in) {
-
-            if (full_comb_func()) {
-                printf("%s: writing to a full fifo\n", __inst_name.c_str());
-                exit(1);
-            }
-            if (!full_comb_func()) {
-                wp_reg.next = wp_reg + 1;
-            }
-            if (wp_reg.next == rp_reg.next) {
-                full_reg.next = 1;
-            }
-        }
-
-        if (*clear_in) {
+        if (clear_in()) {
             wp_reg.next = 0;
             rp_reg.next = 0;
             full_reg.next = 0;
         }
 
-        afull_reg.next = full_reg ||
-            (wp_reg >= rp_reg ?
-                wp_reg - rp_reg :
-                FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+
     }
 
     void strobe()
@@ -250,14 +258,8 @@ public:
         full_reg.strobe();
         afull_reg.strobe();
     }
-
-    void comb()
-    {
-        mem.comb();
-        mem.data_out_comb_func();
-    }
 };
-
+/////////////////////////////////////////////////////////////////////////
 ```
 
 * Module class definition can use template parameters
@@ -274,37 +276,28 @@ public:
 
 ## Input/output ports
 
-&nbsp;&nbsp;&nbsp;&nbsp;Ports are basically pointers in C++HDL. It allows instant value update on change.
-For combinational variables change *name_comb_func()* call is required. This topic will be discussed in corresponding chapter.
+&nbsp;&nbsp;&nbsp;&nbsp;All ports are of type std::function<`data_type()`> in C++HDL. It allows instant recalculation of all combinational functions in a chain.
 
 &nbsp;&nbsp;&nbsp;&nbsp;The following naming convention is used for input/output ports:
 
-* port_in or obj_port_in - generic input port name
-* port_out or obj_port_out - generic output port name
+* `port_in` or `obj_port_in` - generic input port name
+* `port_out` or `obj_port_out` - generic output port name
+* or longer name, ending with \_in or \_out
 
-&nbsp;&nbsp;&nbsp;&nbsp;It is recommended to initialize all ports pointers right away in class description. All output ports should take address
-of particular registers/variables of the module or it's nested instances. All input ports should be assigned *nullptr* value to make uninitialization visible.
+&nbsp;&nbsp;&nbsp;&nbsp;Macros \_\_PORT(`data_type`) allows port simplier declaration. Macros \_\_VAL( `type_or_expression` ) represents lambda function
+`[&](){ return type_or_expression; }` used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Since pointers are used to connect ports, any pair of connected ports must have similar variable types or variable sizes in bytes.
+&nbsp;&nbsp;&nbsp;&nbsp;It is recommended to initialize all output ports right away in class description.
+In more complex situations it's possible to initialize output ports in a special *connect()* function.
+Input ports can be assigned \_\_VAL(0) value to emulate Verilog unassigned inputs behavior.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Any port size is multiple of 8 bit. There is no way to use less size of a variable in C++.
-Size reduction happens after SystemVerilog conversion and uses one of the following ways:
-
-* Standalone types of `<8`bit size (like reg`<u1>`) are translated to corresponding SystemVerilog types (like logic[0:0])
-* Structs should be packed and can have integral-type fields of any bit size (not more than maximum possible size in C++ each)
-* Composite types (structs with non-integral types) align their subtypes size to 8 bit.
-Unused bits should be removed after SV generation and during optimization.
-
-&nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus joint point between C++HDL module with third-party SV module,
-use packed *structs* to achieve proper `<8`bit fields placing.
-
-* Output port should be always assigned register, comb_value or member module output port
-
+&nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus interface between C++HDL module with third-party SV module,
+use packed *structs* to achieve proper `<8`bit fields packing.
 
 ## Clock and reset
 
 &nbsp;&nbsp;&nbsp;&nbsp;The only one clock is used currently, named *clk*. Reset is the main *reset* parameter to work function.
-
+It is possible to define any synchronous reset sequence. Asynchronous reset it not supported yet.
 
 ## Variables list
 
@@ -343,42 +336,17 @@ Only *.next* value of registers should be changed directly.
 Also strobe() should be called for each of nested instances of the class.
 Forgotten registers will be reported by *cpphdl* tool.
 
-## Comb method
+## Comb methods
 
-&nbsp;&nbsp;&nbsp;&nbsp;**In brief: *cpphdl* tool checks combinational dependencies and gives advices how to fix them.**
+&nbsp;&nbsp;&nbsp;&nbsp;Combinational methods represent Verilog combinational logic (functions). All combinational methods should comply with the following requiremets:
 
-&nbsp;&nbsp;&nbsp;&nbsp;Combinational functions declaration is the most complicated part of the RTL development process
- because of lots of ambiguity in behavior of generic combinational logic circuits.
-Their evaluation happens directly during the line execution in simulation, and after synthesis RTL should repeat same behavior.
-Combinational functions can be defined stanalone and being connected to each other.
-This possibility makes a variety of complex logic circuits achievable, including loops and oscillators.
-SystemVerilog RTL development process has a number of rules to avoid loops and overcomplicated combinational circuits (google it),
-C++HDL inherits same rule set. C++HDL uses only blocking assignments as coding technique (as well as other programming languages).
+* The name of the function should contain <var_name>*comb_func()* suffix
+* Corresponding variable should be defined in module class: <var_name>*comb*
+* Combinational function should calculate, assign a value to <var_name>*comb* variable and return it
 
-&nbsp;&nbsp;&nbsp;&nbsp;Since SystemVerilog simulation (and synthesis) refreshes all combinational function values after each line of blocking assignments,
-to achieve same behavior, all C++HDL combinational functions should operate register's *.next* values and be called each time when they are used
-inside an owner module. Third module function insertion in the middle of two module's combinational chain is prohibited.
+&nbsp;&nbsp;&nbsp;&nbsp;It will be converted to corresponding Verilog variable and always (\*) block during conversion.
 
-&nbsp;&nbsp;&nbsp;&nbsp;C++HDL simulation is only capable of runninng a limited number of combinational functions from input A to output B, making loops and oscillators impossible.
-
-&nbsp;&nbsp;&nbsp;&nbsp;Basically, in C++HDL, each standalone combinational function should be represented by a C++ method with a *comb_func()* suffix and
-an output variable with a *comb* suffix, always accesible by an address. All module's combinational functions should be executed by a main *comb()* function,
-which is always called after full system strobing or reset. All nested instance's *comb()* functions should be called at the same place.
-
-&nbsp;&nbsp;&nbsp;&nbsp;More combinational functions complexity follows from the two additional circumstances:
-
-1. Often the only one specific order of their execution provides right calculation of an output during simulation (bacause of cross-dependencies)
-2. Combinational functions from different modules can be connected together and make combinational circuit to be intermodular
-
-&nbsp;&nbsp;&nbsp;&nbsp;This two possible complexities are handled in C++HDL with the following two rules of combinational logic development:
-
-1. At the beginning of design iteration, developer is responsible for minimization of combinational logic complexity, especially cross module's borders
-2. C++HDL conversion tool builds combinational function's dependencies tree and checks the order of functions calling, suggesting the right order or calls
-
-&nbsp;&nbsp;&nbsp;&nbsp;In conclusion of the most important chapter of this specification, the note should be made, that everything said
-above is also a permament headache of many of RTL developers. Such signalling techniques as "valid/ready" may require
-intermodule combinational signalling, which lead to a necessity of combinational function definition. Sometimes it happens to make loop or oscillator
-by mistake.
+&nbsp;&nbsp;&nbsp;&nbsp;It is important to avoid loops in combinational functions call chains.
 
 ## Data types
 
@@ -475,52 +443,78 @@ type should be used to organize simple memory with one read and one write port.
 #pragma once
 
 #include "cpphdl.h"
-#include "PrjConfig.h"
+#include <print>
 
 using namespace cpphdl;
 
-template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH>
-class Memory: public Module
+// C++HDL MODEL /////////////////////////////////////////////////////////
+
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
+class Memory : public Module
 {
     logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
     memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
 
     size_t i;
 
 public:
-    u<clog2(MEM_DEPTH)>       *write_addr_in = nullptr;
-    logic<MEM_WIDTH_BYTES*8>  *data_in       = nullptr;
-    bool                      *write_in      = nullptr;
-    u<clog2(MEM_DEPTH)>       *read_addr_in  = nullptr;
-    logic<MEM_WIDTH_BYTES*8>  *data_out      = &data_out_comb;
-    bool                      *read_in       = nullptr;
+    __PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
+    __PORT(bool)                      write_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
+    __PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
+
+    __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
+    __PORT(bool)                      read_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( data_out_comb_func() );
+
+    bool                      debugen_in;
 
     void connect() {}
 
-    void data_out_comb_func()
+    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
     {
-        data_out_comb = buffer[*read_addr_in];
+        if (SHOWAHEAD) {
+            data_out_comb = buffer[read_addr_in()];
+        }
+        else {
+            data_out_comb = data_out_reg;
+        }
+        return data_out_comb;
     }
+
+    logic<MEM_WIDTH_BYTES*8> mask;
 
     void work(bool clk, bool reset)
     {
         if (!clk) return;
 
-        if (*write_in) {
-            buffer[*write_addr_in] = *data_in;
+        if (write_in()) {
+            mask = 0;
+            for (i=0; i < MEM_WIDTH_BYTES; ++i) {
+                mask.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
+            }
+            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
+        }
+
+        if (!SHOWAHEAD) {
+            data_out_reg.next = buffer[read_addr_in()];
+        }
+
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
+                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
+                (int)read_in(), read_data_out(), read_addr_in());
         }
     }
 
     void strobe()
     {
         buffer.apply();
-    }
-
-    void comb()
-    {
-        data_out_comb_func();
+        data_out_reg.strobe();
     }
 };
+/////////////////////////////////////////////////////////////////////////
 
 ```
 
@@ -541,6 +535,10 @@ public:
 
 * During conversion cpphdl uses Module class template parameters as SystemVerilog module parameters, if they are numerical
 * cpphdl creates separate SV module per each instantiated combination of data types used as template parameters
+
+## References
+
+* All references are removed during SV conversion. Reference should be applied in C++ when it's necessary and possible to improve performance.
 
 ## Syntax
 
