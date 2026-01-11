@@ -1,8 +1,8 @@
 ---
 title: "C++HDL Specification"
 author: "Mike Reznikov"
-date: 2025-09-10
-version: "v1.0"
+date: 2026-01-10
+version: "v0.9"
 ---
 
 This document is currently in **draft** status.  
@@ -48,20 +48,20 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 \newpage
 
-# Who is C++HDL for
+## Who is C++HDL for
 
-* Digital IC development teams (ASIC,IP,libraries,FPGA) - faster development and testing of complex digital designs, free of charge
-* Digital IC developers - use modern C++ environment and smart IDEs, powerful C++ debug tools, static analysis and linting
+* Digital IC development teams (ASIC,IP,libraries,FPGA) - for faster development and testing of complex digital designs, free of charge
+* Digital IC developers - to use modern C++ environment and smart IDEs, powerful C++ debug tools, static analysis and linting
 * Software developers who want to deliver hardware and use powerful and modern language with OOP, templates, abstraction, recursion, etc
 * CAD/Tool developers (especially AI-coding/training) - 100 times more work cycles per day + C++ is more AI-learned by GPTs
 * Talent seekers - involving the most popular programming language speakers into variety of modern projects
 
-# What is the difference from other C++ to Verilog products
+## What is the difference from other C++ to Verilog products
 
 * C++HDL is not HLS, it is a representation of SystemVerilog, register to register, clock to clock, completely repeating model behavior, line by line
 * C++HDL module is a single-process activity without waits, notifies, streams and cooperative multitasking. Multi-threading is possible only for many modules/instances
 
-# Limitations
+## Limitations
 
 * C++HDL supports only digital design components, written using blocking assignments
 * Currently no multiclock or CDC is supported. Each clock domain should be developed separately
@@ -70,7 +70,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL is intended to bring ease and speed in development of various digital circuits like controllers,
 multiplexors, cache and memory functions, mathematics functions, digital data processing, transmitting circuits, etc.
 
-# Requirements
+## Requirements
 
 &nbsp;&nbsp;&nbsp;&nbsp;C++HDL is delivered in two parts:
 
@@ -130,17 +130,17 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 
 &nbsp;&nbsp;&nbsp;&nbsp;In the following block of code the simple FIFO RTL model description using C++HDL is provided as an example:
 
+&nbsp;&nbsp;&nbsp;&nbsp;
+
 ```cpp
 
 #pragma once
 
 #include "cpphdl.h"
-#include "Memory.cpp"
+#include "Memory.h"
 #include <print>
 
 using namespace cpphdl;
-
-// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
@@ -259,14 +259,13 @@ public:
         afull_reg.strobe();
     }
 };
-/////////////////////////////////////////////////////////////////////////
 ```
 
 * Module class definition can use template parameters
 
 * It is allowed to use integrated C++ types like bool, unsigned, unsigned long, etc in all places except reg<>
 
-* Each of *connect()*, *work()*, *strobe()* and *comb()* functions should call corresponding functions of nested modules
+* Each of *connect()*, *work()*, *strobe()* functions should call corresponding functions of nested modules
 
 * Only *reg_name.next* value can be changed in all places except reset. Both reg and *reg.next* values can be used on right side of expressions
 
@@ -276,20 +275,22 @@ public:
 
 ## Input/output ports
 
-&nbsp;&nbsp;&nbsp;&nbsp;All ports are of type std::function<`data_type()`> in C++HDL. It allows instant recalculation of all combinational functions in a chain.
+&nbsp;&nbsp;&nbsp;&nbsp;All ports are of type *std::function<`data_type()`>* in C++HDL. It allows instant recalculation of all combinational functions chain.
+
+* Macros *\_\_PORT( `data_type` )* allows port simplier declaration.
+
+* Macros *\_\_VAL( `member_or_expression` )* represents lambda function
+`[&](){ return member_or_expression; }` used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
 
 &nbsp;&nbsp;&nbsp;&nbsp;The following naming convention is used for input/output ports:
 
 * `port_in` or `obj_port_in` - generic input port name
 * `port_out` or `obj_port_out` - generic output port name
-* or longer name, ending with \_in or \_out
-
-&nbsp;&nbsp;&nbsp;&nbsp;Macros \_\_PORT(`data_type`) allows port simplier declaration. Macros \_\_VAL( `type_or_expression` ) represents lambda function
-`[&](){ return type_or_expression; }` used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
+* or longer name, ending with *\_in* or *\_out*
 
 &nbsp;&nbsp;&nbsp;&nbsp;It is recommended to initialize all output ports right away in class description.
 In more complex situations it's possible to initialize output ports in a special *connect()* function.
-Input ports can be assigned \_\_VAL(0) value to emulate Verilog unassigned inputs behavior.
+Input ports can be assigned *\_\_VAL(0)* value to emulate Verilog unassigned inputs behavior.
 
 &nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus interface between C++HDL module with third-party SV module,
 use packed *structs* to achieve proper `<8`bit fields packing.
@@ -301,13 +302,13 @@ It is possible to define any synchronous reset sequence. Asynchronous reset it n
 
 ## Variables list
 
-&nbsp;&nbsp;&nbsp;&nbsp;Variables are module class members and can be of 3 types:
+&nbsp;&nbsp;&nbsp;&nbsp;Variables are module class members and can be of one of 3 types:
 
 * **registers**
 * **combinational**
 * **temporary**
 
-&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type reg`<TYPE>` and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.next* property is used.
+&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type **reg`<TYPE>`** and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.next* property is used.
 It is recommended to give register names with a *reg* suffix in case when register is used as output port or in parent modules.
 
 * Registers can carry structs, arrays, and single values.
@@ -340,11 +341,11 @@ Forgotten registers will be reported by *cpphdl* tool.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Combinational methods represent Verilog combinational logic (functions). All combinational methods should comply with the following requiremets:
 
-* The name of the function should contain <var_name>*comb_func()* suffix
-* Corresponding variable should be defined in module class: <var_name>*comb*
-* Combinational function should calculate, assign a value to <var_name>*comb* variable and return it
+* The name of the function should contain *_comb_func()* suffix
+* Corresponding variable should be defined in module class: *var_name_comb*
+* Combinational function should calculate, assign a value to *var_name_comb* variable and return it
 
-&nbsp;&nbsp;&nbsp;&nbsp;It will be converted to corresponding Verilog variable and always (\*) block during conversion.
+&nbsp;&nbsp;&nbsp;&nbsp;It will be converted to corresponding Verilog variable and `always (*)` block during conversion.
 
 &nbsp;&nbsp;&nbsp;&nbsp;It is important to avoid loops in combinational functions call chains.
 
@@ -447,8 +448,6 @@ type should be used to organize simple memory with one read and one write port.
 
 using namespace cpphdl;
 
-// C++HDL MODEL /////////////////////////////////////////////////////////
-
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
 class Memory : public Module
 {
@@ -514,7 +513,6 @@ public:
         data_out_reg.strobe();
     }
 };
-/////////////////////////////////////////////////////////////////////////
 
 ```
 
