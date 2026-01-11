@@ -262,7 +262,7 @@ public:
             return;
         }
 
-        if (!clk) {  // all checks on negedge edge
+        if (clk) {  // all checks on negedge edge
             for (i=0; i < LENGTH; ++i) {
                 if (!reset && ((!USE_REG && can_check1 && !read_data[i].cmp(was_refs1[i], 0.1))
                              || (USE_REG && can_check2 && !read_data[i].cmp(was_refs2[i], 0.1))) ) {
@@ -274,7 +274,6 @@ public:
                     error = true;
                 }
             }
-            return;
         }
 
         for (i=0; i < LENGTH; ++i) {
