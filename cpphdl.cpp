@@ -42,8 +42,9 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
     while ((pos = sname.find("::")) != (size_t)-1) {
         sname.replace(pos, 2, "__");
     }
+    sname = genTypeName(sname);
 
-    // extracting parameters of the template
+    // extracting parameters of the template if we see it as template
     if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
         const TemplateArgumentList& Args = CTSD->getTemplateArgs();
         const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
@@ -55,7 +56,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
 
     cpphdl::Struct st{sname, (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT)};
     st.origName = RD->getQualifiedNameAsString();
-    DEBUG_AST(debugIndent++, "@ exportStruct(" << RD->getQualifiedNameAsString() << "):"); on_return ret_debug([](){ --debugIndent; });
+    DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString() << " (" + sname + "):"); on_return ret_debug([](){ --debugIndent; });
 
     for (Decl* D : RD->decls()) {
         if (auto* FD = dyn_cast<FieldDecl>(D)) {
@@ -76,14 +77,14 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
                     DEBUG_AST1(" [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
                     arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_NUM});
                     arrayExpr.value = "c_array";
-                }
-                else if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
+                } else
+                if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
                     DEBUG_AST1(" [v_array");
                     arrayExpr.sub.push_back(hlp.exprToExpr(VAT->getSizeExpr()));
                     DEBUG_AST1("] ");
                     arrayExpr.value = "v_array";
-                }
-                else if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
+                } else
+                if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
                     DEBUG_AST1(" [d_array");
                     arrayExpr.sub.push_back(hlp.exprToExpr(DSAT->getSizeExpr()));
                     DEBUG_AST1("] ");
@@ -210,8 +211,8 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
         if (it != hlp.mod.ports.end()) {
             field = &*it;
             updateExpr(field->expr, expr);
-        }
-        else if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
+        } else
+        if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
             field = &hlp.mod.ports.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
         }
         else {
@@ -255,8 +256,8 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
             if (it != hlp.mod.members.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
-            }
-            else if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
+            } else
+            if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod.members.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
             }
             else {
@@ -271,8 +272,8 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
             if (it != hlp.mod.vars.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
-            }
-            else if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
+            } else
+            if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod.vars.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
             }
             else {

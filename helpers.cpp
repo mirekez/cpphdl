@@ -123,6 +123,29 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         return expr;
     }
+    if (auto* SS = dyn_cast<SwitchStmt>(E)) {
+        cpphdl::Expr expr = cpphdl::Expr{"switch", cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
+        for (const SwitchCase *SC = SS->getSwitchCaseList(); SC; SC = SC->getNextSwitchCase()) {
+            if (isa<SwitchCase>(SC->getSubStmt()) || isa<DefaultStmt>(SC->getSubStmt())) {
+                const SourceManager &SM = Ctx.getSourceManager();
+                PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+            }
+            if (auto *CS = dyn_cast<CaseStmt>(SC)) {
+                cpphdl::Expr LHS = exprToExpr(CS->getLHS());
+                cpphdl::Expr RHS = exprToExpr(CS->getSubStmt());
+                expr.sub.emplace_back(cpphdl::Expr{LHS.str(), cpphdl::Expr::EXPR_BODY, {std::move(RHS)}});  // the only one place we call str() in Clang part
+            } else
+            if (isa<DefaultStmt>(SC)) {
+                cpphdl::Expr RHS = exprToExpr(SC->getSubStmt());
+                expr.sub.emplace_back(cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY, {std::move(RHS)}});
+            }
+        }
+        return expr;
+    }
+    if (/*auto* CS =*/ dyn_cast<CaseStmt>(E)) {
+        return {};
+    }
     if (auto* CS = dyn_cast<CompoundStmt>(E)) {
         DEBUG_AST1(" CompoundStmt");
 
@@ -472,9 +495,16 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" CXXNullPtrLiteralExpr");
         return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
     }
-    if (/*auto* CE = */dyn_cast<InitListExpr>(E)) {
+    if (auto* ILE = dyn_cast<InitListExpr>(E)) {
         DEBUG_AST1(" InitListExpr");
-        return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
+        if (!ILE->getNumInits()) {
+            return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
+        }
+        auto expr = cpphdl::Expr{"init", cpphdl::Expr::EXPR_INIT};
+        for (const Expr *Init : ILE->inits()) {
+            expr.sub.emplace_back(exprToExpr(Init));
+        }
+        return expr;
     }
     if (auto* UETTE = dyn_cast<UnaryExprOrTypeTraitExpr>(E)) {
         DEBUG_AST1(" UnaryExprOrTypeTraitExpr");
@@ -806,14 +836,14 @@ cpphdl::Expr Helpers::digQT(QualType& QT)
             DEBUG_AST1(" [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
             arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_NUM});
             arrayExpr.value = "c_array";
-        }
-        else if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
+        } else
+        if (const auto* VAT = llvm::dyn_cast<clang::VariableArrayType>(AT)) {
             DEBUG_AST1(" [v_array");
             arrayExpr.sub.push_back(exprToExpr(VAT->getSizeExpr()));
             DEBUG_AST1("] ");
             arrayExpr.value = "v_array";
-        }
-        else if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
+        } else
+        if (const auto* DSAT = llvm::dyn_cast<clang::DependentSizedArrayType>(AT)) {
             DEBUG_AST1(" [d_array");
             arrayExpr.sub.push_back(exprToExpr(DSAT->getSizeExpr()));
             DEBUG_AST1("] ");
@@ -995,4 +1025,43 @@ CXXRecordDecl* Helpers::lookupQualifiedRecord(llvm::StringRef QualifiedName)
         }
     }
     return nullptr;
+}
+
+bool Helpers::checkCaseBreaks(const Stmt *S)
+{
+    if (!S) return false;
+
+    while (true) {
+        if (const auto *AS = dyn_cast<AttributedStmt>(S)) {
+            S = AS->getSubStmt();
+            continue;
+        }
+        if (const auto *LS = dyn_cast<LabelStmt>(S)) {
+            S = LS->getSubStmt();
+            continue;
+        }
+        break;
+    }
+
+    if (isa<BreakStmt>(S) || isa<ReturnStmt>(S))
+        return true;
+
+    if (const auto *CS = dyn_cast<CompoundStmt>(S)) {
+        if (CS->body_empty()) return false;
+        return checkCaseBreaks(CS->body_back());
+    }
+
+    if (const auto *If = dyn_cast<IfStmt>(S)) {
+        return checkCaseBreaks(If->getThen()) &&
+               checkCaseBreaks(If->getElse());
+    }
+
+    if (const auto *While = dyn_cast<WhileStmt>(S))
+        return While->getCond()->isEvaluatable(Ctx);
+
+    if (dyn_cast<ForStmt>(S)) {
+        return false;
+    }
+
+    return false;
 }

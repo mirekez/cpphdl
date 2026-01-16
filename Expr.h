@@ -36,6 +36,7 @@ struct Expr
         EXPR_FOR,
         EXPR_WHILE,
         EXPR_IF,
+        EXPR_SWITCH,
         EXPR_BODY,
         EXPR_UNKNOWN
     } type = EXPR_EMPTY;
@@ -64,7 +65,7 @@ struct Expr
 
     bool isMultiline()
     {
-        return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY;
+        return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY || type == EXPR_SWITCH;
     }
 
     Expr simplify();

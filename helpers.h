@@ -28,6 +28,7 @@ struct Helpers
     bool skipStdFunctionType(QualType& QT);
     CXXRecordDecl* resolveCXXRecordDecl(QualType& QT);
     CXXRecordDecl* lookupQualifiedRecord(llvm::StringRef QualifiedName);
+    bool checkCaseBreaks(const Stmt *S);
 };
 
 extern unsigned debugIndent;

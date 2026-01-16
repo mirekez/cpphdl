@@ -22,7 +22,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_DECLARE:
             ASSERT(sub.size() >= 1);
             if (sub.size() == 2) {
-                return indent_str + prefix + sub[0].str() + " " + value + " = " + sub[1].str();
+                return indent_str + prefix + sub[0].str() + " " + value + "; " + value + " = " + sub[1].str();
             }
             else {
                 return indent_str + prefix + sub[0].str() + " " + value + ";";
@@ -324,7 +324,16 @@ if (sub.size() == 0) return "??????";
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
-            ASSERT(sub.size()==1);
+            ASSERT(sub.size()>=1);
+            if (sub.size() > 1) {
+                std::string ret = indent_str + "{";
+                for (size_t i=sub.size(); i > 0; --i) {
+                    sub[i-1].flags |= flags;
+                    ret += sub[i-1].str();
+                }
+                ret += "}";
+                return ret;
+            }
             sub[0].flags |= flags;
             return indent_str + sub[0].str();
         case EXPR_TRAIT:
@@ -404,6 +413,27 @@ if (sub.size() == 0) return "??????";
                 }
                 str += indent_str + "end\n";
             }
+            return str;
+        }
+        case EXPR_SWITCH:
+        {
+            ASSERT(sub.size()>=1);
+            std::string str;
+            str += indent_str + "case (" + sub[0].str() + ")\n";
+            if (sub.size() > 1) {
+                for (size_t i=sub.size()-1; i > 0; --i) {
+                    sub[i].indent = indent + 1;
+                    sub[i].flags |= flags;
+                    str += indent_str + sub[i].value + ":";
+                    str += " begin\n";
+                    str += sub[i].str(prefix);
+                    if (!sub[1].isMultiline()) {
+                        str += ";\n";
+                    }
+                    str += indent_str + "end\n";
+                }
+            }
+            str += indent_str + "endcase\n";
             return str;
         }
         case EXPR_BODY:
@@ -588,6 +618,7 @@ std::string Expr::debug(int debug_indent)
         case EXPR_FOR: str += "EXPR_FOR"; break;
         case EXPR_WHILE: str += "EXPR_WHILE"; break;
         case EXPR_IF: str += "EXPR_IF"; break;
+        case EXPR_SWITCH: str += "EXPR_SWITCH"; break;
         case EXPR_BODY: str += "EXPR_BODY"; break;
         case EXPR_UNKNOWN: str += "EXPR_UNKNOWN"; break;
         default: str += "EXPR_???"; break;
