@@ -143,7 +143,7 @@ union Instr
             state.wb_op = Wb::ALU;
             switch (r.funct3) {
                 case 0b000: state.alu_op = (r.funct7 == 0b0100000) ? Alu::SUB : ((r.funct7 == 0b0000001) ? Alu::MUL : Alu::ADD); break;
-                case 0b111: state.alu_op = (r.funct7 == 0b0000001) ? Alu::REM : state.alu_op = Alu::AND; break;
+                case 0b111: state.alu_op = (r.funct7 == 0b0000001) ? Alu::REM : Alu::AND; break;
                 case 0b110: state.alu_op = Alu::OR;  break;
                 case 0b100: state.alu_op = Alu::XOR; break;
                 case 0b001: state.alu_op = Alu::SLL; break;

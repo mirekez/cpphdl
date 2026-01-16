@@ -21,8 +21,8 @@ public:
 
     bool     branch_taken_comb;
     uint32_t branch_target_comb;
-    uint32_t alu_a;
-    uint32_t alu_b;
+    uint32_t alu_a_comb;
+    uint32_t alu_b_comb;
     uint64_t alu_result_comb;
 
     reg<u32> mem_addr_reg;
@@ -52,12 +52,12 @@ public:
 
     uint32_t alu_a_comb_func()
     {
-        return alu_a = state_in()[ID-1].rs1_val;
+        return alu_a_comb = state_in()[ID-1].rs1_val;
     }
 
     uint32_t alu_b_comb_func()
     {
-        return alu_b = (state_in()[ID-1].alu_op == Alu::ADD && state_in()[ID-1].mem_op != Mem::MNONE) ?
+        return alu_b_comb = (state_in()[ID-1].alu_op == Alu::ADD && state_in()[ID-1].mem_op != Mem::MNONE) ?
                             uint32_t(state_in()[ID-1].imm) :      // load/store address calc uses imm
                             (state_in()[ID-1].rs2 || state_in()[ID-1].br_op == BEQZ || state_in()[ID-1].br_op == BNEZ) ?
                                 state_in()[ID-1].rs2_val : uint32_t(state_in()[ID-1].imm);

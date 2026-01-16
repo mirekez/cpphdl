@@ -399,14 +399,21 @@ int main (int argc, char** argv)
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
-/*    if (!noveril) {
+    if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {});
+        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {"File", "Memory",
+                  "DecodeFetchint_int_0_0_State_pkg",
+                  "ExecuteCalcint_int_0_0_State_pkg",
+                  "MemWBint_int_0_0_State_pkg",
+                  "MakeBigStateDecodeFetchint_int_0_0_State_pkg",
+                  "DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
+                  "ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
+                  "MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State"});
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
         );
-    }*/
+    }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
