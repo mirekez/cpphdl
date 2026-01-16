@@ -18,12 +18,12 @@ class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 
 public:
                                           // it's better to always assign all outputs inline
-    __PORT(bool)      dmem_write_out =      std::get<1>(members).mem_write_out;
+    __PORT(bool)      dmem_write_out      = std::get<1>(members).mem_write_out;
     __PORT(uint32_t)  dmem_write_addr_out = std::get<1>(members).mem_write_addr_out;
     __PORT(uint32_t)  dmem_write_data_out = std::get<1>(members).mem_write_data_out;
     __PORT(uint8_t)   dmem_write_mask_out = std::get<1>(members).mem_write_mask_out;
-    __PORT(bool)      dmem_read_out =       std::get<1>(members).mem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out =  std::get<1>(members).mem_read_addr_out;
+    __PORT(bool)      dmem_read_out       = std::get<1>(members).mem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out  = std::get<1>(members).mem_read_addr_out;
     __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out = __VAL( pc );
     __PORT(uint32_t)  imem_read_data_in;

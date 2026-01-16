@@ -156,7 +156,7 @@ bool Method::printConns(std::ofstream& out)
             && port.initializer.sub.size() >= 1 /*outdated*/ && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
             /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
             port.initializer.flags = Expr::FLAG_ASSIGN;
-            out << "    assign " << port.name << " = " << port.initializer.str() << ( port.initializer.type == cpphdl::Expr::EXPR_BODY ? "" : ";\n");
+            out << "    assign " << port.name << " = " << port.initializer.str() << ";\n";
         }
     }
 

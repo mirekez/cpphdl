@@ -12,11 +12,12 @@ struct Expr
 
     enum {
         EXPR_EMPTY,
+        EXPR_DECLARE,
         EXPR_TYPE,
-        EXPR_VALUE,
-        EXPR_VAR,
+        EXPR_NUM,  // can be also "false" and "true"
         EXPR_STRING,
-        EXPR_PARAM,
+        EXPR_VAR,
+        EXPR_PARAM,  // numeric expression for template parameter
         EXPR_TEMPLATE,
         EXPR_ARRAY,
         EXPR_CALL,
@@ -89,4 +90,35 @@ struct Expr
 };
 
 
+}
+
+#include <string.h>
+
+inline bool str_ending(const std::string& str, const char* ending)
+{
+    return str.rfind(ending) == str.length()-strlen(ending) && str.length() >= strlen(ending);
+}
+
+inline void str_replace(std::string& str, const char* needle, const char* replace, bool all = true)
+{
+    size_t pos;
+    while ((pos = str.find(needle)) != (size_t)-1) {
+        str.replace(pos, strlen(needle), replace);
+        if (!all) {
+            break;
+        }
+    }
+}
+
+inline std::string genTypeName(std::string name)
+{
+    str_replace(name, "struct ", "");
+    str_replace(name, "typename ", "");
+    str_replace(name, "<", "");
+    str_replace(name, ">", "");
+    str_replace(name, " ", "");
+    str_replace(name, ",", "_");
+    str_replace(name, ":", "_");
+    str_replace(name, "-", "m");
+    return name;
 }

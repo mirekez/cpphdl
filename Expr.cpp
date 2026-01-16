@@ -18,11 +18,25 @@ std::string Expr::str(std::string prefix, std::string suffix)
     switch (type)
     {
         case EXPR_EMPTY:
-            return indent_str + prefix + "";
+            return "";
+        case EXPR_DECLARE:
+            ASSERT(sub.size() >= 1);
+            if (sub.size() == 2) {
+                return indent_str + prefix + sub[0].str() + " " + value + " = " + sub[1].str();
+            }
+            else {
+                return indent_str + prefix + sub[0].str() + " " + value + ";";
+            }
         case EXPR_TYPE:
+            if (value == "FILE *") {
+                value = "int";
+            }
             return indent_str + prefix + typeToSV(value, suffix);
-        case EXPR_VALUE:
-            return indent_str + prefix + value;
+        case EXPR_NUM:
+            if (sub.size()) {  // if we have expression for this number parameter (from template parameters)
+                return indent_str + prefix + sub[0].str() + suffix;
+            }
+            return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
         case EXPR_VAR:
             if (value.find("__ONE") == 0) {
                 return indent_str + prefix + "'1";
@@ -35,9 +49,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             replacePrint(value);
             return indent_str + prefix + value;
         case EXPR_PARAM:
-            return indent_str + prefix + (((flags&FLAG_SPECVAL)&&sub.size())?sub[0].str():value);
+            if (sub.size() && !(flags&FLAG_SPECVAL)) {  // if we have expression for this number parameter (from template parameters)
+                return indent_str + prefix + sub[0].str() + suffix;
+            }
+            return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
+//            return indent_str + prefix + (((flags&FLAG_SPECVAL)&&sub.size())?sub[0].str():value);
         case EXPR_TEMPLATE:
         {
+            ASSERT(sub.size());
             if (value == "cpphdl::array") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
@@ -47,19 +66,22 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
 
             std::string typeSpec;
-//        if ((flags&FLAG_MEMBER)) {
-//            str += "#(";
             bool first = true;
-            for (auto& param : sub) {
-                if (!first) {
-                    typeSpec += "_";
+            for (size_t i=0; i < sub.size()-1; ++i) {
+                if (sub[i].type != EXPR_PARAM) {
+                    if (!first) {
+                        typeSpec += "_";
+                    }
+                    typeSpec += sub[i].str();
+                    first = false;
                 }
-                typeSpec += param.str();
-                first = false;
             }
-//            str += ")";
-//        }
-            return indent_str + prefix + typeToSV(value, typeSpec + suffix);
+
+            if (value.find("get") == 0 && sub.size() && sub[sub.size()-1].sub.size()) {  // we treat get template as tuple get, probably later to check std::
+                return indent_str + prefix + sub[sub.size()-1].sub[0].value + "_tuple_" + typeSpec;
+            }
+
+            return indent_str + prefix + typeToSV(sub[sub.size()-1].str(prefix, typeSpec), suffix);
         }
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
@@ -75,7 +97,17 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "printf") {
                  func = "$write";
             }
+            if (func == "fopen") {
+                 func = "$fopen";
+            }
+            if (func == "fclose") {
+                 func = "$fclose";
+            }
             if (func == "fprintf") {
+                 skipArgs = 1;
+                 func = "$fwrite";
+            }
+            if (func == "printf") {
                  skipArgs = 1;
                  func = "$write";
             }
@@ -99,7 +131,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
 
-            std::string str = func;
+            std::string str = func + suffix;
             if (!noBrackets) {
                 str += "(";
             }
@@ -117,7 +149,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_OPERATORCALL:
         {
-            if (value == "=" || value == "+" || value == "-" || value == "*" || value == "/") {
+            if (value == "=" || value == "+" || value == "-" || value == "*" || value == "/" || value == "==" || value == "!=" || value == ">"
+                 || value == ">=" || value == "<" || value == "<=") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
             }
@@ -244,7 +277,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + value + "(" + sub[0].str();
             }
             std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
-            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].value; } )) {
+            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].str(); } )) {
                 delim = "__";
             }
             return indent_str + prefix + sub[0].str() + delim + value;
@@ -400,7 +433,7 @@ std::string Expr::typeToSV(std::string name, std::string size)
 {
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
-    std::string str = name;
+    std::string str = genTypeName(name);
     if (name == "cpphdl::logic") {
         str = logic + size;
     } else
@@ -481,14 +514,6 @@ std::string Expr::typeToSV(std::string name, std::string size)
     } else {
         str += size;
     }
-
-    size_t pos;
-    while ((pos = str.find("::")) != (size_t)-1) {
-        str.replace(pos, 2, "__");
-    }
-    if ((pos = str.find("struct ")) != (size_t)-1) {
-        str.replace(pos, 7, "");
-    }
     return str;
 }
 
@@ -520,11 +545,11 @@ Expr Expr::simplify()  // open brackets for *(+-)
         expr.traverseIf( [&](Expr& e) {
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
                 if (e.sub[0].type == EXPR_MEMBER) {
-                    e = Expr{"0", EXPR_VALUE};
+                    e = Expr{"0", EXPR_NUM};
                     return true;
                 }
                 if (e.sub[1].type == EXPR_MEMBER) {
-                    e = Expr{"0", EXPR_VALUE};
+                    e = Expr{"0", EXPR_NUM};
                     return true;
                 }
             }
@@ -539,9 +564,10 @@ std::string Expr::debug(int debug_indent)
     std::string str;
     switch(type) {
         case EXPR_EMPTY: str += "EXPR_EMPTY"; break;
+        case EXPR_DECLARE: str += "EXPR_DECLARE"; break;
         case EXPR_TYPE: str += "EXPR_TYPE"; break;
-        case EXPR_VALUE: str += "EXPR_VALUE"; break;
         case EXPR_VAR: str += "EXPR_VAR"; break;
+        case EXPR_NUM: str += "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs
         case EXPR_STRING: str += "EXPR_STRING"; break;
         case EXPR_PARAM: str += "EXPR_PARAM"; break;
         case EXPR_TEMPLATE: str += "EXPR_TEMPLATE"; break;

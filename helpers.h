@@ -15,17 +15,19 @@ struct Helpers
 
     enum {
         FLAG_NONE = 0,
-        FLAG_EXTERNAL_THIS = 1  // method from other struct (not Module)
+        FLAG_EXTERNAL_THIS = 1,  // method from other struct (not Module)
+        FLAG_ABSTRACT = 2  // we're in abstract declaration of template module
     };
-    unsigned flags;
+    unsigned flags = 0;
 
     cpphdl::Expr exprToExpr(const Stmt* E);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);
-    void addSpecializationName(std::string& name, std::vector<cpphdl::Field>& params, bool onlyTypes = true);
-    bool specializationToParameters(const CXXRecordDecl* RD, std::vector<cpphdl::Field>& params);
-    bool getStdFunctionType(QualType& QT);
-
+    cpphdl::Expr ArgToExpr(const TemplateArgument& Arg, std::string name = "");
+    void genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes = false);
+    bool skipStdFunctionType(QualType& QT);
+    CXXRecordDecl* resolveCXXRecordDecl(QualType& QT);
+    CXXRecordDecl* lookupQualifiedRecord(llvm::StringRef QualifiedName);
 };
 
 extern unsigned debugIndent;

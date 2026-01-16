@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string.h>
 #include <vector>
 #include <set>
 
@@ -30,11 +29,7 @@ struct Module
     bool printMembers(std::ofstream& out);
 };
 
-}
 
-inline bool str_ending(const std::string& str, const char* ending)
-{
-    return str.rfind(ending) == str.length()-strlen(ending) && str.length() >= strlen(ending);
 }
 
 extern cpphdl::Module* currModule;

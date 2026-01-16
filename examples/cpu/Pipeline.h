@@ -48,6 +48,9 @@ struct PipelineStage : public cpphdl::Module
 
 };
 
+template <typename T>
+struct DebugType;
+
 #define __PARAMS__ typename,typename,size_t,size_t
 
 template <typename... Ts>

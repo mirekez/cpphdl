@@ -103,21 +103,23 @@ bool Module::printMembers(std::ofstream& out)
                 }
             }
             else {
-                std::cerr << "ERROR: cant find module '" << member.expr.value << "' declaration\n";
+                std::cerr << "ERROR: cant find module '" << member.expr.sub[1].str() << "' declaration\n" << member.expr.sub[1].debug() << "\n";
                 return false;
             }
 
             out << "    generate\n";
             out << "    genvar gi;\n";
             out << "    for (gi=0; gi < " << member.expr.sub[0].str() << "; gi = gi + 1) begin\n";
-            out << "        " << member.expr.sub[1].value << " ";
+            out << "        " << member.expr.sub[1].str() << " ";
             if (member.expr.sub[0].sub.size()) {
                 out << "#(\n";
             }
             bool first = true;
             for (auto& param : member.expr.sub[0].sub) {
-                out << (first?"        ":",       ") << param.str() << "\n";
-                first = false;
+                if (param.type == Expr::EXPR_PARAM) {
+                    out << (first?"        ":",       ") << param.str() << "\n";
+                    first = false;
+                }
             }
             if (member.expr.sub[0].sub.size()) {
                 out << "    )";
@@ -136,7 +138,7 @@ bool Module::printMembers(std::ofstream& out)
             out << "    endgenerate\n";
         }
         else {
-            Module* mod = currProject->findModule(member.expr.value);
+            Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
                     Expr expr = port.expr;
@@ -153,18 +155,20 @@ bool Module::printMembers(std::ofstream& out)
                 }
             }
             else {
-                std::cerr << "ERROR: cant find module '" << member.expr.value << "' declaration\n";
+                std::cerr << "ERROR: cant find module '" << member.expr.str() << "' declaration\n" <<  member.expr.debug() << "\n";
                 return false;
             }
 
-            out << "    " << member.expr.value << " ";
+            out << "    " << member.expr.str() << " ";
             if (member.expr.type == Expr::EXPR_TEMPLATE && member.expr.sub.size()) {
                 out << "#(\n";
 //            }
             bool first = true;
             for (auto& param : member.expr.sub) {
-                out << (first?"        ":",       ") << param.str() << "\n";
-                first = false;
+                if (param.type == Expr::EXPR_PARAM) {
+                    out << (first?"        ":",       ") << param.str() << "\n";
+                    first = false;
+                }
             }
 //            if (member.expr.sub.size()) {
                 out << "    )";
