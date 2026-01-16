@@ -148,7 +148,6 @@ public:
             state_reg.next[0].valid = 0;
             state_reg.next[1].valid = 0;
             state_reg.next[2].valid = 0;
-            state_reg.next[3].valid = 0;
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
         do_decode_fetch();

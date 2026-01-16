@@ -102,7 +102,8 @@ public:
         }
         //
 
-        std::print("({}/{}){}: {} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => "
+        if (debugen_in) {
+            std::print("({}/{}){}: {} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => "
                        "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}: {}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
                 (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
@@ -113,6 +114,7 @@ public:
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
                 (int)states_comb[1].valid, (uint8_t)states_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
                 interpret);
+        }
         #endif
 
         if (dmem_write_addr_out() == 0x11223344 && dmem_write_out() ) {
@@ -169,6 +171,9 @@ public:
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
+
+#include <algorithm>
+#include <fstream>
 
 #include "Ram.h"
 
@@ -365,6 +370,10 @@ public:
             strobe();
             clk = !clk;
         }
+
+        std::ifstream a("rv32i.log", std::ios::binary), b("out.txt", std::ios::binary);
+        error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
+
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
