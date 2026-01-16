@@ -35,28 +35,37 @@ void updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2)  // add correspondent 
     }
 }
 
-cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
+cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr)
 {
-    std::string sname = RD->getQualifiedNameAsString();
-    size_t pos;
-    while ((pos = sname.find("::")) != (size_t)-1) {
-        sname.replace(pos, 2, "__");
-    }
-    sname = genTypeName(sname);
+    cpphdl::Struct st_obj = {};
+    if (!st) {
+        std::string sname = RD->getQualifiedNameAsString();
+        str_replace(sname, "::", "_");
+        sname = genTypeName(sname);
 
-    // extracting parameters of the template if we see it as template
-    if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-        const TemplateArgumentList& Args = CTSD->getTemplateArgs();
-        const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
-        for (unsigned i = 0; i < Args.size(); ++i) {
-            auto expr = hlp.ArgToExpr(Args[i], Params->getParam(i)->getNameAsString());
-            hlp.genSpecializationTypeName(i == 0, sname, expr);
+        // extracting parameters of the template if we see it as template
+        if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+            const TemplateArgumentList& Args = CTSD->getTemplateArgs();
+            const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+            for (unsigned i = 0; i < Args.size(); ++i) {
+                auto expr = hlp.ArgToExpr(Args[i], Params->getParam(i)->getNameAsString());
+                hlp.genSpecializationTypeName(i == 0, sname, expr);
+            }
+        }
+
+        st = &st_obj;
+        st->name = sname;
+        st->type = (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT);
+        st->origName = RD->getQualifiedNameAsString();
+        DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString() << " (" + sname + "):"); on_return ret_debug([](){ --debugIndent; });
+    }
+
+    for (const auto &Base : RD->bases()) {
+        CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
+        if (BaseRD && BaseRD->hasDefinition()) {
+            exportStruct(BaseRD, hlp, st);
         }
     }
-
-    cpphdl::Struct st{sname, (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT)};
-    st.origName = RD->getQualifiedNameAsString();
-    DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString() << " (" + sname + "):"); on_return ret_debug([](){ --debugIndent; });
 
     for (Decl* D : RD->decls()) {
         if (auto* FD = dyn_cast<FieldDecl>(D)) {
@@ -125,20 +134,20 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
 
                 auto* CRD = hlp.resolveCXXRecordDecl(QT);
                 DEBUG_AST1(" {var " << FD->getNameAsString() << "} " << (CRD && CRD->isAnonymousStructOrUnion()?"ANON":""));
-                st.fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
+                st->fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
                 if (FD->isBitField()) {
                     DEBUG_AST1(" |bitfield ");
-                    st.fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
+                    st->fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
                     DEBUG_AST1("|");
                 }
-//                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().type.debug(debugIndent));
+//                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
                 if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 &&
                     CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {  // we need std containers in structs?
                     auto st1 = exportStruct(CRD, hlp);
 
                     if (CRD->isAnonymousStructOrUnion() || !CRD->getIdentifier()) {
                         st1.name = FD->getNameAsString();
-                        st.fields.back().definition = std::move(st1);
+                        st->fields.back().definition = std::move(st1);
                     }
                     else {
                         auto ret = hlp.mod.imports.emplace(st1.name);
@@ -148,22 +157,22 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp)
                     }
                 }
 
-                DEBUG_EXPR(debugIndent, " Expr: " << st.fields.back().expr.debug(debugIndent));
+                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().expr.debug(debugIndent));
                 if (FD->isBitField()) {
-                    DEBUG_EXPR(debugIndent, " Expr(bitfield): " << st.fields.back().bitwidth.debug(debugIndent));
+                    DEBUG_EXPR(debugIndent, " Expr(bitfield): " << st->fields.back().bitwidth.debug(debugIndent));
                 }
             }
         }
         if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
             if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
                 DEBUG_AST(debugIndent, "Const(" << VD->getNameAsString() << "): ");
-                st.parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                DEBUG_EXPR(debugIndent, " Expr: " << st.parameters.back().expr.debug(debugIndent));
+                st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
+                DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
             }
         }
     }
 
-    return st;
+    return *st;
 }
 
 void putField(QualType fieldType, const std::string& fieldName, const Expr* initializer, Helpers& hlp)
@@ -227,9 +236,18 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
         }
 
         DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
+
+        auto* CRD = hlp.resolveCXXRecordDecl(QT);
+        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
+                && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+            auto st = exportStruct(CRD, hlp);
+            auto ret = hlp.mod.imports.emplace(st.name);
+            if (ret.second) {
+                currProject->structs.emplace_back(std::move(st));
+            }
+        }
     }
     else {
-        auto* CRD = hlp.resolveCXXRecordDecl(QT);
 
 //        if (auto* TST = fieldType->getAs<clang::TemplateSpecializationType>()) {
 //            clang::TemplateName TN = TST->getTemplateName();
@@ -280,6 +298,8 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
                 return;
             }
             DEBUG_EXPR(debugIndent, " Expr: " << field->expr.debug(debugIndent));
+
+            auto* CRD = hlp.resolveCXXRecordDecl(QT);
             if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
                     && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
                 auto st = exportStruct(CRD, hlp);
@@ -551,7 +571,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 }
 //            }
 //        }
-        std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });
+        std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
         mod.parameters = std::move(params);
         mod.origName = RD->getQualifiedNameAsString();
 

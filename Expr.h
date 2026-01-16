@@ -113,6 +113,10 @@ inline void str_replace(std::string& str, const char* needle, const char* replac
 
 inline std::string genTypeName(std::string name)
 {
+    str_replace(name, "::", "_");
+    str_replace(name, "(", "");
+    str_replace(name, ")", "");
+    str_replace(name, "...", "");
     str_replace(name, "struct ", "");
     str_replace(name, "typename ", "");
     str_replace(name, "<", "");

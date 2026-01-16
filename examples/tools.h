@@ -2,6 +2,12 @@
 
 const std::string compilerParams = " -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
 
+inline int SystemEcho(const char* cmd)
+{
+    std::cout << cmd << "\n";
+    return std::system(cmd);
+}
+
 inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, auto&&... args)
 {
     std::ostringstream oss;
@@ -14,14 +20,14 @@ inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::
     std::string modules_list;
     for (const auto& module : modules) {
         std::filesystem::copy_file(std::string("generated/") + module + ".sv", folder_name + "/" + module + ".sv", std::filesystem::copy_options::overwrite_existing);
-        modules_list += module + ".sv ";;
+        modules_list += module + ".sv ";
     }
     size_t n = 0;
     // SV parameters substitution
     ((std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + name + ".sv").c_str())), ...);
     // running Verilator
-    std::system((std::string("cd ") + folder_name +
+    SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc ../../../examples/predef.sv " + modules_list + " " + name + ".sv --exe ../../" + cpp_name + " --top-module " + name +
         " --Wno-fatal --CFLAGS \"-DVERILATOR -I../../../../include -include V" + name + ".h -DVERILATOR_MODEL=V" + name + " " + compilerParams + "\"").c_str());
     return std::system((std::string("cd ") + folder_name + "/obj_dir" +

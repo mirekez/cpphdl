@@ -31,33 +31,7 @@ void Project::generate(const std::string& outDir)
     }
 
     for (auto& str : structs) {
-        std::string fname = str.name;
-        size_t pos;
-        while (true) {
-            if ((pos = fname.find("::")) != (size_t)-1) {
-                fname.replace(pos, 2, "__");
-            }
-            else
-            if ((pos = fname.find("(")) != (size_t)-1) {
-                fname.replace(pos, 1, "_");
-            }
-            else
-            if ((pos = fname.find(")")) != (size_t)-1) {
-                fname.replace(pos, 1, "_");
-            }
-            else
-            if ((pos = fname.find(" ")) != (size_t)-1) {
-                fname.replace(pos, 1, "_");
-            }
-            else
-            if ((pos = fname.find("_at")) != (size_t)-1) {
-                fname.replace(pos, -1, "");
-            }
-            else {
-                break;
-            }
-        };
-
+        std::string fname = genTypeName(str.name);
         fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
 
         std::ofstream out(filePath);

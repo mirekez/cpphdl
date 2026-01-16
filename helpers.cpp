@@ -17,7 +17,7 @@
 
 unsigned debugIndent = 0;
 
-cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp);
+cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
 std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* Ctx, llvm::StringRef QualifiedName);
 const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext &Ctx);
@@ -181,7 +181,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECLARE,
                                         {cpphdl::Expr{VD->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}, exprToExpr(VD->getInit())}});
                 }
+
+                auto* CRD = resolveCXXRecordDecl(VD->getType());
+                if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
+                        && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+                    auto st = exportStruct(CRD, *this);
+                    auto ret = mod.imports.emplace(st.name);
+                    if (ret.second) {
+                        currProject->structs.emplace_back(std::move(st));
+                    }
+                }
             }
+
         }
         return expr;
     }
@@ -202,10 +213,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
             if (Parent && VD->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
                 std::string sname = Parent->getQualifiedNameAsString();
-                size_t pos;
-                while ((pos = sname.find("::")) != (size_t)-1) {
-                    sname.replace(pos, 2, "__");
-                }
+                str_replace(sname, "::", "_");
                 // extracting parameters of the template
                 if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(Parent)) {
                     const TemplateArgumentList& Args = CTSD->getTemplateArgs();
@@ -271,10 +279,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (const auto* VD = dyn_cast<VarDecl>(ME->getMemberDecl())) {
             if (Parent && VD->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
                 std::string sname = Parent->getQualifiedNameAsString();
-                size_t pos;
-                while ((pos = sname.find("::")) != (size_t)-1) {
-                    sname.replace(pos, 2, "__");
-                }
+                str_replace(sname, "::", "_");
                 // extracting parameters of the template
                 if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(Parent)) {
                     const TemplateArgumentList& Args = CTSD->getTemplateArgs();
@@ -977,7 +982,7 @@ bool Helpers::skipStdFunctionType(QualType& QT)
     return false;
 }
 
-CXXRecordDecl* Helpers::resolveCXXRecordDecl(QualType& QT)
+CXXRecordDecl* Helpers::resolveCXXRecordDecl(QualType QT)
 {
     auto* CRD = QT->getAsCXXRecordDecl();
 

@@ -26,7 +26,7 @@ struct Helpers
     cpphdl::Expr ArgToExpr(const TemplateArgument& Arg, std::string name = "");
     void genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes = false);
     bool skipStdFunctionType(QualType& QT);
-    CXXRecordDecl* resolveCXXRecordDecl(QualType& QT);
+    CXXRecordDecl* resolveCXXRecordDecl(QualType QT);
     CXXRecordDecl* lookupQualifiedRecord(llvm::StringRef QualifiedName);
     bool checkCaseBreaks(const Stmt *S);
 };

@@ -18,12 +18,7 @@ bool Module::print(std::ofstream& out)
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
     for (auto& import : imports) {
-        std::string str = import;
-        size_t pos;
-        while ((pos = str.find("::")) != (size_t)-1) {
-            str.replace(pos, 2, "__");
-        }
-
+        std::string str = genTypeName(import);
         out << "import " << str << "_pkg::*;\n";
     }
     out << "\n\n";
