@@ -405,6 +405,7 @@ int main (int argc, char** argv)
                   "DecodeFetchint_int_0_0_State_pkg",
                   "ExecuteCalcint_int_0_0_State_pkg",
                   "MemWBint_int_0_0_State_pkg",
+                  "Instr_pkg",
                   "MakeBigStateDecodeFetchint_int_0_0_State_pkg",
                   "DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
                   "ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",

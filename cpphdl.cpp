@@ -37,6 +37,7 @@ void updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2)  // add correspondent 
 
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr)
 {
+    DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
     cpphdl::Struct st_obj = {};
     if (!st) {
         std::string sname = RD->getQualifiedNameAsString();
@@ -44,20 +45,13 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
         sname = genTypeName(sname);
 
         // extracting parameters of the template if we see it as template
-        if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-            const TemplateArgumentList& Args = CTSD->getTemplateArgs();
-            const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
-            for (unsigned i = 0; i < Args.size(); ++i) {
-                auto expr = hlp.ArgToExpr(Args[i], Params->getParam(i)->getNameAsString());
-                hlp.genSpecializationTypeName(i == 0, sname, expr);
-            }
-        }
+        hlp.followSpecialization(RD, sname);
 
         st = &st_obj;
         st->name = sname;
         st->type = (RD->isUnion() ? cpphdl::Struct::STRUCT_UNION : cpphdl::Struct::STRUCT_STRUCT);
         st->origName = RD->getQualifiedNameAsString();
-        DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString() << " (" + sname + "):"); on_return ret_debug([](){ --debugIndent; });
+        DEBUG_AST(debugIndent, "@ => " << RD->getQualifiedNameAsString() << " (" + sname + "):");
     }
 
     for (const auto &Base : RD->bases()) {
@@ -81,7 +75,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 
             cpphdl::Expr arrayExpr;
             bool array = false;
-            while (const clang::ArrayType* AT = hlp.Ctx.getAsArrayType(QT)) {
+            while (const clang::ArrayType* AT = hlp.ctx.getAsArrayType(QT)) {
                 if (const auto* CAT = llvm::dyn_cast<clang::ConstantArrayType>(AT)) {
                     DEBUG_AST1(" [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
                     arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_NUM});
@@ -114,8 +108,8 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 //            }
 //            else {
                 QT = QT.getCanonicalType();
-                QT = QT.getDesugaredType(hlp.Ctx);
-                std::string str = QT.getAsString(hlp.Ctx.getPrintingPolicy());
+                QT = QT.getDesugaredType(hlp.ctx);
+                std::string str = QT.getAsString(hlp.ctx.getPrintingPolicy());
                 DEBUG_AST1(str << " type) " << str);
                 expr.value = str;
                 expr.type = cpphdl::Expr::EXPR_TYPE;
@@ -129,7 +123,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
             if (!pointer) {
 
                 QT = QT.getNonReferenceType();
-                QT = QT.getDesugaredType(hlp.Ctx); // remove typedefs, aliases, etc.
+                QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
 //?                QT = QT.getCanonicalType();        // ensure you have the actual canonical form
 
                 auto* CRD = hlp.resolveCXXRecordDecl(QT);
@@ -141,8 +135,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
                     DEBUG_AST1("|");
                 }
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
-                if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 &&
-                    CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {  // we need std containers in structs?
+                if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
                     auto st1 = exportStruct(CRD, hlp);
 
                     if (CRD->isAnonymousStructOrUnion() || !CRD->getIdentifier()) {
@@ -190,7 +183,7 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
         DEBUG_AST1(" *pointer*");
     }
 
-    QT = QT.getDesugaredType(hlp.Ctx);
+    QT = QT.getDesugaredType(hlp.ctx);
 //!!!    QT = QT.getCanonicalType();
 //    auto T = QT.getUnqualifiedType();
 
@@ -238,8 +231,7 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
         DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
 
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
-        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
-                && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
             auto st = exportStruct(CRD, hlp);
             auto ret = hlp.mod.imports.emplace(st.name);
             if (ret.second) {
@@ -300,8 +292,7 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
             DEBUG_EXPR(debugIndent, " Expr: " << field->expr.debug(debugIndent));
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);
-            if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
-                    && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+            if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
                 auto st = exportStruct(CRD, hlp);
                 auto ret = hlp.mod.imports.emplace(st.name);
                 if (ret.second) {
@@ -344,14 +335,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
     if (hlp.mod.origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of structure, adding first parameter this
         // extracting parameters of the template
         std::vector<cpphdl::Field> params;
-        if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
-            const TemplateArgumentList& Args = CTSD->getTemplateArgs();
-            const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
-            for (unsigned i = 0; i < Args.size(); ++i) {
-                auto expr = hlp.ArgToExpr(Args[i], Params->getParam(i)->getNameAsString());
-                hlp.genSpecializationTypeName(i == 0, method.name, expr);
-            }
-        }
+        hlp.followSpecialization(MD->getParent(), method.name, &params);
 
         DEBUG_AST1(" - not Module method: (" << hlp.mod.name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
@@ -359,7 +343,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 
         cpphdl::Expr expr = hlp.digQT(QT);
 
-        QT = QT.getDesugaredType(hlp.Ctx); // remove typedefs, aliases, etc.
+        QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
         QT = QT.getCanonicalType();        // ensure you have the actual canonical form
         DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
 
@@ -367,19 +351,18 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
-    for (const ParmVarDecl* Param : MD->parameters()) {
-        QualType QT = Param->getType().getNonReferenceType();
+    for (const ParmVarDecl* param : MD->parameters()) {
+        QualType QT = param->getType().getNonReferenceType();
 
         cpphdl::Expr expr = hlp.digQT(QT);
 
-        QT = QT.getDesugaredType(hlp.Ctx); // remove typedefs, aliases, etc.
+        QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
 //?        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-        DEBUG_AST(debugIndent, "Param: " << Param->getNameAsString() << " (" << QT.getAsString() << ")");
+        DEBUG_AST(debugIndent, "Param: " << param->getNameAsString() << " (" << QT.getAsString() << ")");
 
-        method.parameters.emplace_back(cpphdl::Field{Param->getNameAsString(), std::move(expr)});
+        method.parameters.emplace_back(cpphdl::Field{param->getNameAsString(), std::move(expr)});
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
-        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0
-                && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
             auto st = exportStruct(CRD, hlp);
             auto ret = hlp.mod.imports.emplace(st.name);
             if (ret.second) {
@@ -434,14 +417,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 
 struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 {
-    explicit MethodVisitor(ASTContext* Context)
-        : Context(Context)/*, SM(Context->getSourceManager())*/ {}
+    explicit MethodVisitor(ASTContext* context)
+        : context(context)/*, SM(context->getSourceManager())*/ {}
 
     void putClass(CXXRecordDecl* RD, cpphdl::Module& mod)
     {
         DEBUG_AST(debugIndent++, "# putClass: " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
 
-        Helpers hlp(Context, &mod);
+        Helpers hlp(context, &mod);
 
         for (Decl* D : RD->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
@@ -450,7 +433,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
                 std::string S;
                 llvm::raw_string_ostream OS(S);
-                FD->getType().print(OS, Context->getPrintingPolicy());
+                FD->getType().print(OS, context->getPrintingPolicy());
                 DEBUG_AST1(std::string("\"")+ S + " " + FD->getNameAsString() + "\"");
 
                 if (const auto *TST = FD->getType()->getAs<TemplateSpecializationType>()) {  // std::tuple support
@@ -460,16 +443,16 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         DEBUG_AST1(std::string(" *tuple*"));
                         if (NS->getName() == "std" || NS->getName() == "__1") {
                             DEBUG_AST1(" *std*");
-                            const auto &Args = TST->template_arguments();
+                            const auto &args = TST->template_arguments();
                             size_t i = 0;
-                            for (const auto &Arg : Args) {
-                                if (Arg.getKind() == TemplateArgument::Type || Arg.getKind() == TemplateArgument::Template) {
+                            for (const auto &arg : args) {
+                                if (arg.getKind() == TemplateArgument::Type || arg.getKind() == TemplateArgument::Template) {
                                     DEBUG_AST(debugIndent++, "% putField: "); on_return ret_debug([](){ --debugIndent; });
                                     std::string S;
                                     llvm::raw_string_ostream OS(S);
-                                    Arg.getAsType().getNonReferenceType().print(OS, Context->getPrintingPolicy());
+                                    arg.getAsType().getNonReferenceType().print(OS, context->getPrintingPolicy());
                                     DEBUG_AST1(std::string("\"")+ S + "\"");
-                                    putField(Arg.getAsType(), FD->getNameAsString() + "_tuple_" + std::to_string(i++), nullptr, hlp);
+                                    putField(arg.getAsType(), FD->getNameAsString() + "_tuple_" + std::to_string(i++), nullptr, hlp);
                                 }
                             }
                             continue;
@@ -553,24 +536,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
-        Helpers hlp(Context, &mod);
+        Helpers hlp(context, &mod);
 
         std::vector<cpphdl::Field> params;
-//        for (auto* RD : abstractDefs) {
-//            if (mod.name.find(RD->getQualifiedNameAsString()) == 0) {
-//                DEBUG_AST(debugIndent, "Applying abstract template: " << RD->getQualifiedNameAsString() << " to " << mod.name);  // get original parameters substitution form abstract, need only for numbers
-                // specialization - we want to have numbers as parameters and types hard-coded in generated names
-                if (auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-                    const TemplateArgumentList& Args = CTSD->getTemplateArgs();
-                    const TemplateParameterList* Params = CTSD->getSpecializedTemplate()->getTemplateParameters();
-                    for (unsigned i = 0; i < Args.size(); ++i) {
-                        auto expr = hlp.ArgToExpr(Args[i], Params->getParam(i)->getNameAsString());
-                        hlp.genSpecializationTypeName(i == 0, mod.name, expr, true);
-                        params.emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), std::move(expr)});
-                    }
-                }
-//            }
-//        }
+        hlp.followSpecialization(RD, mod.name, &params, true);
         std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
         mod.parameters = std::move(params);
         mod.origName = RD->getQualifiedNameAsString();
@@ -591,7 +560,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     bool VisitCXXRecordDecl(CXXRecordDecl* RD)
     {
-        Helpers hlp(Context, nullptr);
+        Helpers hlp(context, nullptr);
         if (auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module")) {
             if (RD && RD->hasDefinition() && RD->isDerivedFrom(ModuleClass)) {
                 putModule(RD);
@@ -603,18 +572,18 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     bool shouldVisitTemplateInstantiations() const { return true; }
 
-    ASTContext* Context;
+    ASTContext* context;
 //    const SourceManager &SM;
     std::vector<CXXRecordDecl*> abstractDefs;
 };
 
 struct MethodConsumer : public ASTConsumer
 {
-    explicit MethodConsumer(ASTContext* Context) : Visitor(Context) {}
+    explicit MethodConsumer(ASTContext* context) : Visitor(context) {}
 
-    void HandleTranslationUnit(ASTContext &Context) override
+    void HandleTranslationUnit(ASTContext &context) override
     {
-        Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+        Visitor.TraverseDecl(context.getTranslationUnitDecl());
     }
 
     MethodVisitor Visitor;
