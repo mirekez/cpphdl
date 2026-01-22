@@ -11,7 +11,7 @@ struct Expr
     std::string value;
 
     enum {
-        EXPR_EMPTY,
+        EXPR_NONE,
         EXPR_DECLARE,
         EXPR_TYPE,
         EXPR_NUM,  // can be also "false" and "true"
@@ -40,7 +40,7 @@ struct Expr
         EXPR_SWITCH,
         EXPR_BODY,
         EXPR_UNKNOWN
-    } type = EXPR_EMPTY;
+    } type = EXPR_NONE;
 
     std::vector<Expr> sub;
 

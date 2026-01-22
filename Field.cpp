@@ -40,7 +40,7 @@ bool Field::print(std::ofstream& out, bool isStruct)
             out << expr.sub[1].str() << " " << name << "[" << expr.sub[0].str() << "]" << ";\n";
         }
     } else
-    if (bitwidth.type != Expr::EXPR_EMPTY) {
+    if (bitwidth.type != Expr::EXPR_NONE) {
         expr.indent = indent + 1;
         expr.type = Expr::EXPR_TYPE;
         expr.value = "cpphdl_logic";

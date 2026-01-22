@@ -18,8 +18,18 @@ bool Enum::print(std::ofstream& out)
     out << "enum {\n";
 
     for (size_t i=0; i < fields.size(); ++i) {
-        fields[i].indent = indent;
-        fields[i].print(out, true);
+        for (int i=0; i < indent; ++i) {
+            out << "    ";
+        }
+        out << fields[i].name;
+        if (fields[i].expr.type != cpphdl::Expr::EXPR_NONE) {
+            out << " = ";
+            out << fields[i].expr.str();
+        }
+        if (i != fields.size()-1) {
+            out << ",";
+        }
+        out << "\n";
     }
 
     for (int i=0; i < indent; ++i) {

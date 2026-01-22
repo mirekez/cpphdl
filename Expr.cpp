@@ -17,7 +17,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 
     switch (type)
     {
-        case EXPR_EMPTY:
+        case EXPR_NONE:
             return "";
         case EXPR_DECLARE:
             ASSERT(sub.size() >= 1);
@@ -28,7 +28,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
             }
         case EXPR_TYPE:
-            if (value == "FILE *") {
+            if (value.find("FILE") == 0) {
                 value = "int";
             }
             return indent_str + prefix + typeToSV(value, suffix);
@@ -79,7 +79,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
 
-            if (value.find("get") == 0 && sub.size() && sub[sub.size()-1].sub.size()) {  // we treat get template as tuple get, probably later to check std::
+            if (value.find("get") == 0 && sub.size() && sub[sub.size()-1].sub.size()) {  // we treat get template as tuple get, probably later to check std:: or this
                 return indent_str + prefix + sub[sub.size()-1].sub[0].value + "_tuple_" + typeSpec;
             }
 
@@ -142,7 +142,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool first = true;
             for (size_t i=skipArgs; i < sub.size(); ++i) {
-                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1) {
+                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {
                     str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
@@ -209,19 +209,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                return indent_str + value + "()";
 //            }
 
-            if (sub.size() >= 1 && value == "clr") {
+            if (sub.size() >= 1 && value == "clr" && sub[0].type != EXPR_VAR/*this*/) { // this means the call of external struct
                 return indent_str + sub[0].str() + " = '0";
             }
-            if (sub.size() >= 2 && value == "set") {
+            if (sub.size() >= 2 && value == "set" && sub[0].type != EXPR_VAR/*this*/) {
                 return indent_str + sub[0].str() + " = " + sub[1].str();
             }
-            if (sub.size() >= 1 && value == "format") {
+            if (sub.size() >= 1 && value == "format" && sub[0].type != EXPR_VAR/*this*/) {
                 return indent_str + sub[0].str();
             }
-            if (sub.size() >= 3 && value == "bits") {
+            if (sub.size() >= 3 && value == "bits" && sub[0].type != EXPR_VAR/*this*/) {
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
             }
-            if (value == "work" || value == "connect" || value == "strobe" || value == "comb") {  // forbidden calls
+            if ((value == "work" || value == "connect" || value == "strobe" || value == "comb") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {
                 return "";
             }
             if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
@@ -250,7 +250,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                    skipfirst = false;
 //                    continue;
 //                }
-                if (arg.value != "clk") {
+                if (arg.value != "clk" && arg.type != EXPR_NONE) {
                     str += (first?"":", ") + arg.str();
                     first = false;
                 }
@@ -265,13 +265,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
-            if ((sub[0].str() == "_this" && !(flags&FLAG_USETHIS)) || (flags&FLAG_NOBASE)) {
+            if ((sub[0].type == EXPR_NONE && !(flags&FLAG_USETHIS)) || (flags&FLAG_NOBASE)) {  // no this inside, no need to "."
                 return indent_str + value;
             }
             if (value == "next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].type == EXPR_INDEX) {
+            if (sub[0].type == EXPR_INDEX) {  // ?
                 ASSERT(sub[0].sub.size() > 1);
                 std::string delim = "";
                 if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].sub[0].str(); } )) {
@@ -279,7 +279,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return indent_str + prefix + sub[0].str("", delim + value);
             }
-            if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function
+            if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function  // ?
                 return indent_str + prefix + value + "(" + sub[0].str();
             }
             std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
@@ -371,7 +371,8 @@ if (sub.size() == 0) return "??????";
         case EXPR_RETURN:
             if (sub.size() >= 1) {
                 return (flags&FLAG_ASSIGN) ? indent_str + sub[0].str() :
-                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER?"":indent_str + sub[0].str()) : indent_str + "return " + sub[0].str());
+                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER||(sub[0].type==EXPR_CAST&&sub[0].sub[0].type==EXPR_MEMBER)
+                                    ?"":indent_str + sub[0].str()) : indent_str + "return " + sub[0].str());
             }
             else {
                 return indent_str + "disable " + currMethod->name;
@@ -630,7 +631,7 @@ std::string Expr::debug(int debug_indent)
 {
     std::string str;
     switch(type) {
-        case EXPR_EMPTY: str += "EXPR_EMPTY"; break;
+        case EXPR_NONE: str += "EXPR_NONE"; break;
         case EXPR_DECLARE: str += "EXPR_DECLARE"; break;
         case EXPR_TYPE: str += "EXPR_TYPE"; break;
         case EXPR_VAR: str += "EXPR_VAR"; break;

@@ -145,10 +145,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return expr;
     }
     if (/*auto* CS =*/ dyn_cast<CaseStmt>(E)) {
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_EMPTY};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};
     }
     if (/*auto* BS =*/ dyn_cast<BreakStmt>(E)) {
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_EMPTY};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};
     }
     if (auto* CS = dyn_cast<CompoundStmt>(E)) {
         DEBUG_AST1(" CompoundStmt");
@@ -169,7 +169,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     if (dyn_cast<NullStmt>(E)) {
         DEBUG_AST1(" NullStmt");
 
-        cpphdl::Expr expr = cpphdl::Expr{"", cpphdl::Expr::EXPR_EMPTY};
+        cpphdl::Expr expr = cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};
         return expr;
     }
     if (auto* DS = dyn_cast<DeclStmt>(E)) {
@@ -177,18 +177,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         auto expr = cpphdl::Expr{"decl", cpphdl::Expr::EXPR_BODY};
         for (Decl* D : DS->decls()) {
             if (auto* VD = dyn_cast<VarDecl>(D)) {
-                if (VD->getType()->isReferenceType()) {
+                if (VD->getType()->isReferenceType()) {  // any reference declaration
                     // ignore
                 }
-                else {
+                else {  // real declaration
                     DEBUG_AST1(" VarDecl(" << VD->getName().str() << ")");
                     if (VD->getInit()) {
                         expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECLARE,
-                                            {cpphdl::Expr{VD->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}, exprToExpr(VD->getInit())}});
+                                            {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}, exprToExpr(VD->getInit())}});
                     }
                     else {
                         expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECLARE,
-                                            {cpphdl::Expr{VD->getType().getAsString(),cpphdl::Expr::EXPR_TYPE}}});
+                                            {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}}});
                     }
 
                     auto* CRD = resolveCXXRecordDecl(VD->getType());
@@ -250,11 +250,20 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     if (auto* DRE = dyn_cast<DeclRefExpr>(E)) {
         DEBUG_AST1(" DeclRefExpr(" << DRE->getNameInfo().getAsString() << ")");
 
+        if (const ValueDecl *VD = DRE->getDecl()) {  // check if it's reference aka symlink to another var
+            if (const auto *Var = dyn_cast<VarDecl>(VD)) {
+                if (VD->getType()->isReferenceType() && Var->hasInit()) {
+                    DEBUG_AST1(" REF");
+                    return exprToExpr(Var->getInit());
+                }
+            }
+        }
+
         const auto* parent = getParentClassOfExpr(DRE, ctx);
         std::string prefix;
         if (const auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl())) {  // make enum pkg
             if (const auto *ED = dyn_cast<EnumDecl>(ECD->getDeclContext())) {
-                std::cout << " EnumName: " << ED->getQualifiedNameAsString() << "\n";
+                DEBUG_AST1(" EnumName: " << ED->getQualifiedNameAsString());
 
                 auto en = cpphdl::Enum{genTypeName(ED->getQualifiedNameAsString()), ED->getQualifiedNameAsString()};
 
@@ -288,9 +297,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         bool isPack = false;
         if (const ParmVarDecl* PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
              if (PVD && PVD->isParameterPack()) {
+                 DEBUG_AST1(" PACK");
                  isPack = true;
-                 prefix += "_substitution_";
+                 prefix += "_substitution_";  // not necessary
              }
+
         }
 
         return cpphdl::Expr{prefix + DRE->getDecl()->getNameAsString(), isPack ? cpphdl::Expr::EXPR_PACK : cpphdl::Expr::EXPR_VAR};
@@ -312,15 +323,21 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
 
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
-             call.sub.push_back(exprToExpr(ME->getBase())/*cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}}*/);
+            if ((flags&FLAG_EXTERNAL_THIS)) {
+                DEBUG_AST1(" EXTERNAL ");
+                call.sub.push_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
+            }
+            else {
+                call.sub.push_back(exprToExpr(ME->getBase())/*cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}}*/);
+            }
         }
         for (unsigned i = 0; i < MCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(MCE->getArg(i)));
         }
 
         if (auto *MD = MCE->getMethodDecl()) {
-            DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << ")");
             auto newName = putMethod(MD, *this);
+            DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
             if (newName.length()) {
                 call.value = newName;
             }
@@ -353,9 +370,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
-        if ((flags&FLAG_EXTERNAL_THIS)) {
-            DEBUG_AST1(" EXTERNAL");
-        }
+
 
 //        std::string ename = ME->getMemberDecl()->getNameAsString();
 //        for (auto parent : parents) {
@@ -364,29 +379,33 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            }
 //        }
 
-        const Expr *base = ME->getBase()->IgnoreParenImpCasts();  // get init
-        if (const auto *DRE = dyn_cast<DeclRefExpr>(base)) {
-            if (const ValueDecl *VD = DRE->getDecl()) {
-                if (const auto *Var = dyn_cast<VarDecl>(VD)) {
-                    if (Var->hasInit()) {
-                        base = Var->getInit();
-                    }
-                }
+        auto expr = exprToExpr(ME->getBase()->IgnoreParenImpCasts());
+
+        if ((flags&FLAG_EXTERNAL_THIS)) {
+            DEBUG_AST1(" EXTERNAL ");
+            if (expr.type == cpphdl::Expr::EXPR_NONE) {
+                expr.type = cpphdl::Expr::EXPR_VAR;
+                expr.value = "_this";
             }
         }
 
-        return cpphdl::Expr{prefix + ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(base)},
+        return cpphdl::Expr{prefix + ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {expr},
                 (anon?cpphdl::Expr::FLAG_ANON:0U) | ((flags&FLAG_EXTERNAL_THIS)?cpphdl::Expr::FLAG_USETHIS:0U) | (ignoreBase?cpphdl::Expr::FLAG_NOBASE:0U)};
     }
     if (auto* CDSME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
         DEBUG_AST1(" CXXDependentScopeMemberExpr(" << CDSME->getMemberNameInfo().getAsString() << ")");
 
+        auto expr = exprToExpr(CDSME->getBase());
+
         if ((flags&FLAG_EXTERNAL_THIS)) {
-            DEBUG_AST1(" EXTERNAL");
+            DEBUG_AST1(" EXTERNAL ");
+            if (expr.type == cpphdl::Expr::EXPR_NONE) {
+                expr.type = cpphdl::Expr::EXPR_VAR;
+                expr.value = "_this";
+            }
         }
 
-        return cpphdl::Expr{CDSME->getMemberNameInfo().getAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(CDSME->getBase())},
-                (flags&FLAG_EXTERNAL_THIS)?cpphdl::Expr::FLAG_USETHIS:0U};
+        return cpphdl::Expr{CDSME->getMemberNameInfo().getAsString(), cpphdl::Expr::EXPR_MEMBER, {expr}};
     }
     if (auto* LE = dyn_cast<LambdaExpr>(E)) {
         DEBUG_AST1(" LambdaExpr");
@@ -620,7 +639,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (/*auto* ME =*/dyn_cast<CXXThisExpr>(E)) {
         DEBUG_AST1(" CXXThisExpr");
-        return cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};  // we never use this directly
     }
     if (auto* CO = dyn_cast<ConditionalOperator>(E)) {
         DEBUG_AST1(" ConditionalOperator");
@@ -637,7 +656,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* FCE = dyn_cast<ImplicitCastExpr>(E)) {
         DEBUG_AST1(" ImplicitCastExpr");
-        return cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
+        return /*cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(FCE->getSubExpr())/*}}*/;
     }
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
         DEBUG_AST1(" CXXFunctionalCastExpr");
@@ -743,8 +762,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         return cpphdl::Expr{"fold", cpphdl::Expr::EXPR_BODY, {expr}};
     }
-    if(/*auto* IVIE = */dyn_cast<ImplicitValueInitExpr>(E)) {
-        return cpphdl::Expr{"ImplicitValueInitExpr", cpphdl::Expr::EXPR_EMPTY};
+    if (/*auto* IVIE = */dyn_cast<ImplicitValueInitExpr>(E)) {
+        return cpphdl::Expr{"ImplicitValueInitExpr", cpphdl::Expr::EXPR_NONE};
     }
 /*
     if (auto* FL = dyn_cast<FloatingLiteral>(E)) {

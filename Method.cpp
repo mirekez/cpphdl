@@ -66,6 +66,7 @@ bool Method::print(std::ofstream& out)
             s += ";\n";
         }
         out << s;
+//        out << stmt.debug();
     }
 
     if (ret.size() == 0) {
@@ -151,7 +152,7 @@ bool Method::printConns(std::ofstream& out)
     out << "    endgenerate\n";
 
     for (auto& port : currModule->ports) {  // outport initializers
-        if (port.initializer.type != Expr::EXPR_EMPTY
+        if (port.initializer.type != Expr::EXPR_NONE
             && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
             && port.initializer.sub.size() >= 1 /*outdated*/ && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
             /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
