@@ -96,6 +96,29 @@ struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
     cpphdl::array<BIG_STATE,LENGTH> states_comb;
     cpphdl::array<BIG_STATE,LENGTH>& states_comb_func()
     {
+        size_t y;
+        size_t x;
+        size_t offset;
+        std::apply([&](auto&... stage) {
+            for (y = 0; y < LENGTH; ++y) {
+                x = 0;
+                offset = 0;
+                states_comb[y] = {};
+                (
+                    (
+                        [&]{
+                            using State = typename std::remove_reference_t<decltype(stage)>::STATE;
+                            if (x <= y) {
+                                *(State*)((uint8_t*)&states_comb[y] + offset) = stage.state_out()[y-x];  // assemble big state from own states for each y
+                            }
+                            ++x;
+                            offset += sizeof(State);
+                        }()
+                    ),
+                    ...
+                );
+            }
+        }, members);
         return states_comb;
     }
 
@@ -149,26 +172,6 @@ public:
 
     void comb()
     {
-        std::apply([&](auto&... stage) {
-            for (size_t y = 0; y < LENGTH; ++y) {
-                size_t x = 0;
-                size_t offset = 0;
-                states_comb[y] = {};
-                (
-                    (
-                        [&]{
-                            using State = typename std::remove_reference_t<decltype(stage)>::STATE;
-                            if (x <= y) {
-                                *(State*)((uint8_t*)&states_comb[y] + offset) = stage.state_out()[y-x];  // assemble big state from own states for each y
-                            }
-                            ++x;
-                            offset += sizeof(State);
-                        }()
-                    ),
-                    ...
-                );
-            }
-        }, members);
 
         states_comb_func();
 //        std::print("~~~ {} == {}", (uint8_t)states_comb[0].alu_op, (uint8_t)std::get<0>(members).state_reg[0].alu_op);

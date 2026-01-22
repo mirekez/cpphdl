@@ -1,8 +1,9 @@
 #include "clang/AST/AST.h"
 
 #include "Module.h"
-#include "Struct.h"
 #include "Expr.h"
+
+//#include <functional>
 
 using namespace clang;
 
@@ -29,7 +30,7 @@ struct Helpers
     bool skipStdFunctionType(QualType& QT);
     CXXRecordDecl* resolveCXXRecordDecl(QualType QT);
     CXXRecordDecl* lookupQualifiedRecord(llvm::StringRef QualifiedName);
-    bool checkCaseBreaks(const Stmt *S);
+    void forEachBase(const CXXRecordDecl* RD, std::function<void(const CXXRecordDecl* RD)> func);
 };
 
 extern unsigned debugIndent;

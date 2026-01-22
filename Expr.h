@@ -18,6 +18,7 @@ struct Expr
         EXPR_STRING,
         EXPR_VAR,
         EXPR_PARAM,  // numeric expression for template parameter
+        EXPR_PACK,  // std::tuple element substitution
         EXPR_TEMPLATE,
         EXPR_ARRAY,
         EXPR_CALL,
@@ -63,10 +64,10 @@ struct Expr
     // methods
     int indent = 0;
 
-    bool isMultiline()
-    {
-        return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY || type == EXPR_SWITCH;
-    }
+//    bool isMultiline()
+//    {
+//        return type == EXPR_FOR || type == EXPR_WHILE || type == EXPR_IF || type == EXPR_BODY || type == EXPR_SWITCH;
+//    }
 
     Expr simplify();
 
@@ -116,6 +117,8 @@ inline std::string genTypeName(std::string name)
     str_replace(name, "::", "_");
     str_replace(name, "(", "");
     str_replace(name, ")", "");
+    str_replace(name, "[", "");
+    str_replace(name, "]", "");
     str_replace(name, "...", "");
     str_replace(name, "struct ", "");
     str_replace(name, "typename ", "");

@@ -238,6 +238,7 @@ union Instr
     template<typename STATE>
     void decode16(STATE& state)
     {
+        int32_t imm_tmp;
         state = {};
         state.funct3 = 7;
         state.funct3 = 0b010;  // LW/SW
@@ -270,9 +271,9 @@ union Instr
             if (c.funct3 == 0b000) {  // ADDI
                 state.rd = q1.rs1;
                 state.rs1 = q1.rs1;
-                int32_t imm = (bit(12) << 5) | bits(6,2);
-                imm = (imm << 26) >> 26;
-                state.imm = imm;
+                imm_tmp = (bit(12) << 5) | bits(6,2);
+                imm_tmp = (imm_tmp << 26) >> 26;
+                state.imm = imm_tmp;
                 state.alu_op = Alu::ADD;
                 state.wb_op  = Wb::ALU;
             }
@@ -284,18 +285,18 @@ union Instr
             }
             else if (c.funct3 == 0b010) {  // LI
                 state.rd = q1.rs1;
-                int32_t imm = (bit(12) << 5) | bits(6, 2);
-                imm = (imm << 26) >> 26;
-                state.imm = imm;
+                imm_tmp = (bit(12) << 5) | bits(6, 2);
+                imm_tmp = (imm_tmp << 26) >> 26;
+                state.imm = imm_tmp;
                 state.alu_op = Alu::PASS;
                 state.wb_op = Wb::ALU;
             }
             else if (c.funct3 == 0b011) {  // ADDI16SP
                 state.rd = 2;
                 state.rs1 = 2; // sp
-                int32_t imm = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
-                imm = (imm << 22) >> 22;
-                state.imm = imm;
+                imm_tmp = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
+                imm_tmp = (imm_tmp << 22) >> 22;
+                state.imm = imm_tmp;
                 state.alu_op = Alu::ADD;
                 state.wb_op = Wb::ALU;
             }
@@ -317,9 +318,9 @@ union Instr
                 else if (c.bits11_10 == 2) {  // C.ANDI
                     state.rd = c.rs1_p + 8;
                     state.rs1 = c.rs1_p + 8;
-                    int32_t imm = (bit(12) << 5) | bits(6,2);
-                    imm = (imm << 26) >> 26;
-                    state.imm = imm;
+                    imm_tmp = (bit(12) << 5) | bits(6,2);
+                    imm_tmp = (imm_tmp << 26) >> 26;
+                    state.imm = imm_tmp;
                     state.alu_op = Alu::AND;
                     state.wb_op = Wb::ALU;
                 }

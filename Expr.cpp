@@ -22,10 +22,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_DECLARE:
             ASSERT(sub.size() >= 1);
             if (sub.size() == 2) {
-                return indent_str + prefix + sub[0].str() + " " + value + "; " + value + " = " + sub[1].str();
+                return indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value) + "; " + value + " = " + sub[1].str();
             }
             else {
-                return indent_str + prefix + sub[0].str() + " " + value + ";";
+                return indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
             }
         case EXPR_TYPE:
             if (value == "FILE *") {
@@ -44,7 +44,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("__ZERO") == 0) {
                 return indent_str + prefix + "'0";
             }
-            return indent_str + prefix + value;
+            return indent_str + prefix + escapeIdentifier(value);
         case EXPR_STRING:
             replacePrint(value);
             return indent_str + prefix + value;
@@ -54,14 +54,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
 //            return indent_str + prefix + (((flags&FLAG_SPECVAL)&&sub.size())?sub[0].str():value);
+        case EXPR_PACK:
+            return indent_str + prefix + value + suffix;
         case EXPR_TEMPLATE:
         {
             ASSERT(sub.size());
-            if (value == "cpphdl::array") {
+            if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
-            if (value.find("cpphdl::") == 0 && sub.size()) {
+            if (value.find("cpphdl_") == 0 && sub.size()) {
                 return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
             }
 
@@ -88,6 +90,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
+            if ((flags&FLAG_NOCALLS)) {
+                return "";
+            }
             bool noBrackets = false;
             int skipArgs = 0;
             std::string func = value;
@@ -131,7 +136,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
 
-            std::string str = func + suffix;
+            std::string str = escapeIdentifier(func) + suffix;
             if (!noBrackets) {
                 str += "(";
             }
@@ -226,24 +231,25 @@ std::string Expr::str(std::string prefix, std::string suffix)
 
             std::string str = "(";
 
-            bool skipfirst = false;
+//            bool skipfirst = false;
             bool first = true;
-            std::string member = value;
-/*            if (sub[0].type == EXPR_MEMBER) {
+            std::string member = escapeIdentifier(value) + suffix;
+            if (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK) {  // member call - can be only member's port access now, no args
                 if (sub[0].str() != "_this") {
                     flags |= FLAG_CALL;  // it will swap places of member and method, and add "("
                     str = "";
                     first = false;
                 }
-                member = sub[0].str();
-                skipfirst = true;
-            }*/
+                member = sub[0].str() + "_" + escapeIdentifier(value) + suffix;
+                return indent_str + prefix + member;
+//                skipfirst = true;
+            }
 
             for (auto& arg : sub) {
-                if (skipfirst) {
-                    skipfirst = false;
-                    continue;
-                }
+//                if (skipfirst) {
+//                    skipfirst = false;
+//                    continue;
+//                }
                 if (arg.value != "clk") {
                     str += (first?"":", ") + arg.str();
                     first = false;
@@ -284,6 +290,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_BINARY:
             ASSERT(sub.size()==2);
+            if (value == "=") {
+                auto& check = sub[0];
+                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                    check = check.sub[0];
+                }
+                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+                    sub[0] = check.sub[0];
+                }
+            }
             sub[0].flags |= flags;
             sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
@@ -308,24 +323,34 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
             ASSERT(sub.size()==2);
+            {
+                auto& check = sub[0];
+                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                    check = check.sub[0];
+                }
+                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be before []
+                    sub[0] = check.sub[0];
+                }
+            }
             sub[0].flags |= flags;
             sub[1].flags |= flags;
-            return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
+            return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + value + "]";
         case EXPR_CAST:
 if (sub.size() == 0) return "??????";
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
-            return indent_str + sub[0].str(prefix, suffix);
+            sub[0].indent = indent;
+            return /*indent_str + */sub[0].str(prefix, suffix);
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
-                return indent_str + sub[0].str();
+                return /*indent_str + */sub[0].str();
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()>=1);
-            if (sub.size() > 1) {
+            if (sub.size() > 1 && sub[0].type != EXPR_INIT) {
                 std::string ret = indent_str + "{";
                 for (size_t i=sub.size(); i > 0; --i) {
                     sub[i-1].flags |= flags;
@@ -365,7 +390,7 @@ if (sub.size() == 0) return "??????";
             sub[3].indent = indent + 1;
             sub[3].flags |= flags;
             str += sub[3].str(prefix);
-            if (!sub[3].isMultiline()) {
+            if (!str.empty() && str.back() != '\n') {
                 str += ";\n";
             }
             str += indent_str + "end\n";
@@ -379,7 +404,7 @@ if (sub.size() == 0) return "??????";
             sub[1].indent = indent + 1;
             sub[1].flags |= flags;
             str += sub[1].str(prefix);
-            if (!sub[1].isMultiline()) {
+            if (!str.empty() && str.back() != '\n') {
                 str += ";\n";
             }
             str += indent_str + "end\n";
@@ -398,7 +423,7 @@ if (sub.size() == 0) return "??????";
                 sub[1].indent = indent + 1;
                 sub[1].flags |= flags;
                 str += sub[1].str(prefix);
-                if (!sub[1].isMultiline()) {
+                if (!str.empty() && str.back() != '\n') {
                     str += ";\n";
                 }
             }
@@ -408,7 +433,7 @@ if (sub.size() == 0) return "??????";
                 sub[2].indent = indent + 1;
                 sub[2].flags |= flags;
                 str += sub[2].str(prefix);
-                if (!sub[2].isMultiline()) {
+                if (!str.empty() && str.back() != '\n') {
                     str += ";\n";
                 }
                 str += indent_str + "end\n";
@@ -427,7 +452,7 @@ if (sub.size() == 0) return "??????";
                     str += indent_str + sub[i].value + ":";
                     str += " begin\n";
                     str += sub[i].str(prefix);
-                    if (!sub[1].isMultiline()) {
+                    if (!str.empty() && str.back() != '\n') {
                         str += ";\n";
                     }
                     str += indent_str + "end\n";
@@ -443,7 +468,7 @@ if (sub.size() == 0) return "??????";
                 stmt.indent = indent;
                 stmt.flags = flags;
                 auto s = stmt.str(prefix);
-                if (s.length() && !stmt.isMultiline()) {
+                if (!s.empty() && s.back() != '\n') {
                     s += ";\n";
                 }
                 str += s;
@@ -463,41 +488,41 @@ std::string Expr::typeToSV(std::string name, std::string size)
 {
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
-    std::string str = genTypeName(name);
-    if (name == "cpphdl::logic") {
+    std::string str = name;//genTypeName(name);
+    if (name == "cpphdl_logic") {
         str = logic + size;
     } else
-    if (name == "cpphdl::u") {
+    if (name == "cpphdl_u") {
         str = logic + size;
     } else
-    if (name == "cpphdl::s") {
+    if (name == "cpphdl_s") {
         str = logic + " signed" + size;
     } else
-    if (name == "cpphdl::u1") {
+    if (name == "cpphdl_u1") {
         str = logic + size;
     } else
-    if (name == "cpphdl::u8") {
+    if (name == "cpphdl_u8") {
         str = logic + size + "[7:0]";
     } else
-    if (name == "cpphdl::s8") {
+    if (name == "cpphdl_s8") {
         str = logic + " signed" + size + "[7:0]";
     } else
-    if (name == "cpphdl::u16") {
+    if (name == "cpphdl_u16") {
         str = logic + size + "[15:0]";
     } else
-    if (name == "cpphdl::s16") {
+    if (name == "cpphdl_s16") {
         str = logic + " signed" + size + "[15:0]";
     } else
-    if (name == "cpphdl::u32") {
+    if (name == "cpphdl_u32") {
         str = logic + size + "[31:0]";
     } else
-    if (name == "cpphdl::s32") {
+    if (name == "cpphdl_s32") {
         str = logic + " signed" + size + "[31:0]";
     } else
-    if (name == "cpphdl::u64") {
+    if (name == "cpphdl_u64") {
         str = logic + size + "[63:0]";
     } else
-    if (name == "cpphdl::s64") {
+    if (name == "cpphdl_s64") {
         str = logic + " signed" + size + "[63:0]";
     } else
     if (name == "bool") {
@@ -506,8 +531,20 @@ std::string Expr::typeToSV(std::string name, std::string size)
     if (name == "_Bool") {
         str = logic + size;
     } else
+    if (name == "int8_t") {
+        str = logic + " signed" + size + "[7:0]";
+    } else
+    if (name == "int16_t") {
+        str = logic + " signed" + size + "[15:0]";
+    } else
+    if (name == "int32_t") {
+        str = logic + " signed" + size + "[31:0]";
+    } else
+    if (name == "int64_t") {
+        str = logic + " signed" + size + "[63:0]";
+    } else
     if (name == "uint8_t") {
-        str = logic + size + "[7:0]";
+        str = logic + " signed" + size + "[7:0]";
     } else
     if (name == "uint16_t") {
         str = logic + size + "[15:0]";
@@ -600,6 +637,7 @@ std::string Expr::debug(int debug_indent)
         case EXPR_NUM: str += "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs
         case EXPR_STRING: str += "EXPR_STRING"; break;
         case EXPR_PARAM: str += "EXPR_PARAM"; break;
+        case EXPR_PACK: str += "EXPR_PACK"; break;
         case EXPR_TEMPLATE: str += "EXPR_TEMPLATE"; break;
         case EXPR_ARRAY: str += "EXPR_ARRAY"; break;
         case EXPR_CALL: str += "EXPR_CALL"; break;

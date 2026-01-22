@@ -5,6 +5,7 @@
 #include "Expr.h"
 #include "Comb.h"
 #include "Struct.h"
+#include "Enum.h"
 
 using namespace cpphdl;
 
@@ -31,7 +32,7 @@ void Project::generate(const std::string& outDir)
     }
 
     for (auto& str : structs) {
-        std::string fname = genTypeName(str.name);
+        std::string fname = str.name;
         fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
 
         std::ofstream out(filePath);
@@ -46,6 +47,23 @@ void Project::generate(const std::string& outDir)
         }
         out << "typedef ";
         str.print(out);
+        out << "\n\nendpackage\n";
+
+        std::cout << "\n" << "Generated: " << filePath << "\n";
+    }
+
+    for (auto& en : enums) {
+        std::string fname = en.name;
+        fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
+
+        std::ofstream out(filePath);
+        if (!out) {
+            std::cerr << "Failed to open '" << filePath << "' for writing\n";
+            continue;
+        }
+        out << "package " << fname << "_pkg;\n\n";
+//        out << "typedef ";
+        en.print(out);
         out << "\n\nendpackage\n";
 
         std::cout << "\n" << "Generated: " << filePath << "\n";

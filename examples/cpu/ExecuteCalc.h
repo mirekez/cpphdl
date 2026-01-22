@@ -65,10 +65,13 @@ public:
 
     uint64_t alu_result_comb_func()
     {
-        uint32_t a = alu_a_comb_func();
-        uint32_t b = alu_b_comb_func();
+        uint32_t a;
+        uint32_t b;
+        uint32_t alu_op;
+        a = alu_a_comb_func();
+        b = alu_b_comb_func();
         alu_result_comb = 0;
-        uint32_t alu_op = state_in()[ID-1].alu_op;
+        alu_op = state_in()[ID-1].alu_op;
         switch (alu_op) {
             case Alu::ADD:  alu_result_comb = a + b; break;
             case Alu::SUB:  alu_result_comb = a - b; break;
@@ -95,7 +98,8 @@ public:
 
     bool branch_taken_comb_func()
     {
-        uint64_t alu_result = alu_result_comb_func();
+        uint64_t alu_result;
+        alu_result = alu_result_comb_func();
         branch_taken_comb = false;
         switch (state_in()[ID-1].br_op) {
             case Br::BEQZ: branch_taken_comb = alu_result>>32; break;
@@ -111,7 +115,7 @@ public:
             case Br::JR: branch_taken_comb = true; break;
             case Br::BNONE: break;
         }
-        return branch_taken_comb && state_in()[ID-1].valid;
+        return branch_taken_comb = branch_taken_comb && state_in()[ID-1].valid;
     }
 
     uint32_t branch_target_comb_func()

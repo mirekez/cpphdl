@@ -36,10 +36,10 @@ bool Method::print(std::ofstream& out)
     }
 
     if (ret.size() == 0) {
-        out << "    task " << name << " (" << (params_cnt > 1 ? "\n" : "");
+        out << "    task " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
     }
     else {
-        out << "    function " << ret[0].str() << " " << name << " (" << (params_cnt > 1 ? "\n" : "");
+        out << "    function " << ret[0].str() << " " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
     }
 
     bool first = true;
@@ -62,7 +62,7 @@ bool Method::print(std::ofstream& out)
 //            stmt.flags = Expr::FLAG_RETURN;
 //        }
         auto s = stmt.str();
-        if (s.length() && !stmt.isMultiline()) {
+        if (!s.empty() && s.back() != '\n') {
             s += ";\n";
         }
         out << s;
@@ -131,19 +131,19 @@ bool Method::printConns(std::ofstream& out)
             continue;
         }
 
-        bool has_body = false;
+//        bool has_body = false;
         stmt.traverseIf( [&](Expr& e) {
                     e.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
-                    if (e.type == Expr::EXPR_BODY) {
-                        has_body = true;  // lambda
-                    }
+//                    if (e.type == Expr::EXPR_BODY) {
+//                        has_body = true;  // lambda
+//                    }
                     return false;
                 } );  // we set flags individually, not all Exprs propagate its flags
 
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
         auto s = stmt.str("assign ");
-        if (s.length() && !(stmt.isMultiline() || has_body)) {
+        if (!s.empty() && s.back() != '\n') {
             s += ";\n";
         }
         out << s;
@@ -156,7 +156,11 @@ bool Method::printConns(std::ofstream& out)
             && port.initializer.sub.size() >= 1 /*outdated*/ && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
             /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
             port.initializer.flags = Expr::FLAG_ASSIGN;
-            out << "    assign " << port.name << " = " << port.initializer.str() << ";\n";
+            std::string s = port.initializer.str();
+            if (!s.empty() && s.back() != '\n') {
+                s += ";\n";
+            }
+            out << "    assign " << port.name << " = " << s << "\n";
         }
     }
 
@@ -204,7 +208,7 @@ bool Method::printComb(std::ofstream& out)
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
         auto s = stmt.str();
-        if (s.length() && !stmt.isMultiline()) {
+        if (!s.empty() && s.back() != '\n') {
             s += ";\n";
         }
         out << s;

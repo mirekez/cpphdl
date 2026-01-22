@@ -40,9 +40,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
     DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
     cpphdl::Struct st_obj = {};
     if (!st) {
-        std::string sname = RD->getQualifiedNameAsString();
-        str_replace(sname, "::", "_");
-        sname = genTypeName(sname);
+        std::string sname = genTypeName(RD->getQualifiedNameAsString());
 
         // extracting parameters of the template if we see it as template
         hlp.followSpecialization(RD, sname);
@@ -344,7 +342,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         cpphdl::Expr expr = hlp.digQT(QT);
 
         QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
-        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+//?        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
         DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
 
         method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
@@ -361,14 +359,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         DEBUG_AST(debugIndent, "Param: " << param->getNameAsString() << " (" << QT.getAsString() << ")");
 
         method.parameters.emplace_back(cpphdl::Field{param->getNameAsString(), std::move(expr)});
-        auto* CRD = hlp.resolveCXXRecordDecl(QT);
-        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
-            auto st = exportStruct(CRD, hlp);
-            auto ret = hlp.mod.imports.emplace(st.name);
-            if (ret.second) {
-                currProject->structs.emplace_back(std::move(st));
-            }
-        }
+//        auto* CRD = hlp.resolveCXXRecordDecl(QT);
+//        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+//            auto st = exportStruct(CRD, hlp);
+//            auto ret = hlp.mod.imports.emplace(st.name);
+//            if (ret.second) {
+//                currProject->structs.emplace_back(std::move(st));
+//            }
+//        }
         DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
