@@ -17,6 +17,7 @@ bool Enum::print(std::ofstream& out)
     }
     out << "enum {\n";
 
+    ++indent;
     for (size_t i=0; i < fields.size(); ++i) {
         for (int i=0; i < indent; ++i) {
             out << "    ";
@@ -31,6 +32,7 @@ bool Enum::print(std::ofstream& out)
         }
         out << "\n";
     }
+    --indent;
 
     for (int i=0; i < indent; ++i) {
         out << "    ";

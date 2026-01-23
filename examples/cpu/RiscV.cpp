@@ -61,6 +61,7 @@ public:
 
     void work(bool clk, bool reset)
     {
+        auto state_comb_tmp = states_comb_func();  // we use it too often, lets cache it. It must not change during work() function
         if (!clk) {
             return;
         }
@@ -84,21 +85,21 @@ public:
 
         // delayed by 1 to align WB
         std::string interpret;
-        if (states_comb[1].valid && states_comb[1].alu_op != Alu::ANONE) {
-            interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)states_comb[1].rs1, (int)states_comb[1].rs2, AOPS[states_comb[1].alu_op],
-                             states_comb[1].debug_alu_a, states_comb[1].debug_alu_b);
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
+            interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
+                             state_comb_tmp[1].debug_alu_a, state_comb_tmp[1].debug_alu_b);
         }
-        if (states_comb[1].valid && states_comb[1].br_op != Br::BNONE && states_comb[1].debug_branch_taken) {
-            interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[states_comb[1].br_op], states_comb[1].debug_branch_target, (int)states_comb[1].rd);
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].br_op != Br::BNONE && state_comb_tmp[1].debug_branch_taken) {
+            interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[state_comb_tmp[1].br_op], state_comb_tmp[1].debug_branch_target, (int)state_comb_tmp[1].rd);
         }
-        if (states_comb[1].valid && states_comb[1].mem_op == Mem::LOAD) {
-            interpret += std::format("LOAD({:08x}) ", states_comb[1].alu_result);
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::LOAD) {
+            interpret += std::format("LOAD({:08x}) ", state_comb_tmp[1].alu_result);
         }
-        if (states_comb[1].valid && states_comb[1].mem_op == Mem::STORE) {
-            interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", states_comb[1].alu_result, states_comb[1].rs2_val, (int)states_comb[1].rs2);
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::STORE) {
+            interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", state_comb_tmp[1].alu_result, state_comb_tmp[1].rs2_val, (int)state_comb_tmp[1].rs2);
         }
-        if (states_comb[1].valid && states_comb[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
-            interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[states_comb[1].wb_op], wb.regs_wr_id_out());
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
+            interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
         }
         //
 
@@ -107,12 +108,12 @@ public:
                        "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}: {}\n",
                 (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
                 (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
-                (int)states_comb[0].valid, (uint8_t)states_comb[0].alu_op, (uint8_t)states_comb[0].mem_op, (uint8_t)states_comb[0].br_op, (uint8_t)states_comb[0].wb_op,
-                (int)states_comb[0].rs1, (int)states_comb[0].rs2, states_comb[0].rs1_val, states_comb[0].rs2_val, states_comb[0].imm, ex.alu_result_comb_func(), (int)states_comb[0].rd,
+                (int)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
+                (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_comb_func(), (int)state_comb_tmp[0].rd,
                 (int)ex.branch_taken_out(), ex.branch_target_out(),
                 (int)ex.mem_write_out(), (int)ex.mem_read_out(),
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
-                (int)states_comb[1].valid, (uint8_t)states_comb[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
+                (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
                 interpret);
         }
         #endif
@@ -129,7 +130,7 @@ public:
         if (valid && !df.stall_out()) {
             pc.next = pc + ((df.instr_in()&3)==3?4:2);
         }
-        if (states_comb[0].valid && ex.branch_taken_out()) {
+        if (state_comb_tmp[0].valid && ex.branch_taken_out()) {
             pc.next = ex.branch_target_out();
         }
 
@@ -240,21 +241,43 @@ public:
         riscv.debugen_in = debugen_in;
         riscv.__inst_name = __inst_name + "/riscv";
         riscv.connect();
+#else  // connecting Verilator to C++HDL
+        dmem.read_in = __VAL( riscv.dmem_read_out );
+        dmem.read_addr_in = __VAL( riscv.dmem_read_addr_out );
+        dmem.write_in = __VAL( riscv.dmem_write_out );
+        dmem.write_addr_in = __VAL( riscv.dmem_write_addr_out );
+        dmem.write_data_in = __VAL( riscv.dmem_write_data_out );
+        dmem.write_mask_in = __VAL( riscv.dmem_write_mask_out );
+        dmem.debugen_in = debugen_in;
+        dmem.__inst_name = __inst_name + "/dmem";
+        dmem.connect();
+
+        imem.read_in = __VAL( !imem_write );
+        imem.read_addr_in = __VAL( riscv.imem_read_addr_out);
+        imem.write_in = __VAL( imem_write );
+        imem.write_addr_in = __VAL( imem_write_addr );
+        imem.write_data_in = __VAL( imem_write_data );
+        imem.write_mask_in = __VAL( 0xFFFFFFFFu );
+        imem.debugen_in = debugen_in;
+        imem.__inst_name = __inst_name + "/imem";
+        imem.connect();
 #endif
     }
 
     void work(bool clk, bool reset)
     {
 #ifndef VERILATOR
-        dmem_read_data = dmem.read_data_out();
+        dmem_read_data = dmem.read_data_out();  // extracting data from C++HDL for checking
         imem_read_data = imem.read_data_out();
         riscv.work(clk, reset);
         dmem.work(clk, reset);
         imem.work(clk, reset);
 #else
+        riscv.dmem_read_data_in = dmem.read_data_out();
+        riscv.imem_read_data_in = imem.read_data_out();
 //        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
-        dmem_read_data = dmem.read_data_out;
-        imem_read_data = imem.read_data_out;
+        dmem_read_data = dmem.read_data_out();
+        imem_read_data = imem.read_data_out();
         riscv.debugen_in    = debugen_in;
 
 //        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;

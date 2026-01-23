@@ -418,7 +418,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     explicit MethodVisitor(ASTContext* context)
         : context(context)/*, SM(context->getSourceManager())*/ {}
 
-    void putClass(CXXRecordDecl* RD, cpphdl::Module& mod)
+    void putClass(const CXXRecordDecl* RD, cpphdl::Module& mod)
     {
         DEBUG_AST(debugIndent++, "# putClass: " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
 
@@ -480,6 +480,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 putMethod(MD, hlp);
             }
         }
+
+//        for (const CXXMethodDecl *MD : RD->methods()) {
+//            putMethod(MD, hlp);
+//         }
 
         for (auto* RD : abstractDefs) {
             if (mod.name.find(RD->getQualifiedNameAsString()) == 0) {
@@ -544,14 +548,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod.name << ")"); on_return ret_debug([](){ --debugIndent; });
 
-        putClass(RD, mod);
-
-        for (const auto &Base : RD->bases()) {
-            CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
-            if (BaseRD && BaseRD->hasDefinition()) {
-                putClass(BaseRD, mod);
-            }
-        }
+        hlp.forEachBase(RD, [&](const CXXRecordDecl* RD){
+                putClass(RD, mod);
+            });
 
         currProject->modules.emplace_back(std::move(mod));
     }

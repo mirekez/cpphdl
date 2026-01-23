@@ -19,14 +19,26 @@ std::string Expr::str(std::string prefix, std::string suffix)
     {
         case EXPR_NONE:
             return "";
-        case EXPR_DECLARE:
+        case EXPR_DECL:
+        {
             ASSERT(sub.size() >= 1);
-            if (sub.size() == 2) {
-                return indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value) + "; " + value + " = " + sub[1].str();
+            std::string str;
+            if (sub[0].type == EXPR_TEMPLATE && sub[0].value == "cpphdl_memory") {
+                ASSERT1(sub[0].sub.size() >= 3, std::string("cpphdl_memory subs size = ") + std::to_string(sub.size()) );
+                sub[0].sub[0].flags = Expr::FLAG_REG;
+                return indent_str + prefix + sub[0].sub[0].str("", std::string("[") + sub[0].sub[1].str() + "-1:0]") + " " + escapeIdentifier(value) + "[" + sub[0].sub[2].str() + "]";
+            } else
+            if (sub[0].type == EXPR_ARRAY) {
+                str += indent_str + prefix + sub[0].str(std::string(" ") + escapeIdentifier(value));  // use name as suffix
             }
             else {
-                return indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
+                str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
             }
+            if (sub.size() == 2) {
+                str += " " + value + " = " + sub[1].str();
+            }
+            return str;
+        }
         case EXPR_TYPE:
             if (value.find("FILE") == 0) {
                 value = "int";
@@ -39,12 +51,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
         case EXPR_VAR:
             if (value.find("__ONE") == 0) {
-                return indent_str + prefix + "'1";
+                return indent_str + prefix + "'1" + suffix;
             }
             if (value.find("__ZERO") == 0) {
-                return indent_str + prefix + "'0";
+                return indent_str + prefix + "'0" + suffix;
             }
-            return indent_str + prefix + escapeIdentifier(value);
+            return indent_str + prefix + escapeIdentifier(value) + suffix;
         case EXPR_STRING:
             replacePrint(value);
             return indent_str + prefix + value;
@@ -59,6 +71,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_TEMPLATE:
         {
             ASSERT(sub.size());
+
+            if (value == "cpphdl_reg") {
+                ASSERT1(sub.size() >= 1, std::string("cpphdl_reg subs size = ") + std::to_string(sub.size()) );
+                sub[0].flags = Expr::FLAG_REG;
+                return indent_str + prefix + sub[0].str("", suffix);
+            } else
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
@@ -87,6 +105,25 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
+
+/*            if (sub[1].type == Expr::EXPR_TYPE || sub[1].type == Expr::EXPR_TEMPLATE) {  // do we need this??
+                ASSERT1(sub.size() >= 1, std::string("EXPR_ARRAY subs size = ") + std::to_string(sub.size()) );
+                if (sub[1].value == "cpphdl_reg") {
+                    ASSERT1(sub[1].sub.size() >= 1, std::string("cpphdl_reg subs size = ") + std::to_string(sub[1].sub.size()) );
+                    sub[1].flags = Expr::FLAG_REG;
+                    sub[1].sub[0].indent = indent;
+                    return indent_str + prefix + sub[1].sub[0].str() + " " + suffix + "[" + sub[0].str() + "]";
+//                } else
+//                if (isStruct) {
+//                    sub[1].indent = indent;
+//                    return indent_str + prefix + str() << " " << suffix;
+                }
+                else {
+                    sub[1].indent = indent;
+                    return indent_str + prefix + sub[1].str() + " " + suffix + "[" + sub[0].str() + "]";
+                }
+            }
+*/
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
@@ -497,99 +534,99 @@ if (sub.size() == 0) return "??????";
     return "";
 }
 
-std::string Expr::typeToSV(std::string name, std::string size)
+std::string Expr::typeToSV(std::string type, std::string size)
 {
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
 
-    std::string str = name;//genTypeName(name);
-    if (name == "cpphdl_logic") {
+    std::string str = type;//genTypeName(type);
+    if (type == "cpphdl_logic") {
         str = logic + size;
     } else
-    if (name == "cpphdl_u") {
+    if (type == "cpphdl_u") {
         str = logic + size;
     } else
-    if (name == "cpphdl_s") {
+    if (type == "cpphdl_s") {
         str = logic + " signed" + size;
     } else
-    if (name == "cpphdl_u1") {
+    if (type == "cpphdl_u1") {
         str = logic + size;
     } else
-    if (name == "cpphdl_u8") {
+    if (type == "cpphdl_u8") {
         str = logic + size + "[7:0]";
     } else
-    if (name == "cpphdl_s8") {
+    if (type == "cpphdl_s8") {
         str = logic + " signed" + size + "[7:0]";
     } else
-    if (name == "cpphdl_u16") {
+    if (type == "cpphdl_u16") {
         str = logic + size + "[15:0]";
     } else
-    if (name == "cpphdl_s16") {
+    if (type == "cpphdl_s16") {
         str = logic + " signed" + size + "[15:0]";
     } else
-    if (name == "cpphdl_u32") {
+    if (type == "cpphdl_u32") {
         str = logic + size + "[31:0]";
     } else
-    if (name == "cpphdl_s32") {
+    if (type == "cpphdl_s32") {
         str = logic + " signed" + size + "[31:0]";
     } else
-    if (name == "cpphdl_u64") {
+    if (type == "cpphdl_u64") {
         str = logic + size + "[63:0]";
     } else
-    if (name == "cpphdl_s64") {
+    if (type == "cpphdl_s64") {
         str = logic + " signed" + size + "[63:0]";
     } else
-    if (name == "bool") {
+    if (type == "bool") {
         str = logic + size;
     } else
-    if (name == "_Bool") {
+    if (type == "_Bool") {
         str = logic + size;
     } else
-    if (name == "int8_t") {
+    if (type == "int8_t") {
         str = logic + " signed" + size + "[7:0]";
     } else
-    if (name == "int16_t") {
+    if (type == "int16_t") {
         str = logic + " signed" + size + "[15:0]";
     } else
-    if (name == "int32_t") {
+    if (type == "int32_t") {
         str = logic + " signed" + size + "[31:0]";
     } else
-    if (name == "int64_t") {
+    if (type == "int64_t") {
         str = logic + " signed" + size + "[63:0]";
     } else
-    if (name == "uint8_t") {
+    if (type == "uint8_t") {
         str = logic + " signed" + size + "[7:0]";
     } else
-    if (name == "uint16_t") {
+    if (type == "uint16_t") {
         str = logic + size + "[15:0]";
     } else
-    if (name == "uint32_t") {
+    if (type == "uint32_t") {
         str = logic + size + "[31:0]";
     } else
-    if (name == "uint64_t") {
+    if (type == "uint64_t") {
         str = logic + size + "[63:0]";
     } else
-    if (name == "signed char") {
+    if (type == "signed char") {
         str = "byte" + size;
     } else
-    if (name.compare(0, 4, "short") == 0) {
+    if (type.compare(0, 4, "short") == 0) {
         str = "shortint" + size;
     } else
-    if (name == "int") {
+    if (type == "int") {
         str = "integer" + size;
     } else
-    if (name.compare(0, 4, "long") == 0) {
+    if (type.compare(0, 4, "long") == 0) {
         str = "longint" + size;
     } else
-    if (name == "unsigned char") {
+    if (type == "unsigned char") {
         str = "logic" + size + "[7:0]";
     } else
-    if (name == "unsigned short") {
+    if (type == "unsigned short") {
         str = "logic" + size + "[15:0]";
     } else
-    if (name == "unsigned long" || name == "size_t") {
+    if (type == "unsigned long" || type == "size_t") {
         str = "logic" + size + "[63:0]";
     } else
-    if (name.compare(0, 8, "unsigned") == 0) {
+    if (type.compare(0, 8, "unsigned") == 0) {
         str = "logic" + size + "[31:0]";
     } else {
         str += size;
@@ -644,7 +681,7 @@ std::string Expr::debug(int debug_indent)
     std::string str;
     switch(type) {
         case EXPR_NONE: str += "EXPR_NONE"; break;
-        case EXPR_DECLARE: str += "EXPR_DECLARE"; break;
+        case EXPR_DECL: str += "EXPR_DECL"; break;
         case EXPR_TYPE: str += "EXPR_TYPE"; break;
         case EXPR_VAR: str += "EXPR_VAR"; break;
         case EXPR_NUM: str += "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs

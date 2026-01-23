@@ -12,7 +12,7 @@ struct Expr
 
     enum {
         EXPR_NONE,
-        EXPR_DECLARE,
+        EXPR_DECL,
         EXPR_TYPE,
         EXPR_NUM,  // can be also "false" and "true"
         EXPR_STRING,

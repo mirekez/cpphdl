@@ -40,6 +40,7 @@ bool Module::print(std::ofstream& out)
 
 //    bool first = true;
     for (auto& port : ports) {
+        port.indent = 1;
         out << ",   ";
         if (!port.printPort(out)) {
             return false;
@@ -49,6 +50,7 @@ bool Module::print(std::ofstream& out)
     out << ");\n";
     out << "\n";
     for (auto& field : vars) {
+        field.indent = 1;
         if (!field.print(out)) {
             return false;
         }
@@ -80,6 +82,8 @@ bool Module::printMembers(std::ofstream& out)
     currModule = this;
 
     for (auto& member : members) {
+        member.indent = 1;
+
         if (member.expr.type == Expr::EXPR_ARRAY && member.expr.sub.size() >= 2) {
             Module* mod = currProject->findModule(member.expr.sub[1].str());
             if (mod) {

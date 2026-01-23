@@ -183,11 +183,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 else {  // real declaration
                     DEBUG_AST1(" VarDecl(" << VD->getName().str() << ")");
                     if (VD->getInit()) {
-                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECLARE,
+                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECL,
                                             {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}, exprToExpr(VD->getInit())}});
                     }
                     else {
-                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECLARE,
+                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECL,
                                             {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}}});
                     }
 
