@@ -353,8 +353,8 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
-        ok &= VerilatorCompile("FpConverter.cpp", "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
+        ok &= VerilatorCompile(__FILE__, "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
+        ok &= VerilatorCompile(__FILE__, "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str()) == 0)

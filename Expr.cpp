@@ -350,13 +350,25 @@ if (sub.size() == 0) return "??????";
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()>=1);
-            if (sub.size() > 1 && sub[0].type != EXPR_INIT) {
-                std::string ret = indent_str + "{";
+            if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
+                bool first = true;
+                std::string ret;
                 for (size_t i=sub.size(); i > 0; --i) {
-                    sub[i-1].flags |= flags;
-                    ret += sub[i-1].str();
+                    if (sub[i-1].type != EXPR_NONE) {
+                        if (first) {
+                            first = false;
+                            ret = indent_str + "{";
+                        }
+                        sub[i-1].flags |= flags;
+                        ret += sub[i-1].str();
+                    }
                 }
-                ret += "}";
+                if (!first) {
+                    ret += "}";
+                }
+                if (ret == "") {
+                    ret += indent_str + "0";
+                }
                 return ret;
             }
             sub[0].flags |= flags;

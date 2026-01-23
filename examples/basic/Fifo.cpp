@@ -343,8 +343,8 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 1);
-        ok &= VerilatorCompile("Fifo.cpp", "Fifo", {"Memory"}, 64, 65536, 0);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Memory"}, 64, 65536, 1);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Memory"}, 64, 65536, 0);
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str()) == 0)

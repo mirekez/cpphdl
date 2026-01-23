@@ -401,7 +401,7 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile("RiscV.cpp", "RiscV", {"File", "Memory",
+        ok &= VerilatorCompile(__FILE__, "RiscV", {"File", "Memory",
                   "DecodeFetchint_int_0_0_State_pkg",
                   "ExecuteCalcint_int_0_0_State_pkg",
                   "MemWBint_int_0_0_State_pkg",
