@@ -48,13 +48,13 @@ struct Expr
         FLAG_NONE = 0,
         FLAG_WIRE = 1,
         FLAG_REG = 2,
-        FLAG_ASSIGN = 4,  // translating connect() function into generate assign block
+        FLAG_ASSIGN = 4,  // translating _connect() function into generate assign block
         FLAG_COMB = 8,  // it's comb block and return should be skipped
         FLAG_SPECVAL = 16,  // show number values from specialization if possible
         FLAG_CALL = 32,  // member inside call
         FLAG_ANON = 64,  // anonymous struct or union
         FLAG_USETHIS = 128,  // methods of structs
-        FLAG_NOCALLS = 256,  // calls forbidden in connect() assign
+        FLAG_NOCALLS = 256,  // calls forbidden in _connect() assign
         FLAG_NOBASE = 512  // dont use base of member expr (for constexpr of structs)
     };
     unsigned flags = FLAG_NONE;

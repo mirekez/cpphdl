@@ -28,7 +28,7 @@ public:
 
     bool    debugen_in;
 
-    void connect()
+    void _connect()
     {
         ram.addr0_in = __VAL( write_in() ? write_addr_in()/4 : read_addr_in()/4 );
         ram.addr1_in = __VAL( write_in() ? ( write_addr_in()%4 ? write_addr_in()/4+1 : 0 ) : ( read_addr_in()%4 ? read_addr_in()/4+1 : 0 ) );
@@ -42,26 +42,19 @@ public:
         ram.read1_in = __VAL( read_addr_in()%4 == 0 ? false : read_in() );
         ram.__inst_name = __inst_name + "/ram";
         ram.debugen_in  = debugen_in;
-        ram.connect();
+        ram._connect();
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
 
-        ram.work(clk, reset);
+        ram._work(clk, reset);
     }
 
-    void strobe()
+    void _strobe()
     {
-        ram.strobe();
-    }
-
-    void comb()
-    {
-        ram.read_data0_out_comb_func();
-        ram.read_data1_out_comb_func();
-        ram.comb();
+        ram._strobe();
     }
 };
 /////////////////////////////////////////////////////////////////////////

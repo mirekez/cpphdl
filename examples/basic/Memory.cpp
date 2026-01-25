@@ -31,7 +31,7 @@ public:
 
     bool                      debugen_in;
 
-    void connect() {}
+    void _connect() {}
 
     logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
     {
@@ -46,7 +46,7 @@ public:
 
     logic<MEM_WIDTH_BYTES*8> mask;
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
 
@@ -69,7 +69,7 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
         buffer.apply();
         data_out_reg.strobe();
@@ -131,7 +131,7 @@ public:
         delete[] mem_copy;
     }
 
-    void connect()
+    void _connect()
     {
 #ifndef VERILATOR
         mem.write_addr_in = __VAL( write_addr_reg );
@@ -141,16 +141,16 @@ public:
         mem.read_addr_in =  __VAL( read_addr_reg );
         mem.read_in =       __VAL( read_reg );
         mem.__inst_name = __inst_name + "/mem";
-        mem.connect();
+        mem._connect();
 #endif
         mem.debugen_in  = debugen_in;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
 #ifndef VERILATOR
         mem_read_data = mem.read_data_out();
-        mem.work(clk, reset);
+        mem._work(clk, reset);
 #else
         mem.write_addr_in = write_addr_reg;
         mem.write_in      = write_reg;
@@ -232,10 +232,10 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
 #ifndef VERILATOR
-        mem.strobe();
+        mem._strobe();
 #endif
 
         write_addr_reg.strobe();
@@ -263,16 +263,16 @@ public:
         }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "mem_test";
-        connect();
-        work(0, 1);
-        work(1, 1);
+        _connect();
+        _work(0, 1);
+        _work(1, 1);
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            work(clk, 0);
+            _work(clk, 0);
 
             if (clk) {
-                strobe();
+                _strobe();
             }
 
             if (clk && error) {

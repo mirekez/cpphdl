@@ -45,7 +45,7 @@ public:
 
 public:
 
-    void connect()
+    void _connect()
     {
         std::print("ExecuteCalc: {} of {}\n", ID, LENGTH);
     }
@@ -185,7 +185,7 @@ public:
         }
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) {
             return;
@@ -194,15 +194,15 @@ public:
             mem_write_reg.clr();
             mem_read_reg.clr();
         }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
         state_reg.next[0] = {};
         do_execute();
         start_memory();
     }
 
-    void strobe()
+    void _strobe()
     {
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
         mem_addr_reg.strobe();
         mem_data_reg.strobe();
         mem_mask_reg.strobe();

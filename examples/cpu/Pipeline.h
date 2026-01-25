@@ -30,7 +30,7 @@ struct PipelineStage : public cpphdl::Module
 
     size_t i;
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) {
             return;
@@ -41,7 +41,7 @@ struct PipelineStage : public cpphdl::Module
         }
     }
 
-    void strobe()
+    void _strobe()
     {
         state_reg.strobe();
     }
@@ -123,14 +123,14 @@ struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
     }
 
 public:
-    void connect()
+    void _connect()
     {
         std::apply([&](auto&... stage) {
             (
                 (
                     [&]{
                         stage.state_in = __VAL( states_comb );
-                        stage.connect();
+                        stage._connect();
                     }()
                 ),
                 ...
@@ -138,7 +138,7 @@ public:
         }, members);
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) {
             return;
@@ -147,7 +147,7 @@ public:
             (
                 (
                     [&]{
-                        stage.work(clk, reset);
+                        stage._work(clk, reset);
                     }()
                 ),
                 ...
@@ -156,26 +156,18 @@ public:
     }
 
 
-    void strobe()
+    void _strobe()
     {
         std::apply([&](auto&... stage) {
             (
                 (
                     [&]{
-                        stage.strobe();
+                        stage._strobe();
                     }()
                 ),
                 ...
             );
         }, members);
     }
-
-    void comb()
-    {
-
-        states_comb_func();
-//        std::print("~~~ {} == {}", (uint8_t)states_comb[0].alu_op, (uint8_t)std::get<0>(members).state_reg[0].alu_op);
-    }
-
 };
 

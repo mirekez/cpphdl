@@ -34,7 +34,7 @@ public:
 
     bool                      debugen_in;
 
-    void connect() {}
+    void _connect() {}
 
     logic<MEM_WIDTH_BYTES*8>& read_data0_out_comb_func()
     {
@@ -60,7 +60,7 @@ public:
 
     logic<MEM_WIDTH_BYTES*8> mask;
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
         if (write0_in()) {
@@ -91,13 +91,11 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
         buffer.apply();
         data0_out_reg.strobe();
         data1_out_reg.strobe();
     }
-
-    void comb() {}
 };
 /////////////////////////////////////////////////////////////////////////

@@ -28,7 +28,7 @@ public:
 
     bool    debugen_in;
 
-    void connect() {}
+    void _connect() {}
 
     DTYPE data0_out_comb_func()
     {
@@ -40,7 +40,7 @@ public:
         return data1_out_comb = (logic<MEM_WIDTH>) buffer[read_addr1_in()];
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
 
@@ -49,11 +49,9 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
         buffer.apply();
     }
-
-    void comb() {}
 };
 /////////////////////////////////////////////////////////////////////////

@@ -24,7 +24,7 @@ public:
     __PORT(uint8_t)    regs_wr_id_out = __VAL( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
     __PORT(bool)       regs_write_out = __VAL( regs_write_comb_func() );
 
-    void connect()
+    void _connect()
     {
         std::print("MemWB: {} of {}\n", ID, LENGTH);
     }
@@ -62,18 +62,18 @@ public:
         return regs_write_comb;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) {
             return;
         }
         if (reset) {
         }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
     }
 
-    void strobe()
+    void _strobe()
     {
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
     }
 };

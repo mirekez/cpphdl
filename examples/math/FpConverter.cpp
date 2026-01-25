@@ -143,7 +143,7 @@ public:
 
     bool     debugen_in;
 
-    void connect() {}
+    void _connect() {}
 
     size_t i;
     array<DTYPE,LENGTH>& conv_comb_func()
@@ -154,7 +154,7 @@ public:
         return conv_comb;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
 
@@ -171,7 +171,7 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
         out_reg.strobe();
     }
@@ -226,22 +226,22 @@ public:
     {
     }
 
-    void connect()
+    void _connect()
     {
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
         converter.data_in      = __VAL( out_reg );
         converter.debugen_in   = debugen_in;
-        converter.connect();
+        converter._connect();
 #endif
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
 #ifndef VERILATOR
         read_data = converter.data_out();
-        converter.work(clk, reset);
+        converter._work(clk, reset);
 #else
         memcpy(&read_data, &converter.data_out, sizeof(read_data));
         memcpy(converter.data_in, &out_reg, sizeof(converter.data_in));
@@ -282,10 +282,10 @@ public:
         can_check2.next = can_check1;
     }
 
-    void strobe()
+    void _strobe()
     {
 #ifndef VERILATOR
-        converter.strobe();
+        converter._strobe();
 #endif
 
         out_reg.strobe();
@@ -308,16 +308,16 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "converter_test";
-        connect();
-        work(0, 1);
-        work(1, 1);
+        _connect();
+        _work(0, 1);
+        _work(1, 1);
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            work(clk, 0);
+            _work(clk, 0);
 
             if (clk) {
-                strobe();
+                _strobe();
             }
 
             if (clk && error) {

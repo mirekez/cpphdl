@@ -48,7 +48,7 @@ public:
     __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
     __PORT(bool)        stall_out      = __VAL( stall_comb_func() );
 
-    void connect()
+    void _connect()
     {
         std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
     }
@@ -76,18 +76,18 @@ public:
     bool stall_comb_func()
     {
         // hazard
-        auto s = state_comb_func();
+        auto state_comb_tmp = state_comb_func();
         stall_comb = false;
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex
-            if (state_reg[0].rd == s.rs1) {
+            if (state_reg[0].rd == state_comb_tmp.rs1) {
                 stall_comb = true;
             }
-            if (state_reg[0].rd == s.rs2) {
+            if (state_reg[0].rd == state_comb_tmp.rs2) {
                 stall_comb = true;
             }
         }
         if ((state_reg[0].valid && state_reg[0].br_op != Br::BNONE)
-//            || (s.valid && s.br_op != Br::BNONE && ((state_reg[1].valid && (state_reg[1].wb_op == Br::PC2 || (state_reg[1].wb_op == Br::PC4))
+//            || (state_comb_tmp.valid && state_comb_tmp.br_op != Br::BNONE && ((state_reg[1].valid && (state_reg[1].wb_op == Br::PC2 || (state_reg[1].wb_op == Br::PC4))
 //                                                 || (state_reg[2].valid && state_reg[2].wb_op && state_reg[2].br_op != Br::NONE)))
 ) {
             stall_comb = true;
@@ -97,49 +97,49 @@ public:
 
     void do_decode_fetch()
     {
-        auto s = state_comb_func();
+        auto state_comb_tmp = state_comb_func();
 
         // fetch
-        if (s.rs1) {
-            s.rs1_val = regs_data0_in();
+        if (state_comb_tmp.rs1) {
+            state_comb_tmp.rs1_val = regs_data0_in();
         }
-        if (s.rs2) {
-            s.rs2_val = regs_data1_in();
+        if (state_comb_tmp.rs2) {
+            state_comb_tmp.rs2_val = regs_data1_in();
         }
 
         // forwarding
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem/Wb alu
-            if (state_reg[1].rd == s.rs1) {
-                s.rs1_val = state_in()[ID+1].alu_result;
+            if (state_reg[1].rd == state_comb_tmp.rs1) {
+                state_comb_tmp.rs1_val = state_in()[ID+1].alu_result;
             }
-            if (state_reg[1].rd == s.rs2) {
-                s.rs2_val = state_in()[ID+1].alu_result;
+            if (state_reg[1].rd == state_comb_tmp.rs2) {
+                state_comb_tmp.rs2_val = state_in()[ID+1].alu_result;
             }
         }
 
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
-            if (state_reg[0].rd == s.rs1) {
-                s.rs1_val = alu_result_in();
+            if (state_reg[0].rd == state_comb_tmp.rs1) {
+                state_comb_tmp.rs1_val = alu_result_in();
             }
-            if (state_reg[0].rd == s.rs2) {
-                s.rs2_val = alu_result_in();
+            if (state_reg[0].rd == state_comb_tmp.rs2) {
+                state_comb_tmp.rs2_val = alu_result_in();
             }
         }
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem/Wb
-            if (state_reg[1].rd == s.rs1) {
-                s.rs1_val = mem_data_in();
+            if (state_reg[1].rd == state_comb_tmp.rs1) {
+                state_comb_tmp.rs1_val = mem_data_in();
             }
-            if (state_reg[1].rd == s.rs2) {
-                s.rs2_val = mem_data_in();
+            if (state_reg[1].rd == state_comb_tmp.rs2) {
+                state_comb_tmp.rs2_val = mem_data_in();
             }
         }
 
-        state_reg.next[0] = s;
+        state_reg.next[0] = state_comb_tmp;
         state_reg.next[0].valid = instr_valid_in() && !stall_comb_func();
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) {
             return;
@@ -149,13 +149,13 @@ public:
             state_reg.next[1].valid = 0;
             state_reg.next[2].valid = 0;
         }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
         do_decode_fetch();
 //        std::print("!!! {} => {} ", (uint8_t)state_reg.next[0].alu_op, (uint8_t)state_reg[0].alu_op);
     }
 
-    void strobe()
+    void _strobe()
     {
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::strobe();
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
     }
 };

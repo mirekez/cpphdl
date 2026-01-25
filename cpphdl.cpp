@@ -301,7 +301,7 @@ void putField(QualType fieldType, const std::string& fieldName, const Expr* init
     }
 }
 
-std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
+std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = false)
 {
     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
     ASSERT(ModuleClass);
@@ -311,12 +311,17 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
         return "";
     }
 
+    if (MD->getNameAsString() == "_strobe") {  // never need them in SV
+        return "";
+    }
+
     if (MD->getQualifiedNameAsString().find("::" + hlp.mod.origName) != (size_t)-1
     || MD->getQualifiedNameAsString().find("::~" + hlp.mod.origName) != (size_t)-1
     || MD->getQualifiedNameAsString().find("::operator=") != (size_t)-1
     || MD->getQualifiedNameAsString().find("cpphdl::") != (size_t)-1
     || MD->getQualifiedNameAsString().find("std::") == (size_t)0
-    || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod.name.find(MD->getParent()->getQualifiedNameAsString())) != 0) {  // module's class method but not current module
+//    || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod.name.find(MD->getParent()->getQualifiedNameAsString())) != 0  // module's class method but not current module
+    ) {
         return "";
     }
 
@@ -330,23 +335,33 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
     }
 
     unsigned savedFlags = hlp.flags;
-    if (hlp.mod.origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of structure, adding first parameter this
-        // extracting parameters of the template
-        std::vector<cpphdl::Field> params;
-        hlp.followSpecialization(MD->getParent(), method.name, &params);
+    // three types of methods:
+    // - module object's methods
+    // - base module object's methods
+    // - external object's methods (require _this)
+    if (hlp.mod.origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {
+        method.name = MD->getParent()->getNameAsString();
+        if (notThis) {  // method called for var - need specialization
+            // extracting parameters of the template
+            std::vector<cpphdl::Field> params;
+            hlp.followSpecialization(MD->getParent(), method.name, &params);
+            DEBUG_AST1(" - not Module method: (" << hlp.mod.name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
+            hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
-        DEBUG_AST1(" - not Module method: (" << hlp.mod.name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
-        hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
-        QualType QT = MD->getThisType()->getPointeeType();
+            QualType QT = MD->getThisType()->getPointeeType();
+            cpphdl::Expr expr = hlp.digQT(QT);
+            QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
+//?            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
+            DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
+            method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
+        DEBUG_EXPR(debugIndent, " param Expr: " << method.parameters.back().expr.debug(debugIndent));
+        }
+        else {
+            DEBUG_AST1(" - base Module method: (" << hlp.mod.name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
+        }
+        method.name += "_";
+        method.name += MD->getNameAsString();
 
-        cpphdl::Expr expr = hlp.digQT(QT);
-
-        QT = QT.getDesugaredType(hlp.ctx); // remove typedefs, aliases, etc.
-//?        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
-        DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
-
-        method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
     for (const ParmVarDecl* param : MD->parameters()) {
@@ -367,7 +382,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp)
 //                currProject->structs.emplace_back(std::move(st));
 //            }
 //        }
-        DEBUG_EXPR(debugIndent, " Expr: " << method.parameters.back().expr.debug(debugIndent));
+        DEBUG_EXPR(debugIndent, "param Expr: " << method.parameters.back().expr.debug(debugIndent));
     }
 
     if (const auto *CS = dyn_cast<CompoundStmt>(MD->getBody())) {
@@ -475,15 +490,16 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             } else
             if ([[maybe_unused]] auto* TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
                 DEBUG_AST(debugIndent, "Type alias: " << TypeAlias->getNameAsString());
-            } else
-            if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {  // Method
-                putMethod(MD, hlp);
-            }
+            }// else
+//            if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {  // Method
+//                putMethod(MD, hlp);
+//            }
         }
 
-//        for (const CXXMethodDecl *MD : RD->methods()) {
-//            putMethod(MD, hlp);
-//         }
+        // when all vars already in
+        for (const CXXMethodDecl *MD : RD->methods()) {
+            putMethod(MD, hlp);
+        }
 
         for (auto* RD : abstractDefs) {
             if (mod.name.find(RD->getQualifiedNameAsString()) == 0) {

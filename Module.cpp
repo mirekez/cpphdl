@@ -69,7 +69,7 @@ bool Module::print(std::ofstream& out)
 
     out << "\n";
     out << "    always @(posedge clk) begin\n";
-    out << "        work(reset);\n";
+    out << "        _work(reset);\n";
     out << "    end\n";
 
     out << "\n";

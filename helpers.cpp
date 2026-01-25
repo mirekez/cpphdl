@@ -19,7 +19,7 @@
 unsigned debugIndent = 0;
 
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
-std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp);
+std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = false);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext &ctx);
 
@@ -174,24 +174,36 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* DS = dyn_cast<DeclStmt>(E)) {
         DEBUG_AST1(" DeclStmt");
-        auto expr = cpphdl::Expr{"decl", cpphdl::Expr::EXPR_BODY};
+        auto body = cpphdl::Expr{"", cpphdl::Expr::EXPR_BODY};
         for (Decl* D : DS->decls()) {
             if (auto* VD = dyn_cast<VarDecl>(D)) {
                 if (VD->getType()->isReferenceType()) {  // any reference declaration
                     // ignore
                 }
                 else {  // real declaration
+                    auto expr = cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECL};
+
                     DEBUG_AST1(" VarDecl(" << VD->getName().str() << ")");
-                    if (VD->getInit()) {
-                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECL,
-                                            {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}, exprToExpr(VD->getInit())}});
-                    }
-                    else {
-                        expr.sub.push_back(cpphdl::Expr{VD->getName().str(), cpphdl::Expr::EXPR_DECL,
-                                            {cpphdl::Expr{genTypeName(VD->getType().getAsString()),cpphdl::Expr::EXPR_TYPE}}});
+                    QualType QT = VD->getType();
+
+                    if (QT->isPointerType()) {  // while?
+                        QT = QT->getPointeeType();
+                        DEBUG_AST1(" *pointer*");
                     }
 
-                    auto* CRD = resolveCXXRecordDecl(VD->getType());
+                    QT = QT.getDesugaredType(ctx);
+                    auto* CRD = resolveCXXRecordDecl(QT);
+                    if (CRD && (CRD->getQualifiedNameAsString().find("std::") == (size_t)0
+                        || CRD->getQualifiedNameAsString().find("IO_FILE") != (size_t)-1)) {
+                        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};  // we dont want any std type to be translated to SV
+                    }
+
+                    expr.sub.emplace_back(digQT(QT));
+                    if (VD->getInit()) {
+                        expr.sub.emplace_back(exprToExpr(VD->getInit()));
+                    }
+
+                    CRD = resolveCXXRecordDecl(QT);
                     if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
                         auto st = exportStruct(CRD, *this);
                         auto ret = mod.imports.emplace(st.name);
@@ -199,10 +211,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                             currProject->structs.emplace_back(std::move(st));
                         }
                     }
+
+                    body.sub.emplace_back(std::move(expr));
                 }
             }
         }
-        return expr;
+        return body;
     }
     if (auto* UO = dyn_cast<UnaryOperator>(E)) {
         DEBUG_AST1(" UnaryOperator");
@@ -322,13 +336,22 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" CXXMemberCallExpr(" << (MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():"") << ")");
         cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
 
+        bool notThis = false;
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
-            if ((flags&FLAG_EXTERNAL_THIS)) {
-                DEBUG_AST1(" EXTERNAL ");
+            auto expr = exprToExpr(ME->getBase());
+
+            if (expr.type != cpphdl::Expr::EXPR_NONE  // base object is not "this" and not member, marking ingerited blocks as EXTERNAL
+                && std::find_if(mod.members.begin(), mod.members.end(), [&](auto& member){ return member.name == expr.value; }) == mod.members.end()) {
+                notThis = true;
+                DEBUG_AST1(" NOTTHIS");
+            }
+
+            if ((flags&FLAG_EXTERNAL_THIS)) {  // already EXTERNAL
+                DEBUG_AST1(" EXTERNAL");
                 call.sub.push_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
             }
             else {
-                call.sub.push_back(exprToExpr(ME->getBase())/*cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}}*/);
+                call.sub.push_back(std::move(expr)/*cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}}*/);
             }
         }
         for (unsigned i = 0; i < MCE->getNumArgs(); ++i) {
@@ -336,10 +359,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         if (auto *MD = MCE->getMethodDecl()) {
-            auto newName = putMethod(MD, *this);
-            DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
-            if (newName.length()) {
-                call.value = newName;
+            if (call.sub.size()  // we need not to call members
+                && std::find_if(mod.members.begin(), mod.members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod.members.end()) {
+                auto newName = putMethod(MD, *this, notThis);
+                DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
+                if (newName.length()) {
+                    call.value = newName;
+                }
             }
         }
 
@@ -688,7 +714,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* EWC = dyn_cast<ExprWithCleanups>(E)) {
         DEBUG_AST1(" ExprWithCleanups");
-        return cpphdl::Expr{"ExprWithCleanups", cpphdl::Expr::EXPR_CAST, {exprToExpr(EWC->getSubExpr())}};
+        return /*cpphdl::Expr{"ExprWithCleanups", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(EWC->getSubExpr())/*}}*/;
     }
     if (auto* CE = dyn_cast<ConstantExpr>(E)) {
         DEBUG_AST1(" ConstantExpr");

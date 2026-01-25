@@ -29,7 +29,7 @@ public:
     __PORT(uint32_t)  imem_read_data_in;
     bool              debugen_in;
 
-    void connect()
+    void _connect()
     {
         auto& df = std::get<0>(members);
         auto& ex = std::get<1>(members);
@@ -49,7 +49,7 @@ public:
 
         wb.mem_data_in    = dmem_read_data_in;
 
-        Pipeline::connect();
+        Pipeline::_connect();
 
         regs.read_addr0_in = df.rs1_out;
         regs.read_addr1_in = df.rs2_out;
@@ -59,9 +59,9 @@ public:
         regs.write_data_in = wb.regs_data_out;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
-        auto state_comb_tmp = states_comb_func();  // we use it too often, lets cache it. It must not change during work() function
+        auto state_comb_tmp = states_comb_func();  // we use it too often, lets cache it. It must not change during _work() function
         if (!clk) {
             return;
         }
@@ -124,8 +124,8 @@ public:
             fclose(out);
         }
 
-        regs.work(clk, reset);
-        Pipeline::work(clk, reset);
+        regs._work(clk, reset);
+        Pipeline::_work(clk, reset);
 
         if (valid && !df.stall_out()) {
             pc.next = pc + ((df.instr_in()&3)==3?4:2);
@@ -137,27 +137,12 @@ public:
         valid.next = true;
     }
 
-    void strobe()
+    void _strobe()
     {
-        Pipeline::strobe();
-        regs.strobe();
+        Pipeline::_strobe();
+        regs._strobe();
         pc.strobe();
         valid.strobe();
-    }
-
-    void comb()
-    {
-        auto& df = std::get<0>(members);
-        auto& ex = std::get<1>(members);
-//        auto& ma = std::get<2>(members);
-//        auto& wb = std::get<3>(members);
-
-        Pipeline::comb();
-        df.state_comb_func();
-        regs.comb();
-        ex.alu_result_comb_func();
-        ex.branch_taken_comb_func();
-        ex.branch_target_comb_func();
     }
 
 };
@@ -213,7 +198,7 @@ public:
     {
     }
 
-    void connect()
+    void _connect()
     {
 #ifndef VERILATOR
         dmem.read_in = riscv.dmem_read_out;
@@ -224,7 +209,7 @@ public:
         dmem.write_mask_in = riscv.dmem_write_mask_out;
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem.connect();
+        dmem._connect();
 
         imem.read_in = __VAL( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
@@ -234,13 +219,13 @@ public:
         imem.write_mask_in = __VAL( 0xFFFFFFFFu );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem.connect();
+        imem._connect();
 
         riscv.dmem_read_data_in = dmem.read_data_out;
         riscv.imem_read_data_in = imem.read_data_out;
         riscv.debugen_in = debugen_in;
         riscv.__inst_name = __inst_name + "/riscv";
-        riscv.connect();
+        riscv._connect();
 #else  // connecting Verilator to C++HDL
         dmem.read_in = __VAL( riscv.dmem_read_out );
         dmem.read_addr_in = __VAL( riscv.dmem_read_addr_out );
@@ -250,7 +235,7 @@ public:
         dmem.write_mask_in = __VAL( riscv.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem.connect();
+        dmem._connect();
 
         imem.read_in = __VAL( !imem_write );
         imem.read_addr_in = __VAL( riscv.imem_read_addr_out);
@@ -260,18 +245,18 @@ public:
         imem.write_mask_in = __VAL( 0xFFFFFFFFu );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem.connect();
+        imem._connect();
 #endif
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
 #ifndef VERILATOR
         dmem_read_data = dmem.read_data_out();  // extracting data from C++HDL for checking
         imem_read_data = imem.read_data_out();
-        riscv.work(clk, reset);
-        dmem.work(clk, reset);
-        imem.work(clk, reset);
+        riscv._work(clk, reset);
+        dmem._work(clk, reset);
+        imem._work(clk, reset);
 #else
         riscv.dmem_read_data_in = dmem.read_data_out();
         riscv.imem_read_data_in = imem.read_data_out();
@@ -285,8 +270,8 @@ public:
         riscv.clk = clk;
         riscv.reset = reset;
         riscv.eval();  // eval of verilator should be in the end
-        dmem.work(clk, reset);
-        imem.work(clk, reset);
+        dmem._work(clk, reset);
+        imem._work(clk, reset);
 #endif
 
         if (reset) {
@@ -319,23 +304,14 @@ public:
 //        can_check2.next = can_check1;
     }
 
-    void strobe()
+    void _strobe()
     {
 #ifndef VERILATOR
-        riscv.strobe();
-        dmem.strobe();
-        imem.strobe();
+        riscv._strobe();
+        dmem._strobe();
+        imem._strobe();
 #endif
 
-    }
-
-    void comb()
-    {
-#ifndef VERILATOR
-        riscv.comb();
-        dmem.comb();
-        imem.comb();
-#endif
     }
 
     bool run(std::string filename, size_t start_offset)
@@ -353,9 +329,9 @@ public:
         fclose(out);
 
         __inst_name = "riscv_test";
-        connect();
-        work(0, 1);
-        work(1, 1);
+        _connect();
+        _work(0, 1);
+        _work(1, 1);
 
         /////////////// read program to memory
         uint32_t ram[RAM_SIZE];
@@ -369,12 +345,12 @@ public:
         std::print("Reading program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
 
         imem_write = true;
-        imem.work(1, 1);
+        imem._work(1, 1);
         for (size_t addr = 0; addr < RAM_SIZE; ++addr) {
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
-            imem.work(1, 0);
-            imem.strobe();
+            imem._work(1, 0);
+            imem._strobe();
             if (debugen_in) {
                 std::print("{:04x}: {:08x}\n", addr, ram[addr]);
             }
@@ -388,9 +364,8 @@ public:
         int cycles = 1000000;
         int clk = 0;
         while (--cycles && !error) {
-            comb();
-            work(clk, 0);
-            strobe();
+            _work(clk, 0);
+            _strobe();
             clk = !clk;
         }
 

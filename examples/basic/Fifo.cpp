@@ -39,7 +39,7 @@ public:
 
     bool                         debugen_in;
 
-    void connect()
+    void _connect()
     {
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
@@ -50,7 +50,7 @@ public:
         mem.read_addr_in  = __VAL( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
-        mem.connect();
+        mem._connect();
     }
 
     bool full_comb_func()
@@ -63,10 +63,10 @@ public:
         return empty_comb = (wp_reg == rp_reg) && !full_reg;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
         if (!clk) return;
-        mem.work(clk, reset);
+        mem._work(clk, reset);
 
         if (debugen_in) {
             std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
@@ -119,9 +119,9 @@ public:
 
     }
 
-    void strobe()
+    void _strobe()
     {
-        mem.strobe();
+        mem._strobe();
         wp_reg.strobe();
         rp_reg.strobe();
         full_reg.strobe();
@@ -182,7 +182,7 @@ public:
         delete[] mem_ref;
     }
 
-    void connect()
+    void _connect()
     {
 #ifndef VERILATOR
         fifo.write_in        = __VAL( write_reg );
@@ -190,16 +190,16 @@ public:
         fifo.read_in         = __VAL( read_reg );
         fifo.clear_in        = __VAL( clear_reg );
         fifo.__inst_name = __inst_name + "/fifo";
-        fifo.connect();
+        fifo._connect();
 #endif
         fifo.debugen_in  = debugen_in;
     }
 
-    void work(bool clk, bool reset)
+    void _work(bool clk, bool reset)
     {
 #ifndef VERILATOR
         fifo_read_data = fifo.read_data_out();
-        fifo.work(clk, reset);
+        fifo._work(clk, reset);
 #else
         fifo.write_in      = write_reg;
         memcpy(&fifo.write_data_in, &data_reg, sizeof(fifo.write_data_in));
@@ -263,10 +263,10 @@ public:
         }
     }
 
-    void strobe()
+    void _strobe()
     {
 #ifndef VERILATOR
-        fifo.strobe();
+        fifo._strobe();
 #endif
 
         read_addr.strobe();
@@ -298,16 +298,16 @@ public:
         }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
-        connect();
-        work(0, 1);
-        work(1, 1);
+        _connect();
+        _work(0, 1);
+        _work(1, 1);
         int cycles = 100000;
         int clk = 0;
         while (--cycles) {
-            work(clk, 0);
+            _work(clk, 0);
 
             if (clk) {
-                strobe();
+                _strobe();
             }
 
             if (clk && error) {

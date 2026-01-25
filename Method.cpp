@@ -12,15 +12,11 @@ bool Method::print(std::ofstream& out)
 {
     currMethod = this;
 
-    if (name == "strobe") {
+    if (name == "_strobe") {
         return true;
     }
 
-    if (name == "comb") {
-        return true;
-    }
-
-    if (name == "connect") {
+    if (name == "_connect") {
         return printConns(out);
     }
 
@@ -66,7 +62,7 @@ bool Method::print(std::ofstream& out)
             s += ";\n";
         }
         out << s;
-//        out << stmt.debug();
+//        out << stmt.debug() << "\n";
     }
 
     if (ret.size() == 0) {

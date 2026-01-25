@@ -35,7 +35,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
             }
             if (sub.size() == 2) {
-                str += " " + value + " = " + sub[1].str();
+                str += "; " + value + " = " + sub[1].str();
             }
             return str;
         }
@@ -258,7 +258,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 3 && value == "bits" && sub[0].type != EXPR_VAR/*this*/) {
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
             }
-            if ((value == "work" || value == "connect" || value == "strobe" || value == "comb") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {
+            if ((value == "_connect" || value == "_strobe" || value == "_work") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {  // never need this functions
                 return "";
             }
             if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
