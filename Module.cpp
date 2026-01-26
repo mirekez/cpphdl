@@ -48,6 +48,13 @@ bool Module::print(std::ofstream& out)
 //        first = false;
     }
     out << ");\n";
+    for (auto& field : consts) {
+        field.indent = 1;
+        out << "    parameter ";
+        if (!field.print(out)) {
+            return false;
+        }
+    }
     out << "\n";
     for (auto& field : vars) {
         field.indent = 1;

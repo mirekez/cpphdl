@@ -28,6 +28,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 sub[0].sub[0].flags = Expr::FLAG_REG;
                 return indent_str + prefix + sub[0].sub[0].str("", std::string("[") + sub[0].sub[1].str() + "-1:0]") + " " + escapeIdentifier(value) + "[" + sub[0].sub[2].str() + "]";
             } else
+            if (sub[0].type == EXPR_NUM) {
+                str += indent_str + prefix + escapeIdentifier(value) + " = " + sub[0].str();  // const initializer
+            }
+            else
             if (sub[0].type == EXPR_ARRAY) {
                 str += indent_str + prefix + sub[0].str(std::string(" ") + escapeIdentifier(value));  // use name as suffix
             }
@@ -40,7 +44,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return str;
         }
         case EXPR_TYPE:
-            if (value.find("FILE") == 0) {
+            if (value.find("_IO_FILE") != (size_t)-1) {
                 value = "int";
             }
             return indent_str + prefix + typeToSV(value, suffix);
@@ -76,7 +80,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT1(sub.size() >= 1, std::string("cpphdl_reg subs size = ") + std::to_string(sub.size()) );
                 sub[0].flags = Expr::FLAG_REG;
                 return indent_str + prefix + sub[0].str("", suffix);
-            } else
+            }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
@@ -235,9 +239,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
         // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
         {
-            if ((flags&FLAG_NOCALLS)) {
-                return "";
-            }
 //            ASSERT(sub.size()>=1);
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
@@ -263,7 +264,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
                 std::string str = value;
-                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+                str_replace(str, "_comb_func", "_comb");
+                return indent_str + str;
+            }
+            if ((flags&FLAG_NOCALLS)) {  // except _comb_func() calls
+                return "";
             }
 
             std::string str = "(";
@@ -277,7 +282,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     str = "";
                     first = false;
                 }
-                member = sub[0].str() + "_" + escapeIdentifier(value) + suffix;
+                member = sub[0].str() + "__" + escapeIdentifier(value) + suffix;
                 return indent_str + prefix + member;
 //                skipfirst = true;
             }

@@ -16,11 +16,11 @@ bool Method::print(std::ofstream& out)
         return true;
     }
 
-    if (name == "_connect") {
+    if (str_ending(name, "_connect")) {  // important for inherited methods
         return printConns(out);
     }
 
-    if (name.length() > 10 && str_ending(name, "_comb_func")) {
+    if (str_ending(name, "_comb_func")) {
         return printComb(out);
     }
 
@@ -135,7 +135,7 @@ bool Method::printConns(std::ofstream& out)
 //                        has_body = true;  // lambda
 //                    }
                     return false;
-                } );  // we set flags individually, not all Exprs propagate its flags
+                } );  // we set flags individually, not all Exprs propagate its flags - fix it later
 
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
@@ -144,6 +144,7 @@ bool Method::printConns(std::ofstream& out)
             s += ";\n";
         }
         out << s;
+//        out << stmt.debug() << "\n";
     }
     out << "    endgenerate\n";
 
@@ -209,6 +210,7 @@ bool Method::printComb(std::ofstream& out)
             s += ";\n";
         }
         out << s;
+//        out << stmt.debug() << "\n";
     }
     out << "    end\n";
 

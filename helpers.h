@@ -9,10 +9,11 @@ using namespace clang;
 
 struct Helpers
 {
-    Helpers(ASTContext* context, cpphdl::Module* module) : ctx(*context), mod(*module) {}
+    Helpers(ASTContext* context, cpphdl::Module* module = nullptr, const CXXRecordDecl* RD = nullptr) : ctx(context), mod(module), parent(RD) {}
 
-    ASTContext& ctx;
-    cpphdl::Module& mod;
+    ASTContext* ctx;
+    cpphdl::Module* mod;
+    const CXXRecordDecl* parent;
 
     enum {
         FLAG_NONE = 0,

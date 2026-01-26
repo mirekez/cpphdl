@@ -15,11 +15,11 @@ struct Module
 {
     std::string name;
     std::vector<Field> parameters;
+    std::vector<Field> consts;
     std::vector<Field> ports;
     std::vector<Field> vars;
     std::vector<Field> members;
     std::vector<Method> methods;
-    std::vector<Comb> combs;
     std::set<std::string> imports;
     std::string origName;
 

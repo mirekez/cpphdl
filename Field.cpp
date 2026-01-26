@@ -17,11 +17,19 @@ bool Field::print(std::ofstream& out, bool isStruct)
         expr.value = "cpphdl_logic";
         bitwidth.flags = Expr::FLAG_SPECVAL;
         out << expr.str("", std::string("[") + bitwidth.str() + "-1:0]") << " " << name << ";\n";
+    } else
+    if (initializer.type != Expr::EXPR_NONE) {
+        auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr), initializer}};
+        tmp.indent = indent;
+        out << tmp.str() + ";\n";
+//        out << tmp.debug() + "\n";
+        expr = std::move(tmp.sub[0]);  // return expr back
     }
     else {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
         tmp.indent = indent;
         out << tmp.str() + ";\n";
+//        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
     }
 
