@@ -1,25 +1,5 @@
 package Instr_pkg;
 
-enum
-{
-    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   DIV,   REM
-} Alu;
-
-enum
-{
-    MNONE,   LOAD,   STORE
-} Mem;
-
-enum
-{
-    WNONE,   ALU,   MEM,   PC2,   PC4
-} Wb;
-
-enum
-{
-    BNONE,   BEQ,   BNE,   BLT,   BGE,   BLTU,   BGEU,   JAL,   JALR,   JR,   BEQZ,   BNEZ
-} Br;
-
 typedef union packed {
     struct packed {
         logic[3-1:0] funct3;

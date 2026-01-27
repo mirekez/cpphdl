@@ -24,13 +24,14 @@ module Memory #(
     logic[MEM_WIDTH_BYTES*8-1:0] data_out_comb;
     reg[MEM_WIDTH_BYTES*8-1:0] data_out_reg;
     reg[MEM_WIDTH_BYTES-1:0][7:0] buffer[MEM_DEPTH];
-    logic[63:0] i;
+    logic[31:0] i;
     logic[MEM_WIDTH_BYTES*8-1:0] mask;
 
 
     generate
     endgenerate
     assign read_data_out = data_out_comb;
+
 
     always @(*) begin
         if (SHOWAHEAD) begin
@@ -41,8 +42,8 @@ module Memory #(
         end
     end
 
-    task work (input logic reset);
-    begin: work
+    task _work (input logic reset);
+    begin: _work
         if (write_in) begin
             mask = 0;
             for (i = 0;i < MEM_WIDTH_BYTES;i=i+1) begin
@@ -59,9 +60,8 @@ module Memory #(
     end
     endtask
 
-
     always @(posedge clk) begin
-        work(reset);
+        _work(reset);
     end
 
 endmodule
