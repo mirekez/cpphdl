@@ -402,10 +402,14 @@ union Instr
         }
     }
 
-#ifndef SYNTHESIS
+//#ifndef SYNTHESIS
     std::string mnemonic()
     {
-        auto decode_mnemonic = [&](uint32_t op, uint32_t f3, uint32_t f7) -> std::string {
+        uint32_t op, f3, f7, b12, rs2, bits6_5, quadrant;
+        if ((raw&3) == 3) {
+            op = r.opcode;
+            f3 = r.funct3;
+            f7 = r.funct7;
             switch (op) {
             case 0b0110011:  // R-type
                 if (f3 == 0 && f7 == 0b0000000) return "add   ";
@@ -443,72 +447,64 @@ union Instr
             case 0b0010111: return "auipc ";
             default:        return "unknwn";
             }
-        };
-
-        auto decode_mnemonic16 = [&](uint16_t op, uint16_t f3, uint16_t b12, uint16_t rs2, uint16_t bits6_5) -> std::string
-        {
-            uint32_t quadrant = op & 0b11;
-            switch (quadrant)
-            {
-                case 0b00:
-                    switch (f3)
-                    {
-                        case 0b000: return "addi4s";
-                        case 0b010: return "lw    ";
-                        case 0b110: return "sw    ";
-                        case 0b011: return "ld    ";   // RV64/128
-                        case 0b111: return "sd    ";   // RV64/128
-                        default:    return "rsrvd ";
-                    }
-                case 0b01:
-                    switch (f3)
-                    {
-                        case 0b000: return "addi  ";
-                        case 0b001: return "jal   ";      // RV32 only
-                        case 0b010: return "li    ";
-                        case 0b011: return "addisp"; // or lui
-                        case 0b100: {
-                            if (c.bits11_10 == 0) { return "srli  "; }
-                            if (c.bits11_10 == 1) { return "srai  "; }
-                            if (c.bits11_10 == 2) { return "andi  "; }
-                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 0) { return "sub   "; }
-                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 1) { return "xor   "; }
-                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 2) { return "or    "; }
-                            if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 3) { return "and   "; }
-                            return "illgl ";
-                        }
-                        case 0b101: return "j     ";
-                        case 0b110: return "beqz  ";
-                        case 0b111: return "bnez  ";
-                    }
-                case 0b10:
-                    switch (f3)
-                    {
-                        case 0b000: return "slli  ";
-                        case 0b001: return "fldsp ";
-                        case 0b010: return "lwsp  ";
-                        case 0b100: {
-                            if (rs2 != 0 && b12 == 0) { return "mv    "; }
-                            if (rs2 != 0 && b12 == 1) { return "add   "; }
-                            if (rs2 == 0 && b12 == 0) { return "jr    "; }
-                            if (rs2 == 0 && b12 == 1) { return "jalr  "; }
-                            return "illgl ";
-                        }
-                        case 0b110: return "swsp  ";
-                        case 0b011: return "ldsp  ";  // RV64/128
-                        case 0b111: return "sdsp  ";  // RV64/128
-                        default:    return "rsrvd ";
-                    }
-            }
-            return "unknwn";
-        };
-
-        if ((raw&3) == 3) {
-            return std::format("[{:08X}]({})", raw, decode_mnemonic(r.opcode, r.funct3, r.funct7));
         }
         else {
-            return std::format("[    {:04X}]({})", (uint16_t)raw, decode_mnemonic16(c.opcode, c.funct3, c.b12, q2.rs2, c.bits6_5));
+            op = r.opcode;
+            f3 = c.funct3;
+            b12 = c.b12;
+            rs2 = q2.rs2;
+            bits6_5 = c.bits6_5;
+            quadrant = op & 0b11;
+            switch (quadrant) {
+            case 0b00:
+                switch (f3) {
+                    case 0b000: return "addi4s";
+                    case 0b010: return "lw    ";
+                    case 0b110: return "sw    ";
+                    case 0b011: return "ld    ";   // RV64/128
+                    case 0b111: return "sd    ";   // RV64/128
+                    default:    return "rsrvd ";
+                }
+            case 0b01:
+                switch (f3) {
+                    case 0b000: return "addi  ";
+                    case 0b001: return "jal   ";      // RV32 only
+                    case 0b010: return "li    ";
+                    case 0b011: return "addisp"; // or lui
+                    case 0b100: {
+                        if (c.bits11_10 == 0) { return "srli  "; }
+                        if (c.bits11_10 == 1) { return "srai  "; }
+                        if (c.bits11_10 == 2) { return "andi  "; }
+                        if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 0) { return "sub   "; }
+                        if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 1) { return "xor   "; }
+                        if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 2) { return "or    "; }
+                        if (c.bits11_10 == 3 && b12 == 0 && bits6_5 == 3) { return "and   "; }
+                        return "illgl ";
+                    }
+                    case 0b101: return "j     ";
+                    case 0b110: return "beqz  ";
+                    case 0b111: return "bnez  ";
+                }
+            case 0b10:
+                switch (f3) {
+                    case 0b000: return "slli  ";
+                    case 0b001: return "fldsp ";
+                    case 0b010: return "lwsp  ";
+                    case 0b100: {
+                        if (rs2 != 0 && b12 == 0) { return "mv    "; }
+                        if (rs2 != 0 && b12 == 1) { return "add   "; }
+                        if (rs2 == 0 && b12 == 0) { return "jr    "; }
+                        if (rs2 == 0 && b12 == 1) { return "jalr  "; }
+                        return "illgl ";
+                    }
+                    case 0b110: return "swsp  ";
+                    case 0b011: return "ldsp  ";  // RV64/128
+                    case 0b111: return "sdsp  ";  // RV64/128
+                    default:    return "rsrvd ";
+                }
+            }
         }
+        return "unknwn";
     }
-#endif
+//#endif
 }__PACKED;

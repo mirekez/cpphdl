@@ -61,21 +61,23 @@ public:
 
     void _work(bool clk, bool reset)
     {
+        BIG_STATE tmp;
+        Instr instr;
         auto state_comb_tmp = states_comb_func();  // we use it too often, lets cache it. It must not change during _work() function
+        auto& df = std::get<0>(members);
+        auto& ex = std::get<1>(members);  // only refs can be declared in any place of function, vars must be declared in the beginning (like in C)
+        auto& wb = std::get<2>(members);
+
         if (!clk) {
             return;
         }
-        auto& df = std::get<0>(members);
-        auto& ex = std::get<1>(members);
-        auto& wb = std::get<2>(members);
         if (reset) {
             pc.clr();
             valid.clr();
             return;
         }
-        #ifndef SYNTHESIS
-        BIG_STATE tmp;
-        Instr instr = {df.instr_in()};
+
+        instr = {df.instr_in()};
         if ((instr.raw&3) == 3) {
             instr.decode(tmp);
         }
@@ -83,40 +85,42 @@ public:
             instr.decode16(tmp);
         }
 
-        // delayed by 1 to align WB
-        std::string interpret;
-        if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
-            interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
-                             state_comb_tmp[1].debug_alu_a, state_comb_tmp[1].debug_alu_b);
-        }
-        if (state_comb_tmp[1].valid && state_comb_tmp[1].br_op != Br::BNONE && state_comb_tmp[1].debug_branch_taken) {
-            interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[state_comb_tmp[1].br_op], state_comb_tmp[1].debug_branch_target, (int)state_comb_tmp[1].rd);
-        }
-        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::LOAD) {
-            interpret += std::format("LOAD({:08x}) ", state_comb_tmp[1].alu_result);
-        }
-        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::STORE) {
-            interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", state_comb_tmp[1].alu_result, state_comb_tmp[1].rs2_val, (int)state_comb_tmp[1].rs2);
-        }
-        if (state_comb_tmp[1].valid && state_comb_tmp[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
-            interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
-        }
-        //
-
         if (debugen_in) {
-            std::print("({}/{}){}: {} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => "
-                       "mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}: {}\n",
+            std::print("({}/{}){}: {:s} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}",
                 (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
                 (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
                 (int)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
-                (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_comb_func(), (int)state_comb_tmp[0].rd,
+                (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_out(), (int)state_comb_tmp[0].rd,
                 (int)ex.branch_taken_out(), ex.branch_target_out(),
                 (int)ex.mem_write_out(), (int)ex.mem_read_out(),
                 ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
-                (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out(),
-                interpret);
+                (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
+
+#ifndef SYNTHESIS
+            // delayed by 1 to align WB
+            std::string interpret;
+            if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
+                interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
+                                 state_comb_tmp[1].debug_alu_a, state_comb_tmp[1].debug_alu_b);
+            }
+            if (state_comb_tmp[1].valid && state_comb_tmp[1].br_op != Br::BNONE && state_comb_tmp[1].debug_branch_taken) {
+                interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[state_comb_tmp[1].br_op], state_comb_tmp[1].debug_branch_target, (int)state_comb_tmp[1].rd);
+            }
+            if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::LOAD) {
+                interpret += std::format("LOAD({:08x}) ", state_comb_tmp[1].alu_result);
+            }
+            if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::STORE) {
+                interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", state_comb_tmp[1].alu_result, state_comb_tmp[1].rs2_val, (int)state_comb_tmp[1].rs2);
+            }
+            if (state_comb_tmp[1].valid && state_comb_tmp[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
+                interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
+            }
+            //
+            std::print(": {}", interpret);
+#else
+            std::print("\n");
+#endif
         }
-        #endif
 
         if (dmem_write_addr_out() == 0x11223344 && dmem_write_out() ) {
             FILE* out = fopen("out.txt", "a");

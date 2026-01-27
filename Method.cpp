@@ -35,7 +35,7 @@ bool Method::print(std::ofstream& out)
         out << "    task " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
     }
     else {
-        out << "    function " << ret[0].str() << " " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
+        out << "    function " << (ret[0].value=="std::string"?"[63:0]":ret[0].str()) << " " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
     }
 
     bool first = true;
@@ -149,9 +149,10 @@ bool Method::printConns(std::ofstream& out)
     out << "    endgenerate\n";
 
     for (auto& port : currModule->ports) {  // outport initializers
+//        out << port.initializer.debug() << "\n";
         if (port.initializer.type != Expr::EXPR_NONE
             && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
-            && port.initializer.sub.size() >= 1 /*outdated*/ && port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
+            && port.initializer.sub.size() >= 1 && /*outdated*/ port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
             /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
             port.initializer.flags = Expr::FLAG_ASSIGN;
             std::string s = port.initializer.str();

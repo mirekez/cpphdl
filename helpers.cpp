@@ -340,6 +340,16 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
             auto expr = exprToExpr(ME->getBase());
 
+//            if (auto* DRE = dyn_cast<DeclRefExpr>(ME->getBase())) {
+//                if (const ValueDecl *VD = DRE->getDecl()) {  // check if it's reference aka symlink to another var
+//                    if (VD->getType()->isReferenceType()) {
+//                        DEBUG_AST1(" REF");
+//                        call.sub.emplace_back(exprToExpr(ME->getBase()));
+//                        return call;
+//                    }
+//                }
+//            }
+
             if (expr.type != cpphdl::Expr::EXPR_NONE  // base object is not "this" and not member, marking ingerited blocks as EXTERNAL
                 && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == expr.value; }) == mod->members.end()) {
                 notThis = true;
@@ -394,7 +404,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             anon = true;
         } else
         if (VD && VD->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
-            DEBUG_AST1(" EXTERNAL");
+            DEBUG_AST1(" PKG");
             std::string sname = parent->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
             // extracting parameters of the template
@@ -660,10 +670,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            }
 //            return call;
             if (CE->getNumArgs()) {
-                return cpphdl::Expr{"constructor", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
+                return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
             }
             else {
-                return cpphdl::Expr{"constructor", cpphdl::Expr::EXPR_CAST};
+                return cpphdl::Expr{str, cpphdl::Expr::EXPR_NONE};
             }
         }
     }
@@ -747,7 +757,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* CE = dyn_cast<ConstantExpr>(E)) {
         DEBUG_AST1(" ConstantExpr");
-        return cpphdl::Expr{"ConstantExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getSubExpr())}};
+        return /*cpphdl::Expr{"ConstantExpr", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CE->getSubExpr())/*}}*/;
     }
     if (auto* BTE = dyn_cast<CXXBindTemporaryExpr>(E)) {
         DEBUG_AST1(" CXXBindTemporaryExpr");

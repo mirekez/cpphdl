@@ -59,8 +59,6 @@ struct Expr
     };
     unsigned flags = FLAG_NONE;
 
-    bool hasInitializer = false;
-
     // methods
     int indent = 0;
 
@@ -87,7 +85,7 @@ struct Expr
         return false;
     }
 
-    void replacePrint(std::string& str);
+    std::string replacePrintFormat(std::string str, bool firstStringInstName = false);
     std::string debug(int debug_indent = 0);
 };
 

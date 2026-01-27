@@ -38,7 +38,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             else {
                 str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value);
             }
-            if (sub.size() == 2) {
+            if (sub.size() == 2 && sub[1].type != EXPR_NONE) {
                 str += "; " + value + " = " + sub[1].str();
             }
             return str;
@@ -62,8 +62,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + escapeIdentifier(value) + suffix;
         case EXPR_STRING:
-            replacePrint(value);
-            return indent_str + prefix + value;
+            return indent_str + prefix + replacePrintFormat(value);
         case EXPR_PARAM:
             if (sub.size() && !(flags&FLAG_SPECVAL)) {  // if we have expression for this number parameter (from template parameters)
                 return indent_str + prefix + sub[0].str() + suffix;
@@ -141,24 +140,24 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 func = "$clog2";
             }
             if (func == "printf") {
-                 func = "$write";
+                func = "$write";
             }
             if (func == "fopen") {
-                 func = "$fopen";
+                func = "$fopen";
             }
             if (func == "fclose") {
-                 func = "$fclose";
+                func = "$fclose";
             }
             if (func == "fprintf") {
-                 skipArgs = 1;
-                 func = "$fwrite";
+                skipArgs = 1;
+                func = "$fwrite";
             }
             if (func == "printf") {
-                 skipArgs = 1;
-                 func = "$write";
+                skipArgs = 1;
+                func = "$write";
             }
             if (func == "print") {
-                 func = "$write";
+                func = "$write";
             }
             if (func == "exit") {
                 return indent_str + "$finish()";
@@ -166,15 +165,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fflush") {
                 return "";
             }
-            if (func.find("std::basic_format_string") == 0) {
-                ASSERT(sub.size()>0);
-                replacePrint(sub[0].value);
-                noBrackets = true;
-                func = "";
-            }
             if (str_ending(value, "_comb_func")) {
                 std::string str = value;
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+            }
+            if (value.find("std::basic_format_string") == 0) {
+                noBrackets = true;
+                func = "";
             }
 
             std::string str = escapeIdentifier(func) + suffix;
@@ -183,7 +180,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool first = true;
             for (size_t i=skipArgs; i < sub.size(); ++i) {
-                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {
+                if (sub[i].value.find("std::basic_format_string") == 0 && i == 0 && sub[0].sub.size()) {  // detect std::print
+                    str += replacePrintFormat(sub[0].sub[0].value, sub.size()>1 && sub[1].str().find("__inst_name") != (size_t)-1);
+                    first = false;
+                } else
+                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {  // normal parameter
                     str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
@@ -378,7 +379,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + value + "]";
         case EXPR_CAST:
-if (sub.size() == 0) return "??????";
+if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
             sub[0].indent = indent;
@@ -733,27 +734,27 @@ std::string Expr::debug(int debug_indent)
     return str;
 }
 
-void Expr::replacePrint(std::string& str)
+std::string Expr::replacePrintFormat(std::string str, bool firstStringInstName)
 {
     size_t pos = 0;
-    while (true) {
-        if ((pos = str.find("{:s}")) != (size_t)-1) {
+    if (firstStringInstName) {
+        if ((pos = str.find("{:s}")) != (size_t)-1) {  // use printf for module name printing
             str.replace(pos, 4, "%m");
-        } else
-        if ((pos = str.find("{}")) != (size_t)-1) {
-            str.replace(pos, 2, "%x");
-        } else
-        if ((pos = str.find("{:x}")) != (size_t)-1) {
-            str.replace(pos, 4, "%x");
-        } else
-        if ((pos = str.find("{:d}")) != (size_t)-1) {
-            str.replace(pos, 4, "%d");
-        } else
-        if ((pos = str.find("%s")) != (size_t)-1) {
-            str.replace(pos, 2, "%m");
-        }
-        else {
-            break;
         }
     }
+    while ((pos = str.find("%s")) != (size_t)-1) {  // use printf for module name printing
+        str.replace(pos, 2, "%m");
+    }
+    size_t pos1 = 0;
+    while ((pos = str.find("{")) != (size_t)-1 && (pos1 = str.find("}", pos)) != (size_t)-1) {
+        if (pos1 == pos+1) {
+            str.replace(pos, 2, "%x");
+        } else
+        if (str[pos+1] == ':') {
+            str.replace(pos1, 1, "");  // }
+            str.replace(pos, 2, "%");  // {:
+        }
+        else break;
+    }
+    return str;
 }

@@ -212,21 +212,21 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             field = &*it;
             updateExpr(field->expr, expr);
         } else
-        if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
+        if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr (above)
             field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
         }
         else {
             return;
         }
 
+        DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
+
         if (initializer) {
             DEBUG_AST1(", <initializer ");
             field->initializer = hlp.exprToExpr(initializer);
+            DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
             DEBUG_AST1(">");
-            expr.hasInitializer = true;
         }
-
-        DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
 
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
         if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
@@ -494,11 +494,11 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             putMethod(MD, hlp);
         }
 
-        for (auto* RD : abstractDefs) {
-            if (hlp.mod->name.find(RD->getQualifiedNameAsString()) == 0) {
-                DEBUG_AST(debugIndent, "Applying abstract: " << RD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
+        for (auto* aRD : abstractDefs) {
+            if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
+                DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
-                for (Decl* D : RD->decls()) {
+                for (Decl* D : aRD->decls()) {
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {
                         hlp.flags |= Helpers::FLAG_ABSTRACT;
                         putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
@@ -534,14 +534,14 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         if (RD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
             abstractDefs.push_back(RD);
 
-            for (const auto &Base : RD->bases()) {
-                CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
-                if (BaseRD && BaseRD->hasDefinition()) {
-//                    if (BaseRD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(BaseRD)) {
-                        abstractDefs.push_back(BaseRD);
-//                    }
-                }
-            }
+//            for (const auto &Base : RD->bases()) {
+//                CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
+//                if (BaseRD && BaseRD->hasDefinition()) {
+////                    if (BaseRD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(BaseRD)) {
+//                        abstractDefs.push_back(BaseRD);
+////                    }
+//                }
+//            }
             return;
         }
 

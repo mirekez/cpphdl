@@ -99,8 +99,16 @@ bool Module::printMembers(std::ofstream& out)
                     expr.flags = Expr::FLAG_WIRE;
                     for (size_t i=0; i < mod->parameters.size(); ++i) {
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name && member.expr.sub.size() > i) {  // port depends on parameter
-                                    e.value = std::string("(") + member.expr.sub[i].str() + ")";
+                                if (e.value == mod->parameters[i].name) {  // port depends on parameter
+                                    size_t memberParamIndex = -1;
+                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
+                                        ++memberParamIndex;
+                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
+                                            ++j;
+                                        }
+                                    }
+                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
                                 }
                                 return false;
                             });
@@ -151,8 +159,16 @@ bool Module::printMembers(std::ofstream& out)
                     expr.flags = Expr::FLAG_WIRE;
                     for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name) {
-                                    e.value = std::string("(") + member.expr.sub[i].str() + ")";
+                                if (e.value == mod->parameters[i].name) {  // port of mod depends on parameter
+                                    size_t memberParamIndex = -1;
+                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
+                                        ++memberParamIndex;
+                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
+                                            ++j;
+                                        }
+                                    }
+                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
                                 }
                                 return false;
                             });
