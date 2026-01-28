@@ -2,6 +2,7 @@
 
 C++HDL Hardware Description Language
 
+Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 Please read the doc/cpphdl.pdf
 
 # build
