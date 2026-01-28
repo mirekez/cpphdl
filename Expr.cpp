@@ -82,9 +82,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
+                sub[0].str();  // to calc declSize
+                declSize = sub[0].declSize * atoi(sub[1].str().c_str());
                 return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
             }
             if (value.find("cpphdl_") == 0 && sub.size()) {
+                declSize = atoi(sub[0].str().c_str());
                 return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
             }
 
@@ -127,6 +130,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
 */
+            sub[1].str();  // to calc declSize
+            declSize = sub[1].declSize * atoi(sub[0].str().c_str());
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
@@ -175,6 +180,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
 
             std::string str = escapeIdentifier(func) + suffix;
+
+            if (!sub.size()) {  // UnresolvedMemberExpr - just a call to port
+                return indent_str + str;
+            }
             if (!noBrackets) {
                 str += "(";
             }
@@ -314,19 +323,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
                 return indent_str + sub[0].str();
             }
-            if (sub[0].type == EXPR_INDEX) {  // ?
-                ASSERT(sub[0].sub.size() > 1);
-                std::string delim = "";
-                if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].sub[0].str(); } )) {
-                    delim = "__";
-                }
-                return indent_str + prefix + sub[0].str("", delim + value);
-            }
+//            if (sub[0].type == EXPR_INDEX) {  // ?
+//                ASSERT(sub[0].sub.size() > 1);
+//                std::string delim = "";
+//                if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); } )) {
+//                    delim = "__";
+//                }
+//                return indent_str + prefix + sub[0].str("", delim + value);
+//            }
             if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function  // ?
                 return indent_str + prefix + value + "(" + sub[0].str();
             }
             std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
-            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& elem){ return elem.name == sub[0].str(); } )) {
+            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].str(); } )) {
                 delim = "__";
             }
             return indent_str + prefix + sub[0].str() + delim + value;
@@ -377,7 +386,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             sub[0].flags |= flags;
             sub[1].flags |= flags;
-            return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + value + "]";
+            return indent_str + prefix + sub[0].str() + suffix + "[(" + sub[1].str() + ")" + value + "]";
         case EXPR_CAST:
 if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);
@@ -547,93 +556,123 @@ std::string Expr::typeToSV(std::string type, std::string size)
     std::string str = type;//genTypeName(type);
     if (type == "cpphdl_logic") {
         str = logic + size;
+        declSize = 1;
     } else
     if (type == "cpphdl_u") {
         str = logic + size;
+        declSize = 1;
     } else
     if (type == "cpphdl_s") {
         str = logic + " signed" + size;
+        declSize = 1;
     } else
     if (type == "cpphdl_u1") {
         str = logic + size;
+        declSize = 1;
     } else
     if (type == "cpphdl_u8") {
         str = logic + size + "[7:0]";
+        declSize = 8;
     } else
     if (type == "cpphdl_s8") {
         str = logic + " signed" + size + "[7:0]";
+        declSize = 8;
     } else
     if (type == "cpphdl_u16") {
         str = logic + size + "[15:0]";
+        declSize = 16;
     } else
     if (type == "cpphdl_s16") {
         str = logic + " signed" + size + "[15:0]";
+        declSize = 16;
     } else
     if (type == "cpphdl_u32") {
         str = logic + size + "[31:0]";
+        declSize = 32;
     } else
     if (type == "cpphdl_s32") {
         str = logic + " signed" + size + "[31:0]";
+        declSize = 32;
     } else
     if (type == "cpphdl_u64") {
         str = logic + size + "[63:0]";
+        declSize = 64;
     } else
     if (type == "cpphdl_s64") {
         str = logic + " signed" + size + "[63:0]";
+        declSize = 64;
     } else
     if (type == "bool") {
         str = logic + size;
+        declSize = 1;
     } else
     if (type == "_Bool") {
         str = logic + size;
+        declSize = 1;
     } else
     if (type == "int8_t") {
         str = logic + " signed" + size + "[7:0]";
+        declSize = 8;
     } else
     if (type == "int16_t") {
         str = logic + " signed" + size + "[15:0]";
+        declSize = 16;
     } else
     if (type == "int32_t") {
         str = logic + " signed" + size + "[31:0]";
+        declSize = 32;
     } else
     if (type == "int64_t") {
         str = logic + " signed" + size + "[63:0]";
+        declSize = 64;
     } else
     if (type == "uint8_t") {
         str = logic + " signed" + size + "[7:0]";
+        declSize = 8;
     } else
     if (type == "uint16_t") {
         str = logic + size + "[15:0]";
+        declSize = 16;
     } else
     if (type == "uint32_t") {
         str = logic + size + "[31:0]";
+        declSize = 32;
     } else
     if (type == "uint64_t") {
         str = logic + size + "[63:0]";
+        declSize = 64;
     } else
-    if (type == "signed char") {
+    if (type == "signedchar") {
         str = "byte" + size;
+        declSize = 8;
     } else
     if (type.compare(0, 4, "short") == 0) {
         str = "shortint" + size;
+        declSize = 16;
     } else
     if (type == "int") {
         str = "integer" + size;
+        declSize = 32;
     } else
     if (type.compare(0, 4, "long") == 0) {
         str = "longint" + size;
+        declSize = 64;
     } else
-    if (type == "unsigned char") {
+    if (type == "unsignedchar") {
         str = "logic" + size + "[7:0]";
+        declSize = 8;
     } else
-    if (type == "unsigned short") {
+    if (type == "unsignedshort") {
         str = "logic" + size + "[15:0]";
+        declSize = 16;
     } else
-    if (type == "unsigned long" || type == "size_t") {
+    if (type == "unsignedlong" || type == "size_t") {
         str = "logic" + size + "[63:0]";
+        declSize = 64;
     } else
     if (type.compare(0, 8, "unsigned") == 0) {
         str = "logic" + size + "[31:0]";
+        declSize = 32;
     } else {
         str += size;
     }

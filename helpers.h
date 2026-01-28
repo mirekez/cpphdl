@@ -30,8 +30,9 @@ struct Helpers
     void followSpecialization(const CXXRecordDecl* RD, std::string& name, std::vector<cpphdl::Field>* params = nullptr, bool onlyTypes = false);
     bool skipStdFunctionType(QualType& QT);
     CXXRecordDecl* resolveCXXRecordDecl(QualType QT);
+    NamedDecl* lookupInContext(DeclContext *DC, IdentifierInfo *Id);
     CXXRecordDecl* lookupQualifiedRecord(llvm::StringRef QualifiedName);
-    void forEachBase(const CXXRecordDecl* RD, std::function<void(const CXXRecordDecl* RD)> func);
+    void forEachBase(const CXXRecordDecl *RD, const std::function<void(const CXXRecordDecl *)>& func, std::unordered_set<const CXXRecordDecl*>* visited = nullptr);
 };
 
 extern unsigned debugIndent;

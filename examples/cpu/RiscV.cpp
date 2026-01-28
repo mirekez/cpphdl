@@ -116,7 +116,7 @@ public:
                 interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
             }
             //
-            std::print(": {}", interpret);
+            std::print(": {}\n", interpret);
 #else
             std::print("\n");
 #endif

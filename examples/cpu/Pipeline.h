@@ -82,23 +82,25 @@ using PipelineStages = MakeStagesTupleImpl<
 
 /////////////////////////////////////////////// Pipeline primitive
 
+using namespace cpphdl;
+
 template <typename>
 struct Pipeline;
 
 template <template<__PARAMS__> class... Ts>
-struct Pipeline<PipelineStages<Ts...>> : public cpphdl::Module
+struct Pipeline<PipelineStages<Ts...>> : public Module
 {
     using BIG_STATE = MakeBigState<typename Ts<int,int,0,0>::State...>;
     using STAGES = PipelineStages<Ts...>::type;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
     STAGES members;
-    cpphdl::array<BIG_STATE,LENGTH> states_comb;
-    cpphdl::array<BIG_STATE,LENGTH>& states_comb_func()
+    array<BIG_STATE,LENGTH> states_comb;
+    array<BIG_STATE,LENGTH>& states_comb_func()
     {
-        size_t y;
-        size_t x;
-        size_t offset;
+        byte y;
+        byte x;
+        byte offset;
         std::apply([&](auto&... stage) {
             for (y = 0; y < LENGTH; ++y) {
                 x = 0;

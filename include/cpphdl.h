@@ -17,6 +17,8 @@ typedef signed long int64_t;
 namespace cpphdl
 {
 
+typedef unsigned char byte;
+
 constexpr unsigned flog2(unsigned x)
 {
     return x == 1 ? 0 : 1+flog2(x >> 1);

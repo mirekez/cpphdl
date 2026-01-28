@@ -59,8 +59,8 @@ struct Expr
     };
     unsigned flags = FLAG_NONE;
 
-    // methods
     int indent = 0;
+    size_t declSize = 0;
 
 //    bool isMultiline()
 //    {

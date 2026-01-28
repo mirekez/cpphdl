@@ -20,12 +20,12 @@ struct Struct
 
     std::vector<Field> fields;
     std::string origName;
-    std::vector<Field> parameters;  // constexpr
+    std::vector<Field> parameters;  // constexpr inside struct
 
-    // methods
     int indent = 0;
+    int alignNo = 0;  // count alignment insertions
 
-    bool print(std::ofstream& out);
+    bool print(std::ofstream* out, std::vector<Field>* params = nullptr, size_t* declSize = nullptr);
 };
 
 }

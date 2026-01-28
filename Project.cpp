@@ -46,7 +46,7 @@ void Project::generate(const std::string& outDir)
             out << "parameter " << param.name << " = " << param.expr.str() << ";\n";
         }
         out << "typedef ";
-        str.print(out);
+        str.print(&out);
         out << "\n\nendpackage\n";
 
         std::cout << "\n" << "Generated: " << filePath << "\n";

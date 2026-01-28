@@ -23,7 +23,7 @@
 
 using namespace clang;
 
-void updateExpr(cpphdl::Expr& expr1, cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
+void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
 {
     if (expr1.type == expr2.type && expr1.sub.size() == expr2.sub.size()) {
         for (size_t i=0; i < expr1.sub.size(); ++i) {
@@ -52,15 +52,19 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
         DEBUG_AST(debugIndent, "@ => " << RD->getQualifiedNameAsString() << " (" + sname + "):");
     }
 
+    bool hasBases = false;
     for (const auto &Base : RD->bases()) {
         CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
-        if (BaseRD && BaseRD->hasDefinition()) {
+        if (BaseRD && BaseRD->hasDefinition()) {  // need to check correct order of struct fields here
+            hasBases = true;
             exportStruct(BaseRD, hlp, st);
         }
     }
 
+    bool hasDecls = false;
     for (Decl* D : RD->decls()) {
         if (auto* FD = dyn_cast<FieldDecl>(D)) {
+            hasDecls = true;
             DEBUG_AST(debugIndent, "Field:");
 
             bool pointer = false;
@@ -73,7 +77,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 
             cpphdl::Expr arrayExpr;
             bool array = false;
-            while (const clang::ArrayType* AT = hlp.ctx->getAsArrayType(QT)) {
+            while (const clang::ArrayType* AT = hlp.ctx->getAsArrayType(QT)) {  // comment this out
                 if (const auto* CAT = llvm::dyn_cast<clang::ConstantArrayType>(AT)) {
                     DEBUG_AST1(" [c_array " << std::to_string(CAT->getSize().getLimitedValue()) << "]");
                     arrayExpr.sub.push_back(cpphdl::Expr{std::to_string(CAT->getSize().getLimitedValue()), cpphdl::Expr::EXPR_NUM});
@@ -129,7 +133,12 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
                 st->fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
                 if (FD->isBitField()) {
                     DEBUG_AST1(" |bitfield ");
-                    st->fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
+                    Expr::EvalResult ER;
+                    if (FD->getBitWidth()->EvaluateAsInt(ER, *hlp.ctx)) {
+                        st->fields.back().bitwidth = cpphdl::Expr{std::to_string((size_t)ER.Val.getInt().getZExtValue()), cpphdl::Expr::EXPR_NUM};
+                    } else {
+                        st->fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
+                    }
                     DEBUG_AST1("|");
                 }
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
@@ -154,13 +163,21 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
                 }
             }
         }
-        if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
+
+        if (VarDecl* VD = dyn_cast<VarDecl>(D)) {  // constexprs from structs
             if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
                 DEBUG_AST(debugIndent, "Const(" << VD->getNameAsString() << "): ");
                 st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
                 DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
             }
         }
+    }
+
+    if (!(!hasDecls && hasBases)) {  // if no decls but has bases then it's already aligned
+        // adding align marker for two purposes: 1) align structures to 8 bits as in C, 2) put 8 bit placeholder to empty structures
+        st->fields.emplace_back(cpphdl::Field{std::string("_align") + std::to_string(st->alignNo), {cpphdl::Expr{"uint8_t", cpphdl::Expr::EXPR_TYPE}}});
+        st->fields.back().bitwidth = cpphdl::Expr{"0",cpphdl::Expr::EXPR_NUM};
+        ++st->alignNo;
     }
 
     return *st;
@@ -195,7 +212,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     if (CRD && CRD->isDerivedFrom(ModuleClass)) {  // check if template is derived from cpphdl::Module
         isMember = true;
     }
-    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& elem){ return elem.name == fieldName; } ) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
+    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& m){ return m.name == fieldName; } ) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
         isMember = true;
     }
 
@@ -207,7 +224,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         DEBUG_AST1(" {port " << fieldName << "}");
 
         cpphdl::Field* field = 0;
-        auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& elem){ return elem.name == fieldName; } );
+        auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName; } );
         if (it != hlp.mod->ports.end()) {
             field = &*it;
             updateExpr(field->expr, expr);
@@ -254,7 +271,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             }
 
             cpphdl::Field* field = 0;
-            auto it = std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& elem){ return elem.name == fieldName; } );
+            auto it = std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& m){ return m.name == fieldName; } );
             if (it != hlp.mod->members.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
@@ -270,7 +287,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         else {
             DEBUG_AST1(" {var " << fieldName << "}");
             cpphdl::Field* field = 0;
-            auto it = std::find_if(hlp.mod->vars.begin(), hlp.mod->vars.end(), [&](auto& elem){ return elem.name == fieldName; } );
+            auto it = std::find_if(hlp.mod->vars.begin(), hlp.mod->vars.end(), [&](auto& v){ return v.name == fieldName; } );
             if (it != hlp.mod->vars.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
@@ -389,7 +406,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 ////     && MD->getNameAsString() != std::string("~") + hlp.mod->name
 //     && MD->getNameAsString().find("operator") != 0) {
     std::string ret = method.name;
-    auto it = std::find_if(hlp.mod->methods.begin(), hlp.mod->methods.end(), [&](auto& elem){ return elem.name == method.name; } );
+    auto it = std::find_if(hlp.mod->methods.begin(), hlp.mod->methods.end(), [&](auto& m){ return m.name == method.name; } );
     if (it != hlp.mod->methods.end()) {
         if (it->ret.size() == method.ret.size()) {
             for (size_t i=0; i < it->ret.size(); ++i) {
@@ -471,8 +488,14 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             } else
             if (auto* VD = dyn_cast<VarDecl>(D)) {
                 if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
-                    hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                    DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+                    auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
+                    if (it != hlp.mod->consts.end()) {
+                        updateExpr((*it).expr, hlp.exprToExpr(VD->getInit()));
+                    }
+                    else {
+                        hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
+                        DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+                    }
                 }
             } else
             if ([[maybe_unused]] auto* Nested = dyn_cast<CXXRecordDecl>(D)) {
@@ -494,7 +517,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             putMethod(MD, hlp);
         }
 
-        for (auto* aRD : abstractDefs) {
+        for (auto* aRD : abstractDefs) {  // we take from abstract: 1) initializers for members, 2) template numeric parameters names, 3) numeric template parameter expressions in all code
             if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
                 DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
@@ -529,9 +552,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
     }
 
-    void putModule(CXXRecordDecl* RD)
+    void putModule(const CXXRecordDecl* RD)
     {
-        if (RD->getDescribedClassTemplate() && !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
+        if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
+            DEBUG_AST(debugIndent++, "# putAbstract: " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
             abstractDefs.push_back(RD);
 
 //            for (const auto &Base : RD->bases()) {
@@ -542,8 +566,11 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 ////                    }
 //                }
 //            }
-            return;
+            if (RD->getDescribedClassTemplate()) {  // it's template, dont use abstract in putClass
+                return;
+            }
         }
+
 
         cpphdl::Module mod{RD->getQualifiedNameAsString()};
 
@@ -567,10 +594,26 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     bool VisitCXXRecordDecl(CXXRecordDecl* RD)
     {
         Helpers hlp(context);
-        if (auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module")) {
-            if (RD && RD->hasDefinition() && RD->isDerivedFrom(ModuleClass)) {
-                putModule(RD);
-            }
+
+        CXXRecordDecl* moduleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+        if (!moduleClass || !moduleClass->getDefinition()) {
+            std::cerr << "ERROR: can't find cpphdl Module class definition\n";
+            return false;
+        }
+        if (!RD->getDefinition()) {
+            return true;
+        }
+        const CXXRecordDecl* def = RD->getDefinition();
+        bool isModule = false;
+        hlp.forEachBase(def, [&](const CXXRecordDecl* RD) {
+//                RD = RD->getCanonicalDecl();
+                if (RD->getQualifiedNameAsString() == moduleClass->getQualifiedNameAsString()) {
+                    isModule = true;
+                }
+            });
+
+        if (isModule) {
+            putModule(def);
         }
 
         return true;
@@ -580,7 +623,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     ASTContext* context;
 //    const SourceManager &SM;
-    std::vector<CXXRecordDecl*> abstractDefs;
+    std::vector<const CXXRecordDecl*> abstractDefs;
 };
 
 struct MethodConsumer : public ASTConsumer

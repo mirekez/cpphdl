@@ -2,7 +2,6 @@
 
 using namespace cpphdl;
 
-
 template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
 class MemWB: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {

@@ -225,15 +225,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (UO->getOpcodeStr(UO->getOpcode()) == "*" && LQT->isPointerType()) {  // convert pointer add into index
             std::string typeSize;
             if (const CXXRecordDecl* RD = LQT->getPointeeType().getNonReferenceType()->getAsCXXRecordDecl()) {
-                typeSize = std::string("$bits(") + RD->getQualifiedNameAsString() + ")/8";
+                typeSize = std::string("$bits(") + RD->getQualifiedNameAsString() + ")";
             }
             else {
-                typeSize = std::string("$bits(") + LQT->getPointeeType().getNonReferenceType().getDesugaredType(*ctx).getAsString(ctx->getPrintingPolicy()) + ")/8";
+                typeSize = std::string("$bits(") + LQT->getPointeeType().getNonReferenceType().getDesugaredType(*ctx).getAsString(ctx->getPrintingPolicy()) + ")";
             }
             bool found = false;
             expr.traverseIf( [&](auto& e) {  // we support only one substitution in pack
                     if (e.type == cpphdl::Expr::EXPR_INDEX) {
-                        e.value = std::string("+: ") + typeSize;
+                        e.value = std::string("*8 +: ") + typeSize;
                         found = true;
                         return true;
                     }
@@ -242,7 +242,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             if (found) {
                 return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {expr}};
             } else {
-                return cpphdl::Expr{std::string("+: ") + typeSize,
+                return cpphdl::Expr{std::string("*8 +: ") + typeSize,
                                    cpphdl::Expr::EXPR_INDEX, {expr, cpphdl::Expr{"0",cpphdl::Expr::EXPR_NUM}}};
             }
         }
@@ -252,7 +252,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" BinaryOperator(" << BO->getOpcodeStr().data() << ")");
         QualType LQT = BO->getLHS()->IgnoreParenImpCasts()->getType().getNonReferenceType();
         if (BO->getOpcodeStr() == "+" && LQT->isPointerType()) {  // convert pointer add into index
-            return cpphdl::Expr{std::string("+:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
+            return cpphdl::Expr{std::string("*8 +:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
                                    cpphdl::Expr::EXPR_INDEX, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
         }
         return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
@@ -369,7 +369,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         if (auto *MD = MCE->getMethodDecl()) {
-            if (call.sub.size()  // we need not to call members
+            if (call.sub.size()  // we need not call members - they are accessible through ports wires
                 && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
                 auto newName = putMethod(MD, *this, notThis);
                 DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
@@ -453,9 +453,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return expr;
     }
     if (auto* CE = dyn_cast<CallExpr>(E)) {
-        DEBUG_AST1(" CallExpr");
         cpphdl::Expr call = cpphdl::Expr{"unknown", cpphdl::Expr::EXPR_CALL};
         const clang::Expr* callee = CE->getCallee()->IgnoreParenImpCasts();
+        DEBUG_AST1(" CallExpr(" << callee->getStmtClassName() << ")");
 
         //////////// this code is for std::tuple and should be refactored to separated source file //
 
@@ -488,7 +488,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                             size_t i=0;
                             for (const auto& arg : TST->template_arguments()) {  // for each argument of Pack, prepare right pattern in lambda
-                                expr.traverseIf( [&](auto& e) {
+                                auto expr1 = expr;  // we will modify a copy
+                                expr1.traverseIf( [&](auto& e) {
                                             // implace right name instead of pack argument (we support only one substitution in pack)
                                             if (e.type == cpphdl::Expr::EXPR_PACK) {
                                                 e.value = exprToExpr(tupleExpr).value + "_tuple_" + std::to_string(i);
@@ -502,17 +503,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                                                     std::string type;
                                                     QualType QT1 = arg.getAsType().getNonReferenceType();
                                                     if (const CXXRecordDecl* RD = QT1->getAsCXXRecordDecl()) {
-                                                        forEachBase(RD, [&](const CXXRecordDecl* RD) {  // looking for type "STATE" through all base classes
+                                                        forEachBase(RD, [&](const CXXRecordDecl* RD) {  // looking for type like "STATE" through all base classes
                                                                 for (const Decl *D : RD->decls()) {
                                                                     if (auto *Alias = dyn_cast<TypeAliasDecl>(D)) {
                                                                         if (Alias->getName() == name) {
-                                                                            QualType QT1 = Alias->getUnderlyingType();
-                                                                            type = genTypeName(QT1.getAsString(ctx->getPrintingPolicy()));
+                                                                            QualType QT2 = Alias->getUnderlyingType();
+                                                                            type = genTypeName(QT2.getAsString(ctx->getPrintingPolicy()));
                                                                         }
                                                                     } else if (auto *TD = dyn_cast<TypeDecl>(D)) {
                                                                         if (TD->getName() == name) {
-                                                                            QualType QT1 = ctx->getTypeDeclType(TD);
-                                                                            type = genTypeName(QT1.getAsString(ctx->getPrintingPolicy()));
+                                                                            QualType QT2 = ctx->getTypeDeclType(TD);
+                                                                            type = genTypeName(QT2.getAsString(ctx->getPrintingPolicy()));
                                                                         }
                                                                     }
                                                                 }
@@ -539,7 +540,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                                             }
                                             return false;
                                         });
-                                expr.traverseIf( [&](auto& e) {  // looking for CXXFoldExpr in lambda
+                                expr1.traverseIf( [&](auto& e) {  // looking for CXXFoldExpr in lambda
                                         // instantiating block of code, must me only CXXFoldExpr pack per std::apply lambda
                                         if (e.value == "CXXFoldExpr") {
                                             if (placeToInsertPattern) {
@@ -565,8 +566,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         if (const auto* ME = llvm::dyn_cast<clang::MemberExpr>(callee)) {
             const clang::CXXMethodDecl* method = llvm::dyn_cast<clang::CXXMethodDecl>(ME->getMemberDecl());
-            DEBUG_AST1(" ME(" << method->getQualifiedNameAsString() << ")");
-            call.value = method->getNameAsString();
+            DEBUG_AST1(" ME(" << (method ? method->getQualifiedNameAsString() : "null") << ")");
+            call.value = method ? method->getNameAsString() : "null";
+
+//            if (call.sub.size()  // we need not call members - they are accessible through ports wires
+//                && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
+            if (method) {
+                auto newName = putMethod(method, *this);
+                DEBUG_AST1(" Called method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
+                if (newName.length()) {
+                    call.value = newName;
+                }
+            }
 
             if (method && method->isLambdaStaticInvoker()) {
                 const auto* RD = method->getParent();
@@ -574,6 +585,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     DEBUG_AST1(" CallExpr LE() not supported");
                 }
             }
+        }
+
+        if (const auto* UME = llvm::dyn_cast<clang::UnresolvedMemberExpr>(callee)) {
+            DEBUG_AST1(" UME(" << UME->getMemberName().getAsString() << ")");
+            call.value = UME->getMemberName().getAsString();
         }
 
         if (const auto* LE = llvm::dyn_cast<clang::LambdaExpr>(callee)) {
@@ -612,7 +628,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 */
         cpphdl::Expr templ = cpphdl::Expr{(CE->getDirectCallee()?CE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_TEMPLATE};
-        if (const auto *DRE = dyn_cast<DeclRefExpr>(callee->IgnoreParenImpCasts())) {  // template parameters
+        if (const auto *DRE = dyn_cast<DeclRefExpr>(callee->IgnoreParenImpCasts())) {  // template parameters for call (needed by std::apply()
             if (DRE->hasExplicitTemplateArgs()) {
                 const TemplateArgumentLoc *args = DRE->getTemplateArgs();
                 for (unsigned i = 0; i < DRE->getNumTemplateArgs(); ++i) {
@@ -624,7 +640,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     }
                 }
                 templ.sub.push_back(call);
-                call = templ;
+                call = templ;  // swap them to make it work
             }
         }
 /*
@@ -714,7 +730,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" ArraySubscriptExpr");
         QualType LQT = ASE->getBase()->IgnoreParenImpCasts()->getType().getNonReferenceType();
         if (LQT->isPointerType()) {  // convert pointer add into index
-            return cpphdl::Expr{std::string("+:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
+            return cpphdl::Expr{std::string("*8 +:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
                                    cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase()),exprToExpr(ASE->getIdx())}};
         }
         return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase()),exprToExpr(ASE->getIdx())}};
@@ -1165,7 +1181,6 @@ CXXRecordDecl* Helpers::resolveCXXRecordDecl(QualType QT)
 
     QT = QT.getNonReferenceType();
     QT = QT.getDesugaredType(*ctx); // remove typedefs, aliases, etc.
-//?    QT = QT.getCanonicalType();        // can use it only on specialized template - add checks later?
 
     if (const auto* RT = QT->getAs<RecordType>()) {
         if (cast<CXXRecordDecl>(RT->getDecl())) {
@@ -1175,47 +1190,108 @@ CXXRecordDecl* Helpers::resolveCXXRecordDecl(QualType QT)
     return CRD;
 }
 
-CXXRecordDecl* Helpers::lookupQualifiedRecord(llvm::StringRef QualifiedName)
+NamedDecl* Helpers::lookupInContext(DeclContext *DC, IdentifierInfo *Id)
 {
-    SmallVector<StringRef, 4> Parts;
-    QualifiedName.split(Parts, "::");
+    auto Result = DC->lookup(Id);
+    if (!Result.empty()) {
+        return Result.front();
+    }
 
-    DeclContext* DC = ctx->getTranslationUnitDecl();
-
-    for (unsigned i = 0; i < Parts.size(); ++i) {
-        IdentifierInfo& Id = ctx->Idents.get(Parts[i]);
-        auto strs = DC->lookup(&Id);
-
-        if (strs.empty()) {
-            return nullptr;
-        }
-
-        NamedDecl* ND = strs.front();
-
-        if (i < Parts.size()-1) {
-            if (auto* NS = dyn_cast<NamespaceDecl>(ND)) {
-                DC = NS;
+    for (auto *D : DC->decls()) {
+        if (auto *NS = dyn_cast<NamespaceDecl>(D)) {
+            if (NS->isInline()) {
+                if (auto *ND = lookupInContext(NS, Id))
+                    return ND;
             }
-            else {
-                return nullptr;
-            }
-        } else {
-            if (auto* CXX = dyn_cast<CXXRecordDecl>(ND)) {
-                return CXX;
-            }
-            return nullptr;
         }
     }
     return nullptr;
 }
 
-void Helpers::forEachBase(const CXXRecordDecl* RD, std::function<void(const CXXRecordDecl*RD)> func)
+CXXRecordDecl* Helpers::lookupQualifiedRecord(llvm::StringRef QualifiedName)
 {
+    SmallVector<StringRef, 4> Parts;
+    QualifiedName.split(Parts, "::");
+
+    DeclContext *DC = ctx->getTranslationUnitDecl();
+
+    for (unsigned i = 0; i < Parts.size(); ++i) {
+        IdentifierInfo &Id = ctx->Idents.get(Parts[i]);
+
+        NamedDecl *ND = lookupInContext(DC, &Id);
+        if (!ND) {
+            return nullptr;
+        }
+
+        if (i + 1 < Parts.size()) {
+            if (auto *NS = dyn_cast<NamespaceDecl>(ND)) {
+                DC = NS;
+                continue;
+            }
+            if (auto *RD = dyn_cast<CXXRecordDecl>(ND)) {
+                DC = RD;
+                continue;
+            }
+            return nullptr;
+        }
+
+        if (auto *RD = dyn_cast<CXXRecordDecl>(ND)) {
+            if (auto *Def = RD->getDefinition()) {
+                return Def;//->getCanonicalDecl();
+            }
+            return RD;//->getCanonicalDecl();
+        }
+        return nullptr;
+    }
+    return nullptr;
+}
+
+void Helpers::forEachBase(const CXXRecordDecl *RD, const std::function<void(const CXXRecordDecl *)>& func, std::unordered_set<const CXXRecordDecl*>* visited)
+{
+    std::unordered_set<const CXXRecordDecl*> set;
+    if (!visited) {
+        visited = &set;
+    }
+
     func(RD);
+
+    RD = RD->getDefinition();
+    if (!RD) {
+        return;
+    }
+//    RD = RD->getCanonicalDecl();
+
+    if (!visited->insert(RD).second) {
+        return;
+    }
+
     for (const CXXBaseSpecifier &Base : RD->bases()) {
-        const CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
-        if (BaseRD) {
-            forEachBase(BaseRD, func);
+        QualType QT = Base.getType();
+
+        if (const auto *RT = QT->getAs<RecordType>()) {  // classes
+            const auto *BaseRD = dyn_cast<CXXRecordDecl>(RT->getDecl());
+
+            if (!BaseRD) {
+                continue;
+            }
+
+//            BaseRD = BaseRD->getCanonicalDecl();
+            func(BaseRD);
+            forEachBase(BaseRD, func, visited);
+            continue;
+        }
+
+        if (QT->isDependentType()) {  // templates  (hey, Clang team, template classes are classes too, do you hear me??)
+            if (const auto *TST = QT->getAs<TemplateSpecializationType>()) {
+                if (const TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl()) {
+                    if (const auto *CTD = dyn_cast<ClassTemplateDecl>(TD)) {
+                        const CXXRecordDecl *TemplRD = CTD->getTemplatedDecl()->getCanonicalDecl();
+
+                        func(TemplRD);
+                        forEachBase(TemplRD, func, visited);
+                    }
+                }
+            }
         }
     }
 }
