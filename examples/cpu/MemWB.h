@@ -61,14 +61,9 @@ public:
         return regs_write_comb;
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) {
-            return;
-        }
-        if (reset) {
-        }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
     }
 
     void _strobe()

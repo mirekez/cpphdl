@@ -185,16 +185,13 @@ public:
         }
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) {
-            return;
-        }
         if (reset) {
             mem_write_reg.clr();
             mem_read_reg.clr();
         }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
         state_reg.next[0] = {};
         do_execute();
         start_memory();

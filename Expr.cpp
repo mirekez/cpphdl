@@ -45,7 +45,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_TYPE:
             if (value.find("_IO_FILE") != (size_t)-1) {
-                value = "int";
+                value = "integer";
             }
             return indent_str + prefix + typeToSV(value, suffix);
         case EXPR_NUM:
@@ -193,7 +193,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     str += replacePrintFormat(sub[0].sub[0].value, sub.size()>1 && sub[1].str().find("__inst_name") != (size_t)-1);
                     first = false;
                 } else
-                if (sub[i].value != "clk" && sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {  // normal parameter
+                if (sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {  // normal parameter
                     str += (first?"":", ") + sub[i].str();
                     first = false;
                 }
@@ -238,10 +238,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str = value + "(";
             bool first = true;
             for (auto& arg : sub) {
-                if (arg.value != "clk") {
-                    str += (first?"":", ") + arg.str();
-                    first = false;
-                }
+                str += (first?"":", ") + arg.str();
+                first = false;
             }
             str += ")";
             return indent_str + prefix + str;
@@ -269,7 +267,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 3 && value == "bits" && sub[0].type != EXPR_VAR/*this*/) {
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
             }
-            if ((value == "_connect" || value == "_strobe" || value == "_work") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {  // never need this functions
+            if ((value == "_connect" || value == "_strobe" || value == "_work" || value == "_work_neg") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {  // never need this functions
                 return "";
             }
             if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
@@ -302,7 +300,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                    skipfirst = false;
 //                    continue;
 //                }
-                if (arg.value != "clk" && arg.type != EXPR_NONE) {
+                if (arg.type != EXPR_NONE) {
                     str += (first?"":", ") + arg.str();
                     first = false;
                 }
@@ -350,6 +348,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
                     sub[0] = check.sub[0];
                 }
+            }
+            if (value == "<<") {
+                value = "<<<";
+            }
+            if (value == ">>") {
+                value = ">>>";
             }
             sub[0].flags |= flags;
             sub[1].flags |= flags;
@@ -479,9 +483,6 @@ if (sub.size() == 0) return "";
         {
             ASSERT(sub.size()>=1);
             std::string param;
-            if (sub[0].traverseIf( [&](Expr& e) { return e.value == "clk";} )) {
-                return "";
-            }
             std::string str;
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
@@ -646,7 +647,7 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = "byte" + size;
         declSize = 8;
     } else
-    if (type.compare(0, 4, "short") == 0) {
+    if (type.compare(0, 5, "short") == 0) {
         str = "shortint" + size;
         declSize = 16;
     } else

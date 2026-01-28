@@ -46,9 +46,13 @@ public:
 
     logic<MEM_WIDTH_BYTES*8> mask;
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
+                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
+                (int)read_in(), read_data_out(), read_addr_in());
+        }
 
         if (write_in()) {
             mask = 0;
@@ -60,12 +64,6 @@ public:
 
         if (!SHOWAHEAD) {
             data_out_reg.next = buffer[read_addr_in()];
-        }
-
-        if (debugen_in) {
-            std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
-                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
-                (int)read_in(), read_data_out(), read_addr_in());
         }
     }
 
@@ -105,7 +103,7 @@ class TestMemory : Module
     reg<u1>                        write_reg;
     reg<u<clog2(MEM_DEPTH)>>       read_addr_reg;
     reg<u1>                        read_reg;
-//    reg<u1>                  clean;
+
     reg<u1>                  was_read;
     reg<u<clog2(MEM_DEPTH)>> was_read_addr;
     reg<u16>                 to_write_cnt;
@@ -114,21 +112,15 @@ class TestMemory : Module
 
     logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
 
-    std::array<uint8_t,MEM_WIDTH_BYTES>* mem_copy;
+    memory<uint8_t,MEM_WIDTH_BYTES,MEM_DEPTH> mem_copy;
 
 public:
-    bool                      debugen_in;
+    bool    debugen_in;
 
     TestMemory(bool debug)
     {
         debugen_in = debug;
-        mem_copy = new std::array<uint8_t,MEM_WIDTH_BYTES>[MEM_DEPTH];
-        memset((void*)mem_copy, 0, sizeof(std::array<uint8_t,MEM_WIDTH_BYTES>[MEM_DEPTH]));
-    }
-
-    ~TestMemory()
-    {
-        delete[] mem_copy;
+        memset(mem_copy.data, 0, sizeof(*mem_copy.data)*MEM_DEPTH);
     }
 
     void _connect()
@@ -146,11 +138,69 @@ public:
         mem.debugen_in  = debugen_in;
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-#ifndef VERILATOR
+        if (reset) {
+            write_reg.clr();
+            read_reg.clr();
+            to_write_cnt.clr();
+            to_read_cnt.clr();
+            was_read.clr();
+            return;
+        }
+
+#ifdef VERILATOR
+        // we're using this trick to update comb values of Verilator on it's outputs without strobing registers
+        // the problem is that it's difficult to see 0-delayed memory output from Verilator
+        // because if we write the same cycle Verilator updates combs in eval() and we see same clock written words
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+        mem.read_addr_in = read_addr_reg;
+        mem.clk = 0;
+        mem.reset = 0;
+        mem.eval();  // so lets update Verilator's combs without strobing registers
+        mem_read_data = *(logic<MEM_WIDTH_BYTES*8>*)&mem.read_data_out;
+#else
         mem_read_data = mem.read_data_out();
-        mem._work(clk, reset);
+#endif
+        // checking test results
+        if (to_read_cnt && (logic<MEM_WIDTH_BYTES*8>)mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr] != mem_read_data && (was_read || SHOWAHEAD)) {
+            std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
+                __inst_name, mem_read_data, (logic<MEM_WIDTH_BYTES*8>)mem_copy[read_addr_reg],
+                SHOWAHEAD?read_addr_reg:was_read_addr);
+            error = true;
+        }
+
+        write_reg.next = 0;
+        if (to_write_cnt) {
+            write_addr_reg.next = random()%MEM_DEPTH;
+            write_reg.next = 1;
+            for (size_t i=0; i < MEM_WIDTH_BYTES/4; ++i) {
+                data_reg.next.bits(i*32+31,i*32) = random();
+            }
+            to_write_cnt.next = to_write_cnt - 1;
+
+            to_read_cnt.next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
+        }
+        mem_copy[write_addr_reg] = data_reg;
+
+        read_reg.next = 0;
+        if (to_read_cnt) {
+            read_addr_reg.next = random()%MEM_DEPTH;
+            to_read_cnt.next = to_read_cnt - 1;
+            if (!SHOWAHEAD) {
+                read_reg.next = 1;
+            }
+        }
+        if (!to_write_cnt && !to_read_cnt) {
+            to_write_cnt.next = random()%100;
+        }
+
+        if (was_read) {
+            was_read_addr.next = read_addr_reg;
+        }
+
+#ifndef VERILATOR
+        mem._work(reset);
 #else
         mem.write_addr_in = write_addr_reg;
         mem.write_in      = write_reg;
@@ -160,76 +210,10 @@ public:
         mem.read_in       = read_reg;
         mem.debugen_in    = debugen_in;
 
-        mem_read_data = *(logic<MEM_WIDTH_BYTES*8>*)&mem.read_data_out;
-
-        mem.clk = clk;
+        mem.clk = 1;
         mem.reset = reset;
-        mem.eval();
+        mem.eval(); // eval of verilator should be in the end in 0-delay test
 #endif
-        if (reset) {
-//            clean.set(1);
-            write_reg.clr();
-            read_reg.clr();
-            to_write_cnt.clr();
-            to_read_cnt.clr();
-            was_read.clr();
-            return;
-        }
-
-        if (clk) {
-            if (!reset && to_read_cnt && memcmp(&mem_read_data, &mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr], sizeof(mem_read_data)) != 0
-                && (was_read || SHOWAHEAD)) {
-                std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
-                    __inst_name,
-                    mem_read_data,
-                    *(logic<MEM_WIDTH_BYTES*8>*)&mem_copy[read_addr_reg],
-                    SHOWAHEAD?read_addr_reg:was_read_addr);
-                error = true;
-            }
-            if (write_reg) {  // change after all checks (we use simple, not registered memory here)
-                memcpy(&mem_copy[write_addr_reg], &data_reg, sizeof(mem_copy[write_addr_reg]));
-            }
-        }
-
-        write_reg.next = 0;
-//        if (clean) {
-//            if (to_write_cnt != MEM_DEPTH) {
-//                write_addr_reg.next = to_write_cnt;
-//                to_write_cnt.next = to_write_cnt + 1;
-//                write_reg.next = 1;
-//            }
-//            else {
-//                clean.next = 0;
-//                to_write_cnt.next = 0;
-//                to_read_cnt.next = 0;
-//            }
-//        }
-//        else {
-            if (to_write_cnt) {
-                write_addr_reg.next = random()%MEM_DEPTH;
-                write_reg.next = 1;
-                for (size_t i=0; i < MEM_WIDTH_BYTES/4; ++i) {
-                    data_reg.next.bits(i*32+31,i*32) = random();
-                }
-                to_write_cnt.next = to_write_cnt - 1;
-
-                to_read_cnt.next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
-            }
-            read_reg.next = 0;
-            if (to_read_cnt) {
-                read_addr_reg.next = random()%MEM_DEPTH;
-                to_read_cnt.next = to_read_cnt - 1;
-                if (!SHOWAHEAD) {
-                    read_reg.next = 1;
-                }
-            }
-            if (!to_write_cnt && !to_read_cnt) {
-                to_write_cnt.next = random()%100;
-            }
-//        }
-        if (was_read) {
-            was_read_addr.next = read_addr_reg;
-        }
     }
 
     void _strobe()
@@ -237,18 +221,32 @@ public:
 #ifndef VERILATOR
         mem._strobe();
 #endif
-
         write_addr_reg.strobe();
         data_reg.strobe();
         write_reg.strobe();
         read_addr_reg.strobe();
+
         read_reg.strobe();
 
-//        clean.strobe();
         was_read.strobe();
         was_read_addr.strobe();
         to_write_cnt.strobe();
         to_read_cnt.strobe();
+
+        mem_copy.apply();
+    }
+
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        mem.clk = 0;
+        mem.reset = reset;
+        mem.eval();
+#endif
+    }
+
+    void _strobe_neg()
+    {
     }
 
     bool run()
@@ -264,22 +262,18 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "mem_test";
         _connect();
-        _work(0, 1);
-        _work(1, 1);
+        _work(1);
+        _work_neg(1);
         int cycles = 100000;
-        int clk = 0;
         while (--cycles) {
-            _work(clk, 0);
+            _strobe();
+            _work(0);
+            _strobe_neg();
+            _work_neg(0);
 
-            if (clk) {
-                _strobe();
-            }
-
-            if (clk && error) {
+            if (error) {
                 break;
             }
-
-            clk = !clk;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());

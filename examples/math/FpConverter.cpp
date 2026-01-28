@@ -154,10 +154,8 @@ public:
         return conv_comb;
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
-
         if (USE_REG) {
             out_reg.next = conv_comb_func();
         }
@@ -237,20 +235,8 @@ public:
 #endif
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-#ifndef VERILATOR
-        read_data = converter.data_out();
-        converter._work(clk, reset);
-#else
-        memcpy(&read_data, &converter.data_out, sizeof(read_data));
-        memcpy(converter.data_in, &out_reg, sizeof(converter.data_in));
-        converter.debugen_in = debugen_in;
-
-        converter.clk = clk;
-        converter.reset = reset;
-        converter.eval();  // eval of verilator should be in the end
-#endif
         if (reset) {
             error = false;
             can_check1.clr();
@@ -258,17 +244,29 @@ public:
             return;
         }
 
-        if (clk) {  // all checks on negedge edge
-            for (i=0; i < LENGTH; ++i) {
-                if (!reset && ((!USE_REG && can_check1 && !read_data[i].cmp(was_refs1[i], 0.1))
-                             || (USE_REG && can_check2 && !read_data[i].cmp(was_refs2[i], 0.1))) ) {
-                    std::print("{:s} ERROR: {}({}) was read instead of {}\n",
-                        __inst_name,
-                        read_data[i].to_double(),
-                        read_data[i],
-                        USE_REG?was_refs2[i]:was_refs1[i]);
-                    error = true;
-                }
+#ifdef VERILATOR
+        // we're using this trick to update comb values of Verilator on it's outputs without strobing registers
+        // the problem is that it's difficult to see 0-delayed memory output from Verilator
+        // because if we write the same cycle Verilator updates combs in eval() and we see same clock written words
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+        memcpy(converter.data_in, &out_reg, sizeof(converter.data_in));
+        converter.clk = 0;
+        converter.reset = 0;
+        converter.eval();  // so lets update Verilator's combs without strobing registers
+        memcpy(&read_data, &converter.data_out, sizeof(read_data));
+#else
+        read_data = converter.data_out();
+#endif
+        // test result
+        for (i=0; i < LENGTH; ++i) {
+            if (!reset && ((!USE_REG && can_check1 && !read_data[i].cmp(was_refs1[i], 0.1))
+                         || (USE_REG && can_check2 && !read_data[i].cmp(was_refs2[i], 0.1))) ) {
+                std::print("{:s} ERROR: {}({}) was read instead of {}\n",
+                    __inst_name,
+                    read_data[i].to_double(),
+                    read_data[i],
+                    USE_REG?was_refs2[i]:was_refs1[i]);
+                error = true;
             }
         }
 
@@ -280,6 +278,17 @@ public:
         was_refs2.next = was_refs1;
         can_check1.next = 1;
         can_check2.next = can_check1;
+
+#ifndef VERILATOR
+        converter._work(reset);
+#else
+        memcpy(converter.data_in, &out_reg, sizeof(converter.data_in));
+        converter.debugen_in = debugen_in;
+
+        converter.clk = 1;
+        converter.reset = reset;
+        converter.eval();  // eval of verilator should be in the end in 0-delay test
+#endif
     }
 
     void _strobe()
@@ -287,12 +296,24 @@ public:
 #ifndef VERILATOR
         converter._strobe();
 #endif
-
         out_reg.strobe();
         was_refs1.strobe();
         was_refs2.strobe();
         can_check1.strobe();
         can_check2.strobe();
+    }
+
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        converter.clk = 0;
+        converter.reset = reset;
+        converter.eval();  // eval of verilator should be in the end
+#endif
+    }
+
+    void _strobe_neg()
+    {
     }
 
     bool run()
@@ -309,22 +330,19 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "converter_test";
         _connect();
-        _work(0, 1);
-        _work(1, 1);
+        _work(1);
+        _work_neg(1);
+
         int cycles = 100000;
-        int clk = 0;
         while (--cycles) {
-            _work(clk, 0);
+            _work(0);
+            _strobe();
+            _work_neg(0);
+            _strobe_neg();
 
-            if (clk) {
-                _strobe();
-            }
-
-            if (clk && error) {
+            if (error) {
                 break;
             }
-
-            clk = !clk;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());

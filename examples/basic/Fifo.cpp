@@ -63,15 +63,14 @@ public:
         return empty_comb = (wp_reg == rp_reg) && !full_reg;
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
-        mem._work(clk, reset);
-
         if (debugen_in) {
             std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
                 (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_out(), (int)empty_out(), reset);
         }
+
+        mem._work(reset);
 
         if (reset) {
             wp_reg.clr();
@@ -195,11 +194,11 @@ public:
         fifo.debugen_in  = debugen_in;
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
 #ifndef VERILATOR
         fifo_read_data = fifo.read_data_out();
-        fifo._work(clk, reset);
+        fifo._work(reset);
 #else
         fifo.write_in      = write_reg;
         memcpy(&fifo.write_data_in, &data_reg, sizeof(fifo.write_data_in));
@@ -209,7 +208,7 @@ public:
 
         fifo_read_data = *(logic<FIFO_WIDTH_BYTES*8>*)&fifo.read_data_out;
 
-        fifo.clk = clk;
+        fifo.clk = 1;
         fifo.reset = reset;
         fifo.eval();
 #endif
@@ -225,16 +224,15 @@ public:
             return;
         }
 
-        if (clk) {
-            if (!reset && to_read_cnt && memcmp(&fifo_read_data, &mem_ref[read_addr], sizeof(fifo_read_data)) != 0
-                && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
-                std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
-                    __inst_name,
-                    fifo_read_data,
-                    *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
-                    read_addr);
-                error = true;
-            }
+        // check result
+        if (!reset && to_read_cnt && memcmp(&fifo_read_data, &mem_ref[read_addr], sizeof(fifo_read_data)) != 0
+            && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
+            std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
+                __inst_name,
+                fifo_read_data,
+                *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[read_addr],
+                read_addr);
+            error = true;
         }
 
         write_reg.next = 0;
@@ -268,7 +266,6 @@ public:
 #ifndef VERILATOR
         fifo._strobe();
 #endif
-
         read_addr.strobe();
         write_addr.strobe();
         data_reg.strobe();
@@ -279,6 +276,19 @@ public:
         clear_reg.strobe();
         to_write_cnt.strobe();
         to_read_cnt.strobe();
+    }
+
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        fifo.clk = 0;
+        fifo.reset = reset;
+        fifo.eval();  // eval of verilator should be in the end
+#endif
+    }
+
+    void _strobe_neg()
+    {
     }
 
     bool run()
@@ -299,22 +309,18 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
         _connect();
-        _work(0, 1);
-        _work(1, 1);
+        _work(1);
+        _work_neg(1);
         int cycles = 100000;
-        int clk = 0;
         while (--cycles) {
-            _work(clk, 0);
+            _strobe();
+            _work(0);
+            _strobe_neg();
+            _work_neg(0);
 
-            if (clk) {
-                _strobe();
-            }
-
-            if (clk && error) {
+            if (error) {
                 break;
             }
-
-            clk = !clk;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());

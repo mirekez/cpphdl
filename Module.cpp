@@ -66,10 +66,14 @@ bool Module::print(std::ofstream& out)
 
     printMembers(out);
 
+    bool hasWorkNeg = false;
     for (auto& method : methods) {
         out << "\n";
         if (!method.print(out)) {
             return false;
+        }
+        if (method.name == "_work_neg") {
+            hasWorkNeg = true;
         }
     }
 
@@ -78,6 +82,12 @@ bool Module::print(std::ofstream& out)
     out << "    always @(posedge clk) begin\n";
     out << "        _work(reset);\n";
     out << "    end\n";
+    if (hasWorkNeg) {
+        out << "\n";
+        out << "    always @(negedge clk) begin\n";
+        out << "        _work_neg(reset);\n";
+        out << "    end\n";
+    }
 
     out << "\n";
     out << "endmodule\n";

@@ -139,17 +139,14 @@ public:
         state_reg.next[0].valid = instr_valid_in() && !stall_comb_func();
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) {
-            return;
-        }
         if (reset) {
             state_reg.next[0].valid = 0;
             state_reg.next[1].valid = 0;
             state_reg.next[2].valid = 0;
         }
-        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(clk, reset);  // first because it copies all registers from previous stage
+        PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
         do_decode_fetch();
 //        std::print("!!! {} => {} ", (uint8_t)state_reg.next[0].alu_op, (uint8_t)state_reg[0].alu_op);
     }

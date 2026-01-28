@@ -45,11 +45,9 @@ public:
         ram._connect();
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
-
-        ram._work(clk, reset);
+        ram._work(reset);
     }
 
     void _strobe()

@@ -28,13 +28,9 @@ struct PipelineStage : public cpphdl::Module
     __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
     __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAL( state_reg );
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
         size_t i;
-
-        if (!clk) {
-            return;
-        }
 
         for (i=1; i < LENGTH-ID; ++i) {
             state_reg.next[i] = state_reg[i-1];
@@ -140,16 +136,13 @@ public:
         }, members);
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) {
-            return;
-        }
         std::apply([&](auto&... stage) {
             (
                 (
                     [&]{
-                        stage._work(clk, reset);
+                        stage._work(reset);
                     }()
                 ),
                 ...

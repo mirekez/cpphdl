@@ -57,9 +57,42 @@ public:
         regs.write_in = wb.regs_write_out;
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
+        regs.debugen_in = debugen_in;
+        regs._connect();
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
+    {
+        auto& df = std::get<0>(members);
+        auto& ex = std::get<1>(members);  // only refs can be declared in any place of function, vars must be declared in the beginning (like in C)
+//        auto& wb = std::get<2>(members);
+
+        if (reset) {
+            pc.clr();
+            valid.clr();
+            return;
+        }
+
+        if (dmem_write_addr_out() == 0x11223344 && dmem_write_out()) {
+            FILE* out = fopen("out.txt", "a");
+            fprintf(out, "%c", dmem_write_data_out()&0xFF);
+            fclose(out);
+        }
+
+        regs._work(reset);
+        Pipeline::_work(reset);
+
+        if (valid && !df.stall_out()) {
+            pc.next = pc + ((df.instr_in()&3)==3?4:2);
+        }
+        if (states_comb_func()[0].valid && ex.branch_taken_out()) {
+            pc.next = ex.branch_target_out();
+        }
+
+        valid.next = true;
+    }
+
+    void _work_neg(bool reset)  // print system debug on negedge if you use Verilator!
     {
         BIG_STATE tmp;
         Instr instr;
@@ -67,15 +100,6 @@ public:
         auto& df = std::get<0>(members);
         auto& ex = std::get<1>(members);  // only refs can be declared in any place of function, vars must be declared in the beginning (like in C)
         auto& wb = std::get<2>(members);
-
-        if (!clk) {
-            return;
-        }
-        if (reset) {
-            pc.clr();
-            valid.clr();
-            return;
-        }
 
         instr = {df.instr_in()};
         if ((instr.raw&3) == 3) {
@@ -97,7 +121,7 @@ public:
                 (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
 
 #ifndef SYNTHESIS
-            // delayed by 1 to align WB
+            // delayed by 1 to align EX to WB
             std::string interpret;
             if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
                 interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
@@ -121,24 +145,6 @@ public:
             std::print("\n");
 #endif
         }
-
-        if (dmem_write_addr_out() == 0x11223344 && dmem_write_out() ) {
-            FILE* out = fopen("out.txt", "a");
-            fprintf(out, "%c", dmem_write_data_out()&0xFF);
-            fclose(out);
-        }
-
-        regs._work(clk, reset);
-        Pipeline::_work(clk, reset);
-
-        if (valid && !df.stall_out()) {
-            pc.next = pc + ((df.instr_in()&3)==3?4:2);
-        }
-        if (state_comb_tmp[0].valid && ex.branch_taken_out()) {
-            pc.next = ex.branch_target_out();
-        }
-
-        valid.next = true;
     }
 
     void _strobe()
@@ -253,14 +259,14 @@ public:
 #endif
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
 #ifndef VERILATOR
         dmem_read_data = dmem.read_data_out();  // extracting data from C++HDL for checking
         imem_read_data = imem.read_data_out();
-        riscv._work(clk, reset);
-        dmem._work(clk, reset);
-        imem._work(clk, reset);
+        riscv._work(reset);
+        dmem._work(reset);
+        imem._work(reset);
 #else
         riscv.dmem_read_data_in = dmem.read_data_out();
         riscv.imem_read_data_in = imem.read_data_out();
@@ -271,41 +277,17 @@ public:
 
 //        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
 
-        riscv.clk = clk;
+        riscv.clk = 1;
         riscv.reset = reset;
         riscv.eval();  // eval of verilator should be in the end
-        dmem._work(clk, reset);
-        imem._work(clk, reset);
+        dmem._work(reset);
+        imem._work(reset);
 #endif
 
         if (reset) {
             error = false;
             return;
         }
-
-        if (!clk) {  // all checks on negedge edge
-//            for (i=0; i < LENGTH; ++i) {
-//                if (!reset && ((!USE_REG && can_check1 && !(*data_in)[i].cmp(was_refs1[i], 0.1))
-//                             || (USE_REG && can_check2 && !(*data_in)[i].cmp(was_refs2[i], 0.1))) ) {
-//                    std::print("{:s} ERROR: {}({}) was read instead of {}\n",
-//                        __inst_name,
-//                        (*data_in)[i].to_double(),
-//                        (*data_in)[i],
-//                        USE_REG?was_refs2[i]:was_refs1[i]);
-//                    error = true;
-//                }
-//            }
-            return;
-        }
-
-//        for (i=0; i < LENGTH; ++i) {
-//            refs[i] = ((double)random() - RAND_MAX/2) / (RAND_MAX/2);
-//            out_reg.next[i].from_double(refs[i]);
-//        }
-//        was_refs1.next = refs;
-//        was_refs2.next = was_refs1;
-//        can_check1.next = 1;
-//        can_check2.next = can_check1;
     }
 
     void _strobe()
@@ -315,7 +297,21 @@ public:
         dmem._strobe();
         imem._strobe();
 #endif
+    }
 
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        riscv.clk = 0;
+        riscv.reset = reset;
+        riscv.eval();  // eval of verilator should be in the end
+#else
+        riscv._work_neg(reset);
+#endif
+    }
+
+    void _strobe_neg()
+    {
     }
 
     bool run(std::string filename, size_t start_offset)
@@ -334,8 +330,8 @@ public:
 
         __inst_name = "riscv_test";
         _connect();
-        _work(0, 1);
-        _work(1, 1);
+        _work(1);
+        _work_neg(1);
 
         /////////////// read program to memory
         uint32_t ram[RAM_SIZE];
@@ -349,11 +345,11 @@ public:
         std::print("Reading program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
 
         imem_write = true;
-        imem._work(1, 1);
+        imem._work(1);
         for (size_t addr = 0; addr < RAM_SIZE; ++addr) {
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
-            imem._work(1, 0);
+            imem._work(0);
             imem._strobe();
             if (debugen_in) {
                 std::print("{:04x}: {:08x}\n", addr, ram[addr]);
@@ -366,11 +362,11 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         int cycles = 1000000;
-        int clk = 0;
         while (--cycles && !error) {
-            _work(clk, 0);
             _strobe();
-            clk = !clk;
+            _work(0);
+            _strobe_neg();
+            _work_neg(0);
         }
 
         std::ifstream a("rv32i.log", std::ios::binary), b("out.txt", std::ios::binary);

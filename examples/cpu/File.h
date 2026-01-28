@@ -22,7 +22,7 @@ public:
 
     __PORT(uint8_t)      read_addr0_in;
     __PORT(uint8_t)      read_addr1_in;
-    __PORT(bool)         read_in;
+    __PORT(bool)         read_in          = __VAL( 0 );  // can be unassigned
     __PORT(DTYPE)        read_data0_out   = __VAL( data0_out_comb_func() );
     __PORT(DTYPE)        read_data1_out   = __VAL( data1_out_comb_func() );
 
@@ -40,9 +40,22 @@ public:
         return data1_out_comb = (logic<MEM_WIDTH>) buffer[read_addr1_in()];
     }
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
+        byte i;
+
+        if (reset) {
+            for (i=0; i < MEM_DEPTH; ++i) {
+                buffer[i] = 0;
+            }
+        }
+
+        if (debugen_in) {
+            std::print("{:s}: port0: @{}({}){}, port1: @{}({}){} @{}({}){}\n", __inst_name,
+                write_addr_in(), write_in(), write_data_in(),
+                read_addr0_in(), read_in(), read_data0_out(),
+                read_addr1_in(), read_in(), read_data1_out());
+        }
 
         if (write_in()) {
             buffer[write_addr_in()] = write_data_in();

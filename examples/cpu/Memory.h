@@ -60,9 +60,14 @@ public:
 
     logic<MEM_WIDTH_BYTES*8> mask;
 
-    void _work(bool clk, bool reset)
+    void _work(bool reset)
     {
-        if (!clk) return;
+        if (debugen_in) {
+            std::print("{:s}: port0: @{}({}/{}){}({}){}, port1: @{}({}/{}){}({}){}\n", __inst_name,
+                addr0_in(), (int)write0_in(), (int)read0_in(), write0_data_in(), write0_mask_in(), read0_data_out(),
+                addr1_in(), (int)write1_in(), (int)read1_in(), write1_data_in(), write1_mask_in(), read1_data_out());
+        }
+
         if (write0_in()) {
             mask = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
@@ -82,12 +87,6 @@ public:
         if (!SHOWAHEAD) {
             data0_out_reg.next = buffer[addr0_in()];
             data1_out_reg.next = buffer[addr1_in()];
-        }
-
-        if (debugen_in) {
-            std::print("{:s}: port0: @{}({}/{}){}({}){}, port1: @{}({}/{}){}({}){}\n", __inst_name,
-                addr0_in(), (int)write0_in(), (int)read0_in(), write0_data_in(), write0_mask_in(), read0_data_out(),
-                addr1_in(), (int)write1_in(), (int)read1_in(), write1_data_in(), write1_mask_in(), read1_data_out());
         }
     }
 
