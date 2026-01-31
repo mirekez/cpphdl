@@ -73,6 +73,8 @@ public:
             return;
         }
 
+        debug();
+
         if (dmem_write_addr_out() == 0x11223344 && dmem_write_out()) {
             FILE* out = fopen("out.txt", "a");
             fprintf(out, "%c", dmem_write_data_out()&0xFF);
@@ -92,7 +94,7 @@ public:
         valid.next = true;
     }
 
-    void _work_neg(bool reset)  // print system debug on negedge if you use Verilator!
+    void debug()
     {
         BIG_STATE tmp;
         Instr instr;
@@ -101,7 +103,7 @@ public:
         auto& ex = std::get<1>(members);  // only refs can be declared in any place of function, vars must be declared in the beginning (like in C)
         auto& wb = std::get<2>(members);
 
-        instr = {df.instr_in()};
+        instr = {imem_read_data_in()};
         if ((instr.raw&3) == 3) {
             instr.decode(tmp);
         }
@@ -190,9 +192,6 @@ class TestRiscV : public Module
     uint32_t imem_write_data;
     bool error;
 
-    uint32_t dmem_read_data;
-    uint32_t imem_read_data;
-
 //    size_t i;
 
 public:
@@ -262,17 +261,11 @@ public:
     void _work(bool reset)
     {
 #ifndef VERILATOR
-        dmem_read_data = dmem.read_data_out();  // extracting data from C++HDL for checking
-        imem_read_data = imem.read_data_out();
         riscv._work(reset);
-        dmem._work(reset);
-        imem._work(reset);
 #else
         riscv.dmem_read_data_in = dmem.read_data_out();
         riscv.imem_read_data_in = imem.read_data_out();
 //        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
-        dmem_read_data = dmem.read_data_out();
-        imem_read_data = imem.read_data_out();
         riscv.debugen_in    = debugen_in;
 
 //        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
@@ -280,9 +273,9 @@ public:
         riscv.clk = 1;
         riscv.reset = reset;
         riscv.eval();  // eval of verilator should be in the end
+#endif
         dmem._work(reset);
         imem._work(reset);
-#endif
 
         if (reset) {
             error = false;
@@ -294,9 +287,9 @@ public:
     {
 #ifndef VERILATOR
         riscv._strobe();
-        dmem._strobe();
-        imem._strobe();
 #endif
+        dmem._strobe();  // we use these modules in Verilator test
+        imem._strobe();
     }
 
     void _work_neg(bool reset)
@@ -330,7 +323,9 @@ public:
 
         __inst_name = "riscv_test";
         _connect();
+        _strobe();
         _work(1);
+        _strobe_neg();
         _work_neg(1);
 
         /////////////// read program to memory
@@ -361,7 +356,7 @@ public:
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();
-        int cycles = 1000000;
+        int cycles = 200000;
         while (--cycles && !error) {
             _strobe();
             _work(0);

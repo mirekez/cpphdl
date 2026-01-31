@@ -20,20 +20,20 @@ public:
 
         uint32_t imm;
 
-        uint8_t valid:1;
-        uint8_t alu_op:4;
-        uint8_t mem_op:2;
-        uint8_t wb_op:3;
-        uint8_t br_op:4;
-        uint8_t funct3:3;
-        uint8_t rd:5;
-        uint8_t rs1:5;
-        uint8_t rs2:5;
+        byte valid:1;
+        byte alu_op:4;
+        byte mem_op:2;
+        byte wb_op:3;
+        byte br_op:4;
+        byte funct3:3;
+        byte rd:5;
+        byte rs1:5;
+        byte rs2:5;
     };//__PACKED;
 
     STATE state_comb;
-    uint8_t rs1_out_comb;
-    uint8_t rs2_out_comb;
+    byte rs1_out_comb;
+    byte rs2_out_comb;
     bool stall_comb;
 
 public:
@@ -42,8 +42,8 @@ public:
     __PORT(uint32_t)    instr_in;
     __PORT(uint32_t)    regs_data0_in;
     __PORT(uint32_t)    regs_data1_in;
-    __PORT(uint8_t)     rs1_out        = __VAL( rs1_out_comb );
-    __PORT(uint8_t)     rs2_out        = __VAL( rs2_out_comb );
+    __PORT(byte)        rs1_out        = __VAL( rs1_out_comb );
+    __PORT(byte)        rs2_out        = __VAL( rs2_out_comb );
     __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
     __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
     __PORT(bool)        stall_out      = __VAL( stall_comb_func() );
@@ -55,6 +55,8 @@ public:
 
     STATE& state_comb_func()
     {
+        bool tmp1;
+        uint32_t tmp2;
         Instr instr = {instr_in()};
         if ((instr.raw&3) == 3) {
             instr.decode(state_comb);
@@ -65,10 +67,12 @@ public:
         else {
             instr.decode16(state_comb);
         }
-        state_comb.valid = instr_valid_in();
-        state_comb.pc = pc_in();
+        tmp1 = instr_valid_in();
+        tmp2 = pc_in();
+        state_comb.valid = tmp1;
+        state_comb.pc = tmp2;
 
-        rs1_out_comb = state_comb.rs1;  // ???
+        rs1_out_comb = state_comb.rs1;  // make them separate
         rs2_out_comb = state_comb.rs2;
         return state_comb;
     }
@@ -148,7 +152,7 @@ public:
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
         do_decode_fetch();
-//        std::print("!!! {} => {} ", (uint8_t)state_reg.next[0].alu_op, (uint8_t)state_reg[0].alu_op);
+//        std::print("!!! {} => {} ", (byte)state_reg.next[0].alu_op, (byte)state_reg[0].alu_op);
     }
 
     void _strobe()

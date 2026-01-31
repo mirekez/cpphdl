@@ -126,5 +126,6 @@ inline std::string genTypeName(std::string name)
     str_replace(name, ",", "_");
     str_replace(name, ":", "_");
     str_replace(name, "-", "m");
+    str_replace(name, ".", "_");
     return name;
 }

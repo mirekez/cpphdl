@@ -66,6 +66,17 @@ bool Module::print(std::ofstream& out)
 
     printMembers(out);
 
+    out << "\n";
+    for (auto& field : vars) {
+        field.indent = 1;
+        if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
+            if (!field.print(out, "_next")) {
+                return false;
+            }
+        }
+    }
+    out << "\n";
+
     bool hasWorkNeg = false;
     for (auto& method : methods) {
         out << "\n";
@@ -81,7 +92,15 @@ bool Module::print(std::ofstream& out)
     out << "\n";
     out << "    always @(posedge clk) begin\n";
     out << "        _work(reset);\n";
+    out << "\n";
+    for (auto& field : vars) {
+        field.indent = 1;
+        if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
+            out << "        " << field.name << " <= " << field.name << "_next;\n";
+        }
+    }
     out << "    end\n";
+
     if (hasWorkNeg) {
         out << "\n";
         out << "    always @(negedge clk) begin\n";

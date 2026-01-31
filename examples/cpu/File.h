@@ -13,8 +13,6 @@ class File : public Module
     DTYPE data1_out_comb;
     memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
 
-    size_t i;
-
 public:
     __PORT(uint8_t)      write_addr_in;
     __PORT(bool)         write_in;

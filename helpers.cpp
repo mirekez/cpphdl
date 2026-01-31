@@ -126,22 +126,54 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* SS = dyn_cast<SwitchStmt>(E)) {
         cpphdl::Expr expr = cpphdl::Expr{"switch", cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
-        for (const SwitchCase *SC = SS->getSwitchCaseList(); SC; SC = SC->getNextSwitchCase()) {
-            if (isa<SwitchCase>(SC->getSubStmt()) || isa<DefaultStmt>(SC->getSubStmt())) {
-                const SourceManager &SM = ctx->getSourceManager();
-                PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
-            }
-            if (auto *CS = dyn_cast<CaseStmt>(SC)) {
-                cpphdl::Expr LHS = exprToExpr(CS->getLHS());
-                cpphdl::Expr RHS = exprToExpr(CS->getSubStmt());
-                expr.sub.emplace_back(cpphdl::Expr{LHS.str(), cpphdl::Expr::EXPR_BODY, {std::move(RHS)}});  // the only one place we call str() in Clang part
+
+        cpphdl::Expr body;
+        bool wasBreak = true;
+        for (const Stmt *S : dyn_cast<CompoundStmt>(SS->getBody())->body()) {
+            if (const auto* CS = dyn_cast<CaseStmt>(S)) {
+                if (!wasBreak) {
+                    expr.sub.emplace_back(std::move(body));
+
+                    const SourceManager &SM = ctx->getSourceManager();
+                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                }
+
+                body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // the only one place we call str() in Clang part (to make a string value)
+                if (CS->getRHS()) {
+                    body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // the only one place we call str() in Clang part (to make a string value)
+                }
+                body.sub.emplace_back(exprToExpr(CS->getSubStmt()));
+                wasBreak = false;
             } else
-            if (isa<DefaultStmt>(SC)) {
-                cpphdl::Expr RHS = exprToExpr(SC->getSubStmt());
-                expr.sub.emplace_back(cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY, {std::move(RHS)}});
+            if (dyn_cast<DefaultStmt>(S)) {
+                if (!wasBreak) {
+                    expr.sub.emplace_back(std::move(body));
+
+                    const SourceManager &SM = ctx->getSourceManager();
+                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                }
+                body = cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY};
+                wasBreak = false;
+            } else
+            if (dyn_cast<BreakStmt>(S)) {
+                expr.sub.emplace_back(std::move(body));
+                wasBreak = true;
+            } else
+            if (dyn_cast<ReturnStmt>(S)) {
+                body.sub.emplace_back(exprToExpr(S));
+                expr.sub.emplace_back(std::move(body));
+                wasBreak = true;
+            }
+            else {
+                body.sub.emplace_back(exprToExpr(S));
             }
         }
+        if (!wasBreak) {
+            expr.sub.emplace_back(std::move(body));
+        }
+
         return expr;
     }
     if (/*auto* CS =*/ dyn_cast<CaseStmt>(E)) {
@@ -321,8 +353,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return cpphdl::Expr{prefix + DRE->getDecl()->getNameAsString(), isPack ? cpphdl::Expr::EXPR_PACK : cpphdl::Expr::EXPR_VAR};
     }
     if (auto* IL = dyn_cast<IntegerLiteral>(E)) {
-        DEBUG_AST1(" IntegerLiteral(" << std::to_string(IL->getValue().getSExtValue()) << ")");
-        return cpphdl::Expr{std::to_string(IL->getValue().getSExtValue()), cpphdl::Expr::EXPR_NUM};
+        DEBUG_AST1(" IntegerLiteral(" << (IL->getType()->isUnsignedIntegerType() ? std::to_string(IL->getValue().getZExtValue()) : std::to_string(IL->getValue().getSExtValue())) << ")");
+        return cpphdl::Expr{IL->getType()->isUnsignedIntegerType() ? std::to_string(IL->getValue().getZExtValue()) : std::to_string(IL->getValue().getSExtValue()), cpphdl::Expr::EXPR_NUM};
     }
     if (auto* OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
         DEBUG_AST1(" CXXOperatorCallExpr");
@@ -686,7 +718,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            }
 //            return call;
             if (CE->getNumArgs()) {
-                return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
+                if (str.find("std::basic_format_string") == 0) {
+                    return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};  // we use it to determine std::print
+                }
+                return /*cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CE->getArg(0))/*}}*/;
             }
             else {
                 return cpphdl::Expr{str, cpphdl::Expr::EXPR_NONE};
@@ -740,28 +775,28 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return /*cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(FCE->getSubExpr())/*}}*/;
     }
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
-        DEBUG_AST1(" CXXFunctionalCastExpr");
-        return cpphdl::Expr{"functional_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
+        DEBUG_AST1(" CXXFunctionalCastExpr(" << FCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) << ")");
+        return cpphdl::Expr{genTypeName(FCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
     }
     if (auto* SCE = dyn_cast<CXXStaticCastExpr>(E)) {
         DEBUG_AST1(" CXXStaticCastExpr");
-        return cpphdl::Expr{"static_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
+        return /*cpphdl::Expr{"static_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(SCE->getSubExpr())/*}}*/;
     }
     if (auto* DCE = dyn_cast<CXXDynamicCastExpr>(E)) {
         DEBUG_AST1(" CXXDynamicCastExpr");
-        return cpphdl::Expr{"dynamic_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(DCE->getSubExpr())}};
+        return /*cpphdl::Expr{"dynamic_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(DCE->getSubExpr())/*}}*/;
     }
     if (auto* RCE = dyn_cast<CXXReinterpretCastExpr>(E)) {
         DEBUG_AST1(" CXXReinterpretCastExpr");
-        return cpphdl::Expr{"reinterpret_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(RCE->getSubExpr())}};
+        return /*cpphdl::Expr{"reinterpret_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(RCE->getSubExpr())/*}}*/;
     }
     if (auto* CCE = dyn_cast<CXXConstCastExpr>(E)) {
         DEBUG_AST1(" CXXConstCastExpr");
-        return cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(CCE->getSubExpr())}};
+        return /*cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CCE->getSubExpr())/*}}*/;
     }
     if (auto* SCE = dyn_cast<CStyleCastExpr>(E)) {
-        DEBUG_AST1(" CStyleCastExpr");
-        return cpphdl::Expr{"cast", cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
+        DEBUG_AST1(" CStyleCastExpr (" + genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())) + ")");
+        return cpphdl::Expr{genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
     if (auto* MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
         DEBUG_AST1(" MaterializeTemporaryExpr");
@@ -777,7 +812,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* BTE = dyn_cast<CXXBindTemporaryExpr>(E)) {
         DEBUG_AST1(" CXXBindTemporaryExpr");
-        return cpphdl::Expr{"CXXBindTemporaryExpr", cpphdl::Expr::EXPR_CAST, {exprToExpr(BTE->getSubExpr())}};
+        return /*cpphdl::Expr{"CXXBindTemporaryExpr", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(BTE->getSubExpr())/*}}*/;
     }
     if (/*auto* CE = */dyn_cast<CXXNullPtrLiteralExpr>(E)) {
         DEBUG_AST1(" CXXNullPtrLiteralExpr");
@@ -1078,12 +1113,12 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
     DynTypedNode Node = DynTypedNode::create(*DRE);
 
     while (true) {
-        auto Parents = ctx->getParents(Node);
+        auto parents = ctx->getParents(Node);
 
-        if (Parents.empty())
+        if (parents.empty())
             return nullptr;
 
-        const DynTypedNode &P = Parents[0];
+        const DynTypedNode &P = parents[0];
 
         if (const Decl *D = P.get<Decl>()) {
             if (const auto *MD = dyn_cast<CXXMethodDecl>(D))

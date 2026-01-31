@@ -2,6 +2,7 @@
 #include "Field.h"
 #include "Module.h"
 
+#include <iostream>
 #include <fstream>
 
 using namespace cpphdl;
@@ -55,9 +56,6 @@ bool Method::print(std::ofstream& out)
 
     for (auto& stmt : statements) {
         stmt.indent = 2;
-//        if (ret.size() != 0) {
-//            stmt.flags = Expr::FLAG_RETURN;
-//        }
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
@@ -82,7 +80,7 @@ bool Method::printConns(std::ofstream& out)
 
     std::vector<std::string> vars;
     for (auto& stmt : statements) {  // collecting vars from for
-        stmt.traverseIf( [&](Expr& e/*, std::vector<std::string>& vars*/)
+        stmt.traverseIf( [&](Expr& e)
             {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
                 if (e.type == Expr::EXPR_FOR
                     && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
@@ -95,10 +93,10 @@ bool Method::printConns(std::ofstream& out)
                     vars.push_back(e.sub[0].sub[0].value);
                 }
                 return false;
-            }/*, vars*/ );
+            } );
     }
     for (auto& stmt : statements) {  // replacing index names
-        stmt.traverseIf( [&](Expr& e/*, std::vector<std::string>& vars*/)
+        stmt.traverseIf( [&](Expr& e)
             {
                 if (e.type == Expr::EXPR_MEMBER) {
                     for (auto& str : vars) {
@@ -109,7 +107,7 @@ bool Method::printConns(std::ofstream& out)
                     }
                 }
                 return false;
-            }/*, vars*/ );
+            } );
     }
 
     out << "    generate\n";
@@ -203,8 +201,10 @@ bool Method::printComb(std::ofstream& out)
             } );
     }
 */
+
     out << "    always @(*) begin\n";
     for (auto& stmt : statements) {
+
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
         auto s = stmt.str();

@@ -66,7 +66,7 @@ bool Struct::print(std::ofstream* out, std::vector<Field>* params, size_t* declS
             fields[i].definition.print(out, params, declSize);
         } else {
             fields[i].indent = indent;
-            fields[i].print(*out, true);
+            fields[i].print(*out);
 //            *out << fields[i].bitwidth.debug() << "\n";
         }
     }

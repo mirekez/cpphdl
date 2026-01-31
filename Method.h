@@ -15,6 +15,7 @@ struct Method
     std::vector<Expr> ret;
     std::vector<Field> parameters;
     std::vector<Expr> statements;
+    std::vector<Field> temps;
 
     // methods
 

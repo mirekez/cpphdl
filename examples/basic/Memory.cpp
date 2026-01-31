@@ -44,7 +44,7 @@ public:
         return data_out_comb;
     }
 
-    logic<MEM_WIDTH_BYTES*8> mask;
+    logic<MEM_WIDTH_BYTES*8> mask_comb;
 
     void _work(bool reset)
     {
@@ -55,11 +55,11 @@ public:
         }
 
         if (write_in()) {
-            mask = 0;
+            mask_comb = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
-                mask.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
+                mask_comb.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
             }
-            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
+            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask_comb) | (write_data_in()&mask_comb);
         }
 
         if (!SHOWAHEAD) {

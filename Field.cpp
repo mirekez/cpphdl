@@ -7,7 +7,7 @@ using namespace cpphdl;
 
 Field* currField;
 
-bool Field::print(std::ofstream& out, bool isStruct)
+bool Field::print(std::ofstream& out, std::string nameSuffix)
 {
     currField = this;
 
@@ -21,14 +21,14 @@ bool Field::print(std::ofstream& out, bool isStruct)
     if (initializer.type != Expr::EXPR_NONE) {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr), initializer}};
         tmp.indent = indent;
-        out << tmp.str() + ";\n";
+        out << tmp.str("",nameSuffix) + ";\n";
 //        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
     }
     else {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
         tmp.indent = indent;
-        out << tmp.str() + ";\n";
+        out << tmp.str("", nameSuffix) + ";\n";
 //        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
     }

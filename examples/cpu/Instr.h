@@ -240,7 +240,6 @@ union Instr
     {
         int32_t imm_tmp;
         state_out = {};
-        state_out.funct3 = 7;
         state_out.funct3 = 0b010;  // LW/SW
 
         if (c.opcode == 0b00) {
