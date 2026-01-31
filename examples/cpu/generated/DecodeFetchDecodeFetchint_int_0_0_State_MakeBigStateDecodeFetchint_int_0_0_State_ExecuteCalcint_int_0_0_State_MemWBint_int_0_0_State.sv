@@ -24,8 +24,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,   input logic[31:0] instr_in
 ,   input logic[31:0] regs_data0_in
 ,   input logic[31:0] regs_data1_in
-,   output logic[31:0] rs1_out
-,   output logic[31:0] rs2_out
+,   output logic[7:0] rs1_out
+,   output logic[7:0] rs2_out
 ,   input logic[31:0] alu_result_in
 ,   input logic[31:0] mem_data_in
 ,   output wire stall_out
@@ -34,14 +34,23 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 );
 
     DecodeFetchint_int_0_0_State state_comb;
-    logic[31:0] rs1_out_comb;
-    logic[31:0] rs2_out_comb;
+    logic[7:0] rs1_out_comb;
+    logic[7:0] rs2_out_comb;
     logic stall_comb;
     DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
 
+    DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
+
+
     generate
     endgenerate
+    assign rs1_out = rs1_out_comb;
+
+    assign rs2_out = rs2_out_comb;
+
+    assign stall_out = stall_comb;
+
     assign state_out = PipelineStage___state_reg;
 
 
@@ -50,7 +59,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,       input logic[31:0] val
 ,       input logic[31:0] bits
     );
-        integer m; m = 1 << (bits - 1);
+        integer m; m = 1 <<< (bits - 1);
         return (val ^ m) - m;
     endfunction
 
@@ -59,19 +68,19 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     endfunction
 
     function logic signed[31:0] Instr___imm_S (input Instr _this);
-        return Instr___sext(_this, _this.s.imm4_0 | (_this.s.imm11_5 << 5), 12);
+        return Instr___sext(_this, _this.s.imm4_0 | (_this.s.imm11_5 <<< 5), 12);
     endfunction
 
     function logic signed[31:0] Instr___imm_B (input Instr _this);
-        return Instr___sext(_this, (_this.b.imm4_1 << 1) | (_this.b.imm11 << 11) | (_this.b.imm10_5 << 5) | (_this.b.imm12 << 12), 13);
+        return Instr___sext(_this, (_this.b.imm4_1 <<< 1) | (_this.b.imm11 <<< 11) | (_this.b.imm10_5 <<< 5) | (_this.b.imm12 <<< 12), 13);
     endfunction
 
     function logic signed[31:0] Instr___imm_J (input Instr _this);
-        return Instr___sext(_this, (_this.j.imm10_1 << 1) | (_this.j.imm11 << 11) | (_this.j.imm19_12 << 12) | (_this.j.imm20 << 20), 21);
+        return Instr___sext(_this, (_this.j.imm10_1 <<< 1) | (_this.j.imm11 <<< 11) | (_this.j.imm19_12 <<< 12) | (_this.j.imm20 <<< 20), 21);
     endfunction
 
     function logic signed[31:0] Instr___imm_U (input Instr _this);
-        return _this.u.imm31_12 << 12;
+        return signed'(32'(_this.u.imm31_12 <<< 12));
     endfunction
 
     task Instr___decode (
@@ -126,7 +135,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                         state_out.alu_op = Alu_pkg::SLL;
                     end
                     5: begin
-                        state_out.alu_op = (_this.i.imm11_0 >> 10) & 1 ? Alu_pkg::SRA : Alu_pkg::SRL;
+                        state_out.alu_op = (_this.i.imm11_0 >>> 10) & 1 ? Alu_pkg::SRA : Alu_pkg::SRL;
                     end
                     endcase
                     state_out.funct3 = _this.i.funct3;
@@ -173,21 +182,27 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                             case (_this.b.funct3)
                             0: begin
                                 state_out.br_op = Br_pkg::BEQ;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             1: begin
                                 state_out.br_op = Br_pkg::BNE;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             4: begin
                                 state_out.br_op = Br_pkg::BLT;
+                                state_out.alu_op = Alu_pkg::SLT;
                             end
                             5: begin
                                 state_out.br_op = Br_pkg::BGE;
+                                state_out.alu_op = Alu_pkg::SLT;
                             end
                             6: begin
                                 state_out.br_op = Br_pkg::BLTU;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             7: begin
                                 state_out.br_op = Br_pkg::BGEU;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             endcase
                             state_out.funct3 = _this.b.funct3;
@@ -239,14 +254,14 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,       input integer hi
 ,       input integer lo
     );
-        return (_this.raw >> lo) & ((1 << (hi - lo + 1)) - 1);
+        return (_this.raw >>> lo) & ((1 <<< (hi - lo + 1)) - 1);
     endfunction
 
     function logic[31:0] Instr___bit (
         input Instr _this
 ,       input integer lo
     );
-        return (_this.raw >> lo) & 1;
+        return (_this.raw >>> lo) & 1;
     endfunction
 
     task Instr___decode16 (
@@ -256,13 +271,12 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     begin: Instr___decode16
         integer imm_tmp;
         state_out = 0;
-        state_out.funct3 = 7;
         state_out.funct3 = 2;
         if (_this.c.opcode == 0) begin
             if (_this.c.funct3 == 0) begin
                 state_out.rd = _this.c.rd_p + 8;
                 state_out.rs1 = 2;
-                state_out.imm = (Instr___bits(_this, 10, 7) << 6) | (Instr___bits(_this, 12, 11) << 4) | (Instr___bits(_this, 6, 5) << 2);
+                state_out.imm = (Instr___bits(_this, 10, 7) <<< 6) | (Instr___bits(_this, 12, 11) <<< 4) | (Instr___bits(_this, 6, 5) <<< 2);
                 state_out.alu_op = Alu_pkg::ADD;
                 state_out.wb_op = Wb_pkg::ALU;
             end
@@ -270,7 +284,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 if (_this.c.funct3 == 2) begin
                     state_out.rd = _this.c.rd_p + 8;
                     state_out.rs1 = _this.c.rs1_p + 8;
-                    state_out.imm = (Instr___bit(_this, 5) << 6) | (Instr___bits(_this, 12, 10) << 3) | (Instr___bit(_this, 6) << 2);
+                    state_out.imm = (Instr___bit(_this, 5) <<< 6) | (Instr___bits(_this, 12, 10) <<< 3) | (Instr___bit(_this, 6) <<< 2);
                     state_out.alu_op = Alu_pkg::ADD;
                     state_out.mem_op = Mem_pkg::LOAD;
                     state_out.wb_op = Wb_pkg::MEM;
@@ -279,7 +293,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                     if (_this.c.funct3 == 6) begin
                         state_out.rs1 = _this.c.rs1_p + 8;
                         state_out.rs2 = _this.c.rd_p + 8;
-                        state_out.imm = (Instr___bit(_this, 5) << 6) | (Instr___bits(_this, 12, 10) << 3) | (Instr___bit(_this, 6) << 2);
+                        state_out.imm = (Instr___bit(_this, 5) <<< 6) | (Instr___bits(_this, 12, 10) <<< 3) | (Instr___bit(_this, 6) <<< 2);
                         state_out.alu_op = Alu_pkg::ADD;
                         state_out.mem_op = Mem_pkg::STORE;
                     end
@@ -291,8 +305,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 if (_this.c.funct3 == 0) begin
                     state_out.rd = _this.q1.rs1;
                     state_out.rs1 = _this.q1.rs1;
-                    imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                    imm_tmp = (imm_tmp << 26) >> 26;
+                    imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                    imm_tmp = (imm_tmp <<< 26) >>> 26;
                     state_out.imm = imm_tmp;
                     state_out.alu_op = Alu_pkg::ADD;
                     state_out.wb_op = Wb_pkg::ALU;
@@ -302,13 +316,13 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                         state_out.rd = 1;
                         state_out.wb_op = Wb_pkg::PC2;
                         state_out.br_op = Br_pkg::JAL;
-                        state_out.imm = (_this.c.b12 << 11) | (Instr___bit(_this, 8) << 10) | (Instr___bits(_this, 10, 9) << 8) | (Instr___bit(_this, 6) << 7) | (Instr___bit(_this, 7) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 11) << 4) | (Instr___bits(_this, 5, 3) << 1);
+                        state_out.imm = (_this.c.b12 <<< 11) | (Instr___bit(_this, 8) <<< 10) | (Instr___bits(_this, 10, 9) <<< 8) | (Instr___bit(_this, 6) <<< 7) | (Instr___bit(_this, 7) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 11) <<< 4) | (Instr___bits(_this, 5, 3) <<< 1);
                     end
                     else begin
                         if (_this.c.funct3 == 2) begin
                             state_out.rd = _this.q1.rs1;
-                            imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                            imm_tmp = (imm_tmp << 26) >> 26;
+                            imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                            imm_tmp = (imm_tmp <<< 26) >>> 26;
                             state_out.imm = imm_tmp;
                             state_out.alu_op = Alu_pkg::PASS;
                             state_out.wb_op = Wb_pkg::ALU;
@@ -317,8 +331,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                             if (_this.c.funct3 == 3) begin
                                 state_out.rd = 2;
                                 state_out.rs1 = 2;
-                                imm_tmp = (Instr___bit(_this, 12) << 9) | (Instr___bit(_this, 4) << 8) | (Instr___bit(_this, 3) << 7) | (Instr___bit(_this, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 6) << 4);
-                                imm_tmp = (imm_tmp << 22) >> 22;
+                                imm_tmp = (Instr___bit(_this, 12) <<< 9) | (Instr___bit(_this, 4) <<< 8) | (Instr___bit(_this, 3) <<< 7) | (Instr___bit(_this, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 6) <<< 4);
+                                imm_tmp = (imm_tmp <<< 22) >>> 22;
                                 state_out.imm = imm_tmp;
                                 state_out.alu_op = Alu_pkg::ADD;
                                 state_out.wb_op = Wb_pkg::ALU;
@@ -344,8 +358,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                             if (_this.c.bits11_10 == 2) begin
                                                 state_out.rd = _this.c.rs1_p + 8;
                                                 state_out.rs1 = _this.c.rs1_p + 8;
-                                                imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                                                imm_tmp = (imm_tmp << 26) >> 26;
+                                                imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                                                imm_tmp = (imm_tmp <<< 26) >>> 26;
                                                 state_out.imm = imm_tmp;
                                                 state_out.alu_op = Alu_pkg::AND;
                                                 state_out.wb_op = Wb_pkg::ALU;
@@ -366,14 +380,14 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                     if (_this.c.funct3 == 5) begin
                                         state_out.rd = 0;
                                         state_out.br_op = Br_pkg::JAL;
-                                        state_out.imm = (_this.c.b12 << 11) | (Instr___bit(_this, 8) << 10) | (Instr___bits(_this, 10, 9) << 8) | (Instr___bit(_this, 6) << 7) | (Instr___bit(_this, 7) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 11) << 4) | (Instr___bits(_this, 5, 3) << 1);
+                                        state_out.imm = (_this.c.b12 <<< 11) | (Instr___bit(_this, 8) <<< 10) | (Instr___bits(_this, 10, 9) <<< 8) | (Instr___bit(_this, 6) <<< 7) | (Instr___bit(_this, 7) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 11) <<< 4) | (Instr___bits(_this, 5, 3) <<< 1);
                                     end
                                     else begin
                                         if (_this.c.funct3 == 6) begin
                                             state_out.rs1 = _this.c.rs1_p + 8;
                                             state_out.br_op = Br_pkg::BEQZ;
                                             state_out.alu_op = Alu_pkg::SLTU;
-                                            state_out.imm = (_this.c.b12 << 8) | (Instr___bits(_this, 6, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bits(_this, 11, 10) << 3) | (Instr___bits(_this, 4, 3) << 1);
+                                            state_out.imm = (_this.c.b12 <<< 8) | (Instr___bits(_this, 6, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bits(_this, 11, 10) <<< 3) | (Instr___bits(_this, 4, 3) <<< 1);
                                             if (_this.c.b12) begin
                                                 state_out.imm |= ~511;
                                             end
@@ -383,7 +397,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                                 state_out.rs1 = _this.c.rs1_p + 8;
                                                 state_out.br_op = Br_pkg::BNEZ;
                                                 state_out.alu_op = Alu_pkg::SLTU;
-                                                state_out.imm = (_this.c.b12 << 8) | (Instr___bits(_this, 6, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bits(_this, 11, 10) << 3) | (Instr___bits(_this, 4, 3) << 1);
+                                                state_out.imm = (_this.c.b12 <<< 8) | (Instr___bits(_this, 6, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bits(_this, 11, 10) <<< 3) | (Instr___bits(_this, 4, 3) <<< 1);
                                                 if (_this.c.b12) begin
                                                     state_out.imm |= ~511;
                                                 end
@@ -401,7 +415,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                     if (_this.c.funct3 == 0) begin
                         state_out.rd = _this.q2.rs1;
                         state_out.rs1 = _this.q2.rs1;
-                        state_out.imm = (_this.c.b12 << 5) | Instr___bits(_this, 6, 2);
+                        state_out.imm = (_this.c.b12 <<< 5) | Instr___bits(_this, 6, 2);
                         state_out.alu_op = Alu_pkg::SLL;
                         state_out.wb_op = Wb_pkg::ALU;
                     end
@@ -409,7 +423,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                         if (_this.c.funct3 == 2) begin
                             state_out.rd = _this.q2.rs1;
                             state_out.rs1 = 2;
-                            state_out.imm = (_this.c.b12 << 5) | (Instr___bits(_this, 6, 4) << 2) | (Instr___bits(_this, 3, 2) << 6);
+                            state_out.imm = (_this.c.b12 <<< 5) | (Instr___bits(_this, 6, 4) <<< 2) | (Instr___bits(_this, 3, 2) <<< 6);
                             state_out.alu_op = Alu_pkg::ADD;
                             state_out.mem_op = Mem_pkg::LOAD;
                             state_out.wb_op = Wb_pkg::MEM;
@@ -443,7 +457,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                 if (_this.c.funct3 == 6) begin
                                     state_out.rs1 = 2;
                                     state_out.rs2 = _this.q2.rs2;
-                                    state_out.imm = (Instr___bits(_this, 8, 7) << 6) | (Instr___bits(_this, 12, 9) << 2);
+                                    state_out.imm = (Instr___bits(_this, 8, 7) <<< 6) | (Instr___bits(_this, 12, 9) <<< 2);
                                     state_out.mem_op = Mem_pkg::STORE;
                                     state_out.alu_op = Alu_pkg::ADD;
                                 end
@@ -457,6 +471,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     endtask
 
     always @(*) begin
+        logic tmp1;
+        logic[31:0] tmp2;
         Instr instr; instr = {instr_in};
         if ((instr.raw & 3) == 3) begin
             Instr___decode(instr, state_comb);
@@ -467,8 +483,10 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         else begin
             Instr___decode16(instr, state_comb);
         end
-        state_comb.valid = instr_valid_in;
-        state_comb.pc = pc_in;
+        tmp1 = instr_valid_in;
+        tmp2 = pc_in;
+        state_comb.valid = tmp1;
+        state_comb.pc = tmp2;
         rs1_out_comb = state_comb.rs1;
         rs2_out_comb = state_comb.rs2;
     end
@@ -522,16 +540,16 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 state_comb_tmp.rs2_val = mem_data_in;
             end
         end
-        PipelineStage___state_reg[0] = state_comb_tmp;
-        PipelineStage___state_reg[0].valid = instr_valid_in && !stall_comb;
+        PipelineStage___state_reg_next[0] = state_comb_tmp;
+        PipelineStage___state_reg_next[0].valid = instr_valid_in && !stall_comb;
     end
     endtask
 
     task PipelineStage____work (input logic reset);
     begin: PipelineStage____work
-        logic[31:0] i;
+        logic[63:0] i;
         for (i = 1;i < LENGTH - ID;i=i+1) begin
-            PipelineStage___state_reg[i] = PipelineStage___state_reg[i - 1];
+            PipelineStage___state_reg_next[i] = PipelineStage___state_reg[i - 1];
         end
     end
     endtask
@@ -539,9 +557,9 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            PipelineStage___state_reg[0].valid = 0;
-            PipelineStage___state_reg[1].valid = 0;
-            PipelineStage___state_reg[2].valid = 0;
+            PipelineStage___state_reg_next[0].valid = 0;
+            PipelineStage___state_reg_next[1].valid = 0;
+            PipelineStage___state_reg_next[2].valid = 0;
         end
         PipelineStage____work(reset);
         do_decode_fetch();
@@ -550,6 +568,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     always @(posedge clk) begin
         _work(reset);
+
+        PipelineStage___state_reg <= PipelineStage___state_reg_next;
     end
 
 endmodule

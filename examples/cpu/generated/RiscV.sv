@@ -18,7 +18,7 @@ module RiscV (
 ,   output wire dmem_write_out
 ,   output logic[31:0] dmem_write_addr_out
 ,   output logic[31:0] dmem_write_data_out
-,   output logic[31:0] dmem_write_mask_out
+,   output logic[7:0] dmem_write_mask_out
 ,   output wire dmem_read_out
 ,   output logic[31:0] dmem_read_addr_out
 ,   input logic[31:0] dmem_read_data_in
@@ -32,11 +32,11 @@ module RiscV (
     reg valid;
     MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[3-1:0] Pipeline___states_comb;
 
-      logic[31:0] regs__write_addr_in;
+      logic[7:0] regs__write_addr_in;
       wire regs__write_in;
       logic[31:0] regs__write_data_in;
-      logic[31:0] regs__read_addr0_in;
-      logic[31:0] regs__read_addr1_in;
+      logic[7:0] regs__read_addr0_in;
+      logic[7:0] regs__read_addr1_in;
       wire regs__read_in;
       logic[31:0] regs__read_data0_out;
       logic[31:0] regs__read_data1_out;
@@ -62,8 +62,8 @@ module RiscV (
       logic[31:0] Pipeline___members_tuple_0__instr_in;
       logic[31:0] Pipeline___members_tuple_0__regs_data0_in;
       logic[31:0] Pipeline___members_tuple_0__regs_data1_in;
-      logic[31:0] Pipeline___members_tuple_0__rs1_out;
-      logic[31:0] Pipeline___members_tuple_0__rs2_out;
+      logic[7:0] Pipeline___members_tuple_0__rs1_out;
+      logic[7:0] Pipeline___members_tuple_0__rs2_out;
       logic[31:0] Pipeline___members_tuple_0__alu_result_in;
       logic[31:0] Pipeline___members_tuple_0__mem_data_in;
       wire Pipeline___members_tuple_0__stall_out;
@@ -91,10 +91,10 @@ module RiscV (
       wire Pipeline___members_tuple_1__mem_write_out;
       logic[31:0] Pipeline___members_tuple_1__mem_write_addr_out;
       logic[31:0] Pipeline___members_tuple_1__mem_write_data_out;
-      logic[31:0] Pipeline___members_tuple_1__mem_write_mask_out;
+      logic[7:0] Pipeline___members_tuple_1__mem_write_mask_out;
       wire Pipeline___members_tuple_1__mem_read_out;
       logic[31:0] Pipeline___members_tuple_1__mem_read_addr_out;
-      logic[31:0] Pipeline___members_tuple_1__alu_result_out;
+      logic[63:0] Pipeline___members_tuple_1__alu_result_out;
       wire Pipeline___members_tuple_1__branch_taken_out;
       logic[31:0] Pipeline___members_tuple_1__branch_target_out;
       MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[(3)-1:0] Pipeline___members_tuple_1__state_in;
@@ -119,7 +119,7 @@ module RiscV (
     );
       logic[31:0] Pipeline___members_tuple_2__mem_data_in;
       logic[31:0] Pipeline___members_tuple_2__regs_data_out;
-      logic[31:0] Pipeline___members_tuple_2__regs_wr_id_out;
+      logic[7:0] Pipeline___members_tuple_2__regs_wr_id_out;
       wire Pipeline___members_tuple_2__regs_write_out;
       MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[(3)-1:0] Pipeline___members_tuple_2__state_in;
       MemWBint_int_0_0_State[(3) - (2)-1:0] Pipeline___members_tuple_2__state_out;
@@ -137,29 +137,33 @@ module RiscV (
 ,       .state_out(Pipeline___members_tuple_2__state_out)
     );
 
+    reg[31:0] pc_next;
+    reg valid_next;
+
+
     always @(*) begin
-        logic[31:0] y;
-        logic[31:0] x;
-        logic[31:0] offset;
+        logic[7:0] y;
+        logic[7:0] x;
+        logic[7:0] offset;
         for (y = 0;y < LENGTH;y=y+1) begin
             x = 0;
             offset = 0;
             Pipeline___states_comb[y] = 0;
             if (x <= y) begin
-                Pipeline___states_comb[y][offset+: $bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8] = Pipeline___members_tuple_0__state_out[y - x];
+                Pipeline___states_comb[y][(offset)*8 +: $bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)] = Pipeline___members_tuple_0__state_out[(y - x)];
             end
             x=x+1;
             offset += ($bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8);
             if (x <= y) begin
-                Pipeline___states_comb[y][offset+: $bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8] = Pipeline___members_tuple_1__state_out[y - x];
+                Pipeline___states_comb[y][(offset)*8 +: $bits(ExecuteCalcint_int_0_0_State_pkg::ExecuteCalcint_int_0_0_State)] = Pipeline___members_tuple_1__state_out[(y - x)];
             end
             x=x+1;
-            offset += ($bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8);
+            offset += ($bits(ExecuteCalcint_int_0_0_State_pkg::ExecuteCalcint_int_0_0_State)/8);
             if (x <= y) begin
-                Pipeline___states_comb[y][offset+: $bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8] = Pipeline___members_tuple_2__state_out[y - x];
+                Pipeline___states_comb[y][(offset)*8 +: $bits(MemWBint_int_0_0_State_pkg::MemWBint_int_0_0_State)] = Pipeline___members_tuple_2__state_out[(y - x)];
             end
             x=x+1;
-            offset += ($bits(DecodeFetchint_int_0_0_State_pkg::DecodeFetchint_int_0_0_State)/8);
+            offset += ($bits(MemWBint_int_0_0_State_pkg::MemWBint_int_0_0_State)/8);
         end
     end
 
@@ -197,6 +201,7 @@ module RiscV (
         assign regs__write_in = Pipeline___members_tuple_2__regs_write_out;
         assign regs__write_addr_in = Pipeline___members_tuple_2__regs_wr_id_out;
         assign regs__write_data_in = Pipeline___members_tuple_2__regs_data_out;
+        assign regs__debugen_in = debugen_in;
     endgenerate
     assign dmem_write_out = Pipeline___members_tuple_1__mem_write_out;
 
@@ -218,7 +223,7 @@ module RiscV (
 ,       input logic[31:0] val
 ,       input logic[31:0] bits
     );
-        integer m; m = 1 << (bits - 1);
+        integer m; m = 1 <<< (bits - 1);
         return (val ^ m) - m;
     endfunction
 
@@ -227,19 +232,19 @@ module RiscV (
     endfunction
 
     function logic signed[31:0] Instr___imm_S (input Instr _this);
-        return Instr___sext(_this, _this.s.imm4_0 | (_this.s.imm11_5 << 5), 12);
+        return Instr___sext(_this, _this.s.imm4_0 | (_this.s.imm11_5 <<< 5), 12);
     endfunction
 
     function logic signed[31:0] Instr___imm_B (input Instr _this);
-        return Instr___sext(_this, (_this.b.imm4_1 << 1) | (_this.b.imm11 << 11) | (_this.b.imm10_5 << 5) | (_this.b.imm12 << 12), 13);
+        return Instr___sext(_this, (_this.b.imm4_1 <<< 1) | (_this.b.imm11 <<< 11) | (_this.b.imm10_5 <<< 5) | (_this.b.imm12 <<< 12), 13);
     endfunction
 
     function logic signed[31:0] Instr___imm_J (input Instr _this);
-        return Instr___sext(_this, (_this.j.imm10_1 << 1) | (_this.j.imm11 << 11) | (_this.j.imm19_12 << 12) | (_this.j.imm20 << 20), 21);
+        return Instr___sext(_this, (_this.j.imm10_1 <<< 1) | (_this.j.imm11 <<< 11) | (_this.j.imm19_12 <<< 12) | (_this.j.imm20 <<< 20), 21);
     endfunction
 
     function logic signed[31:0] Instr___imm_U (input Instr _this);
-        return _this.u.imm31_12 << 12;
+        return signed'(32'(_this.u.imm31_12 <<< 12));
     endfunction
 
     task Instr___decode (
@@ -294,7 +299,7 @@ module RiscV (
                         state_out.alu_op = Alu_pkg::SLL;
                     end
                     5: begin
-                        state_out.alu_op = (_this.i.imm11_0 >> 10) & 1 ? Alu_pkg::SRA : Alu_pkg::SRL;
+                        state_out.alu_op = (_this.i.imm11_0 >>> 10) & 1 ? Alu_pkg::SRA : Alu_pkg::SRL;
                     end
                     endcase
                     state_out.funct3 = _this.i.funct3;
@@ -341,21 +346,27 @@ module RiscV (
                             case (_this.b.funct3)
                             0: begin
                                 state_out.br_op = Br_pkg::BEQ;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             1: begin
                                 state_out.br_op = Br_pkg::BNE;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             4: begin
                                 state_out.br_op = Br_pkg::BLT;
+                                state_out.alu_op = Alu_pkg::SLT;
                             end
                             5: begin
                                 state_out.br_op = Br_pkg::BGE;
+                                state_out.alu_op = Alu_pkg::SLT;
                             end
                             6: begin
                                 state_out.br_op = Br_pkg::BLTU;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             7: begin
                                 state_out.br_op = Br_pkg::BGEU;
+                                state_out.alu_op = Alu_pkg::SLTU;
                             end
                             endcase
                             state_out.funct3 = _this.b.funct3;
@@ -407,14 +418,14 @@ module RiscV (
 ,       input integer hi
 ,       input integer lo
     );
-        return (_this.raw >> lo) & ((1 << (hi - lo + 1)) - 1);
+        return (_this.raw >>> lo) & ((1 <<< (hi - lo + 1)) - 1);
     endfunction
 
     function logic[31:0] Instr___bit (
         input Instr _this
 ,       input integer lo
     );
-        return (_this.raw >> lo) & 1;
+        return (_this.raw >>> lo) & 1;
     endfunction
 
     task Instr___decode16 (
@@ -424,13 +435,12 @@ module RiscV (
     begin: Instr___decode16
         integer imm_tmp;
         state_out = 0;
-        state_out.funct3 = 7;
         state_out.funct3 = 2;
         if (_this.c.opcode == 0) begin
             if (_this.c.funct3 == 0) begin
                 state_out.rd = _this.c.rd_p + 8;
                 state_out.rs1 = 2;
-                state_out.imm = (Instr___bits(_this, 10, 7) << 6) | (Instr___bits(_this, 12, 11) << 4) | (Instr___bits(_this, 6, 5) << 2);
+                state_out.imm = (Instr___bits(_this, 10, 7) <<< 6) | (Instr___bits(_this, 12, 11) <<< 4) | (Instr___bits(_this, 6, 5) <<< 2);
                 state_out.alu_op = Alu_pkg::ADD;
                 state_out.wb_op = Wb_pkg::ALU;
             end
@@ -438,7 +448,7 @@ module RiscV (
                 if (_this.c.funct3 == 2) begin
                     state_out.rd = _this.c.rd_p + 8;
                     state_out.rs1 = _this.c.rs1_p + 8;
-                    state_out.imm = (Instr___bit(_this, 5) << 6) | (Instr___bits(_this, 12, 10) << 3) | (Instr___bit(_this, 6) << 2);
+                    state_out.imm = (Instr___bit(_this, 5) <<< 6) | (Instr___bits(_this, 12, 10) <<< 3) | (Instr___bit(_this, 6) <<< 2);
                     state_out.alu_op = Alu_pkg::ADD;
                     state_out.mem_op = Mem_pkg::LOAD;
                     state_out.wb_op = Wb_pkg::MEM;
@@ -447,7 +457,7 @@ module RiscV (
                     if (_this.c.funct3 == 6) begin
                         state_out.rs1 = _this.c.rs1_p + 8;
                         state_out.rs2 = _this.c.rd_p + 8;
-                        state_out.imm = (Instr___bit(_this, 5) << 6) | (Instr___bits(_this, 12, 10) << 3) | (Instr___bit(_this, 6) << 2);
+                        state_out.imm = (Instr___bit(_this, 5) <<< 6) | (Instr___bits(_this, 12, 10) <<< 3) | (Instr___bit(_this, 6) <<< 2);
                         state_out.alu_op = Alu_pkg::ADD;
                         state_out.mem_op = Mem_pkg::STORE;
                     end
@@ -459,8 +469,8 @@ module RiscV (
                 if (_this.c.funct3 == 0) begin
                     state_out.rd = _this.q1.rs1;
                     state_out.rs1 = _this.q1.rs1;
-                    imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                    imm_tmp = (imm_tmp << 26) >> 26;
+                    imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                    imm_tmp = (imm_tmp <<< 26) >>> 26;
                     state_out.imm = imm_tmp;
                     state_out.alu_op = Alu_pkg::ADD;
                     state_out.wb_op = Wb_pkg::ALU;
@@ -470,13 +480,13 @@ module RiscV (
                         state_out.rd = 1;
                         state_out.wb_op = Wb_pkg::PC2;
                         state_out.br_op = Br_pkg::JAL;
-                        state_out.imm = (_this.c.b12 << 11) | (Instr___bit(_this, 8) << 10) | (Instr___bits(_this, 10, 9) << 8) | (Instr___bit(_this, 6) << 7) | (Instr___bit(_this, 7) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 11) << 4) | (Instr___bits(_this, 5, 3) << 1);
+                        state_out.imm = (_this.c.b12 <<< 11) | (Instr___bit(_this, 8) <<< 10) | (Instr___bits(_this, 10, 9) <<< 8) | (Instr___bit(_this, 6) <<< 7) | (Instr___bit(_this, 7) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 11) <<< 4) | (Instr___bits(_this, 5, 3) <<< 1);
                     end
                     else begin
                         if (_this.c.funct3 == 2) begin
                             state_out.rd = _this.q1.rs1;
-                            imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                            imm_tmp = (imm_tmp << 26) >> 26;
+                            imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                            imm_tmp = (imm_tmp <<< 26) >>> 26;
                             state_out.imm = imm_tmp;
                             state_out.alu_op = Alu_pkg::PASS;
                             state_out.wb_op = Wb_pkg::ALU;
@@ -485,8 +495,8 @@ module RiscV (
                             if (_this.c.funct3 == 3) begin
                                 state_out.rd = 2;
                                 state_out.rs1 = 2;
-                                imm_tmp = (Instr___bit(_this, 12) << 9) | (Instr___bit(_this, 4) << 8) | (Instr___bit(_this, 3) << 7) | (Instr___bit(_this, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 6) << 4);
-                                imm_tmp = (imm_tmp << 22) >> 22;
+                                imm_tmp = (Instr___bit(_this, 12) <<< 9) | (Instr___bit(_this, 4) <<< 8) | (Instr___bit(_this, 3) <<< 7) | (Instr___bit(_this, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 6) <<< 4);
+                                imm_tmp = (imm_tmp <<< 22) >>> 22;
                                 state_out.imm = imm_tmp;
                                 state_out.alu_op = Alu_pkg::ADD;
                                 state_out.wb_op = Wb_pkg::ALU;
@@ -512,8 +522,8 @@ module RiscV (
                                             if (_this.c.bits11_10 == 2) begin
                                                 state_out.rd = _this.c.rs1_p + 8;
                                                 state_out.rs1 = _this.c.rs1_p + 8;
-                                                imm_tmp = (Instr___bit(_this, 12) << 5) | Instr___bits(_this, 6, 2);
-                                                imm_tmp = (imm_tmp << 26) >> 26;
+                                                imm_tmp = (Instr___bit(_this, 12) <<< 5) | Instr___bits(_this, 6, 2);
+                                                imm_tmp = (imm_tmp <<< 26) >>> 26;
                                                 state_out.imm = imm_tmp;
                                                 state_out.alu_op = Alu_pkg::AND;
                                                 state_out.wb_op = Wb_pkg::ALU;
@@ -534,14 +544,14 @@ module RiscV (
                                     if (_this.c.funct3 == 5) begin
                                         state_out.rd = 0;
                                         state_out.br_op = Br_pkg::JAL;
-                                        state_out.imm = (_this.c.b12 << 11) | (Instr___bit(_this, 8) << 10) | (Instr___bits(_this, 10, 9) << 8) | (Instr___bit(_this, 6) << 7) | (Instr___bit(_this, 7) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bit(_this, 11) << 4) | (Instr___bits(_this, 5, 3) << 1);
+                                        state_out.imm = (_this.c.b12 <<< 11) | (Instr___bit(_this, 8) <<< 10) | (Instr___bits(_this, 10, 9) <<< 8) | (Instr___bit(_this, 6) <<< 7) | (Instr___bit(_this, 7) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bit(_this, 11) <<< 4) | (Instr___bits(_this, 5, 3) <<< 1);
                                     end
                                     else begin
                                         if (_this.c.funct3 == 6) begin
                                             state_out.rs1 = _this.c.rs1_p + 8;
                                             state_out.br_op = Br_pkg::BEQZ;
                                             state_out.alu_op = Alu_pkg::SLTU;
-                                            state_out.imm = (_this.c.b12 << 8) | (Instr___bits(_this, 6, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bits(_this, 11, 10) << 3) | (Instr___bits(_this, 4, 3) << 1);
+                                            state_out.imm = (_this.c.b12 <<< 8) | (Instr___bits(_this, 6, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bits(_this, 11, 10) <<< 3) | (Instr___bits(_this, 4, 3) <<< 1);
                                             if (_this.c.b12) begin
                                                 state_out.imm |= ~511;
                                             end
@@ -551,7 +561,7 @@ module RiscV (
                                                 state_out.rs1 = _this.c.rs1_p + 8;
                                                 state_out.br_op = Br_pkg::BNEZ;
                                                 state_out.alu_op = Alu_pkg::SLTU;
-                                                state_out.imm = (_this.c.b12 << 8) | (Instr___bits(_this, 6, 5) << 6) | (Instr___bit(_this, 2) << 5) | (Instr___bits(_this, 11, 10) << 3) | (Instr___bits(_this, 4, 3) << 1);
+                                                state_out.imm = (_this.c.b12 <<< 8) | (Instr___bits(_this, 6, 5) <<< 6) | (Instr___bit(_this, 2) <<< 5) | (Instr___bits(_this, 11, 10) <<< 3) | (Instr___bits(_this, 4, 3) <<< 1);
                                                 if (_this.c.b12) begin
                                                     state_out.imm |= ~511;
                                                 end
@@ -569,7 +579,7 @@ module RiscV (
                     if (_this.c.funct3 == 0) begin
                         state_out.rd = _this.q2.rs1;
                         state_out.rs1 = _this.q2.rs1;
-                        state_out.imm = (_this.c.b12 << 5) | Instr___bits(_this, 6, 2);
+                        state_out.imm = (_this.c.b12 <<< 5) | Instr___bits(_this, 6, 2);
                         state_out.alu_op = Alu_pkg::SLL;
                         state_out.wb_op = Wb_pkg::ALU;
                     end
@@ -577,7 +587,7 @@ module RiscV (
                         if (_this.c.funct3 == 2) begin
                             state_out.rd = _this.q2.rs1;
                             state_out.rs1 = 2;
-                            state_out.imm = (_this.c.b12 << 5) | (Instr___bits(_this, 6, 4) << 2) | (Instr___bits(_this, 3, 2) << 6);
+                            state_out.imm = (_this.c.b12 <<< 5) | (Instr___bits(_this, 6, 4) <<< 2) | (Instr___bits(_this, 3, 2) <<< 6);
                             state_out.alu_op = Alu_pkg::ADD;
                             state_out.mem_op = Mem_pkg::LOAD;
                             state_out.wb_op = Wb_pkg::MEM;
@@ -611,7 +621,7 @@ module RiscV (
                                 if (_this.c.funct3 == 6) begin
                                     state_out.rs1 = 2;
                                     state_out.rs2 = _this.q2.rs2;
-                                    state_out.imm = (Instr___bits(_this, 8, 7) << 6) | (Instr___bits(_this, 12, 9) << 2);
+                                    state_out.imm = (Instr___bits(_this, 8, 7) <<< 6) | (Instr___bits(_this, 12, 9) <<< 2);
                                     state_out.mem_op = Mem_pkg::STORE;
                                     state_out.alu_op = Alu_pkg::ADD;
                                 end
@@ -641,11 +651,76 @@ module RiscV (
                 if (f3 == 0 && f7 == 0) begin
                     return "add   ";
                 end
+                if (f3 == 0 && f7 == 32) begin
+                    return "sub   ";
+                end
+                if (f3 == 0 && f7 == 1) begin
+                    return "mul   ";
+                end
+                if (f3 == 7 && f7 == 1) begin
+                    return "remu  ";
+                end
+                if (f3 == 7) begin
+                    return "and   ";
+                end
+                if (f3 == 6) begin
+                    return "or    ";
+                end
+                if (f3 == 4) begin
+                    return "xor   ";
+                end
+                if (f3 == 1) begin
+                    return "sll   ";
+                end
+                if (f3 == 5 && f7 == 0) begin
+                    return "srl   ";
+                end
+                if (f3 == 5 && f7 == 32) begin
+                    return "sra   ";
+                end
+                if (f3 == 5 && f7 == 1) begin
+                    return "divu  ";
+                end
+                if (f3 == 2) begin
+                    return "slt   ";
+                end
+                if (f3 == 3 && f7 == 1) begin
+                    return "mulhu ";
+                end
+                if (f3 == 3) begin
+                    return "sltu  ";
+                end
+                return "r-type";
             end
             19: begin
                 if (f3 == 0) begin
                     return "addi  ";
                 end
+                if (f3 == 7) begin
+                    return "andi  ";
+                end
+                if (f3 == 6) begin
+                    return "ori   ";
+                end
+                if (f3 == 4) begin
+                    return "xori  ";
+                end
+                if (f3 == 1) begin
+                    return "slli  ";
+                end
+                if (f3 == 5 && f7 == 0) begin
+                    return "srli  ";
+                end
+                if (f3 == 5 && f7 == 32) begin
+                    return "srai  ";
+                end
+                if (f3 == 2) begin
+                    return "slti  ";
+                end
+                if (f3 == 3) begin
+                    return "sltiu ";
+                end
+                return "aluimm";
             end
             3: begin
                 return "load  ";
@@ -669,7 +744,6 @@ module RiscV (
                 return "auipc ";
             end
             default: begin
-                return "unknwn";
             end
             endcase
         end
@@ -699,7 +773,6 @@ module RiscV (
                     return "sd    ";
                 end
                 default: begin
-                    return "rsrvd ";
                 end
                 endcase
             end
@@ -788,7 +861,6 @@ module RiscV (
                     return "sdsp  ";
                 end
                 default: begin
-                    return "rsrvd ";
                 end
                 endcase
             end
@@ -797,22 +869,12 @@ module RiscV (
         return "unknwn";
     endfunction
 
-    task Pipeline____work (input logic reset);
-    begin: Pipeline____work
-    end
-    endtask
-
-    task _work (input logic reset);
-    begin: _work
+    task debug ();
+    begin: debug
         MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State tmp;
         Instr instr;
         MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[3-1:0] state_comb_tmp; state_comb_tmp = Pipeline___states_comb;
-        if (reset) begin
-            pc = '0;
-            valid = '0;
-            disable _work;
-        end
-        instr = {Pipeline___members_tuple_0__instr_in};
+        instr = {imem_read_data_in};
         if ((instr.raw & 3) == 3) begin
             Instr___decode(instr, tmp);
         end
@@ -820,27 +882,46 @@ module RiscV (
             Instr___decode16(instr, tmp);
         end
         if (debugen_in) begin
-            $write("(%x/%x)%x: %s rs%02d/%02d,imm:%08x,rd%02d => (%x)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%x)%08x => mem(%x/%x@%08x)%08x/%01x (%x)wop(%x),r(%x)%08x@%02d", valid, Pipeline___members_tuple_0__stall_out, pc, Instr___mnemonic(instr), tmp.rs1, tmp.rs2, tmp.imm, tmp.rd, state_comb_tmp[0].valid, state_comb_tmp[0].alu_op, state_comb_tmp[0].mem_op, state_comb_tmp[0].br_op, state_comb_tmp[0].wb_op, state_comb_tmp[0].rs1, state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, Pipeline___members_tuple_1__alu_result_out, state_comb_tmp[0].rd, Pipeline___members_tuple_1__branch_taken_out, Pipeline___members_tuple_1__branch_target_out, Pipeline___members_tuple_1__mem_write_out, Pipeline___members_tuple_1__mem_read_out, Pipeline___members_tuple_1__mem_write_addr_out, Pipeline___members_tuple_1__mem_write_data_out, Pipeline___members_tuple_1__mem_write_mask_out, state_comb_tmp[1].valid, state_comb_tmp[1].wb_op, Pipeline___members_tuple_2__regs_write_out, Pipeline___members_tuple_2__regs_data_out, Pipeline___members_tuple_2__regs_wr_id_out);
+            $write("(%x/%x)%x: %s rs%02d/%02d,imm:%08x,rd%02d => (%x)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%x)%08x => mem(%x/%x@%08x)%08x/%01x (%x)wop(%x),r(%x)%08x@%02d", signed'(32'(valid)), signed'(32'(Pipeline___members_tuple_0__stall_out)), pc, Instr___mnemonic(instr), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), signed'(32'(state_comb_tmp[0].valid)), unsigned'(8'(state_comb_tmp[0].alu_op)), unsigned'(8'(state_comb_tmp[0].mem_op)), unsigned'(8'(state_comb_tmp[0].br_op)), unsigned'(8'(state_comb_tmp[0].wb_op)), signed'(32'(state_comb_tmp[0].rs1)), signed'(32'(state_comb_tmp[0].rs2)), state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, Pipeline___members_tuple_1__alu_result_out, signed'(32'(state_comb_tmp[0].rd)), signed'(32'(Pipeline___members_tuple_1__branch_taken_out)), Pipeline___members_tuple_1__branch_target_out, signed'(32'(Pipeline___members_tuple_1__mem_write_out)), signed'(32'(Pipeline___members_tuple_1__mem_read_out)), Pipeline___members_tuple_1__mem_write_addr_out, Pipeline___members_tuple_1__mem_write_data_out, Pipeline___members_tuple_1__mem_write_mask_out, signed'(32'(state_comb_tmp[1].valid)), unsigned'(8'(state_comb_tmp[1].wb_op)), signed'(32'(Pipeline___members_tuple_2__regs_write_out)), Pipeline___members_tuple_2__regs_data_out, Pipeline___members_tuple_2__regs_wr_id_out);
             $write("\n");
         end
+    end
+    endtask
+
+    task Pipeline____work (input logic reset);
+    begin: Pipeline____work
+    end
+    endtask
+
+    task _work (input logic reset);
+    begin: _work
+        if (reset) begin
+            pc_next = '0;
+            valid_next = '0;
+            disable _work;
+        end
+        debug();
         if (dmem_write_addr_out == 287454020 && dmem_write_out) begin
             integer out; out = $fopen("out.txt", "a");
-            $fwrite("%c", dmem_write_data_out & 255);
+            $fwrite(out, "%c", dmem_write_data_out & 255);
             $fclose(out);
         end
         Pipeline____work(reset);
         if (valid && !Pipeline___members_tuple_0__stall_out) begin
-            pc = pc + ((Pipeline___members_tuple_0__instr_in & 3) == 3 ? 4 : 2);
+            pc_next = pc + ((Pipeline___members_tuple_0__instr_in & 3) == 3 ? 4 : 2);
         end
-        if (state_comb_tmp[0].valid && Pipeline___members_tuple_1__branch_taken_out) begin
-            pc = Pipeline___members_tuple_1__branch_target_out;
+        if (Pipeline___states_comb[0].valid && Pipeline___members_tuple_1__branch_taken_out) begin
+            pc_next = Pipeline___members_tuple_1__branch_target_out;
         end
-        valid = 1;
+        valid_next = 1;
     end
     endtask
 
     always @(posedge clk) begin
         _work(reset);
+
+        pc <= pc_next;
+        valid <= valid_next;
     end
 
 endmodule
