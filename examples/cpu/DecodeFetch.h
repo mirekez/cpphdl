@@ -50,7 +50,7 @@ public:
 
     void _connect()
     {
-        std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
+//        std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
     }
 
     STATE& state_comb_func()

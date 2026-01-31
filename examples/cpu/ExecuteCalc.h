@@ -47,7 +47,7 @@ public:
 
     void _connect()
     {
-        std::print("ExecuteCalc: {} of {}\n", ID, LENGTH);
+//        std::print("ExecuteCalc: {} of {}\n", ID, LENGTH);
     }
 
     uint32_t alu_a_comb_func()

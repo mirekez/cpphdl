@@ -25,7 +25,7 @@ public:
 
     void _connect()
     {
-        std::print("MemWB: {} of {}\n", ID, LENGTH);
+//        std::print("MemWB: {} of {}\n", ID, LENGTH);
     }
 
     uint32_t regs_out_comb_func()
