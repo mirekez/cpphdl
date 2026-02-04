@@ -52,7 +52,9 @@ struct cpphdl_exception
 #include "cpphdl_memory.h"
 #include "cpphdl_Model.h"
 #include "cpphdl_port.h"
-//inline static cpphdl::function_ref<A>
+
+#ifdef CPPHDL_STATIC  // for non static version we capture this in comb functions
+
 #define __PORT(A...) inline static cpphdl::function_ref<A>
 #define __VAR(a...)  +[]() { return a; }  // variable
 #define __EXPR(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
@@ -67,3 +69,22 @@ struct cpphdl_exception
         __prev_sys_clock_##name = sys_clock;
 
 #define STATIC inline static
+
+#else  // CPPHDL_STATIC
+
+#define __PORT(A...) cpphdl::function_ref<A>
+#define __VAR(a...)  [&]() { return a; }  // variable
+#define __EXPR(a...) [&]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
+#define __VAL(a...)  [&]() { static auto tmp = a; return &tmp; }  // const
+
+#define __LAZY_COMB(name, type...) \
+    unsigned long __prev_sys_clock_##name = -1; \
+    type name##_func() { \
+        if (sys_clock == __prev_sys_clock_##name) { \
+            return name; \
+        } \
+        __prev_sys_clock_##name = sys_clock;
+
+#define STATIC
+
+#endif

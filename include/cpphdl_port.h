@@ -1,7 +1,12 @@
 #pragma once
 
+#include <exception>
+#include <functional>
+
 namespace cpphdl {
 
+
+#ifdef CPPHDL_STATIC
 
 template <typename R>
 class function_ref
@@ -41,9 +46,7 @@ public:
     }
 };
 
-/*
-#include <exception>
-#include <functional>
+#else  // for non static version we capture this in comb functions
 
 template <typename A>
 class function_ref
@@ -73,6 +76,8 @@ public:
 private:
     func_type func_;
 };
-*/
+
+#endif
+
 
 }

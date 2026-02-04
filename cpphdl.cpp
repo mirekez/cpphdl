@@ -204,8 +204,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 
     auto* CRD = hlp.resolveCXXRecordDecl(QT);
     if ((CRD && CRD->getQualifiedNameAsString().find("std::") == (size_t)0
-        && CRD->getQualifiedNameAsString().find("std::function") == (size_t)-1
-        && CRD->getQualifiedNameAsString().find("cpphdl_function_ref") == (size_t)-1)
+        && CRD->getQualifiedNameAsString().find("std_function") == (size_t)-1
+        && CRD->getQualifiedNameAsString().find("function_ref") == (size_t)-1)
         || (CRD && !CRD->getDefinition())) {
         return;  // we dont want any std type to be translated to SV
     }

@@ -14,9 +14,9 @@ using namespace cpphdl;
 template<size_t W, size_t EW>
 struct FP
 {
-    STATIC constexpr size_t WIDTH = W;
-    STATIC constexpr size_t EXP_WIDTH = EW;
-    STATIC constexpr size_t MANT_WIDTH = W-EW-1;
+    static constexpr size_t WIDTH = W;
+    static constexpr size_t EXP_WIDTH = EW;
+    static constexpr size_t MANT_WIDTH = W-EW-1;
     using RAW = std::conditional_t<(WIDTH<=8), uint8_t,std::conditional_t<(WIDTH<=16), uint16_t,std::conditional_t<(WIDTH<=32), uint32_t,uint64_t>>>;
 
     union {
