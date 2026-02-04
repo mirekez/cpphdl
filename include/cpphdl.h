@@ -17,6 +17,7 @@ typedef signed long int64_t;
 namespace cpphdl
 {
 
+
 typedef unsigned char byte;
 
 constexpr unsigned flog2(unsigned x)
@@ -29,11 +30,11 @@ constexpr unsigned clog2(unsigned x)
     return x == 1 ? 0 : flog2(x - 1) + 1;
 }
 
+
 }
 
 template<typename T>
 struct is_from_cpphdl_namespace : std::false_type {};
-
 
 struct cpphdl_exception
 {
@@ -50,7 +51,19 @@ struct cpphdl_exception
 #include "cpphdl_cat.h"
 #include "cpphdl_memory.h"
 #include "cpphdl_Model.h"
+#include "cpphdl_port.h"
+//inline static cpphdl::function_ref<A>
+#define __PORT(A...) inline static cpphdl::function_ref<A>
+#define __VAR(a...)  +[]() { return a; }  // variable
+#define __EXPR(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
+#define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
 
-#include <functional>
-#define __PORT(a...) std::function<a()>
-#define __VAL(a...)  [&](){ return a; }
+#define __LAZY_COMB(name, type...) \
+    inline static unsigned long __prev_sys_clock_##name = -1; \
+    static type name##_func() { \
+        if (sys_clock == __prev_sys_clock_##name) { \
+            return name; \
+        } \
+        __prev_sys_clock_##name = sys_clock;
+
+#define STATIC inline static

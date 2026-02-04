@@ -13,27 +13,11 @@ using namespace cpphdl;
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
 class Memory : public Module
 {
-    logic<MEM_WIDTH_BYTES*8> data_out_comb;
-    reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
-    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
+    STATIC logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    STATIC reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
+    STATIC memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
 
-    size_t i;
-
-public:
-    __PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
-    __PORT(bool)                      write_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
-    __PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
-
-    __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
-    __PORT(bool)                      read_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( data_out_comb_func() );
-
-    bool                      debugen_in;
-
-    void _connect() {}
-
-    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
+    STATIC logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
     {
         if (SHOWAHEAD) {
             data_out_comb = buffer[read_addr_in()];
@@ -44,10 +28,13 @@ public:
         return data_out_comb;
     }
 
-    logic<MEM_WIDTH_BYTES*8> mask_comb;
+    STATIC logic<MEM_WIDTH_BYTES*8> mask_comb;
+
+public:
 
     void _work(bool reset)
     {
+        size_t i;
         if (debugen_in) {
             std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
                 (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
@@ -57,7 +44,7 @@ public:
         if (write_in()) {
             mask_comb = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
-                mask_comb.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
+                mask_comb.bits((i+1)*8-1,i*8) = (write_mask_in())[i] ? 0xFF : 0 ;
             }
             buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask_comb) | (write_data_in()&mask_comb);
         }
@@ -72,6 +59,19 @@ public:
         buffer.apply();
         data_out_reg.strobe();
     }
+
+    __PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
+    __PORT(bool)                      write_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
+    __PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
+
+    __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
+    __PORT(bool)                      read_in;
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAR( &data_out_comb_func() );
+
+    bool                      debugen_in;
+
+    void _connect() {}
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -93,26 +93,26 @@ template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
 {
 #ifdef VERILATOR
-    VERILATOR_MODEL mem;
+    STATIC VERILATOR_MODEL mem;
 #else
-    Memory<MEM_WIDTH_BYTES,MEM_DEPTH,SHOWAHEAD> mem;
+    STATIC Memory<MEM_WIDTH_BYTES,MEM_DEPTH,SHOWAHEAD> mem;
 #endif
 
-    reg<u<clog2(MEM_DEPTH)>>       write_addr_reg;
-    reg<logic<MEM_WIDTH_BYTES*8>>  data_reg;
-    reg<u1>                        write_reg;
-    reg<u<clog2(MEM_DEPTH)>>       read_addr_reg;
-    reg<u1>                        read_reg;
+    STATIC reg<u<clog2(MEM_DEPTH)>>       write_addr_reg;
+    STATIC reg<logic<MEM_WIDTH_BYTES*8>>  data_reg;
+    STATIC reg<u1>                        write_reg;
+    STATIC reg<u<clog2(MEM_DEPTH)>>       read_addr_reg;
+    STATIC reg<u1>                        read_reg;
 
-    reg<u1>                  was_read;
-    reg<u<clog2(MEM_DEPTH)>> was_read_addr;
-    reg<u16>                 to_write_cnt;
-    reg<u16>                 to_read_cnt;
-    bool                     error = false;
+    STATIC reg<u1>                  was_read;
+    STATIC reg<u<clog2(MEM_DEPTH)>> was_read_addr;
+    STATIC reg<u16>                 to_write_cnt;
+    STATIC reg<u16>                 to_read_cnt;
+    STATIC bool                     error = false;
 
-    logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
+    STATIC logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
 
-    memory<uint8_t,MEM_WIDTH_BYTES,MEM_DEPTH> mem_copy;
+    STATIC memory<uint8_t,MEM_WIDTH_BYTES,MEM_DEPTH> mem_copy;
 
 public:
     bool    debugen_in;
@@ -126,12 +126,12 @@ public:
     void _connect()
     {
 #ifndef VERILATOR
-        mem.write_addr_in = __VAL( write_addr_reg );
-        mem.write_in =      __VAL( write_reg );
-        mem.write_data_in = __VAL( data_reg );
-        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
-        mem.read_addr_in =  __VAL( read_addr_reg );
-        mem.read_in =       __VAL( read_reg );
+        mem.write_addr_in = __VAR( &write_addr_reg );
+        mem.write_in =      __VAR( &write_reg );
+        mem.write_data_in = __VAR( &data_reg );
+        mem.write_mask_in = __VAL( logic<MEM_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.read_addr_in =  __VAR( &read_addr_reg );
+        mem.read_in =       __VAR( &read_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem._connect();
 #endif
@@ -181,7 +181,9 @@ public:
 
             to_read_cnt.next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
         }
-        mem_copy[write_addr_reg] = data_reg;
+        if (write_reg) {
+            mem_copy[write_addr_reg] = data_reg;
+        }
 
         read_reg.next = 0;
         if (to_read_cnt) {

@@ -8,6 +8,7 @@
 namespace cpphdl
 {
 
+
 template<typename T, size_t S>
 struct array;
 

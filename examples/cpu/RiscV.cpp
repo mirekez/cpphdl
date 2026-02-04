@@ -10,57 +10,16 @@
 #include "ExecuteCalc.h"
 #include "MemWB.h"
 
+unsigned long sys_clock = 0;
+
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
-    File<32,32>         regs;
-    reg<u32>            pc;
-    reg<u1>             valid;
+    STATIC File<32,32>         regs;
+
+    STATIC reg<u32>            pc;
+    STATIC reg<u1>             valid;
 
 public:
-                                          // it's better to always assign all outputs inline
-    __PORT(bool)      dmem_write_out      = std::get<1>(members).mem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out = std::get<1>(members).mem_write_addr_out;
-    __PORT(uint32_t)  dmem_write_data_out = std::get<1>(members).mem_write_data_out;
-    __PORT(uint8_t)   dmem_write_mask_out = std::get<1>(members).mem_write_mask_out;
-    __PORT(bool)      dmem_read_out       = std::get<1>(members).mem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out  = std::get<1>(members).mem_read_addr_out;
-    __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAL( pc );
-    __PORT(uint32_t)  imem_read_data_in;
-    bool              debugen_in;
-
-    void _connect()
-    {
-        auto& df = std::get<0>(members);
-        auto& ex = std::get<1>(members);
-        auto& wb = std::get<2>(members);
-
-        df.__inst_name = Pipeline::__inst_name + "/decode_fetch";
-        ex.__inst_name = Pipeline::__inst_name + "/execute_calc";
-        wb.__inst_name = Pipeline::__inst_name + "/write_back";
-
-        df.pc_in          = __VAL( pc );
-        df.instr_valid_in = __VAL( valid );
-        df.instr_in       = imem_read_data_in;
-        df.regs_data0_in  = __VAL( df.rs1_out == 0 ? 0 : regs.read_data0_out() );
-        df.regs_data1_in  = __VAL( df.rs2_out == 0 ? 0 : regs.read_data1_out() );
-        df.alu_result_in  = ex.alu_result_out;
-        df.mem_data_in    = dmem_read_data_in;
-
-        wb.mem_data_in    = dmem_read_data_in;
-
-        Pipeline::_connect();
-
-        regs.read_addr0_in = df.rs1_out;
-        regs.read_addr1_in = df.rs2_out;
-
-        regs.write_in = wb.regs_write_out;
-        regs.write_addr_in = wb.regs_wr_id_out;
-        regs.write_data_in = wb.regs_data_out;
-        regs.debugen_in = debugen_in;
-        regs._connect();
-    }
-
     void _work(bool reset)
     {
         auto& df = std::get<0>(members);
@@ -73,7 +32,9 @@ public:
             return;
         }
 
-        debug();
+        if (debugen_in) {
+            debug();
+        }
 
         if (dmem_write_addr_out() == 0x11223344 && dmem_write_out()) {
             FILE* out = fopen("out.txt", "a");
@@ -111,42 +72,40 @@ public:
             instr.decode16(tmp);
         }
 
-        if (debugen_in) {
-            std::print("({}/{}){}: {:s} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}",
-                (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
-                (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
-                (int)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
-                (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_out(), (int)state_comb_tmp[0].rd,
-                (int)ex.branch_taken_out(), ex.branch_target_out(),
-                (int)ex.mem_write_out(), (int)ex.mem_read_out(),
-                ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
-                (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
+        std::print("({}/{}){}: {:s} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}",
+            (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
+            (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
+            (int)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
+            (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_out(), (int)state_comb_tmp[0].rd,
+            (int)ex.branch_taken_out(), ex.branch_target_out(),
+            (int)ex.mem_write_out(), (int)ex.mem_read_out(),
+            ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
+            (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
 
 #ifndef SYNTHESIS
             // delayed by 1 to align EX to WB
-            std::string interpret;
-            if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
-                interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
-                                 state_comb_tmp[1].debug_alu_a, state_comb_tmp[1].debug_alu_b);
-            }
-            if (state_comb_tmp[1].valid && state_comb_tmp[1].br_op != Br::BNONE && state_comb_tmp[1].debug_branch_taken) {
-                interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[state_comb_tmp[1].br_op], state_comb_tmp[1].debug_branch_target, (int)state_comb_tmp[1].rd);
-            }
-            if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::LOAD) {
-                interpret += std::format("LOAD({:08x}) ", state_comb_tmp[1].alu_result);
-            }
-            if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::STORE) {
-                interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", state_comb_tmp[1].alu_result, state_comb_tmp[1].rs2_val, (int)state_comb_tmp[1].rs2);
-            }
-            if (state_comb_tmp[1].valid && state_comb_tmp[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
-                interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
-            }
-            //
-            std::print(": {}\n", interpret);
-#else
-            std::print("\n");
-#endif
+        std::string interpret;
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].alu_op != Alu::ANONE) {
+            interpret += std::format("r{:02d} r{:02d} {:5s}({:08x},{:08x}) ", (int)state_comb_tmp[1].rs1, (int)state_comb_tmp[1].rs2, AOPS[state_comb_tmp[1].alu_op],
+                             state_comb_tmp[1].debug_alu_a, state_comb_tmp[1].debug_alu_b);
         }
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].br_op != Br::BNONE && state_comb_tmp[1].debug_branch_taken) {
+            interpret += std::format("{}({:08x}) rd={:02d} ", BOPS[state_comb_tmp[1].br_op], state_comb_tmp[1].debug_branch_target, (int)state_comb_tmp[1].rd);
+        }
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::LOAD) {
+            interpret += std::format("LOAD({:08x}) ", state_comb_tmp[1].alu_result);
+        }
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].mem_op == Mem::STORE) {
+            interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", state_comb_tmp[1].alu_result, state_comb_tmp[1].rs2_val, (int)state_comb_tmp[1].rs2);
+        }
+        if (state_comb_tmp[1].valid && state_comb_tmp[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
+            interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_comb_tmp[1].wb_op], wb.regs_wr_id_out());
+        }
+            //
+        std::print(": {}\n", interpret);
+#else
+        std::print("\n");
+#endif
     }
 
     void _strobe()
@@ -155,6 +114,56 @@ public:
         regs._strobe();
         pc.strobe();
         valid.strobe();
+    }
+
+    __PORT(bool)      dmem_write_out;
+    __PORT(uint32_t)  dmem_write_addr_out;
+    __PORT(uint32_t)  dmem_write_data_out;
+    __PORT(uint8_t)   dmem_write_mask_out;
+    __PORT(bool)      dmem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out;
+    __PORT(uint32_t)  dmem_read_data_in;
+    __PORT(uint32_t)  imem_read_addr_out = __VAR( &pc );
+    __PORT(uint32_t)  imem_read_data_in;
+    bool              debugen_in;
+
+    void _connect()
+    {
+        auto& df = std::get<0>(members);
+        auto& ex = std::get<1>(members);
+        auto& wb = std::get<2>(members);
+        df.__inst_name = Pipeline::__inst_name + "/decode_fetch";
+        ex.__inst_name = Pipeline::__inst_name + "/execute_calc";
+        wb.__inst_name = Pipeline::__inst_name + "/write_back";
+
+        df.pc_in          = __VAR( &pc );
+        df.instr_valid_in = __VAR( &valid );
+        df.instr_in       = imem_read_data_in;
+        df.regs_data0_in  = __EXPR( df.rs1_out() == 0 ? 0 : regs.read_data0_out() );
+        df.regs_data1_in  = __EXPR( df.rs2_out() == 0 ? 0 : regs.read_data1_out() );
+        df.alu_result_in  = ex.alu_result_out;
+        df.mem_data_in    = dmem_read_data_in;
+        df._connect();  // outputs are ready
+        // ex has no own inputs
+        ex._connect();  // outputs are ready
+        dmem_write_out      = ex.mem_write_out;
+        dmem_write_addr_out = ex.mem_write_addr_out;
+        dmem_write_data_out = ex.mem_write_data_out;
+        dmem_write_mask_out = ex.mem_write_mask_out;
+        dmem_read_out       = ex.mem_read_out;
+        dmem_read_addr_out  = ex.mem_read_addr_out;
+        wb.mem_data_in    = dmem_read_data_in;
+        wb._connect();  // outputs are ready
+
+        Pipeline::_connect();
+
+        regs.read_addr0_in = df.rs1_out;
+        regs.read_addr1_in = df.rs2_out;
+        regs.write_in = wb.regs_write_out;
+        regs.write_addr_in = wb.regs_wr_id_out;
+        regs.write_data_in = wb.regs_data_out;
+        regs.debugen_in = debugen_in;
+        regs._connect();
     }
 
 };
@@ -177,20 +186,43 @@ public:
 
 #define RAM_SIZE 2048
 
+#include <tuple>
+#include <utility>
+/*
+template<template<std::size_t, size_t, int> class T, size_t U, size_t M, int N>
+struct indexed_classes {
+private:
+    template<std::size_t... Is>
+    static auto make_tuple(std::index_sequence<Is...>) {
+        return std::tuple<T<Is, U, M>...>{};
+    }
+
+public:
+    using tuple_type = decltype(make_tuple(std::make_index_sequence<N>{}));
+    tuple_type objects;
+
+    indexed_classes()
+        : objects(make_tuple(std::make_index_sequence<N>{}))
+    {}
+};
+*/
 class TestRiscV : public Module
 {
-    Ram<32,RAM_SIZE>   imem;
-    Ram<32,RAM_SIZE>   dmem;
+//    using TwoMems = indexed_classes<Ram, 32, RAM_SIZE, 2>;
+//    TwoMems mems;
+    Ram<32,RAM_SIZE,0> imem;// = std::get<0>(mems.objects);
+    Ram<32,RAM_SIZE,1> dmem;// = std::get<1>(mems.objects);
+
 #ifdef VERILATOR
-    VERILATOR_MODEL riscv;
+    STATIC VERILATOR_MODEL riscv;
 #else
-    RiscV riscv;
+    STATIC RiscV riscv;
 #endif
 
-    bool imem_write = false;
-    uint32_t imem_write_addr;
-    uint32_t imem_write_data;
-    bool error;
+    STATIC bool imem_write = false;
+    STATIC uint32_t imem_write_addr;
+    STATIC uint32_t imem_write_data;
+    STATIC bool error;
 
 //    size_t i;
 
@@ -210,6 +242,20 @@ public:
     void _connect()
     {
 #ifndef VERILATOR
+        riscv._connect();
+
+        riscv.dmem_read_data_in = dmem.read_data_out;
+        riscv.imem_read_data_in = imem.read_data_out;
+        riscv.debugen_in = debugen_in;
+        riscv.__inst_name = __inst_name + "/riscv";
+        riscv._connect();
+
+        riscv.dmem_read_data_in = dmem.read_data_out;
+        riscv.imem_read_data_in = imem.read_data_out;
+        riscv.debugen_in = debugen_in;
+        riscv.__inst_name = __inst_name + "/riscv";
+        riscv._connect();
+
         dmem.read_in = riscv.dmem_read_out;
         dmem.read_addr_in = riscv.dmem_read_addr_out;
         dmem.write_in = riscv.dmem_write_out;
@@ -220,38 +266,32 @@ public:
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._connect();
 
-        imem.read_in = __VAL( !imem_write );
+        imem.read_in = __EXPR( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
-        imem.write_in = __VAL( imem_write );
-        imem.write_addr_in = __VAL( imem_write_addr );
-        imem.write_data_in = __VAL( imem_write_data );
-        imem.write_mask_in = __VAL( 0xFFFFFFFFu );
+        imem.write_in = __VAR( &imem_write );
+        imem.write_addr_in = __VAR( &imem_write_addr );
+        imem.write_data_in = __VAR( &imem_write_data );
+        imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._connect();
-
-        riscv.dmem_read_data_in = dmem.read_data_out;
-        riscv.imem_read_data_in = imem.read_data_out;
-        riscv.debugen_in = debugen_in;
-        riscv.__inst_name = __inst_name + "/riscv";
-        riscv._connect();
 #else  // connecting Verilator to C++HDL
-        dmem.read_in = __VAL( riscv.dmem_read_out );
-        dmem.read_addr_in = __VAL( riscv.dmem_read_addr_out );
-        dmem.write_in = __VAL( riscv.dmem_write_out );
-        dmem.write_addr_in = __VAL( riscv.dmem_write_addr_out );
-        dmem.write_data_in = __VAL( riscv.dmem_write_data_out );
-        dmem.write_mask_in = __VAL( riscv.dmem_write_mask_out );
+        dmem.read_in = __VAR( (bool*)&riscv.dmem_read_out );
+        dmem.read_addr_in = __VAR( (uint32_t*)&riscv.dmem_read_addr_out );
+        dmem.write_in = __VAR( (bool*)&riscv.dmem_write_out );
+        dmem.write_addr_in = __VAR( (uint32_t*)&riscv.dmem_write_addr_out );
+        dmem.write_data_in = __VAR( (uint32_t*)&riscv.dmem_write_data_out );
+        dmem.write_mask_in = __VAR( (uint8_t*)&riscv.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._connect();
 
-        imem.read_in = __VAL( !imem_write );
-        imem.read_addr_in = __VAL( riscv.imem_read_addr_out);
-        imem.write_in = __VAL( imem_write );
-        imem.write_addr_in = __VAL( imem_write_addr );
-        imem.write_data_in = __VAL( imem_write_data );
-        imem.write_mask_in = __VAL( 0xFFFFFFFFu );
+        imem.read_in = __EXPR( !imem_write );
+        imem.read_addr_in = __VAR( (uint32_t*)&riscv.imem_read_addr_out );
+        imem.write_in = __VAR( (bool*)&imem_write );
+        imem.write_addr_in = __VAR( (uint32_t*)&imem_write_addr );
+        imem.write_data_in = __VAR( (uint32_t*)&imem_write_data );
+        imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._connect();
@@ -359,6 +399,7 @@ public:
         int cycles = 200000;
         while (--cycles && !error) {
             _strobe();
+            ++sys_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <sstream>
 
 namespace cpphdl
 {
@@ -86,7 +87,58 @@ struct Expr
     }
 
     std::string replacePrintFormat(std::string str, bool firstStringInstName = false);
-    std::string debug(int debug_indent = 0);
+
+    std::string debug(int debug_indent = 0)
+    {
+        std::stringstream str;
+        switch(type) {
+            case EXPR_NONE: str << "EXPR_NONE"; break;
+            case EXPR_DECL: str << "EXPR_DECL"; break;
+            case EXPR_TYPE: str << "EXPR_TYPE"; break;
+            case EXPR_VAR: str << "EXPR_VAR"; break;
+            case EXPR_NUM: str << "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs
+            case EXPR_STRING: str << "EXPR_STRING"; break;
+            case EXPR_PARAM: str << "EXPR_PARAM"; break;
+            case EXPR_PACK: str << "EXPR_PACK"; break;
+            case EXPR_TEMPLATE: str << "EXPR_TEMPLATE"; break;
+            case EXPR_ARRAY: str << "EXPR_ARRAY"; break;
+            case EXPR_CALL: str << "EXPR_CALL"; break;
+            case EXPR_MEMBERCALL: str << "EXPR_MEMBERCALL"; break;
+            case EXPR_OPERATORCALL: str << "EXPR_OPERATORCALL"; break;
+            case EXPR_MEMBER: str << "EXPR_MEMBER"; break;
+            case EXPR_BINARY: str << "EXPR_BINARY"; break;
+            case EXPR_UNARY: str << "EXPR_UNARY"; break;
+            case EXPR_COND: str << "EXPR_COND"; break;
+            case EXPR_INDEX: str << "EXPR_INDEX"; break;
+            case EXPR_CAST: str << "EXPR_CAST"; break;
+            case EXPR_PAREN: str << "EXPR_PAREN"; break;
+            case EXPR_INIT: str << "EXPR_INIT"; break;
+            case EXPR_TRAIT: str << "EXPR_TRAIT"; break;
+            case EXPR_RETURN: str << "EXPR_RETURN"; break;
+            case EXPR_FOR: str << "EXPR_FOR"; break;
+            case EXPR_WHILE: str << "EXPR_WHILE"; break;
+            case EXPR_IF: str << "EXPR_IF"; break;
+            case EXPR_SWITCH: str << "EXPR_SWITCH"; break;
+            case EXPR_BODY: str << "EXPR_BODY"; break;
+            case EXPR_UNKNOWN: str << "EXPR_UNKNOWN"; break;
+            default: str << "EXPR_???"; break;
+        }
+
+        ++debug_indent;
+
+        str << "(" << std::hex << (int)flags << "): " << value << (sub.size()?"(":"");
+        bool first = true;
+        for (auto& expr : sub) {
+            str << (!first ? ", " : " ");
+            if (sub.size() > 1) {
+                str << "\n" << std::string(debug_indent*4, ' ');
+            }
+            str << expr.debug(debug_indent);
+            first = false;
+        }
+        str << (sub.size()?")":"");
+        return str.str();
+    }
 };
 
 

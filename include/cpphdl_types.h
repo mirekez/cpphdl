@@ -14,6 +14,7 @@
 #else
 namespace std {
 
+
 template<typename T>
 struct formatter {};
 struct format_parse_context { constexpr bool begin() { return true; } };
@@ -62,6 +63,7 @@ struct u
         memcpy(&bs, value, sizeof(bs));
     }
 } __PACKED;
+
 
 }
 

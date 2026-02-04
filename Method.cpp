@@ -110,7 +110,7 @@ bool Method::printConns(std::ofstream& out)
             } );
     }
 
-    out << "    generate\n";
+    out << "    generate  // " << name <<"\n";
     if (vars.size()) {
         out << "    genvar ";
     }
@@ -146,21 +146,6 @@ bool Method::printConns(std::ofstream& out)
 //        out << stmt.debug() << "\n";
     }
     out << "    endgenerate\n";
-
-    for (auto& port : currModule->ports) {  // outport initializers
-//        out << port.initializer.debug() << "\n";
-        if (port.initializer.type != Expr::EXPR_NONE
-            && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
-            && port.initializer.sub.size() >= 1 && /*outdated*/ port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
-            /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
-            port.initializer.flags = Expr::FLAG_ASSIGN;
-            std::string s = port.initializer.str();
-            if (!s.empty() && s.back() != '\n') {
-                s += ";\n";
-            }
-            out << "    assign " << port.name << " = " << s << "\n";
-        }
-    }
 
     return true;
 }
@@ -202,7 +187,7 @@ bool Method::printComb(std::ofstream& out)
     }
 */
 
-    out << "    always @(*) begin\n";
+    out << "    always @(*) begin  // " << name <<"\n";
     for (auto& stmt : statements) {
 
         stmt.indent = 2;

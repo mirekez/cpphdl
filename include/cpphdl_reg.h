@@ -4,6 +4,7 @@
 namespace cpphdl
 {
 
+
 template<typename T=u1>
 struct reg : public T
 {
@@ -35,10 +36,12 @@ struct reg : public T
     }
 
     reg() = default;
+
     operator T()
     {
         return *static_cast<T*>(this);
     }
 };
+
 
 }

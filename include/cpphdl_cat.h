@@ -9,6 +9,7 @@
 namespace cpphdl
 {
 
+
 template<size_t... N>
 constexpr size_t SUM() {
     return (N + ...);
@@ -51,5 +52,5 @@ struct cat : logic<SUM<N...>()>
     }
 };
 
-}
 
+}

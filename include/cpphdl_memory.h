@@ -8,6 +8,7 @@
 namespace cpphdl
 {
 
+
 template<typename T, size_t SIZE>
 struct memory_row: public array<T,SIZE>
 {
@@ -125,5 +126,6 @@ struct memory
 
 template<size_t SIZE,size_t DEPTH>
 struct memory<void,SIZE,DEPTH> {};
+
 
 }

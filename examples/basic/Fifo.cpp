@@ -14,60 +14,35 @@ using namespace cpphdl;
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
 {
-    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
+    STATIC Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
 
-    u1 full_comb;
-    u1 empty_comb;
+    STATIC bool full_comb;
+    STATIC bool empty_comb;
 
-    reg<u<clog2(FIFO_DEPTH)>> wp_reg;
-    reg<u<clog2(FIFO_DEPTH)>> rp_reg;
-    reg<u1> full_reg;
+    STATIC reg<u<clog2(FIFO_DEPTH)>> wp_reg;
+    STATIC reg<u<clog2(FIFO_DEPTH)>> rp_reg;
+    STATIC reg<u1> full_reg;
+    STATIC reg<u1> afull_reg;
 
-    reg<u1> afull_reg;
+    STATIC bool& full_comb_func()
+    {
+        full_comb = (wp_reg == rp_reg) && full_reg;
+        return full_comb;
+    }
+
+    STATIC bool& empty_comb_func()
+    {
+        empty_comb = (wp_reg == rp_reg) && !full_reg;
+        return empty_comb;
+    }
 
 public:
-    __PORT(bool)                         write_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
-
-    __PORT(bool)                         read_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
-
-    __PORT(bool)                         empty_out      = __VAL( empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAL( full_comb_func() );
-    __PORT(bool)                         clear_in       = __VAL( false );
-    __PORT(bool)                         afull_out      = __VAL( afull_reg );
-
-    bool                         debugen_in;
-
-    void _connect()
-    {
-        mem.write_data_in = write_data_in;
-        mem.write_data_in = write_data_in;
-        mem.write_in      = write_in;
-        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
-        mem.write_addr_in = __VAL( wp_reg );
-        mem.read_in       = read_in;
-        mem.read_addr_in  = __VAL( rp_reg );
-        mem.__inst_name = __inst_name + "/mem";
-        mem.debugen_in  = debugen_in;
-        mem._connect();
-    }
-
-    bool full_comb_func()
-    {
-        return full_comb = (wp_reg == rp_reg) && full_reg;
-    }
-
-    bool empty_comb_func()
-    {
-        return empty_comb = (wp_reg == rp_reg) && !full_reg;
-    }
 
     void _work(bool reset)
     {
         if (debugen_in) {
             std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
-                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_out(), (int)empty_out(), reset);
+                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_reg, (int)empty_out(), reset);
         }
 
         mem._work(reset);
@@ -82,11 +57,11 @@ public:
 
         if (write_in()) {
 
-            if (full_comb_func() && !read_in()) {
+            if (full_out() && !read_in()) {
                 std::print("{:s}: writing to a full fifo\n", __inst_name);
                 exit(1);
             }
-            if (!full_comb_func() || read_in()) {
+            if (!full_out() || read_in()) {
                 wp_reg.next = wp_reg + 1;
             }
             if (wp_reg.next == rp_reg) {
@@ -96,11 +71,11 @@ public:
 
         if (read_in()) {
 
-            if (empty_comb_func()) {
+            if (empty_out()) {
                 std::print("{:s}: reading from an empty fifo\n", __inst_name);
                 exit(1);
             }
-            if (!empty_comb_func()) {
+            if (!empty_out()) {
                 rp_reg.next = rp_reg + 1;
             }
             if (!write_in()) {
@@ -115,7 +90,6 @@ public:
         }
 
         afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
-
     }
 
     void _strobe()
@@ -125,6 +99,33 @@ public:
         rp_reg.strobe();
         full_reg.strobe();
         afull_reg.strobe();
+    }
+
+    __PORT(bool)                         write_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
+
+    __PORT(bool)                         read_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
+
+    __PORT(bool)                         empty_out      = __VAR( &empty_comb_func() );
+    __PORT(bool)                         full_out       = __VAR( &full_comb_func() );
+    __PORT(bool)                         clear_in       = __VAL( false );
+    __PORT(bool)                         afull_out      = __VAR( &afull_reg );
+
+    bool                         debugen_in;
+
+    void _connect()
+    {
+        mem.write_data_in = write_data_in;
+        mem.write_data_in = write_data_in;
+        mem.write_in      = write_in;
+        mem.write_mask_in = __VAL( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.write_addr_in = __VAR( &wp_reg );
+        mem.read_in       = read_in;
+        mem.read_addr_in  = __VAR( &rp_reg );
+        mem.__inst_name = __inst_name + "/mem";
+        mem.debugen_in  = debugen_in;
+        mem._connect();
     }
 };
 /////////////////////////////////////////////////////////////////////////
@@ -147,25 +148,25 @@ template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
 {
 #ifdef VERILATOR
-    VERILATOR_MODEL fifo;
+    STATIC VERILATOR_MODEL fifo;
 #else
-    Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
+    STATIC Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
 #endif
 
-    reg<u<clog2(FIFO_DEPTH)>>       read_addr;
-    reg<u<clog2(FIFO_DEPTH)>>       write_addr;
-    reg<logic<FIFO_WIDTH_BYTES*8>>  data_reg;
-    reg<u1>     write_reg;
-    reg<u1>     read_reg;
-    reg<u1>     was_read;
-    reg<u1>     clear_reg;
-    reg<u16>    to_write_cnt;
-    reg<u16>    to_read_cnt;
-    bool        error = false;
+    STATIC reg<u<clog2(FIFO_DEPTH)>>       read_addr;
+    STATIC reg<u<clog2(FIFO_DEPTH)>>       write_addr;
+    STATIC reg<logic<FIFO_WIDTH_BYTES*8>>  data_reg;
+    STATIC reg<u1>     write_reg;
+    STATIC reg<u1>     read_reg;
+    STATIC reg<u1>     was_read;
+    STATIC reg<u1>     clear_reg;
+    STATIC reg<u16>    to_write_cnt;
+    STATIC reg<u16>    to_read_cnt;
+    STATIC bool        error = false;
 
-    logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
+    STATIC logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
 
-    std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
+    STATIC std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
 public:
     bool                       debugen_in;
@@ -184,10 +185,11 @@ public:
     void _connect()
     {
 #ifndef VERILATOR
-        fifo.write_in        = __VAL( write_reg );
-        fifo.write_data_in   = __VAL( data_reg );
-        fifo.read_in         = __VAL( read_reg );
-        fifo.clear_in        = __VAL( clear_reg );
+        fifo.write_in        = __VAR( &write_reg );
+        fifo.write_data_in   = __VAR( &data_reg );
+        fifo.read_in         = __VAR( &read_reg );
+        fifo.clear_in        = __VAR( &clear_reg );
+
         fifo.__inst_name = __inst_name + "/fifo";
         fifo._connect();
 #endif

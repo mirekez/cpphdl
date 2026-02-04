@@ -187,7 +187,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 {
     DEBUG_AST(debugIndent++, "# putField: "); on_return ret_debug([](){ --debugIndent; });
     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
-    ASSERT(ModuleClass);
+    ASSERT(ModuleClass && ModuleClass->getDefinition());
 
     QualType QT = fieldType;
 
@@ -203,8 +203,10 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 //    auto T = QT.getUnqualifiedType();
 
     auto* CRD = hlp.resolveCXXRecordDecl(QT);
-    if (CRD && CRD->getQualifiedNameAsString().find("std::") == (size_t)0
-        && CRD->getQualifiedNameAsString().find("std::function") == (size_t)-1) {
+    if ((CRD && CRD->getQualifiedNameAsString().find("std::") == (size_t)0
+        && CRD->getQualifiedNameAsString().find("std::function") == (size_t)-1
+        && CRD->getQualifiedNameAsString().find("cpphdl_function_ref") == (size_t)-1)
+        || (CRD && !CRD->getDefinition())) {
         return;  // we dont want any std type to be translated to SV
     }
 
@@ -326,11 +328,12 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         return "";
     }
 
-    if (MD->getQualifiedNameAsString().find("::" + hlp.mod->origName) != (size_t)-1
-    || MD->getQualifiedNameAsString().find("::~" + hlp.mod->origName) != (size_t)-1
+    if (MD->getQualifiedNameAsString().find("::" + hlp.parent->getNameAsString()) != (size_t)-1
+    || MD->getQualifiedNameAsString().find("::~" + hlp.parent->getNameAsString()) != (size_t)-1
     || MD->getQualifiedNameAsString().find("::operator=") != (size_t)-1
     || MD->getQualifiedNameAsString().find("cpphdl::") != (size_t)-1
     || MD->getQualifiedNameAsString().find("std::") == (size_t)0
+    || MD->getQualifiedNameAsString().find("*(*)()") != (size_t)-1  // lambda
 //    || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod->name.find(MD->getParent()->getQualifiedNameAsString())) != 0  // module's class method but not current module
     ) {
         return "";
@@ -406,6 +409,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 ////     && MD->getNameAsString() != std::string("~") + hlp.mod->name
 //     && MD->getNameAsString().find("operator") != 0) {
     std::string ret = method.name;
+
     auto it = std::find_if(hlp.mod->methods.begin(), hlp.mod->methods.end(), [&](auto& m){ return m.name == method.name; } );
     if (it != hlp.mod->methods.end()) {
         if (it->ret.size() == method.ret.size()) {
@@ -487,16 +491,53 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
             } else
             if (auto* VD = dyn_cast<VarDecl>(D)) {
-                if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
-                    auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
-                    if (it != hlp.mod->consts.end()) {
-                        updateExpr((*it).expr, hlp.exprToExpr(VD->getInit()));
+                if (VD->isStaticDataMember() && VD->isConstexpr()) {
+                    if (VD->getInit()) {
+                        auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
+                        if (it != hlp.mod->consts.end()) {
+                            updateExpr((*it).expr, hlp.exprToExpr(VD->getInit()));
+                        }
+                        else {
+                            hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
+                            DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+                        }
                     }
-                    else {
-                        hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                        DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+                    continue;
+                }
+
+                DEBUG_AST(debugIndent++, "# putFieldStatic: "); on_return ret_debug([](){ --debugIndent; });
+
+                std::string S;
+                llvm::raw_string_ostream OS(S);
+                VD->getType().print(OS, context->getPrintingPolicy());
+                DEBUG_AST1(std::string("\"")+ S + " " + VD->getNameAsString() + "\"");
+
+                // if field is std::tuple - iterate over them
+                if (const auto *TST = VD->getType()->getAs<TemplateSpecializationType>()) {  // std::tuple support
+                    const TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl();
+                    if (TD->getName() == "tuple") {
+                        const auto *NS = dyn_cast<NamespaceDecl>(TD->getDeclContext());
+                        DEBUG_AST1(std::string(" *tuple*"));
+                        if (NS->getName() == "std" || NS->getName() == "__1") {
+                            DEBUG_AST1(" *std*");
+                            const auto &args = TST->template_arguments();
+                            size_t i = 0;
+                            for (const auto &arg : args) {
+                                if (arg.getKind() == TemplateArgument::Type || arg.getKind() == TemplateArgument::Template) {
+                                    DEBUG_AST(debugIndent++, "% putField: "); on_return ret_debug([](){ --debugIndent; });
+                                    std::string S;
+                                    llvm::raw_string_ostream OS(S);
+                                    arg.getAsType().getNonReferenceType().print(OS, context->getPrintingPolicy());
+                                    DEBUG_AST1(std::string("\"")+ S + "\"");
+                                    putField(arg.getAsType(), VD->getNameAsString() + "_tuple_" + std::to_string(i++), nullptr, hlp);
+                                }
+                            }
+                            continue;
+                        }
                     }
                 }
+
+                putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);
             } else
             if ([[maybe_unused]] auto* Nested = dyn_cast<CXXRecordDecl>(D)) {
 //                DEBUG_AST(debugIndent, "Nested class: " << Nested->getNameAsString());
@@ -521,11 +562,18 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
                 DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
-                for (Decl* D : aRD->decls()) {
+                for (Decl* D : aRD->decls()) {  // need fields from abstract class to get its port width parametrict expressions (not numbers)
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {
                         hlp.flags |= Helpers::FLAG_ABSTRACT;
                         putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
                         hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                    } else
+                    if (auto* VD = dyn_cast<VarDecl>(D)) {
+                        if (VD->isStaticDataMember() && !VD->isConstexpr()) {
+                            hlp.flags |= Helpers::FLAG_ABSTRACT;
+                            putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);
+                            hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                        }
                     }
 // else  // no need to update code because of SubstNonTypeTemplateParmExpr replacements
 //                    if (auto* VD = dyn_cast<VarDecl>(D)) {
@@ -584,8 +632,8 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod.name << ")"); on_return ret_debug([](){ --debugIndent; });
 
-        hlp.forEachBase(RD, [&](const CXXRecordDecl* RD){
-                putClass(RD, mod);
+        hlp.forEachBase(RD, [&](const CXXRecordDecl* RD1){
+                putClass(RD1, mod);
             });
 
         currProject->modules.emplace_back(std::move(mod));

@@ -21,7 +21,7 @@ unsigned debugIndent = 0;
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
 std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = false);
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
-const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
+//const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
 cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 {
@@ -296,24 +296,41 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     if (auto* DRE = dyn_cast<DeclRefExpr>(E)) {
         DEBUG_AST1(" DeclRefExpr(" << DRE->getNameInfo().getAsString() << ")");
 
-        if (const ValueDecl *VD = DRE->getDecl()) {  // check if it's reference aka symlink to another var
-            if (const auto *Var = dyn_cast<VarDecl>(VD)) {
-                if (VD->getType()->isReferenceType() && Var->hasInit()) {
-                    DEBUG_AST1(" REF");
-                    return exprToExpr(Var->getInit());
+        const ValueDecl *VD = DRE->getDecl();
+        const auto *Var = dyn_cast_or_null<VarDecl>(VD);
+        if (Var && DRE->getDecl()->getType()->isReferenceType() && Var->hasInit()) {  // check if it's reference aka symlink to another var
+            DEBUG_AST1(" REF");
+            return exprToExpr(Var->getInit());
+        }
+
+        bool isPack = false;
+        if (const ParmVarDecl* PVD = dyn_cast<ParmVarDecl>(Var)) {
+             if (PVD && PVD->isParameterPack()) {
+                 DEBUG_AST1(" PACK");
+                 isPack = true;
+             }
+        }
+
+        const CXXRecordDecl* owner = nullptr;
+        if (VD) {
+            const DeclContext *DC = VD->getDeclContext();  // find owner class
+            while (DC) {
+                if ((owner = dyn_cast<CXXRecordDecl>(DC))) {
+                    if (!owner->isLambda())
+                        break;
                 }
+                DC = DC->getParent();
             }
         }
 
-        const auto* parent = getParentClassOfExpr(DRE, ctx);
-        std::string prefix;
-        if (const auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl())) {  // make enum pkg
+        std::string name = VD->getNameAsString();
+        if (const auto *ECD = dyn_cast<EnumConstantDecl>(VD)) {  // make enum pkg
             if (const auto *ED = dyn_cast<EnumDecl>(ECD->getDeclContext())) {
                 DEBUG_AST1(" EnumName: " << ED->getQualifiedNameAsString());
 
                 auto en = cpphdl::Enum{genTypeName(ED->getQualifiedNameAsString()), ED->getQualifiedNameAsString()};
 
-                 for (const EnumConstantDecl *ECD : ED->enumerators()) {
+                for (const EnumConstantDecl *ECD : ED->enumerators()) {
                     if (ECD->getInitExpr()) {
                         en.fields.emplace_back(cpphdl::Field{ECD->getName().str(), {exprToExpr(ECD->getInitExpr())}});
                     }
@@ -322,7 +339,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     }
                 }
 
-                prefix += en.name + "_pkg::";
+                name = en.name + "_pkg::" + name;
 
                 auto ret = mod->imports.emplace(en.name);
                 if (ret.second) {
@@ -330,27 +347,25 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
             }
         } else
-        if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
-            if (parent && VD->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
-                std::string sname = parent->getQualifiedNameAsString();
-                str_replace(sname, "::", "_");
-                // extracting parameters of the template
-                followSpecialization(parent, sname);
-                prefix = sname + "_pkg::";
-            }
+        if (owner && Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
+            std::string sname = owner->getQualifiedNameAsString();
+            str_replace(sname, "::", "_");
+            // extracting parameters of the template
+            followSpecialization(owner, sname);
+            name = sname + "_pkg::" + name;
+        } else
+        if (owner && Var && mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+            && !Var->isLocalVarDeclOrParm()/* && !Var->isStaticLocal()*/ && !Var->isConstexpr()
+            && !str_ending(name, "_in") && !str_ending(name, "_out")) {  // add base class name, ports dont get this prefix
+            name = genTypeName(owner->getQualifiedNameAsString()) + "___" + name;
+        }
+        if (isPack) {
+            name = "";//genTypeName(owner->getQualifiedNameAsString()) + "___";
         }
 
-        bool isPack = false;
-        if (const ParmVarDecl* PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
-             if (PVD && PVD->isParameterPack()) {
-                 DEBUG_AST1(" PACK");
-                 isPack = true;
-                 prefix += "_substitution_";  // not necessary
-             }
-
+        if (!dyn_cast<MemberExpr>(E)) {
+            return cpphdl::Expr{name, isPack ? cpphdl::Expr::EXPR_PACK : cpphdl::Expr::EXPR_VAR};
         }
-
-        return cpphdl::Expr{prefix + DRE->getDecl()->getNameAsString(), isPack ? cpphdl::Expr::EXPR_PACK : cpphdl::Expr::EXPR_VAR};
     }
     if (auto* IL = dyn_cast<IntegerLiteral>(E)) {
         DEBUG_AST1(" IntegerLiteral(" << (IL->getType()->isUnsignedIntegerType() ? std::to_string(IL->getValue().getZExtValue()) : std::to_string(IL->getValue().getSExtValue())) << ")");
@@ -415,8 +430,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* ME = dyn_cast<MemberExpr>(E)) {
         bool anon = false;
-        const CXXRecordDecl *parent = dyn_cast<CXXRecordDecl>(ME->getMemberDecl()->getDeclContext());
-        DEBUG_AST1(" MemberExpr(" << parent->getQualifiedNameAsString() << "::" << ME->getMemberDecl()->getNameAsString() << ")");
+        const CXXRecordDecl *owner = dyn_cast<CXXRecordDecl>(ME->getMemberDecl()->getDeclContext());
+        DEBUG_AST1(" MemberExpr(" << owner->getQualifiedNameAsString() << "::" << ME->getMemberDecl()->getNameAsString() << ")");
 
         auto expr = exprToExpr(ME->getBase()->IgnoreParenImpCasts());
 
@@ -428,33 +443,26 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
-        const auto* VD = dyn_cast<VarDecl>(ME->getMemberDecl());
+        const auto* Var = dyn_cast<VarDecl>(ME->getMemberDecl());
         bool ignoreBase = false;
         std::string name = ME->getMemberDecl()->getNameAsString();
-        if (/*const auto* FD =*/ dyn_cast<FieldDecl>(ME->getMemberDecl()) && parent && parent->isAnonymousStructOrUnion()) {  // replacing anon with '_'
+        if (/*const auto* FD =*/ dyn_cast<FieldDecl>(ME->getMemberDecl()) && owner->isAnonymousStructOrUnion()) {  // replacing anon with '_'
             DEBUG_AST1(" ANON");
             anon = true;
         } else
-        if (VD && VD->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
+        if (Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
             DEBUG_AST1(" PKG");
-            std::string sname = parent->getQualifiedNameAsString();
+            std::string sname = owner->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
             // extracting parameters of the template
-            followSpecialization(parent, sname);
+            followSpecialization(owner, sname);
             name = sname + "_pkg::" + name;
             ignoreBase = true;
         } else
-        if (mod->origName.find(parent->getQualifiedNameAsString()) != 0 && parent->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+        if (mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
             && expr.type == cpphdl::Expr::EXPR_NONE && !str_ending(name, "_in") && !str_ending(name, "_out") ) {  // add base class name, ports dont get this prefix
-            name = genTypeName(parent->getQualifiedNameAsString()) + "___" + name;
+            name = genTypeName(owner->getQualifiedNameAsString()) + "___" + name;
         }
-//    std::cout << "~~~" << mod->origName << " " << parent->getQualifiedNameAsString() << " " << expr.sub.size() << (expr.sub.size()?expr.sub[0].type:-1) << "\n";
-//        std::string ename = ME->getMemberDecl()->getNameAsString();
-//        for (auto parent : parents) {
-//            if (refs[parent].find(ename) != refs[parent].end()) {
-////                ename = refs[parent][ename];
-//            }
-//        }
 
         return cpphdl::Expr{name, cpphdl::Expr::EXPR_MEMBER, {expr},
                 (anon?cpphdl::Expr::FLAG_ANON:0U) | ((flags&FLAG_EXTERNAL_THIS)?cpphdl::Expr::FLAG_USETHIS:0U) | (ignoreBase?cpphdl::Expr::FLAG_NOBASE:0U)};
@@ -524,7 +532,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                                 expr1.traverseIf( [&](auto& e) {
                                             // implace right name instead of pack argument (we support only one substitution in pack)
                                             if (e.type == cpphdl::Expr::EXPR_PACK) {
-                                                e.value = exprToExpr(tupleExpr).value + "_tuple_" + std::to_string(i);
+                                                e.value += exprToExpr(tupleExpr).value + "_tuple_" + std::to_string(i);
                                             }
 
                                             // replace typename in using TYPE = typename decltype(pack_element_type) like "+: $bits(typename std::remove_reference_t<decltype(stage)>::STATE)/8"
@@ -596,6 +604,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         /////////////////////////////////////////////////////////////////////////////////////////////
 
+
         if (const auto* ME = llvm::dyn_cast<clang::MemberExpr>(callee)) {
             const clang::CXXMethodDecl* method = llvm::dyn_cast<clang::CXXMethodDecl>(ME->getMemberDecl());
             DEBUG_AST1(" ME(" << (method ? method->getQualifiedNameAsString() : "null") << ")");
@@ -629,8 +638,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             return exprToExpr(LE);
         }
 
-        if (/*const auto* ULE = */llvm::dyn_cast<clang::UnresolvedLookupExpr>(callee)) {
-            DEBUG_AST1(" ULE()");
+        if (const auto* ULE = llvm::dyn_cast<clang::UnresolvedLookupExpr>(callee)) {
+            DEBUG_AST1(" ULE(" << ULE->getNameInfo().getAsString() << ")");
+            call.value = ULE->getNameInfo().getAsString();
         }
 
         if (const auto* DSME = llvm::dyn_cast<clang::CXXDependentScopeMemberExpr>(callee)) {  // we do this only to get pack inside std::apply
@@ -675,31 +685,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 call = templ;  // swap them to make it work
             }
         }
-/*
-        if (const auto *ME = dyn_cast<MemberExpr>(Callee)) {
-            if (ME->hasExplicitTemplateArgs()) {
-                const TemplateArgumentLoc *args = ME->getTemplateArgs();
-                for (unsigned i = 0; i < ME->getNumTemplateArgs(); ++i) {
-                    const TemplateArgument &arg = args[i].getArgument();
-                }
-            }
 
-            if (const auto *MD = dyn_cast<CXXMethodDecl>(ME->getMemberDecl())) {
-                if (const auto *FTSI = MD->getTemplateSpecializationInfo()) {
-                    const TemplateArgumentList *args = FTSI->TemplateArguments;
-                    for (const TemplateArgument &arg : args->asArray()) {
-                    }
-                }
-            }
+        const CXXRecordDecl* owner = nullptr;
+        if (const auto *MD = dyn_cast_or_null<CXXMethodDecl>(CE->getDirectCallee())) {
+            const CXXMethodDecl *CanonicalMD = MD->getCanonicalDecl();
+            owner = CanonicalMD->getParent();
         }
 
-        const FunctionDecl *FD = CE->getDirectCallee();
-        if (const auto *FTSI = FD->getTemplateSpecializationInfo()) {
-            const TemplateArgumentList *args = FTSI->TemplateArguments;
-            for (const TemplateArgument &arg : args->asArray()) {
-            }
+        if (owner && mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+            && !str_ending(call.value, "_in") && !str_ending(call.value, "_out") ) {  // add base class name, ports dont get this prefix
+            call.value = genTypeName(owner->getQualifiedNameAsString()) + "___" + call.value;
         }
-*/
+
         return call;
     }
     if (auto* CE = dyn_cast<CXXConstructExpr>(E)) {
@@ -795,7 +792,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return /*cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CCE->getSubExpr())/*}}*/;
     }
     if (auto* SCE = dyn_cast<CStyleCastExpr>(E)) {
-        DEBUG_AST1(" CStyleCastExpr (" + genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())) + ")");
+        DEBUG_AST1(" CStyleCastExpr (" + SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) + ")");
+        if (SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()).find("__remove_reference_t") == 0) {
+            return exprToExpr(SCE->getSubExpr());
+        }
         return cpphdl::Expr{genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
     if (auto* MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
@@ -1107,7 +1107,7 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
         }
     }
 }
-
+/*
 const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx)
 {
     DynTypedNode Node = DynTypedNode::create(*DRE);
@@ -1142,7 +1142,7 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
         return nullptr;
     }
 }
-
+*/
 void Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
 {
     if (!onlyTypes || param.type != cpphdl::Expr::EXPR_NUM) {
@@ -1181,6 +1181,23 @@ bool Helpers::skipStdFunctionType(QualType& QT)
                             }
                         }
                     }
+                    if (II->getName() == "function_ref") {
+                        DEBUG_AST1(" *function_ref*");
+                        const DeclContext *DC = TD->getDeclContext();
+                        if (DC->isNamespace()) {
+                            if (const auto *NS = dyn_cast<NamespaceDecl>(DC)) {
+                                if (NS->getName() == "cpphdl" || NS->getName() == "__1") {
+                                    DEBUG_AST1(" *cpphdl*");
+                                    const TemplateArgument &arg = Spec->getTemplateArgs().get(0);
+                                    if (arg.getKind() == TemplateArgument::Type) {
+                                        QT = arg.getAsType();
+                                        DEBUG_AST1(" (" << QT.getAsString() << ") ");
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1191,7 +1208,7 @@ bool Helpers::skipStdFunctionType(QualType& QT)
             if (TD->getName() == "function") {
                 DEBUG_AST1(" *function*");
                 if (const auto *NS = dyn_cast<NamespaceDecl>(TD->getDeclContext())) {
-                    if (NS->getName() != "std") {
+                    if (NS->getName() == "std" || NS->getName() == "__1") {
                         DEBUG_AST1(" *std*");
                         auto& arg = TST->template_arguments()[0];
                                     if (arg.getKind() == TemplateArgument::Type) {
@@ -1201,6 +1218,20 @@ bool Helpers::skipStdFunctionType(QualType& QT)
                                             DEBUG_AST1(" (" << QT.getAsString() << ") ");
                                             return true;
                                         }
+                                    }
+                    }
+                }
+            }
+            if (TD->getName() == "function_ref") {
+                DEBUG_AST1(" *function_ref*");
+                if (const auto *NS = dyn_cast<NamespaceDecl>(TD->getDeclContext())) {
+                    if (NS->getName() == "cpphdl") {
+                        DEBUG_AST1(" *cpphdl*");
+                        auto& arg = TST->template_arguments()[0];
+                                    if (arg.getKind() == TemplateArgument::Type) {
+                                        QT = arg.getAsType();
+                                        DEBUG_AST1(" (" << QT.getAsString() << ") ");
+                                        return true;
                                     }
                     }
                 }

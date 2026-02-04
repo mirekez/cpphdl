@@ -6,6 +6,7 @@
 namespace cpphdl
 {
 
+
 template<typename T, size_t COUNT>
 struct array
 {
@@ -155,5 +156,6 @@ struct array
 
 template<size_t COUNT>
 struct array<void,COUNT> {};
+
 
 }

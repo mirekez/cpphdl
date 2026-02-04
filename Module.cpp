@@ -36,18 +36,15 @@ bool Module::print(std::ofstream& out)
     out << " (\n";
     out << "    input wire clk\n";
     out << ",   input wire reset\n";
-
-
-//    bool first = true;
     for (auto& port : ports) {
         port.indent = 1;
         out << ",   ";
         if (!port.printPort(out)) {
             return false;
         }
-//        first = false;
     }
     out << ");\n";
+
     for (auto& field : consts) {
         field.indent = 1;
         out << "    parameter ";
@@ -56,6 +53,8 @@ bool Module::print(std::ofstream& out)
         }
     }
     out << "\n";
+
+
     for (auto& field : vars) {
         field.indent = 1;
         if (!field.print(out)) {
@@ -109,6 +108,24 @@ bool Module::print(std::ofstream& out)
     }
 
     out << "\n";
+
+    for (auto& port : currModule->ports) {  // outport initializers
+//        out << port.initializer.debug() << "\n";
+        if (port.initializer.type != Expr::EXPR_NONE
+            && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
+            && port.initializer.sub.size() >= 1 && /*outdated*/ port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
+            /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
+            port.initializer.flags = Expr::FLAG_ASSIGN;
+            std::string s = port.initializer.str();
+            if (!s.empty() && s.back() != '\n') {
+                s += ";\n";
+            }
+            out << "    assign " << port.name << " = " << s << "\n";
+//            out << port.initializer.debug() << "\n";
+        }
+    }
+    out << "\n";
+
     out << "endmodule\n";
     return true;
 }
@@ -128,7 +145,7 @@ bool Module::printMembers(std::ofstream& out)
                     expr.flags = Expr::FLAG_WIRE;
                     for (size_t i=0; i < mod->parameters.size(); ++i) {
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name) {  // port depends on parameter
+                                if (e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
                                     size_t memberParamIndex = -1;
                                     for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
                                         ++memberParamIndex;
@@ -161,6 +178,7 @@ bool Module::printMembers(std::ofstream& out)
             for (auto& param : member.expr.sub[0].sub) {
                 if (param.type == Expr::EXPR_PARAM) {
                     out << (first?"        ":",       ") << param.str() << "\n";
+//                    out << param.debug() << "\n";
                     first = false;
                 }
             }
@@ -188,7 +206,7 @@ bool Module::printMembers(std::ofstream& out)
                     expr.flags = Expr::FLAG_WIRE;
                     for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name) {  // port of mod depends on parameter
+                                if (e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
                                     size_t memberParamIndex = -1;
                                     for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
                                         ++memberParamIndex;
@@ -203,6 +221,8 @@ bool Module::printMembers(std::ofstream& out)
                             });
                     }
                     out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
+//                    out << expr.debug() << "\n";
+//                    out << port.expr.debug() << "\n";
                 }
             }
             else {

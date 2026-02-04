@@ -4,6 +4,8 @@ using namespace cpphdl;
 
 #include "Instr.h"
 
+extern unsigned long sys_clock;
+
 template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
 class DecodeFetch: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
 {
@@ -12,49 +14,14 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
-    struct State
-    {
-        uint32_t pc;
-        uint32_t rs1_val;
-        uint32_t rs2_val;
+private:
+    STATIC STATE state_comb;
+    STATIC byte rs1_out_comb;
+    STATIC byte rs2_out_comb;
+    STATIC bool stall_comb;
 
-        uint32_t imm;
+    __LAZY_COMB(state_comb, STATE&)
 
-        byte valid:1;
-        byte alu_op:4;
-        byte mem_op:2;
-        byte wb_op:3;
-        byte br_op:4;
-        byte funct3:3;
-        byte rd:5;
-        byte rs1:5;
-        byte rs2:5;
-    };//__PACKED;
-
-    STATE state_comb;
-    byte rs1_out_comb;
-    byte rs2_out_comb;
-    bool stall_comb;
-
-public:
-    __PORT(uint32_t)    pc_in;
-    __PORT(bool)        instr_valid_in;
-    __PORT(uint32_t)    instr_in;
-    __PORT(uint32_t)    regs_data0_in;
-    __PORT(uint32_t)    regs_data1_in;
-    __PORT(byte)        rs1_out        = __VAL( rs1_out_comb );
-    __PORT(byte)        rs2_out        = __VAL( rs2_out_comb );
-    __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
-    __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
-    __PORT(bool)        stall_out      = __VAL( stall_comb_func() );
-
-    void _connect()
-    {
-//        std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
-    }
-
-    STATE& state_comb_func()
-    {
         bool tmp1;
         uint32_t tmp2;
         Instr instr = {instr_in()};
@@ -77,10 +44,10 @@ public:
         return state_comb;
     }
 
-    bool stall_comb_func()
-    {
+    __LAZY_COMB(stall_comb, bool&)
+
         // hazard
-        auto state_comb_tmp = state_comb_func();
+        auto& state_comb_tmp = state_comb_func();
         stall_comb = false;
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex
             if (state_reg[0].rd == state_comb_tmp.rs1) {
@@ -101,7 +68,7 @@ public:
 
     void do_decode_fetch()
     {
-        auto state_comb_tmp = state_comb_func();
+        auto& state_comb_tmp = state_comb_func();
 
         // fetch
         if (state_comb_tmp.rs1) {
@@ -143,6 +110,8 @@ public:
         state_reg.next[0].valid = instr_valid_in() && !stall_comb_func();
     }
 
+public:
+
     void _work(bool reset)
     {
         if (reset) {
@@ -158,5 +127,40 @@ public:
     void _strobe()
     {
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
+    }
+
+    __PORT(uint32_t)    pc_in;
+    __PORT(bool)        instr_valid_in;
+    __PORT(uint32_t)    instr_in;
+    __PORT(uint32_t)    regs_data0_in;
+    __PORT(uint32_t)    regs_data1_in;
+    __PORT(byte)        rs1_out        = __VAR( &rs1_out_comb );
+    __PORT(byte)        rs2_out        = __VAR( &rs2_out_comb );
+    __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
+    __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
+    __PORT(bool)        stall_out      = __VAR( &stall_comb_func() );
+
+    struct State
+    {
+        uint32_t pc;
+        uint32_t rs1_val;
+        uint32_t rs2_val;
+
+        uint32_t imm;
+
+        byte valid:1;
+        byte alu_op:4;
+        byte mem_op:2;
+        byte wb_op:3;
+        byte br_op:4;
+        byte funct3:3;
+        byte rd:5;
+        byte rs1:5;
+        byte rs2:5;
+    };//__PACKED;
+
+    void _connect()
+    {
+//        std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
     }
 };

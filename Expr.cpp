@@ -135,6 +135,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
         case EXPR_CALL:
         {
+            if (str_ending(value, "_comb_func")) {
+                std::string str = value;
+                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+            }
             if ((flags&FLAG_NOCALLS)) {
                 return "";
             }
@@ -169,10 +173,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fflush") {
                 return "";
             }
-            if (str_ending(value, "_comb_func")) {
-                std::string str = value;
-                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
-            }
             if (value.find("std::basic_format_string") == 0) {
                 noBrackets = true;
                 func = "";
@@ -205,6 +205,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_OPERATORCALL:
         {
             ASSERT(sub.size());
+            if (sub[0].str().find("__") == 0 || sub[0].str().find("_____") != (size_t)-1
+                || (sub.size() > 1 && (sub[1].str().find("__") == 0 || sub[1].str().find("_____") != (size_t)-1))) {  // all __ vars are hidden
+                return "";
+            }
             auto& vars = currModule->vars;
             std::string left = sub[0].str();
             if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
@@ -218,6 +222,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
             }
             if (value == "[]") {
+                auto& check = sub[0];
+                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                    check = check.sub[0];
+                }
+                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+                    sub[0] = check.sub[0];  // parentheses remover
+                }
+
                 ASSERT(sub.size() >= 2);
                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
             }
@@ -254,28 +266,34 @@ std::string Expr::str(std::string prefix, std::string suffix)
         // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
         {
-//            ASSERT(sub.size()>=1);
+            ASSERT(sub.size());
+            if (value == "_connect" || value == "_strobe") {  // never need this functions
+                return "";
+            }
+            if ((value == "_work" || value == "_work_neg") && sub[0].value != "_this") {  // never need this functions or third party class work
+                return "";
+            }
+            for (auto& e : sub) {
+                e.flags |= flags;
+            }
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
 //            if (sub[0].str() == "this") {
 //                return indent_str + value + "()";
 //            }
-
-            if (sub.size() >= 1 && value == "clr" && sub[0].type != EXPR_VAR/*this*/) { // this means the call of external struct
+            // can we now remove clr and set completely?
+            if (sub.size() >= 1 && value == "clr" && sub[0].value != "_this") {
                 return indent_str + sub[0].str() + "_next = '0";
             }
-            if (sub.size() >= 2 && value == "set" && sub[0].type != EXPR_VAR/*this*/) {
+            if (sub.size() >= 2 && value == "set" && sub[0].value != "_this") {
                 return indent_str + sub[0].str() + "_next = " + sub[1].str();
             }
-            if (sub.size() >= 1 && value == "format" && sub[0].type != EXPR_VAR/*this*/) {
+            if (sub.size() >= 1 && value == "format" && sub[0].value != "_this") {
                 return indent_str + sub[0].str();
             }
-            if (sub.size() >= 3 && value == "bits" && sub[0].type != EXPR_VAR/*this*/) {
+            if (sub.size() >= 3 && value == "bits" && sub[0].value != "_this") {
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
-            }
-            if ((value == "_connect" || value == "_strobe" || value == "_work" || value == "_work_neg") && sub.size() && sub[0].type != EXPR_VAR/*this*/) {  // never need this functions
-                return "";
             }
             if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
                 std::string str = value;
@@ -319,6 +337,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_MEMBER:
         {
             ASSERT(sub.size()==1);
+
+            auto& check = sub[0];
+            while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                check = check.sub[0];
+            }
+            if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+                sub[0] = check.sub[0];  // parentheses remover
+            }
+
             std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
@@ -348,6 +375,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_BINARY:
         {
             ASSERT(sub.size()==2);
+            if ((value == "=" || value == "==") && (sub[0].str().find("__") == 0 || sub[1].str().find("__") == 0
+                || sub[0].str().find("_____") != (size_t)-1 || sub[1].str().find("_____") != (size_t)-1)) {  // all __ vars are hidden
+                return "";
+            }
             auto& vars = currModule->vars;
             std::string left = sub[0].str();
             if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
@@ -355,7 +386,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }) != vars.end()) {
                 value = "<=";
             }
-            if (value == "=" || value == "<=") {
+            if (value == "=" || value == "<=") {  // parentheses remover
                 auto& check = sub[0];
                 while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
                     check = check.sub[0];
@@ -377,6 +408,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
+            if (value == "+") {  // unary + not for Verilog
+                return indent_str + sub[0].str();
+            }
             if (value == "*") {  // we dont need pointers int Verilog
                 return indent_str + sub[0].str();
             }
@@ -394,6 +428,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             sub[2].flags |= flags;
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
+            if (sub.size()) {  // parentheses remover
+                auto& check = sub[0];
+                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                    check = check.sub[0];
+                }
+                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+                    sub[0] = check.sub[0];
+                }
+            }
+
             ASSERT(sub.size()==2);
             {
                 auto& check = sub[0];
@@ -412,6 +456,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             ASSERT(sub.size()==1);
             sub[0].flags |= flags;
             sub[0].indent = indent;
+            str_replace(value, "cpphdl_logic", "");
             if (value.find("logic") == 0) {
                 return indent_str + sub[0].str(prefix, suffix);
             } else
@@ -482,7 +527,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_RETURN:
             if (sub.size() >= 1) {
                 return (flags&FLAG_ASSIGN) ? indent_str + sub[0].str() :
-                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER||(sub[0].type==EXPR_CAST&&sub[0].sub[0].type==EXPR_MEMBER)
+                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER||sub[0].type==EXPR_VAR
+                                ||(sub[0].type==EXPR_CAST&&(sub[0].sub[0].type==EXPR_MEMBER||sub[0].sub[0].type==EXPR_VAR))
                                     ?"":indent_str + sub[0].str()) : indent_str + "return " + sub[0].str());
             }
             else {
@@ -497,6 +543,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_FOR:
         {
             ASSERT(sub.size()==4);
+            if (sub[1].str() == "") {  // all __ vars are hidden
+                return "";
+            }
             std::string str;
             str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
@@ -511,6 +560,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_WHILE:
         {
             ASSERT(sub.size()==2);
+            if (sub[0].str() == "") {  // all __ vars are hidden
+                return "";
+            }
             std::string str;
             str += indent_str + "while (" + sub[0].str() + ") begin\n";
             sub[1].indent = indent + 1;
@@ -525,6 +577,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_IF:
         {
             ASSERT(sub.size()>=1);
+            if (sub[0].str() == "") {
+                return "";
+            }
             std::string param;
             std::string str;
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
@@ -572,11 +627,23 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_BODY:
         {
+            if (value == "lambda") {
+                Expr* body = this;
+                while (body->sub.size() && body->sub[0].sub.size() && body->sub[0].sub[0].type != EXPR_DECL) {  // DECLs always live in BODY
+                    body = &body->sub[0];
+                }
+                if (body->sub.size() && body->sub[0].sub.size() && body->sub[0].sub[0].type == EXPR_DECL && body->sub[0].sub[0].sub.size() > 1) {  // extract Declare from lambda
+                    Expr repl = {"repl", EXPR_RETURN, {body->sub[0].sub[0].sub[1]}};
+                    body->sub.clear();
+                    body->sub.emplace_back(repl);
+                }
+            }
+
             std::string str;
-            for (auto& stmt : sub) {
-                stmt.indent = indent;
-                stmt.flags = flags;
-                auto s = stmt.str(prefix);
+            for (auto& e : sub) {
+                e.indent = indent;
+                e.flags |= flags;
+                auto s = e.str(prefix);
                 if (!s.empty() && s.back() != '\n') {
                     s += ";\n";
                 }
@@ -729,12 +796,13 @@ Expr Expr::simplify()  // open brackets for *(+-)
     while (
         expr.traverseIf( [&](Expr& e) {
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                if ((e.sub[0].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[0].sub.size() >= 1) {
+                if ((e.sub[0].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[0].sub.size() >= 1) {  // remove casts and parentheses left
                     e.sub[0] = e.sub[0].sub[0];
                 }
-                if ((e.sub[1].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[1].sub.size() >= 1) {
+                if ((e.sub[1].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[1].sub.size() >= 1) {  // remove casts and parentheses right
                     e.sub[1] = e.sub[1].sub[0];
                 }
+                // swapping * and +- its places (opening brackets)
                 if ((e.sub[0].type == EXPR_OPERATORCALL || e.sub[0].type == EXPR_BINARY) && (e.sub[0].value == "+" || e.sub[0].value == "-") && e.sub[0].sub.size() == 2) {
                     e = Expr{e.sub[0].value, EXPR_OPERATORCALL, {Expr{"*", EXPR_BINARY, {e.sub[0].sub[0],e.sub[1]}},Expr{"*", EXPR_OPERATORCALL, {e.sub[0].sub[1],e.sub[1]}}}};
                     return true;
@@ -750,11 +818,11 @@ Expr Expr::simplify()  // open brackets for *(+-)
     while (
         expr.traverseIf( [&](Expr& e) {
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                if (e.sub[0].type == EXPR_MEMBER) {
+                if (e.sub[0].type == EXPR_MEMBER || e.sub[0].type == EXPR_VAR) {
                     e = Expr{"0", EXPR_NUM};
                     return true;
                 }
-                if (e.sub[1].type == EXPR_MEMBER) {
+                if (e.sub[1].type == EXPR_MEMBER || e.sub[1].type == EXPR_VAR) {
                     e = Expr{"0", EXPR_NUM};
                     return true;
                 }
@@ -763,58 +831,6 @@ Expr Expr::simplify()  // open brackets for *(+-)
         })
     );
     return expr;
-}
-
-std::string Expr::debug(int debug_indent)
-{
-    std::string str;
-    switch(type) {
-        case EXPR_NONE: str += "EXPR_NONE"; break;
-        case EXPR_DECL: str += "EXPR_DECL"; break;
-        case EXPR_TYPE: str += "EXPR_TYPE"; break;
-        case EXPR_VAR: str += "EXPR_VAR"; break;
-        case EXPR_NUM: str += "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs
-        case EXPR_STRING: str += "EXPR_STRING"; break;
-        case EXPR_PARAM: str += "EXPR_PARAM"; break;
-        case EXPR_PACK: str += "EXPR_PACK"; break;
-        case EXPR_TEMPLATE: str += "EXPR_TEMPLATE"; break;
-        case EXPR_ARRAY: str += "EXPR_ARRAY"; break;
-        case EXPR_CALL: str += "EXPR_CALL"; break;
-        case EXPR_MEMBERCALL: str += "EXPR_MEMBERCALL"; break;
-        case EXPR_OPERATORCALL: str += "EXPR_OPERATORCALL"; break;
-        case EXPR_MEMBER: str += "EXPR_MEMBER"; break;
-        case EXPR_BINARY: str += "EXPR_BINARY"; break;
-        case EXPR_UNARY: str += "EXPR_UNARY"; break;
-        case EXPR_COND: str += "EXPR_COND"; break;
-        case EXPR_INDEX: str += "EXPR_INDEX"; break;
-        case EXPR_CAST: str += "EXPR_CAST"; break;
-        case EXPR_PAREN: str += "EXPR_PAREN"; break;
-        case EXPR_INIT: str += "EXPR_INIT"; break;
-        case EXPR_TRAIT: str += "EXPR_TRAIT"; break;
-        case EXPR_RETURN: str += "EXPR_RETURN"; break;
-        case EXPR_FOR: str += "EXPR_FOR"; break;
-        case EXPR_WHILE: str += "EXPR_WHILE"; break;
-        case EXPR_IF: str += "EXPR_IF"; break;
-        case EXPR_SWITCH: str += "EXPR_SWITCH"; break;
-        case EXPR_BODY: str += "EXPR_BODY"; break;
-        case EXPR_UNKNOWN: str += "EXPR_UNKNOWN"; break;
-        default: str += "EXPR_???"; break;
-    }
-
-    ++debug_indent;
-
-    str += ": " + value + (sub.size()?"(":"");
-    bool first = true;
-    for (auto& expr : sub) {
-        str += (!first ? ", " : " ");
-        if (sub.size() > 1) {
-            str += "\n" + std::string(debug_indent*4, ' ');
-        }
-        str += expr.debug(debug_indent);
-        first = false;
-    }
-    str += (sub.size()?")":"");
-    return str;
 }
 
 std::string Expr::replacePrintFormat(std::string str, bool firstStringInstName)

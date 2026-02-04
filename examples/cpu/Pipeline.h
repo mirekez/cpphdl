@@ -1,6 +1,6 @@
 #pragma once
 
-template<class> struct DEBUG_TYPE;
+extern unsigned long sys_clock;
 
 #include "cpphdl.h"
 
@@ -23,10 +23,7 @@ template<typename OWN_STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
 struct PipelineStage : public cpphdl::Module
 {
     using STATE = OWN_STATE;
-    cpphdl::reg<cpphdl::array<STATE,LENGTH-ID>> state_reg;
-
-    __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
-    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAL( state_reg );
+    STATIC cpphdl::reg<cpphdl::array<STATE,LENGTH-ID>> state_reg;
 
     void _work(bool reset)
     {
@@ -42,6 +39,8 @@ struct PipelineStage : public cpphdl::Module
         state_reg.strobe();
     }
 
+    __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
+    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAR( &state_reg );
 };
 
 template <typename T>
@@ -90,10 +89,10 @@ struct Pipeline<PipelineStages<Ts...>> : public Module
     using STAGES = PipelineStages<Ts...>::type;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
-    STAGES members;
-    array<BIG_STATE,LENGTH> states_comb;
-    array<BIG_STATE,LENGTH>& states_comb_func()
-    {
+    STATIC STAGES members;
+    STATIC array<BIG_STATE,LENGTH> states_comb;
+    __LAZY_COMB(states_comb, array<BIG_STATE,LENGTH>&)
+
         byte y;
         byte x;
         byte offset;
@@ -127,7 +126,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = __VAL( states_comb_func() );
+                        stage.state_in = __VAR( &states_comb_func() );
                         stage._connect();
                     }()
                 ),

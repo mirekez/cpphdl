@@ -6,8 +6,6 @@
 #include "cpphdl.h"
 #include <print>
 
-// we
-
 using namespace cpphdl;
 
 #include <cstdint>
@@ -16,9 +14,9 @@ using namespace cpphdl;
 template<size_t W, size_t EW>
 struct FP
 {
-    static constexpr size_t WIDTH = W;
-    static constexpr size_t EXP_WIDTH = EW;
-    static constexpr size_t MANT_WIDTH = W-EW-1;
+    STATIC constexpr size_t WIDTH = W;
+    STATIC constexpr size_t EXP_WIDTH = EW;
+    STATIC constexpr size_t MANT_WIDTH = W-EW-1;
     using RAW = std::conditional_t<(WIDTH<=8), uint8_t,std::conditional_t<(WIDTH<=16), uint16_t,std::conditional_t<(WIDTH<=32), uint32_t,uint64_t>>>;
 
     union {
@@ -130,29 +128,24 @@ struct std::formatter<FP<W,EW>>
 };
 
 // C++HDL MODEL /////////////////////////////////////////////////////////
+
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
 {
-    reg<array<DTYPE,LENGTH>> out_reg;
+    STATIC reg<array<DTYPE,LENGTH>> out_reg;
 
-    array<DTYPE,LENGTH> conv_comb;
+    STATIC array<DTYPE,LENGTH> conv_comb;
 
-public:
-    __PORT(array<STYPE,LENGTH>)    data_in;
-    __PORT(array<DTYPE,LENGTH>)    data_out = __VAL( USE_REG ? out_reg : conv_comb_func() );
-
-    bool     debugen_in;
-
-    void _connect() {}
-
-    size_t i;
-    array<DTYPE,LENGTH>& conv_comb_func()
+    STATIC array<DTYPE,LENGTH>& conv_comb_func()
     {
+        size_t i;
         for (i=0; i < LENGTH; ++i) {
             data_in()[i].convert(conv_comb[i]);
         }
         return conv_comb;
     }
+
+public:
 
     void _work(bool reset)
     {
@@ -173,6 +166,13 @@ public:
     {
         out_reg.strobe();
     }
+
+    void _connect() {}
+
+    __PORT(array<STYPE,LENGTH>)    data_in;
+    __PORT(array<DTYPE,LENGTH>)    data_out = __EXPR( USE_REG ? out_reg : conv_comb_func() );
+
+    bool     debugen_in;
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -199,17 +199,15 @@ class TestFpConverter : public Module
     FpConverter<STYPE,DTYPE,LENGTH,USE_REG> converter;
 #endif
 
-    double refs[LENGTH];
-    reg<array<STYPE,LENGTH>> out_reg;
-    reg<array<double,LENGTH>> was_refs1;
-    reg<array<double,LENGTH>> was_refs2;
-    reg<u1> can_check1;
-    reg<u1> can_check2;
-    bool error;
+    STATIC double refs[LENGTH];
+    STATIC reg<array<STYPE,LENGTH>> out_reg;
+    STATIC reg<array<double,LENGTH>> was_refs1;
+    STATIC reg<array<double,LENGTH>> was_refs2;
+    STATIC reg<u1> can_check1;
+    STATIC reg<u1> can_check2;
+    STATIC bool error;
 
-    array<DTYPE,LENGTH>    read_data;  // to support Verilator
-
-    size_t i;
+    STATIC array<DTYPE,LENGTH>    read_data;  // to support Verilator
 
 public:
 
@@ -229,7 +227,7 @@ public:
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
-        converter.data_in      = __VAL( out_reg );
+        converter.data_in      = __VAR( &out_reg );
         converter.debugen_in   = debugen_in;
         converter._connect();
 #endif
@@ -237,6 +235,7 @@ public:
 
     void _work(bool reset)
     {
+        size_t i;
         if (reset) {
             error = false;
             can_check1.clr();
