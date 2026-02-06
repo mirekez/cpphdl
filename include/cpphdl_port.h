@@ -3,6 +3,8 @@
 #include <exception>
 #include <functional>
 
+extern unsigned long sys_clock;  // please declare sys_clock in main cpp
+
 namespace cpphdl {
 
 
@@ -30,9 +32,16 @@ public:
         return *this;
     }
 
-    R operator()() const
+    unsigned long prev_call_sys_clock;
+    R* cache = nullptr;
+    R& operator()()
     {
-        return *fn_();
+        if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
+            return *cache;
+        }
+        prev_call_sys_clock = sys_clock;
+        cache = fn_();
+        return *cache;
     }
 
     explicit operator bool() const noexcept
@@ -61,12 +70,15 @@ public:
     template<typename F>
     function_ref(F f) : func_(std::move(f)) {}
 
-    A& operator()() const {
-        A* ptr = func_();
-        if (!ptr) {
-            throw std::runtime_error("function_ref: function returned null");
+    unsigned long prev_call_sys_clock;
+    A* cache = nullptr;
+    A& operator()() {
+        if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
+            return *cache;
         }
-        return *ptr;
+        prev_call_sys_clock = sys_clock;
+        cache = func_();
+        return *cache;
     }
 
     explicit operator bool() const noexcept {

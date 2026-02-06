@@ -190,6 +190,8 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include <sstream>
 #include "../examples/tools.h"
 
+unsigned long sys_clock = -1;
+
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class TestFpConverter : public Module
 {
@@ -227,7 +229,7 @@ public:
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
-        converter.data_in      = __VAR( &out_reg );
+        converter.data_in      = __VAR( out_reg );
         converter.debugen_in   = debugen_in;
         converter._connect();
 #endif
@@ -334,10 +336,11 @@ public:
 
         int cycles = 100000;
         while (--cycles) {
-            _work(0);
             _strobe();
-            _work_neg(0);
+            ++sys_clock;
+            _work(0);
             _strobe_neg();
+            _work_neg(0);
 
             if (error) {
                 break;
@@ -370,13 +373,16 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, 8, 1);
         ok &= VerilatorCompile(__FILE__, "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, 8, 0);
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str()) == 0)
             && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8") + (debug?" --debug":"") + " 1").c_str()) == 0)
         );
+        std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);

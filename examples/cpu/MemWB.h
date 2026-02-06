@@ -67,9 +67,9 @@ public:
     }
 
     __PORT(uint32_t)   mem_data_in;
-    __PORT(uint32_t)   regs_data_out = __VAR( &regs_out_comb_func() );
+    __PORT(uint32_t)   regs_data_out = __VAR( regs_out_comb_func() );
     __PORT(uint8_t)    regs_wr_id_out = __EXPR( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
-    __PORT(bool)       regs_write_out = __VAR( &regs_write_comb_func() );
+    __PORT(bool)       regs_write_out = __VAR( regs_write_comb_func() );
 
     struct State
     {

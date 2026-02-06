@@ -698,33 +698,43 @@ struct MyFrontendAction : public ASTFrontendAction
 
 int main(int argc, const char **argv)
 {
-    int argc1 = 0;
-    char args1[8192];
-    char* argv1[256];
-    char* ptr = args1;
-    bool wasSplitter = false;
-    for (int i=0; i < argc; ++i) {
-        if (i > 0 && !wasSplitter
-            && strstr(argv[i], ".cpp") != argv[i] + strlen(argv[i]) - 4
-            && strstr(argv[i], ".cc") != argv[i] + strlen(argv[i]) - 3
-            && strstr(argv[i], ".h") != argv[i] + strlen(argv[i]) - 2
-            && strstr(argv[i], ".hpp") != argv[i] + strlen(argv[i]) - 4
-            && strcmp(argv[i], "--") != 0) {
-            memcpy(ptr, "--", 2+1);
-            argv1[argc1++] = ptr;
-            ptr += 2+1;
-        }
+    std::vector<const char*> replace;
+    bool saw_double_dash = false;
+    bool injected_double_dash = false;
 
-        if (strcmp(argv[i], "--") == 0) {
-            wasSplitter = true;
-        }
-
-        memcpy(ptr, argv[i], strlen(argv[i])+1);
-        argv1[argc1++] = ptr;
-        ptr += strlen(argv[i])+1;
+    if (argc > 0) {
+        replace.push_back(argv[0]);
     }
 
-    auto ExpectedParser = tooling::CommonOptionsParser::create(argc1, (const char**)argv1, MyToolCategory);
+    for (int i = 1; i < argc; ++i) {
+        const char* arg = argv[i];
+
+        if (std::strcmp(arg, "--") == 0) {
+            saw_double_dash = true;
+            replace.push_back(arg);
+            continue;
+        }
+
+        if (!saw_double_dash) {
+            if (str_ending(arg, ".cpp") || str_ending(arg, ".h") || str_ending(arg, ".cc") || str_ending(arg, ".hpp")) {
+                replace.push_back(arg);
+            } else {
+                if (!injected_double_dash) {
+                    replace.push_back("--");
+                    injected_double_dash = true;
+                }
+                replace.push_back(arg);
+            }
+        } else {
+            replace.push_back(arg);
+        }
+    }
+
+    std::vector<const char*> new_argv = replace;
+    new_argv.push_back(nullptr);
+    int new_argc = (int)new_argv.size() - 1;
+
+    auto ExpectedParser = tooling::CommonOptionsParser::create(new_argc, (const char**)new_argv.data(), MyToolCategory);
     if (!ExpectedParser) {
         llvm::errs() << ExpectedParser.takeError();
         return 1;

@@ -22,8 +22,6 @@ private:
 
     __LAZY_COMB(state_comb, STATE&)
 
-        bool tmp1;
-        uint32_t tmp2;
         Instr instr = {instr_in()};
         if ((instr.raw&3) == 3) {
             instr.decode(state_comb);
@@ -34,10 +32,8 @@ private:
         else {
             instr.decode16(state_comb);
         }
-        tmp1 = instr_valid_in();
-        tmp2 = pc_in();
-        state_comb.valid = tmp1;
-        state_comb.pc = tmp2;
+        state_comb.valid = instr_valid_in();
+        state_comb.pc = pc_in();
 
         rs1_out_comb = state_comb.rs1;  // make them separate
         rs2_out_comb = state_comb.rs2;
@@ -117,7 +113,6 @@ public:
         if (reset) {
             state_reg.next[0].valid = 0;
             state_reg.next[1].valid = 0;
-            state_reg.next[2].valid = 0;
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
         do_decode_fetch();
@@ -134,11 +129,11 @@ public:
     __PORT(uint32_t)    instr_in;
     __PORT(uint32_t)    regs_data0_in;
     __PORT(uint32_t)    regs_data1_in;
-    __PORT(byte)        rs1_out        = __VAR( &rs1_out_comb );
-    __PORT(byte)        rs2_out        = __VAR( &rs2_out_comb );
+    __PORT(byte)        rs1_out        = __VAR( rs1_out_comb );
+    __PORT(byte)        rs2_out        = __VAR( rs2_out_comb );
     __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
     __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
-    __PORT(bool)        stall_out      = __VAR( &stall_comb_func() );
+    __PORT(bool)        stall_out      = __VAR( stall_comb_func() );
 
     struct State
     {

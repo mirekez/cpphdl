@@ -184,16 +184,16 @@ public:
         mem_read_reg.strobe();
     }
 
-    __PORT(bool)      mem_write_out      = __VAR( &mem_write_reg );
-    __PORT(uint32_t)  mem_write_addr_out = __VAR( &mem_addr_reg );
-    __PORT(uint32_t)  mem_write_data_out = __VAR( &mem_data_reg );
-    __PORT(uint8_t)   mem_write_mask_out = __VAR( &mem_mask_reg );
-    __PORT(bool)      mem_read_out       = __VAR( &mem_read_reg );
-    __PORT(uint32_t)  mem_read_addr_out  = __VAR( &mem_addr_reg );
+    __PORT(bool)      mem_write_out      = __VAR( mem_write_reg );
+    __PORT(uint32_t)  mem_write_addr_out = __VAR( mem_addr_reg );
+    __PORT(uint32_t)  mem_write_data_out = __VAR( mem_data_reg );
+    __PORT(uint8_t)   mem_write_mask_out = __VAR( mem_mask_reg );
+    __PORT(bool)      mem_read_out       = __VAR( mem_read_reg );
+    __PORT(uint32_t)  mem_read_addr_out  = __VAR( mem_addr_reg );
 
     __PORT(uint32_t)  alu_result_out    = __EXPR( (uint32_t)alu_result_comb_func() );
-    __PORT(bool)      branch_taken_out  = __VAR( &branch_taken_comb_func() );
-    __PORT(uint32_t)  branch_target_out = __VAR( &branch_target_comb_func() );
+    __PORT(bool)      branch_taken_out  = __VAR( branch_taken_comb_func() );
+    __PORT(uint32_t)  branch_target_out = __VAR( branch_target_comb_func() );
 
     struct State
     {

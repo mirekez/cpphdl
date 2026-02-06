@@ -107,10 +107,10 @@ public:
     __PORT(bool)                         read_in;
     __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
 
-    __PORT(bool)                         empty_out      = __VAR( &empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAR( &full_comb_func() );
+    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
+    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
     __PORT(bool)                         clear_in       = __VAL( false );
-    __PORT(bool)                         afull_out      = __VAR( &afull_reg );
+    __PORT(bool)                         afull_out      = __VAR( afull_reg );
 
     bool                         debugen_in;
 
@@ -120,9 +120,9 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
         mem.write_mask_in = __VAL( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
-        mem.write_addr_in = __VAR( &wp_reg );
+        mem.write_addr_in = __VAR( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = __VAR( &rp_reg );
+        mem.read_addr_in  = __VAR( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem._connect();
@@ -143,6 +143,8 @@ template class Fifo<64,65536,0>;
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
+
+unsigned long sys_clock = -1;
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
@@ -185,15 +187,15 @@ public:
     void _connect()
     {
 #ifndef VERILATOR
-        fifo.write_in        = __VAR( &write_reg );
-        fifo.write_data_in   = __VAR( &data_reg );
-        fifo.read_in         = __VAR( &read_reg );
-        fifo.clear_in        = __VAR( &clear_reg );
+        fifo.write_in        = __VAR( write_reg );
+        fifo.write_data_in   = __VAR( data_reg );
+        fifo.read_in         = __VAR( read_reg );
+        fifo.clear_in        = __VAR( clear_reg );
 
         fifo.__inst_name = __inst_name + "/fifo";
+        fifo.debugen_in  = debugen_in;
         fifo._connect();
 #endif
-        fifo.debugen_in  = debugen_in;
     }
 
     void _work(bool reset)
@@ -316,6 +318,7 @@ public:
         int cycles = 100000;
         while (--cycles) {
             _strobe();
+            ++sys_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);
@@ -324,7 +327,7 @@ public:
                 break;
             }
         }
-        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+        std::print(" {} ({} us)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }
@@ -351,13 +354,16 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Fifo", {"Memory"}, 64, 65536, 1);
         ok &= VerilatorCompile(__FILE__, "Fifo", {"Memory"}, 64, 65536, 0);
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo") + (debug?" --debug":"") + " 0").c_str()) == 0)
             && ((only != -1 && only != 1) || std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo") + (debug?" --debug":"") + " 1").c_str()) == 0)
         );
+        std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);

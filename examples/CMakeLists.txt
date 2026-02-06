@@ -15,7 +15,7 @@ foreach(src ${EXAMPLE_SOURCES})
 
     add_executable(${target_name} ${src})
 
-    target_compile_options(${target_name} PRIVATE "-O2")
+#    target_compile_options(${target_name} PRIVATE "-O2")
 
     set_target_properties(${target_name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples

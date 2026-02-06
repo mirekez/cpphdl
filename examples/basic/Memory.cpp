@@ -67,7 +67,7 @@ public:
 
     __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     __PORT(bool)                      read_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAR( &data_out_comb_func() );
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAR( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -88,6 +88,8 @@ template class Memory<64,65536,0>;
 #include <string>
 #include <sstream>
 #include "../examples/tools.h"
+
+unsigned long sys_clock = -1;
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
@@ -126,16 +128,16 @@ public:
     void _connect()
     {
 #ifndef VERILATOR
-        mem.write_addr_in = __VAR( &write_addr_reg );
-        mem.write_in =      __VAR( &write_reg );
-        mem.write_data_in = __VAR( &data_reg );
+        mem.write_addr_in = __VAR( write_addr_reg );
+        mem.write_in =      __VAR( write_reg );
+        mem.write_data_in = __VAR( data_reg );
         mem.write_mask_in = __VAL( logic<MEM_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
-        mem.read_addr_in =  __VAR( &read_addr_reg );
-        mem.read_in =       __VAR( &read_reg );
+        mem.read_addr_in =  __VAR( read_addr_reg );
+        mem.read_in =       __VAR( read_reg );
         mem.__inst_name = __inst_name + "/mem";
+        mem.debugen_in  = debugen_in;
         mem._connect();
 #endif
-        mem.debugen_in  = debugen_in;
     }
 
     void _work(bool reset)
@@ -269,6 +271,7 @@ public:
         int cycles = 100000;
         while (--cycles) {
             _strobe();
+            ++sys_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);
@@ -277,7 +280,7 @@ public:
                 break;
             }
         }
-        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+        std::print(" {} ({} us)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }
@@ -304,13 +307,16 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Memory", {}, 64, 65536, 1);
         ok &= VerilatorCompile(__FILE__, "Memory", {}, 64, 65536, 0);
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("Memory_64_65536_1/obj_dir/VMemory") + (debug?" --debug":"") + " 0").c_str()) == 0)
             && ((only != -1 && only != 1) || std::system((std::string("Memory_64_65536_0/obj_dir/VMemory") + (debug?" --debug":"") + " 1").c_str()) == 0)
         );
+        std::cout << "Verilator compilation time: {} " << compile_us/2 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);

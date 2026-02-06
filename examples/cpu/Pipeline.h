@@ -40,7 +40,7 @@ struct PipelineStage : public cpphdl::Module
     }
 
     __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
-    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAR( &state_reg );
+    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAR( state_reg );
 };
 
 template <typename T>
@@ -126,7 +126,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = __VAR( &states_comb_func() );
+                        stage.state_in = __VAR( states_comb_func() );
                         stage._connect();
                     }()
                 ),

@@ -39,10 +39,10 @@ public:
         }
 
         if (debugen_in) {
-            std::print("{:s}: port0: @{}({}){}, port1: @{}({}){} @{}({}){}\n", __inst_name,
-                write_addr_in(), write_in(), write_data_in(),
-                read_addr0_in(), read_in(), read_data0_out(),
-                read_addr1_in(), read_in(), read_data1_out());
+            std::print("{:s}: port0: @{}({}){:08x}, port1: @{}({}){:08x} @{}({}){:08x}\n", __inst_name,
+                write_addr_in(), (int)write_in(), write_data_in(),
+                read_addr0_in(), (int)read_in(), read_data0_out(),
+                read_addr1_in(), (int)read_in(), read_data1_out());
         }
 
         if (write_in()) {
@@ -55,6 +55,8 @@ public:
         buffer.apply();
     }
 
+    void _connect() {}
+
     __PORT(uint8_t)      write_addr_in;
     __PORT(bool)         write_in;
     __PORT(DTYPE)        write_data_in;
@@ -66,7 +68,5 @@ public:
     __PORT(DTYPE)        read_data1_out   = __VAR( data1_out_comb_func() );
 
     bool    debugen_in;
-
-    void _connect() {}
 };
 /////////////////////////////////////////////////////////////////////////

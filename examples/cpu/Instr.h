@@ -42,7 +42,7 @@ union Instr
         uint32_t rs1    : 5;
         uint32_t rs2    : 5;
         uint32_t funct7 : 7;
-    } r;
+    }__PACKED r;
     struct
     {
         uint32_t opcode : 7;
@@ -50,7 +50,7 @@ union Instr
         uint32_t funct3 : 3;
         uint32_t rs1    : 5;
         uint32_t imm11_0: 12;
-    } i;
+    }__PACKED i;
     struct
     {
         uint32_t opcode  : 7;
@@ -59,7 +59,7 @@ union Instr
         uint32_t rs1     : 5;
         uint32_t rs2     : 5;
         uint32_t imm11_5 : 7;
-    } s;
+    }__PACKED s;
     struct
     {
         uint32_t opcode    : 7;
@@ -70,13 +70,13 @@ union Instr
         uint32_t rs2       : 5;
         uint32_t imm10_5   : 6;
         uint32_t imm12     : 1;
-    } b;
+    }__PACKED b;
     struct
     {
         uint32_t opcode    : 7;
         uint32_t rd        : 5;
         uint32_t imm31_12  : 20;
-    } u;
+    }__PACKED u;
     struct
     {
         uint32_t opcode     : 7;
@@ -85,7 +85,7 @@ union Instr
         uint32_t imm11      : 1;
         uint32_t imm10_1    : 10;
         uint32_t imm20      : 1;
-    } j;
+    }__PACKED j;
 
     int32_t sext(uint32_t val, unsigned bits)
     {
@@ -215,7 +215,7 @@ union Instr
         uint16_t bits11_10: 2;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
-    } c;
+    }__PACKED c;
     struct {
         uint16_t opcode  : 2;
         uint16_t rd_p    : 3;
@@ -223,14 +223,14 @@ union Instr
         uint16_t rs1     : 5;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
-    } q1;
+    }__PACKED q1;
     struct {
         uint16_t opcode  : 2;
         uint16_t rs2     : 5;
         uint16_t rs1     : 5;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
-    } q2;
+    }__PACKED q2;
 
     uint32_t bit(int lo) { return (raw>>lo) & 1; }
     uint32_t bits(int hi, int lo) { return (raw>>lo) & ((1u<<(hi - lo + 1)) - 1); }

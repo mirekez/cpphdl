@@ -10,8 +10,6 @@
 #include "ExecuteCalc.h"
 #include "MemWB.h"
 
-unsigned long sys_clock = 0;
-
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
     STATIC File<32,32>         regs;
@@ -72,15 +70,15 @@ public:
             instr.decode16(tmp);
         }
 
-        std::print("({}/{}){}: {:s} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({}){:08x} => mem({}/{}@{:08x}){:08x}/{:01x} ({})wop({:x}),r({}){:08x}@{:02d}",
-            (int)valid, (int)df.stall_out(), pc, instr.mnemonic(),
+        std::print("({:d}/{:d}){}: {:s} rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
+            (bool)valid, (bool)df.stall_out(), pc, instr.mnemonic(),
             (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
-            (int)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
+            (bool)state_comb_tmp[0].valid, (uint8_t)state_comb_tmp[0].alu_op, (uint8_t)state_comb_tmp[0].mem_op, (uint8_t)state_comb_tmp[0].br_op, (uint8_t)state_comb_tmp[0].wb_op,
             (int)state_comb_tmp[0].rs1, (int)state_comb_tmp[0].rs2, state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, ex.alu_result_out(), (int)state_comb_tmp[0].rd,
-            (int)ex.branch_taken_out(), ex.branch_target_out(),
-            (int)ex.mem_write_out(), (int)ex.mem_read_out(),
+            (bool)ex.branch_taken_out(), ex.branch_target_out(),
+            (bool)ex.mem_write_out(), (bool)ex.mem_read_out(),
             ex.mem_write_addr_out(), ex.mem_write_data_out(), ex.mem_write_mask_out(),
-            (int)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (int)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
+            (bool)state_comb_tmp[1].valid, (uint8_t)state_comb_tmp[1].wb_op, (bool)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
 
 #ifndef SYNTHESIS
             // delayed by 1 to align EX to WB
@@ -123,7 +121,7 @@ public:
     __PORT(bool)      dmem_read_out;
     __PORT(uint32_t)  dmem_read_addr_out;
     __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAR( &pc );
+    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
     __PORT(uint32_t)  imem_read_data_in;
     bool              debugen_in;
 
@@ -136,8 +134,8 @@ public:
         ex.__inst_name = Pipeline::__inst_name + "/execute_calc";
         wb.__inst_name = Pipeline::__inst_name + "/write_back";
 
-        df.pc_in          = __VAR( &pc );
-        df.instr_valid_in = __VAR( &valid );
+        df.pc_in          = __VAR( pc );
+        df.instr_valid_in = __VAR( valid );
         df.instr_in       = imem_read_data_in;
         df.regs_data0_in  = __EXPR( df.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         df.regs_data1_in  = __EXPR( df.rs2_out() == 0 ? 0 : regs.read_data1_out() );
@@ -188,24 +186,9 @@ public:
 
 #include <tuple>
 #include <utility>
-/*
-template<template<std::size_t, size_t, int> class T, size_t U, size_t M, int N>
-struct indexed_classes {
-private:
-    template<std::size_t... Is>
-    static auto make_tuple(std::index_sequence<Is...>) {
-        return std::tuple<T<Is, U, M>...>{};
-    }
 
-public:
-    using tuple_type = decltype(make_tuple(std::make_index_sequence<N>{}));
-    tuple_type objects;
+unsigned long sys_clock = -1;
 
-    indexed_classes()
-        : objects(make_tuple(std::make_index_sequence<N>{}))
-    {}
-};
-*/
 class TestRiscV : public Module
 {
 //    using TwoMems = indexed_classes<Ram, 32, RAM_SIZE, 2>;
@@ -250,12 +233,6 @@ public:
         riscv.__inst_name = __inst_name + "/riscv";
         riscv._connect();
 
-        riscv.dmem_read_data_in = dmem.read_data_out;
-        riscv.imem_read_data_in = imem.read_data_out;
-        riscv.debugen_in = debugen_in;
-        riscv.__inst_name = __inst_name + "/riscv";
-        riscv._connect();
-
         dmem.read_in = riscv.dmem_read_out;
         dmem.read_addr_in = riscv.dmem_read_addr_out;
         dmem.write_in = riscv.dmem_write_out;
@@ -268,29 +245,29 @@ public:
 
         imem.read_in = __EXPR( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
-        imem.write_in = __VAR( &imem_write );
-        imem.write_addr_in = __VAR( &imem_write_addr );
-        imem.write_data_in = __VAR( &imem_write_data );
+        imem.write_in = __VAR( imem_write );
+        imem.write_addr_in = __VAR( imem_write_addr );
+        imem.write_data_in = __VAR( imem_write_data );
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._connect();
 #else  // connecting Verilator to C++HDL
-        dmem.read_in = __VAR( (bool*)&riscv.dmem_read_out );
-        dmem.read_addr_in = __VAR( (uint32_t*)&riscv.dmem_read_addr_out );
-        dmem.write_in = __VAR( (bool*)&riscv.dmem_write_out );
-        dmem.write_addr_in = __VAR( (uint32_t*)&riscv.dmem_write_addr_out );
-        dmem.write_data_in = __VAR( (uint32_t*)&riscv.dmem_write_data_out );
-        dmem.write_mask_in = __VAR( (uint8_t*)&riscv.dmem_write_mask_out );
+        dmem.read_in = __EXPR( (bool)riscv.dmem_read_out );
+        dmem.read_addr_in = __EXPR( (uint32_t)riscv.dmem_read_addr_out );
+        dmem.write_in = __EXPR( (bool)riscv.dmem_write_out );
+        dmem.write_addr_in = __EXPR( (uint32_t)riscv.dmem_write_addr_out );
+        dmem.write_data_in = __VAR( riscv.dmem_write_data_out );
+        dmem.write_mask_in = __EXPR( (uint8_t)riscv.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._connect();
 
         imem.read_in = __EXPR( !imem_write );
-        imem.read_addr_in = __VAR( (uint32_t*)&riscv.imem_read_addr_out );
-        imem.write_in = __VAR( (bool*)&imem_write );
-        imem.write_addr_in = __VAR( (uint32_t*)&imem_write_addr );
-        imem.write_data_in = __VAR( (uint32_t*)&imem_write_data );
+        imem.read_addr_in = __EXPR( (uint32_t)riscv.imem_read_addr_out );
+        imem.write_in = __VAR( imem_write );
+        imem.write_addr_in = __EXPR( (uint32_t)imem_write_addr );
+        imem.write_data_in = __EXPR( (uint32_t)imem_write_data );
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
@@ -303,8 +280,6 @@ public:
 #ifndef VERILATOR
         riscv._work(reset);
 #else
-        riscv.dmem_read_data_in = dmem.read_data_out();
-        riscv.imem_read_data_in = imem.read_data_out();
 //        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
         riscv.debugen_in    = debugen_in;
 
@@ -313,6 +288,8 @@ public:
         riscv.clk = 1;
         riscv.reset = reset;
         riscv.eval();  // eval of verilator should be in the end
+        riscv.dmem_read_data_in = dmem.read_data_out();
+        riscv.imem_read_data_in = imem.read_data_out();
 #endif
         dmem._work(reset);
         imem._work(reset);
@@ -345,6 +322,9 @@ public:
 
     void _strobe_neg()
     {
+        if (debugen_in) {
+            printf("----- %lx\n", sys_clock);
+        }
     }
 
     bool run(std::string filename, size_t start_offset)
@@ -364,6 +344,7 @@ public:
         __inst_name = "riscv_test";
         _connect();
         _strobe();
+        ++sys_clock;
         _work(1);
         _strobe_neg();
         _work_neg(1);
@@ -384,8 +365,9 @@ public:
         for (size_t addr = 0; addr < RAM_SIZE; ++addr) {
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
-            imem._work(0);
             imem._strobe();
+            ++sys_clock;
+            imem._work(0);
             if (debugen_in) {
                 std::print("{:04x}: {:08x}\n", addr, ram[addr]);
             }
@@ -408,7 +390,7 @@ public:
         std::ifstream a("rv32i.log", std::ios::binary), b("out.txt", std::ios::binary);
         error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
 
-        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+        std::print(" {} ({} us)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }
@@ -435,6 +417,7 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "RiscV", {"File", "Memory",
                   "DecodeFetchint_int_0_0_State_pkg",
                   "ExecuteCalcint_int_0_0_State_pkg",
@@ -449,9 +432,11 @@ int main (int argc, char** argv)
                   "ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
                   "MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State"});
         std::cout << "Executing tests... ===========================================================================\n";
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
         );
+        std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
