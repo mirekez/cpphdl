@@ -319,13 +319,14 @@ public:
 #else
         riscv._work_neg(reset);
 #endif
+
+        if (debugen_in) {
+            printf("----- %lx\n", sys_clock);
+        }
     }
 
     void _strobe_neg()
     {
-        if (debugen_in) {
-            printf("----- %lx\n", sys_clock);
-        }
     }
 
     bool run(std::string filename, size_t start_offset)
@@ -431,7 +432,7 @@ int main (int argc, char** argv)
                   "MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg",
                   "DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
                   "ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
-                  "MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State"});
+                  "MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State"}, {"../../../../include"});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok

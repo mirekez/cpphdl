@@ -22,6 +22,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_DECL:
         {
             ASSERT(sub.size() >= 1);
+            if (value.find("__") == 0 || value.find("_____") != (size_t)-1) {  // hidden var
+                return "";
+            }
             std::string str;
             if (sub[0].type == EXPR_TEMPLATE && sub[0].value == "cpphdl_memory") {
                 ASSERT1(sub[0].sub.size() >= 3, std::string("cpphdl_memory subs size = ") + std::to_string(sub.size()) );
@@ -54,12 +57,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
         case EXPR_VAR:
-            if (value.find("__ONE") == 0) {
-                return indent_str + prefix + "'1" + suffix;
-            }
-            if (value.find("__ZERO") == 0) {
-                return indent_str + prefix + "'0" + suffix;
-            }
+//            if (value.find("__ONE") == 0) {
+//                return indent_str + prefix + "'1" + suffix;
+//            }
+//            if (value.find("__ZERO") == 0) {
+//                return indent_str + prefix + "'0" + suffix;
+//            }
             return indent_str + prefix + escapeIdentifier(value) + suffix;
         case EXPR_STRING:
             return indent_str + prefix + replacePrintFormat(value);

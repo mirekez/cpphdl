@@ -8,7 +8,7 @@ inline int SystemEcho(const char* cmd)
     return std::system(cmd);
 }
 
-inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, auto&&... args)
+inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, auto&&... args)
 {
     std::ostringstream oss;
     ((oss << args << "_"), ...);
@@ -22,6 +22,10 @@ inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::
         std::filesystem::copy_file(std::string("generated/") + module + ".sv", folder_name + "/" + module + ".sv", std::filesystem::copy_options::overwrite_existing);
         modules_list += module + ".sv ";
     }
+    std::string includes_list;
+    for (const auto& include : includes) {
+        includes_list += " -I" + include;
+    }
     size_t n = 0;
     // SV parameters substitution
     ((std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
@@ -29,7 +33,7 @@ inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::
     // running Verilator
     SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc ../../../examples/predef.sv " + modules_list + " " + name + ".sv --exe " + cpp_name + " --top-module " + name +
-        " --Wno-fatal --CFLAGS \"-DVERILATOR -I../../../../include -include V" + name + ".h -DVERILATOR_MODEL=V" + name + " " + compilerParams + "\"").c_str());
+        " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -include V" + name + ".h -DVERILATOR_MODEL=V" + name + " " + compilerParams + "\"").c_str());
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
         "; make -j4 -f V" + name + ".mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };

@@ -363,6 +363,16 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
             QualType QT = MD->getThisType()->getPointeeType();
+
+            auto* CRD = hlp.resolveCXXRecordDecl(QT);
+            if (CRD) {
+                auto st = exportStruct(CRD, hlp);
+                auto ret = hlp.mod->imports.emplace(st.name);
+                if (ret.second) {
+                    currProject->structs.emplace_back(std::move(st));
+                }
+            }
+
             cpphdl::Expr expr = hlp.digQT(QT);
             QT = QT.getDesugaredType(*hlp.ctx); // remove typedefs, aliases, etc.
 //?            QT = QT.getCanonicalType();        // ensure you have the actual canonical form

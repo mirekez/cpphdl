@@ -37,8 +37,8 @@ struct Rv32ic : public Rv32i
 
     void decode(State& state_out)
     {
-        rv16 i = {(uint16_t)raw};
         int32_t imm_tmp;
+        rv16 i = {(uint16_t)raw};
         state_out = {};
 
         if ((raw&3) == 3) {
