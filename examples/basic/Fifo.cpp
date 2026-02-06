@@ -14,23 +14,37 @@ using namespace cpphdl;
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
 {
-    STATIC Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
+public:
+    __PORT(bool)                         write_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
 
-    STATIC bool full_comb;
-    STATIC bool empty_comb;
+    __PORT(bool)                         read_in;
+    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = __EXPR( mem.read_data_out() );
 
-    STATIC reg<u<clog2(FIFO_DEPTH)>> wp_reg;
-    STATIC reg<u<clog2(FIFO_DEPTH)>> rp_reg;
-    STATIC reg<u1> full_reg;
-    STATIC reg<u1> afull_reg;
+    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
+    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
+    __PORT(bool)                         clear_in       = __EXPR( false );
+    __PORT(bool)                         afull_out      = __VAR( afull_reg );
 
-    STATIC bool& full_comb_func()
+    bool                         debugen_in;
+
+private:
+    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
+
+    reg<u<clog2(FIFO_DEPTH)>> wp_reg;
+    reg<u<clog2(FIFO_DEPTH)>> rp_reg;
+    reg<u1> full_reg;
+    reg<u1> afull_reg;
+
+    bool full_comb;
+    bool& full_comb_func()
     {
         full_comb = (wp_reg == rp_reg) && full_reg;
         return full_comb;
     }
 
-    STATIC bool& empty_comb_func()
+    bool empty_comb;
+    bool& empty_comb_func()
     {
         empty_comb = (wp_reg == rp_reg) && !full_reg;
         return empty_comb;
@@ -101,25 +115,13 @@ public:
         afull_reg.strobe();
     }
 
-    __PORT(bool)                         write_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
-
-    __PORT(bool)                         read_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
-
-    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
-    __PORT(bool)                         clear_in       = __VAL( false );
-    __PORT(bool)                         afull_out      = __VAR( afull_reg );
-
-    bool                         debugen_in;
 
     void _connect()
     {
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = __VAL( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.write_mask_in = __EXPR( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
         mem.write_addr_in = __VAR( wp_reg );
         mem.read_in       = read_in;
         mem.read_addr_in  = __VAR( rp_reg );
@@ -150,25 +152,25 @@ template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
 {
 #ifdef VERILATOR
-    STATIC VERILATOR_MODEL fifo;
+    VERILATOR_MODEL fifo;
 #else
-    STATIC Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
+    Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
 #endif
 
-    STATIC reg<u<clog2(FIFO_DEPTH)>>       read_addr;
-    STATIC reg<u<clog2(FIFO_DEPTH)>>       write_addr;
-    STATIC reg<logic<FIFO_WIDTH_BYTES*8>>  data_reg;
-    STATIC reg<u1>     write_reg;
-    STATIC reg<u1>     read_reg;
-    STATIC reg<u1>     was_read;
-    STATIC reg<u1>     clear_reg;
-    STATIC reg<u16>    to_write_cnt;
-    STATIC reg<u16>    to_read_cnt;
-    STATIC bool        error = false;
+    reg<u<clog2(FIFO_DEPTH)>>       read_addr;
+    reg<u<clog2(FIFO_DEPTH)>>       write_addr;
+    reg<logic<FIFO_WIDTH_BYTES*8>>  data_reg;
+    reg<u1>     write_reg;
+    reg<u1>     read_reg;
+    reg<u1>     was_read;
+    reg<u1>     clear_reg;
+    reg<u16>    to_write_cnt;
+    reg<u16>    to_read_cnt;
+    bool        error = false;
 
-    STATIC logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
+    logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
 
-    STATIC std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
+    std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
 public:
     bool                       debugen_in;

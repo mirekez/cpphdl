@@ -14,13 +14,39 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
-private:
-    STATIC STATE state_comb;
-    STATIC byte rs1_out_comb;
-    STATIC byte rs2_out_comb;
-    STATIC bool stall_comb;
+    __PORT(uint32_t)    pc_in;
+    __PORT(bool)        instr_valid_in;
+    __PORT(uint32_t)    instr_in;
+    __PORT(uint32_t)    regs_data0_in;
+    __PORT(uint32_t)    regs_data1_in;
+    __PORT(byte)        rs1_out        = __VAR( rs1_out_comb_func() );
+    __PORT(byte)        rs2_out        = __VAR( rs2_out_comb_func() );
+    __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
+    __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
+    __PORT(bool)        stall_out      = __VAR( stall_comb_func() );
 
-    __LAZY_COMB(state_comb, STATE&)
+    struct State
+    {
+        uint32_t pc;
+        uint32_t rs1_val;
+        uint32_t rs2_val;
+
+        uint32_t imm;
+
+        byte valid:1;
+        byte alu_op:4;
+        byte mem_op:2;
+        byte wb_op:3;
+        byte br_op:4;
+        byte funct3:3;
+        byte rd:5;
+        byte rs1:5;
+        byte rs2:5;
+    };
+
+private:
+
+    __LAZY_COMB(state_comb, STATE)
 
         Instr instr = {instr_in()};
         if ((instr.raw&3) == 3) {
@@ -34,13 +60,22 @@ private:
         }
         state_comb.valid = instr_valid_in();
         state_comb.pc = pc_in();
-
-        rs1_out_comb = state_comb.rs1;  // make them separate
-        rs2_out_comb = state_comb.rs2;
         return state_comb;
     }
 
-    __LAZY_COMB(stall_comb, bool&)
+    __LAZY_COMB(rs1_out_comb, byte)
+        auto& state_tmp = state_comb_func();
+        rs1_out_comb = state_tmp.rs1;
+        return rs1_out_comb;
+    }
+
+    __LAZY_COMB(rs2_out_comb, byte)
+        auto& state_tmp = state_comb_func();
+        rs2_out_comb = state_tmp.rs2;
+        return rs2_out_comb;
+    }
+
+    __LAZY_COMB(stall_comb, bool)
 
         // hazard
         auto& state_comb_tmp = state_comb_func();
@@ -124,35 +159,6 @@ public:
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
     }
 
-    __PORT(uint32_t)    pc_in;
-    __PORT(bool)        instr_valid_in;
-    __PORT(uint32_t)    instr_in;
-    __PORT(uint32_t)    regs_data0_in;
-    __PORT(uint32_t)    regs_data1_in;
-    __PORT(byte)        rs1_out        = __VAR( rs1_out_comb );
-    __PORT(byte)        rs2_out        = __VAR( rs2_out_comb );
-    __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
-    __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
-    __PORT(bool)        stall_out      = __VAR( stall_comb_func() );
-
-    struct State
-    {
-        uint32_t pc;
-        uint32_t rs1_val;
-        uint32_t rs2_val;
-
-        uint32_t imm;
-
-        byte valid:1;
-        byte alu_op:4;
-        byte mem_op:2;
-        byte wb_op:3;
-        byte br_op:4;
-        byte funct3:3;
-        byte rd:5;
-        byte rs1:5;
-        byte rs2:5;
-    };//__PACKED;
 
     void _connect()
     {

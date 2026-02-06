@@ -11,18 +11,29 @@ template<size_t MEM_WIDTH, size_t MEM_DEPTH>
 class File : public Module
 {
     using DTYPE = std::conditional_t<(MEM_WIDTH <= 32),uint32_t,uint64_t>;
+public:
 
-    STATIC DTYPE data0_out_comb;
-    STATIC DTYPE data1_out_comb;
-    STATIC memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
+    __PORT(uint8_t)      write_addr_in;
+    __PORT(bool)         write_in;
+    __PORT(DTYPE)        write_data_in;
 
-    __LAZY_COMB(data0_out_comb, DTYPE&)
+    __PORT(uint8_t)      read_addr0_in;
+    __PORT(uint8_t)      read_addr1_in;
+    __PORT(bool)         read_in          = __EXPR( false );
+    __PORT(DTYPE)        read_data0_out   = __VAR( data0_out_comb_func() );
+    __PORT(DTYPE)        read_data1_out   = __VAR( data1_out_comb_func() );
 
+    bool    debugen_in;
+
+private:
+
+    memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
+
+    __LAZY_COMB(data0_out_comb, DTYPE)
         return data0_out_comb = (logic<MEM_WIDTH>) buffer[read_addr0_in()];
     }
 
-    __LAZY_COMB(data1_out_comb, DTYPE&)
-
+    __LAZY_COMB(data1_out_comb, DTYPE)
         return data1_out_comb = (logic<MEM_WIDTH>) buffer[read_addr1_in()];
     }
 
@@ -55,17 +66,6 @@ public:
         buffer.apply();
     }
 
-    __PORT(uint8_t)      write_addr_in;
-    __PORT(bool)         write_in;
-    __PORT(DTYPE)        write_data_in;
-
-    __PORT(uint8_t)      read_addr0_in;
-    __PORT(uint8_t)      read_addr1_in;
-    __PORT(bool)         read_in          = __EXPR( false );
-    __PORT(DTYPE)        read_data0_out   = __VAR( data0_out_comb_func() );
-    __PORT(DTYPE)        read_data1_out   = __VAR( data1_out_comb_func() );
-
-    bool    debugen_in;
 
     void _connect() {}
 };

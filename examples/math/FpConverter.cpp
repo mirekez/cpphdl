@@ -132,11 +132,15 @@ struct std::formatter<FP<W,EW>>
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
 {
-    STATIC reg<array<DTYPE,LENGTH>> out_reg;
+public:
+    __PORT(array<STYPE,LENGTH>)    data_in;
+    __PORT(array<DTYPE,LENGTH>)    data_out = __EXPR( USE_REG ? out_reg : conv_comb_func() );
 
-    STATIC array<DTYPE,LENGTH> conv_comb;
+private:
+    reg<array<DTYPE,LENGTH>> out_reg;
 
-    STATIC array<DTYPE,LENGTH>& conv_comb_func()
+    array<DTYPE,LENGTH> conv_comb;
+    array<DTYPE,LENGTH>& conv_comb_func()
     {
         size_t i;
         for (i=0; i < LENGTH; ++i) {
@@ -169,8 +173,6 @@ public:
 
     void _connect() {}
 
-    __PORT(array<STYPE,LENGTH>)    data_in;
-    __PORT(array<DTYPE,LENGTH>)    data_out = __EXPR( USE_REG ? out_reg : conv_comb_func() );
 
     bool     debugen_in;
 };
@@ -201,15 +203,15 @@ class TestFpConverter : public Module
     FpConverter<STYPE,DTYPE,LENGTH,USE_REG> converter;
 #endif
 
-    STATIC double refs[LENGTH];
-    STATIC reg<array<STYPE,LENGTH>> out_reg;
-    STATIC reg<array<double,LENGTH>> was_refs1;
-    STATIC reg<array<double,LENGTH>> was_refs2;
-    STATIC reg<u1> can_check1;
-    STATIC reg<u1> can_check2;
-    STATIC bool error;
+    double refs[LENGTH];
+    reg<array<STYPE,LENGTH>> out_reg;
+    reg<array<double,LENGTH>> was_refs1;
+    reg<array<double,LENGTH>> was_refs2;
+    reg<u1> can_check1;
+    reg<u1> can_check2;
+    bool error;
 
-    STATIC array<DTYPE,LENGTH>    read_data;  // to support Verilator
+    array<DTYPE,LENGTH>    read_data;  // to support Verilator
 
 public:
 

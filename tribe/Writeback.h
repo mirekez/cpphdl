@@ -4,10 +4,18 @@ using namespace cpphdl;
 
 class Writeback: public Module
 {
-    STATIC uint32_t regs_out_comb;
-    STATIC bool regs_write_comb;
+public:
+    __PORT(State) state_in;
 
-    __LAZY_COMB(regs_out_comb, uint32_t&)
+    __PORT(uint32_t) alu_result_in;
+    __PORT(uint32_t) mem_data_in;
+    __PORT(uint32_t) regs_data_out = __VAR( regs_out_comb_func() );
+    __PORT(uint8_t ) regs_wr_id_out = __EXPR( state_in().rd );  // NOTE! reg0 is ZERO, never write it
+    __PORT(bool    ) regs_write_out = __VAR( regs_write_comb_func() );
+
+private:
+
+    __LAZY_COMB(regs_out_comb, uint32_t)
         const auto& state_tmp = state_in();
 
         regs_out_comb = 0;
@@ -32,7 +40,7 @@ class Writeback: public Module
         return regs_out_comb;
     }
 
-    __LAZY_COMB(regs_write_comb, bool&)
+    __LAZY_COMB(regs_write_comb, bool)
 
         regs_write_comb = 0;
         if (state_in().wb_op != Wb::WNONE) {
@@ -55,11 +63,4 @@ public:
     {
     }
 
-    __PORT(State) state_in;
-
-    __PORT(uint32_t) alu_result_in;
-    __PORT(uint32_t) mem_data_in;
-    __PORT(uint32_t) regs_data_out = __VAR( regs_out_comb_func() );
-    __PORT(uint8_t ) regs_wr_id_out = __EXPR( state_in().rd );  // NOTE! reg0 is ZERO, never write it
-    __PORT(bool    ) regs_write_out = __VAR( regs_write_comb_func() );
 };

@@ -12,9 +12,24 @@ template<size_t MEM_WIDTH, size_t MEM_DEPTH, int ID = 0>
 class Ram : public Module
 {
     using DTYPE = std::conditional_t<(MEM_WIDTH <= 32),uint32_t,uint64_t>;
+public:
+
+    __PORT(DTYPE)        write_addr_in;
+    __PORT(bool)         write_in;
+    __PORT(DTYPE)        write_data_in;
+    __PORT(uint8_t)      write_mask_in;
+
+    __PORT(DTYPE)        read_addr_in;
+    __PORT(bool)         read_in;
+    __PORT(DTYPE)        read_data_out   = __EXPR( ((DTYPE)ram.read0_data_out() >> (read_addr_in()%4*8)) |
+                     ( read_addr_in()%4 == 0 ? 0 : ((DTYPE)ram.read1_data_out() << (32-read_addr_in()%4*8)) ) );  // combine 2 words on read
+
+    bool    debugen_in;
+
+
+    Memory<MEM_WIDTH/8,MEM_DEPTH,true,ID> ram;
 
 public:
-    STATIC Memory<MEM_WIDTH/8,MEM_DEPTH,true,ID> ram;
 
     void _work(bool reset)
     {
@@ -42,17 +57,5 @@ public:
         ram.debugen_in  = debugen_in;
         ram._connect();
     }
-
-    __PORT(DTYPE)        write_addr_in;
-    __PORT(bool)         write_in;
-    __PORT(DTYPE)        write_data_in;
-    __PORT(uint8_t)      write_mask_in;
-
-    __PORT(DTYPE)        read_addr_in;
-    __PORT(bool)         read_in;
-    __PORT(DTYPE)        read_data_out   = __EXPR( ((DTYPE)ram.read0_data_out() >> (read_addr_in()%4*8)) |
-                     ( read_addr_in()%4 == 0 ? 0 : ((DTYPE)ram.read1_data_out() << (32-read_addr_in()%4*8)) ) );  // combine 2 words on read
-
-    bool    debugen_in;
 };
 /////////////////////////////////////////////////////////////////////////

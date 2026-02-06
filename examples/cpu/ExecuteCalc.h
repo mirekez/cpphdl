@@ -12,25 +12,39 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
+    __PORT(bool)      mem_write_out      = __VAR( mem_write_reg );
+    __PORT(uint32_t)  mem_write_addr_out = __VAR( mem_addr_reg );
+    __PORT(uint32_t)  mem_write_data_out = __VAR( mem_data_reg );
+    __PORT(uint8_t)   mem_write_mask_out = __VAR( mem_mask_reg );
+    __PORT(bool)      mem_read_out       = __VAR( mem_read_reg );
+    __PORT(uint32_t)  mem_read_addr_out  = __VAR( mem_addr_reg );
+
+    __PORT(uint32_t)  alu_result_out    = __EXPR( (uint32_t)alu_result_comb_func() );
+    __PORT(bool)      branch_taken_out  = __VAR( branch_taken_comb_func() );
+    __PORT(uint32_t)  branch_target_out = __VAR( branch_target_comb_func() );
+
+    struct State
+    {
+        uint32_t alu_result;
+        uint32_t debug_alu_a;
+        uint32_t debug_alu_b;
+        uint32_t debug_branch_target;
+        bool     debug_branch_taken;
+    };
+
 private:
-    STATIC bool     branch_taken_comb;
-    STATIC uint32_t branch_target_comb;
-    STATIC uint32_t alu_a_comb;
-    STATIC uint32_t alu_b_comb;
-    STATIC unsigned long alu_result_comb;
+    reg<u32> mem_addr_reg;
+    reg<u32> mem_data_reg;
+    reg<u8>  mem_mask_reg;
+    reg<u1>  mem_write_reg;
+    reg<u1>  mem_read_reg;
 
-    STATIC reg<u32> mem_addr_reg;
-    STATIC reg<u32> mem_data_reg;
-    STATIC reg<u8>  mem_mask_reg;
-    STATIC reg<u1>  mem_write_reg;
-    STATIC reg<u1>  mem_read_reg;
-
-    __LAZY_COMB(alu_a_comb, uint32_t&)
+    __LAZY_COMB(alu_a_comb, uint32_t)
 
         return alu_a_comb = state_in()[ID-1].rs1_val;
     }
 
-    __LAZY_COMB(alu_b_comb, uint32_t&)
+    __LAZY_COMB(alu_b_comb, uint32_t)
 
         return alu_b_comb = (state_in()[ID-1].alu_op == Alu::ADD && state_in()[ID-1].mem_op != Mem::MNONE) ?
                             uint32_t(state_in()[ID-1].imm) :      // load/store address calc uses imm
@@ -38,7 +52,7 @@ private:
                                 state_in()[ID-1].rs2_val : uint32_t(state_in()[ID-1].imm);
     }
 
-    __LAZY_COMB(alu_result_comb, uint64_t&)
+    __LAZY_COMB(alu_result_comb, uint64_t)
 
         uint32_t a;
         uint32_t b;
@@ -71,7 +85,7 @@ private:
         return alu_result_comb;
     }
 
-    __LAZY_COMB(branch_taken_comb, bool&)
+    __LAZY_COMB(branch_taken_comb, bool)
 
         uint64_t alu_result;
         alu_result = alu_result_comb_func();
@@ -93,7 +107,7 @@ private:
         return branch_taken_comb = branch_taken_comb && state_in()[ID-1].valid;
     }
 
-    __LAZY_COMB(branch_target_comb, uint32_t&)
+    __LAZY_COMB(branch_target_comb, uint32_t)
 
         branch_target_comb = 0;
         if (state_in()[ID-1].br_op != Br::BNONE)
@@ -184,25 +198,6 @@ public:
         mem_read_reg.strobe();
     }
 
-    __PORT(bool)      mem_write_out      = __VAR( mem_write_reg );
-    __PORT(uint32_t)  mem_write_addr_out = __VAR( mem_addr_reg );
-    __PORT(uint32_t)  mem_write_data_out = __VAR( mem_data_reg );
-    __PORT(uint8_t)   mem_write_mask_out = __VAR( mem_mask_reg );
-    __PORT(bool)      mem_read_out       = __VAR( mem_read_reg );
-    __PORT(uint32_t)  mem_read_addr_out  = __VAR( mem_addr_reg );
-
-    __PORT(uint32_t)  alu_result_out    = __EXPR( (uint32_t)alu_result_comb_func() );
-    __PORT(bool)      branch_taken_out  = __VAR( branch_taken_comb_func() );
-    __PORT(uint32_t)  branch_target_out = __VAR( branch_target_comb_func() );
-
-    struct State
-    {
-        uint32_t alu_result;
-        uint32_t debug_alu_a;
-        uint32_t debug_alu_b;
-        uint32_t debug_branch_target;
-        bool     debug_branch_taken;
-    };
 
     void _connect()
     {

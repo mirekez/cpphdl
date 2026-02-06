@@ -15,28 +15,27 @@ unsigned long sys_clock = -1;
 
 class RiscV: public Module
 {
-    STATIC Decode          dec;
-    STATIC Execute         exe;
-    STATIC Writeback       wb;
-    STATIC File<32,32>     regs;
+    Decode          dec;
+    Execute         exe;
+    Writeback       wb;
+    File<32,32>     regs;
 
-    STATIC reg<u32>        pc;
-    STATIC reg<u1>         valid;
+    reg<u32>        pc;
+    reg<u1>         valid;
 
-    STATIC reg<u32>        alu_result_reg;
+    reg<u32>        alu_result_reg;
 
-    STATIC reg<array<State,STAGES_NUM-1>> state_reg;
+    reg<array<State,STAGES_NUM-1>> state_reg;
 
     // debug
-    STATIC reg<u32>        debug_alu_a_reg;
-    STATIC reg<u32>        debug_alu_b_reg;
-    STATIC reg<u32>        debug_branch_target_reg;
-    STATIC reg<u1>         debug_branch_taken_reg;
+    reg<u32>        debug_alu_a_reg;
+    reg<u32>        debug_alu_b_reg;
+    reg<u32>        debug_branch_target_reg;
+    reg<u1>         debug_branch_taken_reg;
 
 public:
 
-    STATIC bool stall_comb;
-    __LAZY_COMB(stall_comb, bool&)
+    __LAZY_COMB(stall_comb, bool)
         // hazard
         const auto& dec_state_tmp = dec.state_out();
 
@@ -289,15 +288,15 @@ class TestRiscV : public Module
     Ram<32,RAM_SIZE,1> dmem;
 
 #ifdef VERILATOR
-    STATIC VERILATOR_MODEL riscv;
+    VERILATOR_MODEL riscv;
 #else
-    STATIC RiscV riscv;
+    RiscV riscv;
 #endif
 
-    STATIC bool imem_write = false;
-    STATIC uint32_t imem_write_addr;
-    STATIC uint32_t imem_write_data;
-    STATIC bool error;
+    bool imem_write = false;
+    uint32_t imem_write_addr;
+    uint32_t imem_write_data;
+    bool error;
 
 //    size_t i;
 
@@ -506,19 +505,18 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile(__FILE__, "RiscV", {"File", "Memory",
-                  "DecodeFetchint_int_0_0_State_pkg",
-                  "ExecuteCalcint_int_0_0_State_pkg",
-                  "MemWBint_int_0_0_State_pkg",
+        ok &= VerilatorCompile(__FILE__, "RiscV", {
+                  "State_pkg",
+                  "Rv32ic_rv16_pkg",
                   "Rv32im_pkg",
                   "Alu_pkg",
                   "Br_pkg",
                   "Mem_pkg",
                   "Wb_pkg",
-                  "MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg",
-                  "DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
-                  "ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State",
-                  "MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State"});
+                  "File",
+                  "Decode",
+                  "Execute",
+                  "Writeback"});
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
             && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)

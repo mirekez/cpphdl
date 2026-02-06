@@ -12,10 +12,23 @@
 
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
-    STATIC File<32,32>         regs;
+public:
+    __PORT(bool)      dmem_write_out;
+    __PORT(uint32_t)  dmem_write_addr_out;
+    __PORT(uint32_t)  dmem_write_data_out;
+    __PORT(uint8_t)   dmem_write_mask_out;
+    __PORT(bool)      dmem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out;
+    __PORT(uint32_t)  dmem_read_data_in;
+    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
+    __PORT(uint32_t)  imem_read_data_in;
+    bool              debugen_in;
 
-    STATIC reg<u32>            pc;
-    STATIC reg<u1>             valid;
+private:
+    File<32,32>         regs;
+
+    reg<u32>            pc;
+    reg<u1>             valid;
 
 public:
     void _work(bool reset)
@@ -114,16 +127,6 @@ public:
         valid.strobe();
     }
 
-    __PORT(bool)      dmem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out;
-    __PORT(uint32_t)  dmem_write_data_out;
-    __PORT(uint8_t)   dmem_write_mask_out;
-    __PORT(bool)      dmem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out;
-    __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
-    __PORT(uint32_t)  imem_read_data_in;
-    bool              debugen_in;
 
     void _connect()
     {
@@ -191,21 +194,19 @@ unsigned long sys_clock = -1;
 
 class TestRiscV : public Module
 {
-//    using TwoMems = indexed_classes<Ram, 32, RAM_SIZE, 2>;
-//    TwoMems mems;
-    Ram<32,RAM_SIZE,0> imem;// = std::get<0>(mems.objects);
-    Ram<32,RAM_SIZE,1> dmem;// = std::get<1>(mems.objects);
+    Ram<32,RAM_SIZE> imem;
+    Ram<32,RAM_SIZE> dmem;
 
 #ifdef VERILATOR
-    STATIC VERILATOR_MODEL riscv;
+    VERILATOR_MODEL riscv;
 #else
-    STATIC RiscV riscv;
+    RiscV riscv;
 #endif
 
-    STATIC bool imem_write = false;
-    STATIC uint32_t imem_write_addr;
-    STATIC uint32_t imem_write_data;
-    STATIC bool error;
+    bool imem_write = false;
+    uint32_t imem_write_addr;
+    uint32_t imem_write_data;
+    bool error;
 
 //    size_t i;
 

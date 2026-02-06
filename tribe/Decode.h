@@ -6,8 +6,19 @@ using namespace cpphdl;
 
 class Decode: public Module
 {
-    STATIC State state_comb;
-    __LAZY_COMB(state_comb, State&)
+public:
+    __PORT(uint32_t) pc_in;
+    __PORT(bool)     instr_valid_in;
+    __PORT(uint32_t) instr_in;
+    __PORT(uint32_t) regs_data0_in;
+    __PORT(uint32_t) regs_data1_in;
+    __PORT(u<5>)     rs1_out      =  __VAR( rs1_out_comb_func() );
+    __PORT(u<5>)     rs2_out      =  __VAR( rs2_out_comb_func() );
+    __PORT(State)    state_out    =  __VAR( state_comb_func() );
+
+private:
+
+    __LAZY_COMB(state_comb, State)
 
         Rv32im instr = {{{instr_in()}}};
         instr.decode(state_comb);
@@ -28,14 +39,12 @@ class Decode: public Module
         return state_comb;
     }
 
-    STATIC u<5> rs1_out_comb;
-    __LAZY_COMB(rs1_out_comb, u<5>&)
+    __LAZY_COMB(rs1_out_comb, u<5>)
         rs1_out_comb = state_comb_func().rs1;
         return rs1_out_comb;
     }
 
-    STATIC u<5> rs2_out_comb;
-    __LAZY_COMB(rs2_out_comb, u<5>&)
+    __LAZY_COMB(rs2_out_comb, u<5>)
         rs2_out_comb = state_comb_func().rs2;
         return rs2_out_comb;
     }
@@ -55,12 +64,4 @@ public:
 //    }
 
 
-    __PORT(uint32_t)         pc_in;
-    __PORT(bool)    instr_valid_in;
-    __PORT(uint32_t)      instr_in;
-    __PORT(uint32_t) regs_data0_in;
-    __PORT(uint32_t) regs_data1_in;
-    __PORT(u<5>)     rs1_out   =       __VAR( rs1_out_comb_func() );
-    __PORT(u<5>)     rs2_out   =       __VAR( rs2_out_comb_func() );
-    __PORT(State)     state_out =      __VAR( state_comb_func() );
 };

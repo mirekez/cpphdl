@@ -61,8 +61,9 @@ struct cpphdl_exception
 #define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
 
 #define __LAZY_COMB(name, type...) \
+    type name; \
     inline static unsigned long __prev_sys_clock_##name = -1; \
-    static type name##_func() { \
+    static type& name##_func() { \
         if (__prev_sys_clock_##name == sys_clock) { \
             return name; \
         } \
@@ -73,13 +74,13 @@ struct cpphdl_exception
 #else  // CPPHDL_STATIC
 
 #define __PORT(A...) cpphdl::function_ref<A>
-#define __VAR(a...)  [&]() { return &a; }  // variable
-#define __EXPR(a...) [&]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
-#define __VAL(a...)  [&]() { static auto tmp = a; return &tmp; }  // const
+#define __VAR(a...)  [&]() { return &a; } // variable
+#define __EXPR(a...) [&]() { return a; }  // expression
 
 #define __LAZY_COMB(name, type...) \
+    type name; \
     unsigned long __prev_sys_clock_##name = -1; \
-    type name##_func() { \
+    type& name##_func() { \
         if (__prev_sys_clock_##name == sys_clock) { \
             return name; \
         } \

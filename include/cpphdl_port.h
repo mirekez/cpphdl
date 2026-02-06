@@ -61,14 +61,65 @@ template <typename A>
 class function_ref
 {
 public:
-    using func_type = std::function<A*()>;
+    using func1_type = std::function<A*()>;
+    using func2_type = std::function<A()>;
 
     function_ref() = default;
 
-    function_ref(func_type f) : func_(std::move(f)) {}
+//    function_ref(func1_type&& f) : func1_(std::move(f)) {}
+
+//    function_ref& operator=(function_ref& other)
+//    {
+//        func1_ = other.func1_;
+//        return *this;
+//    }
+
+//    template<typename F>
+//    using result_t = std::remove_cvref_t<std::invoke_result_t<F&>>;
 
     template<typename F>
-    function_ref(F f) : func_(std::move(f)) {}
+    requires std::is_pointer_v<std::invoke_result_t<F&>> //std::is_convertible_v<std::invoke_result_t<F>, A*>
+    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
+    function_ref(F&& f)
+    {
+        func1_ = std::move(f);
+    }
+
+    template<typename F>
+    requires (!std::is_pointer_v<std::invoke_result_t<F&>>) // std::is_convertible_v<std::invoke_result_t<F>, A>
+    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
+    function_ref(F&& f)
+    {
+        func2_ = std::move(f);
+        func1_ = [&]() -> A* {
+            a_tmp = func2_();
+            return &a_tmp;
+        };
+    }
+
+    template<typename F>
+//    requires std::same_as<result_t<F>, A*>
+    requires std::is_pointer_v<std::invoke_result_t<F&>> //std::is_convertible_v<std::invoke_result_t<F>, A*>
+    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
+    function_ref& operator=(const F& f)
+    {
+        func1_ = f;
+        return *this;
+    }
+
+    template<typename F>
+//    requires std::same_as<result_t<F>, A>
+    requires (!std::is_pointer_v<std::invoke_result_t<F&>>) //std::is_convertible_v<std::invoke_result_t<F>, A>
+    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
+    function_ref& operator=(const F& f)
+    {
+        func2_ = f;
+        func1_ = [&]() -> A* {
+            a_tmp = func2_();
+            return &a_tmp;
+        };
+        return *this;
+    }
 
     unsigned long prev_call_sys_clock;
     A* cache = nullptr;
@@ -77,16 +128,18 @@ public:
             return *cache;
         }
         prev_call_sys_clock = sys_clock;
-        cache = func_();
+        cache = func1_();
         return *cache;
     }
 
     explicit operator bool() const noexcept {
-        return static_cast<bool>(func_);
+        return static_cast<bool>(func1_);
     }
 
 private:
-    func_type func_;
+    func1_type func1_;
+    func2_type func2_;
+    A a_tmp;
 };
 
 #endif
