@@ -21,18 +21,13 @@ module File #(
 ,   input wire debugen_in
 );
 
-    logic[31:0] data0_out_comb;
-    logic[31:0] data1_out_comb;
     reg[MEM_WIDTH/32-1:0][31:0] buffer[MEM_DEPTH];
+    logic[31:0] data0_out_comb;
+;
+    logic[31:0] data1_out_comb;
+;
 
 
-
-
-    generate
-    endgenerate
-    assign read_data0_out = data0_out_comb;
-
-    assign read_data1_out = data1_out_comb;
 
 
     task _work (input logic reset);
@@ -44,7 +39,7 @@ module File #(
             end
         end
         if (debugen_in) begin
-            $write("%m: port0: @%x(%x)%x, port1: @%x(%x)%x @%x(%x)%x\n", write_addr_in, write_in, write_data_in, read_addr0_in, read_in, read_data0_out, read_addr1_in, read_in, read_data1_out);
+            $write("%m: port0: @%x(%x)%08x, port1: @%x(%x)%08x @%x(%x)%08x\n", write_addr_in, signed'(32'(write_in)), write_data_in, read_addr0_in, signed'(32'(read_in)), read_data0_out, read_addr1_in, signed'(32'(read_in)), read_data1_out);
         end
         if (write_in) begin
             buffer[write_addr_in] <= write_data_in;
@@ -52,11 +47,14 @@ module File #(
     end
     endtask
 
-    always @(*) begin
+    generate  // _connect
+    endgenerate
+
+    always @(*) begin  // data0_out_comb_func
         data0_out_comb = buffer[(read_addr0_in)];
     end
 
-    always @(*) begin
+    always @(*) begin  // data1_out_comb_func
         data1_out_comb = buffer[(read_addr1_in)];
     end
 
@@ -64,5 +62,10 @@ module File #(
         _work(reset);
 
     end
+
+    assign read_data0_out = data0_out_comb;
+
+    assign read_data1_out = data1_out_comb;
+
 
 endmodule

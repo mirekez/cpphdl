@@ -24,22 +24,13 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 );
 
     logic[31:0] regs_out_comb;
+;
     logic regs_write_comb;
+;
     MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
 
     MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
-
-
-    generate
-    endgenerate
-    assign regs_data_out = regs_out_comb;
-
-    assign regs_wr_id_out = state_in[(ID - 1)].rd;
-
-    assign regs_write_out = regs_write_comb;
-
-    assign state_out = PipelineStage___state_reg;
 
 
     task PipelineStage____work (input logic reset);
@@ -57,7 +48,10 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
     end
     endtask
 
-    always @(*) begin
+    generate  // _connect
+    endgenerate
+
+    always @(*) begin  // regs_out_comb_func
         regs_out_comb = 0;
         if (state_in[(ID - 1)].wb_op == Wb_pkg::PC2) begin
             regs_out_comb = state_in[(ID - 1)].pc + 2;
@@ -95,7 +89,7 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
         end
     end
 
-    always @(*) begin
+    always @(*) begin  // regs_write_comb_func
         regs_write_comb = 0;
         if (state_in[(ID - 1)].wb_op != Wb_pkg::WNONE) begin
             regs_write_comb = state_in[(ID - 1)].valid;
@@ -107,5 +101,14 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 
         PipelineStage___state_reg <= PipelineStage___state_reg_next;
     end
+
+    assign regs_data_out = regs_out_comb;
+
+    assign regs_wr_id_out = state_in[(ID - 1)].rd;
+
+    assign regs_write_out = regs_write_comb;
+
+    assign state_out = PipelineStage___state_reg;
+
 
 endmodule

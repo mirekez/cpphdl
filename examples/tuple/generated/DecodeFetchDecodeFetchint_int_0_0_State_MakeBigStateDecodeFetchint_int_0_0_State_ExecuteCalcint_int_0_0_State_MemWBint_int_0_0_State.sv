@@ -34,24 +34,17 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 );
 
     DecodeFetchint_int_0_0_State state_comb;
+;
     logic[7:0] rs1_out_comb;
+;
     logic[7:0] rs2_out_comb;
+;
     logic stall_comb;
+;
     DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
 
     DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
-
-
-    generate
-    endgenerate
-    assign rs1_out = rs1_out_comb;
-
-    assign rs2_out = rs2_out_comb;
-
-    assign stall_out = stall_comb;
-
-    assign state_out = PipelineStage___state_reg;
 
 
     function logic signed[31:0] Instr___sext (
@@ -470,9 +463,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     end
     endtask
 
-    always @(*) begin
-        logic tmp1;
-        logic[31:0] tmp2;
+    always @(*) begin  // state_comb_func
         Instr instr; instr = {instr_in};
         if ((instr.raw & 3) == 3) begin
             Instr___decode(instr, state_comb);
@@ -483,22 +474,17 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         else begin
             Instr___decode16(instr, state_comb);
         end
-        tmp1 = instr_valid_in;
-        tmp2 = pc_in;
-        state_comb.valid = tmp1;
-        state_comb.pc = tmp2;
-        rs1_out_comb = state_comb.rs1;
-        rs2_out_comb = state_comb.rs2;
+        state_comb.valid = instr_valid_in;
+        state_comb.pc = pc_in;
     end
 
-    always @(*) begin
-        DecodeFetchint_int_0_0_State state_comb_tmp; state_comb_tmp = state_comb;
+    always @(*) begin  // stall_comb_func
         stall_comb = 0;
         if (PipelineStage___state_reg[0].valid && PipelineStage___state_reg[0].wb_op == Wb_pkg::MEM && PipelineStage___state_reg[0].rd != 0) begin
-            if (PipelineStage___state_reg[0].rd == state_comb_tmp.rs1) begin
+            if (PipelineStage___state_reg[0].rd == state_comb.rs1) begin
                 stall_comb = 1;
             end
-            if (PipelineStage___state_reg[0].rd == state_comb_tmp.rs2) begin
+            if (PipelineStage___state_reg[0].rd == state_comb.rs2) begin
                 stall_comb = 1;
             end
         end
@@ -509,38 +495,37 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     task do_decode_fetch ();
     begin: do_decode_fetch
-        DecodeFetchint_int_0_0_State state_comb_tmp; state_comb_tmp = state_comb;
-        if (state_comb_tmp.rs1) begin
-            state_comb_tmp.rs1_val = regs_data0_in;
+        if (state_comb.rs1) begin
+            state_comb.rs1_val = regs_data0_in;
         end
-        if (state_comb_tmp.rs2) begin
-            state_comb_tmp.rs2_val = regs_data1_in;
+        if (state_comb.rs2) begin
+            state_comb.rs2_val = regs_data1_in;
         end
         if (PipelineStage___state_reg[1].valid && PipelineStage___state_reg[1].wb_op == Wb_pkg::ALU && PipelineStage___state_reg[1].rd != 0) begin
-            if (PipelineStage___state_reg[1].rd == state_comb_tmp.rs1) begin
-                state_comb_tmp.rs1_val = state_in[ID + 1].alu_result;
+            if (PipelineStage___state_reg[1].rd == state_comb.rs1) begin
+                state_comb.rs1_val = state_in[ID + 1].alu_result;
             end
-            if (PipelineStage___state_reg[1].rd == state_comb_tmp.rs2) begin
-                state_comb_tmp.rs2_val = state_in[ID + 1].alu_result;
+            if (PipelineStage___state_reg[1].rd == state_comb.rs2) begin
+                state_comb.rs2_val = state_in[ID + 1].alu_result;
             end
         end
         if (PipelineStage___state_reg[0].valid && PipelineStage___state_reg[0].wb_op == Wb_pkg::ALU && PipelineStage___state_reg[0].rd != 0) begin
-            if (PipelineStage___state_reg[0].rd == state_comb_tmp.rs1) begin
-                state_comb_tmp.rs1_val = alu_result_in;
+            if (PipelineStage___state_reg[0].rd == state_comb.rs1) begin
+                state_comb.rs1_val = alu_result_in;
             end
-            if (PipelineStage___state_reg[0].rd == state_comb_tmp.rs2) begin
-                state_comb_tmp.rs2_val = alu_result_in;
+            if (PipelineStage___state_reg[0].rd == state_comb.rs2) begin
+                state_comb.rs2_val = alu_result_in;
             end
         end
         if (PipelineStage___state_reg[1].valid && PipelineStage___state_reg[1].wb_op == Wb_pkg::MEM && PipelineStage___state_reg[1].rd != 0) begin
-            if (PipelineStage___state_reg[1].rd == state_comb_tmp.rs1) begin
-                state_comb_tmp.rs1_val = mem_data_in;
+            if (PipelineStage___state_reg[1].rd == state_comb.rs1) begin
+                state_comb.rs1_val = mem_data_in;
             end
-            if (PipelineStage___state_reg[1].rd == state_comb_tmp.rs2) begin
-                state_comb_tmp.rs2_val = mem_data_in;
+            if (PipelineStage___state_reg[1].rd == state_comb.rs2) begin
+                state_comb.rs2_val = mem_data_in;
             end
         end
-        PipelineStage___state_reg_next[0] = state_comb_tmp;
+        PipelineStage___state_reg_next[0] = state_comb;
         PipelineStage___state_reg_next[0].valid = instr_valid_in && !stall_comb;
     end
     endtask
@@ -559,17 +544,36 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         if (reset) begin
             PipelineStage___state_reg_next[0].valid = 0;
             PipelineStage___state_reg_next[1].valid = 0;
-            PipelineStage___state_reg_next[2].valid = 0;
         end
         PipelineStage____work(reset);
         do_decode_fetch();
     end
     endtask
 
+    generate  // _connect
+    endgenerate
+
+    always @(*) begin  // rs1_out_comb_func
+        rs1_out_comb = state_comb.rs1;
+    end
+
+    always @(*) begin  // rs2_out_comb_func
+        rs2_out_comb = state_comb.rs2;
+    end
+
     always @(posedge clk) begin
         _work(reset);
 
         PipelineStage___state_reg <= PipelineStage___state_reg_next;
     end
+
+    assign rs1_out = rs1_out_comb;
+
+    assign rs2_out = rs2_out_comb;
+
+    assign stall_out = stall_comb;
+
+    assign state_out = PipelineStage___state_reg;
+
 
 endmodule

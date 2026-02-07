@@ -13,7 +13,7 @@
 
 unsigned long sys_clock = -1;
 
-class RiscV: public Module
+class Tribe: public Module
 {
     Decode          dec;
     Execute         exe;
@@ -279,15 +279,15 @@ public:
 #include <tuple>
 #include <utility>
 
-class TestRiscV : public Module
+class TestTribe : public Module
 {
     Ram<32,RAM_SIZE,0> imem;
     Ram<32,RAM_SIZE,1> dmem;
 
 #ifdef VERILATOR
-    VERILATOR_MODEL riscv;
+    VERILATOR_MODEL tribe;
 #else
-    RiscV riscv;
+    Tribe tribe;
 #endif
 
     bool imem_write = false;
@@ -301,38 +301,38 @@ public:
 
     bool      debugen_in;
 
-    TestRiscV(bool debug)
+    TestTribe(bool debug)
     {
         debugen_in = debug;
     }
 
-    ~TestRiscV()
+    ~TestTribe()
     {
     }
 
     void _connect()
     {
 #ifndef VERILATOR
-        riscv._connect();
+        tribe._connect();
 
-        riscv.dmem_read_data_in = dmem.read_data_out;
-        riscv.imem_read_data_in = imem.read_data_out;
-        riscv.debugen_in = debugen_in;
-        riscv.__inst_name = __inst_name + "/riscv";
-        riscv._connect();
+        tribe.dmem_read_data_in = dmem.read_data_out;
+        tribe.imem_read_data_in = imem.read_data_out;
+        tribe.debugen_in = debugen_in;
+        tribe.__inst_name = __inst_name + "/tribe";
+        tribe._connect();
 
-        dmem.read_in = riscv.dmem_read_out;
-        dmem.read_addr_in = riscv.dmem_read_addr_out;
-        dmem.write_in = riscv.dmem_write_out;
-        dmem.write_addr_in = riscv.dmem_write_addr_out;
-        dmem.write_data_in = riscv.dmem_write_data_out;
-        dmem.write_mask_in = riscv.dmem_write_mask_out;
+        dmem.read_in = tribe.dmem_read_out;
+        dmem.read_addr_in = tribe.dmem_read_addr_out;
+        dmem.write_in = tribe.dmem_write_out;
+        dmem.write_addr_in = tribe.dmem_write_addr_out;
+        dmem.write_data_in = tribe.dmem_write_data_out;
+        dmem.write_mask_in = tribe.dmem_write_mask_out;
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._connect();
 
         imem.read_in = __EXPR( !imem_write );
-        imem.read_addr_in = riscv.imem_read_addr_out;
+        imem.read_addr_in = tribe.imem_read_addr_out;
         imem.write_in = __VAR( imem_write );
         imem.write_addr_in = __VAR( imem_write_addr );
         imem.write_data_in = __VAR( imem_write_data );
@@ -341,18 +341,18 @@ public:
         imem.__inst_name = __inst_name + "/imem";
         imem._connect();
 #else  // connecting Verilator to C++HDL
-        dmem.read_in = __EXPR( (bool)riscv.dmem_read_out );
-        dmem.read_addr_in = __EXPR( (uint32_t)riscv.dmem_read_addr_out );
-        dmem.write_in = __EXPR( (bool)riscv.dmem_write_out );
-        dmem.write_addr_in = __EXPR( (uint32_t)riscv.dmem_write_addr_out );
-        dmem.write_data_in = __EXPR( (uint32_t)riscv.dmem_write_data_out );
-        dmem.write_mask_in = __EXPR( (uint8_t)riscv.dmem_write_mask_out );
+        dmem.read_in = __EXPR( (bool)tribe.dmem_read_out );
+        dmem.read_addr_in = __EXPR( (uint32_t)tribe.dmem_read_addr_out );
+        dmem.write_in = __EXPR( (bool)tribe.dmem_write_out );
+        dmem.write_addr_in = __EXPR( (uint32_t)tribe.dmem_write_addr_out );
+        dmem.write_data_in = __EXPR( (uint32_t)tribe.dmem_write_data_out );
+        dmem.write_mask_in = __EXPR( (uint8_t)tribe.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._connect();
 
         imem.read_in = __EXPR( (bool)!imem_write );
-        imem.read_addr_in = __EXPR( (uint32_t)riscv.imem_read_addr_out );
+        imem.read_addr_in = __EXPR( (uint32_t)tribe.imem_read_addr_out );
         imem.write_in = __EXPR( (bool)imem_write );
         imem.write_addr_in = __EXPR( (uint32_t)imem_write_addr );
         imem.write_data_in = __EXPR( (uint32_t)imem_write_data );
@@ -366,18 +366,18 @@ public:
     void _work(bool reset)
     {
 #ifndef VERILATOR
-        riscv._work(reset);
+        tribe._work(reset);
 #else
-//        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
-        riscv.debugen_in    = debugen_in;
+//        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
+        tribe.debugen_in    = debugen_in;
 
-//        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
+//        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
 
-        riscv.clk = 1;
-        riscv.reset = reset;
-        riscv.eval();  // eval of verilator should be in the end
-        riscv.dmem_read_data_in = dmem.read_data_out();
-        riscv.imem_read_data_in = imem.read_data_out();
+        tribe.clk = 1;
+        tribe.reset = reset;
+        tribe.eval();  // eval of verilator should be in the end
+        tribe.dmem_read_data_in = dmem.read_data_out();
+        tribe.imem_read_data_in = imem.read_data_out();
 #endif
         dmem._work(reset);
         imem._work(reset);
@@ -391,7 +391,7 @@ public:
     void _strobe()
     {
 #ifndef VERILATOR
-        riscv._strobe();
+        tribe._strobe();
 #endif
         dmem._strobe();  // we use these modules in Verilator test
         imem._strobe();
@@ -400,11 +400,11 @@ public:
     void _work_neg(bool reset)
     {
 #ifdef VERILATOR
-        riscv.clk = 0;
-        riscv.reset = reset;
-        riscv.eval();  // eval of verilator should be in the end
+        tribe.clk = 0;
+        tribe.reset = reset;
+        tribe.eval();  // eval of verilator should be in the end
 #else
-        riscv._work_neg(reset);
+        tribe._work_neg(reset);
 #endif
 
         if (debugen_in) {
@@ -419,9 +419,9 @@ public:
     bool run(std::string filename, size_t start_offset)
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestRiscV...");
+        std::print("VERILATOR TestTribe...");
 #else
-        std::print("C++HDL TestRiscV...");
+        std::print("C++HDL TestTribe...");
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -430,7 +430,7 @@ public:
         FILE* out = fopen("out.txt", "w");
         fclose(out);
 
-        __inst_name = "riscv_test";
+        __inst_name = "tribe_test";
         _connect();
         _strobe();
         ++sys_clock;
@@ -506,7 +506,8 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        ok &= VerilatorCompile(__FILE__, "RiscV", {
+        auto start = std::chrono::high_resolution_clock::now();
+        ok &= VerilatorCompile(__FILE__, "Tribe", {
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",
@@ -521,16 +522,18 @@ int main (int argc, char** argv)
                   "Execute",
                   "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec"});
         std::cout << "Executing tests... ===========================================================================\n";
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && ((only != -1 && only != 0) || std::system((std::string("Tribe/obj_dir/VTribe") + (debug?" --debug":"") + " 0").c_str()) == 0)
         );
+        std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestRiscV(debug).run("rv32i.bin", 0x37c))
+        && ((only != -1 && only != 0) || TestTribe(debug).run("rv32i.bin", 0x37c))
     );
 }
 

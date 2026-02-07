@@ -18,6 +18,9 @@ bool Module::print(std::ofstream& out)
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
     for (auto& import : imports) {
+        if (std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){ return genTypeName(import).find(m.name) == 0; }) != currProject->modules.end()) {
+            continue;
+        }
         std::string str = genTypeName(import);
         out << "import " << str << "_pkg::*;\n";
     }

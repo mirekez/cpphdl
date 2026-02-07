@@ -31,6 +31,7 @@ module RiscV (
     reg[31:0] pc;
     reg valid;
     MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[3-1:0] Pipeline___states_comb;
+;
 
       logic[7:0] regs__write_addr_in;
       wire regs__write_in;
@@ -94,7 +95,7 @@ module RiscV (
       logic[7:0] Pipeline___members_tuple_1__mem_write_mask_out;
       wire Pipeline___members_tuple_1__mem_read_out;
       logic[31:0] Pipeline___members_tuple_1__mem_read_addr_out;
-      logic[63:0] Pipeline___members_tuple_1__alu_result_out;
+      logic[31:0] Pipeline___members_tuple_1__alu_result_out;
       wire Pipeline___members_tuple_1__branch_taken_out;
       logic[31:0] Pipeline___members_tuple_1__branch_target_out;
       MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[(3)-1:0] Pipeline___members_tuple_1__state_in;
@@ -141,7 +142,7 @@ module RiscV (
     reg valid_next;
 
 
-    always @(*) begin
+    always @(*) begin  // Pipeline___states_comb_func
         logic[7:0] y;
         logic[7:0] x;
         logic[7:0] offset;
@@ -166,57 +167,6 @@ module RiscV (
             offset += ($bits(MemWBint_int_0_0_State_pkg::MemWBint_int_0_0_State)/8);
         end
     end
-
-    generate
-        assign Pipeline___members_tuple_0__state_in = Pipeline___states_comb;
-        assign Pipeline___members_tuple_1__state_in = Pipeline___states_comb;
-        assign Pipeline___members_tuple_2__state_in = Pipeline___states_comb;
-    endgenerate
-    assign dmem_write_out = Pipeline___members_tuple_1__mem_write_out;
-
-    assign dmem_write_addr_out = Pipeline___members_tuple_1__mem_write_addr_out;
-
-    assign dmem_write_data_out = Pipeline___members_tuple_1__mem_write_data_out;
-
-    assign dmem_write_mask_out = Pipeline___members_tuple_1__mem_write_mask_out;
-
-    assign dmem_read_out = Pipeline___members_tuple_1__mem_read_out;
-
-    assign dmem_read_addr_out = Pipeline___members_tuple_1__mem_read_addr_out;
-
-    assign imem_read_addr_out = pc;
-
-
-    generate
-        assign Pipeline___members_tuple_0__pc_in = pc;
-        assign Pipeline___members_tuple_0__instr_valid_in = valid;
-        assign Pipeline___members_tuple_0__instr_in = imem_read_data_in;
-        assign Pipeline___members_tuple_0__regs_data0_in = Pipeline___members_tuple_0__rs1_out == 0 ? 0 : regs__read_data0_out;
-        assign Pipeline___members_tuple_0__regs_data1_in = Pipeline___members_tuple_0__rs2_out == 0 ? 0 : regs__read_data1_out;
-        assign Pipeline___members_tuple_0__alu_result_in = Pipeline___members_tuple_1__alu_result_out;
-        assign Pipeline___members_tuple_0__mem_data_in = dmem_read_data_in;
-        assign Pipeline___members_tuple_2__mem_data_in = dmem_read_data_in;
-        assign regs__read_addr0_in = Pipeline___members_tuple_0__rs1_out;
-        assign regs__read_addr1_in = Pipeline___members_tuple_0__rs2_out;
-        assign regs__write_in = Pipeline___members_tuple_2__regs_write_out;
-        assign regs__write_addr_in = Pipeline___members_tuple_2__regs_wr_id_out;
-        assign regs__write_data_in = Pipeline___members_tuple_2__regs_data_out;
-        assign regs__debugen_in = debugen_in;
-    endgenerate
-    assign dmem_write_out = Pipeline___members_tuple_1__mem_write_out;
-
-    assign dmem_write_addr_out = Pipeline___members_tuple_1__mem_write_addr_out;
-
-    assign dmem_write_data_out = Pipeline___members_tuple_1__mem_write_data_out;
-
-    assign dmem_write_mask_out = Pipeline___members_tuple_1__mem_write_mask_out;
-
-    assign dmem_read_out = Pipeline___members_tuple_1__mem_read_out;
-
-    assign dmem_read_addr_out = Pipeline___members_tuple_1__mem_read_addr_out;
-
-    assign imem_read_addr_out = pc;
-
 
     function logic signed[31:0] Instr___sext (
         input Instr _this
@@ -881,10 +831,8 @@ module RiscV (
         else begin
             Instr___decode16(instr, tmp);
         end
-        if (debugen_in) begin
-            $write("(%x/%x)%x: %s rs%02d/%02d,imm:%08x,rd%02d => (%x)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%x)%08x => mem(%x/%x@%08x)%08x/%01x (%x)wop(%x),r(%x)%08x@%02d", signed'(32'(valid)), signed'(32'(Pipeline___members_tuple_0__stall_out)), pc, Instr___mnemonic(instr), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), signed'(32'(state_comb_tmp[0].valid)), unsigned'(8'(state_comb_tmp[0].alu_op)), unsigned'(8'(state_comb_tmp[0].mem_op)), unsigned'(8'(state_comb_tmp[0].br_op)), unsigned'(8'(state_comb_tmp[0].wb_op)), signed'(32'(state_comb_tmp[0].rs1)), signed'(32'(state_comb_tmp[0].rs2)), state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, Pipeline___members_tuple_1__alu_result_out, signed'(32'(state_comb_tmp[0].rd)), signed'(32'(Pipeline___members_tuple_1__branch_taken_out)), Pipeline___members_tuple_1__branch_target_out, signed'(32'(Pipeline___members_tuple_1__mem_write_out)), signed'(32'(Pipeline___members_tuple_1__mem_read_out)), Pipeline___members_tuple_1__mem_write_addr_out, Pipeline___members_tuple_1__mem_write_data_out, Pipeline___members_tuple_1__mem_write_mask_out, signed'(32'(state_comb_tmp[1].valid)), unsigned'(8'(state_comb_tmp[1].wb_op)), signed'(32'(Pipeline___members_tuple_2__regs_write_out)), Pipeline___members_tuple_2__regs_data_out, Pipeline___members_tuple_2__regs_wr_id_out);
-            $write("\n");
-        end
+        $write("(%d/%d)%x: %s rs%02d/%02d,imm:%08x,rd%02d => (%d)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%d)%08x => mem(%d/%d@%08x)%08x/%01x (%d)wop(%x),r(%d)%08x@%02d", logic'(valid), logic'(Pipeline___members_tuple_0__stall_out), pc, Instr___mnemonic(instr), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), logic'(state_comb_tmp[0].valid), unsigned'(8'(state_comb_tmp[0].alu_op)), unsigned'(8'(state_comb_tmp[0].mem_op)), unsigned'(8'(state_comb_tmp[0].br_op)), unsigned'(8'(state_comb_tmp[0].wb_op)), signed'(32'(state_comb_tmp[0].rs1)), signed'(32'(state_comb_tmp[0].rs2)), state_comb_tmp[0].rs1_val, state_comb_tmp[0].rs2_val, state_comb_tmp[0].imm, Pipeline___members_tuple_1__alu_result_out, signed'(32'(state_comb_tmp[0].rd)), logic'(Pipeline___members_tuple_1__branch_taken_out), Pipeline___members_tuple_1__branch_target_out, logic'(Pipeline___members_tuple_1__mem_write_out), logic'(Pipeline___members_tuple_1__mem_read_out), Pipeline___members_tuple_1__mem_write_addr_out, Pipeline___members_tuple_1__mem_write_data_out, Pipeline___members_tuple_1__mem_write_mask_out, logic'(state_comb_tmp[1].valid), unsigned'(8'(state_comb_tmp[1].wb_op)), logic'(Pipeline___members_tuple_2__regs_write_out), Pipeline___members_tuple_2__regs_data_out, Pipeline___members_tuple_2__regs_wr_id_out);
+        $write("\n");
     end
     endtask
 
@@ -900,7 +848,9 @@ module RiscV (
             valid_next = '0;
             disable _work;
         end
-        debug();
+        if (debugen_in) begin
+            debug();
+        end
         if (dmem_write_addr_out == 287454020 && dmem_write_out) begin
             integer out; out = $fopen("out.txt", "a");
             $fwrite(out, "%c", dmem_write_data_out & 255);
@@ -917,11 +867,52 @@ module RiscV (
     end
     endtask
 
+    generate  // DecodeFetch___DecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_0_3_connect
+    endgenerate
+
+    generate  // ExecuteCalc___ExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_1_3_connect
+    endgenerate
+
+    generate  // MemWB___MemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_2_3_connect
+    endgenerate
+
+    generate  // Pipeline____connect
+        assign Pipeline___members_tuple_0__state_in = Pipeline___states_comb;
+        assign Pipeline___members_tuple_1__state_in = Pipeline___states_comb;
+        assign Pipeline___members_tuple_2__state_in = Pipeline___states_comb;
+    endgenerate
+
+    generate  // _connect
+        assign Pipeline___members_tuple_0__pc_in = pc;
+        assign Pipeline___members_tuple_0__instr_valid_in = valid;
+        assign Pipeline___members_tuple_0__instr_in = imem_read_data_in;
+        assign Pipeline___members_tuple_0__regs_data0_in = Pipeline___members_tuple_0__rs1_out == 0 ? 0 : regs__read_data0_out;
+        assign Pipeline___members_tuple_0__regs_data1_in = Pipeline___members_tuple_0__rs2_out == 0 ? 0 : regs__read_data1_out;
+        assign Pipeline___members_tuple_0__alu_result_in = Pipeline___members_tuple_1__alu_result_out;
+        assign Pipeline___members_tuple_0__mem_data_in = dmem_read_data_in;
+        assign dmem_write_out = Pipeline___members_tuple_1__mem_write_out;
+        assign dmem_write_addr_out = Pipeline___members_tuple_1__mem_write_addr_out;
+        assign dmem_write_data_out = Pipeline___members_tuple_1__mem_write_data_out;
+        assign dmem_write_mask_out = Pipeline___members_tuple_1__mem_write_mask_out;
+        assign dmem_read_out = Pipeline___members_tuple_1__mem_read_out;
+        assign dmem_read_addr_out = Pipeline___members_tuple_1__mem_read_addr_out;
+        assign Pipeline___members_tuple_2__mem_data_in = dmem_read_data_in;
+        assign regs__read_addr0_in = Pipeline___members_tuple_0__rs1_out;
+        assign regs__read_addr1_in = Pipeline___members_tuple_0__rs2_out;
+        assign regs__write_in = Pipeline___members_tuple_2__regs_write_out;
+        assign regs__write_addr_in = Pipeline___members_tuple_2__regs_wr_id_out;
+        assign regs__write_data_in = Pipeline___members_tuple_2__regs_data_out;
+        assign regs__debugen_in = debugen_in;
+    endgenerate
+
     always @(posedge clk) begin
         _work(reset);
 
         pc <= pc_next;
         valid <= valid_next;
     end
+
+    assign imem_read_addr_out = pc;
+
 
 endmodule

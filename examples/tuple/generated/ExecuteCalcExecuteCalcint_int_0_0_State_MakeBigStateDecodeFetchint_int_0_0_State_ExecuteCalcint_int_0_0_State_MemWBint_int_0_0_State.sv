@@ -23,23 +23,28 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,   output logic[7:0] mem_write_mask_out
 ,   output wire mem_read_out
 ,   output logic[31:0] mem_read_addr_out
-,   output logic[63:0] alu_result_out
+,   output logic[31:0] alu_result_out
 ,   output wire branch_taken_out
 ,   output logic[31:0] branch_target_out
 ,   input MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[LENGTH-1:0] state_in
 ,   output ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] state_out
 );
 
-    logic branch_taken_comb;
-    logic[31:0] branch_target_comb;
-    logic[31:0] alu_a_comb;
-    logic[31:0] alu_b_comb;
-    logic[63:0] alu_result_comb;
     reg[31:0] mem_addr_reg;
     reg[31:0] mem_data_reg;
     reg[7:0] mem_mask_reg;
     reg mem_write_reg;
     reg mem_read_reg;
+    logic[31:0] alu_a_comb;
+;
+    logic[31:0] alu_b_comb;
+;
+    logic[63:0] alu_result_comb;
+;
+    logic branch_taken_comb;
+;
+    logic[31:0] branch_target_comb;
+;
     ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
 
@@ -51,38 +56,15 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
 
 
-    generate
-    endgenerate
-    assign mem_write_out = mem_write_reg;
-
-    assign mem_write_addr_out = mem_addr_reg;
-
-    assign mem_write_data_out = mem_data_reg;
-
-    assign mem_write_mask_out = mem_mask_reg;
-
-    assign mem_read_out = mem_read_reg;
-
-    assign mem_read_addr_out = mem_addr_reg;
-
-    assign alu_result_out = alu_result_comb;
-
-    assign branch_taken_out = branch_taken_comb;
-
-    assign branch_target_out = branch_target_comb;
-
-    assign state_out = PipelineStage___state_reg;
-
-
-    always @(*) begin
+    always @(*) begin  // alu_a_comb_func
         alu_a_comb = state_in[ID - 1].rs1_val;
     end
 
-    always @(*) begin
+    always @(*) begin  // alu_b_comb_func
         alu_b_comb = (state_in[ID - 1].alu_op == Alu_pkg::ADD && state_in[ID - 1].mem_op != Mem_pkg::MNONE) ? unsigned'(32'(state_in[ID - 1].imm)) : (state_in[ID - 1].rs2 || state_in[ID - 1].br_op == Br_pkg::BEQZ || state_in[ID - 1].br_op == Br_pkg::BNEZ) ? state_in[ID - 1].rs2_val : unsigned'(32'(state_in[ID - 1].imm));
     end
 
-    always @(*) begin
+    always @(*) begin  // alu_result_comb_func
         logic[31:0] a;
         logic[31:0] b;
         logic[31:0] alu_op;
@@ -144,7 +126,7 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         end
     end
 
-    always @(*) begin
+    always @(*) begin  // branch_taken_comb_func
         logic[63:0] alu_result;
         alu_result = alu_result_comb;
         branch_taken_comb = 0;
@@ -188,7 +170,7 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         branch_taken_comb = branch_taken_comb && state_in[ID - 1].valid;
     end
 
-    always @(*) begin
+    always @(*) begin  // branch_target_comb_func
         branch_target_comb = 0;
         if (state_in[ID - 1].br_op != Br_pkg::BNONE) begin
             if (state_in[ID - 1].br_op == Br_pkg::JAL) begin
@@ -284,6 +266,9 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     end
     endtask
 
+    generate  // _connect
+    endgenerate
+
     always @(posedge clk) begin
         _work(reset);
 
@@ -294,5 +279,26 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
         mem_read_reg <= mem_read_reg_next;
         PipelineStage___state_reg <= PipelineStage___state_reg_next;
     end
+
+    assign mem_write_out = mem_write_reg;
+
+    assign mem_write_addr_out = mem_addr_reg;
+
+    assign mem_write_data_out = mem_data_reg;
+
+    assign mem_write_mask_out = mem_mask_reg;
+
+    assign mem_read_out = mem_read_reg;
+
+    assign mem_read_addr_out = mem_addr_reg;
+
+    assign alu_result_out = unsigned'(32'(alu_result_comb));
+
+    assign branch_taken_out = branch_taken_comb;
+
+    assign branch_target_out = branch_target_comb;
+
+    assign state_out = PipelineStage___state_reg;
+
 
 endmodule

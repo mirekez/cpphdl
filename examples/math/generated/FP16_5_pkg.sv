@@ -7,10 +7,10 @@ typedef struct packed {
     union packed {
         struct packed {
             logic[1-1:0] sign;
-            logic[EXP_WIDTH-1:0] exponent;
-            logic[MANT_WIDTH-1:0] mantissa;
+            logic[5-1:0] exponent;
+            logic[10-1:0] mantissa;
         } _;
-        logic[WIDTH-1:0] raw;
+        logic[16-1:0] raw;
     } _;
 } FP16_5;
 

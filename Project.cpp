@@ -32,6 +32,10 @@ void Project::generate(const std::string& outDir)
     }
 
     for (auto& str : structs) {
+        if (std::find_if(modules.begin(), modules.end(), [&](auto& m){ return str.name.find(m.name) == 0; }) != modules.end()) {
+            continue;
+        }
+
         std::string fname = str.name;
         fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
 
