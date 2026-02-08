@@ -20,6 +20,21 @@ class Tribe: public Module
     Writeback       wb;
     File<32,32>     regs;
 
+public:
+
+    __PORT(bool)      dmem_write_out;
+    __PORT(uint32_t)  dmem_write_addr_out;
+    __PORT(uint32_t)  dmem_write_data_out;
+    __PORT(uint8_t)   dmem_write_mask_out;
+    __PORT(bool)      dmem_read_out;
+    __PORT(uint32_t)  dmem_read_addr_out;
+    __PORT(uint32_t)  dmem_read_data_in;
+    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
+    __PORT(uint32_t)  imem_read_data_in;
+    bool              debugen_in;
+
+private:
+
     reg<u32>        pc;
     reg<u1>         valid;
 
@@ -33,7 +48,6 @@ class Tribe: public Module
     reg<u32>        debug_branch_target_reg;
     reg<u1>         debug_branch_taken_reg;
 
-public:
 
     __LAZY_COMB(stall_comb, bool)
         // hazard
@@ -103,6 +117,8 @@ public:
             }
         }
     }
+
+public:
 
     void _work(bool reset)
     {
@@ -246,16 +262,6 @@ public:
         dmem_read_addr_out  = exe.mem_read_addr_out;
     }
 
-    __PORT(bool)      dmem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out;
-    __PORT(uint32_t)  dmem_write_data_out;
-    __PORT(uint8_t)   dmem_write_mask_out;
-    __PORT(bool)      dmem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out;
-    __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
-    __PORT(uint32_t)  imem_read_data_in;
-    bool              debugen_in;
 };
 
 // C++HDL INLINE TEST ///////////////////////////////////////////////////
