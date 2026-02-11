@@ -36,7 +36,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             else
             if (sub[0].type == EXPR_ARRAY) {
-                str += indent_str + prefix + sub[0].str(std::string(" ") + escapeIdentifier(value) + suffix);  // use name as suffix
+                str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value) + suffix;
             }
             else {
                 str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value) + suffix;
@@ -135,7 +135,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 */
             sub[1].str();  // to calc declSize
             declSize = sub[1].declSize * atoi(sub[0].str().c_str());
-            return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");
+            return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // in structures we need to put outer dimension before
         case EXPR_CALL:
         {
             if (str_ending(value, "_comb_func")) {
