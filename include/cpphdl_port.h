@@ -3,7 +3,7 @@
 #include <exception>
 #include <functional>
 
-extern unsigned long sys_clock;  // please declare sys_clock in main cpp
+extern long sys_clock;  // please declare sys_clock in main cpp
 
 namespace cpphdl {
 
@@ -32,7 +32,7 @@ public:
         return *this;
     }
 
-    unsigned long prev_call_sys_clock;
+    long prev_call_sys_clock;
     R* cache = nullptr;
     R& operator()()
     {
@@ -121,7 +121,7 @@ public:
         return *this;
     }
 
-    unsigned long prev_call_sys_clock;
+    long prev_call_sys_clock = -1;
     A* cache = nullptr;
     A& operator()() {
         if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
@@ -130,10 +130,6 @@ public:
         prev_call_sys_clock = sys_clock;
         cache = func1_();
         return *cache;
-    }
-
-    explicit operator bool() const noexcept {
-        return static_cast<bool>(func1_);
     }
 
 private:

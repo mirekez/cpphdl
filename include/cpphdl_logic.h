@@ -24,13 +24,23 @@ struct logic
     logic() = default;
     logic(const logic& other) = default;
 
-    template<size_t WIDTH1>
-    logic(const logic<WIDTH1>& other)
+//    template<size_t WIDTH1>
+//    logic(const logic<WIDTH1>& other)
+//    {
+//        for (size_t i=0; i < std::min(SIZE,other.SIZE); ++i) {
+//            bytes[i] = other.bytes[i];
+//        }
+//        memset(&bytes[std::min(SIZE,other.SIZE)], 0, SIZE - std::min(SIZE,other.SIZE));
+//    }
+
+    template<typename T>
+    logic(const T& other)
     {
-        for (size_t i=0; i < std::min(SIZE,other.SIZE); ++i) {
-            bytes[i] = other.bytes[i];
+        size_t to_copy = std::min(sizeof(*this),sizeof(other));
+        memcpy(&bytes, &other, to_copy);
+        if (to_copy < sizeof(*this)) {
+            memset((uint8_t*)&bytes + to_copy, 0, sizeof(*this) - to_copy);
         }
-        memset(&bytes[std::min(SIZE,other.SIZE)], 0, SIZE - std::min(SIZE,other.SIZE));
     }
 
     logic(uint64_t other)

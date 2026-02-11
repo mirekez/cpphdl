@@ -91,7 +91,7 @@ template class Memory<64,65536,0>;
 #include <sstream>
 #include "../examples/tools.h"
 
-unsigned long sys_clock = -1;
+long sys_clock = -1;
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
@@ -211,7 +211,8 @@ public:
         mem.write_addr_in = write_addr_reg;
         mem.write_in      = write_reg;
         memcpy(&mem.write_data_in, &data_reg, sizeof(mem.write_data_in));
-        memcpy(&mem.write_mask_in, &__ONES1024, sizeof(mem.write_mask_in));
+        auto tmp = __ONES<MEM_WIDTH_BYTES>();
+        memcpy(&mem.write_mask_in, &tmp, sizeof(mem.write_mask_in));
         mem.read_addr_in  = read_addr_reg;
         mem.read_in       = read_reg;
         mem.debugen_in    = debugen_in;

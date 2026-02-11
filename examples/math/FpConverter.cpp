@@ -192,7 +192,7 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include <sstream>
 #include "../examples/tools.h"
 
-unsigned long sys_clock = -1;
+long sys_clock = -1;
 
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class TestFpConverter : public Module

@@ -4,7 +4,7 @@
 
 using namespace cpphdl;
 
-extern unsigned long sys_clock;
+extern long sys_clock;
 
 // C++HDL MODEL /////////////////////////////////////////////////////////
 

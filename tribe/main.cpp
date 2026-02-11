@@ -11,7 +11,7 @@
 #include "Execute.h"
 #include "Writeback.h"
 
-unsigned long sys_clock = -1;
+long sys_clock = -1;
 
 class Tribe: public Module
 {

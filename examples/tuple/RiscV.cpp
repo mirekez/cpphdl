@@ -190,7 +190,7 @@ public:
 #include <tuple>
 #include <utility>
 
-unsigned long sys_clock = -1;
+long sys_clock = -1;
 
 class TestRiscV : public Module
 {

@@ -62,7 +62,7 @@ struct cpphdl_exception
 
 #define __LAZY_COMB(name, type...) \
     type name; \
-    inline static unsigned long __prev_sys_clock_##name = -1; \
+    inline static long __prev_sys_clock_##name = -1; \
     static type& name##_func() { \
         if (__prev_sys_clock_##name == sys_clock) { \
             return name; \
@@ -79,7 +79,7 @@ struct cpphdl_exception
 
 #define __LAZY_COMB(name, type...) \
     type name; \
-    unsigned long __prev_sys_clock_##name = -1; \
+    long __prev_sys_clock_##name = -1; \
     type& name##_func() { \
         if (__prev_sys_clock_##name == sys_clock) { \
             return name; \

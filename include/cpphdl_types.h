@@ -62,6 +62,7 @@ struct u
         logic<WIDTH> bs;
         memcpy(&bs, value, sizeof(bs));
     }
+
 } __PACKED;
 
 
@@ -130,3 +131,17 @@ DEFINE_REGULAR_TYPE_CLASS(int8_t, s8, 8, "{:+4}");
 DEFINE_REGULAR_TYPE_CLASS(int16_t, s16, 16, "{:+6}");
 DEFINE_REGULAR_TYPE_CLASS(int32_t, s32, 32, "{:+11}");
 DEFINE_REGULAR_TYPE_CLASS(int64_t, s64, 64, "{:+21}");
+
+template<size_t WIDTH>
+struct __ONES
+{
+    unsigned char data[WIDTH/8];
+    constexpr __ONES() { memset(data, 0xFF, sizeof(data)); }
+};
+
+template<size_t WIDTH>
+struct __ZEROS
+{
+    unsigned char data[WIDTH/8];
+    constexpr __ZEROS() { memset(data, 0x00, sizeof(data)); }
+};

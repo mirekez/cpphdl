@@ -63,6 +63,7 @@ bool Module::print(std::ofstream& out)
         if (!field.print(out)) {
             return false;
         }
+//        out << field.expr.debug() << "\n";
     }
     out << "\n";
 

@@ -2,7 +2,7 @@
 
 using namespace cpphdl;
 
-extern unsigned long sys_clock;
+extern long sys_clock;
 
 template<typename STATE, typename BIG_STATE, size_t ID, size_t LENGTH>
 class ExecuteCalc: public PipelineStage<STATE,BIG_STATE,ID,LENGTH>
