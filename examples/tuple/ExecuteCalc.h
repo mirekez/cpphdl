@@ -127,48 +127,48 @@ private:
 
     void do_execute()
     {
-        state_reg.next[0].alu_result = alu_result_comb_func();
-        state_reg.next[0].debug_alu_a = alu_a_comb_func();
-        state_reg.next[0].debug_alu_b = alu_b_comb_func();
-        state_reg.next[0].debug_branch_target = branch_target_comb_func();
-        state_reg.next[0].debug_branch_taken = branch_taken_comb_func();
+        state_reg._next[0].alu_result = alu_result_comb_func();
+        state_reg._next[0].debug_alu_a = alu_a_comb_func();
+        state_reg._next[0].debug_alu_b = alu_b_comb_func();
+        state_reg._next[0].debug_branch_target = branch_target_comb_func();
+        state_reg._next[0].debug_branch_taken = branch_taken_comb_func();
     }
 
     void start_memory()
     {
-        mem_addr_reg.next = alu_result_comb_func();
-        mem_data_reg.next = state_in()[ID-1].rs2_val;
+        mem_addr_reg._next = alu_result_comb_func();
+        mem_data_reg._next = state_in()[ID-1].rs2_val;
 
-        mem_write_reg.next = 0;
-        mem_mask_reg.next = 0;
+        mem_write_reg._next = 0;
+        mem_mask_reg._next = 0;
         if (state_in()[ID-1].mem_op == Mem::STORE && state_in()[ID-1].valid) {  // parallel case, full case
             switch (state_in()[ID-1].funct3)
             {
                 case 0b000: // LB
-                    mem_write_reg.next = state_in()[ID-1].valid;
-                    mem_mask_reg.next = 0x1;
+                    mem_write_reg._next = state_in()[ID-1].valid;
+                    mem_mask_reg._next = 0x1;
                     break;
                 case 0b001: // LH
-                    mem_write_reg.next = state_in()[ID-1].valid;
-                    mem_mask_reg.next = 0x3;
+                    mem_write_reg._next = state_in()[ID-1].valid;
+                    mem_mask_reg._next = 0x3;
                     break;
                 case 0b010: // LW
-                    mem_write_reg.next = state_in()[ID-1].valid;
-                    mem_mask_reg.next = 0xF;
+                    mem_write_reg._next = state_in()[ID-1].valid;
+                    mem_mask_reg._next = 0xF;
                     break;
             }
         }
 
-        mem_read_reg.next = 0;
+        mem_read_reg._next = 0;
         if (state_in()[ID-1].mem_op == Mem::LOAD && state_in()[ID-1].valid)
         {
             switch (state_in()[ID-1].funct3)
             {
-                case 0b000: mem_read_reg.next = 1; break;
-                case 0b001: mem_read_reg.next = 1; break;
-                case 0b010: mem_read_reg.next = 1; break;
-                case 0b100: mem_read_reg.next = 1; break;
-                case 0b101: mem_read_reg.next = 1; break;
+                case 0b000: mem_read_reg._next = 1; break;
+                case 0b001: mem_read_reg._next = 1; break;
+                case 0b010: mem_read_reg._next = 1; break;
+                case 0b100: mem_read_reg._next = 1; break;
+                case 0b101: mem_read_reg._next = 1; break;
                 default: break;
             }
         }
@@ -183,7 +183,7 @@ public:
             mem_read_reg.clr();
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
-        state_reg.next[0] = {};
+        state_reg._next[0] = {};
         do_execute();
         start_memory();
     }

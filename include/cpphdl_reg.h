@@ -8,10 +8,10 @@ namespace cpphdl
 template<typename T=u1>
 struct reg : public T
 {
-    T next;
+    T _next;
     void strobe()
     {
-        *static_cast<T*>(this) = next;
+        *static_cast<T*>(this) = _next;
     }
 
     T operator=(T val)
@@ -21,13 +21,13 @@ struct reg : public T
 
     void set()
     {
-        next = *static_cast<T*>(this);
+        _next = *static_cast<T*>(this);
     }
 
     void set(const T& t)
     {
         *static_cast<T*>(this) = t;
-        next = t;
+        _next = t;
     }
 
     void clr()

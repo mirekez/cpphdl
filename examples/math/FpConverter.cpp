@@ -154,7 +154,7 @@ public:
     void _work(bool reset)
     {
         if (USE_REG) {
-            out_reg.next = conv_comb_func();
+            out_reg._next = conv_comb_func();
         }
 
         if (reset) {
@@ -275,12 +275,12 @@ public:
 
         for (i=0; i < LENGTH; ++i) {
             refs[i] = ((double)random() - RAND_MAX/2) / (RAND_MAX/2);
-            out_reg.next[i].from_double(refs[i]);
+            out_reg._next[i].from_double(refs[i]);
         }
-        was_refs1.next = refs;
-        was_refs2.next = was_refs1;
-        can_check1.next = 1;
-        can_check2.next = can_check1;
+        was_refs1._next = refs;
+        was_refs2._next = was_refs1;
+        can_check1._next = 1;
+        can_check2._next = can_check1;
 
 #ifndef VERILATOR
         converter._work(reset);

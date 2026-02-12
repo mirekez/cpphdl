@@ -34,7 +34,7 @@ struct PipelineStage : public cpphdl::Module
         size_t i;
 
         for (i=1; i < LENGTH-ID; ++i) {
-            state_reg.next[i] = state_reg[i-1];
+            state_reg._next[i] = state_reg[i-1];
         }
     }
 

@@ -63,7 +63,7 @@ public:
         }
 
         if (!SHOWAHEAD) {
-            data_out_reg.next = buffer[read_addr_in()];
+            data_out_reg._next = buffer[read_addr_in()];
         }
     }
 
@@ -174,35 +174,35 @@ public:
             error = true;
         }
 
-        write_reg.next = 0;
+        write_reg._next = 0;
         if (to_write_cnt) {
-            write_addr_reg.next = random()%MEM_DEPTH;
-            write_reg.next = 1;
+            write_addr_reg._next = random()%MEM_DEPTH;
+            write_reg._next = 1;
             for (size_t i=0; i < MEM_WIDTH_BYTES/4; ++i) {
-                data_reg.next.bits(i*32+31,i*32) = random();
+                data_reg._next.bits(i*32+31,i*32) = random();
             }
-            to_write_cnt.next = to_write_cnt - 1;
+            to_write_cnt._next = to_write_cnt - 1;
 
-            to_read_cnt.next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
+            to_read_cnt._next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
         }
         if (write_reg) {
             mem_copy[write_addr_reg] = data_reg;
         }
 
-        read_reg.next = 0;
+        read_reg._next = 0;
         if (to_read_cnt) {
-            read_addr_reg.next = random()%MEM_DEPTH;
-            to_read_cnt.next = to_read_cnt - 1;
+            read_addr_reg._next = random()%MEM_DEPTH;
+            to_read_cnt._next = to_read_cnt - 1;
             if (!SHOWAHEAD) {
-                read_reg.next = 1;
+                read_reg._next = 1;
             }
         }
         if (!to_write_cnt && !to_read_cnt) {
-            to_write_cnt.next = random()%100;
+            to_write_cnt._next = random()%100;
         }
 
         if (was_read) {
-            was_read_addr.next = read_addr_reg;
+            was_read_addr._next = read_addr_reg;
         }
 
 #ifndef VERILATOR

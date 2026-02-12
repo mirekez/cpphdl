@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <set>
 
 namespace cpphdl
 {
@@ -22,6 +23,7 @@ struct Struct
     std::vector<Field> fields;
     std::string origName;
     std::vector<Field> parameters;  // constexpr inside struct
+    std::set<std::string> imports;
 
     int indent = 0;
     int alignNo = 0;  // count alignment insertions

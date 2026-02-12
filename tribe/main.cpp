@@ -74,13 +74,13 @@ private:
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem/Wb alu
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg.next[0].rs1_val = alu_result_reg;
+                state_reg._next[0].rs1_val = alu_result_reg;
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS1\n", (uint32_t)alu_result_reg);
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg.next[0].rs2_val = alu_result_reg;
+                state_reg._next[0].rs2_val = alu_result_reg;
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", (uint32_t)alu_result_reg);
                 }
@@ -89,13 +89,13 @@ private:
 
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
             if (dec_state_tmp.rs1 == state_reg[0].rd) {
-                state_reg.next[0].rs1_val = exe.alu_result_out();
+                state_reg._next[0].rs1_val = exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS1\n", (uint32_t)exe.alu_result_out());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[0].rd) {
-                state_reg.next[0].rs2_val = exe.alu_result_out();
+                state_reg._next[0].rs2_val = exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
                 }
@@ -104,13 +104,13 @@ private:
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem/Wb mem
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg.next[0].rs1_val = dmem_read_data_in();
+                state_reg._next[0].rs1_val = dmem_read_data_in();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS1\n", (uint32_t)dmem_read_data_in());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg.next[0].rs2_val = dmem_read_data_in();
+                state_reg._next[0].rs2_val = dmem_read_data_in();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", (uint32_t)dmem_read_data_in());
                 }
@@ -133,19 +133,19 @@ public:
         }
 
         if (valid && !stall_comb_func()) {
-            pc.next = pc + ((dec.instr_in()&3)==3?4:2);
+            pc._next = pc + ((dec.instr_in()&3)==3?4:2);
         }
         if (state_reg[0].valid && exe.branch_taken_out()) {
-            pc.next = exe.branch_target_out();
+            pc._next = exe.branch_target_out();
         }
 
-        valid.next = true;
+        valid._next = true;
 
-        state_reg.next[0] = dec.state_out();
-        state_reg.next[0].valid = dec.instr_valid_in() && !stall_comb_func();
+        state_reg._next[0] = dec.state_out();
+        state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func();
         forward();
-        state_reg.next[1] = state_reg[0];
-        alu_result_reg.next = exe.alu_result_out();
+        state_reg._next[1] = state_reg[0];
+        alu_result_reg._next = exe.alu_result_out();
         debug_branch_target_reg = exe.branch_target_out();
         debug_branch_taken_reg = exe.branch_taken_out();
 
@@ -155,8 +155,8 @@ public:
         wb._work(reset);
 
         if (reset) {
-            state_reg.next[0].valid = 0;
-            state_reg.next[1].valid = 0;
+            state_reg._next[0].valid = 0;
+            state_reg._next[1].valid = 0;
             pc.clr();
             valid.clr();
         }
@@ -202,8 +202,8 @@ public:
         }
             //
         std::print(": {}\n", interpret);
-        debug_alu_a_reg.next = exe.debug_alu_a_out();
-        debug_alu_b_reg.next = exe.debug_alu_b_out();
+        debug_alu_a_reg._next = exe.debug_alu_a_out();
+        debug_alu_b_reg._next = exe.debug_alu_b_out();
         debug_branch_target_reg = exe.branch_target_out();
 #else
         std::print("\n");

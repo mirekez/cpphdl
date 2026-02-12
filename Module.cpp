@@ -70,7 +70,7 @@ bool Module::print(std::ofstream& out)
     printMembers(out);
 
     out << "\n";
-    for (auto& field : vars) {
+    for (auto& field : vars) {  // strobe
         field.indent = 1;
         if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
             if (!field.print(out, "_next")) {

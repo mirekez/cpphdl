@@ -31,7 +31,7 @@ void Project::generate(const std::string& outDir)
         std::cout << "\n" << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
     }
 
-    for (auto& str : structs) {
+    for (auto& str : structs) {  // export structs but not modules
         if (std::find_if(modules.begin(), modules.end(), [&](auto& m){ return str.name.find(m.name) == 0; }) != modules.end()) {
             continue;
         }
@@ -44,7 +44,14 @@ void Project::generate(const std::string& outDir)
             std::cerr << "Failed to open '" << filePath << "' for writing\n";
             continue;
         }
-        out << "package " << fname << "_pkg;\n\n";
+        out << "package " << fname << "_pkg;\n";
+
+        for (auto& imp : str.imports) {
+            out << "import " << imp << "_pkg::*;\n";
+        }
+
+        out << "\n";
+
         for (auto& param : str.parameters) {
             param.expr.flags = Expr::FLAG_SPECVAL;
             out << "parameter " << param.name << " = " << param.expr.str() << ";\n";

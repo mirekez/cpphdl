@@ -137,8 +137,8 @@ private:
             }
         }
 
-        state_reg.next[0] = state_comb_tmp;
-        state_reg.next[0].valid = instr_valid_in() && !stall_comb_func();
+        state_reg._next[0] = state_comb_tmp;
+        state_reg._next[0].valid = instr_valid_in() && !stall_comb_func();
     }
 
 public:
@@ -146,12 +146,12 @@ public:
     void _work(bool reset)
     {
         if (reset) {
-            state_reg.next[0].valid = 0;
-            state_reg.next[1].valid = 0;
+            state_reg._next[0].valid = 0;
+            state_reg._next[1].valid = 0;
         }
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_work(reset);  // first because it copies all registers from previous stage
         do_decode_fetch();
-//        std::print("!!! {} => {} ", (byte)state_reg.next[0].alu_op, (byte)state_reg[0].alu_op);
+//        std::print("!!! {} => {} ", (byte)state_reg._next[0].alu_op, (byte)state_reg[0].alu_op);
     }
 
     void _strobe()

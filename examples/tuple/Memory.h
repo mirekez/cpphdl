@@ -83,8 +83,8 @@ public:
         }
 
         if (!SHOWAHEAD) {
-            data0_out_reg.next = buffer[addr0_in()];
-            data1_out_reg.next = buffer[addr1_in()];
+            data0_out_reg._next = buffer[addr0_in()];
+            data1_out_reg._next = buffer[addr1_in()];
         }
     }
 

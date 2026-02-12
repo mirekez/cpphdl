@@ -142,7 +142,11 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
                     DEBUG_AST1("|");
                 }
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
+                // folded struct
                 if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+                    if (!CRD->isAnonymousStructOrUnion() && CRD->getIdentifier()) {
+                        st->imports.emplace(genTypeName(CRD->getQualifiedNameAsString()));
+                    }
                     auto st1 = exportStruct(CRD, hlp);
 
                     if (CRD->isAnonymousStructOrUnion() || !CRD->getIdentifier()) {

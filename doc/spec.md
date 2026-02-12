@@ -163,10 +163,10 @@ public:
     __PORT(bool)                         read_in;
     __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
 
-    __PORT(bool)                         empty_out      = __VAL( empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAL( full_comb_func() );
-    __PORT(bool)                         clear_in       = __VAL( false );
-    __PORT(bool)                         afull_out      = __VAL( afull_reg );
+    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
+    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
+    __PORT(bool)                         clear_in       = __EXPR( false );
+    __PORT(bool)                         afull_out      = __VAR( afull_reg );
 
     bool                         debugen_in;
 
@@ -175,10 +175,10 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = __VAL( 0xFFFFFFFFFFFFFFFFULL );
-        mem.write_addr_in = __VAL( wp_reg );
+        mem.write_mask_in = __EXPR( 0xFFFFFFFFFFFFFFFFULL );
+        mem.write_addr_in = __VAR( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = __VAL( rp_reg );
+        mem.read_addr_in  = __VAR( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem.connect();
@@ -219,10 +219,10 @@ public:
                 exit(1);
             }
             if (!full_comb_func() || read_in()) {
-                wp_reg.next = wp_reg + 1;
+                wp_reg._next = wp_reg + 1;
             }
-            if (wp_reg.next == rp_reg) {
-                full_reg.next = 1;
+            if (wp_reg._next == rp_reg) {
+                full_reg._next = 1;
             }
         }
 
@@ -233,20 +233,20 @@ public:
                 exit(1);
             }
             if (!empty_comb_func()) {
-                rp_reg.next = rp_reg + 1;
+                rp_reg._next = rp_reg + 1;
             }
             if (!write_in()) {
-                full_reg.next = 0;
+                full_reg._next = 0;
             }
         }
 
         if (clear_in()) {
-            wp_reg.next = 0;
-            rp_reg.next = 0;
-            full_reg.next = 0;
+            wp_reg._next = 0;
+            rp_reg._next = 0;
+            full_reg._next = 0;
         }
 
-        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+        afull_reg._next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
 
     }
 
@@ -267,7 +267,7 @@ public:
 
 * Each of *connect()*, *work()*, *strobe()* functions should call corresponding functions of nested modules
 
-* Only *reg_name.next* value can be changed in all places except reset. Both reg and *reg.next* values can be used on right side of expressions
+* Only *reg_name.\_next* value can be changed in all places except reset. Both reg and *reg.\_next* values can be used on right side of expressions
 
 * During reset *.clr()* and *.set(val)* methods are used to set up both current and next register's values
 
@@ -279,8 +279,10 @@ public:
 
 * Macros *\_\_PORT( `data_type` )* allows port simplier declaration.
 
-* Macros *\_\_VAL( `member_or_expression` )* represents lambda function
-`[&](){ return member_or_expression; }` used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
+* Macros *\_\_EXPR( `any_expression` )* used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
+
+* Macros *\_\_VAR( `member_or_comb_func` )* used as replacement for Verilog assign expression. Return type of port lambda function represents type of the port.
+(works faster than \_\_EXPR)
 
 &nbsp;&nbsp;&nbsp;&nbsp;The following naming convention is used for input/output ports:
 
@@ -308,7 +310,7 @@ It is possible to define any synchronous reset sequence. Asynchronous reset it n
 * **combinational**
 * **temporary**
 
-&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type **reg`<TYPE>`** and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.next* property is used.
+&nbsp;&nbsp;&nbsp;&nbsp;Registers are of type **reg`<TYPE>`** and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.\_next* property is used.
 It is recommended to give register names with a *reg* suffix in case when register is used as output port or in parent modules.
 
 * Registers can carry structs, arrays, and single values.
@@ -324,7 +326,7 @@ It is recommended to give register names with a *reg* suffix in case when regist
 ## Work method
 
 &nbsp;&nbsp;&nbsp;&nbsp;Work method can make any changes to registers and temporary variables.
-Only *.next* value of registers should be changed directly.
+Only *._next* value of registers should be changed directly.
 
 * Work method can call other methods to make code well-structured.
 * Methods with return value become functions SystemVerilog, methods with void return become tasks in Verilog.
@@ -381,7 +383,7 @@ logic<MEM_WIDTH_BYTES*8> *data_in = nullptr;
 &nbsp;&nbsp;&nbsp;&nbsp;logic`<>` type provides read/write access to particular bits using *operator[]* and to partial bitmap using method *.bits(hi,lo)*:
 
 ```cpp
-buffer1_byteenable.next[addr_sub+i] = 1;
+buffer1_byteenable._next[addr_sub+i] = 1;
 host_addr.bits(39,32) = *s_writedata_in >> 32;
 ```
 
@@ -400,7 +402,7 @@ u<STEPS_SIZE> cmd_steps;
 
 ### reg`<TYPE>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;reg`<>` template is intended to make variable to be a register. It adds *.next* property to be changed in a *work()* function as well as
+&nbsp;&nbsp;&nbsp;&nbsp;reg`<>` template is intended to make variable to be a register. It adds *.\_next* property to be changed in a *work()* function as well as
 .strobe() method which synchronizes current value with next. It should not be used as port definition, but it can provide data to a port.
 Examples of reg`<>` usage are provided below:
 
@@ -412,18 +414,18 @@ reg<logic<WIDTH/8>> buffer1_byteenable;
 ```
 
 ```cpp
-state_struct.next.steps = state_struct.steps - 1;
+state_struct._next.steps = state_struct.steps - 1;
 if (state_struct.steps == 0) {
-    state_struct.next.steps = 255;
+    state_struct._next.steps = 255;
 }
 
-size.next = 0xFFFF;
+size._next = 0xFFFF;
 
-buffer1.next |= buffer1_precalc;
+buffer1._next |= buffer1_precalc;
 
-buffer1_byteenable.next[i] = buffer2_byteenable[i];
+buffer1_byteenable._next[i] = buffer2_byteenable[i];
 
-mask.next.bits((i+1)*32-1,i*32) = 0;
+mask._next.bits((i+1)*32-1,i*32) = 0;
 ```
 
 ### array`<SIZE>`
@@ -465,7 +467,7 @@ public:
 
     __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     __PORT(bool)                      read_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAL( data_out_comb_func() );
+    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAR( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -497,7 +499,7 @@ public:
         }
 
         if (!SHOWAHEAD) {
-            data_out_reg.next = buffer[read_addr_in()];
+            data_out_reg._next = buffer[read_addr_in()];
         }
 
         if (debugen_in) {

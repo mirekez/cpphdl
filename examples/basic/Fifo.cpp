@@ -76,10 +76,10 @@ public:
                 exit(1);
             }
             if (!full_out() || read_in()) {
-                wp_reg.next = wp_reg + 1;
+                wp_reg._next = wp_reg + 1;
             }
-            if (wp_reg.next == rp_reg) {
-                full_reg.next = 1;
+            if (wp_reg._next == rp_reg) {
+                full_reg._next = 1;
             }
         }
 
@@ -90,20 +90,20 @@ public:
                 exit(1);
             }
             if (!empty_out()) {
-                rp_reg.next = rp_reg + 1;
+                rp_reg._next = rp_reg + 1;
             }
             if (!write_in()) {
-                full_reg.next = 0;
+                full_reg._next = 0;
             }
         }
 
         if (clear_in()) {
-            wp_reg.next = 0;
-            rp_reg.next = 0;
-            full_reg.next = 0;
+            wp_reg._next = 0;
+            rp_reg._next = 0;
+            full_reg._next = 0;
         }
 
-        afull_reg.next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+        afull_reg._next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
     }
 
     void _strobe()
@@ -241,29 +241,29 @@ public:
             error = true;
         }
 
-        write_reg.next = 0;
+        write_reg._next = 0;
         if (to_write_cnt) {
-            write_addr.next = write_addr + 1;
-            write_reg.next = 1;
-            data_reg.next = *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[write_addr];
-            to_write_cnt.next = to_write_cnt - 1;
+            write_addr._next = write_addr + 1;
+            write_reg._next = 1;
+            data_reg._next = *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[write_addr];
+            to_write_cnt._next = to_write_cnt - 1;
 
-            to_read_cnt.next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
+            to_read_cnt._next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
         }
-        read_reg.next = 0;
+        read_reg._next = 0;
         if (to_read_cnt) {
-            to_read_cnt.next = to_read_cnt - 1;
-            read_reg.next = 1;
+            to_read_cnt._next = to_read_cnt - 1;
+            read_reg._next = 1;
         }
         if (!to_write_cnt) {
-            to_write_cnt.next = random()%100;
+            to_write_cnt._next = random()%100;
         }
-        was_read.next = 0;
+        was_read._next = 0;
         if (read_reg && !SHOWAHEAD) {
-            was_read.next = 1;
+            was_read._next = 1;
         }
         if ((read_reg && SHOWAHEAD) || (was_read && !SHOWAHEAD)) {
-            read_addr.next = read_addr + 1;
+            read_addr._next = read_addr + 1;
         }
     }
 

@@ -264,7 +264,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str() + " ^ " + sub[1].str();
             }
 
-            std::string str = value + "(";
+            std::string str = value + suffix + "(";
             bool first = true;
             for (auto& arg : sub) {
                 str += (first?"":", ") + arg.str();
@@ -361,10 +361,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str();
             }
             if ((sub[0].type == EXPR_NONE && !(flags&FLAG_USETHIS)) || (flags&FLAG_NOBASE)) {  // no this inside, no need to "."
-                return indent_str + value;
+                return indent_str + value + suffix;
             }
-            if (value == "next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
-                delim = "_";
+            if (value == "_next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
+                return indent_str + prefix + sub[0].str("", "_next");
             }
 //            if (sub[0].type == EXPR_INDEX) {  // ?
 //                ASSERT(sub[0].sub.size() > 1);
@@ -375,12 +375,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                return indent_str + prefix + sub[0].str("", delim + value);
 //            }
             if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function  // ?
-                return indent_str + prefix + value + "(" + sub[0].str();
+                return indent_str + prefix + value + suffix + "(" + sub[0].str();
             }
             if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].str(); } )) {
                 delim = "__";
             }
-            return indent_str + prefix + sub[0].str() + delim + value;
+            return indent_str + prefix + sub[0].str() + delim + value + suffix;
         }
         case EXPR_BINARY:
         {

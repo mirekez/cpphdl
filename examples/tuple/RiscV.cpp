@@ -57,13 +57,13 @@ public:
         Pipeline::_work(reset);
 
         if (valid && !df.stall_out()) {
-            pc.next = pc + ((df.instr_in()&3)==3?4:2);
+            pc._next = pc + ((df.instr_in()&3)==3?4:2);
         }
         if (states_comb_func()[0].valid && ex.branch_taken_out()) {
-            pc.next = ex.branch_target_out();
+            pc._next = ex.branch_target_out();
         }
 
-        valid.next = true;
+        valid._next = true;
     }
 
     void debug()
