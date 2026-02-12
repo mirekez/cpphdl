@@ -112,8 +112,8 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
                 QT = QT.getCanonicalType();
                 QT = QT.getDesugaredType(*hlp.ctx);
                 std::string str = QT.getAsString(hlp.ctx->getPrintingPolicy());
-                DEBUG_AST1(str << " type) " << str);
-                expr.value = str;
+                DEBUG_AST1(str << " type) ");
+                expr.value = genTypeName(str);
                 expr.type = cpphdl::Expr::EXPR_TYPE;
 //            }
 
@@ -173,7 +173,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
         }
     }
 
-    if (!(!hasDecls && hasBases)) {  // if no decls but has bases then it's already aligned
+    if (!(!hasDecls && hasBases) && !RD->isUnion()) {  // if no decls but has bases then it's already aligned, union cant be aligned
         // adding align marker for two purposes: 1) align structures to 8 bits as in C, 2) put 8 bit placeholder to empty structures
         st->fields.emplace_back(cpphdl::Field{std::string("_align") + std::to_string(st->alignNo), {cpphdl::Expr{"uint8_t", cpphdl::Expr::EXPR_TYPE}}});
         st->fields.back().bitwidth = cpphdl::Expr{"0",cpphdl::Expr::EXPR_NUM};

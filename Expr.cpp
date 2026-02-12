@@ -3,6 +3,7 @@
 #include "Module.h"
 #include "Field.h"
 #include "Debug.h"
+#include "Struct.h"
 
 using namespace cpphdl;
 
@@ -47,10 +48,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return str;
         }
         case EXPR_TYPE:
+        {
             if (value.find("_IO_FILE") != (size_t)-1) {
                 value = "integer";
             }
-            return indent_str + prefix + typeToSV(value, suffix);
+            std::string str = typeToSV(value, suffix);  // also calc size
+            if (!declSize && declSize != (size_t)-1) {  // unknown type
+                declSize = getStructSize(value);
+            }
+            return indent_str + prefix + str;
+        }
         case EXPR_NUM:
             if (sub.size()) {  // if we have expression for this number parameter (from template parameters)
                 return indent_str + prefix + sub[0].str() + suffix;
@@ -85,9 +92,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
-                sub[0].str();  // to calc declSize
+                std::string str = sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");  // also calc size
                 declSize = sub[0].declSize * atoi(sub[1].str().c_str());
-                return indent_str + prefix + sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");
+                return indent_str + prefix + str;
             }
             if (value.find("cpphdl_") == 0 && sub.size()) {
                 declSize = atoi(sub[0].str().c_str());
@@ -107,10 +114,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
 
             if (value.find("get") == 0 && sub.size() && sub[sub.size()-1].sub.size()) {  // we treat get template as tuple get, probably later to check std:: or this
-                return indent_str + prefix + sub[sub.size()-1].sub[0].value + "_tuple_" + typeSpec;
+                return indent_str + prefix + sub[sub.size()-1].sub[0].value + "_tuple_" + typeSpec;   // we have type copy of value in last sub
             }
 
-            return indent_str + prefix + typeToSV(sub[sub.size()-1].str(prefix, typeSpec), suffix);
+            return indent_str + prefix + typeToSV(/*sub[sub.size()-1].str(prefix, */value + typeSpec/*)*/, suffix);   // we have type copy of value in last sub
         }
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
@@ -339,7 +346,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_MEMBER:
         {
-            ASSERT(sub.size()==1);
+            ASSERT1(sub.size()==1, std::string("member sub size zero: ") + debug());
 
             auto& check = sub[0];
             while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
@@ -786,6 +793,10 @@ std::string Expr::typeToSV(std::string type, std::string size)
     } else
     if (type.compare(0, 8, "unsigned") == 0) {
         str = "logic" + size + "[31:0]";
+        declSize = 32;
+    } else
+    if (type.compare(0, 6, "signed") == 0) {
+        str = "logic signed" + size + "[31:0]";
         declSize = 32;
     } else {
         str += size;

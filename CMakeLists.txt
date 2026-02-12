@@ -39,22 +39,21 @@ project(
 
 add_definitions(-DSTATIC_BUILD)
 
-project(MyClangTool LANGUAGES CXX)
-
 find_package(LLVM REQUIRED CONFIG PATHS .conda/lib/cmake/llvm)
 find_package(Clang REQUIRED CONFIG PATHS .conda/lib/cmake/clang)
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${CLANG_INCLUDE_DIRS})
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Struct.cpp Enum.cpp)
-target_link_libraries(cpphdl
-  PRIVATE
+
+target_link_libraries(cpphdl PRIVATE
   clangTooling
   clangBasic
   clangASTMatchers
   clangFrontend
   clangRewrite
   LLVM
+  stdc++exp
 )
 
 add_subdirectory(examples)

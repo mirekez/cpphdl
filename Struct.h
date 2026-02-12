@@ -6,6 +6,7 @@
 namespace cpphdl
 {
 
+
 struct Field;
 
 struct Struct
@@ -24,9 +25,13 @@ struct Struct
 
     int indent = 0;
     int alignNo = 0;  // count alignment insertions
+    size_t declSize = 0;
 
-    bool print(std::ofstream* out, std::vector<Field>* params = nullptr, size_t* declSize = nullptr);
+    bool print(std::ofstream& out/*, std::vector<Field>* params = nullptr*/);
 };
+
+size_t getStructSize(std::string name, Struct* st = nullptr);
+
 
 }
 

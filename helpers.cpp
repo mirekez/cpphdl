@@ -648,7 +648,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             call.value = DSME->getMemberNameInfo().getAsString();
             call.type = cpphdl::Expr::EXPR_MEMBERCALL;
             auto member = exprToExpr(DSME->getBase());
-            member.sub.emplace_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
+//            member.sub.emplace_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
 //            member.type = cpphdl::Expr::EXPR_MEMBER;
             call.sub.emplace_back(member);
         }
