@@ -46,18 +46,19 @@ public:
 
     void _work(bool reset)
     {
-        logic<MEM_WIDTH_BYTES*8> mask;
         size_t i;
+        logic<MEM_WIDTH_BYTES*8> mask;
+        logic<MEM_WIDTH_BYTES> mask_in = write_mask_in();
         if (debugen_in) {
             std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
-                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
+                (int)write_in(), write_data_in(), write_addr_in(), mask_in,
                 (int)read_in(), read_data_out(), read_addr_in());
         }
 
         if (write_in()) {
             mask = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
-                mask.bits((i+1)*8-1,i*8) = (write_mask_in())[i] ? 0xFF : 0 ;
+                mask.bits((i+1)*8-1,i*8) = mask_in[i] ? 0xFF : 0 ;
             }
             buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
         }

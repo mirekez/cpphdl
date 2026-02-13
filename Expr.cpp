@@ -50,7 +50,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_TYPE:
         {
             if (value.find("_IO_FILE") != (size_t)-1) {
-                value = "integer";
+                value = "int";
             }
             std::string str = typeToSV(value, suffix);  // also calc size
             if (!declSize && declSize != (size_t)-1) {  // unknown type

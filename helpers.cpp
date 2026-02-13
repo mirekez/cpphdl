@@ -139,9 +139,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
                 }
 
-                body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // the only one place we call str() in Clang part (to make a string value)
+                body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // first place we call str() in Clang part (to make a string value)
                 if (CS->getRHS()) {
-                    body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // the only one place we call str() in Clang part (to make a string value)
+                    body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // first place we call str() in Clang part (to make a string value)
                 }
                 body.sub.emplace_back(exprToExpr(CS->getSubStmt()));
                 wasBreak = false;
@@ -1146,7 +1146,7 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
 void Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
 {
     if (!onlyTypes || param.type != cpphdl::Expr::EXPR_NUM) {
-        std::string str = param.str();
+        std::string str = param.str();  // first place we call str() in Clang part (to make a string value)
         if (!first) {
             name += "_";
         }

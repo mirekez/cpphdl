@@ -8,7 +8,8 @@ inline int SystemEcho(const char* cmd)
     return std::system(cmd);
 }
 
-inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, auto&&... args)
+template<typename... Args>
+inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args)
 {
     std::ostringstream oss;
     ((oss << args << "_"), ...);

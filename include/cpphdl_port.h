@@ -74,21 +74,25 @@ public:
 //        return *this;
 //    }
 
-//    template<typename F>
-//    using result_t = std::remove_cvref_t<std::invoke_result_t<F&>>;
+    template<typename T> using remove_cvref_t = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
+    template<typename F> using invoke_result_t = typename std::invoke_result_t<F&>;
+
+    template<typename F> using enable_if_pointer =
+        typename std::enable_if<std::is_pointer<invoke_result_t<F>>::value && !std::is_same<remove_cvref_t<F>,function_ref>::value>::type;
+
+    template<typename F> using enable_if_not_pointer =
+        typename std::enable_if<!std::is_pointer<invoke_result_t<F>>::value && !std::is_same<remove_cvref_t<F>,function_ref>::value>::type;
+
+    // we can accept pointers and objects
 
     template<typename F>
-    requires std::is_pointer_v<std::invoke_result_t<F&>> //std::is_convertible_v<std::invoke_result_t<F>, A*>
-    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
-    function_ref(F&& f)
+    function_ref(F&& f, enable_if_pointer<F>* = nullptr)
     {
         func1_ = std::move(f);
     }
 
     template<typename F>
-    requires (!std::is_pointer_v<std::invoke_result_t<F&>>) // std::is_convertible_v<std::invoke_result_t<F>, A>
-    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
-    function_ref(F&& f)
+    function_ref(F&& f, enable_if_not_pointer<F>* = nullptr)
     {
         func2_ = std::move(f);
         func1_ = [&]() -> A* {
@@ -97,21 +101,15 @@ public:
         };
     }
 
-    template<typename F>
-//    requires std::same_as<result_t<F>, A*>
-    requires std::is_pointer_v<std::invoke_result_t<F&>> //std::is_convertible_v<std::invoke_result_t<F>, A*>
-    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
-    function_ref& operator=(const F& f)
+    template<typename F, typename = enable_if_pointer<F>>
+    function_ref& operator=(const F& f)  // we dont destroy source object
     {
         func1_ = f;
         return *this;
     }
 
-    template<typename F>
-//    requires std::same_as<result_t<F>, A>
-    requires (!std::is_pointer_v<std::invoke_result_t<F&>>) //std::is_convertible_v<std::invoke_result_t<F>, A>
-    && (!std::same_as<std::remove_cvref_t<F&>, function_ref>)
-    function_ref& operator=(const F& f)
+    template<typename F, typename = enable_if_not_pointer<F>, typename = void>
+    function_ref& operator=(const F& f)  // we dont destroy source object
     {
         func2_ = f;
         func1_ = [&]() -> A* {

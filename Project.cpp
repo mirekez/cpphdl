@@ -28,7 +28,7 @@ void Project::generate(const std::string& outDir)
 
         mod.print(out);
 
-        std::cout << "\n" << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
+        std::cout << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
     }
 
     for (auto& str : structs) {  // export structs but not modules
@@ -60,7 +60,7 @@ void Project::generate(const std::string& outDir)
         str.print(out);
         out << "\n\nendpackage\n";
 
-        std::cout << "\n" << "Generated: " << filePath << "\n";
+        std::cout << "Generated: " << filePath << "\n";
     }
 
     for (auto& en : enums) {
@@ -77,7 +77,7 @@ void Project::generate(const std::string& outDir)
         en.print(out);
         out << "\n\nendpackage\n";
 
-        std::cout << "\n" << "Generated: " << filePath << "\n";
+        std::cout << "Generated: " << filePath << "\n";
     }
 }
 
