@@ -123,7 +123,7 @@ size_t cpphdl::getStructSize(std::string name, Struct* st)
                     structSize = tmp;
                 } else
                 if (tmp != structSize) {
-                    std::cerr << "!!! Warning: different sizes in union " << st->name << ": " << f.name << " size "  << tmp << " != " << structSize << "(" << f.expr.str()
+                    std::cerr << "WARNING: different sizes in union " << st->name << ": " << f.name << " size "  << tmp << " != " << structSize << "(" << f.expr.str()
                               << (f.bitwidth.type != Expr::EXPR_NONE?std::string(":")+f.bitwidth.str():"") << ") for '" << name << "'\n";
                 }
             }
@@ -151,6 +151,6 @@ size_t cpphdl::getStructSize(std::string name, Struct* st)
             }
         }
     }
-    std::cerr << "!!! Warning: can't get structure '" << name << "\n"; //"', " << std::stacktrace::current() << "\n";
+    std::cerr << "WARNING: can't get structure '" << name << "\n"; //"', " << std::stacktrace::current() << "\n";
     return 0;
 }

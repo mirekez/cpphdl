@@ -24,6 +24,10 @@ bool Field::print(std::ofstream& out, std::string nameSuffix)
         out << tmp.str("",nameSuffix) + ";\n";
 //        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
+    } else
+    if (expr.type == Expr::EXPR_PARAM) {
+        out << name << nameSuffix << " = " << expr.str() + ";\n";
+//        out << tmp.debug() + "\n";
     }
     else {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};

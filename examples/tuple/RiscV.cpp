@@ -420,7 +420,7 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "RiscV", {"File", "Memory",
+        ok &= VerilatorCompile(__FILE__, "RiscV", {"Predef_pkg", "File", "Memory",
                   "DecodeFetchint_int_0_0_State_pkg",
                   "ExecuteCalcint_int_0_0_State_pkg",
                   "MemWBint_int_0_0_State_pkg",

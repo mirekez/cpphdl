@@ -49,15 +49,15 @@ bool Module::print(std::ofstream& out)
     out << ");\n";
 
     for (auto& field : consts) {
-        field.indent = 1;
         out << "    parameter ";
         if (!field.print(out)) {
             return false;
         }
+//        out << field.expr.debug();
     }
     out << "\n";
 
-
+    out << "    // regs and combs\n";
     for (auto& field : vars) {
         field.indent = 1;
         if (!field.print(out)) {
@@ -67,13 +67,16 @@ bool Module::print(std::ofstream& out)
     }
     out << "\n";
 
+    out << "    // members\n";
     printMembers(out);
 
     out << "\n";
-    for (auto& field : vars) {  // strobe
+    out << "    // tmp variables\n";
+    for (auto& field : vars) {  // tmp vars
         field.indent = 1;
-        if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
-            if (!field.print(out, "_next")) {
+        if (field.expr.traverseIf([](auto& e){ return e.type == cpphdl::Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+            field.expr.flags |= Expr::FLAG_NOTREG;
+            if (!field.print(out, "_tmp")) {
                 return false;
             }
         }
@@ -96,10 +99,10 @@ bool Module::print(std::ofstream& out)
     out << "    always @(posedge clk) begin\n";
     out << "        _work(reset);\n";
     out << "\n";
-    for (auto& field : vars) {
+    for (auto& field : vars) {  // strobe
         field.indent = 1;
         if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
-            out << "        " << field.name << " <= " << field.name << "_next;\n";
+            out << "        " << field.name << " <= " << field.name << "_tmp;\n";
         }
     }
     out << "    end\n";

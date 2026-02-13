@@ -513,7 +513,7 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "Tribe", {
+        ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",

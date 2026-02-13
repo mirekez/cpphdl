@@ -16,6 +16,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
     }
 
+    for (auto& e : sub) {
+        e.flags |= flags;
+    }
+
     switch (type)
     {
         case EXPR_NONE:
@@ -29,13 +33,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             if (sub[0].type == EXPR_TEMPLATE && sub[0].value == "cpphdl_memory") {
                 ASSERT1(sub[0].sub.size() >= 3, std::string("cpphdl_memory subs size = ") + std::to_string(sub.size()) );
-                sub[0].sub[0].flags = Expr::FLAG_REG;
+                sub[0].sub[0].flags |= Expr::FLAG_REG;
                 return indent_str + prefix + sub[0].sub[0].str("", std::string("[") + sub[0].sub[1].str() + "-1:0]") + " " + escapeIdentifier(value) + "[" + sub[0].sub[2].str() + "]";
             } else
             if (sub[0].type == EXPR_NUM) {
                 str += indent_str + prefix + escapeIdentifier(value) + suffix + " = " + sub[0].str();  // const initializer
-            }
-            else
+            } else
             if (sub[0].type == EXPR_ARRAY) {
                 str += indent_str + prefix + sub[0].str() + " " + escapeIdentifier(value) + suffix;
             }
@@ -87,7 +90,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 
             if (value == "cpphdl_reg") {
                 ASSERT1(sub.size() >= 1, std::string("cpphdl_reg subs size = ") + std::to_string(sub.size()) );
-                sub[0].flags = Expr::FLAG_REG;
+                sub[0].flags |= FLAG_REG;
                 return indent_str + prefix + sub[0].str("", suffix);
             }
             if (value == "cpphdl_array") {
@@ -121,25 +124,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
         case EXPR_ARRAY:
             ASSERT(sub.size() >= 2);
-
-/*            if (sub[1].type == Expr::EXPR_TYPE || sub[1].type == Expr::EXPR_TEMPLATE) {  // do we need this??
-                ASSERT1(sub.size() >= 1, std::string("EXPR_ARRAY subs size = ") + std::to_string(sub.size()) );
-                if (sub[1].value == "cpphdl_reg") {
-                    ASSERT1(sub[1].sub.size() >= 1, std::string("cpphdl_reg subs size = ") + std::to_string(sub[1].sub.size()) );
-                    sub[1].flags = Expr::FLAG_REG;
-                    sub[1].sub[0].indent = indent;
-                    return indent_str + prefix + sub[1].sub[0].str() + " " + suffix + "[" + sub[0].str() + "]";
-//                } else
-//                if (isStruct) {
-//                    sub[1].indent = indent;
-//                    return indent_str + prefix + str() << " " << suffix;
-                }
-                else {
-                    sub[1].indent = indent;
-                    return indent_str + prefix + sub[1].str() + " " + suffix + "[" + sub[0].str() + "]";
-                }
-            }
-*/
             sub[1].str();  // to calc declSize
             declSize = sub[1].declSize * atoi(sub[0].str().c_str());
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // in structures we need to put outer dimension before
@@ -283,9 +267,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if ((value == "_work" || value == "_work_neg") && sub[0].value != "_this") {  // never need this functions or third party class work
                 return "";
             }
-            for (auto& e : sub) {
-                e.flags |= flags;
-            }
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
@@ -294,10 +275,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //            }
             // can we now remove clr and set completely?
             if (sub.size() >= 1 && value == "clr" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_next = '0";
+                return indent_str + sub[0].str() + "_tmp = '0";
             }
             if (sub.size() >= 2 && value == "set" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_next = " + sub[1].str();
+                return indent_str + sub[0].str() + "_tmp = " + sub[1].str();
             }
             if (sub.size() >= 1 && value == "format" && sub[0].value != "_this") {
                 return indent_str + sub[0].str();
@@ -356,7 +337,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 sub[0] = check.sub[0];  // parentheses remover
             }
 
-            std::string delim = std::string((flags&FLAG_ANON)?"_":"") + ".";
+            if ((flags&FLAG_ANON)&&value=="") {
+                value = "_";
+            }
+
+            std::string delim = ".";
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
@@ -364,7 +349,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + value + suffix;
             }
             if (value == "_next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
-                return indent_str + prefix + sub[0].str("", "_next");
+                return indent_str + prefix + sub[0].str("", "_tmp");
             }
 //            if (sub[0].type == EXPR_INDEX) {  // ?
 //                ASSERT(sub[0].sub.size() > 1);
@@ -411,13 +396,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == ">>") {
                 value = ">>>";
             }
-            sub[0].flags |= flags;
-            sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
         }
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
-            sub[0].flags |= flags;
             if (value == "+") {  // unary + not for Verilog
                 return indent_str + sub[0].str();
             }
@@ -433,9 +415,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
-            sub[0].flags |= flags;
-            sub[1].flags |= flags;
-            sub[2].flags |= flags;
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
             if (sub.size()) {  // parentheses remover
@@ -458,13 +437,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     sub[0] = check.sub[0];
                 }
             }
-            sub[0].flags |= flags;
-            sub[1].flags |= flags;
             return indent_str + prefix + sub[0].str() + suffix + "[(" + sub[1].str() + ")" + value + "]";
         case EXPR_CAST:
             if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);
-            sub[0].flags |= flags;
             sub[0].indent = indent;
             str_replace(value, "cpphdl_logic", "");
             if (value.find("logic") == 0) {
@@ -497,7 +473,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + typeToSV(value) + "'(" + sub[0].str(prefix, suffix) + ")";
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
-            sub[0].flags |= flags;
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
                 return /*indent_str + */sub[0].str();
             }
@@ -525,11 +500,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return ret;
             }
-            sub[0].flags |= flags;
             return indent_str + sub[0].str();
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
-            sub[0].flags |= flags;
             if (value == "sizeof") {
                 return indent_str + "($bits" + "(" + sub[0].str() + ")/8)";
             }
@@ -559,7 +532,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
-            sub[3].flags |= flags;
             str += sub[3].str(prefix);
             if (!str.empty() && str.back() != '\n') {
                 str += ";\n";
@@ -576,7 +548,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             str += indent_str + "while (" + sub[0].str() + ") begin\n";
             sub[1].indent = indent + 1;
-            sub[1].flags |= flags;
             str += sub[1].str(prefix);
             if (!str.empty() && str.back() != '\n') {
                 str += ";\n";
@@ -595,7 +566,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
                 sub[1].indent = indent + 1;
-                sub[1].flags |= flags;
                 str += sub[1].str(prefix);
                 if (!str.empty() && str.back() != '\n') {
                     str += ";\n";
@@ -605,7 +575,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() > 2) {
                 str += indent_str + "else begin\n";
                 sub[2].indent = indent + 1;
-                sub[2].flags |= flags;
                 str += sub[2].str(prefix);
                 if (!str.empty() && str.back() != '\n') {
                     str += ";\n";
@@ -622,7 +591,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() > 1) {
                 for (size_t i=1; i < sub.size(); ++i) {
                     sub[i].indent = indent + 1;
-                    sub[i].flags |= flags;
                     str += indent_str + sub[i].value + ":";
                     str += " begin\n";
                     str += sub[i].str(prefix);
@@ -652,7 +620,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             std::string str;
             for (auto& e : sub) {
                 e.indent = indent;
-                e.flags |= flags;
                 auto s = e.str(prefix);
                 if (!s.empty() && s.back() != '\n') {
                     s += ";\n";
@@ -672,7 +639,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 
 std::string Expr::typeToSV(std::string type, std::string size)
 {
-    std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG) ? "reg" : "logic");
+    std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG)&&!(flags&FLAG_NOTREG) ? "reg" : "logic");
 
     std::string str = type;//genTypeName(type);
     if (type == "cpphdl_logic") {

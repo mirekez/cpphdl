@@ -56,7 +56,8 @@ struct Expr
         FLAG_ANON = 64,  // anonymous struct or union
         FLAG_USETHIS = 128,  // methods of structs
         FLAG_NOCALLS = 256,  // calls forbidden in _connect() assign
-        FLAG_NOBASE = 512  // dont use base of member expr (for constexpr of structs)
+        FLAG_NOBASE = 512,  // dont use base of member expr (for constexpr of structs)
+        FLAG_NOTREG = 1024  // declare logic instead of reg
     };
     unsigned flags = FLAG_NONE;
 

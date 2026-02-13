@@ -632,6 +632,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 return;
             }
         }
+        if (RD->getQualifiedNameAsString() == "cpphdl::Module") {
+            return;
+        }
 
 
         cpphdl::Module mod{RD->getQualifiedNameAsString()};

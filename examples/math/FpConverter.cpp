@@ -376,8 +376,8 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "FpConverterFP32_8_FP16_5", {"FP16_5_pkg","FP32_8_pkg"}, {"../../../../include"}, 8, 1);
-        ok &= VerilatorCompile(__FILE__, "FpConverterFP16_5_FP32_8", {"FP16_5_pkg","FP32_8_pkg"}, {"../../../../include"}, 8, 0);
+        ok &= VerilatorCompile(__FILE__, "FpConverterFP32_8_FP16_5", {"Predef_pkg","FP16_5_pkg","FP32_8_pkg"}, {"../../../../include"}, 8, 1);
+        ok &= VerilatorCompile(__FILE__, "FpConverterFP16_5_FP32_8", {"Predef_pkg","FP16_5_pkg","FP32_8_pkg"}, {"../../../../include"}, 8, 0);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok

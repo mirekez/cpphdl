@@ -312,8 +312,8 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "Memory", {}, {"../../../../include"}, 64, 65536, 1);
-        ok &= VerilatorCompile(__FILE__, "Memory", {}, {"../../../../include"}, 64, 65536, 0);
+        ok &= VerilatorCompile(__FILE__, "Memory", {"Predef_pkg"}, {"../../../../include"}, 64, 65536, 1);
+        ok &= VerilatorCompile(__FILE__, "Memory", {"Predef_pkg"}, {"../../../../include"}, 64, 65536, 0);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
