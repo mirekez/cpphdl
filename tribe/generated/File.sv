@@ -21,13 +21,16 @@ module File #(
 ,   input wire debugen_in
 );
 
+    // regs and combs
     reg[MEM_WIDTH/32-1:0][31:0] buffer[MEM_DEPTH];
     logic[31:0] data0_out_comb;
 ;
     logic[31:0] data1_out_comb;
 ;
 
+    // members
 
+    // tmp variables
 
 
     task _work (input logic reset);

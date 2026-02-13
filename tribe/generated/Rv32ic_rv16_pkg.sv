@@ -25,7 +25,7 @@ typedef union packed {
         logic[3-1:0] rd_p;
         logic[2-1:0] opcode;
     } base;
-    logic[31:0] raw;
+    logic[15:0] raw;
 } Rv32ic_rv16;
 
 

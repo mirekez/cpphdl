@@ -26,13 +26,15 @@ module RiscV (
 ,   input logic[31:0] imem_read_data_in
 ,   input wire debugen_in
 );
-    parameter     LENGTH = 3;
+    parameter LENGTH = 3;
 
+    // regs and combs
     reg[31:0] pc;
     reg valid;
     MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[3-1:0] Pipeline___states_comb;
 ;
 
+    // members
       logic[7:0] regs__write_addr_in;
       wire regs__write_in;
       logic[31:0] regs__write_data_in;
@@ -138,8 +140,9 @@ module RiscV (
 ,       .state_out(Pipeline___members_tuple_2__state_out)
     );
 
-    reg[31:0] pc_next;
-    reg valid_next;
+    // tmp variables
+    logic[31:0] pc_tmp;
+    logic valid_tmp;
 
 
     always @(*) begin  // Pipeline___states_comb_func
@@ -844,8 +847,8 @@ module RiscV (
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            pc_next = '0;
-            valid_next = '0;
+            pc_tmp = '0;
+            valid_tmp = '0;
             disable _work;
         end
         if (debugen_in) begin
@@ -858,12 +861,12 @@ module RiscV (
         end
         Pipeline____work(reset);
         if (valid && !Pipeline___members_tuple_0__stall_out) begin
-            pc_next = pc + ((Pipeline___members_tuple_0__instr_in & 3) == 3 ? 4 : 2);
+            pc_tmp = pc + ((Pipeline___members_tuple_0__instr_in & 3) == 3 ? 4 : 2);
         end
         if (Pipeline___states_comb[0].valid && Pipeline___members_tuple_1__branch_taken_out) begin
-            pc_next = Pipeline___members_tuple_1__branch_target_out;
+            pc_tmp = Pipeline___members_tuple_1__branch_target_out;
         end
-        valid_next = 1;
+        valid_tmp = 1;
     end
     endtask
 
@@ -908,8 +911,8 @@ module RiscV (
     always @(posedge clk) begin
         _work(reset);
 
-        pc <= pc_next;
-        valid <= valid_next;
+        pc <= pc_tmp;
+        valid <= valid_tmp;
     end
 
     assign imem_read_addr_out = pc;

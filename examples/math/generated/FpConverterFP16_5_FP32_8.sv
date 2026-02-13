@@ -6,8 +6,8 @@ import FP32_8_pkg::*;
 
 
 module FpConverterFP16_5_FP32_8 #(
-    parameter LENGTH = 8
-,   parameter USE_REG = 0
+    parameter LENGTH
+,   parameter USE_REG
  )
  (
     input wire clk
@@ -17,11 +17,14 @@ module FpConverterFP16_5_FP32_8 #(
 ,   input wire debugen_in
 );
 
+    // regs and combs
     FP32_8[LENGTH-1:0] out_reg;
     FP32_8[LENGTH-1:0] conv_comb;
 
+    // members
 
-    FP32_8[LENGTH-1:0] out_reg_next;
+    // tmp variables
+    FP32_8[LENGTH-1:0] out_reg_tmp;
 
 
     task FP___16_5convert (
@@ -63,7 +66,7 @@ module FpConverterFP16_5_FP32_8 #(
     task _work (input logic reset);
     begin: _work
         if (USE_REG) begin
-            out_reg_next = conv_comb;
+            out_reg_tmp = conv_comb;
         end
         if (reset) begin
             disable _work;
@@ -80,7 +83,7 @@ module FpConverterFP16_5_FP32_8 #(
     always @(posedge clk) begin
         _work(reset);
 
-        out_reg <= out_reg_next;
+        out_reg <= out_reg_tmp;
     end
 
     assign data_out = USE_REG ? out_reg : conv_comb;

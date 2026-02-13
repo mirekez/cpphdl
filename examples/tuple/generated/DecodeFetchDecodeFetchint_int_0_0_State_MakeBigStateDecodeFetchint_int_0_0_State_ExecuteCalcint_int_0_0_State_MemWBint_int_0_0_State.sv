@@ -33,6 +33,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,   output DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] state_out
 );
 
+    // regs and combs
     DecodeFetchint_int_0_0_State state_comb;
 ;
     logic[7:0] rs1_out_comb;
@@ -43,8 +44,10 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ;
     DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
+    // members
 
-    DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
+    // tmp variables
+    DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_tmp;
 
 
     function logic signed[31:0] Instr___sext (
@@ -525,8 +528,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 state_comb.rs2_val = mem_data_in;
             end
         end
-        PipelineStage___state_reg_next[0] = state_comb;
-        PipelineStage___state_reg_next[0].valid = instr_valid_in && !stall_comb;
+        PipelineStage___state_reg_tmp[0] = state_comb;
+        PipelineStage___state_reg_tmp[0].valid = instr_valid_in && !stall_comb;
     end
     endtask
 
@@ -534,7 +537,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     begin: PipelineStage____work
         logic[63:0] i;
         for (i = 1;i < LENGTH - ID;i=i+1) begin
-            PipelineStage___state_reg_next[i] = PipelineStage___state_reg[i - 1];
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 1];
         end
     end
     endtask
@@ -542,8 +545,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            PipelineStage___state_reg_next[0].valid = 0;
-            PipelineStage___state_reg_next[1].valid = 0;
+            PipelineStage___state_reg_tmp[0].valid = 0;
+            PipelineStage___state_reg_tmp[1].valid = 0;
         end
         PipelineStage____work(reset);
         do_decode_fetch();
@@ -564,7 +567,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     always @(posedge clk) begin
         _work(reset);
 
-        PipelineStage___state_reg <= PipelineStage___state_reg_next;
+        PipelineStage___state_reg <= PipelineStage___state_reg_tmp;
     end
 
     assign rs1_out = rs1_out_comb;

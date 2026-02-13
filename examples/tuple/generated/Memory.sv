@@ -21,12 +21,15 @@ module Memory #(
 ,   input wire debugen_in
 );
 
+    // regs and combs
     reg[MEM_WIDTH_BYTES*8-1:0] data_out_reg;
     reg[MEM_WIDTH_BYTES-1:0][7:0] buffer[MEM_DEPTH];
     logic[MEM_WIDTH_BYTES*8-1:0] data_out_comb;
 
+    // members
 
-    reg[MEM_WIDTH_BYTES*8-1:0] data_out_reg_next;
+    // tmp variables
+    logic[MEM_WIDTH_BYTES*8-1:0] data_out_reg_tmp;
 
 
     always @(*) begin  // data_out_comb_func
@@ -40,20 +43,21 @@ module Memory #(
 
     task _work (input logic reset);
     begin: _work
-        logic[512-1:0] mask;
         logic[63:0] i;
+        logic[512-1:0] mask;
+        logic[64-1:0] mask_in; mask_in = write_mask_in;
         if (debugen_in) begin
-            $write("%m: input: (%x)%x@%x(%x), output: (%x)%x@%x\n", signed'(32'(write_in)), write_data_in, write_addr_in, write_mask_in, signed'(32'(read_in)), read_data_out, read_addr_in);
+            $write("%m: input: (%x)%x@%x(%x), output: (%x)%x@%x\n", signed'(32'(write_in)), write_data_in, write_addr_in, mask_in, signed'(32'(read_in)), read_data_out, read_addr_in);
         end
         if (write_in) begin
             mask = 0;
             for (i = 0;i < MEM_WIDTH_BYTES;i=i+1) begin
-                mask[i*8 +:(0 + 1 * 8 - 1 - 0)+1] = write_mask_in[i] ? 255 : 0;
+                mask[i*8 +:(0 + 1 * 8 - 1 - 0)+1] = mask_in[i] ? 255 : 0;
             end
             buffer[write_addr_in] <= (buffer[write_addr_in] & ~(mask)) | (write_data_in & mask);
         end
         if (!SHOWAHEAD) begin
-            data_out_reg_next = buffer[read_addr_in];
+            data_out_reg_tmp = buffer[read_addr_in];
         end
     end
     endtask
@@ -64,7 +68,7 @@ module Memory #(
     always @(posedge clk) begin
         _work(reset);
 
-        data_out_reg <= data_out_reg_next;
+        data_out_reg <= data_out_reg_tmp;
     end
 
     assign read_data_out = data_out_comb;

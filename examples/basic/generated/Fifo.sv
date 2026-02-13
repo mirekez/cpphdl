@@ -4,9 +4,9 @@ import Predef_pkg::*;
 
 
 module Fifo #(
-    parameter FIFO_WIDTH_BYTES = 64
-,   parameter FIFO_DEPTH = 65536
-,   parameter SHOWAHEAD = 0
+    parameter FIFO_WIDTH_BYTES
+,   parameter FIFO_DEPTH
+,   parameter SHOWAHEAD
  )
  (
     input wire clk
@@ -22,6 +22,7 @@ module Fifo #(
 ,   input wire debugen_in
 );
 
+    // regs and combs
     reg[$clog2(FIFO_DEPTH)-1:0] wp_reg;
     reg[$clog2(FIFO_DEPTH)-1:0] rp_reg;
     reg full_reg;
@@ -29,6 +30,7 @@ module Fifo #(
     logic full_comb;
     logic empty_comb;
 
+    // members
       wire[$clog2((FIFO_DEPTH))-1:0] mem__write_addr_in;
       wire mem__write_in;
       wire[(FIFO_WIDTH_BYTES)*8-1:0] mem__write_data_in;
@@ -54,10 +56,11 @@ module Fifo #(
 ,       .debugen_in(mem__debugen_in)
     );
 
-    reg[$clog2(FIFO_DEPTH)-1:0] wp_reg_next;
-    reg[$clog2(FIFO_DEPTH)-1:0] rp_reg_next;
-    reg full_reg_next;
-    reg afull_reg_next;
+    // tmp variables
+    logic[$clog2(FIFO_DEPTH)-1:0] wp_reg_tmp;
+    logic[$clog2(FIFO_DEPTH)-1:0] rp_reg_tmp;
+    logic full_reg_tmp;
+    logic afull_reg_tmp;
 
 
     always @(*) begin  // full_comb_func
@@ -74,10 +77,10 @@ module Fifo #(
             $write("%m: input: (%x)%x, output: (%x)%x, wp_reg: %x, rp_reg: %x, full: %x, empty: %x, reset: %x\n", signed'(32'(write_in)), write_data_in, signed'(32'(read_in)), read_data_out, wp_reg, rp_reg, signed'(32'(full_reg)), signed'(32'(empty_out)), reset);
         end
         if (reset) begin
-            wp_reg_next = '0;
-            rp_reg_next = '0;
-            full_reg_next = '0;
-            afull_reg_next = '0;
+            wp_reg_tmp = '0;
+            rp_reg_tmp = '0;
+            full_reg_tmp = '0;
+            afull_reg_tmp = '0;
             disable _work;
         end
         if (write_in) begin
@@ -86,10 +89,10 @@ module Fifo #(
                 $finish();
             end
             if (!full_out || read_in) begin
-                wp_reg_next = wp_reg + 1;
+                wp_reg_tmp = wp_reg + 1;
             end
-            if (wp_reg_next == rp_reg) begin
-                full_reg_next = 1;
+            if (wp_reg_tmp == rp_reg) begin
+                full_reg_tmp = 1;
             end
         end
         if (read_in) begin
@@ -98,18 +101,18 @@ module Fifo #(
                 $finish();
             end
             if (!empty_out) begin
-                rp_reg_next = rp_reg + 1;
+                rp_reg_tmp = rp_reg + 1;
             end
             if (!write_in) begin
-                full_reg_next = 0;
+                full_reg_tmp = 0;
             end
         end
         if (clear_in) begin
-            wp_reg_next = 0;
-            rp_reg_next = 0;
-            full_reg_next = 0;
+            wp_reg_tmp = 0;
+            rp_reg_tmp = 0;
+            full_reg_tmp = 0;
         end
-        afull_reg_next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
+        afull_reg_tmp = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
     end
     endtask
 
@@ -127,10 +130,10 @@ module Fifo #(
     always @(posedge clk) begin
         _work(reset);
 
-        wp_reg <= wp_reg_next;
-        rp_reg <= rp_reg_next;
-        full_reg <= full_reg_next;
-        afull_reg <= afull_reg_next;
+        wp_reg <= wp_reg_tmp;
+        rp_reg <= rp_reg_tmp;
+        full_reg <= full_reg_tmp;
+        afull_reg <= afull_reg_tmp;
     end
 
     assign read_data_out = mem__read_data_out;

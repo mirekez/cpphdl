@@ -24,6 +24,7 @@ module Execute (
 ,   output logic[31:0] branch_target_out
 );
 
+    // regs and combs
     reg[31:0] mem_addr_reg;
     reg[31:0] mem_data_reg;
     reg[7:0] mem_mask_reg;
@@ -40,12 +41,14 @@ module Execute (
     logic[31:0] branch_target_comb;
 ;
 
+    // members
 
-    reg[31:0] mem_addr_reg_next;
-    reg[31:0] mem_data_reg_next;
-    reg[7:0] mem_mask_reg_next;
-    reg mem_write_reg_next;
-    reg mem_read_reg_next;
+    // tmp variables
+    logic[31:0] mem_addr_reg_tmp;
+    logic[31:0] mem_data_reg_tmp;
+    logic[7:0] mem_mask_reg_tmp;
+    logic mem_write_reg_tmp;
+    logic mem_read_reg_tmp;
 
 
     always @(*) begin  // alu_a_comb_func
@@ -181,43 +184,43 @@ module Execute (
 
     task do_memory ();
     begin: do_memory
-        mem_addr_reg_next = alu_result_comb;
-        mem_data_reg_next = state_in.rs2_val;
-        mem_write_reg_next = 0;
-        mem_mask_reg_next = 0;
+        mem_addr_reg_tmp = alu_result_comb;
+        mem_data_reg_tmp = state_in.rs2_val;
+        mem_write_reg_tmp = 0;
+        mem_mask_reg_tmp = 0;
         if (state_in.mem_op == Mem_pkg::STORE && state_in.valid) begin
             case (state_in.funct3)
             0: begin
-                mem_write_reg_next = state_in.valid;
-                mem_mask_reg_next = 1;
+                mem_write_reg_tmp = state_in.valid;
+                mem_mask_reg_tmp = 1;
             end
             1: begin
-                mem_write_reg_next = state_in.valid;
-                mem_mask_reg_next = 3;
+                mem_write_reg_tmp = state_in.valid;
+                mem_mask_reg_tmp = 3;
             end
             2: begin
-                mem_write_reg_next = state_in.valid;
-                mem_mask_reg_next = 15;
+                mem_write_reg_tmp = state_in.valid;
+                mem_mask_reg_tmp = 15;
             end
             endcase
         end
-        mem_read_reg_next = 0;
+        mem_read_reg_tmp = 0;
         if (state_in.mem_op == Mem_pkg::LOAD && state_in.valid) begin
             case (state_in.funct3)
             0: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             1: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             2: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             4: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             5: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             default: begin
             end
@@ -230,8 +233,8 @@ module Execute (
     begin: _work
         do_memory();
         if (reset) begin
-            mem_write_reg_next = '0;
-            mem_read_reg_next = '0;
+            mem_write_reg_tmp = '0;
+            mem_read_reg_tmp = '0;
         end
     end
     endtask
@@ -242,11 +245,11 @@ module Execute (
     always @(posedge clk) begin
         _work(reset);
 
-        mem_addr_reg <= mem_addr_reg_next;
-        mem_data_reg <= mem_data_reg_next;
-        mem_mask_reg <= mem_mask_reg_next;
-        mem_write_reg <= mem_write_reg_next;
-        mem_read_reg <= mem_read_reg_next;
+        mem_addr_reg <= mem_addr_reg_tmp;
+        mem_data_reg <= mem_data_reg_tmp;
+        mem_mask_reg <= mem_mask_reg_tmp;
+        mem_write_reg <= mem_write_reg_tmp;
+        mem_read_reg <= mem_read_reg_tmp;
     end
 
     assign mem_write_out = mem_write_reg;

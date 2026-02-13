@@ -23,21 +23,24 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 ,   output MemWBint_int_0_0_State[LENGTH - ID-1:0] state_out
 );
 
+    // regs and combs
     logic[31:0] regs_out_comb;
 ;
     logic regs_write_comb;
 ;
     MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
+    // members
 
-    MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
+    // tmp variables
+    MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_tmp;
 
 
     task PipelineStage____work (input logic reset);
     begin: PipelineStage____work
         logic[63:0] i;
         for (i = 1;i < LENGTH - ID;i=i+1) begin
-            PipelineStage___state_reg_next[i] = PipelineStage___state_reg[i - 1];
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 1];
         end
     end
     endtask
@@ -99,7 +102,7 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
     always @(posedge clk) begin
         _work(reset);
 
-        PipelineStage___state_reg <= PipelineStage___state_reg_next;
+        PipelineStage___state_reg <= PipelineStage___state_reg_tmp;
     end
 
     assign regs_data_out = regs_out_comb;

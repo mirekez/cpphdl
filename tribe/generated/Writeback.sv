@@ -16,12 +16,15 @@ module Writeback (
 ,   output wire regs_write_out
 );
 
+    // regs and combs
     logic[31:0] regs_out_comb;
 ;
     logic regs_write_comb;
 ;
 
+    // members
 
+    // tmp variables
 
 
     always @(*) begin  // regs_out_comb_func

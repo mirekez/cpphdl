@@ -30,6 +30,7 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,   output ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] state_out
 );
 
+    // regs and combs
     reg[31:0] mem_addr_reg;
     reg[31:0] mem_data_reg;
     reg[7:0] mem_mask_reg;
@@ -47,13 +48,15 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ;
     ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
+    // members
 
-    reg[31:0] mem_addr_reg_next;
-    reg[31:0] mem_data_reg_next;
-    reg[7:0] mem_mask_reg_next;
-    reg mem_write_reg_next;
-    reg mem_read_reg_next;
-    ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_next;
+    // tmp variables
+    logic[31:0] mem_addr_reg_tmp;
+    logic[31:0] mem_data_reg_tmp;
+    logic[7:0] mem_mask_reg_tmp;
+    logic mem_write_reg_tmp;
+    logic mem_read_reg_tmp;
+    ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_tmp;
 
 
     always @(*) begin  // alu_a_comb_func
@@ -189,53 +192,53 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     task do_execute ();
     begin: do_execute
-        PipelineStage___state_reg_next[0].alu_result = alu_result_comb;
-        PipelineStage___state_reg_next[0].debug_alu_a = alu_a_comb;
-        PipelineStage___state_reg_next[0].debug_alu_b = alu_b_comb;
-        PipelineStage___state_reg_next[0].debug_branch_target = branch_target_comb;
-        PipelineStage___state_reg_next[0].debug_branch_taken = branch_taken_comb;
+        PipelineStage___state_reg_tmp[0].alu_result = alu_result_comb;
+        PipelineStage___state_reg_tmp[0].debug_alu_a = alu_a_comb;
+        PipelineStage___state_reg_tmp[0].debug_alu_b = alu_b_comb;
+        PipelineStage___state_reg_tmp[0].debug_branch_target = branch_target_comb;
+        PipelineStage___state_reg_tmp[0].debug_branch_taken = branch_taken_comb;
     end
     endtask
 
     task start_memory ();
     begin: start_memory
-        mem_addr_reg_next = alu_result_comb;
-        mem_data_reg_next = state_in[ID - 1].rs2_val;
-        mem_write_reg_next = 0;
-        mem_mask_reg_next = 0;
+        mem_addr_reg_tmp = alu_result_comb;
+        mem_data_reg_tmp = state_in[ID - 1].rs2_val;
+        mem_write_reg_tmp = 0;
+        mem_mask_reg_tmp = 0;
         if (state_in[ID - 1].mem_op == Mem_pkg::STORE && state_in[ID - 1].valid) begin
             case (state_in[ID - 1].funct3)
             0: begin
-                mem_write_reg_next = state_in[ID - 1].valid;
-                mem_mask_reg_next = 1;
+                mem_write_reg_tmp = state_in[ID - 1].valid;
+                mem_mask_reg_tmp = 1;
             end
             1: begin
-                mem_write_reg_next = state_in[ID - 1].valid;
-                mem_mask_reg_next = 3;
+                mem_write_reg_tmp = state_in[ID - 1].valid;
+                mem_mask_reg_tmp = 3;
             end
             2: begin
-                mem_write_reg_next = state_in[ID - 1].valid;
-                mem_mask_reg_next = 15;
+                mem_write_reg_tmp = state_in[ID - 1].valid;
+                mem_mask_reg_tmp = 15;
             end
             endcase
         end
-        mem_read_reg_next = 0;
+        mem_read_reg_tmp = 0;
         if (state_in[ID - 1].mem_op == Mem_pkg::LOAD && state_in[ID - 1].valid) begin
             case (state_in[ID - 1].funct3)
             0: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             1: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             2: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             4: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             5: begin
-                mem_read_reg_next = 1;
+                mem_read_reg_tmp = 1;
             end
             default: begin
             end
@@ -248,7 +251,7 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     begin: PipelineStage____work
         logic[63:0] i;
         for (i = 1;i < LENGTH - ID;i=i+1) begin
-            PipelineStage___state_reg_next[i] = PipelineStage___state_reg[i - 1];
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 1];
         end
     end
     endtask
@@ -256,11 +259,11 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            mem_write_reg_next = '0;
-            mem_read_reg_next = '0;
+            mem_write_reg_tmp = '0;
+            mem_read_reg_tmp = '0;
         end
         PipelineStage____work(reset);
-        PipelineStage___state_reg_next[0] = 0;
+        PipelineStage___state_reg_tmp[0] = 0;
         do_execute();
         start_memory();
     end
@@ -272,12 +275,12 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     always @(posedge clk) begin
         _work(reset);
 
-        mem_addr_reg <= mem_addr_reg_next;
-        mem_data_reg <= mem_data_reg_next;
-        mem_mask_reg <= mem_mask_reg_next;
-        mem_write_reg <= mem_write_reg_next;
-        mem_read_reg <= mem_read_reg_next;
-        PipelineStage___state_reg <= PipelineStage___state_reg_next;
+        mem_addr_reg <= mem_addr_reg_tmp;
+        mem_data_reg <= mem_data_reg_tmp;
+        mem_mask_reg <= mem_mask_reg_tmp;
+        mem_write_reg <= mem_write_reg_tmp;
+        mem_read_reg <= mem_read_reg_tmp;
+        PipelineStage___state_reg <= PipelineStage___state_reg_tmp;
     end
 
     assign mem_write_out = mem_write_reg;

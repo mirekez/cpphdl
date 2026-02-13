@@ -12,31 +12,196 @@ import State_pkg::*;
 import Wb_pkg::*;
 
 
-module Decode (
+module Tribe (
     input wire clk
 ,   input wire reset
-,   input logic[31:0] pc_in
-,   input wire instr_valid_in
-,   input logic[31:0] instr_in
-,   input logic[31:0] regs_data0_in
-,   input logic[31:0] regs_data1_in
-,   output wire[5-1:0] rs1_out
-,   output wire[5-1:0] rs2_out
-,   output State state_out
+,   output wire dmem_write_out
+,   output logic[31:0] dmem_write_addr_out
+,   output logic[31:0] dmem_write_data_out
+,   output logic[7:0] dmem_write_mask_out
+,   output wire dmem_read_out
+,   output logic[31:0] dmem_read_addr_out
+,   input logic[31:0] dmem_read_data_in
+,   output logic[31:0] imem_read_addr_out
+,   input logic[31:0] imem_read_data_in
+,   input wire debugen_in
 );
 
     // regs and combs
-    State state_comb;
-;
-    logic[5-1:0] rs1_out_comb;
-;
-    logic[5-1:0] rs2_out_comb;
+    reg[31:0] pc;
+    reg valid;
+    reg[31:0] alu_result_reg;
+    State[2-1:0] state_reg;
+    reg[31:0] debug_alu_a_reg;
+    reg[31:0] debug_alu_b_reg;
+    reg[31:0] debug_branch_target_reg;
+    reg debug_branch_taken_reg;
+    logic stall_comb;
 ;
 
     // members
+      logic[31:0] dec__pc_in;
+      wire dec__instr_valid_in;
+      logic[31:0] dec__instr_in;
+      logic[31:0] dec__regs_data0_in;
+      logic[31:0] dec__regs_data1_in;
+      wire[5-1:0] dec__rs1_out;
+      wire[5-1:0] dec__rs2_out;
+      State dec__state_out;
+    Decode      dec (
+        .clk(clk)
+,       .reset(reset)
+,       .pc_in(dec__pc_in)
+,       .instr_valid_in(dec__instr_valid_in)
+,       .instr_in(dec__instr_in)
+,       .regs_data0_in(dec__regs_data0_in)
+,       .regs_data1_in(dec__regs_data1_in)
+,       .rs1_out(dec__rs1_out)
+,       .rs2_out(dec__rs2_out)
+,       .state_out(dec__state_out)
+    );
+      State exe__state_in;
+      wire exe__mem_write_out;
+      logic[31:0] exe__mem_write_addr_out;
+      logic[31:0] exe__mem_write_data_out;
+      logic[7:0] exe__mem_write_mask_out;
+      wire exe__mem_read_out;
+      logic[31:0] exe__mem_read_addr_out;
+      logic[31:0] exe__alu_result_out;
+      logic[31:0] exe__debug_alu_a_out;
+      logic[31:0] exe__debug_alu_b_out;
+      wire exe__branch_taken_out;
+      logic[31:0] exe__branch_target_out;
+    Execute      exe (
+        .clk(clk)
+,       .reset(reset)
+,       .state_in(exe__state_in)
+,       .mem_write_out(exe__mem_write_out)
+,       .mem_write_addr_out(exe__mem_write_addr_out)
+,       .mem_write_data_out(exe__mem_write_data_out)
+,       .mem_write_mask_out(exe__mem_write_mask_out)
+,       .mem_read_out(exe__mem_read_out)
+,       .mem_read_addr_out(exe__mem_read_addr_out)
+,       .alu_result_out(exe__alu_result_out)
+,       .debug_alu_a_out(exe__debug_alu_a_out)
+,       .debug_alu_b_out(exe__debug_alu_b_out)
+,       .branch_taken_out(exe__branch_taken_out)
+,       .branch_target_out(exe__branch_target_out)
+    );
+      State wb__state_in;
+      logic[31:0] wb__alu_result_in;
+      logic[31:0] wb__mem_data_in;
+      logic[31:0] wb__regs_data_out;
+      logic[7:0] wb__regs_wr_id_out;
+      wire wb__regs_write_out;
+    Writeback      wb (
+        .clk(clk)
+,       .reset(reset)
+,       .state_in(wb__state_in)
+,       .alu_result_in(wb__alu_result_in)
+,       .mem_data_in(wb__mem_data_in)
+,       .regs_data_out(wb__regs_data_out)
+,       .regs_wr_id_out(wb__regs_wr_id_out)
+,       .regs_write_out(wb__regs_write_out)
+    );
+      logic[7:0] regs__write_addr_in;
+      wire regs__write_in;
+      logic[31:0] regs__write_data_in;
+      logic[7:0] regs__read_addr0_in;
+      logic[7:0] regs__read_addr1_in;
+      wire regs__read_in;
+      logic[31:0] regs__read_data0_out;
+      logic[31:0] regs__read_data1_out;
+      wire regs__debugen_in;
+    File #(
+        32
+,       32
+    ) regs (
+        .clk(clk)
+,       .reset(reset)
+,       .write_addr_in(regs__write_addr_in)
+,       .write_in(regs__write_in)
+,       .write_data_in(regs__write_data_in)
+,       .read_addr0_in(regs__read_addr0_in)
+,       .read_addr1_in(regs__read_addr1_in)
+,       .read_in(regs__read_in)
+,       .read_data0_out(regs__read_data0_out)
+,       .read_data1_out(regs__read_data1_out)
+,       .debugen_in(regs__debugen_in)
+    );
 
     // tmp variables
+    logic[31:0] pc_tmp;
+    logic valid_tmp;
+    logic[31:0] alu_result_reg_tmp;
+    State[2-1:0] state_reg_tmp;
+    logic[31:0] debug_alu_a_reg_tmp;
+    logic[31:0] debug_alu_b_reg_tmp;
+    logic[31:0] debug_branch_target_reg_tmp;
+    logic debug_branch_taken_reg_tmp;
 
+
+    always @(*) begin  // stall_comb_func
+        stall_comb = 0;
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb_pkg::MEM && state_reg[0].rd != 0) begin
+            if (state_reg[0].rd == dec__state_out.rs1) begin
+                stall_comb = 1;
+            end
+            if (state_reg[0].rd == dec__state_out.rs2) begin
+                stall_comb = 1;
+            end
+        end
+        if ((state_reg[0].valid && state_reg[0].br_op != Br_pkg::BNONE)) begin
+            stall_comb = 1;
+        end
+    end
+
+    task forward ();
+    begin: forward
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb_pkg::ALU && state_reg[1].rd != 0) begin
+            if (dec__state_out.rs1 == state_reg[1].rd) begin
+                state_reg_tmp[0].rs1_val = alu_result_reg;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS1\n", unsigned'(32'(alu_result_reg)));
+                end
+            end
+            if (dec__state_out.rs2 == state_reg[1].rd) begin
+                state_reg_tmp[0].rs2_val = alu_result_reg;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS2\n", unsigned'(32'(alu_result_reg)));
+                end
+            end
+        end
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb_pkg::ALU && state_reg[0].rd != 0) begin
+            if (dec__state_out.rs1 == state_reg[0].rd) begin
+                state_reg_tmp[0].rs1_val = exe__alu_result_out;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS1\n", unsigned'(32'(exe__alu_result_out)));
+                end
+            end
+            if (dec__state_out.rs2 == state_reg[0].rd) begin
+                state_reg_tmp[0].rs2_val = exe__alu_result_out;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS2\n", unsigned'(32'(exe__alu_result_out)));
+                end
+            end
+        end
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb_pkg::MEM && state_reg[1].rd != 0) begin
+            if (dec__state_out.rs1 == state_reg[1].rd) begin
+                state_reg_tmp[0].rs1_val = dmem_read_data_in;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS1\n", unsigned'(32'(dmem_read_data_in)));
+                end
+            end
+            if (dec__state_out.rs2 == state_reg[1].rd) begin
+                state_reg_tmp[0].rs2_val = dmem_read_data_in;
+                if (debugen_in) begin
+                    $write("forwarding %.08x from ALU to RS2\n", unsigned'(32'(dmem_read_data_in)));
+                end
+            end
+        end
+    end
+    endtask
 
     function logic signed[31:0] Rv32i___sext (
         input Rv32i _this
@@ -485,45 +650,352 @@ module Decode (
     end
     endtask
 
-    always @(*) begin  // state_comb_func
-        Rv32im instr; instr = {instr_in};
-        Rv32im___decode(instr, state_comb);
-        if ((instr._.raw & 3) == 3 && instr._.r.opcode == 23) begin
-            state_comb.rs1_val = pc_in;
+    function [63:0] Rv32i___mnemonic (input Rv32i _this);
+        logic[31:0] op;
+        logic[31:0] f3;
+        logic[31:0] f7;
+        op = _this._.r.opcode;
+        f3 = _this._.r.funct3;
+        f7 = _this._.r.funct7;
+        case (op)
+        51: begin
+            if (f3 == 0 && f7 == 0) begin
+                return "add   ";
+            end
+            if (f3 == 0 && f7 == 32) begin
+                return "sub   ";
+            end
+            if (f3 == 0 && f7 == 1) begin
+                return "mul   ";
+            end
+            if (f3 == 7 && f7 == 1) begin
+                return "remu  ";
+            end
+            if (f3 == 7) begin
+                return "and   ";
+            end
+            if (f3 == 6) begin
+                return "or    ";
+            end
+            if (f3 == 4) begin
+                return "xor   ";
+            end
+            if (f3 == 1) begin
+                return "sll   ";
+            end
+            if (f3 == 5 && f7 == 0) begin
+                return "srl   ";
+            end
+            if (f3 == 5 && f7 == 32) begin
+                return "sra   ";
+            end
+            if (f3 == 5 && f7 == 1) begin
+                return "divu  ";
+            end
+            if (f3 == 2) begin
+                return "slt   ";
+            end
+            if (f3 == 3 && f7 == 1) begin
+                return "mulhu ";
+            end
+            if (f3 == 3) begin
+                return "sltu  ";
+            end
+            return "r-type";
         end
-        state_comb.valid = instr_valid_in;
-        state_comb.pc = pc_in;
-        if (state_comb.rs1) begin
-            state_comb.rs1_val = regs_data0_in;
+        19: begin
+            if (f3 == 0) begin
+                return "addi  ";
+            end
+            if (f3 == 7) begin
+                return "andi  ";
+            end
+            if (f3 == 6) begin
+                return "ori   ";
+            end
+            if (f3 == 4) begin
+                return "xori  ";
+            end
+            if (f3 == 1) begin
+                return "slli  ";
+            end
+            if (f3 == 5 && f7 == 0) begin
+                return "srli  ";
+            end
+            if (f3 == 5 && f7 == 32) begin
+                return "srai  ";
+            end
+            if (f3 == 2) begin
+                return "slti  ";
+            end
+            if (f3 == 3) begin
+                return "sltiu ";
+            end
+            return "aluimm";
         end
-        if (state_comb.rs2) begin
-            state_comb.rs2_val = regs_data1_in;
+        3: begin
+            return "load  ";
         end
-    end
+        35: begin
+            return "store ";
+        end
+        99: begin
+            return "branch";
+        end
+        111: begin
+            return "jal   ";
+        end
+        103: begin
+            return "jalr  ";
+        end
+        55: begin
+            return "lui   ";
+        end
+        23: begin
+            return "auipc ";
+        end
+        default: begin
+        end
+        endcase
+        return "unknwn";
+    endfunction
 
-    always @(*) begin  // rs1_out_comb_func
-        rs1_out_comb = state_comb.rs1;
-    end
+    function [63:0] Rv32ic___mnemonic (input Rv32ic _this);
+        logic[7:0] op;
+        logic[7:0] f3;
+        logic[7:0] b12;
+        logic[7:0] rs2;
+        logic[7:0] bits6_5;
+        logic[7:0] bits11_10;
+        Rv32ic_rv16 i; i = {unsigned'(16'(_this._.raw))};
+        if ((_this._.raw & 3) == 3) begin
+            return Rv32i___mnemonic(_this);
+        end
+        op = i.base.opcode;
+        f3 = i.base.funct3;
+        b12 = i.base.b12;
+        bits6_5 = i.base.bits6_5;
+        bits11_10 = i.base.bits11_10;
+        rs2 = i.big.rs2;
+        case (op)
+        0: begin
+            case (f3)
+            0: begin
+                return "addi4s";
+            end
+            2: begin
+                return "lw    ";
+            end
+            6: begin
+                return "sw    ";
+            end
+            3: begin
+                return "ld    ";
+            end
+            7: begin
+                return "sd    ";
+            end
+            default: begin
+            end
+            endcase
+        end
+        1: begin
+            case (f3)
+            0: begin
+                return "addi  ";
+            end
+            1: begin
+                return "jal   ";
+            end
+            2: begin
+                return "li    ";
+            end
+            3: begin
+                return "addisp";
+            end
+            4: begin
+                if (bits11_10 == 0) begin
+                    return "srli  ";
+                end
+                if (bits11_10 == 1) begin
+                    return "srai  ";
+                end
+                if (bits11_10 == 2) begin
+                    return "andi  ";
+                end
+                if (bits11_10 == 3 && b12 == 0 && bits6_5 == 0) begin
+                    return "sub   ";
+                end
+                if (bits11_10 == 3 && b12 == 0 && bits6_5 == 1) begin
+                    return "xor   ";
+                end
+                if (bits11_10 == 3 && b12 == 0 && bits6_5 == 2) begin
+                    return "or    ";
+                end
+                if (bits11_10 == 3 && b12 == 0 && bits6_5 == 3) begin
+                    return "and   ";
+                end
+                return "illgl ";
+            end
+            5: begin
+                return "j     ";
+            end
+            6: begin
+                return "beqz  ";
+            end
+            7: begin
+                return "bnez  ";
+            end
+            endcase
+        end
+        2: begin
+            case (f3)
+            0: begin
+                return "slli  ";
+            end
+            1: begin
+                return "fldsp ";
+            end
+            2: begin
+                return "lwsp  ";
+            end
+            4: begin
+                if (rs2 != 0 && b12 == 0) begin
+                    return "mv    ";
+                end
+                if (rs2 != 0 && b12 == 1) begin
+                    return "add   ";
+                end
+                if (rs2 == 0 && b12 == 0) begin
+                    return "jr    ";
+                end
+                if (rs2 == 0 && b12 == 1) begin
+                    return "jalr  ";
+                end
+                return "illgl ";
+            end
+            6: begin
+                return "swsp  ";
+            end
+            3: begin
+                return "ldsp  ";
+            end
+            7: begin
+                return "sdsp  ";
+            end
+            default: begin
+            end
+            endcase
+        end
+        endcase
+        return "unknwn";
+    endfunction
 
-    always @(*) begin  // rs2_out_comb_func
-        rs2_out_comb = state_comb.rs2;
+    function [63:0] Rv32im___mnemonic (input Rv32im _this);
+        if (_this._.r.opcode == 51 && _this._.r.funct7 == 1) begin
+            if (_this._.r.funct3 == 0) begin
+                return "mul   ";
+            end
+            if (_this._.r.funct3 == 5) begin
+                return "divu  ";
+            end
+            if (_this._.r.funct3 == 3) begin
+                return "mulhu ";
+            end
+        end
+        return Rv32ic___mnemonic(_this);
+    endfunction
+
+    task debug ();
+    begin: debug
+        State tmp;
+        Rv32im instr; instr = {imem_read_data_in};
+        Rv32im___decode(instr, tmp);
+        $write("(%d/%d)%x: [%s]%08x  rs%02d/%02d,imm:%08x,rd%02d => (%d)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%d)%08x => mem(%d/%d@%08x)%08x/%01x (%d)wop(%x),r(%d)%08x@%02d", logic'(valid), logic'(stall_comb), pc, Rv32im___mnemonic(instr), (instr._.raw & 3) == 3 ? instr._.raw : (instr._.raw | 4294901760), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), logic'(state_reg[0].valid), unsigned'(8'(state_reg[0].alu_op)), unsigned'(8'(state_reg[0].mem_op)), unsigned'(8'(state_reg[0].br_op)), unsigned'(8'(state_reg[0].wb_op)), signed'(32'(state_reg[0].rs1)), signed'(32'(state_reg[0].rs2)), state_reg[0].rs1_val, state_reg[0].rs2_val, state_reg[0].imm, exe__alu_result_out, signed'(32'(state_reg[0].rd)), logic'(exe__branch_taken_out), exe__branch_target_out, logic'(exe__mem_write_out), logic'(exe__mem_read_out), exe__mem_write_addr_out, exe__mem_write_data_out, exe__mem_write_mask_out, logic'(state_reg[1].valid), unsigned'(8'(state_reg[1].wb_op)), logic'(wb__regs_write_out), wb__regs_data_out, wb__regs_wr_id_out);
+        $write("\n");
     end
+    endtask
 
     task _work (input logic reset);
     begin: _work
+        if (debugen_in) begin
+            debug();
+        end
+        if (dmem_write_addr_out == 287454020 && dmem_write_out) begin
+            integer out; out = $fopen("out.txt", "a");
+            $fwrite(out, "%c", dmem_write_data_out & 255);
+            $fclose(out);
+        end
+        if (valid && !stall_comb) begin
+            pc_tmp = pc + ((dec__instr_in & 3) == 3 ? 4 : 2);
+        end
+        if (state_reg[0].valid && exe__branch_taken_out) begin
+            pc_tmp = exe__branch_target_out;
+        end
+        valid_tmp = 1;
+        state_reg_tmp[0] = dec__state_out;
+        state_reg_tmp[0].valid = dec__instr_valid_in && !stall_comb;
+        forward();
+        state_reg_tmp[1] = state_reg[0];
+        alu_result_reg_tmp = exe__alu_result_out;
+        debug_branch_target_reg = exe__branch_target_out;
+        debug_branch_taken_reg = exe__branch_taken_out;
+        if (reset) begin
+            state_reg_tmp[0].valid = 0;
+            state_reg_tmp[1].valid = 0;
+            pc_tmp = '0;
+            valid_tmp = '0;
+        end
     end
     endtask
+
+    task _work_neg (input logic reset);
+    begin: _work_neg
+    end
+    endtask
+
+    generate  // _connect
+        assign dec__pc_in = pc;
+        assign dec__instr_valid_in = valid;
+        assign dec__instr_in = imem_read_data_in;
+        assign dec__regs_data0_in = dec__rs1_out == 0 ? 0 : regs__read_data0_out;
+        assign dec__regs_data1_in = dec__rs2_out == 0 ? 0 : regs__read_data1_out;
+        assign exe__state_in = state_reg[0];
+        assign wb__state_in = state_reg[1];
+        assign wb__mem_data_in = dmem_read_data_in;
+        assign wb__alu_result_in = alu_result_reg;
+        assign regs__read_addr0_in = unsigned'(8'(dec__rs1_out));
+        assign regs__read_addr1_in = unsigned'(8'(dec__rs2_out));
+        assign regs__write_in = wb__regs_write_out;
+        assign regs__write_addr_in = wb__regs_wr_id_out;
+        assign regs__write_data_in = wb__regs_data_out;
+        assign regs__debugen_in = debugen_in;
+        assign dmem_write_out = exe__mem_write_out;
+        assign dmem_write_addr_out = exe__mem_write_addr_out;
+        assign dmem_write_data_out = exe__mem_write_data_out;
+        assign dmem_write_mask_out = exe__mem_write_mask_out;
+        assign dmem_read_out = exe__mem_read_out;
+        assign dmem_read_addr_out = exe__mem_read_addr_out;
+    endgenerate
 
     always @(posedge clk) begin
         _work(reset);
 
+        pc <= pc_tmp;
+        valid <= valid_tmp;
+        alu_result_reg <= alu_result_reg_tmp;
+        state_reg <= state_reg_tmp;
+        debug_alu_a_reg <= debug_alu_a_reg_tmp;
+        debug_alu_b_reg <= debug_alu_b_reg_tmp;
+        debug_branch_target_reg <= debug_branch_target_reg_tmp;
+        debug_branch_taken_reg <= debug_branch_taken_reg_tmp;
     end
 
-    assign rs1_out = rs1_out_comb;
+    always @(negedge clk) begin
+        _work_neg(reset);
+    end
 
-    assign rs2_out = rs2_out_comb;
-
-    assign state_out = state_comb;
+    assign imem_read_addr_out = pc;
 
 
 endmodule
