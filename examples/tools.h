@@ -29,7 +29,7 @@ inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::
     }
     size_t n = 0;
     // SV parameters substitution
-    ((std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
+    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + name + ".sv").c_str())), ...);
     // running Verilator
     SystemEcho((std::string("cd ") + folder_name +
