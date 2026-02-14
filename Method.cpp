@@ -127,14 +127,18 @@ bool Method::printConns(std::ofstream& out)
             continue;
         }
 
-//        bool has_body = false;
-        stmt.traverseIf( [&](Expr& e) {
-                    e.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
-//                    if (e.type == Expr::EXPR_BODY) {
-//                        has_body = true;  // lambda
-//                    }
-                    return false;
-                } );  // we set flags individually, not all Exprs propagate its flags - fix it later
+        if (stmt.type == Expr::EXPR_IF) {
+            continue;
+        }
+
+////        bool has_body = false;
+//        stmt.traverseIf( [&](Expr& e) {
+//                    e.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
+////                    if (e.type == Expr::EXPR_BODY) {
+////                        has_body = true;  // lambda
+////                    }
+//                    return false;
+//                } );  // we set flags individually, not all Exprs propagate its flags - fix it later
 
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
