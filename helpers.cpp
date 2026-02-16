@@ -238,8 +238,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0
                         && CRD->getQualifiedNameAsString().find("IO_FILE") == (size_t)-1) {
                         auto st = exportStruct(CRD, *this);
-                        auto ret = mod->imports.emplace(st.name);
-                        if (ret.second) {
+                        if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {
+                            mod->imports.emplace_back(st.name);
                             currProject->structs.emplace_back(std::move(st));
                         }
                     }
@@ -341,8 +341,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                 name = en.name + "_pkg::" + name;
 
-                auto ret = mod->imports.emplace(en.name);
-                if (ret.second) {
+                if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == en.name; }) == mod->imports.end()) {
+                    mod->imports.emplace_back(en.name);
                     currProject->enums.emplace_back(std::move(en));
                 }
             }
@@ -962,11 +962,11 @@ void Helpers::ArgToExpr(const TemplateArgument& arg, cpphdl::Expr& expr, bool sp
         cpphdl::Expr expr1 = digQT(QT);
         expr.sub.emplace_back(std::move(expr1));
 
-        auto* CRD = resolveCXXRecordDecl(QT);
+        auto* CRD = resolveCXXRecordDecl(QT);  // types embedded in any templates
         if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
             auto st = exportStruct(CRD, *this);
-            auto ret = mod->imports.emplace(st.name);
-            if (ret.second) {
+            if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {
+                auto ret = mod->imports.emplace_back(st.name);
                 currProject->structs.emplace_back(std::move(st));
             }
         }

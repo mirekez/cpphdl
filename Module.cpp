@@ -17,12 +17,11 @@ bool Module::print(std::ofstream& out)
 
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
-    for (auto& import : imports) {
-        if (std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){ return genTypeName(import).find(m.name) == 0; }) != currProject->modules.end()) {
+    for (auto& imp : imports) {
+        if (std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){ return imp.origName == m.origName; }) != currProject->modules.end()) {
             continue;
         }
-        std::string str = genTypeName(import);
-        out << "import " << str << "_pkg::*;\n";
+        out << "import " << genTypeName(imp.name) << "_pkg::*;\n";
     }
     out << "\n\n";
     out << "module ";
@@ -101,7 +100,7 @@ bool Module::print(std::ofstream& out)
     out << "\n";
     for (auto& field : vars) {  // strobe
         field.indent = 1;
-        if (!str_ending(field.name, "_comb") && !(field.expr.type == cpphdl::Expr::EXPR_TEMPLATE && field.expr.value == "cpphdl_memory")) {
+        if (field.expr.traverseIf([](auto& e){ return e.type == cpphdl::Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             out << "        " << field.name << " <= " << field.name << "_tmp;\n";
         }
     }

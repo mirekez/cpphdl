@@ -43,7 +43,7 @@ void Project::generate(const std::string& outDir)
             continue;
         }
         structures_uniq.emplace(str.name);
-        if (std::find_if(modules.begin(), modules.end(), [&](auto& m){ return str.name.find(m.name) == 0; }) != modules.end()) {
+        if (std::find_if(modules.begin(), modules.end(), [&](auto& m){ return str.origName == m.origName; }) != modules.end()) {
             continue;
         }
 
@@ -58,7 +58,7 @@ void Project::generate(const std::string& outDir)
         out << "package " << fname << "_pkg;\n";
 
         for (auto& imp : str.imports) {
-            out << "import " << imp << "_pkg::*;\n";
+            out << "import " << imp.name << "_pkg::*;\n";
         }
 
         out << "\n";

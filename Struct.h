@@ -7,6 +7,11 @@
 namespace cpphdl
 {
 
+struct Import
+{
+    std::string name;
+    std::string origName;  // qualified name of the type without specialization
+};
 
 struct Field;
 
@@ -23,7 +28,7 @@ struct Struct
     std::vector<Field> fields;
     std::string origName;
     std::vector<Field> parameters;  // constexpr inside struct
-    std::set<std::string> imports;
+    std::vector<Import> imports;
 
     int indent = 0;
     int alignNo = 0;  // count alignment insertions

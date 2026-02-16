@@ -10,6 +10,7 @@ namespace cpphdl
 struct Field;
 struct Method;
 struct Comb;
+struct Import;
 
 struct Module
 {
@@ -20,7 +21,7 @@ struct Module
     std::vector<Field> vars;
     std::vector<Field> members;
     std::vector<Method> methods;
-    std::set<std::string> imports;
+    std::vector<Import> imports;
     std::string origName;
 
     // methods

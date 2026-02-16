@@ -151,6 +151,6 @@ size_t cpphdl::getStructSize(std::string name, Struct* st)
             }
         }
     }
-    std::cerr << "WARNING: can't get structure '" << name << "\n"; //"', " << std::stacktrace::current() << "\n";
+    std::cerr << "WARNING: can't get structure '" << name << "'\n"; //"', " << std::stacktrace::current() << "\n";
     return 0;
 }
