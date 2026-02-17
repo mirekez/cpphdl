@@ -13,7 +13,7 @@ struct Method
 {
     std::string name;
     std::vector<Expr> ret;
-    std::vector<Field> parameters;
+    std::vector<Field> arguments;
     std::vector<Expr> statements;
     std::vector<Field> temps;
 

@@ -23,10 +23,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
     switch (type)
     {
         case EXPR_NONE:
-            return "";
+            return prefix + suffix;
         case EXPR_DECL:
         {
             ASSERT(sub.size() >= 1);
+            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
+                return "";
+            }
             if (value.find("__") == 0 || value.find("_____") != (size_t)-1) {  // hidden var
                 return "";
             }
@@ -67,15 +70,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
         case EXPR_VAR:
-//            if (value.find("__ONE") == 0) {
-//                return indent_str + prefix + "'1" + suffix;
-//            }
-//            if (value.find("__ZERO") == 0) {
-//                return indent_str + prefix + "'0" + suffix;
-//            }
             return indent_str + prefix + escapeIdentifier(value) + suffix;
         case EXPR_STRING:
-            return indent_str + prefix + replacePrintFormat(value);
+            return indent_str + prefix + value;
         case EXPR_PARAM:
             if (sub.size() && !(flags&FLAG_SPECVAL)) {  // if we have expression for this number parameter (from template parameters)
                 return indent_str + prefix + sub[0].str() + suffix;
@@ -133,17 +130,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 std::string str = value;
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
-            if ((flags&FLAG_NOCALLS)) {
+            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
                 return "";
             }
-            bool noBrackets = false;
-            int skipArgs = 0;
             std::string func = value;
             if (func == "clog2") {
                 func = "$clog2";
-            }
-            if (func == "printf") {
-                func = "$write";
             }
             if (func == "fopen") {
                 func = "$fopen";
@@ -151,11 +143,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fclose") {
                 func = "$fclose";
             }
-            if (func == "fprintf") {
+            if (sub.size() && (func == "printf" || func == "print" || func == "fprintf")) {
+                sub[0].value = replacePrintFormat(sub);
+            }
+            if (func == "fprintf" && sub.size()) {
+                if (sub[0].value == "stderr") {
+                    sub[0].value = "2";
+                }
+                if (sub[0].value == "stdout") {
+                    sub[0].value = "1";
+                }
                 func = "$fwrite";
             }
             if (func == "printf") {
-                skipArgs = 1;  // check %s in printf first
                 func = "$write";
             }
             if (func == "print") {
@@ -167,40 +167,30 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fflush") {
                 return "";
             }
-            if (value.find("std::basic_format_string") == 0) {
-                noBrackets = true;
-                func = "";
-            }
-
-            std::string str = escapeIdentifier(func) + suffix;
-
-            if (!sub.size()) {  // UnresolvedMemberExpr - just a call to port
-                return indent_str + str;
-            }
-            if (!noBrackets) {
-                str += "(";
-            }
+//            if (value.find("std::basic_format_string") == 0) {
+//                noBrackets = true;
+//                func = "";
+//            }
+//            if (!sub.size()) {  // UnresolvedMemberExpr - just a call to port
+//                return indent_str + str;
+//            }
+            std::string call = escapeIdentifier(func) + suffix;
+            call += "(";
             bool first = true;
-            for (size_t i=skipArgs; i < sub.size(); ++i) {
-                if (sub[i].value.find("std::basic_format_string") == 0 && i == 0 && sub[0].sub.size()) {  // detect std::print
-                    str += replacePrintFormat(sub[0].sub[0].value, sub.size()>1 && sub[1].str().find("__inst_name") != (size_t)-1);
-                    first = false;
-                } else
-                if (sub[i].str().find("__inst_name") == (size_t)-1 && sub[i].type != EXPR_NONE) {  // normal parameter
-                    str += (first?"":", ") + sub[i].str();
+            for (auto& arg : sub) {
+                if (arg.type != EXPR_NONE) {  // normal parameter
+                    call += (first?"":", ") + arg.str();
                     first = false;
                 }
             }
-            if (!noBrackets) {
-                str += ")";
-            }
-            return indent_str + prefix + str;
+            call += ")";
+            return indent_str + prefix + call;
         }
         case EXPR_OPERATORCALL:
         {
             ASSERT(sub.size());
-            if (sub[0].str().find("__") == 0 || sub[0].str().find("_____") != (size_t)-1
-                || (sub.size() > 1 && (sub[1].str().find("__") == 0 || sub[1].str().find("_____") != (size_t)-1))) {  // all __ vars are hidden
+            if (sub[0].value.find("__") == 0 || sub[0].value.find("_____") != (size_t)-1
+                || (sub.size() > 1 && (sub[1].value.find("__") == 0 || sub[1].value.find("_____") != (size_t)-1))) {  // all __ vars are hidden
                 return "";
             }
             auto& vars = currModule->vars;
@@ -227,8 +217,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
             }
-            if (value == "()") {
-                ASSERT(sub.size() >= 1);
+            if (value == "()") {  // it can be only port, skip parenthesis
+//                if (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK) {  // member call - can be only member's port access now, no args
+//                    ASSERT(sub[0].sub.size());
+////                    if (sub[0].str() != "_this") {
+//                        return indent_str + prefix + sub[0].sub[0].str("", std::string(sub[0].sub[0].str().length()?"__":"") + sub[0].value + suffix);
+////                    }
+//                }
                 return indent_str + sub[0].str();
             }
             if (value == "*" && sub.size() == 1) {  // we dont need pointers int Verilog
@@ -248,25 +243,26 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str() + " ^ " + sub[1].str();
             }
 
-            std::string str = value + suffix + "(";
+            std::string func = value + suffix + "(";
+
             bool first = true;
             for (auto& arg : sub) {
-                str += (first?"":", ") + arg.str();
+                func += (first?"":", ") + arg.str();
                 first = false;
             }
-            str += ")";
-            return indent_str + prefix + str;
+            func += ")";
+            return indent_str + prefix + func;
         }
         // here we have member as first sub element, and it has object as it's sub element
         case EXPR_MEMBERCALL:
         {
             ASSERT(sub.size());
-            if (value == "_connect" || value == "_strobe") {  // never need this functions
+            if (value == "_connect" || value == "_strobe" || str_ending(value, "____connect") || str_ending(value, "____strobe")) {  // never need this functions
                 return "";
             }
-            if ((value == "_work" || value == "_work_neg") && sub[0].value != "_this") {  // never need this functions or third party class work
-                return "";
-            }
+//            if ((value == "_work" || value == "_work_neg" || str_ending(value, "____work") || str_ending(value, "____work_neg")) && sub[0].value != "_this") {  // never need this functions except third party class work
+//                return "";
+//            }
             if (value.find("operator") == 0) {
                 return indent_str + sub[0].str();
             }
@@ -286,44 +282,46 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 3 && value == "bits" && sub[0].value != "_this") {
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
             }
-            if (sub.size() >= 1 && str_ending(value, "_comb_func")) {
+            if (str_ending(value, "_comb_func")) {
                 std::string str = value;
                 str_replace(str, "_comb_func", "_comb");
-                return indent_str + str;
+                return indent_str + prefix + str + suffix;
             }
-            if ((flags&FLAG_NOCALLS)) {  // except _comb_func() calls
+            if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
+                return indent_str + prefix + escapeIdentifier(value) + suffix;
+            }
+            std::string base = sub[0].str();
+            if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
+                && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } )) {
+                if (value == "_work") {  // dont call _work() for members
+                    return "";
+                }
+                return indent_str + prefix + base + "__" + escapeIdentifier(value) + suffix;
+            }
+            if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
+                base = sub[0].sub[0].str();
+                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; })) {
+                    if (value == "_work") {  // dont call _work() for members
+                        return "";
+                    }
+                    return indent_str + prefix + sub[0].str("", "__" + escapeIdentifier(value) + suffix);
+                }
+            }
+            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
                 return "";
             }
 
-            std::string str = "(";
-
-//            bool skipfirst = false;
+            std::string args = "(";
             bool first = true;
-            std::string member = escapeIdentifier(value) + suffix;
-            if (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK) {  // member call - can be only member's port access now, no args
-                if (sub[0].str() != "_this") {
-                    flags |= FLAG_CALL;  // it will swap places of member and method, and add "("
-                    str = "";
-                    first = false;
-                }
-                member = sub[0].str() + "__" + escapeIdentifier(value) + suffix;
-                return indent_str + prefix + member;
-//                skipfirst = true;
-            }
-
             for (auto& arg : sub) {
-//                if (skipfirst) {
-//                    skipfirst = false;
-//                    continue;
-//                }
-                if (arg.type != EXPR_NONE) {
-                    str += (first?"":", ") + arg.str();
+                if (arg.type != EXPR_NONE) {  // usually, 'this' for Module
+                    args += (first?"":", ") + arg.str();
                     first = false;
                 }
             }
-            str += ")";
+            args += ")";
 
-            return indent_str + prefix + member + str;
+            return indent_str + prefix + escapeIdentifier(value) + args + suffix;  // member goes as first parameter, if it has third party this (not Module)
         }
         case EXPR_MEMBER:
         {
@@ -346,26 +344,22 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str();
             }
             if ((sub[0].type == EXPR_NONE && !(flags&FLAG_USETHIS)) || (flags&FLAG_NOBASE)) {  // no this inside, no need to "."
-                return indent_str + value + suffix;
+                return indent_str + escapeIdentifier(value) + suffix;
             }
             if (value == "_next"/* || (value == "" && !(flags&FLAG_ANON))*/) {
                 return indent_str + prefix + sub[0].str("", "_tmp");
             }
-//            if (sub[0].type == EXPR_INDEX) {  // ?
-//                ASSERT(sub[0].sub.size() > 1);
-//                std::string delim = "";
-//                if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); } )) {
-//                    delim = "__";
-//                }
-//                return indent_str + prefix + sub[0].str("", delim + value);
-//            }
-            if ((flags&FLAG_CALL)) {  // for all we need to extract this as first parameter to function  // ?
-                return indent_str + prefix + value + suffix + "(" + sub[0].str();
-            }
-            if (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].str(); } )) {
+            std::string base = sub[0].str();
+            if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } )) {  // we compare full string because Pack can add "tuple_N"
                 delim = "__";
             }
-            return indent_str + prefix + sub[0].str() + delim + value + suffix;
+            if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
+                base = sub[0].sub[0].str();
+                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; })) {
+                    return indent_str + prefix + sub[0].str("", "__" + escapeIdentifier(value) + suffix);
+                }
+            }
+            return indent_str + prefix + sub[0].str() + delim + escapeIdentifier(value) + suffix;
         }
         case EXPR_BINARY:
         {
@@ -561,7 +555,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub[0].str() == "") {
                 return "";
             }
-            std::string param;
             std::string str;
             str += indent_str + "if (" + sub[0].str() + ") begin\n";
             if (sub.size() > 1) {
@@ -658,37 +651,15 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
-    if (type == "cpphdl_u8") {
-        str = logic + size + "[7:0]";
+    if (type.find("cpphdl_u") == 0) {
+        size_t width = atoi(type.c_str() + strlen("cpphdl_u"));
+        str = logic + size + "[" + std::to_string(width) + "-1:0]";
         declSize = 8;
     } else
-    if (type == "cpphdl_s8") {
-        str = logic + " signed" + size + "[7:0]";
+    if (type.find("cpphdl_s") == 0) {
+        size_t width = atoi(type.c_str() + strlen("cpphdl_s"));
+        str = logic + " signed" + size + "[" + std::to_string(width) + "-1:0]";
         declSize = 8;
-    } else
-    if (type == "cpphdl_u16") {
-        str = logic + size + "[15:0]";
-        declSize = 16;
-    } else
-    if (type == "cpphdl_s16") {
-        str = logic + " signed" + size + "[15:0]";
-        declSize = 16;
-    } else
-    if (type == "cpphdl_u32") {
-        str = logic + size + "[31:0]";
-        declSize = 32;
-    } else
-    if (type == "cpphdl_s32") {
-        str = logic + " signed" + size + "[31:0]";
-        declSize = 32;
-    } else
-    if (type == "cpphdl_u64") {
-        str = logic + size + "[63:0]";
-        declSize = 64;
-    } else
-    if (type == "cpphdl_s64") {
-        str = logic + " signed" + size + "[63:0]";
-        declSize = 64;
     } else
     if (type == "bool") {
         str = logic + size;
@@ -814,18 +785,49 @@ Expr Expr::simplify()  // open brackets for *(+-)
     return expr;
 }
 
-std::string Expr::replacePrintFormat(std::string str, bool firstStringInstName)
+std::string Expr::replacePrintFormat(std::vector<Expr>& params)
 {
-    size_t pos = 0;
-    if (firstStringInstName) {
-        if ((pos = str.find("{:s}")) != (size_t)-1) {  // use printf for module name printing
-            str.replace(pos, 4, "%m");
+    std::string str = params[0].value;
+    bool stdPrint = false;
+    if (str.find("std::basic_format_string") == 0 && params[0].sub.size()) {
+        params[0] = params[0].sub[0];
+        str = params[0].value;
+        stdPrint = true;
+    }
+    size_t pos = -1, pos1 = -1;
+    for (size_t i=0; i < params.size(); ++i) {
+        if (params[i].str() == "__inst_name") {
+            bool replaced = false;
+            if (!stdPrint && (pos = str.find("%", pos+1)) != (size_t)-1 && pos < str.length()-1) {
+                while (str[pos] == str[pos+1] && pos < str.length()-1) { // %%
+                    if ((pos = str.find("%", pos+2)) == (size_t)-1) {
+                        break;
+                    }
+                }
+                if (pos != (size_t)-1) {
+                    str.replace(pos, 2, "%m");  // put %m insted of %s on place of "__inst_name"
+                    replaced = true;
+                }
+            }
+            if (stdPrint && (pos = str.find("{", pos+1)) != (size_t)-1 && pos < str.length()-1) {
+                while (str[pos] == str[pos+1] && pos < str.length()-1) { // {{
+                    if ((pos = str.find("{", pos+2)) == (size_t)-1) {
+                        break;
+                    }
+                }
+                if (pos != (size_t)-1 && (pos1 = str.find("}", pos)) != (size_t)-1) {
+                    str.replace(pos, pos1-pos+1, "%m");  // put %m insted of {} or {:s} on place of "__inst_name"
+                    replaced = true;
+                }
+            }
+            if (!replaced) {
+                std::cerr << "WARNING: cant find '%s' in %-position " << i << " of string '" << params[0].value << "'\n";
+            }
+            params.erase(params.begin() + i);
+            --i;
         }
     }
-    while ((pos = str.find("%s")) != (size_t)-1) {  // use printf for module name printing
-        str.replace(pos, 2, "%m");
-    }
-    size_t pos1 = 0;
+
     while ((pos = str.find("{")) != (size_t)-1 && (pos1 = str.find("}", pos)) != (size_t)-1) {
         if (pos1 == pos+1) {
             str.replace(pos, 2, "%x");

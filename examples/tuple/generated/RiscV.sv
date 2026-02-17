@@ -1,15 +1,15 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import Alu_pkg::*;
-import Br_pkg::*;
 import DecodeFetchint_int_0_0_State_pkg::*;
 import ExecuteCalcint_int_0_0_State_pkg::*;
-import Instr_pkg::*;
-import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
-import Mem_pkg::*;
 import MemWBint_int_0_0_State_pkg::*;
+import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
+import Instr_pkg::*;
+import Mem_pkg::*;
+import Alu_pkg::*;
 import Wb_pkg::*;
+import Br_pkg::*;
 
 
 module RiscV (
@@ -29,7 +29,7 @@ module RiscV (
     parameter LENGTH = 3;
 
     // regs and combs
-    reg[31:0] pc;
+    reg[32-1:0] pc;
     reg valid;
     MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[3-1:0] Pipeline___states_comb;
 ;
@@ -141,7 +141,7 @@ module RiscV (
     );
 
     // tmp variables
-    logic[31:0] pc_tmp;
+    logic[32-1:0] pc_tmp;
     logic valid_tmp;
 
 
@@ -859,7 +859,6 @@ module RiscV (
             $fwrite(out, "%c", dmem_write_data_out & 255);
             $fclose(out);
         end
-        Pipeline____work(reset);
         if (valid && !Pipeline___members_tuple_0__stall_out) begin
             pc_tmp = pc + ((Pipeline___members_tuple_0__instr_in & 3) == 3 ? 4 : 2);
         end
@@ -869,15 +868,6 @@ module RiscV (
         valid_tmp = 1;
     end
     endtask
-
-    generate  // DecodeFetch___DecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_0_3_connect
-    endgenerate
-
-    generate  // ExecuteCalc___ExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_1_3_connect
-    endgenerate
-
-    generate  // MemWB___MemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_2_3_connect
-    endgenerate
 
     generate  // Pipeline____connect
         assign Pipeline___members_tuple_0__state_in = Pipeline___states_comb;

@@ -52,12 +52,11 @@ struct Expr
         FLAG_ASSIGN = 4,  // translating _connect() function into generate assign block
         FLAG_COMB = 8,  // it's comb block and return should be skipped
         FLAG_SPECVAL = 16,  // show number values from specialization if possible
-        FLAG_CALL = 32,  // member inside call
-        FLAG_ANON = 64,  // anonymous struct or union
-        FLAG_USETHIS = 128,  // methods of structs
-        FLAG_NOCALLS = 256,  // calls forbidden in _connect() assign
-        FLAG_NOBASE = 512,  // dont use base of member expr (for constexpr of structs)
-        FLAG_NOTREG = 1024  // declare logic instead of reg
+//        FLAG_CALL = 32,  // member inside call
+        FLAG_ANON = 32,  // anonymous struct or union
+        FLAG_USETHIS = 64,  // methods of structs
+        FLAG_NOBASE = 128,  // dont use base of member expr (for constexpr of structs)
+        FLAG_NOTREG = 256  // declare logic instead of reg
     };
     unsigned flags = FLAG_NONE;
 
@@ -87,7 +86,7 @@ struct Expr
         return false;
     }
 
-    std::string replacePrintFormat(std::string str, bool firstStringInstName = false);
+    std::string replacePrintFormat(std::vector<Expr>& params);
 
     std::string debug(int debug_indent = 0)
     {

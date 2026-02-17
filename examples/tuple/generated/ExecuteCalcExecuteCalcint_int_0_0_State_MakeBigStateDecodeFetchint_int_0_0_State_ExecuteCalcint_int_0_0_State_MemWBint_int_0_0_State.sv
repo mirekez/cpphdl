@@ -1,13 +1,13 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import Alu_pkg::*;
-import Br_pkg::*;
-import DecodeFetchint_int_0_0_State_pkg::*;
 import ExecuteCalcint_int_0_0_State_pkg::*;
-import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
-import Mem_pkg::*;
+import DecodeFetchint_int_0_0_State_pkg::*;
 import MemWBint_int_0_0_State_pkg::*;
+import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
+import Alu_pkg::*;
+import Mem_pkg::*;
+import Br_pkg::*;
 
 
 module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State #(
@@ -31,9 +31,9 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 );
 
     // regs and combs
-    reg[31:0] mem_addr_reg;
-    reg[31:0] mem_data_reg;
-    reg[7:0] mem_mask_reg;
+    reg[32-1:0] mem_addr_reg;
+    reg[32-1:0] mem_data_reg;
+    reg[8-1:0] mem_mask_reg;
     reg mem_write_reg;
     reg mem_read_reg;
     logic[31:0] alu_a_comb;
@@ -51,9 +51,9 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     // members
 
     // tmp variables
-    logic[31:0] mem_addr_reg_tmp;
-    logic[31:0] mem_data_reg_tmp;
-    logic[7:0] mem_mask_reg_tmp;
+    logic[32-1:0] mem_addr_reg_tmp;
+    logic[32-1:0] mem_data_reg_tmp;
+    logic[8-1:0] mem_mask_reg_tmp;
     logic mem_write_reg_tmp;
     logic mem_read_reg_tmp;
     ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_tmp;
@@ -262,15 +262,11 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
             mem_write_reg_tmp = '0;
             mem_read_reg_tmp = '0;
         end
-        PipelineStage____work(reset);
         PipelineStage___state_reg_tmp[0] = 0;
         do_execute();
         start_memory();
     end
     endtask
-
-    generate  // _connect
-    endgenerate
 
     always @(posedge clk) begin
         _work(reset);

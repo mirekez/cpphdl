@@ -23,7 +23,7 @@ module Memory #(
 
     // regs and combs
     reg[MEM_WIDTH_BYTES*8-1:0] data_out_reg;
-    reg[MEM_WIDTH_BYTES-1:0][7:0] buffer[MEM_DEPTH];
+    reg[MEM_WIDTH_BYTES-1:0][8-1:0] buffer[MEM_DEPTH];
     logic[MEM_WIDTH_BYTES*8-1:0] data_out_comb;
 
     // members
@@ -61,9 +61,6 @@ module Memory #(
         end
     end
     endtask
-
-    generate  // _connect
-    endgenerate
 
     always @(posedge clk) begin
         _work(reset);

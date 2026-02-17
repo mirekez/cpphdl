@@ -365,8 +365,11 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     // - external object's methods (require _this)
     if (hlp.mod->origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of base class or external object (not current mod)
         method.name = genTypeName(MD->getParent()->getQualifiedNameAsString()) + "___";
-        if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))  // method called for var - need specialization
-            && MD->getNameAsString() != "_work" && MD->getNameAsString() != "_connect") {
+        if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
+            if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_connect") {
+                return "";  // we need not work functions from third party classes (not Modules)
+            }
+
             // extracting parameters of the template
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), method.name, &params);
@@ -388,8 +391,8 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             QT = QT.getDesugaredType(*hlp.ctx); // remove typedefs, aliases, etc.
 //?            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
             DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
-            method.parameters.emplace_back(cpphdl::Field{"_this", std::move(expr)});
-            DEBUG_EXPR(debugIndent, " param Expr: " << method.parameters.back().expr.debug(debugIndent));
+            method.arguments.emplace_back(cpphdl::Field{"_this", std::move(expr)});
+            DEBUG_EXPR(debugIndent, " param Expr: " << method.arguments.back().expr.debug(debugIndent));
         }
         else {
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
@@ -407,7 +410,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 //?        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
         DEBUG_AST(debugIndent, "Param: " << param->getNameAsString() << " (" << QT.getAsString() << ")");
 
-        method.parameters.emplace_back(cpphdl::Field{param->getNameAsString(), std::move(expr)});
+        method.arguments.emplace_back(cpphdl::Field{param->getNameAsString(), std::move(expr)});
 //        auto* CRD = hlp.resolveCXXRecordDecl(QT);
 //        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
 //            auto st = exportStruct(CRD, hlp);
@@ -416,7 +419,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 //                currProject->structs.emplace_back(std::move(st));
 //            }
 //        }
-        DEBUG_EXPR(debugIndent, "param Expr: " << method.parameters.back().expr.debug(debugIndent));
+        DEBUG_EXPR(debugIndent, "param Expr: " << method.arguments.back().expr.debug(debugIndent));
     }
 
     if (const auto *CS = dyn_cast<CompoundStmt>(MD->getBody())) {
@@ -439,12 +442,12 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
                 updateExpr(it->ret[i], method.ret[i]);
             }
         }
-        if (it->parameters.size() == method.parameters.size()) {
-            for (size_t i=0; i < it->parameters.size(); ++i) {
-                DEBUG_AST(debugIndent, "updating parameters...");
-                updateExpr(it->parameters[i].expr, method.parameters[i].expr);
-                updateExpr(it->parameters[i].initializer, method.parameters[i].initializer);
-                updateExpr(it->parameters[i].bitwidth, method.parameters[i].bitwidth);
+        if (it->arguments.size() == method.arguments.size()) {
+            for (size_t i=0; i < it->arguments.size(); ++i) {
+                DEBUG_AST(debugIndent, "updating arguments...");
+                updateExpr(it->arguments[i].expr, method.arguments[i].expr);
+                updateExpr(it->arguments[i].initializer, method.arguments[i].initializer);
+                updateExpr(it->arguments[i].bitwidth, method.arguments[i].bitwidth);
             }
         }
         if (it->statements.size() == method.statements.size()) {

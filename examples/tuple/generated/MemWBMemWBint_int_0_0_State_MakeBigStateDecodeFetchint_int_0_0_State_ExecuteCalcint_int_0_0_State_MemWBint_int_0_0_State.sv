@@ -1,10 +1,10 @@
 `default_nettype none
 
 import Predef_pkg::*;
+import MemWBint_int_0_0_State_pkg::*;
 import DecodeFetchint_int_0_0_State_pkg::*;
 import ExecuteCalcint_int_0_0_State_pkg::*;
 import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
-import MemWBint_int_0_0_State_pkg::*;
 import Wb_pkg::*;
 
 
@@ -47,12 +47,8 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 
     task _work (input logic reset);
     begin: _work
-        PipelineStage____work(reset);
     end
     endtask
-
-    generate  // _connect
-    endgenerate
 
     always @(*) begin  // regs_out_comb_func
         regs_out_comb = 0;

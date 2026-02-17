@@ -26,29 +26,29 @@ bool Method::print(std::ofstream& out)
         return printComb(out);
     }
 
-    size_t params_cnt = parameters.size();
-    for (auto& param : parameters) {
-        if (param.name == "clk") {
-            --params_cnt;
+    size_t args_cnt = arguments.size();
+    for (auto& arg : arguments) {
+        if (arg.name == "clk") {
+            --args_cnt;
         }
     }
 
     if (ret.size() == 0) {
-        out << "    task " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
+        out << "    task " << escapeIdentifier(name) << " (" << (args_cnt > 1 ? "\n" : "");
     }
     else {
-        out << "    function " << (ret[0].value=="std::string"?"[63:0]":ret[0].str()) << " " << escapeIdentifier(name) << " (" << (params_cnt > 1 ? "\n" : "");
+        out << "    function " << (ret[0].value=="std::string"?"[63:0]":ret[0].str()) << " " << escapeIdentifier(name) << " (" << (args_cnt > 1 ? "\n" : "");
     }
 
     bool first = true;
-    for (auto& param : parameters) {
-        if (param.name != "clk") {
-            out << (params_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
-                << (str_ending(param.name, "_out") ? "output " : "input ") << param.expr.str() << " " << param.name << (params_cnt > 1 ? "\n" : "");
+    for (auto& arg : arguments) {
+        if (arg.name != "clk") {
+            out << (args_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
+                << (str_ending(arg.name, "_out") ? "output " : "input ") << arg.expr.str() << " " << arg.name << (args_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
-    out << (params_cnt>1?"    ":"") << ");" << "\n";
+    out << (args_cnt>1?"    ":"") << ");" << "\n";
 
     if (ret.size() == 0) {
         out << "    begin: " << name << "\n";
@@ -84,7 +84,7 @@ bool Method::printConns(std::ofstream& out)
             {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
                 if (e.type == Expr::EXPR_FOR
                     && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
-                    && e.sub[0].sub.size() > 0 && e.sub[0].sub[0].type == Expr::EXPR_MEMBER) {
+                    && e.sub[0].sub.size() > 0 && (e.sub[0].sub[0].type == Expr::EXPR_MEMBER || e.sub[0].sub[0].type == Expr::EXPR_VAR)) {
                     for (auto& str : vars) {
                         if (str == e.sub[0].sub[0].value) {
                             return false;
@@ -98,7 +98,7 @@ bool Method::printConns(std::ofstream& out)
     for (auto& stmt : statements) {  // replacing index names
         stmt.traverseIf( [&](Expr& e)
             {
-                if (e.type == Expr::EXPR_MEMBER) {
+                if (e.type == Expr::EXPR_MEMBER || e.type == Expr::EXPR_VAR) {
                     for (auto& str : vars) {
                         if (str == e.value) {
                             e.value = std::string("g") + str;
@@ -141,7 +141,7 @@ bool Method::printConns(std::ofstream& out)
 //                } );  // we set flags individually, not all Exprs propagate its flags - fix it later
 
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_ASSIGN | Expr::FLAG_NOCALLS;
+        stmt.flags = Expr::FLAG_ASSIGN;
         auto s = stmt.str("assign ");
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
@@ -157,39 +157,6 @@ bool Method::printConns(std::ofstream& out)
 bool Method::printComb(std::ofstream& out)
 {
     currMethod = this;
-
-/*    std::vector<std::string> vars;
-    for (auto& stmt : statements) {  // collecting vars from for
-        stmt.traverseIf( [&](Expr& e)
-            {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
-                if (e.type == Expr::EXPR_FOR
-                    && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
-                    && e.sub[0].sub.size() > 0 && e.sub[0].sub[0].type == Expr::EXPR_MEMBER) {
-                    for (auto& str : vars) {
-                        if (str == e.sub[0].sub[0].value) {
-                            return false;
-                        }
-                    }
-                    vars.push_back(e.sub[0].sub[0].value);
-                }
-                return false;
-            } );
-    }
-    for (auto& stmt : statements) {  // replacing index names
-        stmt.traverseIf( [&](Expr& e)
-            {
-                if (e.type == Expr::EXPR_MEMBER) {
-                    for (auto& str : vars) {
-                        if (str == e.value) {
-                            e.value = std::string("g") + str;
-                            return false;
-                        }
-                    }
-                }
-                return false;
-            } );
-    }
-*/
 
     out << "    always @(*) begin  // " << name <<"\n";
     for (auto& stmt : statements) {

@@ -606,9 +606,20 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
 
         if (const auto* ME = llvm::dyn_cast<clang::MemberExpr>(callee)) {
+            const ValueDecl *VD = ME->getMemberDecl();
             const clang::CXXMethodDecl* method = llvm::dyn_cast<clang::CXXMethodDecl>(ME->getMemberDecl());
-            DEBUG_AST1(" ME(" << (method ? method->getQualifiedNameAsString() : "null") << ")");
-            call.value = method ? method->getNameAsString() : "null";
+            if (method) {
+                DEBUG_AST1(" ME(" << method->getQualifiedNameAsString() << ")");
+                call.value = method->getNameAsString();
+            } else
+            if (const clang::FieldDecl* field = llvm::dyn_cast<clang::FieldDecl>(ME->getMemberDecl())) {
+                DEBUG_AST1(" ME(" << field->getNameAsString() << ")");
+                call.value = field->getNameAsString();
+            }
+            else {
+                DEBUG_AST1(" ME(" << VD->getDeclKindName() << ")");
+                call.value = VD->getDeclKindName();
+            }
 
 //            if (call.sub.size()  // we need not call members - they are accessible through ports wires
 //                && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
@@ -623,14 +634,21 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             if (method && method->isLambdaStaticInvoker()) {
                 const auto* RD = method->getParent();
                 if (RD && RD->isLambda()) {
-                    DEBUG_AST1(" CallExpr LE() not supported");
+                    DEBUG_AST1(" CallExpr(LambdaExpr) not supported");
                 }
             }
+
+            call.type = cpphdl::Expr::EXPR_MEMBERCALL;
+            call.sub.emplace_back(cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE});
         }
 
         if (const auto* UME = llvm::dyn_cast<clang::UnresolvedMemberExpr>(callee)) {
             DEBUG_AST1(" UME(" << UME->getMemberName().getAsString() << ")");
             call.value = UME->getMemberName().getAsString();
+            call.type = cpphdl::Expr::EXPR_MEMBERCALL;
+//            member.sub.emplace_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
+//            member.type = cpphdl::Expr::EXPR_MEMBER;
+            call.sub.emplace_back(cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE});
         }
 
         if (const auto* LE = llvm::dyn_cast<clang::LambdaExpr>(callee)) {
@@ -760,12 +778,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* ASE = dyn_cast<ArraySubscriptExpr>(E)) {
         DEBUG_AST1(" ArraySubscriptExpr");
-        QualType LQT = ASE->getBase()->IgnoreParenImpCasts()->getType().getNonReferenceType();
+        QualType LQT = ASE->getLHS()->IgnoreParenImpCasts()->getType().getNonReferenceType();
         if (LQT->isPointerType()) {  // convert pointer add into index
             return cpphdl::Expr{std::string("*8 +:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
-                                   cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase()),exprToExpr(ASE->getIdx())}};
+                                   cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getLHS()),exprToExpr(ASE->getRHS())}};
         }
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getBase()),exprToExpr(ASE->getIdx())}};
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_INDEX, {exprToExpr(ASE->getLHS()),exprToExpr(ASE->getRHS())}};
     }
     if (auto* FCE = dyn_cast<ImplicitCastExpr>(E)) {
         DEBUG_AST1(" ImplicitCastExpr");

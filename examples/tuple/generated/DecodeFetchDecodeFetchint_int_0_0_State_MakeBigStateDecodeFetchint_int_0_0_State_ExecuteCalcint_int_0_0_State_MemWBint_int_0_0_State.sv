@@ -1,15 +1,15 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import Alu_pkg::*;
-import Br_pkg::*;
 import DecodeFetchint_int_0_0_State_pkg::*;
 import ExecuteCalcint_int_0_0_State_pkg::*;
-import Instr_pkg::*;
-import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
-import Mem_pkg::*;
 import MemWBint_int_0_0_State_pkg::*;
+import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
+import Instr_pkg::*;
+import Mem_pkg::*;
+import Alu_pkg::*;
 import Wb_pkg::*;
+import Br_pkg::*;
 
 
 module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State #(
@@ -548,13 +548,9 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
             PipelineStage___state_reg_tmp[0].valid = 0;
             PipelineStage___state_reg_tmp[1].valid = 0;
         end
-        PipelineStage____work(reset);
         do_decode_fetch();
     end
     endtask
-
-    generate  // _connect
-    endgenerate
 
     always @(*) begin  // rs1_out_comb_func
         rs1_out_comb = state_comb.rs1;

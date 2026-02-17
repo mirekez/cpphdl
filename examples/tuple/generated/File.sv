@@ -22,7 +22,7 @@ module File #(
 );
 
     // regs and combs
-    reg[MEM_WIDTH/32-1:0][31:0] buffer[MEM_DEPTH];
+    reg[MEM_WIDTH/32-1:0][32-1:0] buffer[MEM_DEPTH];
     logic[31:0] data0_out_comb;
 ;
     logic[31:0] data1_out_comb;
@@ -49,9 +49,6 @@ module File #(
         end
     end
     endtask
-
-    generate  // _connect
-    endgenerate
 
     always @(*) begin  // data0_out_comb_func
         data0_out_comb = buffer[(read_addr0_in)];
