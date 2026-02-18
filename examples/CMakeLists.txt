@@ -15,6 +15,10 @@ foreach(src ${EXAMPLE_SOURCES})
 
     add_executable(${target_name} ${src})
 
+    target_link_libraries(${target_name} PRIVATE
+      stdc++exp
+    )
+
 #    target_compile_options(${target_name} PRIVATE "-O2")
 
     set_target_properties(${target_name} PROPERTIES

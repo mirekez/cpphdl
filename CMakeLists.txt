@@ -18,19 +18,17 @@ set (CMAKE_C_COMPILER_FORCED "TRUE")
 set (CMAKE_CXX_COMPILER_FORCED "TRUE")
 endif()
 
-SET (CMAKE_C_FLAGS_INIT                "-Wall -Wextra -std=c11")
 SET (CMAKE_C_FLAGS_DEBUG_INIT          "-g")
 SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
-SET (CMAKE_C_FLAGS_RELWITHDEBINFO_INIT "-O2 -g")
+SET (CMAKE_C_FLAGS_RELWITHDEBINFO_INIT "-O2")
 
-SET (CMAKE_CXX_FLAGS_INIT                "-Wall -Wextra -std=c++26")
 SET (CMAKE_CXX_FLAGS_DEBUG_INIT          "-g")
 SET (CMAKE_CXX_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
 SET (CMAKE_CXX_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
-SET (CMAKE_CXX_FLAGS_RELWITHDEBINFO_INIT "-O2 -g")
+SET (CMAKE_CXX_FLAGS_RELWITHDEBINFO_INIT "-O2")
 
-set(CMAKE_CXX_FLAGS "-std=c++2c -g -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
+set(CMAKE_CXX_FLAGS "-static-libstdc++ -static-libgcc -std=c++2c -g -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
 
 project(
   cpphdl

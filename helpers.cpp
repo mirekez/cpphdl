@@ -304,7 +304,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         bool isPack = false;
-        if (const ParmVarDecl* PVD = dyn_cast<ParmVarDecl>(Var)) {
+        if (const ParmVarDecl* PVD = dyn_cast_or_null<ParmVarDecl>(Var)) {
              if (PVD && PVD->isParameterPack()) {
                  DEBUG_AST1(" PACK");
                  isPack = true;
