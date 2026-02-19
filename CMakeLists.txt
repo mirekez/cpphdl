@@ -18,6 +18,9 @@ set (CMAKE_C_COMPILER_FORCED "TRUE")
 set (CMAKE_CXX_COMPILER_FORCED "TRUE")
 endif()
 
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED OFF)
+
 SET (CMAKE_C_FLAGS_DEBUG_INIT          "-g")
 SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
@@ -28,10 +31,10 @@ SET (CMAKE_CXX_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
 SET (CMAKE_CXX_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
 SET (CMAKE_CXX_FLAGS_RELWITHDEBINFO_INIT "-O2")
 
-set(CMAKE_CXX_FLAGS "-static-libstdc++ -static-libgcc -std=c++2c -g -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
+set(CMAKE_CXX_FLAGS "-g -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
+set(CMAKE_CXX_LINK_FLAGS "-static-libstdc++ -static-libgcc")
 
-project(
-  cpphdl
+project(cpphdl
   VERSION 0.8
   LANGUAGES CXX)
 
@@ -43,6 +46,16 @@ include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${CLANG_INCLUDE_DIRS})
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Struct.cpp Enum.cpp)
+
+include(CheckCXXCompilerFlag)
+foreach(flag -std=c++26 -std=c++2c -std=c++23)
+    check_cxx_compiler_flag("${flag}" HAS_FLAG)
+    if(HAS_FLAG)
+        target_compile_options(cpphdl PRIVATE "${flag}")
+        message(STATUS "Using ${flag}")
+        break()
+    endif()
+endforeach()
 
 target_link_libraries(cpphdl PRIVATE
   clangTooling

@@ -6,6 +6,16 @@ add_executable(tribe main.cpp)
 
 #target_compile_options(tribe PRIVATE "-O2")
 
+include(CheckCXXCompilerFlag)
+foreach(flag -std=c++26 -std=c++2c)
+    check_cxx_compiler_flag("${flag}" HAS_FLAG)
+    if(HAS_FLAG)
+        target_compile_options(tribe PRIVATE "${flag}")
+        message(STATUS "Using ${flag}")
+        break()
+    endif()
+endforeach()
+
 set_target_properties(tribe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tribe
     RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/tribe

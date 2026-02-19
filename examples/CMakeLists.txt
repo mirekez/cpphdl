@@ -15,6 +15,16 @@ foreach(src ${EXAMPLE_SOURCES})
 
     add_executable(${target_name} ${src})
 
+    include(CheckCXXCompilerFlag)
+    foreach(flag -std=c++26 -std=c++2c)
+        check_cxx_compiler_flag("${flag}" HAS_FLAG)
+        if(HAS_FLAG)
+            target_compile_options(${target_name} PRIVATE "${flag}")
+            message(STATUS "Using ${flag}")
+            break()
+        endif()
+    endforeach()
+
     target_link_libraries(${target_name} PRIVATE
       stdc++exp
     )

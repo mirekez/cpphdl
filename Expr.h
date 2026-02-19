@@ -164,6 +164,9 @@ inline void str_replace(std::string& str, const char* needle, const char* replac
 
 inline std::string genTypeName(std::string name)
 {
+    if (name.find("decltype(") != (size_t)-1) {
+        return name;  // this is for Pack substitution
+    }
     str_replace(name, "::", "_");
     str_replace(name, "(", "");
     str_replace(name, ")", "");

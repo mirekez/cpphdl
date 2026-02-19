@@ -257,10 +257,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (UO->getOpcodeStr(UO->getOpcode()) == "*" && LQT->isPointerType()) {  // convert pointer add into index
             std::string typeSize;
             if (const CXXRecordDecl* RD = LQT->getPointeeType().getNonReferenceType()->getAsCXXRecordDecl()) {
-                typeSize = std::string("$bits(") + RD->getQualifiedNameAsString() + ")";
+                typeSize = std::string("$bits(") + genTypeName(RD->getQualifiedNameAsString()) + ")";
             }
             else {
-                typeSize = std::string("$bits(") + LQT->getPointeeType().getNonReferenceType().getDesugaredType(*ctx).getAsString(ctx->getPrintingPolicy()) + ")";
+                typeSize = std::string("$bits(") + genTypeName(LQT->getPointeeType().getNonReferenceType().getDesugaredType(*ctx).getAsString(ctx->getPrintingPolicy())) + ")";
             }
             bool found = false;
             expr.traverseIf( [&](auto& e) {  // we support only one substitution in pack
@@ -863,7 +863,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (UETTE->isArgumentType()) {
             auto QT = UETTE->getArgumentType().getNonReferenceType().getDesugaredType(*ctx);
             if (!QT->getAs<RecordType>()) {  // cant know the type - will try to replace it later
-                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {cpphdl::Expr{QT.getAsString(),cpphdl::Expr::EXPR_TYPE}}};
+                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {cpphdl::Expr{genTypeName(QT.getAsString()),cpphdl::Expr::EXPR_TYPE}}};
             }
             return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT, {cpphdl::Expr{genTypeName(QT.getAsString()),cpphdl::Expr::EXPR_TYPE}}};
         } else {
@@ -1077,7 +1077,7 @@ cpphdl::Expr Helpers::digQT(QualType& QT)
         QT = QT.getDesugaredType(*ctx);
 //?        QT = QT.getCanonicalType();
         std::string str = QT.getAsString(ctx->getPrintingPolicy());
-        DEBUG_AST1(str << " TYPE) ");
+        DEBUG_AST1(" TYPE) ");
         expr.value = genTypeName(str);
         expr.type = cpphdl::Expr::EXPR_TYPE;
     }

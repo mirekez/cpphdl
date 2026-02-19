@@ -11,7 +11,6 @@ typedef signed short int16_t;
 typedef signed int int32_t;
 typedef signed long int64_t;
 
-#include <type_traits>
 #include <string>
 
 namespace cpphdl

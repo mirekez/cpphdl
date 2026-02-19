@@ -143,7 +143,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fclose") {
                 func = "$fclose";
             }
-            if (sub.size() && (func == "printf" || func == "print" || func == "fprintf")) {
+            if (sub.size() && (func == "printf" || func == "print" || func == "format" || func == "fprintf")) {
                 sub[0].value = replacePrintFormat(sub);
             }
             if (func == "fprintf" && sub.size()) {
@@ -160,6 +160,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (func == "print") {
                 func = "$write";
+            }
+            if (func == "format") {
+                return "{0}";
+                func = "$sformatf";
             }
             if (func == "exit") {
                 return indent_str + "$finish()";
@@ -411,18 +415,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
             ASSERT(sub.size()==3);
             return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
         case EXPR_INDEX:
-            if (sub.size()) {  // parentheses remover
-                auto& check = sub[0];
-                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                    check = check.sub[0];
-                }
-                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-                    sub[0] = check.sub[0];
-                }
-            }
-
-            ASSERT(sub.size()==2);
             {
+                ASSERT(sub.size()==2);
+//                if (sub.size()) {  // parentheses remover
+//                    auto& check = sub[0];
+//                    while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+//                        check = check.sub[0];
+//                    }
+//                    if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+//                        sub[0] = check.sub[0];
+//                    }
+//                }
+
                 auto& check = sub[0];
                 while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
                     check = check.sub[0];
@@ -430,8 +434,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 if (check.type == EXPR_PAREN) {  // we dont want parentheses to be before []
                     sub[0] = check.sub[0];
                 }
+
+                size_t pos, pos1;
+                if ((pos = value.find("$bits(")) != (size_t)-1 && (pos1 = value.find(")", pos)) != (size_t)-1) {
+                    std::string type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
+                    value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
+                }
+
+                return indent_str + prefix + sub[0].str() + suffix + "[(" + sub[1].str() + ")" + value + "]";
             }
-            return indent_str + prefix + sub[0].str() + suffix + "[(" + sub[1].str() + ")" + value + "]";
         case EXPR_CAST:
             if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);

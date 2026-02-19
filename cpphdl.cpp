@@ -460,7 +460,13 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 */
     }
     else {
-        if (method.statements.size()) {  // only with body
+        auto it = std::find_if(hlp.mod->methods.begin(), hlp.mod->methods.end(), [&](auto& m){ return m.name == method.name; });
+        if (it != hlp.mod->methods.end()) {
+            if (it->statements.size() == 0) {
+                *it = std::move(method);
+            }
+        }
+        else {
             hlp.mod->methods.emplace_back(std::move(method));
         }
     }
