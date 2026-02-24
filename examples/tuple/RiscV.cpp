@@ -37,12 +37,6 @@ public:
         auto& ex = std::get<1>(members);  // only refs can be declared in any place of function, vars must be declared in the beginning (like in C)
 //        auto& wb = std::get<2>(members);
 
-        if (reset) {
-            pc.clr();
-            valid.clr();
-            return;
-        }
-
         if (debugen_in) {
             debug();
         }
@@ -53,9 +47,6 @@ public:
             fclose(out);
         }
 
-        regs._work(reset);
-        Pipeline::_work(reset);
-
         if (valid && !df.stall_out()) {
             pc._next = pc + ((df.instr_in()&3)==3?4:2);
         }
@@ -64,6 +55,14 @@ public:
         }
 
         valid._next = true;
+
+        regs._work(reset);
+        Pipeline::_work(reset);
+
+        if (reset) {
+            pc.clr();
+            valid.clr();
+        }
     }
 
     void debug()
@@ -164,6 +163,7 @@ public:
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
+        regs.__inst_name = __inst_name + "/regs";
         regs._connect();
     }
 

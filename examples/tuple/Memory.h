@@ -61,7 +61,7 @@ public:
         size_t i;
         logic<MEM_WIDTH_BYTES*8> mask;
         if (debugen_in) {
-            std::print("{:s}: port0: @{}({}/{}){}({}){}, port1: @{}({}/{}){}({}){}\n", __inst_name,
+            std::print("{:s}: port0: @{}({:d}/{:d}){}({}){}, port1: @{}({:d}/{:d}){}({}){}\n", __inst_name,
                 addr0_in(), (int)write0_in(), (int)read0_in(), write0_data_in(), write0_mask_in(), read0_data_out(),
                 addr1_in(), (int)write1_in(), (int)read1_in(), write1_data_in(), write1_mask_in(), read1_data_out());
         }

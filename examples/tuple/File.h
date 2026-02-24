@@ -43,21 +43,21 @@ public:
     {
         byte i;
 
-        if (reset) {
-            for (i=0; i < MEM_DEPTH; ++i) {
-                buffer[i] = 0;
-            }
-        }
-
         if (debugen_in) {
-            std::print("{:s}: port0: @{}({}){}, port1: @{}({}){} @{}({}){}\n", __inst_name,
-                write_addr_in(), write_in(), write_data_in(),
-                read_addr0_in(), read_in(), read_data0_out(),
-                read_addr1_in(), read_in(), read_data1_out());
+            std::print("{:s}: r({:d}) port0: @{}({:d}){}, port1: @{}({:d}){} @{}({:d}){}\n", __inst_name, reset,
+                write_addr_in(), (int)write_in(), write_data_in(),
+                read_addr0_in(), (int)read_in(), read_data0_out(),
+                read_addr1_in(), (int)read_in(), read_data1_out());
         }
 
         if (write_in()) {
             buffer[write_addr_in()] = write_data_in();
+        }
+
+        if (reset) {
+            for (i=0; i < MEM_DEPTH; ++i) {
+                buffer[i] = 0;
+            }
         }
     }
 

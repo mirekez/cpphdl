@@ -8,7 +8,7 @@ namespace cpphdl
 
 
 template<typename T, size_t COUNT>
-struct array
+struct array : public bitops<logic<COUNT*sizeof(T)*8>>
 {
     constexpr static size_t SIZE = COUNT*sizeof(T);
     T data[COUNT];
@@ -87,16 +87,7 @@ struct array
         return *(logic<SIZE*8>*)this;
     }
 
-    explicit operator uint64_t() const
-    {
-        return *(uint64_t*)data;
-    }
-
-    explicit operator uint32_t() const
-    {
-        return *(uint32_t*)data;
-    }
-
+/*
     array<T,COUNT> operator<<(size_t shift)
     {
         uint64_t tmp = 0;
@@ -166,30 +157,73 @@ struct array
         }
         return arr_tmp;
     }
+*/
 
-    array<T,COUNT>& operator<<=(size_t shift)
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator&;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator|;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator^;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator~;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator<<;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator>>;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator+;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator-;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator==;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator!=;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator<;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator<=;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator>;
+    using bitops<logic<COUNT*sizeof(T)*8>>::operator>=;
+    using bitops<logic<COUNT*sizeof(T)*8>>::to_ullong;
+    using bitops<logic<COUNT*sizeof(T)*8>>::to_hex;
+
+    array& operator<<=(size_t shift)
     {
         return *this = *this << shift;
     }
 
-    array<T,COUNT>& operator>>=(size_t shift)
+    array& operator>>=(size_t shift)
     {
         return *this = *this >> shift;
     }
 
-    array<T,COUNT> operator|=(const array<T,COUNT>& other)
+    array operator|=(const array& other)
     {
         return *this = *this | other;
     }
 
-    array<T,COUNT> operator&=(const array<T,COUNT>& other)
+    array operator&=(const array& other)
     {
         return *this = *this & other;
     }
 
-    array<T,COUNT> operator^=(const array<T,COUNT>& other)
+    array operator^=(const array& other)
     {
         return *this = *this ^ other;
+    }
+
+    explicit operator uint64_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator bool() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint32_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint16_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint8_t() const
+    {
+        return to_ullong();
     }
 
     std::string to_string()

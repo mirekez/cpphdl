@@ -249,11 +249,95 @@ public:
         return result;
     }
 
-    bool operator==(const BASE& rhs) const {
+    bool operator==(const BASE& rhs) const
+    {
         return std::memcmp(this, &rhs, sizeof(BASE)) == 0;
     }
 
-    bool operator!=(const BASE& rhs) const {
+    bool operator!=(const BASE& rhs) const
+    {
         return !(*this == rhs);
+    }
+
+    bool operator<(const BASE& rhs) const
+    {
+        constexpr size_t size = sizeof(BASE);
+        constexpr size_t step = sizeof(uint64_t);
+
+        const uint8_t* a = reinterpret_cast<const uint8_t*>(this);
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(&rhs);
+
+        for (size_t i = size; i >= step; i -= step) {
+            uint64_t av, bv;
+            std::memcpy(&av, a + i - step, step);
+            std::memcpy(&bv, b + i - step, step);
+
+            if (av < bv) return true;
+            if (av > bv) return false;
+        }
+
+        size_t rem = size % step;
+        for (size_t i = rem; i-- > 0;) {
+            uint8_t av = a[i];
+            uint8_t bv = b[i];
+
+            if (av < bv) return true;
+            if (av > bv) return false;
+        }
+
+        return false;
+    }
+
+    bool operator>(const BASE& rhs) const
+    {
+        return rhs < static_cast<const BASE&>(*this);
+    }
+
+    bool operator<=(const BASE& rhs) const
+    {
+        return !(rhs < static_cast<const BASE&>(*this));
+    }
+
+    bool operator>=(const BASE& rhs) const
+    {
+        return !(*this < rhs);
+    }
+
+    uint64_t to_ullong() const
+    {
+        uint64_t value;
+        std::memcpy(&value, this, std::min(sizeof(BASE), sizeof(uint64_t)));
+        return value;
+    }
+
+    std::string to_hex(bool trim_leading_zeros = false) const
+    {
+        constexpr size_t size = sizeof(BASE);
+        static const char* digits = "0123456789abcdef";
+        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(this);
+
+        std::string result;
+        result.reserve(size * 2);
+
+        bool started = !trim_leading_zeros;
+        for (size_t i = size; i-- > 0;) {
+            uint8_t byte = ptr[i];
+
+            if (!started) {
+                if (byte == 0) {
+                    continue;
+                }
+                started = true;
+            }
+
+            result.push_back(digits[byte >> 4]);
+            result.push_back(digits[byte & 0x0F]);
+        }
+
+        if (!started) {
+            return "0";
+        }
+
+        return result;
     }
 };

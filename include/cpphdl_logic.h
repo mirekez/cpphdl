@@ -89,31 +89,6 @@ struct logic : public bitops<logic<WIDTH>>
         bytes[bitnum/8] = (bytes[bitnum/8]&~(1<<(bitnum%8)))|(in<<(bitnum%8));
     }
 
-    explicit operator uint64_t() const
-    {
-        return to_ullong();
-    }
-
-    explicit operator bool() const
-    {
-        return to_ullong();
-    }
-
-    explicit operator uint32_t() const
-    {
-        return to_ullong();
-    }
-
-    explicit operator uint16_t() const
-    {
-        return to_ullong();
-    }
-
-    explicit operator uint8_t() const
-    {
-        return to_ullong();
-    }
-
     using bitops<logic<WIDTH>>::operator&;
     using bitops<logic<WIDTH>>::operator|;
     using bitops<logic<WIDTH>>::operator^;
@@ -124,6 +99,12 @@ struct logic : public bitops<logic<WIDTH>>
     using bitops<logic<WIDTH>>::operator-;
     using bitops<logic<WIDTH>>::operator==;
     using bitops<logic<WIDTH>>::operator!=;
+    using bitops<logic<WIDTH>>::operator<;
+    using bitops<logic<WIDTH>>::operator<=;
+    using bitops<logic<WIDTH>>::operator>;
+    using bitops<logic<WIDTH>>::operator>=;
+    using bitops<logic<WIDTH>>::to_ullong;
+    using bitops<logic<WIDTH>>::to_hex;
 
     logic operator<<=(uint64_t shift)
     {
@@ -153,25 +134,29 @@ struct logic : public bitops<logic<WIDTH>>
         return *this = *this ^ in;
     }
 
-    uint64_t to_ullong() const
+    explicit operator uint64_t() const
     {
-        uint64_t ullong = 0;
-        size_t bits = WIDTH;
-        for (size_t i=0; i < std::min(sizeof(uint64_t),SIZE); ++i) {
-            ullong |= (uint64_t)(bytes[i] & ((1U<<(bits>8?8:bits))-1)) << (i*8);
-            bits -= 8;
-        }
-        return ullong;
+        return to_ullong();
     }
 
-    std::string to_hex() const
+    explicit operator bool() const
     {
-        std::string hex;
-        for (size_t i = 0; i < size(); i+=4) {
-            int hex_value = (this->get(i) * 1) + (this->get(i+1) * 2) + (this->get(i+2) * 4) + (this->get(i+3) * 8);
-            hex = ((char)(hex_value < 10 ? '0'+hex_value : 'a'+hex_value-10)) + hex;
-        }
-        return hex;
+        return to_ullong();
+    }
+
+    explicit operator uint32_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint16_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint8_t() const
+    {
+        return to_ullong();
     }
 
     std::string to_string() const
@@ -266,6 +251,23 @@ struct logic_bits : public logic<WIDTH>
         updateParent();
         return *this;
     }
+
+    using logic<WIDTH>::operator&;
+    using logic<WIDTH>::operator|;
+    using logic<WIDTH>::operator^;
+    using logic<WIDTH>::operator~;
+    using logic<WIDTH>::operator<<;
+    using logic<WIDTH>::operator>>;
+    using logic<WIDTH>::operator+;
+    using logic<WIDTH>::operator-;
+    using logic<WIDTH>::operator==;
+    using logic<WIDTH>::operator!=;
+    using logic<WIDTH>::operator<;
+    using logic<WIDTH>::operator<=;
+    using logic<WIDTH>::operator>;
+    using logic<WIDTH>::operator>=;
+    using logic<WIDTH>::to_ullong;
+    using logic<WIDTH>::to_hex;
 
     template<size_t WIDTH1>
     logic_bits& operator&=(const logic<WIDTH1>& in)
