@@ -39,11 +39,11 @@ struct memory_row: public array<T,SIZE>
         return *this;
     }
 
-//    operator array<T,SIZE>() const
+//    operator array<T,SIZE>&()
 //    {
-//        return data;
+//        return *this;
 //    }
-
+//
 //    operator logic<SIZE*sizeof(T)*8>() const
 //    {
 //        return *this;
@@ -51,33 +51,33 @@ struct memory_row: public array<T,SIZE>
 
     logic<SIZE*sizeof(T)*8> operator<<(uint64_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>)*this << shift;
+        return (logic<SIZE*sizeof(T)*8>&)*this << shift;
     }
 
     logic<SIZE*sizeof(T)*8> operator>>(uint64_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>)*this >> shift;
+        return (logic<SIZE*sizeof(T)*8>&)*this >> shift;
     }
 
     logic<SIZE*sizeof(T)*8> operator|(const logic<SIZE*sizeof(T)*8>& other)
     {
-        return (logic<SIZE*sizeof(T)*8>)*this | other;
+        return (logic<SIZE*sizeof(T)*8>&)*this | other;
     }
 
     logic<SIZE*sizeof(T)*8> operator&(const logic<SIZE*sizeof(T)*8>& other)
     {
-        return (logic<SIZE*sizeof(T)*8>)*this & other;
+        return (logic<SIZE*sizeof(T)*8>&)*this & other;
     }
 
     logic<SIZE*sizeof(T)*8> operator|=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        *(logic<SIZE*sizeof(T)*8>*)*this |= other;
+        (logic<SIZE*sizeof(T)*8>&)*this |= other;
         return *(logic<SIZE*sizeof(T)*8>*)this;
     }
 
     logic<SIZE*sizeof(T)*8> operator&=(const logic<SIZE*sizeof(T)*8>& other)
     {
-        *(logic<SIZE*sizeof(T)*8>*)*this &= other;
+        (logic<SIZE*sizeof(T)*8>&)*this &= other;
         return *(logic<SIZE*sizeof(T)*8>*)this;
     }
 };

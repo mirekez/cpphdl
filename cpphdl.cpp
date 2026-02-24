@@ -486,7 +486,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         Helpers hlp(context, &mod, RD);
 
-        for (Decl* D : RD->decls()) {
+        for (Decl* D : RD->getDefinition()->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
 
                 DEBUG_AST(debugIndent++, "# putField: "); on_return ret_debug([](){ --debugIndent; });
@@ -579,7 +579,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 DEBUG_AST(debugIndent, "Enum: " << EnumD->getNameAsString());
             } else
             if ([[maybe_unused]] auto* TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
-                DEBUG_AST(debugIndent, "Type alias: " << TypeAlias->getNameAsString());
+                DEBUG_AST(debugIndent, "Type alias: " << TypeAlias->getNameAsString() << ", " << TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()));
+                if (find_if(mod.aliases.begin(), mod.aliases.end(), [&](auto& a){ return a.name == TypeAlias->getNameAsString(); }) == mod.aliases.end()) {
+                    if (TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
+                        mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(),
+                            cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE}});
+                    }
+                }
             }// else
 //            if (auto* MD = llvm::dyn_cast<CXXMethodDecl>(D)) {  // Method
 //                putMethod(MD, hlp);

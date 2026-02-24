@@ -29,8 +29,8 @@ bool Module::print(std::ofstream& out)
     if (parameters.size()) {
         out <<  " #(\n";
         bool first = true;
-        for (auto& param : parameters) {
-            out << (first?"    ":",   ") << "parameter " << param.name << "\n";
+        for (auto& p : parameters) {
+            out << (first?"    ":",   ") << "parameter " << p.name << "\n";
             first = false;
         }
         out <<  " )\n";
@@ -38,21 +38,27 @@ bool Module::print(std::ofstream& out)
     out << " (\n";
     out << "    input wire clk\n";
     out << ",   input wire reset\n";
-    for (auto& port : ports) {
-        port.indent = 1;
+    for (auto& p : ports) {
+        p.indent = 1;
         out << ",   ";
-        if (!port.printPort(out)) {
+        if (!p.printPort(out)) {
             return false;
         }
     }
     out << ");\n";
 
-    for (auto& field : consts) {
+    for (auto& f : consts) {
         out << "    parameter ";
-        if (!field.print(out)) {
+        if (!f.print(out)) {
             return false;
         }
-//        out << field.expr.debug();
+//        out << f.expr.debug();
+    }
+    out << "\n";
+
+    for (auto& a : aliases) {
+        out << "    typedef " << a.expr.str() << " " << a.name << ";\n";
+//        out << a.expr.debug();
     }
     out << "\n";
 

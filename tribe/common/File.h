@@ -30,11 +30,11 @@ private:
     memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
 
     __LAZY_COMB(data0_out_comb, DTYPE)
-        return data0_out_comb = (logic<MEM_WIDTH>) buffer[read_addr0_in()];
+        return data0_out_comb = (DTYPE) buffer[read_addr0_in()];
     }
 
     __LAZY_COMB(data1_out_comb, DTYPE)
-        return data1_out_comb = (logic<MEM_WIDTH>) buffer[read_addr1_in()];
+        return data1_out_comb = (DTYPE) buffer[read_addr1_in()];
     }
 
 public:

@@ -810,9 +810,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return /*cpphdl::Expr{"const_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CCE->getSubExpr())/*}}*/;
     }
     if (auto* SCE = dyn_cast<CStyleCastExpr>(E)) {
-        DEBUG_AST1(" CStyleCastExpr (" + SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) + ")");
+        DEBUG_AST1(" CStyleCastExpr(" + SCE->getType().getAsString(ctx->getPrintingPolicy())
+                                      + ", " + SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) + ")");
         if (SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()).find("__remove_reference_t") == 0) {
             return exprToExpr(SCE->getSubExpr());
+        }
+        if (SCE->getType()->isDependentType()) {  // some methods are still abstract (when they are called from lambdas in templates)
+            return cpphdl::Expr{genTypeName(SCE->getType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
         }
         return cpphdl::Expr{genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
@@ -1018,7 +1022,7 @@ bool Helpers::templateToExpr(QualType QT, cpphdl::Expr& expr)
     DEBUG_AST1(/*debugIndent++, */" templateToExpr: " << str);//    on_return ret_debug([](){ --debugIndent; });
 
     auto* CRD = resolveCXXRecordDecl(QT);
-    auto* TSD = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(CRD);
+    auto* TSD = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(CRD ? CRD->getDefinition() : CRD);
     auto* TST = QT->getAs<TemplateSpecializationType>();
     if (TSD || TST) {
         if (TSD) {

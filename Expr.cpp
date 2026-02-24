@@ -162,7 +162,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 func = "$write";
             }
             if (func == "format") {
-                return "{0}";
+//                return "{0}";
                 func = "$sformatf";
             }
             if (func == "exit") {

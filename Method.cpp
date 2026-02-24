@@ -37,7 +37,7 @@ bool Method::print(std::ofstream& out)
         out << "    task " << escapeIdentifier(name) << " (" << (args_cnt > 1 ? "\n" : "");
     }
     else {
-        out << "    function " << (ret[0].value=="std::string"?"[63:0]":ret[0].str()) << " " << escapeIdentifier(name) << " (" << (args_cnt > 1 ? "\n" : "");
+        out << "    function " << (ret[0].value=="std::string"?"string":ret[0].str()) << " " << escapeIdentifier(name) << " (" << (args_cnt > 1 ? "\n" : "");
     }
 
     bool first = true;

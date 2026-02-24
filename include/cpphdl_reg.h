@@ -37,9 +37,9 @@ struct reg : public T
 
     reg() = default;
 
-    operator T()
+    operator T&()
     {
-        return *static_cast<T*>(this);
+        return *this;
     }
 };
 

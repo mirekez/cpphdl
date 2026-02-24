@@ -1,9 +1,6 @@
 #pragma once
 
-#include <cstddef>
-#include <cassert>
-#include <string>
-#include <cstring>
+#include "cpphdl_bitops.h"
 
 namespace cpphdl
 {
@@ -16,7 +13,7 @@ template<size_t WIDTH>
 struct logic_bits;
 
 template<size_t WIDTH>
-struct logic
+struct logic : public bitops<logic<WIDTH>>
 {
     constexpr static size_t SIZE = (WIDTH+7)/8;
     uint8_t bytes[SIZE];
@@ -46,7 +43,14 @@ struct logic
     logic(uint64_t other)
     {
         for (size_t i=0; i < SIZE; ++i) {
-            bytes[i] = other>>(i*8);
+            bytes[i] = other>>(i*8);  // todo: optimize
+        }
+    }
+
+    logic(unsigned other)
+    {
+        for (size_t i=0; i < SIZE; ++i) {
+            bytes[i] = other>>(i*8);  // todo: optimize
         }
     }
 
@@ -85,144 +89,68 @@ struct logic
         bytes[bitnum/8] = (bytes[bitnum/8]&~(1<<(bitnum%8)))|(in<<(bitnum%8));
     }
 
-
-/*    template<size_t WIDTH1>
-    logic& operator&=(const logic<WIDTH1>& in)
-    {
-        for (size_t i=0; i < std::min(SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bytes[i] &= in.bytes[i];
-        }
-        return *this;
-    }
-
-    template<size_t WIDTH1>
-    logic& operator|=(const logic<WIDTH1>& in)
-    {
-        for (size_t i=0; i < std::min(SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bytes[i] |= in.bytes[i];
-        }
-        return *this;
-    }
-
-    template<size_t WIDTH1>
-    logic& operator^=(const logic<WIDTH1>& in)
-    {
-        for (size_t i=0; i < std::min(SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bytes[i] ^= in.bytes[i];
-        }
-        return *this;
-    }
-*/
-
-    operator uint64_t() const
+    explicit operator uint64_t() const
     {
         return to_ullong();
     }
 
-    logic<WIDTH> operator<<(uint64_t shift) const
+    explicit operator bool() const
     {
-        uint64_t tmp = 0;
-        logic<WIDTH> logic_tmp = {0};
-
-        for (int i=WIDTH/8-1; i >= 0; --i) {
-            tmp = this->bytes[i];
-            if (i + shift/8 < WIDTH/8) {
-                logic_tmp.bytes[i+shift/8] = logic_tmp.bytes[i+shift/8] | tmp<<(shift%8);
-            }
-            if (i+shift/8+1 < WIDTH/8) {
-                logic_tmp.bytes[i+shift/8+1] = logic_tmp.bytes[i+shift/8+1] | tmp>>(8-shift%8);
-            }
-        }
-        return logic_tmp;
+        return to_ullong();
     }
 
-    logic<WIDTH> operator>>(uint64_t shift) const
+    explicit operator uint32_t() const
     {
-        uint64_t tmp = 0;
-        logic<WIDTH> logic_tmp = 0;
-
-        for (int i=0; i < (int)WIDTH/8; ++i) {
-            tmp = this->bytes[i];
-            if (i-(int)(shift/8) >= 0) {
-                logic_tmp.bytes[i-shift/8] = logic_tmp.bytes[i-shift/8] | tmp>>(shift%8);
-            }
-            if (i-(int)(shift/8)-1 >= 0) {
-                logic_tmp.bytes[i-shift/8-1] = logic_tmp.bytes[i-shift/8-1] | tmp<<(8-shift%8);
-            }
-        }
-        return logic_tmp;
+        return to_ullong();
     }
 
-    logic operator~() const
+    explicit operator uint16_t() const
     {
-        logic bs;
-        for (size_t i=0; i < logic<WIDTH>::SIZE; ++i) {  // optimize with ulong
-            bs.bytes[i] = ~logic<WIDTH>::bytes[i];
-        }
-        return bs;
+        return to_ullong();
     }
 
-    template<size_t WIDTH1>
-    logic operator&(const logic<WIDTH1>& in) const
+    explicit operator uint8_t() const
     {
-        auto bs = *this;
-        for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bs.bytes[i] &= in.bytes[i];
-        }
-        return bs;
+        return to_ullong();
     }
 
-    template<size_t WIDTH1>
-    logic operator|(const logic<WIDTH1>& in) const
+    using bitops<logic<WIDTH>>::operator&;
+    using bitops<logic<WIDTH>>::operator|;
+    using bitops<logic<WIDTH>>::operator^;
+    using bitops<logic<WIDTH>>::operator~;
+    using bitops<logic<WIDTH>>::operator<<;
+    using bitops<logic<WIDTH>>::operator>>;
+    using bitops<logic<WIDTH>>::operator+;
+    using bitops<logic<WIDTH>>::operator-;
+    using bitops<logic<WIDTH>>::operator==;
+    using bitops<logic<WIDTH>>::operator!=;
+
+    logic operator<<=(uint64_t shift)
     {
-        auto bs = *this;
-        for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bs.bytes[i] |= in.bytes[i];
-        }
-        return bs;
+        return *this = *this << shift;
     }
 
-    template<size_t WIDTH1>
-    logic operator^(const logic<WIDTH1>& in) const
+    logic operator>>=(uint64_t shift)
     {
-        auto bs = *this;
-        for (size_t i=0; i < std::min(logic<WIDTH>::SIZE,in.SIZE); ++i) {  // optimize with ulong
-            bs.bytes[i] ^= in.bytes[i];
-        }
-        return bs;
-    }
-
-    logic<WIDTH> operator<<=(uint64_t shift)
-    {
-        *this = *this << shift;
-        return *this;
-    }
-
-    logic<WIDTH> operator>>=(uint64_t shift)
-    {
-        *this = *this >> shift;
-        return *this;
+        return *this = *this >> shift;
     }
 
     template<size_t WIDTH1>
     logic operator&=(const logic<WIDTH1>& in)
     {
-        *this = *this & in;
-        return *this;
+        return *this = *this & in;
     }
 
     template<size_t WIDTH1>
     logic operator|=(const logic<WIDTH1>& in)
     {
-        *this = *this | in;
-        return *this;
+        return *this = *this | in;
     }
 
     template<size_t WIDTH1>
     logic operator^=(const logic<WIDTH1>& in)
     {
-        *this = *this ^ in;
-        return *this;
+        return *this = *this ^ in;
     }
 
     uint64_t to_ullong() const

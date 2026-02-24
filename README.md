@@ -31,3 +31,4 @@ This work is not subsidized or paid.
 
 - VCD file dumping
 - asynchronous resets
+- ports naming doc

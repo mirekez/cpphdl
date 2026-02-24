@@ -82,19 +82,22 @@ struct array
         return logic<SIZE*8>((logic<SIZE*8>*)this, first, last);
     }*/
 
-    operator logic<SIZE*8>() const
+    operator logic<SIZE*8>&()
     {
-        logic<SIZE*8> bs;
-        memcpy(&bs, this->data, sizeof(bs));
-        return bs;
+        return *(logic<SIZE*8>*)this;
     }
 
-//    operator uint64_t() const
-//    {
-//        return *(uint64_t*)data;
-//    }
+    explicit operator uint64_t() const
+    {
+        return *(uint64_t*)data;
+    }
 
-    array<T,COUNT> operator<<(uint64_t shift)
+    explicit operator uint32_t() const
+    {
+        return *(uint32_t*)data;
+    }
+
+    array<T,COUNT> operator<<(size_t shift)
     {
         uint64_t tmp = 0;
         array<T,COUNT> arr_tmp = {0};
@@ -111,7 +114,7 @@ struct array
         return arr_tmp;
     }
 
-    array<T,COUNT> operator>>(uint64_t shift)
+    array<T,COUNT> operator>>(size_t shift)
     {
         uint64_t tmp = 0;
         array<T,COUNT> arr_tmp = 0;
@@ -136,10 +139,57 @@ struct array
         }
         return arr_tmp;
     }
+
+    array<T,COUNT> operator&(const array<T,COUNT>& other)
+    {
+        array<T,COUNT> arr_tmp = *this;
+        for (size_t i=0; i < COUNT; ++i) {
+            arr_tmp[i] = arr_tmp[i] & other[i];
+        }
+        return arr_tmp;
+    }
+
+    array<T,COUNT> operator~()
+    {
+        array<T,COUNT> arr_tmp = *this;
+        for (size_t i=0; i < COUNT; ++i) {
+            arr_tmp[i] = ~arr_tmp[i];
+        }
+        return arr_tmp;
+    }
+
+    array<T,COUNT> operator^(const array<T,COUNT>& other)
+    {
+        array<T,COUNT> arr_tmp = *this;
+        for (size_t i=0; i < COUNT; ++i) {
+            arr_tmp[i] = arr_tmp[i] ^ other[i];
+        }
+        return arr_tmp;
+    }
+
+    array<T,COUNT>& operator<<=(size_t shift)
+    {
+        return *this = *this << shift;
+    }
+
+    array<T,COUNT>& operator>>=(size_t shift)
+    {
+        return *this = *this >> shift;
+    }
+
     array<T,COUNT> operator|=(const array<T,COUNT>& other)
     {
-        *this = *this | other;
-        return *this;
+        return *this = *this | other;
+    }
+
+    array<T,COUNT> operator&=(const array<T,COUNT>& other)
+    {
+        return *this = *this & other;
+    }
+
+    array<T,COUNT> operator^=(const array<T,COUNT>& other)
+    {
+        return *this = *this ^ other;
     }
 
     std::string to_string()

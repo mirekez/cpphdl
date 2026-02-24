@@ -23,6 +23,7 @@ struct Module
     std::vector<Method> methods;
     std::vector<Import> imports;
     std::string origName;
+    std::vector<Field> aliases;
 
     // methods
 
