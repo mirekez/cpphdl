@@ -106,30 +106,30 @@ struct logic : public bitops<logic<WIDTH>>
     using bitops<logic<WIDTH>>::to_ullong;
     using bitops<logic<WIDTH>>::to_hex;
 
-    logic operator<<=(uint64_t shift)
+    logic& operator<<=(uint64_t shift)
     {
         return *this = *this << shift;
     }
 
-    logic operator>>=(uint64_t shift)
+    logic& operator>>=(uint64_t shift)
     {
         return *this = *this >> shift;
     }
 
     template<size_t WIDTH1>
-    logic operator&=(const logic<WIDTH1>& in)
+    logic& operator&=(const logic<WIDTH1>& in)
     {
         return *this = *this & in;
     }
 
     template<size_t WIDTH1>
-    logic operator|=(const logic<WIDTH1>& in)
+    logic& operator|=(const logic<WIDTH1>& in)
     {
         return *this = *this | in;
     }
 
     template<size_t WIDTH1>
-    logic operator^=(const logic<WIDTH1>& in)
+    logic& operator^=(const logic<WIDTH1>& in)
     {
         return *this = *this ^ in;
     }

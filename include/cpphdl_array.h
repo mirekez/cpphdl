@@ -90,17 +90,17 @@ struct array : public bitops<logic<COUNT*sizeof(T)*8>>
         return *this = *this >> shift;
     }
 
-    array operator|=(const array& other)
+    array& operator|=(const array& other)
     {
         return *this = *this | other;
     }
 
-    array operator&=(const array& other)
+    array& operator&=(const array& other)
     {
         return *this = *this & other;
     }
 
-    array operator^=(const array& other)
+    array& operator^=(const array& other)
     {
         return *this = *this ^ other;
     }

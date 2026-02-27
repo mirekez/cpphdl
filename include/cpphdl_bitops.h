@@ -6,53 +6,48 @@ template<typename BASE>
 class bitops
 {
 private:
-    static constexpr size_t U64 = sizeof(uint64_t);
-
     static void apply_and(BASE& dst, const BASE& rhs)
     {
-        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a & b; }, [](uint8_t  a, uint8_t  b){ return a & b; });
+        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a & b; });
     }
 
     static void apply_or(BASE& dst, const BASE& rhs)
     {
-        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a | b; }, [](uint8_t  a, uint8_t  b){ return a | b; });
+        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a | b; });
     }
 
     static void apply_xor(BASE& dst, const BASE& rhs)
     {
-        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a ^ b; }, [](uint8_t  a, uint8_t  b){ return a ^ b; });
+        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a ^ b; });
     }
 
     static void apply_add(BASE& dst, const BASE& rhs)
     {
-        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a + b; }, [](uint8_t  a, uint8_t  b){ return a + b; });
+        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a + b; });
     }
 
     static void apply_sub(BASE& dst, const BASE& rhs)
     {
-        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a - b; }, [](uint8_t  a, uint8_t  b){ return a - b; });
+        apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a - b; });
     }
 
-    template<typename F64, typename F8>
-    static void apply_binary(BASE& dst, const BASE& rhs, F64 op64, F8 op8)
+    template<typename F64>
+    static void apply_binary(BASE& dst, const BASE& rhs, F64 op)
     {
         size_t size = sizeof(BASE);
 
-        uint8_t* dptr = reinterpret_cast<uint8_t*>(&dst);
-        const uint8_t* rptr = reinterpret_cast<const uint8_t*>(&rhs);
+        uint8_t* dptr = (uint8_t*)&dst;
+        const uint8_t* rptr = (const uint8_t*)&rhs;
 
         size_t i = 0;
-
         // 64-bit chunks
-        for (; i + U64 <= size; i += U64) {
-            auto* d64 = reinterpret_cast<uint64_t*>(dptr + i);
-            const auto* r64 = reinterpret_cast<const uint64_t*>(rptr + i);
-            *d64 = op64(*d64, *r64);
+        for (; i + sizeof(uint64_t) <= size; i += sizeof(uint64_t)) {
+            *(uint64_t*)(dptr + i) = op(*(uint64_t*)(dptr + i), *(const uint64_t*)(rptr + i));
         }
 
         // remaining bytes
         for (; i < size; ++i) {
-            dptr[i] = op8(dptr[i], rptr[i]);
+            dptr[i] = op(dptr[i], rptr[i]);
         }
     }
 
@@ -86,7 +81,7 @@ public:
         BASE result = static_cast<const BASE&>(*this);
 
         size_t size = sizeof(BASE);
-        uint8_t* ptr = reinterpret_cast<uint8_t*>(&result);
+        uint8_t* ptr = (uint8_t*)&result;
 
         for (size_t i = 0; i < size; ++i)
             ptr[i] = ~ptr[i];
@@ -98,37 +93,63 @@ public:
     {
         BASE result{};
 
-        constexpr size_t total_bits = sizeof(BASE) * 8;
+        constexpr size_t size = sizeof(BASE);
+        constexpr size_t step = sizeof(uint64_t);
+        constexpr size_t total_bits = size * 8;
+
         if (shift >= total_bits) {
             return result;
         }
 
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(this);
-        uint8_t* dst = reinterpret_cast<uint8_t*>(&result);
+        const uint8_t* src8 = (const uint8_t*)this;
+        uint8_t* dst8 = (uint8_t*)&result;
 
-        constexpr size_t step = sizeof(uint64_t);
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t word_count = size / step;
+        constexpr size_t remainder  = size % step;
+        constexpr size_t total_words = word_count + (remainder ? 1 : 0);
 
         size_t word_shift = shift / 64;
         size_t bit_shift  = shift % 64;
 
-        size_t word_count = size / step;
+        for (size_t i = total_words; i-- > 0;) {
 
-        const uint64_t* s64 = reinterpret_cast<const uint64_t*>(src);
-        uint64_t* d64 = reinterpret_cast<uint64_t*>(dst);
-
-        for (size_t i = word_count; i-- > 0;) {
-            uint64_t value = 0;
+            uint64_t cur  = 0;
+            uint64_t prev = 0;
 
             if (i >= word_shift) {
-                value = s64[i - word_shift] << bit_shift;
+                size_t src_index = i - word_shift;
 
-                if (bit_shift && i > word_shift) {
-                    value |= s64[i - word_shift - 1] >> (64 - bit_shift);
+                if (src_index < word_count) {
+                    cur = ((const uint64_t*)src8)[src_index];
+                }
+                else if (src_index == word_count && remainder) {
+                    std::memcpy(&cur, src8 + word_count * step, remainder);
                 }
             }
 
-            d64[i] = value;
+            if (bit_shift && i > word_shift) {
+                size_t prev_index = i - word_shift - 1;
+
+                if (prev_index < word_count) {
+                    prev = ((const uint64_t*)src8)[prev_index];
+                }
+                else if (prev_index == word_count && remainder) {
+                    std::memcpy(&prev, src8 + word_count * step, remainder);
+                }
+            }
+
+            uint64_t value = (cur << bit_shift);
+
+            if (bit_shift) {
+                value |= (prev >> (64 - bit_shift));
+            }
+
+            if (i < word_count) {
+                ((uint64_t*)dst8)[i] = value;
+            }
+            else if (i == word_count && remainder) {
+                std::memcpy(dst8 + word_count * step, &value, remainder);
+            }
         }
 
         return result;
@@ -138,37 +159,61 @@ public:
     {
         BASE result{};
 
-        constexpr size_t total_bits = sizeof(BASE) * 8;
+        constexpr size_t size = sizeof(BASE);
+        constexpr size_t step = sizeof(uint64_t);
+        constexpr size_t total_bits = size * 8;
+
         if (shift >= total_bits) {
             return result;
         }
 
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(this);
-        uint8_t* dst = reinterpret_cast<uint8_t*>(&result);
+        const uint8_t* src8 = (const uint8_t*)this;
+        uint8_t* dst8 = (uint8_t*)&result;
 
-        constexpr size_t step = sizeof(uint64_t);
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t word_count = size / step;
+        constexpr size_t remainder  = size % step;
+        constexpr size_t total_words = word_count + (remainder ? 1 : 0);
 
         size_t word_shift = shift / 64;
         size_t bit_shift  = shift % 64;
 
-        size_t word_count = size / step;
+        for (size_t i = 0; i < total_words; ++i) {
 
-        const uint64_t* s64 = reinterpret_cast<const uint64_t*>(src);
-        uint64_t* d64 = reinterpret_cast<uint64_t*>(dst);
+            uint64_t cur  = 0;
+            uint64_t next = 0;
 
-        for (size_t i = 0; i < word_count; ++i) {
-            uint64_t value = 0;
+            size_t src_index = i + word_shift;
 
-            if (i + word_shift < word_count) {
-                value = s64[i + word_shift] >> bit_shift;
+            if (src_index < word_count) {
+                cur = ((const uint64_t*)src8)[src_index];
+            }
+            else if (src_index == word_count && remainder) {
+                std::memcpy(&cur, src8 + word_count * step, remainder);
+            }
 
-                if (bit_shift && i + word_shift + 1 < word_count) {
-                    value |= s64[i + word_shift + 1] << (64 - bit_shift);
+            if (bit_shift) {
+                size_t next_index = src_index + 1;
+
+                if (next_index < word_count) {
+                    next = ((const uint64_t*)src8)[next_index];
+                }
+                else if (next_index == word_count && remainder) {
+                    std::memcpy(&next, src8 + word_count * step, remainder);
                 }
             }
 
-            d64[i] = value;
+            uint64_t value = (cur >> bit_shift);
+
+            if (bit_shift) {
+                value |= (next << (64 - bit_shift));
+            }
+
+            if (i < word_count) {
+                ((uint64_t*)dst8)[i] = value;
+            }
+            else if (i == word_count && remainder) {
+                std::memcpy(dst8 + word_count * step, &value, remainder);
+            }
         }
 
         return result;
@@ -179,9 +224,9 @@ public:
     {
         BASE result{};
 
-        const uint8_t* ap = reinterpret_cast<const uint8_t*>(this);
-        const uint8_t* bp = reinterpret_cast<const uint8_t*>(&rhs);
-        uint8_t* rp = reinterpret_cast<uint8_t*>(&result);
+        const uint8_t* ap = (const uint8_t*)this;
+        const uint8_t* bp = (const uint8_t*)&rhs;
+        uint8_t* rp = (uint8_t*)&result;
 
         constexpr size_t size = sizeof(BASE);
         constexpr size_t step = sizeof(uint64_t);
@@ -218,9 +263,9 @@ public:
     {
         BASE result{};
 
-        const uint8_t* ap = reinterpret_cast<const uint8_t*>(this);
-        const uint8_t* bp = reinterpret_cast<const uint8_t*>(&rhs);
-        uint8_t* rp = reinterpret_cast<uint8_t*>(&result);
+        const uint8_t* ap = (const uint8_t*)this;
+        const uint8_t* bp = (const uint8_t*)&rhs;
+        uint8_t* rp = (uint8_t*)&result;
 
         constexpr size_t size = sizeof(BASE);
         constexpr size_t step = sizeof(uint64_t);
@@ -264,8 +309,8 @@ public:
         constexpr size_t size = sizeof(BASE);
         constexpr size_t step = sizeof(uint64_t);
 
-        const uint8_t* a = reinterpret_cast<const uint8_t*>(this);
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&rhs);
+        const uint8_t* a = (const uint8_t*)this;
+        const uint8_t* b = (const uint8_t*)&rhs;
 
         for (size_t i = size; i >= step; i -= step) {
             uint64_t av, bv;
@@ -314,7 +359,7 @@ public:
     {
         constexpr size_t size = sizeof(BASE);
         static const char* digits = "0123456789abcdef";
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(this);
+        const uint8_t* ptr = (const uint8_t*)this;
 
         std::string result;
         result.reserve(size * 2);
