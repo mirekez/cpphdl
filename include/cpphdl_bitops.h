@@ -52,6 +52,27 @@ private:
     }
 
 public:
+    bitops() {}
+
+    template<typename T>
+    bitops(const T& other)
+    {
+        memcpy(this, &other, std::min(sizeof(BASE), sizeof(other)));
+        if (sizeof(BASE) > sizeof(other)) {
+            memset((uint8_t*)this + sizeof(other), 0, sizeof(BASE) - sizeof(other));
+        }
+    }
+
+    template<typename T>
+    BASE& operator=(const T& other)
+    {
+        memcpy(this, &other, std::min(sizeof(BASE), sizeof(other)));
+        if (sizeof(BASE) > sizeof(other)) {
+            memset((uint8_t*)this + sizeof(other), 0, sizeof(BASE) - sizeof(other));
+        }
+        return (BASE&)*this;
+    }
+
     template<typename T>
     BASE operator&(const T& rhs) const
     {

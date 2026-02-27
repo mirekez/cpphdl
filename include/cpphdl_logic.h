@@ -21,59 +21,10 @@ struct logic : public bitops<logic<WIDTH>>
     logic() = default;
     logic(const logic& other) = default;
 
-//    template<size_t WIDTH1>
-//    logic(const logic<WIDTH1>& other)
-//    {
-//        for (size_t i=0; i < std::min(SIZE,other.SIZE); ++i) {
-//            bytes[i] = other.bytes[i];
-//        }
-//        memset(&bytes[std::min(SIZE,other.SIZE)], 0, SIZE - std::min(SIZE,other.SIZE));
-//    }
-
     template<typename T>
-    logic(const T& other)
-    {
-        size_t to_copy = std::min(sizeof(*this),sizeof(other));
-        memcpy(&bytes, &other, to_copy);
-        if (to_copy < sizeof(*this)) {
-            memset((uint8_t*)&bytes + to_copy, 0, sizeof(*this) - to_copy);
-        }
-    }
-
-    logic(uint64_t other)
-    {
-        for (size_t i=0; i < SIZE; ++i) {
-            bytes[i] = other>>(i*8);  // todo: optimize
-        }
-    }
-
-    logic(unsigned other)
-    {
-        for (size_t i=0; i < SIZE; ++i) {
-            bytes[i] = other>>(i*8);  // todo: optimize
-        }
-    }
+    logic(const T& other) : bitops<logic<WIDTH>>(other) {}
 
     logic& operator=(const logic& other) = default;
-
-    template<size_t WIDTH1>
-    logic& operator=(const logic<WIDTH1>& other)
-    {
-        for (size_t i=0; i < std::min(SIZE,other.SIZE); ++i) {
-            bytes[i] = other.bytes[i];
-        }
-        memset(&bytes[std::min(SIZE,other.SIZE)], 0, SIZE - std::min(SIZE,other.SIZE));
-        return *this;
-    }
-
-    logic& operator=(uint64_t in)
-    {
-        for (size_t i=0; i < SIZE; ++i) {  // optimize with ulong
-            bytes[i] = in&0xFF;
-            in >>= 8;
-        }
-        return *this;
-    }
 
     logic_bits<WIDTH> bits(size_t last, size_t first);
     logic_bits<WIDTH> operator[](size_t bitnum);
@@ -89,6 +40,7 @@ struct logic : public bitops<logic<WIDTH>>
         bytes[bitnum/8] = (bytes[bitnum/8]&~(1<<(bitnum%8)))|(in<<(bitnum%8));
     }
 
+    using bitops<logic<WIDTH>>::operator=;
     using bitops<logic<WIDTH>>::operator&;
     using bitops<logic<WIDTH>>::operator|;
     using bitops<logic<WIDTH>>::operator^;
