@@ -56,7 +56,8 @@ struct Expr
         FLAG_ANON = 32,  // anonymous struct or union
         FLAG_USETHIS = 64,  // methods of structs
         FLAG_NOBASE = 128,  // dont use base of member expr (for constexpr of structs)
-        FLAG_NOTREG = 256  // declare logic instead of reg
+        FLAG_NOTREG = 256,  // declare logic instead of reg
+        FLAG_BRACKETS = 512
     };
     unsigned flags = FLAG_NONE;
 
@@ -86,7 +87,7 @@ struct Expr
         return false;
     }
 
-    std::string replacePrintFormat(std::vector<Expr>& params);
+    std::string replacePrintFormat(std::vector<Expr>& params, bool fprintf = false);
 
     std::string debug(int debug_indent = 0)
     {

@@ -143,15 +143,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fclose") {
                 func = "$fclose";
             }
+            bool fprint = sub.size()>1 && (func == "fprintf" || sub[0].value == "stdout" || sub[0].value == "stderr");
             if (sub.size() && (func == "printf" || func == "print" || func == "format" || func == "fprintf")) {
-                sub[0].value = replacePrintFormat(sub);
+                sub[(int)fprint].value = replacePrintFormat(sub, fprint);
             }
-            if (func == "fprintf" && sub.size()) {
-                if (sub[0].value == "stderr") {
-                    sub[0].value = "2";
-                }
+            if (fprint) {
                 if (sub[0].value == "stdout") {
                     sub[0].value = "1";
+                }
+                if (sub[0].value == "stderr") {
+                    sub[0].value = "2";
                 }
                 func = "$fwrite";
             }
@@ -202,12 +203,21 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
                     return left.find(v.name + "[") == 0 && v.expr.type == cpphdl::Expr::EXPR_TEMPLATE && v.expr.value == "cpphdl_memory";
                 }) != vars.end()) {
-                value = "<=";
+                ASSERT(sub.size() >= 2);
+                return indent_str + prefix + sub[0].str() + " <= " + sub[1].str();
             }
-            if (value == "<=" || value == "=" || value == "+" || value == "-" || value == "*" || value == "/" || value == "==" || value == "!=" || value == ">"
-                 || value == ">=" || value == "<" || value == "<=") {
+            if (value.length() && value.back() == '=' && (value[0] != '=' || value.length()==1)) {
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
+            }
+            if (value.length() && (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '*' || value[0] == '/'
+                || value[0] == '!' || value[0] == '<' || value[0] == '>')) {
+                ASSERT(sub.size() >= 2);
+                if ((flags&FLAG_BRACKETS)) {
+                    return indent_str + prefix + "(" + sub[0].str() + " " + value + " " + sub[1].str() + ")";
+                } else {
+                    return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
+                }
             }
             if (value == "[]") {
                 auto& check = sub[0];
@@ -245,6 +255,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "^" && sub.size() == 2) {
                 return indent_str + sub[0].str() + " ^ " + sub[1].str();
+            }
+
+            for (auto& e : sub) {
+                e.flags |= FLAG_BRACKETS;
             }
 
             std::string func = value + suffix + "(";
@@ -377,9 +391,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
                     return left.find(v.name + "[") == 0 && v.expr.type == cpphdl::Expr::EXPR_TEMPLATE && v.expr.value == "cpphdl_memory";
                 }) != vars.end()) {
-                value = "<=";
-            }
-            if (value == "=" || value == "<=") {  // parentheses remover
+
                 auto& check = sub[0];
                 while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
                     check = check.sub[0];
@@ -387,6 +399,17 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
                     sub[0] = check.sub[0];
                 }
+                return indent_str + prefix + sub[0].str() + " <= " + sub[1].str();
+            }
+            if (value.length() && value.back() == '=' && (value[0] != '=' || value.length()==1)) {
+                auto& check = sub[0];
+                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+                    check = check.sub[0];
+                }
+                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+                    sub[0] = check.sub[0];
+                }
+                return indent_str + prefix + sub[0].str() + value + sub[1].str();
             }
             if (value == "<<") {
                 value = "<<<";
@@ -394,7 +417,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == ">>") {
                 value = ">>>";
             }
-            return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value :" " + value + " ") + sub[1].str();
+            for (auto& e : sub) {
+                e.flags |= FLAG_BRACKETS;
+            }
+            if ((flags&FLAG_BRACKETS)) {
+                return indent_str + prefix + "(" + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str() + ")";
+            } else {
+                return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str();
+            }
         }
         case EXPR_UNARY:
             ASSERT(sub.size()==1);
@@ -796,17 +826,17 @@ Expr Expr::simplify()  // open brackets for *(+-)
     return expr;
 }
 
-std::string Expr::replacePrintFormat(std::vector<Expr>& params)
+std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint)
 {
-    std::string str = params[0].value;
+    std::string str = params[(int)fprint].value;
     bool stdPrint = false;
-    if (str.find("std::basic_format_string") == 0 && params[0].sub.size()) {
-        params[0] = params[0].sub[0];
-        str = params[0].value;
+    if (str.find("std::basic_format_string") == 0 && params[(int)fprint].sub.size()) {
+        params[(int)fprint] = params[(int)fprint].sub[0];
+        str = params[(int)fprint].value;
         stdPrint = true;
     }
     size_t pos = -1, pos1 = -1;
-    for (size_t i=0; i < params.size(); ++i) {
+    for (size_t i=((int)fprint)+1; i < params.size(); ++i) {
         if (params[i].str() == "__inst_name") {
             bool replaced = false;
             if (!stdPrint && (pos = str.find("%", pos+1)) != (size_t)-1 && pos < str.length()-1) {
