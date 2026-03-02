@@ -410,7 +410,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 //?        QT = QT.getCanonicalType();        // ensure you have the actual canonical form
         DEBUG_AST(debugIndent, "Param: " << param->getNameAsString() << " (" << QT.getAsString() << ")");
 
-        method.arguments.emplace_back(cpphdl::Field{param->getNameAsString(), std::move(expr)});
+        method.arguments.emplace_back(cpphdl::Field{(param->getNameAsString().length() ? param->getNameAsString() : "unused"), std::move(expr)});
 //        auto* CRD = hlp.resolveCXXRecordDecl(QT);
 //        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
 //            auto st = exportStruct(CRD, hlp);

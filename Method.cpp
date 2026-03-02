@@ -47,6 +47,7 @@ bool Method::print(std::ofstream& out)
                 << (str_ending(arg.name, "_out") ? "output " : "input ") << arg.expr.str() << " " << arg.name << (args_cnt > 1 ? "\n" : "");
             first = false;
         }
+//        out << "\n" << arg.expr.debug() << " " << arg.name << "\n";
     }
     out << (args_cnt>1?"    ":"") << ");" << "\n";
 

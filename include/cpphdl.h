@@ -1,7 +1,5 @@
 #pragma once
 
-//#include <stdint.h>
-
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned uint32_t;
@@ -10,8 +8,6 @@ typedef signed char int8_t;
 typedef signed short int16_t;
 typedef signed int int32_t;
 typedef signed long int64_t;
-
-#include <string>
 
 namespace cpphdl
 {
@@ -32,8 +28,12 @@ constexpr unsigned clog2(unsigned x)
 
 }
 
+#include <type_traits>
+
 template<typename T>
 struct is_from_cpphdl_namespace : std::false_type {};
+
+#include <string>
 
 struct cpphdl_exception
 {

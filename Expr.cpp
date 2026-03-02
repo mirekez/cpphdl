@@ -70,6 +70,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + (value == "true"? "1" : (value == "false"? "0" : value)) + suffix;
         case EXPR_VAR:
+            if (value == "sys_clock") {
+                value = "$time";
+            }
             return indent_str + prefix + escapeIdentifier(value) + suffix;
         case EXPR_STRING:
             return indent_str + prefix + value;
