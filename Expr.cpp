@@ -481,6 +481,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
             str_replace(value, "cpphdl_logic", "");
+            // considering casting names as special case since Verilog cant cast using logic[31:0]'val  (what a strange language)
             if (value.find("logic") == 0) {
                 return indent_str + sub[0].str(prefix, suffix);
             } else
@@ -507,6 +508,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             } else
             if (value.compare(0, 8, "unsigned") == 0) {
                 return indent_str + "unsigned'(32'(" + sub[0].str(prefix, suffix) + "))";
+            } else
+            if (value.find("cpphdl_u") == 0) {
+                size_t width = atoi(value.c_str() + strlen("cpphdl_u"));
+                return indent_str + "unsigned'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
+            } else
+            if (value.find("cpphdl_s") == 0) {
+                size_t width = atoi(value.c_str() + strlen("cpphdl_s"));
+                return indent_str + "signed'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
             }
             return indent_str + typeToSV(value) + "'(" + sub[0].str(prefix, suffix) + ")";
         case EXPR_PAREN:
