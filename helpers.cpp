@@ -272,21 +272,22 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     return false;
                 });
             if (found) {
-                return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {expr}};
+                return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {std::move(expr)}};
             } else {
-                return cpphdl::Expr{std::string("*8 +: ") + typeSize,
-                                   cpphdl::Expr::EXPR_INDEX, {expr, cpphdl::Expr{"0",cpphdl::Expr::EXPR_NUM}}};
+                return cpphdl::Expr{typeSize, cpphdl::Expr::EXPR_DEREF, {std::move(expr)}};
             }
         }
-        return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {expr}};
+        return cpphdl::Expr{UO->getOpcodeStr(UO->getOpcode()).str(), cpphdl::Expr::EXPR_UNARY, {std::move(expr)}};
     }
     if (auto* BO = dyn_cast<BinaryOperator>(E)) {
         DEBUG_AST1(" BinaryOperator(" << BO->getOpcodeStr().data() << ")");
-        QualType LQT = BO->getLHS()->IgnoreParenImpCasts()->getType().getNonReferenceType();
-        if (BO->getOpcodeStr() == "+" && LQT->isPointerType()) {  // convert pointer add into index
-            return cpphdl::Expr{std::string("*8 +:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
-                                   cpphdl::Expr::EXPR_INDEX, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
-        }
+//        QualType LQT = BO->getLHS()->IgnoreParenImpCasts()->getType().getNonReferenceType();
+//        if (BO->getOpcodeStr() == "+" && LQT->isPointerType() && !(flag&&FLAG_POINTER_BASE)) {  // convert pointer add into index
+//            if (dyn_cast<BinaryOperator>(BO->getRHS())) {
+//            }
+//            return cpphdl::Expr{std::string("*8 +:") + std::to_string(ctx->getTypeSizeInChars(LQT->getPointeeType()).getQuantity()*8),
+//                                   cpphdl::Expr::EXPR_INDEX, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
+//        }
         return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY, {exprToExpr(BO->getLHS()),exprToExpr(BO->getRHS())}};
     }
     if (auto* CAO = dyn_cast<CompoundAssignOperator>(E)) {

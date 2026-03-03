@@ -43,11 +43,11 @@ bool Method::print(std::ofstream& out)
     bool first = true;
     for (auto& arg : arguments) {
         if (arg.name != "clk") {
+//        out << "\n" << arg.expr.debug() << " " << arg.name << "\n";
             out << (args_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
                 << (str_ending(arg.name, "_out") ? "output " : "input ") << arg.expr.str() << " " << arg.name << (args_cnt > 1 ? "\n" : "");
             first = false;
         }
-//        out << "\n" << arg.expr.debug() << " " << arg.name << "\n";
     }
     out << (args_cnt>1?"    ":"") << ");" << "\n";
 
@@ -57,12 +57,12 @@ bool Method::print(std::ofstream& out)
 
     for (auto& stmt : statements) {
         stmt.indent = 2;
+//        out << stmt.debug() << "\n";
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
         }
         out << s;
-//        out << stmt.debug() << "\n";
     }
 
     if (ret.size() == 0) {
@@ -143,12 +143,12 @@ bool Method::printConns(std::ofstream& out)
 
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_ASSIGN;
+//        out << stmt.debug() << "\n";
         auto s = stmt.str("assign ");
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
         }
         out << s;
-//        out << stmt.debug() << "\n";
     }
     out << "    endgenerate\n";
 
@@ -161,7 +161,7 @@ bool Method::printComb(std::ofstream& out)
 
     out << "    always @(*) begin  // " << name <<"\n";
     for (auto& stmt : statements) {
-
+//        out << stmt.debug() << "\n";
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
         auto s = stmt.str();
@@ -169,7 +169,6 @@ bool Method::printComb(std::ofstream& out)
             s += ";\n";
         }
         out << s;
-//        out << stmt.debug() << "\n";
     }
     out << "    end\n";
 

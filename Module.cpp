@@ -48,27 +48,27 @@ bool Module::print(std::ofstream& out)
     out << ");\n";
 
     for (auto& f : consts) {
+//        out << f.expr.debug();
         out << "    parameter ";
         if (!f.print(out)) {
             return false;
         }
-//        out << f.expr.debug();
     }
     out << "\n";
 
     for (auto& a : aliases) {
-        out << "    typedef " << a.expr.str() << " " << a.name << ";\n";
 //        out << a.expr.debug();
+        out << "    typedef " << a.expr.str() << " " << a.name << ";\n";
     }
     out << "\n";
 
     out << "    // regs and combs\n";
     for (auto& field : vars) {
         field.indent = 1;
+//        out << field.expr.debug() << "\n";
         if (!field.print(out)) {
             return false;
         }
-//        out << field.expr.debug() << "\n";
     }
     out << "\n";
 
@@ -133,7 +133,6 @@ bool Module::print(std::ofstream& out)
                 s += ";\n";
             }
             out << "    assign " << port.name << " = " << s << "\n";
-//            out << port.initializer.debug() << "\n";
         }
     }
     out << "\n";
@@ -189,8 +188,8 @@ bool Module::printMembers(std::ofstream& out)
             bool first = true;
             for (auto& param : member.expr.sub[0].sub) {
                 if (param.type == Expr::EXPR_PARAM) {
-                    out << (first?"        ":",       ") << param.str() << "\n";
 //                    out << param.debug() << "\n";
+                    out << (first?"        ":",       ") << param.str() << "\n";
                     first = false;
                 }
             }
@@ -232,9 +231,9 @@ bool Module::printMembers(std::ofstream& out)
                                 return false;
                             });
                     }
-                    out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
 //                    out << expr.debug() << "\n";
 //                    out << port.expr.debug() << "\n";
+                    out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
                 }
             }
             else {

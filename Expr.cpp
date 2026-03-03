@@ -127,6 +127,59 @@ std::string Expr::str(std::string prefix, std::string suffix)
             sub[1].str();  // to calc declSize
             declSize = sub[1].declSize * atoi(sub[0].str().c_str());
             return indent_str + prefix + sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // in structures we need to put outer dimension before
+        case EXPR_BINARY:
+        {
+            ASSERT(sub.size()==2);
+            if ((value == "=" || value == "==") && (sub[0].str().find("__") == 0 || sub[1].str().find("__") == 0
+                || sub[0].str().find("_____") != (size_t)-1 || sub[1].str().find("_____") != (size_t)-1)) {  // all __ vars are hidden
+                return "";
+            }
+            auto& vars = currModule->vars;
+            std::string left = sub[0].str();
+            if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
+                    return left.find(v.name + "[") == 0 && v.expr.type == cpphdl::Expr::EXPR_TEMPLATE && v.expr.value == "cpphdl_memory";
+                }) != vars.end()) {
+
+                deparenth();  // we dont want parentheses to be on left side of =
+                return indent_str + prefix + sub[0].str() + " <= " + sub[1].str();
+            }
+            if (value.length() && value.back() == '=' && value[0] != '!' && (value[0] != '=' || value.length()==1)) {  // += -= etc neednt brackets
+                deparenth();  // we dont want parentheses to be on left side of =
+                return indent_str + prefix + sub[0].str() + value + sub[1].str();
+            }
+            if (value == "<<") {
+                value = "<<<";
+            }
+            if (value == ">>") {
+                value = ">>>";
+            }
+            for (auto& e : sub) {
+                e.flags |= FLAG_BRACKETS;
+            }
+            if ((flags&FLAG_BRACKETS)) {
+                return indent_str + prefix + "(" + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str() + ")";
+            } else {
+                return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str();
+            }
+        }
+        case EXPR_UNARY:
+            ASSERT(sub.size()==1);
+            if (value == "+") {  // unary + not for Verilog
+                return indent_str + sub[0].str();
+            }
+            if (value == "*") {  // we dont need pointers int Verilog
+                return indent_str + sub[0].str();
+            }
+            if (value == "&") {  // we dont need pointers int Verilog
+                return indent_str + sub[0].str();
+            }
+            if (value == "++") {
+                return indent_str + sub[0].str() + "=" + sub[0].str() + "+1";
+            }
+            return indent_str + prefix + value + sub[0].str();
+        case EXPR_COND:
+            ASSERT(sub.size()==3);
+            return indent_str + prefix + "(" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + ")";
         case EXPR_CALL:
         {
             if (str_ending(value, "_comb_func")) {
@@ -209,12 +262,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str() + " <= " + sub[1].str();
             }
-            if (value.length() && value.back() == '=' && (value[0] != '=' || value.length()==1)) {
+            if (value.length() && value.back() == '=' && value[0] != '!' && (value[0] != '=' || value.length()==1)) {  // += -= etc neednt brackets
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
             }
             if (value.length() && (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '*' || value[0] == '/'
-                || value[0] == '!' || value[0] == '<' || value[0] == '>')) {
+                || value[0] == '!' || value[0] == '<' || value[0] == '>')) {  // all operators
                 ASSERT(sub.size() >= 2);
                 if ((flags&FLAG_BRACKETS)) {
                     return indent_str + prefix + "(" + sub[0].str() + " " + value + " " + sub[1].str() + ")";
@@ -223,13 +276,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
             if (value == "[]") {
-                auto& check = sub[0];
-                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                    check = check.sub[0];
-                }
-                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-                    sub[0] = check.sub[0];  // parentheses remover
-                }
+                deparenth();
 
                 ASSERT(sub.size() >= 2);
                 return indent_str + sub[0].str() + "[" + sub[1].str() + "]";
@@ -348,13 +395,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT1(sub.size()==1, std::string("member sub size zero: ") + debug());
 
-            auto& check = sub[0];
-            while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                check = check.sub[0];
-            }
-            if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-                sub[0] = check.sub[0];  // parentheses remover
-            }
+            deparenth();  // we dont want parentheses to be on left side of =
 
             if ((flags&FLAG_ANON)&&value=="") {
                 value = "_";
@@ -382,100 +423,31 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + prefix + sub[0].str() + delim + escapeIdentifier(value) + suffix;
         }
-        case EXPR_BINARY:
+        case EXPR_INDEX:
         {
             ASSERT(sub.size()==2);
-            if ((value == "=" || value == "==") && (sub[0].str().find("__") == 0 || sub[1].str().find("__") == 0
-                || sub[0].str().find("_____") != (size_t)-1 || sub[1].str().find("_____") != (size_t)-1)) {  // all __ vars are hidden
-                return "";
-            }
-            auto& vars = currModule->vars;
-            std::string left = sub[0].str();
-            if (value == "=" && std::find_if(vars.begin(), vars.end(), [&](auto& v) {
-                    return left.find(v.name + "[") == 0 && v.expr.type == cpphdl::Expr::EXPR_TEMPLATE && v.expr.value == "cpphdl_memory";
-                }) != vars.end()) {
+            deparenth();  // we dont want parentheses to be before []
 
-                auto& check = sub[0];
-                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                    check = check.sub[0];
-                }
-                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-                    sub[0] = check.sub[0];
-                }
-                return indent_str + prefix + sub[0].str() + " <= " + sub[1].str();
-            }
-            if (value.length() && value.back() == '=' && (value[0] != '=' || value.length()==1)) {
-                auto& check = sub[0];
-                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                    check = check.sub[0];
-                }
-                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-                    sub[0] = check.sub[0];
-                }
-                return indent_str + prefix + sub[0].str() + value + sub[1].str();
-            }
-            if (value == "<<") {
-                value = "<<<";
-            }
-            if (value == ">>") {
-                value = ">>>";
-            }
-            for (auto& e : sub) {
-                e.flags |= FLAG_BRACKETS;
-            }
-            if ((flags&FLAG_BRACKETS)) {
-                return indent_str + prefix + "(" + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str() + ")";
-            } else {
-                return indent_str + prefix + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str();
-            }
+            return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         }
-        case EXPR_UNARY:
+        case EXPR_DEREF:
+        {
             ASSERT(sub.size()==1);
-            if (value == "+") {  // unary + not for Verilog
-                return indent_str + sub[0].str();
+            Expr expr = sub[0];
+            Expr* check = &expr;
+            while (check->type == EXPR_UNARY || check->type == EXPR_BINARY/* || check->type == EXPR_OPERATORCALL*/ || check->type == EXPR_PAREN || check->type == EXPR_CAST) {
+                ASSERT(check->sub.size());
+                check = &check->sub[0];
             }
-            if (value == "*") {  // we dont need pointers int Verilog
-                return indent_str + sub[0].str();
+            Expr base = *check;
+            *check = Expr{"0", EXPR_NUM};
+            size_t pos, pos1;
+            if ((pos = value.find("$bits(")) != (size_t)-1 && (pos1 = value.find(")", pos)) != (size_t)-1) {
+                std::string type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
+                value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
             }
-            if (value == "&") {  // we dont need pointers int Verilog
-                return indent_str + sub[0].str();
-            }
-            if (value == "++") {
-                return indent_str + sub[0].str() + "=" + sub[0].str() + "+1";
-            }
-            return indent_str + prefix + value + sub[0].str();
-        case EXPR_COND:
-            ASSERT(sub.size()==3);
-            return indent_str + prefix + sub[0].str() + " ? " + sub[1].str() + " : " + sub[2].str();
-        case EXPR_INDEX:
-            {
-                ASSERT(sub.size()==2);
-//                if (sub.size()) {  // parentheses remover
-//                    auto& check = sub[0];
-//                    while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-//                        check = check.sub[0];
-//                    }
-//                    if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
-//                        sub[0] = check.sub[0];
-//                    }
-//                }
-
-                auto& check = sub[0];
-                while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
-                    check = check.sub[0];
-                }
-                if (check.type == EXPR_PAREN) {  // we dont want parentheses to be before []
-                    sub[0] = check.sub[0];
-                }
-
-                size_t pos, pos1;
-                if ((pos = value.find("$bits(")) != (size_t)-1 && (pos1 = value.find(")", pos)) != (size_t)-1) {
-                    std::string type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
-                    value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
-                }
-
-                return indent_str + prefix + sub[0].str() + suffix + "[(" + sub[1].str() + ")" + value + "]";
-            }
+            return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8 +: (" + value + ")]";
+        }
         case EXPR_CAST:
             if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);
@@ -681,6 +653,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
     }
     ASSERT(0);
     return "";
+}
+
+void Expr::deparenth()
+{
+    auto& check = sub[0];
+    while (check.type == EXPR_UNARY || check.type == EXPR_CAST) {
+        ASSERT(check.sub.size());
+        check = check.sub[0];
+    }
+    if (check.type == EXPR_PAREN) {  // we dont want parentheses to be on left side of =
+        ASSERT(check.sub.size());
+        sub[0] = check.sub[0];  // parentheses remover
+    }
 }
 
 std::string Expr::typeToSV(std::string type, std::string size)

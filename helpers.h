@@ -18,7 +18,7 @@ struct Helpers
     enum {
         FLAG_NONE = 0,
         FLAG_EXTERNAL_THIS = 1,  // method from other struct (not Module)
-        FLAG_ABSTRACT = 2  // we're in abstract declaration of template module
+        FLAG_ABSTRACT = 2,       // we're in abstract declaration of template module
     };
     unsigned flags = 0;
 

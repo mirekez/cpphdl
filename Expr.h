@@ -30,6 +30,7 @@ struct Expr
         EXPR_UNARY,
         EXPR_COND,
         EXPR_INDEX,
+        EXPR_DEREF,
         EXPR_CAST,
         EXPR_PAREN,
         EXPR_INIT,
@@ -70,6 +71,7 @@ struct Expr
 //    }
 
     Expr simplify();
+    void deparenth();
 
     std::string str(std::string prefix = "", std::string size = "");
     std::string typeToSV(std::string name, std::string size = "");
@@ -111,6 +113,7 @@ struct Expr
             case EXPR_UNARY: str << "EXPR_UNARY"; break;
             case EXPR_COND: str << "EXPR_COND"; break;
             case EXPR_INDEX: str << "EXPR_INDEX"; break;
+            case EXPR_DEREF: str << "EXPR_DEREF"; break;
             case EXPR_CAST: str << "EXPR_CAST"; break;
             case EXPR_PAREN: str << "EXPR_PAREN"; break;
             case EXPR_INIT: str << "EXPR_INIT"; break;
