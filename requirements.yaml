@@ -19,3 +19,4 @@ dependencies:
     - git==2.45
     - verilator=5.034
     - gawk=5.3.1
+    - gdb=17.1
