@@ -78,17 +78,29 @@ struct std::formatter<cpphdl::u<WIDTH>>
     template <typename FormatContext>
     auto format(const cpphdl::u<WIDTH> &val, FormatContext& ctx) const {
         auto out = ctx.out();
+        if (WIDTH > 48) {
+            out = std::format_to(out, "{:08x}", (uint64_t)val);
+        } else
+        if (WIDTH > 32) {
+            out = std::format_to(out, "{:07x}", (uint64_t)val);
+        } else
+        if (WIDTH > 24) {
+            out = std::format_to(out, "{:06x}", (uint32_t)val);
+        } else
+        if (WIDTH > 16) {
+            out = std::format_to(out, "{:05x}", (uint32_t)val);
+        } else
         if (WIDTH > 12) {
-            out = std::format_to(out, "{:04x}", static_cast<const uint64_t&>(val));
+            out = std::format_to(out, "{:04x}", (uint16_t)val);
         } else
         if (WIDTH > 8) {
-            out = std::format_to(out, "{:03x}", static_cast<const uint64_t&>(val));
+            out = std::format_to(out, "{:03x}", (uint16_t)val);
         } else
         if (WIDTH > 4) {
-            out = std::format_to(out, "{:02x}", static_cast<const uint64_t&>(val));
+            out = std::format_to(out, "{:02x}", (uint8_t)val);
         }
         else {
-            out = std::format_to(out, "{:x}", static_cast<const uint64_t&>(val));
+            out = std::format_to(out, "{:x}", (uint8_t)val);
         }
         return out;
     }
@@ -116,7 +128,7 @@ struct std::formatter<cpphdl::class> \
     template <typename FormatContext> \
     auto format(const cpphdl::class &val, FormatContext& ctx) const { \
         auto out = ctx.out(); \
-        out = std::format_to(out, text, static_cast<const type&>(val.value)); \
+        out = std::format_to(out, text, (type)val.value); \
         return out; \
     } \
 }; \

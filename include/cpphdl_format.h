@@ -18,7 +18,8 @@ struct std::formatter<T[N]>: public std::formatter<T>
     {
         auto out = ctx.out();
         for (size_t i = 0; i < N; ++i) {
-            out = std::formatter<T>::format(static_cast<T>(arr[N-1-i]), ctx);
+            if (i > 0) *out++ = ' ';
+            out = std::formatter<T>::format(static_cast<T>(arr[i]), ctx);
         }
         return out;
     }
@@ -42,7 +43,25 @@ struct std::formatter<cpphdl::array<T,N>>: public std::formatter<T>
         *out++ = '[';
         for (size_t i = 0; i < N; ++i) {
             if (i > 0) *out++ = ' ';
-            out = std::formatter<T>::format(static_cast<T>(arr[N-1-i]), ctx);
+            out = std::formatter<T>::format(static_cast<T>(arr[i]), ctx);
+        }
+        *out++ = ']';
+        return out;
+    }
+};
+
+// printing u8 arrays from right to left and without spaces
+
+template<size_t N>
+struct std::formatter<cpphdl::u8[N]>: public std::formatter<cpphdl::u8>
+{
+    template <typename FormatContext>
+    auto format(const cpphdl::u8 (&arr)[N], FormatContext& ctx) const {
+        auto out = ctx.out();
+        *out++ = '[';
+        for (size_t i = 0; i < N; ++i) {
+//            if (i > 0) *out++ = ' ';  // dont like spaces for byte arrays
+            out = std::formatter<cpphdl::u8>::format(static_cast<cpphdl::u8>(arr[N-1-i]), ctx);
         }
         *out++ = ']';
         return out;
