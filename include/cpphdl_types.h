@@ -48,6 +48,10 @@ struct u
     u& operator-=(const u& other) { value -= other.value; return *this; }
     u& operator*=(const u& other) { value *= other.value; return *this; }
     u& operator/=(const u& other) { value /= other.value; return *this; }
+    u& operator&=(const u& other) { value &= other.value; return *this; }
+    u& operator|=(const u& other) { value |= other.value; return *this; }
+    u& operator>>=(const u& other) { value >>= other.value; return *this; }
+    u& operator<<=(const u& other) { value <<= other.value; return *this; }
     operator uint64_t () { return value; }
     operator uint64_t () const { return value; }
 

@@ -57,7 +57,7 @@ struct cpphdl_exception
 #define __PORT(A...) inline static cpphdl::function_ref<A>
 #define __VAR(a...)  +[]() { return &a; }  // variable
 #define __EXPR(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
-#define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
+//#define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
 
 #define __LAZY_COMB(name, type...) \
     type name; \
