@@ -3,12 +3,18 @@
 #include <exception>
 #include <functional>
 
+#if __cplusplus >= 202300L
+#if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in cpphdl
+#include <stacktrace>
+#endif
+#endif
+
 extern long sys_clock;  // please declare sys_clock in main cpp
 
 namespace cpphdl {
 
 
-#ifdef CPPHDL_STATIC
+#ifdef CPPHDL_STATIC  // first branch is outdated static version of ports
 
 template <typename R>
 class function_ref
@@ -64,6 +70,8 @@ public:
     using func1_type = std::function<A*()>;
     using func2_type = std::function<A()>;
 
+    bool assigned = false;
+
     function_ref() = default;
 
 //    function_ref(func1_type&& f) : func1_(std::move(f)) {}
@@ -89,6 +97,7 @@ public:
     function_ref(F&& f, enable_if_pointer<F>* = nullptr)
     {
         func1_ = std::move(f);
+        assigned = true;
     }
 
     template<typename F>
@@ -99,12 +108,14 @@ public:
             a_tmp = func2_();
             return &a_tmp;
         };
+        assigned = true;
     }
 
     template<typename F, typename = enable_if_pointer<F>>
     function_ref& operator=(const F& f)  // we dont destroy source object
     {
         func1_ = f;
+        assigned = true;
         return *this;
     }
 
@@ -116,6 +127,7 @@ public:
             a_tmp = func2_();
             return &a_tmp;
         };
+        assigned = true;
         return *this;
     }
 
@@ -124,6 +136,14 @@ public:
     A& operator()() {
         if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
             return *cache;
+        }
+        if (!assigned) {
+            std::print(stderr, "Port is not assigned, check backtrace in gdb\n");
+#if __cplusplus >= 202002L
+#if !defined(SYNTHESIS) && !defined(VERILATOR)
+            std::print(stderr, "Backtrace: \n{}\n", std::stacktrace::current());
+#endif
+#endif
         }
         prev_call_sys_clock = sys_clock;
         cache = func1_();

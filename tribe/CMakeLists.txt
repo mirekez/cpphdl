@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(tribe LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 add_executable(tribe main.cpp)
 
@@ -40,3 +41,6 @@ target_compile_options(tribe PRIVATE "-fno-strict-aliasing")
 
 add_dependencies(tribe cpphdl)
 
+target_link_libraries(tribe PRIVATE
+  stdc++exp
+)

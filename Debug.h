@@ -1,6 +1,6 @@
 #pragma once
 
-#if __cplusplus >= 202600L
+#if __cplusplus >= 202002L
 #define STACKTRACE std::cout << std::stacktrace::current();
 #else
 #define STACKTRACE
