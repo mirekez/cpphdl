@@ -39,46 +39,77 @@ struct memory_row: public array<T,SIZE>
         return *this;
     }
 
-//    operator array<T,SIZE>&()
-//    {
-//        return *this;
-//    }
-//
-//    operator logic<SIZE*sizeof(T)*8>() const
-//    {
-//        return *this;
-//    }
+    using array<T,SIZE>::operator&;
+    using array<T,SIZE>::operator|;
+    using array<T,SIZE>::operator^;
+    using array<T,SIZE>::operator~;
+    using array<T,SIZE>::operator<<;
+    using array<T,SIZE>::operator>>;
+    using array<T,SIZE>::operator+;
+    using array<T,SIZE>::operator-;
+    using array<T,SIZE>::operator==;
+    using array<T,SIZE>::operator!=;
+    using array<T,SIZE>::operator<;
+    using array<T,SIZE>::operator<=;
+    using array<T,SIZE>::operator>;
+    using array<T,SIZE>::operator>=;
+    using array<T,SIZE>::to_ullong;
+    using array<T,SIZE>::to_hex;
+    using array<T,SIZE>::to_string;
 
-    logic<SIZE*sizeof(T)*8> operator<<(uint64_t shift)
+    memory_row& operator<<=(size_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>&)*this << shift;
+        changes->push_back(*this);
+        return (memory_row&)(*this = *this << shift);
     }
 
-    logic<SIZE*sizeof(T)*8> operator>>(uint64_t shift)
+    memory_row& operator>>=(size_t shift)
     {
-        return (logic<SIZE*sizeof(T)*8>&)*this >> shift;
+        changes->push_back(*this);
+        return (memory_row&)(*this = *this >> shift);
     }
 
-    logic<SIZE*sizeof(T)*8> operator|(const logic<SIZE*sizeof(T)*8>& other)
+    memory_row& operator|=(const memory_row& other)
     {
-        return (logic<SIZE*sizeof(T)*8>&)*this | other;
+        changes->push_back(*this);
+        return (memory_row&)(*this = *this | other);
     }
 
-    logic<SIZE*sizeof(T)*8> operator&(const logic<SIZE*sizeof(T)*8>& other)
+    memory_row& operator&=(const memory_row& other)
     {
-        return (logic<SIZE*sizeof(T)*8>&)*this & other;
+        changes->push_back(*this);
+        return (memory_row&)(*this = *this & other);
     }
 
-    logic<SIZE*sizeof(T)*8> operator|=(const logic<SIZE*sizeof(T)*8>& other)
+    memory_row& operator^=(const memory_row& other)
     {
-        (logic<SIZE*sizeof(T)*8>&)*this |= other;
-        return *(logic<SIZE*sizeof(T)*8>*)this;
+        changes->push_back(*this);
+        return (memory_row&)(*this = *this ^ other);
     }
 
-    logic<SIZE*sizeof(T)*8> operator&=(const logic<SIZE*sizeof(T)*8>& other)
+    explicit operator uint64_t() const
     {
-        (logic<SIZE*sizeof(T)*8>&)*this &= other;
-        return *(logic<SIZE*sizeof(T)*8>*)this;
+        return to_ullong();
+    }
+
+    explicit operator bool() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint32_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint16_t() const
+    {
+        return to_ullong();
+    }
+
+    explicit operator uint8_t() const
+    {
+        return to_ullong();
     }
 };
 
