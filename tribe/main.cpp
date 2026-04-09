@@ -285,6 +285,10 @@ public:
 #include <tuple>
 #include <utility>
 
+#ifdef VERILATOR
+#include "VTribe.h"
+#endif
+
 class TestTribe : public Module
 {
     Ram<32,RAM_SIZE,0> imem;

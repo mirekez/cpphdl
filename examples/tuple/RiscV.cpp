@@ -190,6 +190,10 @@ public:
 #include <tuple>
 #include <utility>
 
+#ifdef VERILATOR
+#include "VRiscV.h"
+#endif
+
 long sys_clock = -1;
 
 class TestRiscV : public Module

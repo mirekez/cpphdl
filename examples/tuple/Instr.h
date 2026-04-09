@@ -215,6 +215,7 @@ union Instr
         uint16_t bits11_10: 2;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
+        uint16_t unused  : 16;
     }__PACKED c;
     struct {
         uint16_t opcode  : 2;
@@ -223,6 +224,7 @@ union Instr
         uint16_t rs1     : 5;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
+        uint16_t unused  : 16;
     }__PACKED q1;
     struct {
         uint16_t opcode  : 2;
@@ -230,6 +232,7 @@ union Instr
         uint16_t rs1     : 5;
         uint16_t b12     : 1;
         uint16_t funct3  : 3;
+        uint16_t unused  : 16;
     }__PACKED q2;
 
     uint32_t bit(int lo) { return (raw>>lo) & 1; }
