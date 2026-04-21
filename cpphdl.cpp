@@ -196,6 +196,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     DEBUG_AST(debugIndent++, "# putField: "); on_return ret_debug([](){ --debugIndent; });
     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
     ASSERT(ModuleClass && ModuleClass->getDefinition());
+    auto* InterfaceClass = hlp.lookupQualifiedRecord("cpphdl::Interface");
+    ASSERT(InterfaceClass && InterfaceClass->getDefinition());
 
     QualType QT = fieldType;
 
@@ -211,9 +213,19 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 //    auto T = QT.getUnqualifiedType();
 
     auto* CRD = hlp.resolveCXXRecordDecl(QT);
-    if (const ArrayType *AT = hlp.ctx->getAsArrayType(QT)) {
+
+    std::vector<cpphdl::Expr> array_dim;
+    while (const ArrayType *AT = hlp.ctx->getAsArrayType(QT)) {
         CRD = hlp.resolveCXXRecordDecl(AT->getElementType());
+        QT = AT->getElementType();
+        if (const auto *CAT = dyn_cast<ConstantArrayType>(AT)) {
+            array_dim.emplace_back(cpphdl::Expr{std::to_string(CAT->getSize().getZExtValue()), cpphdl::Expr::EXPR_NUM});
+        }
+        if (const auto *DAT = dyn_cast<DependentSizedArrayType>(AT)) {
+            array_dim.emplace_back(hlp.exprToExpr(DAT->getSizeExpr()));
+        }
     }
+
     if ((CRD && CRD->getQualifiedNameAsString().find("std::") == (size_t)0
         && CRD->getQualifiedNameAsString().find("std_function") == (size_t)-1
         && CRD->getQualifiedNameAsString().find("function_ref") == (size_t)-1)
@@ -233,31 +245,97 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     cpphdl::Expr expr = hlp.digQT(QT);
 
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
-        DEBUG_AST1(" {port " << fieldName << "}");
+        DEBUG_AST1(" {port " << fieldName << "} ");
+
+        auto* CRD = hlp.resolveCXXRecordDecl(QT);
 
         cpphdl::Field* field = 0;
         auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName; } );
-        if (it != hlp.mod->ports.end()) {
+        if (it != hlp.mod->ports.end()) {  // field already exists
             field = &*it;
             updateExpr(field->expr, expr);
+            for (size_t i=0; i < array_dim.size(); ++i) {
+                if (field->array.size() > i) {
+                    updateExpr(field->array[i], array_dim[i]);
+                }
+            }
         } else
-        if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr (above)
-            field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
+        if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // specialization (we start from it and then update just some info from abstract)
+            if (!CRD || !CRD->isDerivedFrom(InterfaceClass)) {
+                field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});  // normal field, not Interface
+            }
         }
-        else {
+        else {  // looks like it's Abstract for the Module, need update all Abstract information about parameters to Interface struct and array size expression
+            auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name.find(fieldName + "__") == 0; } );
+            DEBUG_EXPR1(" ExprInterface: " << expr.debug(debugIndent) << ", " << " array " << (array_dim.size()?array_dim[0].debug(debugIndent):"0"));
+            while (it != hlp.mod->ports.end() && it->name.find(fieldName + "__") == 0) {
+                field = &*it;
+                DEBUG_EXPR(debugIndent, " updating " << field->name << " " << array_dim.size() << "/" << field->array.size() << "... ");
+                for (size_t i=0; i < array_dim.size(); ++i) {
+                    if (field->array.size() > i) {
+                        updateExpr(field->array[i], array_dim[i]);
+                    }
+                }
+                const clang::TemplateSpecializationType *TST = QT->getAs<clang::TemplateSpecializationType>();
+                if (TST && TST->getTemplateName().getAsTemplateDecl()) {
+                    const clang::TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl();
+                    const clang::TemplateParameterList *params = TD->getTemplateParameters();  // getting port names
+                    size_t i=0;
+                    for (const clang::NamedDecl *param : *params) {  // looking for parameters of Interface struct used in SubFields
+                        DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
+                        field->expr.traverseIf( [&](auto& e) {
+                                if (e.type == cpphdl::Expr::EXPR_VAR && e.value == param->getNameAsString() && expr.sub.size() > i) {
+                                    e = expr.sub[i];  // get parameter expression from Interface parameters if one of parameters names is used in fields of the Interface
+                                }
+                                return false;
+                            });
+                        ++i;
+                    }
+                }
+                DEBUG_AST(debugIndent, "SubField: " << field->name << ": " << field->expr.debug(debugIndent)
+                    << " array " << (field->array.size()?field->array[0].debug(debugIndent):""));
+                ++it;
+            };
             return;
         }
 
-        DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
+        if (field) {  // normal field, not Interface struct
+            DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
 
-        if (initializer) {
-            DEBUG_AST1(", <initializer ");
-            field->initializer = hlp.exprToExpr(initializer);
-            DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
-            DEBUG_AST1(">");
+            if (initializer) {
+                DEBUG_AST1(", <initializer ");
+                field->initializer = hlp.exprToExpr(initializer);
+                DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
+                DEBUG_AST1(">");
+            }
         }
 
-        auto* CRD = hlp.resolveCXXRecordDecl(QT);
+        if (CRD && CRD->isDerivedFrom(InterfaceClass)) {  // Interface struct
+            // for Interface structs we need Abstract declaration to know expressions of template parameters in subfields (and port cames too)
+            ClassTemplateDecl *CTD = dyn_cast<ClassTemplateSpecializationDecl>(CRD)->getSpecializedTemplate();
+            CRD = CTD->getTemplatedDecl();
+            for (Decl* D : CRD->decls()) {
+                if (auto* FD = dyn_cast<FieldDecl>(D)) {
+                    QualType QT = FD->getType().getNonReferenceType();
+                    hlp.skipStdFunctionType(QT);
+                    cpphdl::Expr exprSub = hlp.digQT(QT);
+                    std::string ending = FD->getNameAsString();
+                    if (str_ending(fieldName, "_out")) {
+                        if (str_ending(ending, "_out")) {
+                            str_replace(ending, "_out", "_in");
+                        } else
+                        if (str_ending(ending, "_in")) {
+                            str_replace(ending, "_in", "_out");
+                        }
+                    }
+                    field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName + "__" + ending, std::move(exprSub), {}, array_dim});
+                    DEBUG_AST(debugIndent, "SubField: " << FD->getNameAsString() << "(" << field->name << ")" << ": " << exprSub.debug(debugIndent)
+                        << " array " << (array_dim.size()?array_dim[0].debug(debugIndent):""));
+                    // only not abstract here
+                }
+            }
+        }
+        else
         if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
             auto st = exportStruct(CRD, hlp);
             if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
@@ -287,9 +365,14 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (it != hlp.mod->members.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
+                for (size_t i=0; i < array_dim.size(); ++i) {
+                    if (field->array.size() > i) {
+                        updateExpr(field->array[i], array_dim[i]);
+                    }
+                }
             } else
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
-                field = &hlp.mod->members.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
+                field = &hlp.mod->members.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
             }
             else {
                 return;
@@ -303,9 +386,14 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (it != hlp.mod->vars.end()) {
                 field = &*it;
                 updateExpr(field->expr, expr);
+                for (size_t i=0; i < array_dim.size(); ++i) {
+                    if (field->array.size() > i) {
+                        updateExpr(field->array[i], array_dim[i]);
+                    }
+                }
             } else
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
-                field = &hlp.mod->vars.emplace_back(cpphdl::Field{fieldName, std::move(expr)});
+                field = &hlp.mod->vars.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
             }
             else {
                 return;
@@ -528,10 +616,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     if (VD->getInit()) {
                         auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
                         if (it != hlp.mod->consts.end()) {
-                            updateExpr((*it).expr, hlp.exprToExpr(VD->getInit()));
+                            updateExpr((*it).initializer, hlp.exprToExpr(VD->getInit()));
                         }
                         else {
-                            hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
+                            hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {hlp.exprToExpr(VD->getInit())}}});
                             DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
                         }
                     }
@@ -642,7 +730,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     void putModule(const CXXRecordDecl* RD)
     {
         if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
-            DEBUG_AST(debugIndent++, "# putAbstract: " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
+            DEBUG_AST(debugIndent++, "# it's abstract, saving " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
             abstractDefs.push_back(RD);
 
 //            for (const auto &Base : RD->bases()) {

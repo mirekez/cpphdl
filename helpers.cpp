@@ -430,9 +430,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return call;
     }
     if (auto* ME = dyn_cast<MemberExpr>(E)) {
-        bool anon = false;
-        const CXXRecordDecl *owner = dyn_cast<CXXRecordDecl>(ME->getMemberDecl()->getDeclContext());
-        DEBUG_AST1(" MemberExpr(" << owner->getQualifiedNameAsString() << "::" << ME->getMemberDecl()->getNameAsString() << ")");
+        const CXXRecordDecl *CRD = dyn_cast<CXXRecordDecl>(ME->getMemberDecl()->getDeclContext());
+        auto* InterfaceClass = lookupQualifiedRecord("cpphdl::Interface");
+        ASSERT(InterfaceClass && InterfaceClass->getDefinition());
+        bool interface = CRD->isDerivedFrom(InterfaceClass);
+
+        DEBUG_AST1(" MemberExpr(" << CRD->getQualifiedNameAsString() << "::" << ME->getMemberDecl()->getNameAsString() << ")");
 
         auto expr = exprToExpr(ME->getBase()->IgnoreParenImpCasts());
 
@@ -447,26 +450,28 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         const auto* Var = dyn_cast<VarDecl>(ME->getMemberDecl());
         bool ignoreBase = false;
         std::string name = ME->getMemberDecl()->getNameAsString();
-        if (/*const auto* FD =*/ dyn_cast<FieldDecl>(ME->getMemberDecl()) && owner->isAnonymousStructOrUnion()) {  // replacing anon with '_'
+        bool anon = false;
+        if (/*const auto* FD =*/ dyn_cast<FieldDecl>(ME->getMemberDecl()) && CRD->isAnonymousStructOrUnion()) {  // replacing anon with '_'
             DEBUG_AST1(" ANON");
             anon = true;
         } else
         if (Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
             DEBUG_AST1(" PKG");
-            std::string sname = owner->getQualifiedNameAsString();
+            std::string sname = CRD->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
             // extracting parameters of the template
-            followSpecialization(owner, sname);
+            followSpecialization(CRD, sname);
             name = sname + "_pkg::" + name;
             ignoreBase = true;
         } else
-        if (mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+        if (mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
             && expr.type == cpphdl::Expr::EXPR_NONE && !str_ending(name, "_in") && !str_ending(name, "_out") ) {  // add base class name, ports dont get this prefix
-            name = genTypeName(owner->getQualifiedNameAsString()) + "___" + name;
+            name = genTypeName(CRD->getQualifiedNameAsString()) + "___" + name;
         }
 
         return cpphdl::Expr{name, cpphdl::Expr::EXPR_MEMBER, {expr},
-                (anon?cpphdl::Expr::FLAG_ANON:0U) | ((flags&FLAG_EXTERNAL_THIS)?cpphdl::Expr::FLAG_USETHIS:0U) | (ignoreBase?cpphdl::Expr::FLAG_NOBASE:0U)};
+                (anon?cpphdl::Expr::FLAG_ANON:0U) | ((flags&FLAG_EXTERNAL_THIS)?cpphdl::Expr::FLAG_USETHIS:0U) | (ignoreBase?cpphdl::Expr::FLAG_NOBASE:0U),
+                interface};
     }
     if (auto* CDSME = dyn_cast<CXXDependentScopeMemberExpr>(E)) {
         DEBUG_AST1(" CXXDependentScopeMemberExpr(" << CDSME->getMemberNameInfo().getAsString() << ")");
@@ -705,15 +710,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
-        const CXXRecordDecl* owner = nullptr;
+        const CXXRecordDecl* CRD = nullptr;
         if (const auto *MD = dyn_cast_or_null<CXXMethodDecl>(CE->getDirectCallee())) {
             const CXXMethodDecl *CanonicalMD = MD->getCanonicalDecl();
-            owner = CanonicalMD->getParent();
+            CRD = CanonicalMD->getParent();
         }
 
-        if (owner && mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+        if (CRD && mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
             && !str_ending(call.value, "_in") && !str_ending(call.value, "_out") ) {  // add base class name, ports dont get this prefix
-            call.value = genTypeName(owner->getQualifiedNameAsString()) + "___" + call.value;
+            call.value = genTypeName(CRD->getQualifiedNameAsString()) + "___" + call.value;
         }
 
         return call;
@@ -1034,9 +1039,11 @@ bool Helpers::templateToExpr(QualType QT, cpphdl::Expr& expr)
         expr.value = genTypeName(TSD ? TSD->getSpecializedTemplate()->getQualifiedNameAsString()
                          : TST->getTemplateName().getAsTemplateDecl()->getQualifiedNameAsString());
 
+        size_t i=0;
         for (const auto &arg : (TSD ? ArrayRef<TemplateArgument>(TSD->getTemplateArgs().asArray()) : TST->template_arguments())) {
-            DEBUG_AST(debugIndent++, "# Arg "); on_return ret_debug([](){ --debugIndent; });
+            DEBUG_AST(debugIndent++, "# Arg " << (TSD ? TSD->getSpecializedTemplate()->getTemplateParameters()->getParam(i)->getNameAsString() : "?")); on_return ret_debug([](){ --debugIndent; });
             ArgToExpr(arg, expr, TSD != nullptr);
+            ++i;
         }
 
         expr.sub.push_back(cpphdl::Expr{expr.value, cpphdl::Expr::EXPR_TYPE});  // subject to call

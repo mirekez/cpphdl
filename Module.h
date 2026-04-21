@@ -24,6 +24,7 @@ struct Module
     std::vector<Import> imports;
     std::string origName;
     std::vector<Field> aliases;
+    std::vector<Field> wires;  // made during generation
 
     // methods
 

@@ -14,6 +14,7 @@ struct Expr
     enum {
         EXPR_NONE,
         EXPR_DECL,
+        EXPR_CONST,   // const alias like parameter aaa = ...;
         EXPR_TYPE,
         EXPR_NUM,  // can be also "false" and "true"
         EXPR_STRING,
@@ -61,6 +62,7 @@ struct Expr
         FLAG_BRACKETS = 512
     };
     unsigned flags = FLAG_NONE;
+    bool interface = false;
 
     int indent = 0;
     size_t declSize = 0;
@@ -97,6 +99,7 @@ struct Expr
         switch(type) {
             case EXPR_NONE: str << "EXPR_NONE"; break;
             case EXPR_DECL: str << "EXPR_DECL"; break;
+            case EXPR_CONST: str << "EXPR_CONST"; break;
             case EXPR_TYPE: str << "EXPR_TYPE"; break;
             case EXPR_VAR: str << "EXPR_VAR"; break;
             case EXPR_NUM: str << "EXPR_NUM"; break;  // can also be "true" and "false" - useful for template specs
@@ -130,7 +133,7 @@ struct Expr
 
         ++debug_indent;
 
-        str << "(" << std::hex << (int)flags << "): " << value << (sub.size()?"(":"");
+        str << "(" << std::hex << (int)flags << (interface?",I":"") << "): " << value << (sub.size()?" (":"");
         bool first = true;
         for (auto& expr : sub) {
             str << (!first ? ", " : " ");
@@ -184,7 +187,10 @@ inline std::string genTypeName(std::string name)
     str_replace(name, " ", "");
     str_replace(name, ",", "_");
     str_replace(name, ":", "_");
-    str_replace(name, "-", "m");
     str_replace(name, ".", "_");
+    str_replace(name, "*", "M");
+    str_replace(name, "/", "D");
+    str_replace(name, "+", "P");
+    str_replace(name, "-", "m");
     return name;
 }

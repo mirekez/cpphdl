@@ -158,5 +158,22 @@ private:
 
 #endif
 
+class Interface  // Interface can have both direction signals
+{
+public:
+
+    template<typename ModA, typename ModB, typename A, typename B>
+    void assign(ModA& modA, ModB& modB, A& a, B& b)
+    {
+        a = b;
+        modA._connect();
+        b = a;
+        modB._connect();
+        a = b;
+        modA._connect();
+    }
+
+};
+
 
 }

@@ -11,6 +11,7 @@ struct Field
     std::string name;
     Expr expr;
     Expr initializer;
+    std::vector<Expr> array;
     Expr bitwidth;
     Struct definition;
 

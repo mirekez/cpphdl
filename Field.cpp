@@ -25,9 +25,19 @@ bool Field::print(std::ofstream& out, std::string nameSuffix)
 //        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
     } else
+    if (expr.type == Expr::EXPR_CONST) {
+        out << expr.str() + ";\n";
+    } else
     if (expr.type == Expr::EXPR_PARAM) {
         out << name << nameSuffix << " = " << expr.str() + ";\n";
 //        out << tmp.debug() + "\n";
+    } else
+    if (array.size()) {
+        auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
+        tmp.indent = indent;
+        out << tmp.str("", nameSuffix) + "[" + array[0].str() + "];\n";
+//        out << tmp.debug() + "\n";
+        expr = std::move(tmp.sub[0]);  // return expr back
     }
     else {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
@@ -43,8 +53,11 @@ bool Field::print(std::ofstream& out, std::string nameSuffix)
 bool Field::printPort(std::ofstream& out)
 {
     currField = this;
-
     expr.flags = Expr::FLAG_WIRE;
-    out << expr.str(name.find("_out") == (size_t)-1 ? "input " : "output ") << " " << name << "\n";
+    if (array.size()) {
+        out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << "[" << array[0].str() << "]\n";
+        return true;
+    }
+    out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << "\n";
     return true;
 }

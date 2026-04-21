@@ -53,6 +53,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return str;
         }
+        case EXPR_CONST:
+            ASSERT(sub.size() >= 1);
+            return indent_str + prefix + " " + escapeIdentifier(value) + " = " + sub[0].str(suffix);
         case EXPR_TYPE:
         {
             if (value.find("_IO_FILE") != (size_t)-1) {
@@ -131,7 +134,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT(sub.size()==2);
             if ((value == "=" || value == "==") && (sub[0].str().find("__") == 0 || sub[1].str().find("__") == 0
-                || sub[0].str().find("_____") != (size_t)-1 || sub[1].str().find("_____") != (size_t)-1)) {  // all __ vars are hidden
+                || sub[0].str().find("_____") != (size_t)-1 || sub[1].str().find("_____") != (size_t)-1)) {  // all __xxx vars are hidden
                 return "";
             }
             auto& vars = currModule->vars;
@@ -153,8 +156,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == ">>") {
                 value = ">>>";
             }
-            for (auto& e : sub) {
-                e.flags |= FLAG_BRACKETS;
+            if (value != ",") {
+                for (auto& e : sub) {
+                    e.flags |= FLAG_BRACKETS;
+                }
             }
             if ((flags&FLAG_BRACKETS)) {
                 return indent_str + prefix + "(" + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str() + ")";
@@ -186,10 +191,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 std::string str = value;
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
-            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
+            std::string func = value;
+            if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
                 return "";
             }
-            std::string func = value;
             if (func == "clog2") {
                 func = "$clog2";
             }
@@ -359,20 +364,30 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + escapeIdentifier(value) + suffix;
             }
             std::string base = sub[0].str();
+            std::string member = escapeIdentifier(value);
             if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
-                && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } )) {
-                if (value == "_work") {  // dont call _work() for members
+                && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // Port struct
+
+                if (member == "_work") {  // dont call _work() for members
                     return "";
                 }
-                return indent_str + prefix + base + "__" + escapeIdentifier(value) + suffix;
+                if (interface && str_ending(base, "_out")) {  // for Port structs
+                    if (str_ending(member, "_out")) {
+                        str_replace(member, "_out", "_in");
+                    } else
+                    if (str_ending(member, "_in")) {
+                        str_replace(member, "_in", "_out");
+                    }
+                }
+                return indent_str + prefix + base + "__" + member + suffix;
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
                 base = sub[0].sub[0].str();
                 if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; })) {
-                    if (value == "_work") {  // dont call _work() for members
+                    if (member == "_work") {  // dont call _work() for members
                         return "";
                     }
-                    return indent_str + prefix + sub[0].str("", "__" + escapeIdentifier(value) + suffix);
+                    return indent_str + prefix + sub[0].str("", "__" + member + suffix);
                 }
             }
             if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
@@ -389,7 +404,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             args += ")";
 
-            return indent_str + prefix + escapeIdentifier(value) + args + suffix;  // member goes as first parameter, if it has third party this (not Module)
+            return indent_str + prefix + member + args + suffix;  // member goes as first parameter, if it has third party this (not Module)
         }
         case EXPR_MEMBER:
         {
@@ -412,16 +427,25 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + sub[0].str("", "_tmp");
             }
             std::string base = sub[0].str();
-            if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } )) {  // we compare full string because Pack can add "tuple_N"
+            std::string member = escapeIdentifier(value);
+            if (base != "_this" && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // we compare full string because Pack can add "tuple_N"
                 delim = "__";
-            }
-            if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
-                base = sub[0].sub[0].str();
-                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; })) {
-                    return indent_str + prefix + sub[0].str("", "__" + escapeIdentifier(value) + suffix);
+                if (interface && str_ending(base, "_out")) {  // for Port structs
+                    if (str_ending(member, "_out")) {
+                        str_replace(member, "_out", "_in");
+                    } else
+                    if (str_ending(member, "_in")) {
+                        str_replace(member, "_in", "_out");
+                    }
                 }
             }
-            return indent_str + prefix + sub[0].str() + delim + escapeIdentifier(value) + suffix;
+            if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
+                if (sub[0].sub[0].str() != "_this"
+                    && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); }) || interface)) {
+                    return indent_str + prefix + sub[0].str("", "__" + member + suffix);
+                }
+            }
+            return indent_str + prefix + base + delim + member + suffix;
         }
         case EXPR_INDEX:
         {
@@ -449,7 +473,6 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8 +: (" + value + ")]";
         }
         case EXPR_CAST:
-            if (sub.size() == 0) return "";
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
             str_replace(value, "cpphdl_logic", "");
@@ -485,11 +508,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 size_t width = atoi(value.c_str() + strlen("cpphdl_u"));
                 return indent_str + "unsigned'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
             } else
-            if (value.find("cpphdl_s") == 0) {
-                size_t width = atoi(value.c_str() + strlen("cpphdl_s"));
+            if (value.find("cpphdl_i") == 0) {
+                size_t width = atoi(value.c_str() + strlen("cpphdl_i"));
                 return indent_str + "signed'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
             }
-            return indent_str + typeToSV(value) + "'(" + sub[0].str(prefix, suffix) + ")";
+            return indent_str + /*typeToSV(value) + "'(" + */sub[0].str(prefix, suffix);// + ")";  // cast only simple types
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
@@ -681,7 +704,7 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
-    if (type == "cpphdl_s") {
+    if (type == "cpphdl_i") {
         str = logic + " signed" + size;
         declSize = 1;
     } else
@@ -694,8 +717,8 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size + "[" + std::to_string(width) + "-1:0]";
         declSize = 8;
     } else
-    if (type.find("cpphdl_s") == 0) {
-        size_t width = atoi(type.c_str() + strlen("cpphdl_s"));
+    if (type.find("cpphdl_i") == 0) {
+        size_t width = atoi(type.c_str() + strlen("cpphdl_i"));
         str = logic + " signed" + size + "[" + std::to_string(width) + "-1:0]";
         declSize = 8;
     } else

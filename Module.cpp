@@ -41,6 +41,7 @@ bool Module::print(std::ofstream& out)
     for (auto& p : ports) {
         p.indent = 1;
         out << ",   ";
+//        out << p.expr.debug() << " : " << (p.array.size()?p.array[0].debug():std::string()) << "\n";
         if (!p.printPort(out)) {
             return false;
         }
@@ -50,6 +51,7 @@ bool Module::print(std::ofstream& out)
     for (auto& f : consts) {
 //        out << f.expr.debug();
         out << "    parameter ";
+        f.expr.value = f.name;
         if (!f.print(out)) {
             return false;
         }
@@ -57,7 +59,7 @@ bool Module::print(std::ofstream& out)
     out << "\n";
 
     for (auto& a : aliases) {
-//        out << a.expr.debug();
+//        out << a.expr.debug() << "\n";
         out << "    typedef " << a.expr.str() << " " << a.name << ";\n";
     }
     out << "\n";
@@ -79,7 +81,7 @@ bool Module::print(std::ofstream& out)
     out << "    // tmp variables\n";
     for (auto& field : vars) {  // tmp vars
         field.indent = 1;
-        if (field.expr.traverseIf([](auto& e){ return e.type == cpphdl::Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             field.expr.flags |= Expr::FLAG_NOTREG;
             if (!field.print(out, "_tmp")) {
                 return false;
@@ -106,7 +108,7 @@ bool Module::print(std::ofstream& out)
     out << "\n";
     for (auto& field : vars) {  // strobe
         field.indent = 1;
-        if (field.expr.traverseIf([](auto& e){ return e.type == cpphdl::Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             out << "        " << field.name << " <= " << field.name << "_tmp;\n";
         }
     }
@@ -145,18 +147,28 @@ bool Module::printMembers(std::ofstream& out)
 {
     currModule = this;
 
+    out << "    genvar gi, gj, gk;\n";
+
+    // printWires for members
     for (auto& member : members) {
         member.indent = 1;
-
-        if (member.expr.type == Expr::EXPR_ARRAY && member.expr.sub.size() >= 2) {
-            Module* mod = currProject->findModule(member.expr.sub[1].str());
+        if (member.array.size()) {  // array of members
+            Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
                     Expr expr = port.expr;
                     expr.flags = Expr::FLAG_WIRE;
+                    for (size_t i=0; i < mod->consts.size(); ++i) {
+                        expr.traverseIf( [&](Expr& e) {
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->consts[i].name) {  // port of mod depends on its parameter
+                                    e = mod->consts[i].expr.sub[0];
+                                }
+                                return false;
+                            });
+                    }
                     for (size_t i=0; i < mod->parameters.size(); ++i) {
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
                                     size_t memberParamIndex = -1;
                                     for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
                                         ++memberParamIndex;
@@ -170,7 +182,35 @@ bool Module::printMembers(std::ofstream& out)
                                 return false;
                             });
                     }
-                    out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << member.expr.sub[0].str() << "]" << ";\n";  // cant be reg or memory
+                    Expr array;
+                    if (port.array.size()) {  // supporting only one dimension now
+                        array = port.array[0];
+                    }
+                    for (size_t i=0; i < mod->parameters.size(); ++i) {
+                        array.traverseIf( [&](Expr& e) {
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
+                                    size_t memberParamIndex = -1;
+                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
+                                        ++memberParamIndex;
+                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
+                                            ++j;
+                                        }
+                                    }
+                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
+                                }
+                                return false;
+                            });
+                    }
+//                    out << expr.debug() << "\n";
+                    if (array.type != Expr::EXPR_NONE) {
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << member.expr.sub[0].str() << "]" << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
+                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    }
+                    else {
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << member.array[0].str() << "]" << ";\n";  // cant be reg or memory
+                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    }
                 }
             }
             else {
@@ -179,21 +219,20 @@ bool Module::printMembers(std::ofstream& out)
             }
 
             out << "    generate\n";
-            out << "    genvar gi;\n";
-            out << "    for (gi=0; gi < " << member.expr.sub[0].str() << "; gi = gi + 1) begin\n";
-            out << "        " << member.expr.sub[1].str() << " ";
-            if (member.expr.sub[0].sub.size()) {
+            out << "    for (gi=0; gi < " << member.array[0].str() << "; gi = gi + 1) begin\n";
+            out << "        " << member.expr.str() << " ";
+            if (member.expr.sub.size()) {
                 out << "#(\n";
             }
             bool first = true;
-            for (auto& param : member.expr.sub[0].sub) {
+            for (auto& param : member.expr.sub) {
                 if (param.type == Expr::EXPR_PARAM) {
 //                    out << param.debug() << "\n";
                     out << (first?"        ":",       ") << param.str() << "\n";
                     first = false;
                 }
             }
-            if (member.expr.sub[0].sub.size()) {
+            if (member.expr.sub.size()) {
                 out << "    )";
             }
             else {
@@ -215,9 +254,17 @@ bool Module::printMembers(std::ofstream& out)
                 for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
                     Expr expr = port.expr;
                     expr.flags = Expr::FLAG_WIRE;
+                    for (size_t i=0; i < mod->consts.size(); ++i) {  // we want to extract parameters values which influence port width
+                        expr.traverseIf( [&](Expr& e) {
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->consts[i].name) {  // port of mod depends on its parameter
+                                    e = mod->consts[i].expr.sub[0];
+                                }
+                                return false;
+                            });
+                    }
                     for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
                         expr.traverseIf( [&](Expr& e) {
-                                if (e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
                                     size_t memberParamIndex = -1;
                                     for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
                                         ++memberParamIndex;
@@ -231,9 +278,36 @@ bool Module::printMembers(std::ofstream& out)
                                 return false;
                             });
                     }
+                    Expr array;
+                    if (port.array.size()) {  // supporting only one dimension now
+                        array = port.array[0];
+                    }
+                    for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence array sizwe
+                        array.traverseIf( [&](Expr& e) {
+                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
+                                    size_t memberParamIndex = -1;
+                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
+                                        ++memberParamIndex;
+                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
+                                            ++j;
+                                        }
+                                    }
+                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
+                                }
+                                return false;
+                            });
+                    }
+//                    out << array.debug() << "\n";
 //                    out << expr.debug() << "\n";
 //                    out << port.expr.debug() << "\n";
-                    out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
+                    if (array.type != Expr::EXPR_NONE) {
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
+                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    } else {
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
+                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    }
                 }
             }
             else {
@@ -248,6 +322,7 @@ bool Module::printMembers(std::ofstream& out)
             bool first = true;
             for (auto& param : member.expr.sub) {
                 if (param.type == Expr::EXPR_PARAM) {
+//                    out << param.debug() << "\n";
                     out << (first?"        ":",       ") << param.str() << "\n";
                     first = false;
                 }
