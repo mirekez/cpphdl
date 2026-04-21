@@ -27,8 +27,11 @@ This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-re
 
 This work is not subsidized or paid.
 
-# development plan
+# features added
 
 - VCD file dumping
-- asynchronous resets
-- ports naming doc
+- Interfaces with bidir ports
+
+# development plan
+
+- asynchronous resets?

@@ -286,7 +286,8 @@ public:
 #include <utility>
 
 #ifdef VERILATOR
-#include "VTribe.h"
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
 class TestTribe : public Module
