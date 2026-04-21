@@ -192,6 +192,11 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include <sstream>
 #include "../examples/tools.h"
 
+#ifdef VERILATOR
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
+#endif
+
 long sys_clock = -1;
 
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>

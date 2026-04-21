@@ -146,6 +146,11 @@ template class Fifo<64,65536,0>;
 #include <sstream>
 #include "../examples/tools.h"
 
+#ifdef VERILATOR
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
+#endif
+
 long sys_clock = -1;
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>

@@ -191,7 +191,8 @@ public:
 #include <utility>
 
 #ifdef VERILATOR
-#include "VRiscV.h"
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
 long sys_clock = -1;
