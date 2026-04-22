@@ -120,7 +120,9 @@ struct class : public u<size> \
 { \
     class() = default; \
     class(type v) : u(v) {}  \
+    template<size_t W> class(u<W> v) : u((uint64_t)v) {}  \
     type* operator&() { return (type*)this; } \
+    template<size_t W> explicit operator u<W>() { return value; }  \
 }; \
 } \
 template<> \

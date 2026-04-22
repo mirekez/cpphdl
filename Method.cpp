@@ -81,10 +81,9 @@ bool Method::printConns(std::ofstream& out)
 
     std::vector<std::string> vars;
     for (auto& stmt : statements) {  // collecting vars from for
-        stmt.traverseIf( [&](Expr& e)
-            {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
+        stmt.traverseIf( [&](Expr& e) {  // EXPR_FOR (=: EXPR_BINARY (j: EXPR_MEMBER
                 if (e.type == Expr::EXPR_FOR
-                    && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BINARY
+                    && e.sub.size() > 0 && (e.sub[0].type == Expr::EXPR_BINARY || e.sub[0].type == Expr::EXPR_OPERATORCALL)
                     && e.sub[0].sub.size() > 0 && (e.sub[0].sub[0].type == Expr::EXPR_MEMBER || e.sub[0].sub[0].type == Expr::EXPR_VAR)) {
                     for (auto& str : vars) {
                         if (str == e.sub[0].sub[0].value) {
@@ -97,8 +96,7 @@ bool Method::printConns(std::ofstream& out)
             } );
     }
     for (auto& stmt : statements) {  // replacing index names
-        stmt.traverseIf( [&](Expr& e)
-            {
+        stmt.traverseIf( [&](Expr& e) {
                 if (e.type == Expr::EXPR_MEMBER || e.type == Expr::EXPR_VAR) {
                     for (auto& str : vars) {
                         if (str == e.value) {
@@ -112,17 +110,11 @@ bool Method::printConns(std::ofstream& out)
     }
 
     out << "    generate  // " << name <<"\n";
-//    if (vars.size()) {
-//        out << "    genvar ";
-//    }
-//    bool first = true;
-//    for (auto& var : vars) {
-//        out << (!first?",":"") << "g" << var;
-//        first = false;
-//    }
-//    if (vars.size()) {
-//        out << ";\n";
-//    }
+    for (auto& var : vars) {
+        if (var != "i" && var != "j" && var != "k") {
+            out << "genvar" << "g" << var << ";\n";
+        }
+    }
     for (auto& stmt : statements) {
         if (stmt.traverseIf( [](Expr& e) { return e.value == "__inst_name";} )) {
             continue;

@@ -328,10 +328,12 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                             str_replace(ending, "_in", "_out");
                         }
                     }
-                    field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName + "__" + ending, std::move(exprSub), {}, array_dim});
-                    DEBUG_AST(debugIndent, "SubField: " << FD->getNameAsString() << "(" << field->name << ")" << ": " << exprSub.debug(debugIndent)
-                        << " array " << (array_dim.size()?array_dim[0].debug(debugIndent):""));
-                    // only not abstract here
+                    if (std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName + "__" + ending; } ) == hlp.mod->ports.end()) {
+                        field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName + "__" + ending, std::move(exprSub), {}, array_dim});
+                        DEBUG_AST(debugIndent, "SubField: " << FD->getNameAsString() << "(" << field->name << ")" << ": " << exprSub.debug(debugIndent)
+                            << " array " << (array_dim.size()?array_dim[0].debug(debugIndent):""));
+                        // only specialized here
+                    }
                 }
             }
         }

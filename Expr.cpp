@@ -271,6 +271,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 ASSERT(sub.size() >= 2);
                 return indent_str + prefix + sub[0].str() + " " + value + " " + sub[1].str();
             }
+            if (value == "++" || value == "--") {
+                return indent_str + sub[0].str() + value;
+            }
             if (value.length() && (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '*' || value[0] == '/'
                 || value[0] == '!' || value[0] == '<' || value[0] == '>')) {  // all operators
                 ASSERT(sub.size() >= 2);
