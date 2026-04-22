@@ -322,10 +322,10 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                     std::string ending = FD->getNameAsString();
                     if (str_ending(fieldName, "_out")) {
                         if (str_ending(ending, "_out")) {
-                            str_replace(ending, "_out", "_in");
+                            ending.replace(ending.length() - 4, 4, "_in");
                         } else
                         if (str_ending(ending, "_in")) {
-                            str_replace(ending, "_in", "_out");
+                            ending.replace(ending.length() - 3, 3, "_out");
                         }
                     }
                     if (std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName + "__" + ending; } ) == hlp.mod->ports.end()) {

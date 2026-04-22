@@ -167,9 +167,8 @@ bool Method::printConns(std::ofstream& out)
                                 std::string right1 = e.sub[4].str();
                                 std::string array2 = right1.find("[") != (size_t)-1 ? right1.substr(right1.find("[")) : "";
                                 std::string peer = wire.name;
-                                str_replace(peer, left.c_str(), right.c_str()); // fix bug
+                                str_replace(peer, left.c_str(), right.c_str());
                                 peer.replace(peer.length() - 3, 3, "_out");
-//                                str_replace(peer, "_in", "_out"); // fix bug _ending
                                 tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{wire.name + array1, Expr::EXPR_VAR}, Expr{peer + array2, Expr::EXPR_VAR}}});
                             }
                             if (wire.name.find(left) == 0 && str_ending(wire.name, "_out")) {
@@ -178,10 +177,9 @@ bool Method::printConns(std::ofstream& out)
                                 std::string right1 = e.sub[4].str();
                                 std::string array2 = right1.find("[") != (size_t)-1 ? right1.substr(right1.find("[")) : "";
                                 std::string peer = wire.name;
-                                str_replace(peer, left.c_str(), right.c_str()); // fix bug
+                                str_replace(peer, left.c_str(), right.c_str());
                                 peer.replace(peer.length() - 4, 4, "_in");
-//                                str_replace(peer, "_out", "_in"); // fix bug
-                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{peer + array1, Expr::EXPR_VAR}, Expr{wire.name + array2, Expr::EXPR_VAR}}});
+                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{peer + array2, Expr::EXPR_VAR}, Expr{wire.name + array1, Expr::EXPR_VAR}}});
                             }
                         }
                         e = tmp;

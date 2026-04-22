@@ -376,10 +376,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 if (interface && str_ending(base, "_out")) {  // for Port structs
                     if (str_ending(member, "_out")) {
-                        str_replace(member, "_out", "_in");
+                        member.replace(member.length() - 4, 4, "_in");
                     } else
                     if (str_ending(member, "_in")) {
-                        str_replace(member, "_in", "_out");
+                        member.replace(member.length() - 3, 3, "_out");
                     }
                 }
                 return indent_str + prefix + base + "__" + member + suffix;
@@ -435,10 +435,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 delim = "__";
                 if (interface && str_ending(base, "_out")) {  // for Port structs
                     if (str_ending(member, "_out")) {
-                        str_replace(member, "_out", "_in");
+                        member.replace(member.length() - 4, 4, "_in");
                     } else
                     if (str_ending(member, "_in")) {
-                        str_replace(member, "_in", "_out");
+                        member.replace(member.length() - 3, 3, "_out");
                     }
                 }
             }
