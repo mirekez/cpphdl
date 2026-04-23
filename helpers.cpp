@@ -404,13 +404,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 DEBUG_AST1(" NOTTHIS");
             }
 
-            if ((flags&FLAG_EXTERNAL_THIS)) {  // already EXTERNAL
-                DEBUG_AST1(" EXTERNAL");
-                call.sub.push_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
-            }
-            else {
+//?            if ((flags&FLAG_EXTERNAL_THIS)) {  // already EXTERNAL
+//?                DEBUG_AST1(" EXTERNAL");
+//?                call.sub.push_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
+//?            }
+//?            else {
                 call.sub.push_back(std::move(expr)/*cpphdl::Expr{ME->getMemberDecl()->getNameAsString(), cpphdl::Expr::EXPR_MEMBER, {exprToExpr(ME->getBase())}}*/);
-            }
+//?            }
         }
         for (unsigned i = 0; i < MCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(MCE->getArg(i)));

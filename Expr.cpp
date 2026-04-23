@@ -468,12 +468,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             Expr base = *check;
             *check = Expr{"0", EXPR_NUM};
+            std::string type;
             size_t pos, pos1;
             if ((pos = value.find("$bits(")) != (size_t)-1 && (pos1 = value.find(")", pos)) != (size_t)-1) {
-                std::string type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
+                type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
                 value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
             }
-            return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8 +: (" + value + ")]";
+            type = std::string("$bits(") + type + ")";
+            return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*" + (type.length()?type:"8") + " +: (" + value + ")]";
         }
         case EXPR_CAST:
             ASSERT(sub.size()==1);
