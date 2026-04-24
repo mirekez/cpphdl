@@ -1005,8 +1005,14 @@ void Helpers::ArgToExpr(const TemplateArgument& arg, cpphdl::Expr& expr, bool sp
         DEBUG_AST1(" (template" << str << " ),");
     } else
     if (arg.getKind() == TemplateArgument::Integral) {
-        if (str.length() > 2 && str_ending(str, "UL")) {
-            str = str.replace(str.rfind("UL"), 2, "");
+        if (str_ending(str, "LL")) {
+            str = str.replace(str.rfind("LL"), 2, "");
+        }
+        if (str_ending(str, "L")) {
+            str = str.replace(str.rfind("L"), 1, "");
+        }
+        if (str_ending(str, "U")) {
+            str = str.replace(str.rfind("U"), 1, "");
         }
         cpphdl::Expr expr1 = cpphdl::Expr{arg.getIntegralType()->isBooleanType() ? (arg.getAsIntegral().isZero() ? "false" : "true") : str, cpphdl::Expr::EXPR_NUM};
         expr.sub.emplace_back(std::move(expr1));

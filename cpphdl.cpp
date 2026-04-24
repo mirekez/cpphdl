@@ -144,12 +144,12 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
                 // folded struct
                 if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
-//?                    if (!CRD->isAnonymousStructOrUnion() && CRD->getIdentifier()) {  // same as below?
-//?                        std::string name = genTypeName(CRD->getQualifiedNameAsString());
-//?                        if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
-//?                            st->imports.emplace_back(name);
-//?                        }
-//?                    }
+                    if (!CRD->isAnonymousStructOrUnion() && CRD->getIdentifier()) {  // add to imports
+                        std::string name = genTypeName(CRD->getQualifiedNameAsString());
+                        if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
+                            st->imports.emplace_back(name);
+                        }
+                    }
                     auto st1 = exportStruct(CRD, hlp);
 
                     if (CRD->isAnonymousStructOrUnion() || !CRD->getIdentifier()) {
