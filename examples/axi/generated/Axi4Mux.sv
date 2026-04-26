@@ -100,7 +100,7 @@ module Axi4Mux #(
         ar_next_comb = idx;
     end
 
-    generate  // _connect
+    generate  // _assign
         assign master_out__awvalid_out = !aw_active && slaves_in__awvalid_in[aw_next_comb];
         assign master_out__awaddr_out = slaves_in__awaddr_in[aw_next_comb];
         assign master_out__awid_out = slaves_in__awid_in[aw_next_comb];

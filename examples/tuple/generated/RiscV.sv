@@ -869,13 +869,13 @@ module RiscV (
     end
     endtask
 
-    generate  // Pipeline____connect
+    generate  // Pipeline____assign
         assign Pipeline___members_tuple_0__state_in = Pipeline___states_comb;
         assign Pipeline___members_tuple_1__state_in = Pipeline___states_comb;
         assign Pipeline___members_tuple_2__state_in = Pipeline___states_comb;
     endgenerate
 
-    generate  // _connect
+    generate  // _assign
         assign Pipeline___members_tuple_0__pc_in = pc;
         assign Pipeline___members_tuple_0__instr_valid_in = valid;
         assign Pipeline___members_tuple_0__instr_in = imem_read_data_in;

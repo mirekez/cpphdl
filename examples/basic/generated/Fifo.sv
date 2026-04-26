@@ -116,7 +116,7 @@ module Fifo #(
     end
     endtask
 
-    generate  // _connect
+    generate  // _assign
         assign mem__write_data_in = write_data_in;
         assign mem__write_data_in = write_data_in;
         assign mem__write_in = write_in;

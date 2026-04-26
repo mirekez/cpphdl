@@ -199,7 +199,7 @@ public:
     }
 
 
-    void _connect()
+    void _assign()
     {
 //        std::print("ExecuteCalc: {} of {}\n", ID, LENGTH);
     }

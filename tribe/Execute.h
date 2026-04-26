@@ -175,7 +175,7 @@ public:
         mem_read_reg.strobe();
     }
 
-    void _connect()
+    void _assign()
     {
     }
 

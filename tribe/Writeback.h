@@ -59,7 +59,7 @@ public:
     {
     }
 
-    void _connect()
+    void _assign()
     {
     }
 

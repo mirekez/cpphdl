@@ -171,8 +171,7 @@ public:
         out_reg.strobe();
     }
 
-    void _connect() {}
-
+    void _assign() {}
 
     bool     debugen_in;
 };
@@ -231,14 +230,14 @@ public:
     {
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
         converter.data_in      = __VAR( out_reg );
         converter.debugen_in   = debugen_in;
-        converter._connect();
+        converter._assign();
 #endif
     }
 
@@ -337,7 +336,7 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "converter_test";
-        _connect();
+        _assign();
         _work(1);
         _work_neg(1);
 

@@ -18,7 +18,7 @@ bool Method::print(std::ofstream& out)
     }
 
     // make strong comparison here
-    if (str_ending(name, "_connect")) {  // important for inherited methods
+    if (str_ending(name, "_assign")) {  // important for inherited methods
         return printConns(out);
     }
 

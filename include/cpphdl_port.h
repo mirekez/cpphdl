@@ -166,11 +166,11 @@ public:
     void assign(ModA& modA, ModB& modB, A& a, B& b)
     {
         a = b;
-        modA._connect();
+        modA._assign();
         b = a;
-        modB._connect();
+        modB._assign();
         a = b;
-        modA._connect();
+        modA._assign();
     }
 
 };

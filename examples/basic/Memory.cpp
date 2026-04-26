@@ -74,7 +74,7 @@ public:
         data_out_reg.strobe();
     }
 
-    void _connect() {}
+    void _assign() {}
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -133,7 +133,7 @@ public:
         memset(mem_copy.data, 0, sizeof(*mem_copy.data)*MEM_DEPTH);
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
         mem.write_addr_in = __VAR( write_addr_reg );
@@ -144,7 +144,7 @@ public:
         mem.read_in =       __VAR( read_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
-        mem._connect();
+        mem._assign();
 #endif
     }
 
@@ -274,7 +274,7 @@ public:
         }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "mem_test";
-        _connect();
+        _assign();
         _work(1);
         _work_neg(1);
         int cycles = 100000;

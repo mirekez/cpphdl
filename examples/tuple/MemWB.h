@@ -68,7 +68,7 @@ public:
         PipelineStage<STATE,BIG_STATE,ID,LENGTH>::_strobe();
     }
 
-    void _connect()
+    void _assign()
     {
 //        std::print("MemWB: {} of {}\n", ID, LENGTH);
     }

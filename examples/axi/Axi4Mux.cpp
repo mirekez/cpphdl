@@ -83,7 +83,7 @@ private:
     }
 
 public:
-    void _connect()
+    void _assign()
     {
         u8 i;
 
@@ -220,14 +220,14 @@ public:
     {
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
         mux.__inst_name = __inst_name + "/mux";
 
 //        mux.data_in      = __VAR( out_reg );
         mux.debugen_in   = debugen_in;
-        mux._connect();
+        mux._assign();
 #endif
     }
 
@@ -260,7 +260,7 @@ public:
         }
 
 #ifndef VERILATOR
-        mux._work(reset);
+//        mux._work(reset);
 #else
 //        memcpy(mux.data_in, &out_reg, sizeof(mux.data_in));
         mux.debugen_in = debugen_in;
@@ -304,7 +304,7 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "mux_test";
-        _connect();
+        _assign();
         _work(1);
         _work_neg(1);
 

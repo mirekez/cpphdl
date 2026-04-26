@@ -121,14 +121,14 @@ struct Pipeline<PipelineStages<Ts...>> : public Module
     }
 
 public:
-    void _connect()
+    void _assign()
     {
         std::apply([&](auto&... stage) {
             (
                 (
                     [&]{
                         stage.state_in = __VAR( states_comb_func() );
-                        stage._connect();
+                        stage._assign();
                     }()
                 ),
                 ...

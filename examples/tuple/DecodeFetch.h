@@ -160,7 +160,7 @@ public:
     }
 
 
-    void _connect()
+    void _assign()
     {
 //        std::print("DecodeFetch: {} of {}\n", ID, LENGTH);
     }

@@ -456,7 +456,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     if (hlp.mod->origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of base class or external object (not current mod)
         method.name = genTypeName(MD->getParent()->getQualifiedNameAsString()) + "___";
         if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
-            if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_connect") {
+            if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_assign") {
                 return "";  // we need not work functions from third party classes (not Modules)
             }
 

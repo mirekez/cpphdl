@@ -38,7 +38,7 @@ public:
         ram._strobe();
     }
 
-    void _connect()
+    void _assign()
     {
         ram.addr0_in = __EXPR((u<clog2(MEM_DEPTH)>) (write_in() ? write_addr_in()/4 : read_addr_in()/4) );
         ram.addr1_in = __EXPR((u<clog2(MEM_DEPTH)>) (write_in() ? ( write_addr_in()%4 ? write_addr_in()/4+1 : 0 ) : ( read_addr_in()%4 ? read_addr_in()/4+1 : 0 )) );
@@ -52,7 +52,7 @@ public:
         ram.read1_in = __EXPR( read_addr_in()%4 == 0 ? false : read_in() );  // when we need to read 2 words
         ram.__inst_name = __inst_name + "/ram";
         ram.debugen_in  = debugen_in;
-        ram._connect();
+        ram._assign();
     }
 
 };

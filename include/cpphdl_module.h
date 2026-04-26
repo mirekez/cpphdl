@@ -13,7 +13,7 @@ public:
     static void _strobe_neg() {}
 
     static void _strobe() {}
-    static void _connect() {}
+    static void _assign() {}
 };
 
 

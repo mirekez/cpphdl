@@ -62,7 +62,7 @@ module Memory #(
     end
     endtask
 
-    generate  // _connect
+    generate  // _assign
     endgenerate
 
     always @(posedge clk) begin

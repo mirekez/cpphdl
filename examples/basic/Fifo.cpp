@@ -116,7 +116,7 @@ public:
     }
 
 
-    void _connect()
+    void _assign()
     {
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
@@ -127,7 +127,7 @@ public:
         mem.read_addr_in  = __VAR( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
-        mem._connect();
+        mem._assign();
     }
 };
 /////////////////////////////////////////////////////////////////////////
@@ -191,7 +191,7 @@ public:
         delete[] mem_ref;
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
         fifo.write_in        = __VAR( write_reg );
@@ -201,7 +201,7 @@ public:
 
         fifo.__inst_name = __inst_name + "/fifo";
         fifo.debugen_in  = debugen_in;
-        fifo._connect();
+        fifo._assign();
 #endif
     }
 
@@ -319,7 +319,7 @@ public:
         }
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
-        _connect();
+        _assign();
         _work(1);
         _work_neg(1);
         int cycles = 100000;

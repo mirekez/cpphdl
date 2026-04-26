@@ -333,7 +333,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_MEMBERCALL:
         {
             ASSERT(sub.size());
-            if (value == "_connect" || value == "_strobe" || str_ending(value, "____connect") || str_ending(value, "____strobe")) {  // never need this functions
+            if (value == "_assign" || value == "_strobe" || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
                 return "";
             }
 //            if ((value == "_work" || value == "_work_neg" || str_ending(value, "____work") || str_ending(value, "____work_neg")) && sub[0].value != "_this") {  // never need this functions except third party class work

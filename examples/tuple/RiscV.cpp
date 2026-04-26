@@ -127,7 +127,7 @@ public:
     }
 
 
-    void _connect()
+    void _assign()
     {
         auto& df = std::get<0>(members);
         auto& ex = std::get<1>(members);
@@ -143,9 +143,9 @@ public:
         df.regs_data1_in  = __EXPR( df.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         df.alu_result_in  = ex.alu_result_out;
         df.mem_data_in    = dmem_read_data_in;
-        df._connect();  // outputs are ready
+        df._assign();  // outputs are ready
         // ex has no own inputs
-        ex._connect();  // outputs are ready
+        ex._assign();  // outputs are ready
         dmem_write_out      = ex.mem_write_out;
         dmem_write_addr_out = ex.mem_write_addr_out;
         dmem_write_data_out = ex.mem_write_data_out;
@@ -153,9 +153,9 @@ public:
         dmem_read_out       = ex.mem_read_out;
         dmem_read_addr_out  = ex.mem_read_addr_out;
         wb.mem_data_in    = dmem_read_data_in;
-        wb._connect();  // outputs are ready
+        wb._assign();  // outputs are ready
 
-        Pipeline::_connect();
+        Pipeline::_assign();
 
         regs.read_addr0_in = df.rs1_out;
         regs.read_addr1_in = df.rs2_out;
@@ -164,7 +164,7 @@ public:
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
-        regs._connect();
+        regs._assign();
     }
 
 };
@@ -228,16 +228,16 @@ public:
     {
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
-        riscv._connect();
+        riscv._assign();
 
         riscv.dmem_read_data_in = dmem.read_data_out;
         riscv.imem_read_data_in = imem.read_data_out;
         riscv.debugen_in = debugen_in;
         riscv.__inst_name = __inst_name + "/riscv";
-        riscv._connect();
+        riscv._assign();
 
         dmem.read_in = riscv.dmem_read_out;
         dmem.read_addr_in = riscv.dmem_read_addr_out;
@@ -247,7 +247,7 @@ public:
         dmem.write_mask_in = riscv.dmem_write_mask_out;
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem._connect();
+        dmem._assign();
 
         imem.read_in = __EXPR( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
@@ -257,7 +257,7 @@ public:
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem._connect();
+        imem._assign();
 #else  // connecting Verilator to C++HDL
         dmem.read_in = __EXPR( (bool)riscv.dmem_read_out );
         dmem.read_addr_in = __EXPR( (uint32_t)riscv.dmem_read_addr_out );
@@ -267,7 +267,7 @@ public:
         dmem.write_mask_in = __EXPR( (uint8_t)riscv.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem._connect();
+        dmem._assign();
 
         imem.read_in = __EXPR( !imem_write );
         imem.read_addr_in = __EXPR( (uint32_t)riscv.imem_read_addr_out );
@@ -277,7 +277,7 @@ public:
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem._connect();
+        imem._assign();
 #endif
     }
 
@@ -349,7 +349,7 @@ public:
         fclose(out);
 
         __inst_name = "riscv_test";
-        _connect();
+        _assign();
         _strobe();
         ++sys_clock;
         _work(1);

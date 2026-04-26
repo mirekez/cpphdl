@@ -50,7 +50,7 @@ module File #(
     end
     endtask
 
-    generate  // _connect
+    generate  // _assign
     endgenerate
 
     always @(*) begin  // data0_out_comb_func

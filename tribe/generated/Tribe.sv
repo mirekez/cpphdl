@@ -954,7 +954,7 @@ module Tribe (
     end
     endtask
 
-    generate  // _connect
+    generate  // _assign
         assign dec__pc_in = pc;
         assign dec__instr_valid_in = valid;
         assign dec__instr_in = imem_read_data_in;

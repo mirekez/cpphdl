@@ -77,7 +77,7 @@ module FpConverterFP32_8_FP16_5 #(
     end
     endtask
 
-    generate  // _connect
+    generate  // _assign
     endgenerate
 
     always @(posedge clk) begin

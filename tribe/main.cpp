@@ -227,7 +227,7 @@ public:
         wb._strobe();
     }
 
-    void _connect()
+    void _assign()
     {
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
@@ -235,15 +235,15 @@ public:
         dec.instr_in       = imem_read_data_in;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
-        dec._connect();  // outputs are ready
+        dec._assign();  // outputs are ready
 
         exe.state_in       = __VAR( state_reg[0] );
-        exe._connect();  // outputs are ready
+        exe._assign();  // outputs are ready
 
         wb.state_in       = __VAR( state_reg[1] );
         wb.mem_data_in    = dmem_read_data_in;
         wb.alu_result_in  = __VAR( alu_result_reg );
-        wb._connect();  // outputs are ready
+        wb._assign();  // outputs are ready
 
         regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
@@ -252,7 +252,7 @@ public:
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
-        regs._connect();
+        regs._assign();
 
         dmem_write_out      = exe.mem_write_out;
         dmem_write_addr_out = exe.mem_write_addr_out;
@@ -321,16 +321,16 @@ public:
     {
     }
 
-    void _connect()
+    void _assign()
     {
 #ifndef VERILATOR
-        tribe._connect();
+        tribe._assign();
 
         tribe.dmem_read_data_in = dmem.read_data_out;
         tribe.imem_read_data_in = imem.read_data_out;
         tribe.debugen_in = debugen_in;
         tribe.__inst_name = __inst_name + "/tribe";
-        tribe._connect();
+        tribe._assign();
 
         dmem.read_in = tribe.dmem_read_out;
         dmem.read_addr_in = tribe.dmem_read_addr_out;
@@ -340,7 +340,7 @@ public:
         dmem.write_mask_in = tribe.dmem_write_mask_out;
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem._connect();
+        dmem._assign();
 
         imem.read_in = __EXPR( !imem_write );
         imem.read_addr_in = tribe.imem_read_addr_out;
@@ -350,7 +350,7 @@ public:
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem._connect();
+        imem._assign();
 #else  // connecting Verilator to C++HDL
         dmem.read_in = __EXPR( (bool)tribe.dmem_read_out );
         dmem.read_addr_in = __EXPR( (uint32_t)tribe.dmem_read_addr_out );
@@ -360,7 +360,7 @@ public:
         dmem.write_mask_in = __EXPR( (uint8_t)tribe.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
-        dmem._connect();
+        dmem._assign();
 
         imem.read_in = __EXPR( (bool)!imem_write );
         imem.read_addr_in = __EXPR( (uint32_t)tribe.imem_read_addr_out );
@@ -370,7 +370,7 @@ public:
         imem.write_mask_in = __EXPR( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
-        imem._connect();
+        imem._assign();
 #endif
     }
 
@@ -442,7 +442,7 @@ public:
         fclose(out);
 
         __inst_name = "tribe_test";
-        _connect();
+        _assign();
         _strobe();
         ++sys_clock;
         _work(1);
