@@ -474,7 +474,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 type = value.substr(pos+strlen("$bits("), pos1-pos-strlen("$bits("));
                 value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
             }
-            type = std::string("$bits(") + type + ")";
+            type = std::string("$bits(") + typeToSV(type) + ")";
             return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*" + (type.length()?type:"8") + " +: (" + value + ")]";
         }
         case EXPR_CAST:
