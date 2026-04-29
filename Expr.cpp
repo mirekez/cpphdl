@@ -475,7 +475,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 value.replace(pos + strlen("$bits("), type.length(), typeToSV(type));
             }
             type = std::string("$bits(") + typeToSV(type) + ")";
-            return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*" + (type.length()?type:"8") + " +: (" + value + ")]";
+            return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8" + " +: (" + value + ")]";  // currently supporting dereference shift only for char*
         }
         case EXPR_CAST:
             ASSERT(sub.size()==1);
