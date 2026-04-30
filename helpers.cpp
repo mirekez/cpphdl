@@ -1045,7 +1045,7 @@ bool Helpers::templateToExpr(QualType QT, cpphdl::Expr& expr)
         expr.value = genTypeName(TSD ? TSD->getSpecializedTemplate()->getQualifiedNameAsString()
                          : TST->getTemplateName().getAsTemplateDecl()->getQualifiedNameAsString());
 
-        size_t i=0;
+        [[maybe_unused]] size_t i=0;
         for (const auto &arg : (TSD ? ArrayRef<TemplateArgument>(TSD->getTemplateArgs().asArray()) : TST->template_arguments())) {
             DEBUG_AST(debugIndent++, "# Arg " << (TSD ? TSD->getSpecializedTemplate()->getTemplateParameters()->getParam(i)->getNameAsString() : "?")); on_return ret_debug([](){ --debugIndent; });
             ArgToExpr(arg, expr, TSD != nullptr);
