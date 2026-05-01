@@ -11,18 +11,37 @@ using namespace cpphdl;
 
 Module* currModule = nullptr;
 
+void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* importsSet)
+{
+    std::unordered_set<std::string> importsRoot;
+    if (!importsSet) {
+        importsSet = &importsRoot;
+    }
+    for (auto& imp : imports) {
+        for (auto& member : members) {
+            auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){
+//out << "importing " << (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) << "..." << m.origName << "\n";
+ return (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) == m.origName; });
+
+            if (it != currProject->modules.end()) {
+                it->printImports(out, importsSet);
+            }
+        }
+        std::string name = genTypeName(imp.name);
+        if (importsSet->find(name) == importsSet->end()) {
+            importsSet->insert(name);
+            out << "import " << name << "_pkg::*;\n";
+        }
+    }
+}
+
 bool Module::print(std::ofstream& out)
 {
     currModule = this;
 
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
-    for (auto& imp : imports) {
-        if (std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){ return imp.origName == m.origName; }) != currProject->modules.end()) {
-            continue;
-        }
-        out << "import " << genTypeName(imp.name) << "_pkg::*;\n";
-    }
+    printImports(out);
     out << "\n\n";
     out << "module ";
     out << name;
@@ -214,7 +233,7 @@ bool Module::printMembers(std::ofstream& out)
                 }
             }
             else {
-                std::cerr << "ERROR: cant find module '" << member.expr.sub[1].str() << "' declaration\n" << member.expr.sub[1].debug() << "\n";
+                std::cerr << "ERROR: cant find module '" << member.expr.str() << "' declaration\n" << member.expr.debug() << "\n";
                 return false;
             }
 

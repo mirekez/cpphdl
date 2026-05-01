@@ -2,7 +2,7 @@
 
 #include <string>
 #include <vector>
-#include <set>
+#include <unordered_set>
 
 namespace cpphdl
 {
@@ -28,6 +28,7 @@ struct Module
 
     // methods
 
+    void printImports(std::ofstream& out, std::unordered_set<std::string>* imports = 0);
     bool print(std::ofstream& out);
     bool printMembers(std::ofstream& out);
 };
@@ -36,8 +37,6 @@ struct Module
 }
 
 extern cpphdl::Module* currModule;
-
-#include <unordered_set>
 
 inline bool is_systemverilog_keyword(const std::string& token)
 {

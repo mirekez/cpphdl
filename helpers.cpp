@@ -369,8 +369,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
     }
     if (auto* IL = dyn_cast<IntegerLiteral>(E)) {
-        DEBUG_AST1(" IntegerLiteral(" << (IL->getType()->isUnsignedIntegerType() ? std::to_string(IL->getValue().getZExtValue()) : std::to_string(IL->getValue().getSExtValue())) << ")");
-        return cpphdl::Expr{IL->getType()->isUnsignedIntegerType() ? std::to_string(IL->getValue().getZExtValue()) : std::to_string(IL->getValue().getSExtValue()), cpphdl::Expr::EXPR_NUM};
+        llvm::SmallString<32> Str;
+        IL->getValue().toString(Str, 16, !IL->getType()->isUnsignedIntegerType())
+        DEBUG_AST1(" IntegerLiteral(" << ("'h"+Str.str().str()) << ")");
+        return cpphdl::Expr{("'h"+Str.str().str()), cpphdl::Expr::EXPR_NUM};
     }
     if (auto* OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
         DEBUG_AST1(" CXXOperatorCallExpr");

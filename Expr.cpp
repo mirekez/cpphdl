@@ -62,7 +62,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 value = "int";
             }
             std::string str = typeToSV(value, suffix);  // also calc size
-            if (!declSize && declSize != (size_t)-1) {  // unknown type
+            if (!declSize && declSize != (size_t)-1) {  // unknown type or structure
                 declSize = getStructSize(value);
             }
             return indent_str + prefix + str;
@@ -114,7 +114,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (!first) {
                         typeSpec += "_";
                     }
-                    typeSpec += sub[i].str();
+                    if (sub[i].type == EXPR_NUM && sub[i].value.length() > 2 && sub[i].value[0] == '\'' && sub[i].value[1] == 'h') {
+                        typeSpec += std::to_string(std::stoul(sub[i].value.substr(2).c_str(), nullptr, 16));  // we store numbers in hex
+                    }
+                    else {
+                        typeSpec += sub[i].str();
+                    }
                     first = false;
                 }
             }
@@ -735,74 +740,39 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
-    if (type == "int8_t") {
+    if (type == "int8_t" || type == "signedchar") {
         str = logic + " signed" + size + "[7:0]";
         declSize = 8;
     } else
-    if (type == "int16_t") {
+    if (type == "int16_t" || type.compare(0, 5, "short") == 0) {
         str = logic + " signed" + size + "[15:0]";
         declSize = 16;
     } else
-    if (type == "int32_t") {
-        str = logic + " signed" + size + "[31:0]";
-        declSize = 32;
-    } else
-    if (type == "int64_t") {
+    if (type == "int64_t" || type.compare(0, 4, "long") == 0) {
         str = logic + " signed" + size + "[63:0]";
         declSize = 64;
     } else
-    if (type == "uint8_t") {
-        str = logic + " signed" + size + "[7:0]";
+    if (type == "int32_t" || type == "int" || type.compare(0, 6, "signed") == 0) {
+        str = logic + " signed" + size + "[31:0]";
+        declSize = 32;
+    } else
+    if (type == "uint8_t" || type == "unsignedchar") {
+        str = logic + size + "[7:0]";
         declSize = 8;
     } else
-    if (type == "uint16_t") {
+    if (type == "uint16_t" || type == "unsignedshort") {
         str = logic + size + "[15:0]";
         declSize = 16;
     } else
-    if (type == "uint32_t") {
-        str = logic + size + "[31:0]";
-        declSize = 32;
-    } else
-    if (type == "uint64_t") {
+    if (type == "uint64_t" || type == "unsignedlong" || type == "size_t") {
         str = logic + size + "[63:0]";
         declSize = 64;
     } else
-    if (type == "signedchar") {
-        str = "byte" + size;
-        declSize = 8;
-    } else
-    if (type.compare(0, 5, "short") == 0) {
-        str = "shortint" + size;
-        declSize = 16;
-    } else
-    if (type == "int") {
-        str = "integer" + size;
+    if (type == "uint32_t" || type.compare(0, 8, "unsigned") == 0) {
+        str = logic + size + "[31:0]";
         declSize = 32;
-    } else
-    if (type.compare(0, 4, "long") == 0) {
-        str = "longint" + size;
-        declSize = 64;
-    } else
-    if (type == "unsignedchar") {
-        str = "logic" + size + "[7:0]";
-        declSize = 8;
-    } else
-    if (type == "unsignedshort") {
-        str = "logic" + size + "[15:0]";
-        declSize = 16;
-    } else
-    if (type == "unsignedlong" || type == "size_t") {
-        str = "logic" + size + "[63:0]";
-        declSize = 64;
-    } else
-    if (type.compare(0, 8, "unsigned") == 0) {
-        str = "logic" + size + "[31:0]";
-        declSize = 32;
-    } else
-    if (type.compare(0, 6, "signed") == 0) {
-        str = "logic signed" + size + "[31:0]";
-        declSize = 32;
-    } else {
+    }
+    else {
         str += size;
     }
     return str;
