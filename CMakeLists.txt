@@ -38,6 +38,8 @@ project(cpphdl
   VERSION 0.8
   LANGUAGES CXX)
 
+include(CTest)
+
 add_definitions(-DSTATIC_BUILD)
 
 find_package(LLVM REQUIRED CONFIG PATHS .conda/lib/cmake/llvm)

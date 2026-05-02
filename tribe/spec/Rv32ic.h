@@ -85,7 +85,7 @@ struct Rv32ic : public Rv32i
                 state_out.rd = 1;
                 state_out.wb_op = Wb::PC2;
                 state_out.br_op = Br::JAL;
-                state_out.imm = (i.base.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+                state_out.imm = sext((i.base.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1), 12);
             }
             else if (i.base.funct3 == 0b010) {  // LI
                 state_out.rd = i.avg.rs1;
@@ -129,9 +129,9 @@ struct Rv32ic : public Rv32i
                     state_out.wb_op = Wb::ALU;
                 }
                 else if (i.base.bits11_10 == 3 && i.base.b12 == 0) {  // C.SUB, C.XOR, C.OR, C.AND
-                    state_out.rd = i.big.rs1;
-                    state_out.rs1 = i.big.rs1;
-                    state_out.rs2 = i.big.rs2;
+                    state_out.rd = i.base.rs1_p + 8;
+                    state_out.rs1 = i.base.rs1_p + 8;
+                    state_out.rs2 = i.base.rd_p + 8;
                     state_out.alu_op = i.base.bits6_5 == 0 ? Alu::SUB : ( i.base.bits6_5 == 1 ? Alu::XOR : ( i.base.bits6_5 == 2 ? Alu::OR : Alu::AND ) );
                     state_out.wb_op = Wb::ALU;
                 }
@@ -139,7 +139,7 @@ struct Rv32ic : public Rv32i
             else if (i.base.funct3 == 0b101) {  // J
                 state_out.rd = 0;
                 state_out.br_op = Br::JAL;
-                state_out.imm = (i.base.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1);
+                state_out.imm = sext((i.base.b12<<11)|(bit(8)<<10)|(bits(10,9)<<8)|(bit(6)<<7)|(bit(7)<<6)|(bit(2)<<5)|(bit(11)<<4)|(bits(5,3)<<1), 12);
             }
             else if (i.base.funct3 == 0b110) {  // BEQZ
                 state_out.rs1 = i.base.rs1_p+8;
@@ -190,7 +190,7 @@ struct Rv32ic : public Rv32i
                     state_out.wb_op = Wb::PC2;
                 }
                 else if (i.big.rs2 == 0 && i.base.b12 == 1) {  // C.JALR
-                    state_out.rs1 = i.big.rs2;
+                    state_out.rs1 = i.big.rs1;
                     state_out.rd = 1;
                     state_out.br_op = Br::JALR;
                     state_out.wb_op = Wb::PC2;

@@ -62,9 +62,13 @@ private:
             case Alu::SLTU: alu_result_comb = (a < b);                            break;
             case Alu::PASS: alu_result_comb = b;                                  break;
             case Alu::MUL:  alu_result_comb = a * b;                              break;
-            case Alu::MULH: alu_result_comb = ((uint64_t)a * b) >> 32;            break;
-            case Alu::DIV:  alu_result_comb = a / b;                              break;
-            case Alu::REM:  alu_result_comb = a % b;                              break;
+            case Alu::MULH: alu_result_comb = (uint64_t(int64_t(int32_t(a)) * int64_t(int32_t(b))) >> 32); break;
+            case Alu::MULHSU: alu_result_comb = (uint64_t(int64_t(int32_t(a)) * int64_t(uint64_t(b))) >> 32); break;
+            case Alu::MULHU: alu_result_comb = ((uint64_t)a * b) >> 32;           break;
+            case Alu::DIV:  alu_result_comb = b == 0 ? ~0u : (a == 0x80000000u && b == 0xffffffffu ? a : uint32_t(int32_t(a) / int32_t(b))); break;
+            case Alu::DIVU: alu_result_comb = b == 0 ? ~0u : a / b;              break;
+            case Alu::REM:  alu_result_comb = b == 0 ? a : (a == 0x80000000u && b == 0xffffffffu ? 0 : uint32_t(int32_t(a) % int32_t(b))); break;
+            case Alu::REMU: alu_result_comb = b == 0 ? a : a % b;                break;
             case Alu::ANONE:                                                      break;
         }
         if (alu_op == Alu::SLT || alu_op == Alu::SLTU) {

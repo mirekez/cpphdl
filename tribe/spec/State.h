@@ -3,10 +3,10 @@
 #include <stdint.h>
 
 constexpr const char* AOPS[] =
-  {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASS", "MUL", "MULH", "DIV", "REM"};
+  {"ANONE", "ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SRA", "SLT", "SLTU", "PASS", "MUL", "MULH", "MULHSU", "MULHU", "DIV", "DIVU", "REM", "REMU"};
 enum Alu
 {
-    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   DIV,   REM
+    ANONE,   ADD,   SUB,   AND,   OR,   XOR,   SLL,   SRL,   SRA,   SLT,   SLTU,   PASS,   MUL,   MULH,   MULHSU,   MULHU,   DIV,   DIVU,   REM,   REMU
 };
 
 constexpr const char* MOPS[] =
@@ -39,7 +39,7 @@ struct State
     uint32_t imm;
 
     uint8_t valid:1;
-    uint8_t alu_op:4;
+    uint8_t alu_op:5;
     uint8_t mem_op:2;
     uint8_t wb_op:3;
     uint8_t br_op:4;

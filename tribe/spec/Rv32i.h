@@ -1,6 +1,11 @@
 #pragma once
 
 #include "State.h"
+#include <string>
+
+#ifndef __PACKED
+#define __PACKED __attribute__((packed))
+#endif
 
 struct Rv32i
 {
