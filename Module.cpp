@@ -123,6 +123,13 @@ bool Module::print(std::ofstream& out)
 
     out << "\n";
     out << "    always @(posedge clk) begin\n";
+    for (auto& field : vars) {  // strobe
+        field.indent = 1;
+        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+            out << "        " << field.name << "_tmp = " << field.name << ";\n";
+        }
+    }
+    out << "\n";
     out << "        _work(reset);\n";
     out << "\n";
     for (auto& field : vars) {  // strobe

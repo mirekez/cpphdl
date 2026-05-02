@@ -146,8 +146,8 @@ public:
         forward();
         state_reg._next[1] = state_reg[0];
         alu_result_reg._next = exe.alu_result_out();
-        debug_branch_target_reg = exe.branch_target_out();
-        debug_branch_taken_reg = exe.branch_taken_out();
+        debug_branch_target_reg._next = exe.branch_target_out();
+        debug_branch_taken_reg._next = exe.branch_taken_out();
 
         regs._work(reset);
         dec._work(reset);
