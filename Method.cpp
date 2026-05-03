@@ -19,7 +19,7 @@ bool Method::print(std::ofstream& out)
 
     // make strong comparison here
     if (str_ending(name, "_assign")) {  // important for inherited methods
-        return printConns(out);
+        return printAssigns(out);
     }
 
     if (str_ending(name, "_comb_func")) {
@@ -75,7 +75,7 @@ bool Method::print(std::ofstream& out)
     return true;
 }
 
-bool Method::printConns(std::ofstream& out)
+bool Method::printAssigns(std::ofstream& out)
 {
     currMethod = this;
 

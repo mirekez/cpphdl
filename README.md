@@ -1,6 +1,6 @@
 # cpphdl
 
-C++HDL Hardware Description Language
+CppHDL Hardware Description Language
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
