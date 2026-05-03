@@ -12,6 +12,47 @@ using namespace cpphdl;
 #include <cstdint>
 #include <type_traits>
 
+template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH> struct Axi4If;
+
+template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
+struct Axi4Driver
+{
+    bool awvalid;
+    u<ADDR_WIDTH> awaddr;
+    u<ID_WIDTH> awid;
+
+    bool wvalid;
+    logic<DATA_WIDTH> wdata;
+    bool wlast;
+
+    bool bready;
+
+    bool arvalid;
+    u<ADDR_WIDTH> araddr;
+    u<ID_WIDTH> arid;
+
+    bool rready;
+
+    Axi4Driver& operator=(const Axi4Driver&) = default;
+};
+
+template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
+struct Axi4Responder
+{
+    bool awready;
+    bool wready;
+    bool bvalid;
+    u<ID_WIDTH> bid;
+
+    bool arready;
+    bool rvalid;
+    logic<DATA_WIDTH> rdata;
+    bool rlast;
+    u<ID_WIDTH> rid;
+
+    Axi4Responder& operator=(const Axi4Responder&) = default;
+};
+
 template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 struct Axi4If : Interface
 {
@@ -39,6 +80,44 @@ struct Axi4If : Interface
     __PORT(logic<DATA_WIDTH>)  rdata_out;
     __PORT(bool)               rlast_out;
     __PORT(u<ID_WIDTH>)        rid_out;
+
+    Axi4If& operator=(Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>& other)
+    {
+        Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>* p = &other;
+        awvalid_in = [p]() { return &p->awvalid; };
+        awaddr_in = [p]() { return &p->awaddr; };
+        awid_in = [p]() { return &p->awid; };
+
+        wvalid_in = [p]() { return &p->wvalid; };
+        wdata_in = [p]() { return &p->wdata; };
+        wlast_in = [p]() { return &p->wlast; };
+
+        bready_in = [p]() { return &p->bready; };
+
+        arvalid_in = [p]() { return &p->arvalid; };
+        araddr_in = [p]() { return &p->araddr; };
+        arid_in = [p]() { return &p->arid; };
+
+        rready_in = [p]() { return &p->rready; };
+        return *this;
+    }
+
+    Axi4If& operator=(Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>& other)
+    {
+        Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>* p = &other;
+        awready_out = [p]() { return &p->awready; };
+        wready_out = [p]() { return &p->wready; };
+
+        bvalid_out = [p]() { return &p->bvalid; };
+        bid_out = [p]() { return &p->bid; };
+
+        arready_out = [p]() { return &p->arready; };
+        rvalid_out = [p]() { return &p->rvalid; };
+        rdata_out = [p]() { return &p->rdata; };
+        rlast_out = [p]() { return &p->rlast; };
+        rid_out = [p]() { return &p->rid; };
+        return *this;
+    }
 };
 
 // C++HDL MODEL /////////////////////////////////////////////////////////
@@ -47,8 +126,8 @@ template<size_t N, size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 class Axi4Mux : public Module
 {
 public:
-    Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    slaves_in[N];
     Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    master_out;
+    Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    slaves_in[N];
 private:
     // Round-robin pointers
     reg<u<clog2(N)>> rr_aw, rr_ar;
@@ -217,23 +296,10 @@ class TestAxi4Mux : public Module
 #else
     Axi4Mux<N,ADDR_WIDTH,ID_WIDTH,DATA_WIDTH> mux;
 #endif
+    reg<Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>> s_slave[N];
+    reg<Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>> m_master;
 
     static constexpr size_t TX_PER_SLAVE = 16;
-
-    reg<u1> s_awvalid[N], s_wvalid[N], s_wlast[N], s_bready[N];
-    reg<u<ADDR_WIDTH>> s_awaddr[N];
-    reg<u<ID_WIDTH>> s_awid[N];
-    reg<logic<DATA_WIDTH>> s_wdata[N];
-
-    reg<u1> s_arvalid[N], s_rready[N];
-    reg<u<ADDR_WIDTH>> s_araddr[N];
-    reg<u<ID_WIDTH>> s_arid[N];
-
-    reg<u1> m_awready, m_wready, m_bvalid;
-    reg<u<ID_WIDTH>> m_bid;
-    reg<u1> m_arready, m_rvalid, m_rlast;
-    reg<u<ID_WIDTH>> m_rid;
-    reg<logic<DATA_WIDTH>> m_rdata;
 
     int write_phase[N];  // 0 idle, 1 AW, 2 W, 3 B
     int read_phase[N];   // 0 idle, 1 AR, 2 R
@@ -304,31 +370,31 @@ public:
         mux.reset = reset;
         mux.debugen_in = debugen_in;
 
-        mux.master_out___05Fawready_in = m_awready;
-        mux.master_out___05Fwready_in = m_wready;
-        mux.master_out___05Fbvalid_in = m_bvalid;
-        mux.master_out___05Fbid_in = m_bid;
-        mux.master_out___05Farready_in = m_arready;
-        mux.master_out___05Frvalid_in = m_rvalid;
-        mux.master_out___05Frlast_in = m_rlast;
-        mux.master_out___05Frid_in = m_rid;
-        logic<DATA_WIDTH> rdata = m_rdata;
+        mux.master_out___05Fawready_in = m_master.awready;
+        mux.master_out___05Fwready_in = m_master.wready;
+        mux.master_out___05Fbvalid_in = m_master.bvalid;
+        mux.master_out___05Fbid_in = m_master.bid;
+        mux.master_out___05Farready_in = m_master.arready;
+        mux.master_out___05Frvalid_in = m_master.rvalid;
+        mux.master_out___05Frlast_in = m_master.rlast;
+        mux.master_out___05Frid_in = m_master.rid;
+        logic<DATA_WIDTH> rdata = m_master.rdata;
         std::memcpy(&mux.master_out___05Frdata_in, &rdata, sizeof(rdata));
 
         for (size_t i = 0; i < N; ++i) {
-            mux.slaves_in___05Fawvalid_in[i] = s_awvalid[i];
-            mux.slaves_in___05Fawaddr_in[i] = s_awaddr[i];
-            mux.slaves_in___05Fawid_in[i] = s_awid[i];
-            mux.slaves_in___05Fwvalid_in[i] = s_wvalid[i];
-            logic<DATA_WIDTH> wdata = s_wdata[i];
+            mux.slaves_in___05Fawvalid_in[i] = s_slave[i].awvalid;
+            mux.slaves_in___05Fawaddr_in[i] = s_slave[i].awaddr;
+            mux.slaves_in___05Fawid_in[i] = s_slave[i].awid;
+            mux.slaves_in___05Fwvalid_in[i] = s_slave[i].wvalid;
+            logic<DATA_WIDTH> wdata = s_slave[i].wdata;
             std::memcpy(&mux.slaves_in___05Fwdata_in[i], &wdata, sizeof(wdata));
-            mux.slaves_in___05Fwlast_in[i] = s_wlast[i];
-            mux.slaves_in___05Fbready_in[i] = s_bready[i];
+            mux.slaves_in___05Fwlast_in[i] = s_slave[i].wlast;
+            mux.slaves_in___05Fbready_in[i] = s_slave[i].bready;
 
-            mux.slaves_in___05Farvalid_in[i] = s_arvalid[i];
-            mux.slaves_in___05Faraddr_in[i] = s_araddr[i];
-            mux.slaves_in___05Farid_in[i] = s_arid[i];
-            mux.slaves_in___05Frready_in[i] = s_rready[i];
+            mux.slaves_in___05Farvalid_in[i] = s_slave[i].arvalid;
+            mux.slaves_in___05Faraddr_in[i] = s_slave[i].araddr;
+            mux.slaves_in___05Farid_in[i] = s_slave[i].arid;
+            mux.slaves_in___05Frready_in[i] = s_slave[i].rready;
         }
         mux.eval();
     }
@@ -526,11 +592,11 @@ public:
         std::print("{:s}: awv={} awr={} awaddr={} awid={} wv={} wr={} bv={} br={} "
                    "arv={} arr={} araddr={} arid={} rv={} rr={} done={}\n",
             __inst_name,
-            (int)master_awvalid(), (int)(bool)m_awready, master_awaddr(), master_awid(),
-            (int)master_wvalid(), (int)(bool)m_wready,
-            (int)(bool)m_bvalid, (int)master_bready(),
-            (int)master_arvalid(), (int)(bool)m_arready, master_araddr(), master_arid(),
-            (int)(bool)m_rvalid, (int)master_rready(), done);
+            (int)master_awvalid(), (int)(bool)m_master.awready, master_awaddr(), master_awid(),
+            (int)master_wvalid(), (int)(bool)m_master.wready,
+            (int)(bool)m_master.bvalid, (int)master_bready(),
+            (int)master_arvalid(), (int)(bool)m_master.arready, master_araddr(), master_arid(),
+            (int)(bool)m_master.rvalid, (int)master_rready(), done);
     }
 
     size_t find_write_request(uint64_t addr, uint64_t id)
@@ -557,33 +623,12 @@ public:
     {
 #ifndef VERILATOR
         mux.__inst_name = __inst_name + "/mux";
-
         for (size_t i = 0; i < N; ++i) {
-            mux.slaves_in[i].awvalid_in = __VAR_I( s_awvalid[i] );
-            mux.slaves_in[i].awaddr_in  = __VAR_I( s_awaddr[i] );
-            mux.slaves_in[i].awid_in    = __VAR_I( s_awid[i] );
-            mux.slaves_in[i].wvalid_in  = __VAR_I( s_wvalid[i] );
-            mux.slaves_in[i].wdata_in   = __VAR_I( s_wdata[i] );
-            mux.slaves_in[i].wlast_in   = __VAR_I( s_wlast[i] );
-            mux.slaves_in[i].bready_in  = __VAR_I( s_bready[i] );
-
-            mux.slaves_in[i].arvalid_in = __VAR_I( s_arvalid[i] );
-            mux.slaves_in[i].araddr_in  = __VAR_I( s_araddr[i] );
-            mux.slaves_in[i].arid_in    = __VAR_I( s_arid[i] );
-            mux.slaves_in[i].rready_in  = __VAR_I( s_rready[i] );
+            mux.slaves_in[i] = s_slave[i];
         }
+        mux.master_out = m_master;
 
-        mux.master_out.awready_out = __VAR( m_awready );
-        mux.master_out.wready_out  = __VAR( m_wready );
-        mux.master_out.bvalid_out  = __VAR( m_bvalid );
-        mux.master_out.bid_out     = __VAR( m_bid );
-        mux.master_out.arready_out = __VAR( m_arready );
-        mux.master_out.rvalid_out  = __VAR( m_rvalid );
-        mux.master_out.rdata_out   = __VAR( m_rdata );
-        mux.master_out.rlast_out   = __VAR( m_rlast );
-        mux.master_out.rid_out     = __VAR( m_rid );
-
-        mux.debugen_in   = debugen_in;
+        mux.debugen_in = debugen_in;
         mux._assign();
 #endif
     }
@@ -598,27 +643,9 @@ public:
             downstream_read_wait_r = false;
             b_delay = 0;
             r_delay = 0;
-            m_awready.clr();
-            m_wready.clr();
-            m_bvalid.clr();
-            m_bid.clr();
-            m_arready.clr();
-            m_rvalid.clr();
-            m_rlast.clr();
-            m_rid.clr();
-            m_rdata.clr();
+            m_master.clr();
             for (size_t i = 0; i < N; ++i) {
-                s_awvalid[i].clr();
-                s_awaddr[i].clr();
-                s_awid[i].clr();
-                s_wvalid[i].clr();
-                s_wdata[i].clr();
-                s_wlast[i].clr();
-                s_bready[i].clr();
-                s_arvalid[i].clr();
-                s_araddr[i].clr();
-                s_arid[i].clr();
-                s_rready[i].clr();
+                s_slave[i].clr();
                 write_phase[i] = 0;
                 read_phase[i] = 0;
                 write_started[i] = write_done[i] = 0;
@@ -637,27 +664,9 @@ public:
 #endif
 
         for (size_t i = 0; i < N; ++i) {
-            s_awvalid[i].set();
-            s_awaddr[i].set();
-            s_awid[i].set();
-            s_wvalid[i].set();
-            s_wdata[i].set();
-            s_wlast[i].set();
-            s_bready[i].set();
-            s_arvalid[i].set();
-            s_araddr[i].set();
-            s_arid[i].set();
-            s_rready[i].set();
+            s_slave[i].set();
         }
-        m_awready.set();
-        m_wready.set();
-        m_bvalid.set();
-        m_bid.set();
-        m_arready.set();
-        m_rvalid.set();
-        m_rlast.set();
-        m_rid.set();
-        m_rdata.set();
+        m_master.set();
 
         size_t aw_slave = N;
         size_t w_slave = N;
@@ -666,11 +675,11 @@ public:
         bool read_completed_this_cycle[N] = {};
 
         for (size_t i = 0; i < N; ++i) {
-            bool aw_hs = s_awvalid[i] && slave_awready(i);
-            bool w_hs = s_wvalid[i] && slave_wready(i);
-            bool b_hs = slave_bvalid(i) && s_bready[i];
-            bool ar_hs = s_arvalid[i] && slave_arready(i);
-            bool r_hs = slave_rvalid(i) && s_rready[i] && slave_rlast(i);
+            bool aw_hs = s_slave[i].awvalid && slave_awready(i);
+            bool w_hs = s_slave[i].wvalid && slave_wready(i);
+            bool b_hs = slave_bvalid(i) && s_slave[i].bready;
+            bool ar_hs = s_slave[i].arvalid && slave_arready(i);
+            bool r_hs = slave_rvalid(i) && s_slave[i].rready && slave_rlast(i);
 
             if (slave_bvalid(i) && write_phase[i] != 3) {
                 std::print("{:s} ERROR: unexpected B response on slave {}\n", __inst_name, i);
@@ -686,7 +695,7 @@ public:
             }
             if (w_hs) {
                 w_slave = i;
-                s_wvalid[i]._next = 0;
+                s_slave[i]._next.wvalid = 0;
                 write_phase[i] = 3;
             }
             if (b_hs) {
@@ -716,18 +725,18 @@ public:
             }
         }
 
-        if (master_awvalid() && m_awready) {
+        if (master_awvalid() && m_master.awready) {
             aw_slave = find_write_request(master_awaddr(), master_awid());
             if (aw_slave == N || downstream_write_active || downstream_write_wait_b) {
-                std::print("{:s} ERROR: invalid downstream AW handshake aw_slave={} active={} wait_b={} m_awready={} master_awvalid={}\n",
+                std::print("{:s} ERROR: invalid downstream AW handshake aw_slave={} active={} wait_b={} m_master.awready={} master_awvalid={}\n",
                     __inst_name, aw_slave, downstream_write_active, downstream_write_wait_b,
-                    (int)(bool)m_awready, (int)master_awvalid());
+                    (int)(bool)m_master.awready, (int)master_awvalid());
                 error = true;
             }
             else {
-                s_awvalid[aw_slave]._next = 0;
-                s_wvalid[aw_slave]._next = 1;
-                s_wlast[aw_slave]._next = 1;
+                s_slave[aw_slave]._next.awvalid = 0;
+                s_slave[aw_slave]._next.wvalid = 1;
+                s_slave[aw_slave]._next.wlast = 1;
                 write_phase[aw_slave] = 2;
                 downstream_write_active = true;
                 downstream_write_slave = aw_slave;
@@ -753,30 +762,30 @@ public:
             downstream_write_wait_b = true;
             b_delay = random() % 4;
         }
-        if (m_bvalid && master_bready()) {
-            m_bvalid._next = 0;
+        if (m_master.bvalid && master_bready()) {
+            m_master._next.bvalid = 0;
             downstream_write_wait_b = false;
         }
-        else if (!m_bvalid && downstream_write_wait_b) {
+        else if (!m_master.bvalid && downstream_write_wait_b) {
             if (b_delay > 0) {
                 --b_delay;
             }
             else {
-                m_bvalid._next = 1;
-                m_bid._next = downstream_write_id;
+                m_master._next.bvalid = 1;
+                m_master._next.bid = downstream_write_id;
             }
         }
 
-        if (master_arvalid() && m_arready) {
+        if (master_arvalid() && m_master.arready) {
             ar_slave = find_read_request(master_araddr(), master_arid());
             if (ar_slave == N || downstream_read_wait_r) {
-                std::print("{:s} ERROR: invalid downstream AR handshake ar_slave={} wait_r={} m_arready={} master_arvalid={}\n",
+                std::print("{:s} ERROR: invalid downstream AR handshake ar_slave={} wait_r={} m_master.arready={} master_arvalid={}\n",
                     __inst_name, ar_slave, downstream_read_wait_r,
-                    (int)(bool)m_arready, (int)master_arvalid());
+                    (int)(bool)m_master.arready, (int)master_arvalid());
                 error = true;
             }
             else {
-                s_arvalid[ar_slave]._next = 0;
+                s_slave[ar_slave]._next.arvalid = 0;
                 read_phase[ar_slave] = 2;
                 downstream_read_wait_r = true;
                 downstream_read_slave = ar_slave;
@@ -792,20 +801,20 @@ public:
                 }
             }
         }
-        if (m_rvalid && master_rready()) {
-            m_rvalid._next = 0;
-            m_rlast._next = 0;
+        if (m_master.rvalid && master_rready()) {
+            m_master._next.rvalid = 0;
+            m_master._next.rlast = 0;
             downstream_read_wait_r = false;
         }
-        else if (!m_rvalid && downstream_read_wait_r) {
+        else if (!m_master.rvalid && downstream_read_wait_r) {
             if (r_delay > 0) {
                 --r_delay;
             }
             else {
-                m_rvalid._next = 1;
-                m_rlast._next = 1;
-                m_rid._next = downstream_read_id;
-                m_rdata._next = downstream_read_data;
+                m_master._next.rvalid = 1;
+                m_master._next.rlast = 1;
+                m_master._next.rid = downstream_read_id;
+                m_master._next.rdata = downstream_read_data;
             }
         }
 
@@ -816,10 +825,10 @@ public:
                 write_addr[i] = (((uint64_t)i << 20) | (seq << 7) | 0x40) & ((ADDR_WIDTH == 64) ? ~0ULL : ((1ULL << ADDR_WIDTH) - 1));
                 write_id[i] = ((i << 4) ^ seq) & ((1ULL << ID_WIDTH) - 1);
                 write_data[i] = make_data(i, seq, write_addr[i], false);
-                s_awaddr[i]._next = write_addr[i];
-                s_awid[i]._next = write_id[i];
-                s_wdata[i]._next = write_data[i];
-                s_awvalid[i]._next = 1;
+                s_slave[i]._next.awaddr = write_addr[i];
+                s_slave[i]._next.awid = write_id[i];
+                s_slave[i]._next.wdata = write_data[i];
+                s_slave[i]._next.awvalid = 1;
                 write_phase[i] = 1;
             }
             if (!read_completed_this_cycle[i] && read_phase[i] == 0 && read_started[i] < TX_PER_SLAVE) {
@@ -828,19 +837,19 @@ public:
                 read_addr[i] = (((uint64_t)i << 21) | (seq << 8) | 0x80) & ((ADDR_WIDTH == 64) ? ~0ULL : ((1ULL << ADDR_WIDTH) - 1));
                 read_id[i] = ((i << 5) ^ (seq << 1) ^ 1) & ((1ULL << ID_WIDTH) - 1);
                 read_data_ref[i] = make_data(i, seq, read_addr[i], true);
-                s_araddr[i]._next = read_addr[i];
-                s_arid[i]._next = read_id[i];
-                s_arvalid[i]._next = 1;
+                s_slave[i]._next.araddr = read_addr[i];
+                s_slave[i]._next.arid = read_id[i];
+                s_slave[i]._next.arvalid = 1;
                 read_phase[i] = 1;
             }
 
-            s_bready[i]._next = 1;
-            s_rready[i]._next = read_phase[i] == 2;
+            s_slave[i]._next.bready = 1;
+            s_slave[i]._next.rready = read_phase[i] == 2;
         }
 
-        m_awready._next = (random() % 10) != 0;
-        m_wready._next = (random() % 10) != 1;
-        m_arready._next = (random() % 10) != 2;
+        m_master._next.awready = (random() % 10) != 0;
+        m_master._next.wready = (random() % 10) != 1;
+        m_master._next.arready = (random() % 10) != 2;
 
         done = all_done();
         debug_print_cycle();
@@ -857,27 +866,9 @@ public:
         mux._strobe();
 #endif
         for (size_t i = 0; i < N; ++i) {
-            s_awvalid[i].strobe();
-            s_awaddr[i].strobe();
-            s_awid[i].strobe();
-            s_wvalid[i].strobe();
-            s_wdata[i].strobe();
-            s_wlast[i].strobe();
-            s_bready[i].strobe();
-            s_arvalid[i].strobe();
-            s_araddr[i].strobe();
-            s_arid[i].strobe();
-            s_rready[i].strobe();
+            s_slave[i].strobe();
         }
-        m_awready.strobe();
-        m_wready.strobe();
-        m_bvalid.strobe();
-        m_bid.strobe();
-        m_arready.strobe();
-        m_rvalid.strobe();
-        m_rlast.strobe();
-        m_rid.strobe();
-        m_rdata.strobe();
+        m_master.strobe();
     }
 
     void _work_neg(bool reset)
@@ -934,7 +925,7 @@ public:
             }
             std::print("{:s}: downstream write_active={} write_wait_b={} read_wait_r={} bvalid={} rvalid={}\n",
                 __inst_name, downstream_write_active, downstream_write_wait_b, downstream_read_wait_r,
-                (int)(bool)m_bvalid, (int)(bool)m_rvalid);
+                (int)(bool)m_master.bvalid, (int)(bool)m_master.rvalid);
             error = true;
         }
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
