@@ -390,12 +390,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + prefix + base + "__" + member + suffix;
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
-                base = sub[0].sub[0].str();
-                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; })) {
+//                base = sub[0].sub[0].str();  dont break base
+                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); })) {
                     if (member == "_work") {  // dont call _work() for members
                         return "";
                     }
-                    if (interface && str_ending(base, "_out")) {  // for Port structs
+                    if (interface && str_ending(sub[0].sub[0].str(), "_out")) {  // for Port structs
                         if (str_ending(member, "_out")) {
                             member.replace(member.length() - 4, 4, "_in");
                         } else
@@ -456,10 +456,10 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
-                base = sub[0].sub[0].str();
+//                base = sub[0].sub[0].str();  dont do this, dont break base
                 if (sub[0].sub[0].str() != "_this"
-                    && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; }) || interface)) {
-                    if (interface && str_ending(base, "_out")) {  // for Port structs
+                    && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); }) || interface)) {
+                    if (interface && str_ending(sub[0].sub[0].str(), "_out")) {  // for Port structs
                         if (str_ending(member, "_out")) {
                             member.replace(member.length() - 4, 4, "_in");
                         } else

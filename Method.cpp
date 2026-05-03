@@ -144,7 +144,7 @@ bool Method::printAssigns(std::ofstream& out)
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";
                         }
                     }
-                    if ((e.type == Expr::EXPR_OPERATORCALL || e.type == Expr::EXPR_MEMBERCALL ) && e.value == "assign" && e.sub.size() > 4) {  // Port structire
+                    if ((e.type == Expr::EXPR_OPERATORCALL || e.type == Expr::EXPR_MEMBERCALL ) && e.value == "assignIf" && e.sub.size() > 4) {  // Port structure
                         auto tmp = Expr{"gen", Expr::EXPR_BODY};
                         std::string left = e.sub[3].str();
                         if (e.sub[3].type == Expr::EXPR_MEMBER && e.sub[3].sub[0].type == Expr::EXPR_INDEX) {
