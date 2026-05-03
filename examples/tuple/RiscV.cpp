@@ -169,7 +169,7 @@ public:
 
 };
 
-// C++HDL INLINE TEST ///////////////////////////////////////////////////
+// CppHDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -258,7 +258,7 @@ public:
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._assign();
-#else  // connecting Verilator to C++HDL
+#else  // connecting Verilator to CppHDL
         dmem.read_in = __EXPR( (bool)riscv.dmem_read_out );
         dmem.read_addr_in = __EXPR( (uint32_t)riscv.dmem_read_addr_out );
         dmem.write_in = __EXPR( (bool)riscv.dmem_write_out );
@@ -339,7 +339,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestRiscV...");
 #else
-        std::print("C++HDL TestRiscV...");
+        std::print("CppHDL TestRiscV...");
 #endif
         if (debugen_in) {
             std::print("\n");

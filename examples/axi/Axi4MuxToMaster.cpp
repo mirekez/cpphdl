@@ -12,122 +12,16 @@ using namespace cpphdl;
 #include <cstdint>
 #include <type_traits>
 
-template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH> struct Axi4If;
+#include "Axi4.h"
 
-template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-struct Axi4Driver
-{
-    bool awvalid;
-    u<ADDR_WIDTH> awaddr;
-    u<ID_WIDTH> awid;
-
-    bool wvalid;
-    logic<DATA_WIDTH> wdata;
-    bool wlast;
-
-    bool bready;
-
-    bool arvalid;
-    u<ADDR_WIDTH> araddr;
-    u<ID_WIDTH> arid;
-
-    bool rready;
-
-    Axi4Driver& operator=(const Axi4Driver&) = default;
-};
-
-template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-struct Axi4Responder
-{
-    bool awready;
-    bool wready;
-    bool bvalid;
-    u<ID_WIDTH> bid;
-
-    bool arready;
-    bool rvalid;
-    logic<DATA_WIDTH> rdata;
-    bool rlast;
-    u<ID_WIDTH> rid;
-
-    Axi4Responder& operator=(const Axi4Responder&) = default;
-};
-
-template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-struct Axi4If : Interface
-{
-    __PORT(bool)               awvalid_in;
-    __PORT(bool)               awready_out;
-    __PORT(u<ADDR_WIDTH>)      awaddr_in;
-    __PORT(u<ID_WIDTH>)        awid_in;
-
-    __PORT(bool)               wvalid_in;
-    __PORT(bool)               wready_out;
-    __PORT(logic<DATA_WIDTH>)  wdata_in;
-    __PORT(bool)               wlast_in;
-
-    __PORT(bool)               bvalid_out;
-    __PORT(bool)               bready_in;
-    __PORT(u<ID_WIDTH>)        bid_out;
-
-    __PORT(bool)               arvalid_in;
-    __PORT(bool)               arready_out;
-    __PORT(u<ADDR_WIDTH>)      araddr_in;
-    __PORT(u<ID_WIDTH>)        arid_in;
-
-    __PORT(bool)               rvalid_out;
-    __PORT(bool)               rready_in;
-    __PORT(logic<DATA_WIDTH>)  rdata_out;
-    __PORT(bool)               rlast_out;
-    __PORT(u<ID_WIDTH>)        rid_out;
-
-    Axi4If& operator=(Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>& other)
-    {
-        Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>* p = &other;
-        awvalid_in = [p]() { return &p->awvalid; };
-        awaddr_in = [p]() { return &p->awaddr; };
-        awid_in = [p]() { return &p->awid; };
-
-        wvalid_in = [p]() { return &p->wvalid; };
-        wdata_in = [p]() { return &p->wdata; };
-        wlast_in = [p]() { return &p->wlast; };
-
-        bready_in = [p]() { return &p->bready; };
-
-        arvalid_in = [p]() { return &p->arvalid; };
-        araddr_in = [p]() { return &p->araddr; };
-        arid_in = [p]() { return &p->arid; };
-
-        rready_in = [p]() { return &p->rready; };
-        return *this;
-    }
-
-    Axi4If& operator=(Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>& other)
-    {
-        Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>* p = &other;
-        awready_out = [p]() { return &p->awready; };
-        wready_out = [p]() { return &p->wready; };
-
-        bvalid_out = [p]() { return &p->bvalid; };
-        bid_out = [p]() { return &p->bid; };
-
-        arready_out = [p]() { return &p->arready; };
-        rvalid_out = [p]() { return &p->rvalid; };
-        rdata_out = [p]() { return &p->rdata; };
-        rlast_out = [p]() { return &p->rlast; };
-        rid_out = [p]() { return &p->rid; };
-        return *this;
-    }
-};
-
-// C++HDL MODEL /////////////////////////////////////////////////////////
+// CppHDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t N, size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-class Axi4Mux : public Module
+class Axi4MuxToMaster : public Module
 {
 public:
-    Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    master_out;
     Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    slaves_in[N];
+    Axi4If<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>    master_out;
 private:
     // Round-robin pointers
     reg<u<clog2(N)>> rr_aw, rr_ar;
@@ -265,10 +159,10 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// C++HDL INLINE TEST ///////////////////////////////////////////////////
+// CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Axi4Mux<4,32,8,128>;
-template class Axi4Mux<8,64,16,512>;
+template class Axi4MuxToMaster<4,32,8,128>;
+template class Axi4MuxToMaster<8,64,16,512>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -289,12 +183,12 @@ template class Axi4Mux<8,64,16,512>;
 long sys_clock = -1;
 
 template<size_t N, size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-class TestAxi4Mux : public Module
+class TestAxi4MuxToMaster : public Module
 {
 #ifdef VERILATOR
     VERILATOR_MODEL mux;
 #else
-    Axi4Mux<N,ADDR_WIDTH,ID_WIDTH,DATA_WIDTH> mux;
+    Axi4MuxToMaster<N,ADDR_WIDTH,ID_WIDTH,DATA_WIDTH> mux;
 #endif
     reg<Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>> s_slave[N];
     reg<Axi4Responder<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>> m_master;
@@ -328,12 +222,12 @@ public:
 
     bool debugen_in;
 
-    TestAxi4Mux(bool debug)
+    TestAxi4MuxToMaster(bool debug)
     {
         debugen_in = debug;
     }
 
-    ~TestAxi4Mux()
+    ~TestAxi4MuxToMaster()
     {
     }
 
@@ -887,9 +781,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestAxi4Mux, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
+        std::print("VERILATOR TestAxi4MuxToMaster, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
 #else
-        std::print("C++HDL TestAxi4Mux, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
+        std::print("CppHDL TestAxi4MuxToMaster, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -956,13 +850,13 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "Axi4Mux", {"Predef_pkg"}, {"../../../../include"}, 4, 32, 8, 128);
-        ok &= VerilatorCompile(__FILE__, "Axi4Mux", {"Predef_pkg"}, {"../../../../include"}, 8, 64, 16, 512);
+        ok &= VerilatorCompile(__FILE__, "Axi4MuxToMaster", {"Predef_pkg"}, {"../../../../include"}, 4, 32, 8, 128);
+        ok &= VerilatorCompile(__FILE__, "Axi4MuxToMaster", {"Predef_pkg"}, {"../../../../include"}, 8, 64, 16, 512);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("Axi4Mux_4_32_8_128/obj_dir/VAxi4Mux") + (debug?" --debug":"") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 1) || std::system((std::string("Axi4Mux_8_64_16_512/obj_dir/VAxi4Mux") + (debug?" --debug":"") + " 1").c_str()) == 0)
+            && ((only != -1 && only != 0) || std::system((std::string("Axi4MuxToMaster_4_32_8_128/obj_dir/VAxi4MuxToMaster") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && ((only != -1 && only != 1) || std::system((std::string("Axi4MuxToMaster_8_64_16_512/obj_dir/VAxi4MuxToMaster") + (debug?" --debug":"") + " 1").c_str()) == 0)
         );
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
@@ -971,8 +865,8 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestAxi4Mux<4,32,8,128>(debug).run())
-        && ((only != -1 && only != 1) || TestAxi4Mux<8,64,16,512>(debug).run())
+        && ((only != -1 && only != 0) || TestAxi4MuxToMaster<4,32,8,128>(debug).run())
+        && ((only != -1 && only != 1) || TestAxi4MuxToMaster<8,64,16,512>(debug).run())
     );
 }
 

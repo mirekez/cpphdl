@@ -9,7 +9,7 @@
 
 using namespace cpphdl;
 
-// C++HDL MODEL /////////////////////////////////////////////////////////
+// CppHDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
@@ -132,7 +132,7 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// C++HDL INLINE TEST ///////////////////////////////////////////////////
+// CppHDL INLINE TEST ///////////////////////////////////////////////////
 
 template class Fifo<64,65536,1>;
 template class Fifo<64,65536,0>;
@@ -312,7 +312,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
 #else
-        std::print("C++HDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+        std::print("CppHDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
 #endif
         if (debugen_in) {
             std::print("\n");
