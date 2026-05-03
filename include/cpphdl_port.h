@@ -161,18 +161,6 @@ private:
 class Interface  // Interface can have both direction signals
 {
 public:
-
-    template<typename ModA, typename ModB, typename A, typename B>
-    void assign(ModA& modA, ModB& modB, A& a, B& b)
-    {
-        a = b;
-        modA._assign();
-        b = a;
-        modB._assign();
-        a = b;
-        modA._assign();
-    }
-
 };
 
 
