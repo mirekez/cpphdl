@@ -5,6 +5,7 @@
 #include "Method.h"
 
 #include <algorithm>
+#include <iostream>
 
 using namespace cpphdl;
 
@@ -19,14 +20,16 @@ void Optimizer::collectAccesses(Expr& expr, std::unordered_map<std::string, VarS
                         curr = &curr->sub[0];
                     }
                 }
-                if (curr->type == Expr::EXPR_MEMBER && curr->value == "_next" && curr->sub.size()) {
+                while (curr->type == Expr::EXPR_MEMBER && curr->sub.size()) {  // we take only very base of expression to check access count
                     curr = &curr->sub[0];
+                    while ((curr->type == Expr::EXPR_CAST || curr->type == Expr::EXPR_UNARY) && curr->sub.size()) {
+                        curr = &curr->sub[0];
+                    }
                 }
-                std::string name = curr->value;
-                if (name.empty()) {
-                    name = curr->str();
-                }
+
+                std::string name = curr->str();
                 if (!name.empty()) {
+//std::cout << "~~~~~ " << name << " was accessed:" << e.debug() << "\n";
                     auto& stat = vars[name];
                     ++stat.accessed;
                 }
@@ -42,7 +45,7 @@ void Optimizer::replaceAssignments(Expr& expr, const std::unordered_map<std::str
             if ((e.type == Expr::EXPR_BINARY || e.type == Expr::EXPR_OPERATORCALL) && e.value == "=" && e.sub.size() >= 2) {
                 // traverse left side of =
                 e.sub[0].traverseIf([&](auto& e1){
-                        if (e1.type == Expr::EXPR_MEMBER || e1.type == Expr::EXPR_VAR || e1.type == Expr::EXPR_INDEX) {
+                        if (e1.type == Expr::EXPR_MEMBER && e1.value == "_next" && e1.sub.size()) {
                             Expr* curr = &e1;
                             if (curr->type == Expr::EXPR_INDEX && curr->sub.size()) {
                                 curr = &curr->sub[0];
@@ -50,19 +53,20 @@ void Optimizer::replaceAssignments(Expr& expr, const std::unordered_map<std::str
                                     curr = &curr->sub[0];
                                 }
                             }
-                            if (curr->type == Expr::EXPR_MEMBER && curr->value == "_next" && curr->sub.size()) {
-                                std::string name = curr->sub[0].value;
-                                if (name.empty()) {
-                                    name = curr->sub[0].str();
-                                }
-                                auto stat = vars.find(name);
-                                if (stat != vars.end() && stat->second.accessed == 1 && currModule && currModule->isReg(name)) {
-                                    *curr = curr->sub[0];
-                                    e.value = "<=";
-                                    currModule->onceAccessedRegs.insert(name);
+                            if (curr->type == Expr::EXPR_MEMBER && curr->sub.size()) {    // we take only very base of expression to check access count
+                                curr = &curr->sub[0];
+                                while ((curr->type == Expr::EXPR_CAST || curr->type == Expr::EXPR_UNARY) && curr->sub.size()) {
+                                    curr = &curr->sub[0];
                                 }
                             }
 
+                            std::string name = curr->str();
+                            auto stat = vars.find(name);
+                            if (stat != vars.end() && stat->second.accessed == 1 && currModule && currModule->isReg(name)) {
+                                e1 = e1.sub[0];  // remove _next
+                                e.value = "<=";
+                                currModule->onceAccessedRegs.insert(name);
+                            }
                         }
                         return false;
                     });
