@@ -3,7 +3,6 @@
 #include "Method.h"
 #include "Field.h"
 #include "Expr.h"
-#include "Comb.h"
 #include "Struct.h"
 #include "Enum.h"
 

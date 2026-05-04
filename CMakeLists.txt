@@ -38,6 +38,8 @@ project(cpphdl
   VERSION 0.8
   LANGUAGES CXX)
 
+option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
+
 include(CTest)
 
 add_definitions(-DSTATIC_BUILD)
@@ -71,3 +73,6 @@ target_link_libraries(cpphdl PRIVATE
 
 add_subdirectory(examples)
 add_subdirectory(tribe)
+if(CPPHDL_BUILD_HDLCPP)
+  add_subdirectory(hdlcpp)
+endif()
