@@ -5,7 +5,6 @@
 #include "Method.h"
 
 #include <algorithm>
-#include <iostream>
 
 using namespace cpphdl;
 
@@ -20,7 +19,7 @@ void Optimizer::collectAccesses(Expr& expr, std::unordered_map<std::string, VarS
                         curr = &curr->sub[0];
                     }
                 }
-                while (curr->type == Expr::EXPR_MEMBER && curr->sub.size()) {  // we take only very base of expression to check access count
+                while (curr->type == Expr::EXPR_MEMBER && curr->sub.size() && curr->sub[0].type != Expr::EXPR_NONE) {  // we take only very base of expression to check access count
                     curr = &curr->sub[0];
                     while ((curr->type == Expr::EXPR_CAST || curr->type == Expr::EXPR_UNARY) && curr->sub.size()) {
                         curr = &curr->sub[0];
@@ -53,7 +52,7 @@ void Optimizer::replaceAssignments(Expr& expr, const std::unordered_map<std::str
                                     curr = &curr->sub[0];
                                 }
                             }
-                            if (curr->type == Expr::EXPR_MEMBER && curr->sub.size()) {    // we take only very base of expression to check access count
+                            if (curr->type == Expr::EXPR_MEMBER && curr->sub.size() && curr->sub[0].type != Expr::EXPR_NONE) {    // we take only very base of expression to check access count
                                 curr = &curr->sub[0];
                                 while ((curr->type == Expr::EXPR_CAST || curr->type == Expr::EXPR_UNARY) && curr->sub.size()) {
                                     curr = &curr->sub[0];
