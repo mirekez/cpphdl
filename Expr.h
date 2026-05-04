@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <unordered_map>
 
 namespace cpphdl
 {
@@ -85,7 +86,7 @@ struct Expr
         }
         for (auto& expr : sub) {
             if (expr.traverseIf(checker/*, param*/)) {
-                return true;
+//                return true;
             }
         }
         return false;
@@ -150,6 +151,8 @@ struct Expr
 
 
 }
+
+// some inline functions
 
 #include <string.h>
 

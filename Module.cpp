@@ -4,6 +4,7 @@
 #include "Field.h"
 #include "Expr.h"
 #include "Comb.h"
+#include "Optimizer.h"
 
 #include <fstream>
 
@@ -38,6 +39,7 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
 bool Module::print(std::ofstream& out)
 {
     currModule = this;
+    onceAccessedRegs.clear();
 
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
@@ -96,11 +98,15 @@ bool Module::print(std::ofstream& out)
     out << "    // members\n";
     printMembers(out);
 
+    Optimizer opt;
+    opt.optimizeBlocking(methods);
+
     out << "\n";
     out << "    // tmp variables\n";
     for (auto& field : vars) {  // tmp vars
         field.indent = 1;
-        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+        if (onceAccessedRegs.find(field.name) == onceAccessedRegs.end()
+            && field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             field.expr.flags |= Expr::FLAG_NOTREG;
             if (!field.print(out, "_tmp")) {
                 return false;
@@ -120,12 +126,12 @@ bool Module::print(std::ofstream& out)
         }
     }
 
-
     out << "\n";
     out << "    always @(posedge clk) begin\n";
     for (auto& field : vars) {  // strobe
         field.indent = 1;
-        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+        if (onceAccessedRegs.find(field.name) == onceAccessedRegs.end()
+            && field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             out << "        " << field.name << "_tmp = " << field.name << ";\n";
         }
     }
@@ -134,7 +140,8 @@ bool Module::print(std::ofstream& out)
     out << "\n";
     for (auto& field : vars) {  // strobe
         field.indent = 1;
-        if (field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
+        if (onceAccessedRegs.find(field.name) == onceAccessedRegs.end()
+            && field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
             out << "        " << field.name << " <= " << field.name << "_tmp;\n";
         }
     }
@@ -369,4 +376,13 @@ bool Module::printMembers(std::ofstream& out)
         }
     }
     return true;
+}
+
+bool Module::isReg(const std::string& name)
+{
+    return std::any_of(vars.begin(), vars.end(), [&](auto& field) {
+        return field.name == name && field.expr.traverseIf([](auto& e) {
+            return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg";
+        });
+    });
 }

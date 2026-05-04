@@ -47,7 +47,7 @@ find_package(Clang REQUIRED CONFIG PATHS .conda/lib/cmake/clang)
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${CLANG_INCLUDE_DIRS})
 
-add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Struct.cpp Enum.cpp)
+add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp)
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c -std=c++23)

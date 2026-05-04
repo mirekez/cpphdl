@@ -25,12 +25,15 @@ struct Module
     std::string origName;
     std::vector<Field> aliases;
     std::vector<Field> wires;  // made during generation
+    std::unordered_set<std::string> onceAccessedRegs;
 
     // methods
 
     void printImports(std::ofstream& out, std::unordered_set<std::string>* imports = 0);
     bool print(std::ofstream& out);
     bool printMembers(std::ofstream& out);
+    bool isReg(const std::string& name);
+
 };
 
 
