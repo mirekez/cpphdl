@@ -22,8 +22,6 @@ struct Axi4Driver
     u<ID_WIDTH> arid;
 
     bool rready;
-
-    Axi4Driver& operator=(const Axi4Driver&) = default;
 };
 
 template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
@@ -39,8 +37,6 @@ struct Axi4Responder
     logic<DATA_WIDTH> rdata;
     bool rlast;
     u<ID_WIDTH> rid;
-
-    Axi4Responder& operator=(const Axi4Responder&) = default;
 };
 
 template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
