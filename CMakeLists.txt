@@ -72,6 +72,7 @@ target_link_libraries(cpphdl PRIVATE
 )
 
 add_subdirectory(examples)
+add_subdirectory(tests)
 add_subdirectory(tribe)
 if(CPPHDL_BUILD_HDLCPP)
   add_subdirectory(hdlcpp)
