@@ -127,7 +127,7 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 1. Optional private zone with nested modules
 2. Public zone with I/O ports definitions and *\_assign*() function body
 3. Optional private zone for registers and variables
-3. Public zone with *\_work(reset)*, *\_strobe*() and combinational functions bodies
+4. Public zone with *\_work(reset)*, *\_strobe*(), *\_work_neg(reset)*, *\_strobe_neg*() and combinational functions bodies
 
 &nbsp;&nbsp;&nbsp;&nbsp;In the following block of code a simple FIFO model RTL shown as a basic CppHDL example:
 
@@ -518,42 +518,128 @@ public:
 
 ## Interfaces
 
-&nbsp;&nbsp;&nbsp;&nbsp;Interfaces are special structures which consist of ports of any direction. There is no need in
-mating structure. Both master and slave can use similar structure woth ways like `slave_in.rdata_out` and `master_out.rdata_out`.
-Second port will be converted to `master_out__rdata_in` in SystemVerilog. Check `Axi4Mux.cpp` example for details.
+&nbsp;&nbsp;&nbsp;&nbsp;Interfaces are special structures which consist of ports of any direction. There is no need for
+separate "driver" and "responder" interface types: both sides use the same `Interface` type, and the
+port suffix (`_in` or `_out`) describes signal direction relative to each module. For example,
+`source_out.valid_in` and `sink_in.valid_in` are both the valid signal driven by the source and consumed
+by the sink. During SystemVerilog conversion these names are flattened, for example
+`source_out.valid_in` becomes `source_out__valid_out` on the driver module.
 
 ```cpp
 
-template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
-struct Axi4If : Interface
+template<size_t DATAWIDTH>
+struct DataValidReady
 {
-    __PORT(bool)               awvalid_in;
-    __PORT(bool)               awready_out;
-    __PORT(u<ADDR_WIDTH>)      awaddr_in;
-    __PORT(u<ID_WIDTH>)        awid_in;
+    bool valid;
+    bool ready;
+    logic<DATAWIDTH> data;
+};
 
-    __PORT(bool)               wvalid_in;
-    __PORT(bool)               wready_out;
-    __PORT(logic<DATA_WIDTH>)  wdata_in;
-    __PORT(bool)               wlast_in;
+template<size_t DATAWIDTH>
+struct DataValidReadyIf : public Interface
+{
+    __PORT(bool) valid_in;
+    __PORT(bool) ready_out;
+    __PORT(logic<DATAWIDTH>) data_in;
+};
 
-    __PORT(bool)               bvalid_out;
-    __PORT(bool)               bready_in;
-    __PORT(u<ID_WIDTH>)        bid_out;
+template<size_t DATAWIDTH>
+class VRDriver : public Module
+{
+public:
+    DataValidReadyIf<DATAWIDTH> source_out;
 
-    __PORT(bool)               arvalid_in;
-    __PORT(bool)               arready_out;
-    __PORT(u<ADDR_WIDTH>)      araddr_in;
-    __PORT(u<ID_WIDTH>)        arid_in;
+private:
+    reg<u1> valid_reg;
+    reg<logic<DATAWIDTH>> data_reg;
 
-    __PORT(bool)               rvalid_out;
-    __PORT(bool)               rready_in;
-    __PORT(logic<DATA_WIDTH>)  rdata_out;
-    __PORT(bool)               rlast_out;
-    __PORT(u<ID_WIDTH>)        rid_out;
+public:
+    void _assign()
+    {
+        source_out.valid_in = __VAR(valid_reg);
+        source_out.data_in = __VAR(data_reg);
+    }
+
+    void _work(bool reset)
+    {
+        if (reset) {
+            valid_reg.clr();
+            data_reg.clr();
+            return;
+        }
+
+        valid_reg._next = 1;
+        if (!valid_reg || source_out.ready_out()) {
+            data_reg._next = data_reg + logic<DATAWIDTH>(1);
+        }
+    }
+
+    void _strobe()
+    {
+        valid_reg.strobe();
+        data_reg.strobe();
+    }
+};
+
+template<size_t DATAWIDTH>
+class VRResponder : public Module
+{
+public:
+    DataValidReadyIf<DATAWIDTH> sink_in;
+
+private:
+    reg<u1> ready_reg;
+    reg<logic<DATAWIDTH>> last_data_reg;
+
+public:
+    void _assign()
+    {
+        sink_in.ready_out = __VAR(ready_reg);
+    }
+
+    void _work(bool reset)
+    {
+        if (reset) {
+            ready_reg.clr();
+            last_data_reg.clr();
+            return;
+        }
+
+        ready_reg._next = 1;
+        if (sink_in.valid_in() && sink_in.ready_out()) {
+            last_data_reg._next = sink_in.data_in();
+        }
+    }
+
+    void _strobe()
+    {
+        ready_reg.strobe();
+        last_data_reg.strobe();
+    }
+};
+
+class TestValidReady : public Module
+{
+    VRDriver<32> driver;
+    VRResponder<32> responder;
+
+public:
+    void _assign()
+    {
+        driver.__inst_name = __inst_name + "/driver";
+        responder.__inst_name = __inst_name + "/responder";
+        assignIf(driver, responder, driver.source_out, responder.sink_in);
+    }
 };
 
 ```
+
+&nbsp;&nbsp;&nbsp;&nbsp;`assignIf(modA, modB, ifA, ifB)` connects two interface instances and calls the modules'
+`_assign()` methods in the order needed for bidirectional interface signals. This is important for
+interfaces such as valid-ready, where one module drives `valid` and `data`, while the other drives
+`ready`. Use it from a parent module or test wrapper after setting instance names. Check
+`examples/axi/Axi4MuxFromSlave.cpp`, `examples/axi/Axi4MuxToMaster.cpp`, and
+`tests/interface/ValidReady.cpp` for larger examples.
 
 # CppHDL SV Conversion tool
 
@@ -586,4 +672,3 @@ cpphdl <source.h> <source.cpp> ... [compilation parameters]
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The cpphdl tool is based on llvm clang and supports all usual C++ command line parameters.
-
