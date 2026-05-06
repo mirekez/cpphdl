@@ -48,22 +48,13 @@ static uint32_t mem_word(uint32_t word)
     return x;
 }
 
-static uint32_t expected_read(uint32_t addr)
-{
-    uint32_t lo = mem_word(addr >> 2);
-    if ((addr & 0x3) == 0) {
-        return lo;
-    }
-    uint32_t hi = mem_word((addr >> 2) + 1);
-    return (lo >> 16) | (hi << 16);
-}
-
+template<int CACHE_ID>
 class TestL1Cache : public Module
 {
 #ifdef VERILATOR
     VERILATOR_MODEL cache;
 #else
-    L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS> cache;
+    L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS> cache;
 #endif
     Ram<32, RAM_WORDS, 7> ram;
 
@@ -159,6 +150,17 @@ public:
 #endif
     }
 
+    uint32_t expected_ram_read(uint32_t request_addr)
+    {
+        uint32_t lo = (uint32_t)ram.ram.buffer[request_addr >> 2];
+        uint32_t shift = (request_addr & 0x3) * 8;
+        if (shift == 0) {
+            return lo;
+        }
+        uint32_t hi = (uint32_t)ram.ram.buffer[(request_addr >> 2) + 1];
+        return (lo >> shift) | (hi << (32 - shift));
+    }
+
     void eval(bool reset)
     {
 #ifdef VERILATOR
@@ -241,7 +243,7 @@ public:
 
     void check_result(const char* phase, uint32_t request_addr)
     {
-        uint32_t expected = expected_read(request_addr);
+        uint32_t expected = expected_ram_read(request_addr);
         if (!valid() || raddr() != request_addr || rdata() != expected) {
             std::print("\n{} ERROR addr={:#x}: valid={} raddr={:#x} data={:#x} expected={:#x} busy={}\n",
                 phase, request_addr, valid(), raddr(), rdata(), expected, busy());
@@ -306,6 +308,129 @@ public:
         cycle(false);
     }
 
+    void write_word(uint32_t request_addr, uint32_t data)
+    {
+        idle();
+        addr = request_addr;
+        write_data = data;
+        write_mask = 0xF;
+        write = true;
+        read = false;
+        stall = false;
+        flush = false;
+        cycle(false);
+        write = false;
+        write_mask = 0;
+        cycle(false);
+    }
+
+    void focused_refill_assembly_check()
+    {
+        uint32_t request_addr = 5 * SETS * LINE_SIZE + 3 * LINE_SIZE + 2;
+        read_check("focused refill addr[1]", request_addr, false);
+        read_check("focused hit addr[1]", request_addr, true);
+    }
+
+    void focused_store_invalidate_check()
+    {
+        uint32_t request_addr = 6 * SETS * LINE_SIZE + 4 * LINE_SIZE + 8;
+        read_check("focused store fill", request_addr, false);
+        write_word(request_addr, 0xa55a33cc);
+        read_check("focused store reload miss", request_addr, false);
+        read_check("focused store reload hit", request_addr, true);
+    }
+
+    void focused_flush_cached_hit_check()
+    {
+        uint32_t old_addr = 7 * SETS * LINE_SIZE + 5 * LINE_SIZE;
+        uint32_t target_addr = 8 * SETS * LINE_SIZE + 6 * LINE_SIZE + 2;
+        read_check("focused flush target fill", target_addr, false);
+        idle();
+
+        addr = old_addr;
+        read = true;
+        stall = false;
+        flush = false;
+        cycle(false);
+
+        addr = target_addr;
+        stall = true;
+        flush = true;
+        cycle(false);
+
+        flush = false;
+        stall = false;
+        cycle(false);
+
+        if (busy()) {
+            std::print("\nfocused flush cached hit ERROR addr={:#x}: redirect hit asserted busy\n", target_addr);
+            error = true;
+        }
+        check_result("focused flush cached hit", target_addr);
+
+        read = false;
+        cycle(false);
+    }
+
+    void focused_flush_miss_check()
+    {
+        uint32_t old_addr = 9 * SETS * LINE_SIZE + 7 * LINE_SIZE;
+        uint32_t target_addr = 10 * SETS * LINE_SIZE + 8 * LINE_SIZE + 2;
+        idle();
+
+        addr = old_addr;
+        read = true;
+        stall = false;
+        flush = false;
+        cycle(false);
+
+        addr = target_addr;
+        stall = true;
+        flush = true;
+        cycle(false);
+
+        flush = false;
+        stall = false;
+
+        bool got = false;
+        bool saw_old = false;
+        bool saw_busy = false;
+        for (size_t i = 0; i < 80 && !got; ++i) {
+            cycle(false);
+            saw_busy |= busy();
+            if (valid() && raddr() == old_addr) {
+                saw_old = true;
+            }
+            if (valid() && raddr() == target_addr) {
+                check_result("focused flush miss", target_addr);
+                got = true;
+            }
+        }
+
+        if (saw_old || !saw_busy || !got) {
+            std::print("\nfocused flush miss ERROR old_seen={} saw_busy={} got={} target={:#x} valid={} raddr={:#x}\n",
+                saw_old, saw_busy, got, target_addr, valid(), raddr());
+            error = true;
+        }
+
+        read = false;
+        cycle(false);
+    }
+
+    void focused_checks()
+    {
+        focused_refill_assembly_check();
+        if (!error) {
+            focused_store_invalidate_check();
+        }
+        if (!error) {
+            focused_flush_cached_hit_check();
+        }
+        if (!error) {
+            focused_flush_miss_check();
+        }
+    }
+
     uint32_t line_addr(uint32_t tag, uint32_t set, uint32_t salt)
     {
         uint32_t half_offset = ((salt * 7 + set * 5 + tag * 3) % 15) * 2;
@@ -320,7 +445,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestL1Cache...");
 #else
-        std::print("CppHDL TestL1Cache...");
+        std::print("CppHDL TestL1Cache<ID={}>...", CACHE_ID);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "l1cache_test";
@@ -344,6 +469,9 @@ public:
         }
         for (uint32_t set = 0; set < SETS && !error; ++set) {
             read_check("third tag miss", line_addr(2, set, 5), false);
+        }
+        if (!error) {
+            focused_checks();
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
@@ -380,7 +508,13 @@ int main(int argc, char** argv)
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !(ok && TestL1Cache().run());
+#ifdef VERILATOR
+    ok = ok && TestL1Cache<0>().run();
+#else
+    ok = ok && TestL1Cache<0>().run();
+    ok = ok && TestL1Cache<1>().run();
+#endif
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

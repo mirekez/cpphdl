@@ -259,7 +259,7 @@ bool state_for(std::string_view name, uint32_t raw, State& out)
                        0b010, crd_rs1(raw), 2);
     } else if (name == "c.mv" || name == "c.add") {
         out = expected(0, name == "c.mv" ? Alu::PASS : Alu::ADD, Mem::MNONE, Wb::ALU,
-                       Br::BNONE, 0b010, crd_rs1(raw), crd_rs1(raw), crs2(raw));
+                       Br::BNONE, 0b010, crd_rs1(raw), name == "c.mv" ? 0 : crd_rs1(raw), crs2(raw));
     } else if (name == "c.jr") {
         out = expected(0, Alu::ANONE, Mem::MNONE, Wb::PC2, Br::JR, 0b010, 0, crd_rs1(raw));
     } else if (name == "c.jalr") {

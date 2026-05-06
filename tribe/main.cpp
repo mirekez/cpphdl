@@ -55,6 +55,8 @@ private:
     reg<u1>         valid;
 
     reg<u32>        alu_result_reg;
+    reg<u32>        load_data_reg;
+    reg<u1>         load_data_valid_reg;
 
     reg<array<State,STAGES_NUM-1>> state_reg;
 
@@ -104,18 +106,59 @@ private:
     }
 
     __LAZY_COMB(cache_busy_comb, bool)
-        return cache_busy_comb = icache_wait_comb_func() || dcache_wait_comb_func();
+        return cache_busy_comb = dcache_wait_comb_func() || wb_mem_wait_comb_func();
+    }
+
+    __LAZY_COMB(fetch_valid_comb, bool)
+        return fetch_valid_comb = valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc;
+    }
+
+    __LAZY_COMB(load_response_comb, bool)
+        return load_response_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg;
+    }
+
+    __LAZY_COMB(wb_mem_valid_comb, bool)
+        return wb_mem_valid_comb = load_data_valid_reg || load_response_comb_func();
+    }
+
+    __LAZY_COMB(wb_write_ready_comb, bool)
+        return wb_write_ready_comb = state_reg[1].wb_op != Wb::MEM || wb_mem_valid_comb_func();
+    }
+
+    __LAZY_COMB(wb_mem_wait_comb, bool)
+        return wb_mem_wait_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            !wb_mem_valid_comb_func();
+    }
+
+    __LAZY_COMB(wb_mem_data_comb, uint32_t)
+        return wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
+            (load_response_comb_func() ? dcache.read_data_out() : (uint32_t)0);
     }
 
     __LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
-        if (valid && !stall_comb_func()) {
+        if (fetch_valid_comb_func() && !stall_comb_func()) {
             fetch_addr_comb = pc + ((dec.instr_in()&3)==3?4:2);
         }
         if (state_reg[0].valid && exe.branch_taken_out()) {
             fetch_addr_comb = exe.branch_target_out();
         }
         return fetch_addr_comb;
+    }
+
+    __LAZY_COMB(exe_state_comb, State)
+        exe_state_comb = state_reg[0];
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
+            wb_mem_valid_comb_func()) {
+            if (state_reg[0].rs1 == state_reg[1].rd) {
+                exe_state_comb.rs1_val = wb_mem_data_comb_func();
+            }
+            if (state_reg[0].rs2 == state_reg[1].rd) {
+                exe_state_comb.rs2_val = wb_mem_data_comb_func();
+            }
+        }
+        return exe_state_comb;
     }
 
     void forward()
@@ -137,6 +180,22 @@ private:
             }
         }
 
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
+            wb_mem_valid_comb_func()) {  // Mem/Wb mem
+            if (dec_state_tmp.rs1 == state_reg[1].rd) {
+                state_reg._next[0].rs1_val = wb_mem_data_comb_func();
+                if (debugen_in) {
+                    printf("forwarding %.08x from MEM to RS1\n", (uint32_t)wb_mem_data_comb_func());
+                }
+            }
+            if (dec_state_tmp.rs2 == state_reg[1].rd) {
+                state_reg._next[0].rs2_val = wb_mem_data_comb_func();
+                if (debugen_in) {
+                    printf("forwarding %.08x from MEM to RS2\n", (uint32_t)wb_mem_data_comb_func());
+                }
+            }
+        }
+
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
             if (dec_state_tmp.rs1 == state_reg[0].rd) {
                 state_reg._next[0].rs1_val = exe.alu_result_out();
@@ -148,21 +207,6 @@ private:
                 state_reg._next[0].rs2_val = exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
-                }
-            }
-        }
-
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem/Wb mem
-            if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg._next[0].rs1_val = dcache.read_data_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)dcache.read_data_out());
-                }
-            }
-            if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg._next[0].rs2_val = dcache.read_data_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)dcache.read_data_out());
                 }
             }
         }
@@ -190,11 +234,23 @@ public:
             valid._next = valid;
             state_reg._next = state_reg;
             alu_result_reg._next = alu_result_reg;
+            if (load_response_comb_func()) {
+                load_data_reg._next = dcache.read_data_out();
+                load_data_valid_reg._next = true;
+                if (state_reg[1].rd != 0 && state_reg[0].valid) {
+                    if (state_reg[0].rs1 == state_reg[1].rd) {
+                        state_reg._next[0].rs1_val = dcache.read_data_out();
+                    }
+                    if (state_reg[0].rs2 == state_reg[1].rd) {
+                        state_reg._next[0].rs2_val = dcache.read_data_out();
+                    }
+                }
+            }
             debug_branch_target_reg._next = debug_branch_target_reg;
             debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
         else {
-            if (valid && !stall_comb_func()) {
+            if (fetch_valid_comb_func() && !stall_comb_func()) {
                 pc._next = pc + ((dec.instr_in()&3)==3?4:2);
             }
             if (state_reg[0].valid && exe.branch_taken_out()) {
@@ -203,11 +259,18 @@ public:
 
             valid._next = true;
 
-            state_reg._next[0] = dec.state_out();
-            state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func() && !branch_flush_comb_func();
-            forward();
+            if (hazard_stall_comb_func()) {
+                state_reg._next[0] = State{};
+                state_reg._next[0].valid = false;
+            }
+            else {
+                state_reg._next[0] = dec.state_out();
+                state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
+                forward();
+            }
             state_reg._next[1] = state_reg[0];
             alu_result_reg._next = exe.alu_result_out();
+            load_data_valid_reg._next = false;
             debug_branch_target_reg._next = exe.branch_target_out();
             debug_branch_taken_reg._next = exe.branch_taken_out();
         }
@@ -224,6 +287,8 @@ public:
             state_reg._next[1].valid = 0;
             pc.clr();
             valid.clr();
+            load_data_reg.clr();
+            load_data_valid_reg.clr();
         }
     }
 
@@ -286,6 +351,8 @@ public:
         valid.strobe();
         state_reg.strobe();
         alu_result_reg.strobe();
+        load_data_reg.strobe();
+        load_data_valid_reg.strobe();
         debug_alu_a_reg.strobe();
         debug_alu_b_reg.strobe();
         debug_branch_target_reg.strobe();
@@ -303,52 +370,49 @@ public:
     {
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
-        dec.instr_valid_in = __VAR( valid );
+        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
         dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
 
-        exe.state_in       = __VAR( state_reg[0] );
+        exe.state_in       = __VAR( exe_state_comb_func() );
         exe._assign();  // outputs are ready
 
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = dcache.read_data_out;
+        wb.mem_data_in    = __VAR(wb_mem_data_comb_func());
         wb.alu_result_in  = __VAR( alu_result_reg );
         wb._assign();  // outputs are ready
 
         regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
-        regs.write_in = __EXPR( wb.regs_write_out() && !cache_busy_comb_func() );
+        regs.write_in = __EXPR( wb.regs_write_out() && !cache_busy_comb_func() && wb_write_ready_comb_func() );
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = exe.mem_read_out;
-        dcache.write_in = __EXPR( exe.mem_write_out() && !cache_busy_comb_func() );
+        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache_wait_comb_func() );
+        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache_wait_comb_func() );
         dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
         dcache.write_data_in = exe.mem_write_data_out;
         dcache.write_mask_in = exe.mem_write_mask_out;
         dcache.mem_read_data_in = dmem_read_data_in;
-        dcache.stall_in = __EXPR(cache_busy_comb_func());
+        dcache.stall_in = __EXPR(branch_stall_comb_func());
         dcache.flush_in = __EXPR(false);
-        dcache.fast_in = __EXPR(false);
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
 
         icache.read_in = __EXPR( true );
-        icache.addr_in = __VAR( pc );
+        icache.addr_in = __EXPR( fetch_addr_comb_func() );
         icache.write_in = __EXPR( false );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
         icache.mem_read_data_in = imem_read_data_in;
-        icache.stall_in = __EXPR(cache_busy_comb_func());
-        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out());
-        icache.fast_in = __EXPR((!state_reg[0].valid || state_reg[0].mem_op == Mem::MNONE) &&
-                                (!state_reg[1].valid || state_reg[1].mem_op == Mem::MNONE));
+        icache.stall_in = __EXPR(dcache_wait_comb_func() || stall_comb_func());
+        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out() && !cache_busy_comb_func());
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();

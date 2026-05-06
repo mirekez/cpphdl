@@ -177,11 +177,16 @@ struct Rv32ic : public Rv32i
                 state_out.wb_op  = Wb::MEM;
             }
             else if (i.base.funct3 == 0b100) {
-                if (i.big.rs2 != 0) {  // C.MV
+                if (i.big.rs2 != 0) {  // C.MV / C.ADD
                     state_out.rd = i.big.rs1;
-                    state_out.rs1 = i.big.rs1;
                     state_out.rs2 = i.big.rs2;
-                    state_out.alu_op = i.base.b12 == 0 ? Alu::PASS : Alu::ADD;
+                    if (i.base.b12 == 0) {
+                        state_out.alu_op = Alu::PASS;
+                    }
+                    else {
+                        state_out.rs1 = i.big.rs1;
+                        state_out.alu_op = Alu::ADD;
+                    }
                     state_out.wb_op  = Wb::ALU;
                 }
                 else if (i.big.rs2 == 0 && i.base.b12 == 0) {  // C.JR

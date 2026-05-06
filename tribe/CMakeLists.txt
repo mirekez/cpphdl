@@ -48,6 +48,8 @@ target_link_libraries(tribe PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_subdirectory(tests)
+
     set(RISCV_OPCODES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-opcodes" CACHE PATH "Path to a local riscv/riscv-opcodes checkout")
     if(NOT RISCV_OPCODES_DIR)
         set(RISCV_OPCODES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-opcodes")
