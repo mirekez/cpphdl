@@ -115,28 +115,14 @@ private:
     __LAZY_COMB(refill_even_line_comb, logic<HALF_LINE_BITS>)
         uint32_t word = (uint32_t)refill_word_reg;
         refill_even_line_comb = refill_even_line_reg;
-        if (word == 0) { refill_even_line_comb.bits(15, 0) = mem_read_data_in() & 0xFFFF; }
-        if (word == 1) { refill_even_line_comb.bits(31, 16) = mem_read_data_in() & 0xFFFF; }
-        if (word == 2) { refill_even_line_comb.bits(47, 32) = mem_read_data_in() & 0xFFFF; }
-        if (word == 3) { refill_even_line_comb.bits(63, 48) = mem_read_data_in() & 0xFFFF; }
-        if (word == 4) { refill_even_line_comb.bits(79, 64) = mem_read_data_in() & 0xFFFF; }
-        if (word == 5) { refill_even_line_comb.bits(95, 80) = mem_read_data_in() & 0xFFFF; }
-        if (word == 6) { refill_even_line_comb.bits(111, 96) = mem_read_data_in() & 0xFFFF; }
-        if (word == 7) { refill_even_line_comb.bits(127, 112) = mem_read_data_in() & 0xFFFF; }
+        refill_even_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() & 0xFFFF;
         return refill_even_line_comb;
     }
 
     __LAZY_COMB(refill_odd_line_comb, logic<HALF_LINE_BITS>)
         uint32_t word = (uint32_t)refill_word_reg;
         refill_odd_line_comb = refill_odd_line_reg;
-        if (word == 0) { refill_odd_line_comb.bits(15, 0) = mem_read_data_in() >> 16; }
-        if (word == 1) { refill_odd_line_comb.bits(31, 16) = mem_read_data_in() >> 16; }
-        if (word == 2) { refill_odd_line_comb.bits(47, 32) = mem_read_data_in() >> 16; }
-        if (word == 3) { refill_odd_line_comb.bits(63, 48) = mem_read_data_in() >> 16; }
-        if (word == 4) { refill_odd_line_comb.bits(79, 64) = mem_read_data_in() >> 16; }
-        if (word == 5) { refill_odd_line_comb.bits(95, 80) = mem_read_data_in() >> 16; }
-        if (word == 6) { refill_odd_line_comb.bits(111, 96) = mem_read_data_in() >> 16; }
-        if (word == 7) { refill_odd_line_comb.bits(127, 112) = mem_read_data_in() >> 16; }
+        refill_odd_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() >> 16;
         return refill_odd_line_comb;
     }
 
@@ -166,22 +152,10 @@ private:
         for (i = 0; i < WAYS; ++i) {
             if (tag_ram[i].q_out()[TAG_BITS] &&
                 tag_ram[i].q_out().bits(TAG_BITS - 1, 0) == req_tag_comb_func()) {
-                if (word == 0) { even_half = (uint32_t)even_ram[i].q_out().bits(15, 0); odd_half = (uint32_t)odd_ram[i].q_out().bits(15, 0); }
-                if (word == 1) { even_half = (uint32_t)even_ram[i].q_out().bits(31, 16); odd_half = (uint32_t)odd_ram[i].q_out().bits(31, 16); }
-                if (word == 2) { even_half = (uint32_t)even_ram[i].q_out().bits(47, 32); odd_half = (uint32_t)odd_ram[i].q_out().bits(47, 32); }
-                if (word == 3) { even_half = (uint32_t)even_ram[i].q_out().bits(63, 48); odd_half = (uint32_t)odd_ram[i].q_out().bits(63, 48); }
-                if (word == 4) { even_half = (uint32_t)even_ram[i].q_out().bits(79, 64); odd_half = (uint32_t)odd_ram[i].q_out().bits(79, 64); }
-                if (word == 5) { even_half = (uint32_t)even_ram[i].q_out().bits(95, 80); odd_half = (uint32_t)odd_ram[i].q_out().bits(95, 80); }
-                if (word == 6) { even_half = (uint32_t)even_ram[i].q_out().bits(111, 96); odd_half = (uint32_t)odd_ram[i].q_out().bits(111, 96); }
-                if (word == 7) { even_half = (uint32_t)even_ram[i].q_out().bits(127, 112); odd_half = (uint32_t)odd_ram[i].q_out().bits(127, 112); }
+                even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
+                odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 if (req_addr_reg & 0x2) {
-                    if (word == 0) { even_half = (uint32_t)even_ram[i].q_out().bits(31, 16); }
-                    if (word == 1) { even_half = (uint32_t)even_ram[i].q_out().bits(47, 32); }
-                    if (word == 2) { even_half = (uint32_t)even_ram[i].q_out().bits(63, 48); }
-                    if (word == 3) { even_half = (uint32_t)even_ram[i].q_out().bits(79, 64); }
-                    if (word == 4) { even_half = (uint32_t)even_ram[i].q_out().bits(95, 80); }
-                    if (word == 5) { even_half = (uint32_t)even_ram[i].q_out().bits(111, 96); }
-                    if (word == 6) { even_half = (uint32_t)even_ram[i].q_out().bits(127, 112); }
+                    even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
                     cache_data_comb = odd_half | (even_half << 16);
                 }
                 else {

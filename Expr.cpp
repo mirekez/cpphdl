@@ -361,7 +361,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + sub[0].str();
             }
             if (sub.size() >= 3 && value == "bits" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "[" + sub[2].str() + " +:(" + Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}.simplify().str() + ")+1" + "]";
+                Expr width = Expr{"+", EXPR_OPERATORCALL, {Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}, Expr{"1", EXPR_NUM}}}.simplify();
+                return indent_str + sub[0].str() + "[" + sub[2].str() + " +:" + width.str() + "]";
             }
             if (str_ending(value, "_comb_func")) {
                 std::string str = value;
@@ -798,43 +799,110 @@ std::string Expr::typeToSV(std::string type, std::string size)
 Expr Expr::simplify()  // open brackets for *(+-)
 {
     Expr expr = *this;
-    while (
+    auto unwrap = [](Expr& e) {
+        while ((e.type == EXPR_CAST || e.type == EXPR_PAREN) && e.sub.size() >= 1) {
+            e = e.sub[0];
+        }
+    };
+    auto containsVar = [](Expr& e) {
+        return e.traverseIf([](Expr& check) {
+            return check.type == EXPR_MEMBER || check.type == EXPR_VAR;
+        });
+    };
+    auto numValue = [](const Expr& e, int64_t& value) {
+        if (e.type != EXPR_NUM) {
+            return false;
+        }
+        try {
+            if (e.value == "true") {
+                value = 1;
+            }
+            else if (e.value == "false") {
+                value = 0;
+            }
+            else if (e.value.size() > 2 && e.value[0] == '\'' && (e.value[1] == 'h' || e.value[1] == 'H')) {
+                value = std::stoll(e.value.substr(2), nullptr, 16);
+            }
+            else {
+                value = std::stoll(e.value, nullptr, 0);
+            }
+        }
+        catch (...) {
+            return false;
+        }
+        return true;
+    };
+    auto makeNum = [](int64_t value) {
+        return Expr{std::to_string(value), EXPR_NUM};
+    };
+
+    bool changed;
+    do {
+        changed = false;
+        expr.traverseIf( [&](Expr& e) {
+            if ((e.type == EXPR_CAST || e.type == EXPR_PAREN) && e.sub.size() >= 1) {
+                e = e.sub[0];
+                changed = true;
+            }
+            return false;
+        });
+    } while (changed);
+    do {
+        changed = false;
         expr.traverseIf( [&](Expr& e) {
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                if ((e.sub[0].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[0].sub.size() >= 1) {  // remove casts and parentheses left
-                    e.sub[0] = e.sub[0].sub[0];
-                }
-                if ((e.sub[1].type == EXPR_CAST || e.sub[0].type == EXPR_PAREN) && e.sub[1].sub.size() >= 1) {  // remove casts and parentheses right
-                    e.sub[1] = e.sub[1].sub[0];
-                }
+                unwrap(e.sub[0]);
+                unwrap(e.sub[1]);
                 // swapping * and +- its places (opening brackets)
                 if ((e.sub[0].type == EXPR_OPERATORCALL || e.sub[0].type == EXPR_BINARY) && (e.sub[0].value == "+" || e.sub[0].value == "-") && e.sub[0].sub.size() == 2) {
                     e = Expr{e.sub[0].value, EXPR_OPERATORCALL, {Expr{"*", EXPR_BINARY, {e.sub[0].sub[0],e.sub[1]}},Expr{"*", EXPR_OPERATORCALL, {e.sub[0].sub[1],e.sub[1]}}}};
-                    return true;
+                    changed = true;
                 }
-                if ((e.sub[1].type == EXPR_OPERATORCALL || e.sub[1].type == EXPR_BINARY) && (e.sub[1].value == "+" || e.sub[1].value == "-") && e.sub[1].sub.size() == 2) {
+                else if ((e.sub[1].type == EXPR_OPERATORCALL || e.sub[1].type == EXPR_BINARY) && (e.sub[1].value == "+" || e.sub[1].value == "-") && e.sub[1].sub.size() == 2) {
                     e = Expr{e.sub[1].value, EXPR_OPERATORCALL, {Expr{"*", EXPR_BINARY, {e.sub[0],e.sub[1].sub[0]}},Expr{"*", EXPR_OPERATORCALL, {e.sub[0],e.sub[1].sub[1]}}}};
-                    return true;
+                    changed = true;
                 }
             }
             return false;
-        })
-    );
-    while (
+        });
+    } while (changed);
+    do {
+        changed = false;
         expr.traverseIf( [&](Expr& e) {
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                if (e.sub[0].type == EXPR_MEMBER || e.sub[0].type == EXPR_VAR) {
+                unwrap(e.sub[0]);
+                unwrap(e.sub[1]);
+                if (containsVar(e.sub[0]) || containsVar(e.sub[1])) {
                     e = Expr{"0", EXPR_NUM};
-                    return true;
-                }
-                if (e.sub[1].type == EXPR_MEMBER || e.sub[1].type == EXPR_VAR) {
-                    e = Expr{"0", EXPR_NUM};
-                    return true;
+                    changed = true;
                 }
             }
             return false;
-        })
-    );
+        });
+    } while (changed);
+    do {
+        changed = false;
+        expr.traverseIf( [&](Expr& e) {
+            int64_t left;
+            int64_t right;
+            if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.sub.size() == 2 &&
+                numValue(e.sub[0], left) && numValue(e.sub[1], right)) {
+                if (e.value == "+") {
+                    e = makeNum(left + right);
+                    changed = true;
+                }
+                else if (e.value == "-") {
+                    e = makeNum(left - right);
+                    changed = true;
+                }
+                else if (e.value == "*") {
+                    e = makeNum(left * right);
+                    changed = true;
+                }
+            }
+            return false;
+        });
+    } while (changed);
     return expr;
 }
 
