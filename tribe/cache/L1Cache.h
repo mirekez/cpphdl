@@ -5,12 +5,13 @@
 
 using namespace cpphdl;
 
-template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0>
+template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0, size_t ADDR_BITS = 32>
 class L1Cache : public Module
 {
     static_assert(CACHE_LINE_SIZE == 32, "L1Cache uses 32-byte cache lines");
     static_assert(WAYS > 0, "L1Cache needs at least one way");
     static_assert(TOTAL_CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L1Cache geometry must divide evenly");
+    static_assert(ADDR_BITS > 0 && ADDR_BITS <= 32, "L1Cache address width must be in 1..32 bits");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
     static constexpr size_t SETS = TOTAL_CACHE_SIZE / CACHE_LINE_SIZE / WAYS;
@@ -18,8 +19,9 @@ class L1Cache : public Module
     static constexpr size_t WORD_BITS = clog2(LINE_WORDS);
     static constexpr size_t LINE_BITS = clog2(CACHE_LINE_SIZE);
     static constexpr size_t HALF_LINE_BITS = CACHE_LINE_SIZE * 4;
-    static constexpr size_t TAG_BITS = 32 - SET_BITS - LINE_BITS;
+    static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t WAY_BITS = WAYS <= 1 ? 1 : clog2(WAYS);
+    static_assert(ADDR_BITS > SET_BITS + LINE_BITS, "L1Cache address width must include tag bits");
 
     static constexpr uint64_t ST_IDLE = 0;
     static constexpr uint64_t ST_LOOKUP = 1;
@@ -64,7 +66,6 @@ private:
     reg<u16> refill_low_half_reg;
     reg<logic<HALF_LINE_BITS>> refill_even_line_reg;
     reg<logic<HALF_LINE_BITS>> refill_odd_line_reg;
-
     __LAZY_COMB(req_set_comb, u<SET_BITS>)
         return req_set_comb = (u<SET_BITS>)((uint32_t)req_addr_reg >> LINE_BITS);
     }
@@ -114,14 +115,28 @@ private:
     __LAZY_COMB(refill_even_line_comb, logic<HALF_LINE_BITS>)
         uint32_t word = (uint32_t)refill_word_reg;
         refill_even_line_comb = refill_even_line_reg;
-        refill_even_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() & 0xFFFF;
+        if (word == 0) { refill_even_line_comb.bits(15, 0) = mem_read_data_in() & 0xFFFF; }
+        if (word == 1) { refill_even_line_comb.bits(31, 16) = mem_read_data_in() & 0xFFFF; }
+        if (word == 2) { refill_even_line_comb.bits(47, 32) = mem_read_data_in() & 0xFFFF; }
+        if (word == 3) { refill_even_line_comb.bits(63, 48) = mem_read_data_in() & 0xFFFF; }
+        if (word == 4) { refill_even_line_comb.bits(79, 64) = mem_read_data_in() & 0xFFFF; }
+        if (word == 5) { refill_even_line_comb.bits(95, 80) = mem_read_data_in() & 0xFFFF; }
+        if (word == 6) { refill_even_line_comb.bits(111, 96) = mem_read_data_in() & 0xFFFF; }
+        if (word == 7) { refill_even_line_comb.bits(127, 112) = mem_read_data_in() & 0xFFFF; }
         return refill_even_line_comb;
     }
 
     __LAZY_COMB(refill_odd_line_comb, logic<HALF_LINE_BITS>)
         uint32_t word = (uint32_t)refill_word_reg;
         refill_odd_line_comb = refill_odd_line_reg;
-        refill_odd_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() >> 16;
+        if (word == 0) { refill_odd_line_comb.bits(15, 0) = mem_read_data_in() >> 16; }
+        if (word == 1) { refill_odd_line_comb.bits(31, 16) = mem_read_data_in() >> 16; }
+        if (word == 2) { refill_odd_line_comb.bits(47, 32) = mem_read_data_in() >> 16; }
+        if (word == 3) { refill_odd_line_comb.bits(63, 48) = mem_read_data_in() >> 16; }
+        if (word == 4) { refill_odd_line_comb.bits(79, 64) = mem_read_data_in() >> 16; }
+        if (word == 5) { refill_odd_line_comb.bits(95, 80) = mem_read_data_in() >> 16; }
+        if (word == 6) { refill_odd_line_comb.bits(111, 96) = mem_read_data_in() >> 16; }
+        if (word == 7) { refill_odd_line_comb.bits(127, 112) = mem_read_data_in() >> 16; }
         return refill_odd_line_comb;
     }
 
@@ -146,13 +161,27 @@ private:
         uint32_t odd_half;
         cache_data_comb = 0;
         word = (uint32_t)req_word_comb_func();
+        even_half = 0;
+        odd_half = 0;
         for (i = 0; i < WAYS; ++i) {
             if (tag_ram[i].q_out()[TAG_BITS] &&
                 tag_ram[i].q_out().bits(TAG_BITS - 1, 0) == req_tag_comb_func()) {
-                even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
-                odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
+                if (word == 0) { even_half = (uint32_t)even_ram[i].q_out().bits(15, 0); odd_half = (uint32_t)odd_ram[i].q_out().bits(15, 0); }
+                if (word == 1) { even_half = (uint32_t)even_ram[i].q_out().bits(31, 16); odd_half = (uint32_t)odd_ram[i].q_out().bits(31, 16); }
+                if (word == 2) { even_half = (uint32_t)even_ram[i].q_out().bits(47, 32); odd_half = (uint32_t)odd_ram[i].q_out().bits(47, 32); }
+                if (word == 3) { even_half = (uint32_t)even_ram[i].q_out().bits(63, 48); odd_half = (uint32_t)odd_ram[i].q_out().bits(63, 48); }
+                if (word == 4) { even_half = (uint32_t)even_ram[i].q_out().bits(79, 64); odd_half = (uint32_t)odd_ram[i].q_out().bits(79, 64); }
+                if (word == 5) { even_half = (uint32_t)even_ram[i].q_out().bits(95, 80); odd_half = (uint32_t)odd_ram[i].q_out().bits(95, 80); }
+                if (word == 6) { even_half = (uint32_t)even_ram[i].q_out().bits(111, 96); odd_half = (uint32_t)odd_ram[i].q_out().bits(111, 96); }
+                if (word == 7) { even_half = (uint32_t)even_ram[i].q_out().bits(127, 112); odd_half = (uint32_t)odd_ram[i].q_out().bits(127, 112); }
                 if (req_addr_reg & 0x2) {
-                    even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                    if (word == 0) { even_half = (uint32_t)even_ram[i].q_out().bits(31, 16); }
+                    if (word == 1) { even_half = (uint32_t)even_ram[i].q_out().bits(47, 32); }
+                    if (word == 2) { even_half = (uint32_t)even_ram[i].q_out().bits(63, 48); }
+                    if (word == 3) { even_half = (uint32_t)even_ram[i].q_out().bits(79, 64); }
+                    if (word == 4) { even_half = (uint32_t)even_ram[i].q_out().bits(95, 80); }
+                    if (word == 5) { even_half = (uint32_t)even_ram[i].q_out().bits(111, 96); }
+                    if (word == 6) { even_half = (uint32_t)even_ram[i].q_out().bits(127, 112); }
                     cache_data_comb = odd_half | (even_half << 16);
                 }
                 else {
@@ -164,7 +193,7 @@ private:
     }
 
     __LAZY_COMB(read_data_comb, uint32_t)
-        if (last_valid_reg && last_addr_reg == addr_in()) {
+        if (last_valid_reg) {
             read_data_comb = last_data_reg;
         }
         else if (state_reg == ST_LOOKUP && req_read_reg && req_addr_reg == addr_in() && hit_comb_func()) {
@@ -180,7 +209,7 @@ private:
         if (state_reg == ST_INIT) {
             busy_comb = true;
         }
-        else if (last_valid_reg && last_addr_reg == addr_in()) {
+        else if (last_valid_reg) {
             busy_comb = false;
         }
         else if (state_reg != ST_IDLE) {
@@ -273,13 +302,7 @@ public:
             }
         }
         else if (state_reg == ST_DONE) {
-            if (last_valid_reg && last_addr_reg != addr_in()) {
-                state_reg._next = ST_IDLE;
-                req_read_reg._next = false;
-                req_cacheable_reg._next = false;
-                last_valid_reg._next = false;
-            }
-            else if (!stall_in()) {
+            if (!stall_in()) {
                 state_reg._next = ST_IDLE;
                 req_read_reg._next = false;
                 req_cacheable_reg._next = false;
@@ -339,7 +362,6 @@ public:
         refill_low_half_reg.strobe();
         refill_even_line_reg.strobe();
         refill_odd_line_reg.strobe();
-
         size_t i;
         for (i = 0; i < WAYS; ++i) {
             even_ram[i]._strobe();
@@ -352,24 +374,24 @@ public:
     {
         size_t i;
         for (i = 0; i < WAYS; ++i) {
-            even_ram[i].addr_in = __EXPR_I((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func());
-            even_ram[i].data_in = __EXPR_I(refill_even_line_comb_func());
+            even_ram[i].addr_in = __EXPR((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func());
+            even_ram[i].data_in = __EXPR(refill_even_line_comb_func());
             even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
-            even_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
+            even_ram[i].rd_in = __EXPR(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
             even_ram[i].id_in = ID * 100 + i * 3;
 
-            odd_ram[i].addr_in = __EXPR_I((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func());
-            odd_ram[i].data_in = __EXPR_I(refill_odd_line_comb_func());
+            odd_ram[i].addr_in = __EXPR((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func());
+            odd_ram[i].data_in = __EXPR(refill_odd_line_comb_func());
             odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
-            odd_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
+            odd_ram[i].rd_in = __EXPR(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
             odd_ram[i].id_in = ID * 100 + i * 3 + 1;
 
-            tag_ram[i].addr_in = __EXPR_I((state_reg == ST_INIT) ? init_set_reg : ((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func()));
-            tag_ram[i].data_in = __EXPR_I((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
+            tag_ram[i].addr_in = __EXPR((state_reg == ST_INIT) ? init_set_reg : ((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_set_comb_func() : input_set_comb_func()));
+            tag_ram[i].data_in = __EXPR((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
             tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
                                         ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i) ||
                                         write_in());
-            tag_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
+            tag_ram[i].rd_in = __EXPR(read_in() && state_reg == ST_IDLE && input_cacheable_comb_func() && !(last_valid_reg && last_addr_reg == addr_in()));
             tag_ram[i].id_in = ID * 100 + i * 3 + 2;
         }
     }

@@ -12,6 +12,9 @@
 #include "Writeback.h"
 #include "cache/L1Cache.h"
 
+#define RAM_SIZE 2048
+#define CACHE_ADDR_BITS 13
+
 long sys_clock = -1;
 
 class Tribe: public Module
@@ -20,8 +23,8 @@ class Tribe: public Module
     Execute         exe;
     Writeback       wb;
     File<32,32>     regs;
-    L1Cache<1024,32,2,0> icache;
-    L1Cache<1024,32,2,1> dcache;
+    L1Cache<1024,32,2,0,CACHE_ADDR_BITS> icache;
+    L1Cache<1024,32,2,1,CACHE_ADDR_BITS> dcache;
 
 public:
 
@@ -321,8 +324,6 @@ public:
 #include <fstream>
 
 #include "Ram.h"
-
-#define RAM_SIZE 2048
 
 #include <tuple>
 #include <utility>
