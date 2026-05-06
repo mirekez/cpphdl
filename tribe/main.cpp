@@ -17,6 +17,16 @@
 
 long sys_clock = -1;
 
+struct TribePerf
+{
+    unsigned hazard_stall:1;
+    unsigned branch_stall:1;
+    unsigned dcache_wait:1;
+    unsigned icache_wait:1;
+    L1CachePerf icache;
+    L1CachePerf dcache;
+} __PACKED;
+
 class Tribe: public Module
 {
     Decode          dec;
@@ -36,17 +46,7 @@ public:
     __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out;
     __PORT(uint32_t)  imem_read_data_in;
-    __PORT(bool)      perf_hazard_stall_out = __VAR(hazard_stall_comb_func());
-    __PORT(bool)      perf_branch_stall_out = __VAR(branch_stall_comb_func());
-    __PORT(bool)      perf_dcache_wait_out = __VAR(dcache_wait_comb_func());
-    __PORT(bool)      perf_icache_wait_out = __VAR(icache_wait_comb_func());
-    __PORT(u<3>)      perf_icache_state_out;
-    __PORT(u<3>)      perf_dcache_state_out;
-    __PORT(bool)      perf_icache_hit_out;
-    __PORT(bool)      perf_icache_lookup_wait_out;
-    __PORT(bool)      perf_icache_refill_wait_out;
-    __PORT(bool)      perf_icache_init_wait_out;
-    __PORT(bool)      perf_icache_issue_wait_out;
+    __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
 
 private:
@@ -65,7 +65,6 @@ private:
     reg<u32>        debug_alu_b_reg;
     reg<u32>        debug_branch_target_reg;
     reg<u1>         debug_branch_taken_reg;
-
 
     __LAZY_COMB(hazard_stall_comb, bool)
         const auto& dec_state_tmp = dec.state_out();
@@ -97,48 +96,19 @@ private:
         return stall_comb;
     }
 
-    __LAZY_COMB(dcache_wait_comb, bool)
-        return dcache_wait_comb = dcache.busy_out();
-    }
-
-    __LAZY_COMB(icache_wait_comb, bool)
-        return icache_wait_comb = icache.busy_out();
-    }
-
-    __LAZY_COMB(cache_busy_comb, bool)
-        return cache_busy_comb = dcache_wait_comb_func() || wb_mem_wait_comb_func();
-    }
-
-    __LAZY_COMB(fetch_valid_comb, bool)
-        return fetch_valid_comb = valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc;
-    }
-
-    __LAZY_COMB(load_response_comb, bool)
-        return load_response_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg;
-    }
-
-    __LAZY_COMB(wb_mem_valid_comb, bool)
-        return wb_mem_valid_comb = load_data_valid_reg || load_response_comb_func();
-    }
-
-    __LAZY_COMB(wb_write_ready_comb, bool)
-        return wb_write_ready_comb = state_reg[1].wb_op != Wb::MEM || wb_mem_valid_comb_func();
-    }
-
-    __LAZY_COMB(wb_mem_wait_comb, bool)
-        return wb_mem_wait_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            !wb_mem_valid_comb_func();
-    }
-
-    __LAZY_COMB(wb_mem_data_comb, uint32_t)
-        return wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
-            (load_response_comb_func() ? dcache.read_data_out() : (uint32_t)0);
+    __LAZY_COMB(perf_comb, TribePerf)
+        perf_comb.hazard_stall = hazard_stall_comb_func();
+        perf_comb.branch_stall = branch_stall_comb_func();
+        perf_comb.dcache_wait = dcache.busy_out();
+        perf_comb.icache_wait = icache.busy_out();
+        perf_comb.icache = icache.perf_out();
+        perf_comb.dcache = dcache.perf_out();
+        return perf_comb;
     }
 
     __LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
-        if (fetch_valid_comb_func() && !stall_comb_func()) {
+        if (valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc && !stall_comb_func()) {
             fetch_addr_comb = pc + ((dec.instr_in()&3)==3?4:2);
         }
         if (state_reg[0].valid && exe.branch_taken_out()) {
@@ -150,12 +120,12 @@ private:
     __LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
-            wb_mem_valid_comb_func()) {
+            (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg))) {
             if (state_reg[0].rs1 == state_reg[1].rd) {
-                exe_state_comb.rs1_val = wb_mem_data_comb_func();
+                exe_state_comb.rs1_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
             }
             if (state_reg[0].rs2 == state_reg[1].rd) {
-                exe_state_comb.rs2_val = wb_mem_data_comb_func();
+                exe_state_comb.rs2_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
             }
         }
         return exe_state_comb;
@@ -181,17 +151,17 @@ private:
         }
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
-            wb_mem_valid_comb_func()) {  // Mem/Wb mem
+            (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg))) {  // Mem/Wb mem
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg._next[0].rs1_val = wb_mem_data_comb_func();
+                state_reg._next[0].rs1_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS1\n", (uint32_t)wb_mem_data_comb_func());
+                    printf("forwarding %.08x from MEM to RS1\n", load_data_valid_reg ? (uint32_t)load_data_reg : (uint32_t)dcache.read_data_out());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg._next[0].rs2_val = wb_mem_data_comb_func();
+                state_reg._next[0].rs2_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS2\n", (uint32_t)wb_mem_data_comb_func());
+                    printf("forwarding %.08x from MEM to RS2\n", load_data_valid_reg ? (uint32_t)load_data_reg : (uint32_t)dcache.read_data_out());
                 }
             }
         }
@@ -229,12 +199,14 @@ public:
             fclose(out);
         }
 
-        if (cache_busy_comb_func()) {
+        if (dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))) {
             pc._next = pc;
             valid._next = valid;
             state_reg._next = state_reg;
             alu_result_reg._next = alu_result_reg;
-            if (load_response_comb_func()) {
+            if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) {
                 load_data_reg._next = dcache.read_data_out();
                 load_data_valid_reg._next = true;
                 if (state_reg[1].rd != 0 && state_reg[0].valid) {
@@ -250,7 +222,7 @@ public:
             debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
         else {
-            if (fetch_valid_comb_func() && !stall_comb_func()) {
+            if (valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc && !stall_comb_func()) {
                 pc._next = pc + ((dec.instr_in()&3)==3?4:2);
             }
             if (state_reg[0].valid && exe.branch_taken_out()) {
@@ -305,9 +277,9 @@ public:
         std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
             (bool)valid, (bool)stall_comb_func(), pc,
             (bool)hazard_stall_comb_func(), (bool)branch_stall_comb_func(),
-            (bool)dcache_wait_comb_func(), (bool)icache_wait_comb_func(),
-            (uint32_t)icache.perf_state_out(), (uint32_t)dcache.perf_state_out(),
-            (bool)icache.perf_hit_out(),
+            (bool)dcache.busy_out(), (bool)icache.busy_out(),
+            (uint32_t)icache.perf_out().state, (uint32_t)dcache.perf_out().state,
+            (bool)icache.perf_out().hit,
             instr.mnemonic(), (instr.raw&3)==3?instr.raw:(instr.raw|0xFFFF0000),
             (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
             (bool)state_reg[0].valid, (uint8_t)state_reg[0].alu_op, (uint8_t)state_reg[0].mem_op, (uint8_t)state_reg[0].br_op, (uint8_t)state_reg[0].wb_op,
@@ -370,7 +342,7 @@ public:
     {
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
-        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
+        dec.instr_valid_in = __EXPR(valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc);
         dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
@@ -380,21 +352,28 @@ public:
         exe._assign();  // outputs are ready
 
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = __VAR(wb_mem_data_comb_func());
+        wb.mem_data_in    = __EXPR(load_data_valid_reg ? (uint32_t)load_data_reg :
+            ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+              dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
+                dcache.read_data_out() : (uint32_t)0));
         wb.alu_result_in  = __VAR( alu_result_reg );
         wb._assign();  // outputs are ready
 
         regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
-        regs.write_in = __EXPR( wb.regs_write_out() && !cache_busy_comb_func() && wb_write_ready_comb_func() );
+        regs.write_in = __EXPR(wb.regs_write_out() &&
+            !(dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))) &&
+            (state_reg[1].wb_op != Wb::MEM || load_data_valid_reg ||
+                (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache_wait_comb_func() );
-        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache_wait_comb_func() );
+        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache.busy_out() );
+        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache.busy_out() );
         dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
         dcache.write_data_in = exe.mem_write_data_out;
         dcache.write_mask_in = exe.mem_write_mask_out;
@@ -411,8 +390,10 @@ public:
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
         icache.mem_read_data_in = imem_read_data_in;
-        icache.stall_in = __EXPR(dcache_wait_comb_func() || stall_comb_func());
-        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out() && !cache_busy_comb_func());
+        icache.stall_in = __EXPR(dcache.busy_out() || stall_comb_func());
+        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out() &&
+            !(dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))));
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
@@ -423,13 +404,6 @@ public:
         dmem_read_out       = dcache.mem_read_out;
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
-        perf_icache_state_out = icache.perf_state_out;
-        perf_dcache_state_out = dcache.perf_state_out;
-        perf_icache_hit_out = icache.perf_hit_out;
-        perf_icache_lookup_wait_out = icache.perf_lookup_wait_out;
-        perf_icache_refill_wait_out = icache.perf_refill_wait_out;
-        perf_icache_init_wait_out = icache.perf_init_wait_out;
-        perf_icache_issue_wait_out = icache.perf_issue_wait_out;
     }
 
 };
@@ -456,6 +430,33 @@ public:
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
 #include MAKE_HEADER(VERILATOR_MODEL)
+static L1CachePerf decode_l1cache_perf(uint32_t bits)
+{
+    L1CachePerf perf{};
+    perf.hit = bits & 1;
+    perf.lookup_wait = (bits >> 1) & 1;
+    perf.refill_wait = (bits >> 2) & 1;
+    perf.init_wait = (bits >> 3) & 1;
+    perf.issue_wait = (bits >> 4) & 1;
+    perf.state = (bits >> 5) & 0x7;
+    return perf;
+}
+
+static TribePerf decode_tribe_perf(uint32_t bits)
+{
+    TribePerf perf{};
+    perf.hazard_stall = bits & 1;
+    perf.branch_stall = (bits >> 1) & 1;
+    perf.dcache_wait = (bits >> 2) & 1;
+    perf.icache_wait = (bits >> 3) & 1;
+    perf.icache = decode_l1cache_perf((bits >> 4) & 0x7ff);
+    perf.dcache = decode_l1cache_perf((bits >> 15) & 0x7ff);
+    return perf;
+}
+
+#define PORT_VALUE(port) decode_tribe_perf(port)
+#else
+#define PORT_VALUE(port) (port())
 #endif
 
 class TestTribe : public Module
@@ -607,87 +608,6 @@ public:
     {
     }
 
-    bool perf_hazard_stall()
-    {
-#ifdef VERILATOR
-        return tribe.perf_hazard_stall_out;
-#else
-        return tribe.perf_hazard_stall_out();
-#endif
-    }
-
-    bool perf_branch_stall()
-    {
-#ifdef VERILATOR
-        return tribe.perf_branch_stall_out;
-#else
-        return tribe.perf_branch_stall_out();
-#endif
-    }
-
-    bool perf_dcache_wait_stall()
-    {
-#ifdef VERILATOR
-        return tribe.perf_dcache_wait_out;
-#else
-        return tribe.perf_dcache_wait_out();
-#endif
-    }
-
-    bool perf_icache_wait_stall()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_wait_out;
-#else
-        return tribe.perf_icache_wait_out();
-#endif
-    }
-
-    bool perf_icache_issue_wait()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_issue_wait_out;
-#else
-        return tribe.perf_icache_issue_wait_out();
-#endif
-    }
-
-    bool perf_icache_lookup_wait()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_lookup_wait_out;
-#else
-        return tribe.perf_icache_lookup_wait_out();
-#endif
-    }
-
-    bool perf_icache_refill_wait()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_refill_wait_out;
-#else
-        return tribe.perf_icache_refill_wait_out();
-#endif
-    }
-
-    bool perf_icache_init_wait()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_init_wait_out;
-#else
-        return tribe.perf_icache_init_wait_out();
-#endif
-    }
-
-    bool perf_icache_hit_lookup()
-    {
-#ifdef VERILATOR
-        return tribe.perf_icache_hit_out && tribe.perf_icache_lookup_wait_out;
-#else
-        return tribe.perf_icache_hit_out() && tribe.perf_icache_lookup_wait_out();
-#endif
-    }
-
     void perf_reset()
     {
         perf_clocks = 0;
@@ -705,21 +625,22 @@ public:
 
     void perf_sample()
     {
-        bool hazard = perf_hazard_stall();
-        bool branch = perf_branch_stall();
-        bool dcache_wait = perf_dcache_wait_stall();
-        bool icache_wait = perf_icache_wait_stall();
+        auto perf = PORT_VALUE(tribe.perf_out);
+        bool hazard = perf.hazard_stall;
+        bool branch = perf.branch_stall;
+        bool dcache_wait = perf.dcache_wait;
+        bool icache_wait = perf.icache_wait;
 
         ++perf_clocks;
         perf_hazard += hazard;
         perf_branch += branch;
         perf_dcache_wait += dcache_wait;
         perf_icache_wait += icache_wait;
-        perf_icache_issue_wait_cycles += perf_icache_issue_wait();
-        perf_icache_lookup_wait_cycles += perf_icache_lookup_wait();
-        perf_icache_refill_wait_cycles += perf_icache_refill_wait();
-        perf_icache_init_wait_cycles += perf_icache_init_wait();
-        perf_icache_hit_lookup_cycles += perf_icache_hit_lookup();
+        perf_icache_issue_wait_cycles += perf.icache.issue_wait;
+        perf_icache_lookup_wait_cycles += perf.icache.lookup_wait;
+        perf_icache_refill_wait_cycles += perf.icache.refill_wait;
+        perf_icache_init_wait_cycles += perf.icache.init_wait;
+        perf_icache_hit_lookup_cycles += perf.icache.hit && perf.icache.lookup_wait;
         perf_stall += hazard || branch || dcache_wait || icache_wait;
     }
 
@@ -856,6 +777,8 @@ int main (int argc, char** argv)
                   "Br_pkg",
                   "Mem_pkg",
                   "Wb_pkg",
+                  "L1CachePerf_pkg",
+                  "TribePerf_pkg",
                   "File",
                   "RAM1PORT",
                   "L1Cache",

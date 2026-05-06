@@ -5,6 +5,16 @@
 
 using namespace cpphdl;
 
+struct L1CachePerf
+{
+    unsigned hit:1;
+    unsigned lookup_wait:1;
+    unsigned refill_wait:1;
+    unsigned init_wait:1;
+    unsigned issue_wait:1;
+    u<3> state;
+} __PACKED;
+
 template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0, size_t ADDR_BITS = 32>
 class L1Cache : public Module
 {
@@ -48,12 +58,7 @@ public:
     __PORT(bool)      mem_read_out = __VAR(mem_read_comb_func());
     __PORT(uint32_t)  mem_addr_out = __VAR(mem_addr_comb_func());
     __PORT(uint32_t)  mem_read_data_in;
-    __PORT(u<3>)      perf_state_out = __VAR(perf_state_comb_func());
-    __PORT(bool)      perf_hit_out = __VAR(hit_comb_func());
-    __PORT(bool)      perf_lookup_wait_out = __VAR(perf_lookup_wait_comb_func());
-    __PORT(bool)      perf_refill_wait_out = __VAR(perf_refill_wait_comb_func());
-    __PORT(bool)      perf_init_wait_out = __VAR(perf_init_wait_comb_func());
-    __PORT(bool)      perf_issue_wait_out = __VAR(perf_issue_wait_comb_func());
+    __PORT(L1CachePerf) perf_out = __VAR(perf_comb_func());
 
     bool debugen_in;
 
@@ -246,29 +251,14 @@ private:
         return busy_comb;
     }
 
-    // Expose current state for performance counters/debug.
-    __LAZY_COMB(perf_state_comb, u<3>)
-        return perf_state_comb = state_reg;
-    }
-
-    // Performance flag for lookup cycles that still stall the CPU.
-    __LAZY_COMB(perf_lookup_wait_comb, bool)
-        return perf_lookup_wait_comb = busy_comb_func() && state_reg == ST_LOOKUP;
-    }
-
-    // Performance flag for miss refill cycles.
-    __LAZY_COMB(perf_refill_wait_comb, bool)
-        return perf_refill_wait_comb = busy_comb_func() && state_reg == ST_REFILL;
-    }
-
-    // Performance flag for tag initialization cycles.
-    __LAZY_COMB(perf_init_wait_comb, bool)
-        return perf_init_wait_comb = busy_comb_func() && state_reg == ST_INIT;
-    }
-
-    // Performance flag for cycles where CPU presents a new read in idle.
-    __LAZY_COMB(perf_issue_wait_comb, bool)
-        return perf_issue_wait_comb = read_in() && state_reg == ST_IDLE;
+    __LAZY_COMB(perf_comb, L1CachePerf)
+        perf_comb.state = state_reg;
+        perf_comb.hit = hit_comb_func();
+        perf_comb.lookup_wait = busy_comb_func() && state_reg == ST_LOOKUP;
+        perf_comb.refill_wait = busy_comb_func() && state_reg == ST_REFILL;
+        perf_comb.init_wait = busy_comb_func() && state_reg == ST_INIT;
+        perf_comb.issue_wait = read_in() && state_reg == ST_IDLE;
+        return perf_comb;
     }
 
     // Backing memory read request.

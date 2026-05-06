@@ -366,6 +366,9 @@ public:
             std::print("\nfocused flush cached hit ERROR addr={:#x}: redirect hit asserted busy\n", target_addr);
             error = true;
         }
+        if (!valid()) {
+            cycle(false);
+        }
         check_result("focused flush cached hit", target_addr);
 
         read = false;
@@ -495,8 +498,8 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "RAM1PORT"},
-            {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
+        ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
+            {"../../../../include", "../../../../tribe/common", "../../../../tribe/cache"},
             CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
