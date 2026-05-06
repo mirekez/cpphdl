@@ -25,7 +25,7 @@ set_target_properties(tribe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/tribe
 )
 
-include_directories(tribe PRIVATE "../include" "common" "spec")
+include_directories(tribe PRIVATE "../include" "common" "spec" "cache")
 
 # verilator tests
 add_custom_command(

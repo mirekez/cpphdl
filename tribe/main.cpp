@@ -10,6 +10,7 @@
 #include "Decode.h"
 #include "Execute.h"
 #include "Writeback.h"
+#include "cache/L1Cache.h"
 
 long sys_clock = -1;
 
@@ -19,6 +20,8 @@ class Tribe: public Module
     Execute         exe;
     Writeback       wb;
     File<32,32>     regs;
+    L1Cache<1024,4,2,0> icache;
+    L1Cache<1024,4,2,1> dcache;
 
 public:
 
@@ -29,7 +32,7 @@ public:
     __PORT(bool)      dmem_read_out;
     __PORT(uint32_t)  dmem_read_addr_out;
     __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
+    __PORT(uint32_t)  imem_read_addr_out;
     __PORT(uint32_t)  imem_read_data_in;
     bool              debugen_in;
 
@@ -68,6 +71,10 @@ private:
         return stall_comb;
     }
 
+    __LAZY_COMB(cache_busy_comb, bool)
+        return cache_busy_comb = icache.busy_out() || dcache.busy_out();
+    }
+
     void forward()
     {
         const auto& dec_state_tmp = dec.state_out();
@@ -104,15 +111,15 @@ private:
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0) {  // Mem/Wb mem
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg._next[0].rs1_val = dmem_read_data_in();
+                state_reg._next[0].rs1_val = dcache.read_data_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)dmem_read_data_in());
+                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)dcache.read_data_out());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg._next[0].rs2_val = dmem_read_data_in();
+                state_reg._next[0].rs2_val = dcache.read_data_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)dmem_read_data_in());
+                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)dcache.read_data_out());
                 }
             }
         }
@@ -132,27 +139,39 @@ public:
             fclose(out);
         }
 
-        if (valid && !stall_comb_func()) {
-            pc._next = pc + ((dec.instr_in()&3)==3?4:2);
+        if (cache_busy_comb_func()) {
+            pc._next = pc;
+            valid._next = valid;
+            state_reg._next = state_reg;
+            alu_result_reg._next = alu_result_reg;
+            debug_branch_target_reg._next = debug_branch_target_reg;
+            debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
-        if (state_reg[0].valid && exe.branch_taken_out()) {
-            pc._next = exe.branch_target_out();
+        else {
+            if (valid && !stall_comb_func()) {
+                pc._next = pc + ((dec.instr_in()&3)==3?4:2);
+            }
+            if (state_reg[0].valid && exe.branch_taken_out()) {
+                pc._next = exe.branch_target_out();
+            }
+
+            valid._next = true;
+
+            state_reg._next[0] = dec.state_out();
+            state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func();
+            forward();
+            state_reg._next[1] = state_reg[0];
+            alu_result_reg._next = exe.alu_result_out();
+            debug_branch_target_reg._next = exe.branch_target_out();
+            debug_branch_taken_reg._next = exe.branch_taken_out();
         }
-
-        valid._next = true;
-
-        state_reg._next[0] = dec.state_out();
-        state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func();
-        forward();
-        state_reg._next[1] = state_reg[0];
-        alu_result_reg._next = exe.alu_result_out();
-        debug_branch_target_reg._next = exe.branch_target_out();
-        debug_branch_taken_reg._next = exe.branch_taken_out();
 
         regs._work(reset);
         dec._work(reset);
         exe._work(reset);
         wb._work(reset);
+        icache._work(reset);
+        dcache._work(reset);
 
         if (reset) {
             state_reg._next[0].valid = 0;
@@ -225,6 +244,8 @@ public:
         dec._strobe();
         exe._strobe();
         wb._strobe();
+        icache._strobe();
+        dcache._strobe();
     }
 
     void _assign()
@@ -232,7 +253,7 @@ public:
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
         dec.instr_valid_in = __VAR( valid );
-        dec.instr_in       = imem_read_data_in;
+        dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
@@ -241,25 +262,50 @@ public:
         exe._assign();  // outputs are ready
 
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = dmem_read_data_in;
+        wb.mem_data_in    = dcache.read_data_out;
         wb.alu_result_in  = __VAR( alu_result_reg );
         wb._assign();  // outputs are ready
 
         regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
-        regs.write_in = wb.regs_write_out;
+        regs.write_in = __EXPR( wb.regs_write_out() && !cache_busy_comb_func() );
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dmem_write_out      = exe.mem_write_out;
-        dmem_write_addr_out = exe.mem_write_addr_out;
-        dmem_write_data_out = exe.mem_write_data_out;
-        dmem_write_mask_out = exe.mem_write_mask_out;
-        dmem_read_out       = exe.mem_read_out;
-        dmem_read_addr_out  = exe.mem_read_addr_out;
+        dcache.read_in = exe.mem_read_out;
+        dcache.read_addr_in = exe.mem_read_addr_out;
+        dcache.write_in = __EXPR( exe.mem_write_out() && !cache_busy_comb_func() );
+        dcache.write_addr_in = exe.mem_write_addr_out;
+        dcache.write_data_in = exe.mem_write_data_out;
+        dcache.write_mask_in = exe.mem_write_mask_out;
+        dcache.mem_read_data_in = dmem_read_data_in;
+        dcache.stall_in = __EXPR(cache_busy_comb_func());
+        dcache.debugen_in = debugen_in;
+        dcache.__inst_name = __inst_name + "/dcache";
+        dcache._assign();
+
+        icache.read_in = __EXPR( true );
+        icache.read_addr_in = __VAR( pc );
+        icache.write_in = __EXPR( false );
+        icache.write_addr_in = __EXPR( (uint32_t)0 );
+        icache.write_data_in = __EXPR( (uint32_t)0 );
+        icache.write_mask_in = __EXPR( (uint8_t)0 );
+        icache.mem_read_data_in = imem_read_data_in;
+        icache.stall_in = __EXPR(cache_busy_comb_func());
+        icache.debugen_in = debugen_in;
+        icache.__inst_name = __inst_name + "/icache";
+        icache._assign();
+
+        dmem_write_out      = dcache.mem_write_out;
+        dmem_write_addr_out = dcache.mem_write_addr_out;
+        dmem_write_data_out = dcache.mem_write_data_out;
+        dmem_write_mask_out = dcache.mem_write_mask_out;
+        dmem_read_out       = dcache.mem_read_out;
+        dmem_read_addr_out  = dcache.mem_read_addr_out;
+        imem_read_addr_out  = icache.mem_read_addr_out;
     }
 
 };
@@ -478,7 +524,7 @@ public:
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();
-        int cycles = 200000;
+        int cycles = 2000000;
         while (--cycles && !error) {
             _strobe();
             ++sys_clock;
@@ -529,9 +575,11 @@ int main (int argc, char** argv)
                   "Mem_pkg",
                   "Wb_pkg",
                   "File",
+                  "RAM1PORT",
+                  "L1Cache",
                   "Decode",
                   "Execute",
-                  "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec"});
+                  "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok
