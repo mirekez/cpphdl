@@ -36,6 +36,17 @@ public:
     __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out;
     __PORT(uint32_t)  imem_read_data_in;
+    __PORT(bool)      perf_hazard_stall_out = __VAR(hazard_stall_comb_func());
+    __PORT(bool)      perf_branch_stall_out = __VAR(branch_stall_comb_func());
+    __PORT(bool)      perf_dcache_wait_out = __VAR(dcache_wait_comb_func());
+    __PORT(bool)      perf_icache_wait_out = __VAR(icache_wait_comb_func());
+    __PORT(u<3>)      perf_icache_state_out;
+    __PORT(u<3>)      perf_dcache_state_out;
+    __PORT(bool)      perf_icache_hit_out;
+    __PORT(bool)      perf_icache_lookup_wait_out;
+    __PORT(bool)      perf_icache_refill_wait_out;
+    __PORT(bool)      perf_icache_init_wait_out;
+    __PORT(bool)      perf_icache_issue_wait_out;
     bool              debugen_in;
 
 private:
@@ -54,27 +65,57 @@ private:
     reg<u1>         debug_branch_taken_reg;
 
 
-    __LAZY_COMB(stall_comb, bool)
-        // hazard
+    __LAZY_COMB(hazard_stall_comb, bool)
         const auto& dec_state_tmp = dec.state_out();
 
-        stall_comb = false;
+        hazard_stall_comb = false;
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
             if (state_reg[0].rd == dec_state_tmp.rs1) {
-                stall_comb = true;
+                hazard_stall_comb = true;
             }
             if (state_reg[0].rd == dec_state_tmp.rs2) {
-                stall_comb = true;
+                hazard_stall_comb = true;
             }
         }
-        if ((state_reg[0].valid && state_reg[0].br_op != Br::BNONE)) {  // Ex branch
-            stall_comb = true;
-        }
+        return hazard_stall_comb;
+    }
+
+    __LAZY_COMB(branch_stall_comb, bool)
+        branch_stall_comb = state_reg[0].valid && state_reg[0].br_op != Br::BNONE;
+        return branch_stall_comb;
+    }
+
+    __LAZY_COMB(branch_flush_comb, bool)
+        branch_flush_comb = state_reg[0].valid && exe.branch_taken_out() && !branch_stall_comb_func();
+        return branch_flush_comb;
+    }
+
+    __LAZY_COMB(stall_comb, bool)
+        stall_comb = hazard_stall_comb_func() || branch_stall_comb_func();
         return stall_comb;
     }
 
+    __LAZY_COMB(dcache_wait_comb, bool)
+        return dcache_wait_comb = dcache.busy_out();
+    }
+
+    __LAZY_COMB(icache_wait_comb, bool)
+        return icache_wait_comb = icache.busy_out();
+    }
+
     __LAZY_COMB(cache_busy_comb, bool)
-        return cache_busy_comb = icache.busy_out() || dcache.busy_out();
+        return cache_busy_comb = icache_wait_comb_func() || dcache_wait_comb_func();
+    }
+
+    __LAZY_COMB(fetch_addr_comb, uint32_t)
+        fetch_addr_comb = pc;
+        if (valid && !stall_comb_func()) {
+            fetch_addr_comb = pc + ((dec.instr_in()&3)==3?4:2);
+        }
+        if (state_reg[0].valid && exe.branch_taken_out()) {
+            fetch_addr_comb = exe.branch_target_out();
+        }
+        return fetch_addr_comb;
     }
 
     void forward()
@@ -137,6 +178,9 @@ public:
 
         if (dmem_addr_out() == 0x11223344 && dmem_write_out()) {
             FILE* out = fopen("out.txt", "a");
+            if (debugen_in) {
+                std::print("OUTPUT pc={} data={:08x} char={:02x}\n", pc, dmem_write_data_out(), dmem_write_data_out() & 0xFF);
+            }
             fprintf(out, "%c", dmem_write_data_out()&0xFF);
             fclose(out);
         }
@@ -160,7 +204,7 @@ public:
             valid._next = true;
 
             state_reg._next[0] = dec.state_out();
-            state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func();
+            state_reg._next[0].valid = dec.instr_valid_in() && !stall_comb_func() && !branch_flush_comb_func();
             forward();
             state_reg._next[1] = state_reg[0];
             alu_result_reg._next = exe.alu_result_out();
@@ -193,8 +237,13 @@ public:
         Rv32im instr = {{{imem_read_data_in()}}};
         instr.decode(tmp);
 
-        std::print("({:d}/{:d}){}: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
-            (bool)valid, (bool)stall_comb_func(), pc, instr.mnemonic(), (instr.raw&3)==3?instr.raw:(instr.raw|0xFFFF0000),
+        std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
+            (bool)valid, (bool)stall_comb_func(), pc,
+            (bool)hazard_stall_comb_func(), (bool)branch_stall_comb_func(),
+            (bool)dcache_wait_comb_func(), (bool)icache_wait_comb_func(),
+            (uint32_t)icache.perf_state_out(), (uint32_t)dcache.perf_state_out(),
+            (bool)icache.perf_hit_out(),
+            instr.mnemonic(), (instr.raw&3)==3?instr.raw:(instr.raw|0xFFFF0000),
             (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
             (bool)state_reg[0].valid, (uint8_t)state_reg[0].alu_op, (uint8_t)state_reg[0].mem_op, (uint8_t)state_reg[0].br_op, (uint8_t)state_reg[0].wb_op,
             (int)state_reg[0].rs1, (int)state_reg[0].rs2, state_reg[0].rs1_val, state_reg[0].rs2_val, state_reg[0].imm, exe.alu_result_out(), (int)state_reg[0].rd,
@@ -284,6 +333,8 @@ public:
         dcache.write_mask_in = exe.mem_write_mask_out;
         dcache.mem_read_data_in = dmem_read_data_in;
         dcache.stall_in = __EXPR(cache_busy_comb_func());
+        dcache.flush_in = __EXPR(false);
+        dcache.fast_in = __EXPR(false);
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
@@ -295,6 +346,9 @@ public:
         icache.write_mask_in = __EXPR( (uint8_t)0 );
         icache.mem_read_data_in = imem_read_data_in;
         icache.stall_in = __EXPR(cache_busy_comb_func());
+        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out());
+        icache.fast_in = __EXPR((!state_reg[0].valid || state_reg[0].mem_op == Mem::MNONE) &&
+                                (!state_reg[1].valid || state_reg[1].mem_op == Mem::MNONE));
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
@@ -305,6 +359,13 @@ public:
         dmem_read_out       = dcache.mem_read_out;
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
+        perf_icache_state_out = icache.perf_state_out;
+        perf_dcache_state_out = dcache.perf_state_out;
+        perf_icache_hit_out = icache.perf_hit_out;
+        perf_icache_lookup_wait_out = icache.perf_lookup_wait_out;
+        perf_icache_refill_wait_out = icache.perf_refill_wait_out;
+        perf_icache_init_wait_out = icache.perf_init_wait_out;
+        perf_icache_issue_wait_out = icache.perf_issue_wait_out;
     }
 
 };
@@ -348,6 +409,18 @@ class TestTribe : public Module
     uint32_t imem_write_addr;
     uint32_t imem_write_data;
     bool error;
+
+    uint64_t perf_clocks = 0;
+    uint64_t perf_stall = 0;
+    uint64_t perf_hazard = 0;
+    uint64_t perf_dcache_wait = 0;
+    uint64_t perf_icache_wait = 0;
+    uint64_t perf_branch = 0;
+    uint64_t perf_icache_issue_wait_cycles = 0;
+    uint64_t perf_icache_lookup_wait_cycles = 0;
+    uint64_t perf_icache_refill_wait_cycles = 0;
+    uint64_t perf_icache_init_wait_cycles = 0;
+    uint64_t perf_icache_hit_lookup_cycles = 0;
 
 //    size_t i;
 
@@ -470,6 +543,151 @@ public:
     {
     }
 
+    bool perf_hazard_stall()
+    {
+#ifdef VERILATOR
+        return tribe.perf_hazard_stall_out;
+#else
+        return tribe.perf_hazard_stall_out();
+#endif
+    }
+
+    bool perf_branch_stall()
+    {
+#ifdef VERILATOR
+        return tribe.perf_branch_stall_out;
+#else
+        return tribe.perf_branch_stall_out();
+#endif
+    }
+
+    bool perf_dcache_wait_stall()
+    {
+#ifdef VERILATOR
+        return tribe.perf_dcache_wait_out;
+#else
+        return tribe.perf_dcache_wait_out();
+#endif
+    }
+
+    bool perf_icache_wait_stall()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_wait_out;
+#else
+        return tribe.perf_icache_wait_out();
+#endif
+    }
+
+    bool perf_icache_issue_wait()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_issue_wait_out;
+#else
+        return tribe.perf_icache_issue_wait_out();
+#endif
+    }
+
+    bool perf_icache_lookup_wait()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_lookup_wait_out;
+#else
+        return tribe.perf_icache_lookup_wait_out();
+#endif
+    }
+
+    bool perf_icache_refill_wait()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_refill_wait_out;
+#else
+        return tribe.perf_icache_refill_wait_out();
+#endif
+    }
+
+    bool perf_icache_init_wait()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_init_wait_out;
+#else
+        return tribe.perf_icache_init_wait_out();
+#endif
+    }
+
+    bool perf_icache_hit_lookup()
+    {
+#ifdef VERILATOR
+        return tribe.perf_icache_hit_out && tribe.perf_icache_lookup_wait_out;
+#else
+        return tribe.perf_icache_hit_out() && tribe.perf_icache_lookup_wait_out();
+#endif
+    }
+
+    void perf_reset()
+    {
+        perf_clocks = 0;
+        perf_stall = 0;
+        perf_hazard = 0;
+        perf_dcache_wait = 0;
+        perf_icache_wait = 0;
+        perf_branch = 0;
+        perf_icache_issue_wait_cycles = 0;
+        perf_icache_lookup_wait_cycles = 0;
+        perf_icache_refill_wait_cycles = 0;
+        perf_icache_init_wait_cycles = 0;
+        perf_icache_hit_lookup_cycles = 0;
+    }
+
+    void perf_sample()
+    {
+        bool hazard = perf_hazard_stall();
+        bool branch = perf_branch_stall();
+        bool dcache_wait = perf_dcache_wait_stall();
+        bool icache_wait = perf_icache_wait_stall();
+
+        ++perf_clocks;
+        perf_hazard += hazard;
+        perf_branch += branch;
+        perf_dcache_wait += dcache_wait;
+        perf_icache_wait += icache_wait;
+        perf_icache_issue_wait_cycles += perf_icache_issue_wait();
+        perf_icache_lookup_wait_cycles += perf_icache_lookup_wait();
+        perf_icache_refill_wait_cycles += perf_icache_refill_wait();
+        perf_icache_init_wait_cycles += perf_icache_init_wait();
+        perf_icache_hit_lookup_cycles += perf_icache_hit_lookup();
+        perf_stall += hazard || branch || dcache_wait || icache_wait;
+    }
+
+    void perf_print()
+    {
+        auto percent = [&](uint64_t value) {
+            return perf_clocks ? (100.0 * (double)value / (double)perf_clocks) : 0.0;
+        };
+
+        std::print("Performance: clocks={}, stalled={:.2f}% ({})"
+                   ", hazards={:.2f}% ({})"
+                   ", dcache_wait={:.2f}% ({})"
+                   ", icache_wait={:.2f}% ({})"
+                   ", branching={:.2f}% ({})\n",
+            perf_clocks,
+            percent(perf_stall), perf_stall,
+            percent(perf_hazard), perf_hazard,
+            percent(perf_dcache_wait), perf_dcache_wait,
+            percent(perf_icache_wait), perf_icache_wait,
+            percent(perf_branch), perf_branch);
+        std::print("I-cache wait detail: issue={:.2f}% ({})"
+                   ", lookup={:.2f}% ({})"
+                   ", lookup_hit={:.2f}% ({})"
+                   ", refill={:.2f}% ({})"
+                   ", init={:.2f}% ({})\n",
+            percent(perf_icache_issue_wait_cycles), perf_icache_issue_wait_cycles,
+            percent(perf_icache_lookup_wait_cycles), perf_icache_lookup_wait_cycles,
+            percent(perf_icache_hit_lookup_cycles), perf_icache_hit_lookup_cycles,
+            percent(perf_icache_refill_wait_cycles), perf_icache_refill_wait_cycles,
+            percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
+    }
+
     bool run(std::string filename, size_t start_offset)
     {
 #ifdef VERILATOR
@@ -521,10 +739,12 @@ public:
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();
+        perf_reset();
         int cycles = 2000000;
         while (--cycles && !error) {
             _strobe();
             ++sys_clock;
+            perf_sample();
             _work(0);
             _strobe_neg();
             _work_neg(0);
@@ -533,6 +753,7 @@ public:
         std::ifstream a("rv32i.log", std::ios::binary), b("out.txt", std::ios::binary);
         error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
 
+        perf_print();
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
