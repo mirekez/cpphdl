@@ -26,11 +26,10 @@ class Tribe: public Module
 public:
 
     __PORT(bool)      dmem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out;
     __PORT(uint32_t)  dmem_write_data_out;
     __PORT(uint8_t)   dmem_write_mask_out;
     __PORT(bool)      dmem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out;
+    __PORT(uint32_t)  dmem_addr_out;
     __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out;
     __PORT(uint32_t)  imem_read_data_in;
@@ -133,7 +132,7 @@ public:
             debug();
         }
 
-        if (dmem_write_addr_out() == 0x11223344 && dmem_write_out()) {
+        if (dmem_addr_out() == 0x11223344 && dmem_write_out()) {
             FILE* out = fopen("out.txt", "a");
             fprintf(out, "%c", dmem_write_data_out()&0xFF);
             fclose(out);
@@ -276,9 +275,8 @@ public:
         regs._assign();
 
         dcache.read_in = exe.mem_read_out;
-        dcache.read_addr_in = exe.mem_read_addr_out;
         dcache.write_in = __EXPR( exe.mem_write_out() && !cache_busy_comb_func() );
-        dcache.write_addr_in = exe.mem_write_addr_out;
+        dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
         dcache.write_data_in = exe.mem_write_data_out;
         dcache.write_mask_in = exe.mem_write_mask_out;
         dcache.mem_read_data_in = dmem_read_data_in;
@@ -288,9 +286,8 @@ public:
         dcache._assign();
 
         icache.read_in = __EXPR( true );
-        icache.read_addr_in = __VAR( pc );
+        icache.addr_in = __VAR( pc );
         icache.write_in = __EXPR( false );
-        icache.write_addr_in = __EXPR( (uint32_t)0 );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
         icache.mem_read_data_in = imem_read_data_in;
@@ -300,12 +297,11 @@ public:
         icache._assign();
 
         dmem_write_out      = dcache.mem_write_out;
-        dmem_write_addr_out = dcache.mem_write_addr_out;
         dmem_write_data_out = dcache.mem_write_data_out;
         dmem_write_mask_out = dcache.mem_write_mask_out;
         dmem_read_out       = dcache.mem_read_out;
-        dmem_read_addr_out  = dcache.mem_read_addr_out;
-        imem_read_addr_out  = icache.mem_read_addr_out;
+        dmem_addr_out       = dcache.mem_addr_out;
+        imem_read_addr_out  = icache.mem_addr_out;
     }
 
 };
@@ -379,9 +375,9 @@ public:
         tribe._assign();
 
         dmem.read_in = tribe.dmem_read_out;
-        dmem.read_addr_in = tribe.dmem_read_addr_out;
+        dmem.read_addr_in = tribe.dmem_addr_out;
         dmem.write_in = tribe.dmem_write_out;
-        dmem.write_addr_in = tribe.dmem_write_addr_out;
+        dmem.write_addr_in = tribe.dmem_addr_out;
         dmem.write_data_in = tribe.dmem_write_data_out;
         dmem.write_mask_in = tribe.dmem_write_mask_out;
         dmem.debugen_in = debugen_in;
@@ -399,9 +395,9 @@ public:
         imem._assign();
 #else  // connecting Verilator to CppHDL
         dmem.read_in = __EXPR( (bool)tribe.dmem_read_out );
-        dmem.read_addr_in = __EXPR( (uint32_t)tribe.dmem_read_addr_out );
+        dmem.read_addr_in = __EXPR( (uint32_t)tribe.dmem_addr_out );
         dmem.write_in = __EXPR( (bool)tribe.dmem_write_out );
-        dmem.write_addr_in = __EXPR( (uint32_t)tribe.dmem_write_addr_out );
+        dmem.write_addr_in = __EXPR( (uint32_t)tribe.dmem_addr_out );
         dmem.write_data_in = __EXPR( (uint32_t)tribe.dmem_write_data_out );
         dmem.write_mask_in = __EXPR( (uint8_t)tribe.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;

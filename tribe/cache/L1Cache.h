@@ -24,21 +24,19 @@ class L1Cache : public Module
 
 public:
     __PORT(bool)      write_in;
-    __PORT(uint32_t)  write_addr_in;
     __PORT(uint32_t)  write_data_in;
     __PORT(uint8_t)   write_mask_in;
     __PORT(bool)      read_in;
-    __PORT(uint32_t)  read_addr_in;
+    __PORT(uint32_t)  addr_in;
     __PORT(uint32_t)  read_data_out = __VAR(read_data_comb_func());
     __PORT(bool)      busy_out = __VAR(busy_comb_func());
     __PORT(bool)      stall_in;
 
     __PORT(bool)      mem_write_out = __EXPR(write_in());
-    __PORT(uint32_t)  mem_write_addr_out = __EXPR(write_addr_in());
     __PORT(uint32_t)  mem_write_data_out = __EXPR(write_data_in());
     __PORT(uint8_t)   mem_write_mask_out = __EXPR(write_mask_in());
     __PORT(bool)      mem_read_out = __VAR(mem_read_comb_func());
-    __PORT(uint32_t)  mem_read_addr_out = __EXPR((uint32_t)req_addr_reg);
+    __PORT(uint32_t)  mem_addr_out = __EXPR(mem_read_out() ? (uint32_t)req_addr_reg : addr_in());
     __PORT(uint32_t)  mem_read_data_in;
 
     bool debugen_in;
@@ -91,7 +89,7 @@ private:
     }
 
     __LAZY_COMB(input_even_set_comb, u<SET_BITS>)
-        uint32_t addr = read_in() ? read_addr_in() : write_addr_in();
+        uint32_t addr = addr_in();
         if (addr & 0x2) {
             addr += 2;
         }
@@ -99,7 +97,7 @@ private:
     }
 
     __LAZY_COMB(input_odd_set_comb, u<SET_BITS>)
-        uint32_t addr = read_in() ? read_addr_in() : write_addr_in();
+        uint32_t addr = addr_in();
         if ((addr & 0x2) == 0) {
             addr += 2;
         }
@@ -107,7 +105,7 @@ private:
     }
 
     __LAZY_COMB(input_even_tag_comb, logic<TAG_BITS + 1>)
-        uint32_t addr = write_addr_in();
+        uint32_t addr = addr_in();
         if (addr & 0x2) {
             addr += 2;
         }
@@ -115,7 +113,7 @@ private:
     }
 
     __LAZY_COMB(input_odd_tag_comb, logic<TAG_BITS + 1>)
-        uint32_t addr = write_addr_in();
+        uint32_t addr = addr_in();
         if ((addr & 0x2) == 0) {
             addr += 2;
         }
@@ -167,7 +165,7 @@ private:
         if (last_valid_reg) {
             read_data_comb = last_data_reg;
         }
-        else if (state_reg == ST_LOOKUP && req_read_reg && req_addr_reg == read_addr_in() && hit_comb_func()) {
+        else if (state_reg == ST_LOOKUP && req_read_reg && req_addr_reg == addr_in() && hit_comb_func()) {
             read_data_comb = cache_data_comb_func();
         }
         else {
@@ -237,14 +235,14 @@ public:
             }
         }
         else if (read_in() && !last_valid_reg) {
-            req_addr_reg._next = read_addr_in();
+            req_addr_reg._next = addr_in();
             req_read_reg._next = true;
             last_valid_reg._next = false;
             state_reg._next = ST_LOOKUP;
         }
 
         if (write_in()) {
-            if (last_valid_reg && last_addr_reg == write_addr_in()) {
+            if (last_valid_reg && last_addr_reg == addr_in()) {
                 last_valid_reg._next = false;
             }
         }
@@ -294,15 +292,15 @@ public:
         size_t i;
         for (i = 0; i < WAYS; ++i) {
             even_ram[i].addr_in = __EXPR_I((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_even_set_comb_func() : input_even_set_comb_func());
-            even_ram[i].data_in = __EXPR_I((state_reg == ST_REFILL) ? logic<16>((req_addr_reg & 0x2) ? mem_read_data_in() >> 16 : mem_read_data_in()) : logic<16>(write_addr_in() & 0x2 ? write_data_in() >> 16 : write_data_in()));
+            even_ram[i].data_in = __EXPR_I((state_reg == ST_REFILL) ? logic<16>((req_addr_reg & 0x2) ? mem_read_data_in() >> 16 : mem_read_data_in()) : logic<16>(addr_in() & 0x2 ? write_data_in() >> 16 : write_data_in()));
             even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && victim_reg == i);
-            even_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == read_addr_in()));
+            even_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == addr_in()));
             even_ram[i].id_in = ID * 100 + i * 4;
 
             odd_ram[i].addr_in = __EXPR_I((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_odd_set_comb_func() : input_odd_set_comb_func());
-            odd_ram[i].data_in = __EXPR_I((state_reg == ST_REFILL) ? logic<16>((req_addr_reg & 0x2) ? mem_read_data_in() : mem_read_data_in() >> 16) : logic<16>(write_addr_in() & 0x2 ? write_data_in() : write_data_in() >> 16));
+            odd_ram[i].data_in = __EXPR_I((state_reg == ST_REFILL) ? logic<16>((req_addr_reg & 0x2) ? mem_read_data_in() : mem_read_data_in() >> 16) : logic<16>(addr_in() & 0x2 ? write_data_in() : write_data_in() >> 16));
             odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && victim_reg == i);
-            odd_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == read_addr_in()));
+            odd_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == addr_in()));
             odd_ram[i].id_in = ID * 100 + i * 4 + 1;
 
             even_tag_ram[i].addr_in = __EXPR_I((state_reg == ST_INIT) ? init_set_reg : ((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_even_set_comb_func() : input_even_set_comb_func()));
@@ -310,7 +308,7 @@ public:
             even_tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
                                              ((state_reg == ST_REFILL) && req_read_reg && victim_reg == i) ||
                                              write_in());
-            even_tag_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == read_addr_in()));
+            even_tag_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == addr_in()));
             even_tag_ram[i].id_in = ID * 100 + i * 4 + 2;
 
             odd_tag_ram[i].addr_in = __EXPR_I((state_reg == ST_INIT) ? init_set_reg : ((state_reg == ST_LOOKUP || state_reg == ST_REFILL) ? req_odd_set_comb_func() : input_odd_set_comb_func()));
@@ -318,7 +316,7 @@ public:
             odd_tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
                                             ((state_reg == ST_REFILL) && req_read_reg && victim_reg == i) ||
                                             write_in());
-            odd_tag_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == read_addr_in()));
+            odd_tag_ram[i].rd_in = __EXPR_I(read_in() && state_reg == ST_IDLE && !(last_valid_reg && last_addr_reg == addr_in()));
             odd_tag_ram[i].id_in = ID * 100 + i * 4 + 3;
         }
     }
