@@ -20,8 +20,8 @@ class Tribe: public Module
     Execute         exe;
     Writeback       wb;
     File<32,32>     regs;
-    L1Cache<1024,4,2,0> icache;
-    L1Cache<1024,4,2,1> dcache;
+    L1Cache<1024,32,2,0> icache;
+    L1Cache<1024,32,2,1> dcache;
 
 public:
 
