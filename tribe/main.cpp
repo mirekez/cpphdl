@@ -546,31 +546,13 @@ public:
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
 #include MAKE_HEADER(VERILATOR_MODEL)
-static L1CachePerf decode_l1cache_perf(uint32_t bits)
+static TribePerf verilator_tribe_perf(uint64_t bits)
 {
-    L1CachePerf perf{};
-    perf.hit = bits & 1;
-    perf.lookup_wait = (bits >> 1) & 1;
-    perf.refill_wait = (bits >> 2) & 1;
-    perf.init_wait = (bits >> 3) & 1;
-    perf.issue_wait = (bits >> 4) & 1;
-    perf.state = (bits >> 5) & 0x7;
-    return perf;
+    uint64_t storage = bits;
+    return *reinterpret_cast<TribePerf*>(&storage);
 }
 
-static TribePerf decode_tribe_perf(uint32_t bits)
-{
-    TribePerf perf{};
-    perf.hazard_stall = bits & 1;
-    perf.branch_stall = (bits >> 1) & 1;
-    perf.dcache_wait = (bits >> 2) & 1;
-    perf.icache_wait = (bits >> 3) & 1;
-    perf.icache = decode_l1cache_perf((bits >> 4) & 0x7ff);
-    perf.dcache = decode_l1cache_perf((bits >> 15) & 0x7ff);
-    return perf;
-}
-
-#define PORT_VALUE(port) decode_tribe_perf(port)
+#define PORT_VALUE(port) verilator_tribe_perf((uint64_t)(port))
 #else
 #define PORT_VALUE(port) (port())
 #endif
