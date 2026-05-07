@@ -31,7 +31,14 @@ void Project::generate(const std::string& outDir)
             continue;
         }
 
-        mod.print(out);
+        if (!mod.replacement.empty()) {
+            out << mod.replacement;
+            if (mod.replacement.back() != '\n') {
+                out << "\n";
+            }
+        } else {
+            mod.print(out);
+        }
 
         std::cout << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
     }

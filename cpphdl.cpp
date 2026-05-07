@@ -19,8 +19,34 @@
 #include "Struct.h"
 
 #include <map>
+#include <string_view>
 
 using namespace clang;
+
+namespace
+{
+
+std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD)
+{
+    constexpr std::string_view prefix = "CPPHDL_REPLACEMENT=";
+
+    for (const Attr* attr : RD->attrs()) {
+        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+            std::string text = ann->getAnnotation().str();
+            if (text.rfind(prefix, 0) == 0) {
+                text.erase(0, prefix.size());
+                size_t end = text.find_last_not_of(" \t\r\n");
+                if (end != std::string::npos && text[end] == ';') {
+                    text.erase(end);
+                }
+                return text;
+            }
+        }
+    }
+    return {};
+}
+
+}
 
 void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
 {
@@ -764,6 +790,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
         mod->parameters = std::move(params);
         mod->origName = RD->getQualifiedNameAsString();
+        mod->replacement = cpphdlReplacementFromAnnotations(RD);
 
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod->name << ")"); on_return ret_debug([](){ --debugIndent; });
 

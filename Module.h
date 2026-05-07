@@ -23,6 +23,7 @@ struct Module
     std::vector<Method> methods;
     std::vector<Import> imports;
     std::string origName;
+    std::string replacement;
     std::vector<Field> aliases;
     std::vector<Field> wires;  // made during generation
     std::unordered_set<std::string> onceAccessedRegs;
