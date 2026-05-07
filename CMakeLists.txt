@@ -42,6 +42,30 @@ option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" 
 
 include(CTest)
 
+set(CPPHDL_TEST_ALL_SCRIPT "${CMAKE_BINARY_DIR}/.test_all.sh")
+file(WRITE "${CPPHDL_TEST_ALL_SCRIPT}" [=[
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+for DIR in examples tests; do
+    if [[ ! -d "$DIR" ]]; then
+        continue
+    fi
+
+    while IFS= read -r -d '' EXE; do
+        echo "==> ${EXE}"
+        EXE_DIR="$(dirname "$EXE")"
+        EXE_NAME="$(basename "$EXE")"
+        (cd "$EXE_DIR" && "./$EXE_NAME")
+    done < <(find "$DIR" -maxdepth 1 -type f -perm -111 -print0 | sort -z)
+done
+]=])
+file(CHMOD "${CPPHDL_TEST_ALL_SCRIPT}"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
 add_definitions(-DSTATIC_BUILD)
 
 find_package(LLVM REQUIRED CONFIG PATHS .conda/lib/cmake/llvm)

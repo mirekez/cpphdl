@@ -62,6 +62,34 @@ public:
 
     bool debugen_in;
 
+    void _assign()
+    {
+        size_t i;
+        for (i = 0; i < WAYS; ++i) {
+            even_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            even_ram[i].data_in = __EXPR(refill_even_line_comb_func());
+            even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
+            even_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            even_ram[i].id_in = ID * 100 + i * 3;
+
+            odd_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            odd_ram[i].data_in = __EXPR(refill_odd_line_comb_func());
+            odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
+            odd_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            odd_ram[i].id_in = ID * 100 + i * 3 + 1;
+
+            tag_ram[i].addr_in = __EXPR((state_reg == ST_INIT) ? init_set_reg :
+                                        (write_in() ? input_set_comb_func() :
+                                         ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
+            tag_ram[i].data_in = __EXPR((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
+            tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
+                                        ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i) ||
+                                        write_in());
+            tag_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            tag_ram[i].id_in = ID * 100 + i * 3 + 2;
+        }
+    }
+
 private:
     RAM1PORT<HALF_LINE_BITS, SETS> even_ram[WAYS];
     RAM1PORT<HALF_LINE_BITS, SETS> odd_ram[WAYS];
@@ -427,34 +455,6 @@ public:
             even_ram[i]._strobe();
             odd_ram[i]._strobe();
             tag_ram[i]._strobe();
-        }
-    }
-
-    void _assign()
-    {
-        size_t i;
-        for (i = 0; i < WAYS; ++i) {
-            even_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            even_ram[i].data_in = __EXPR(refill_even_line_comb_func());
-            even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
-            even_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
-            even_ram[i].id_in = ID * 100 + i * 3;
-
-            odd_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            odd_ram[i].data_in = __EXPR(refill_odd_line_comb_func());
-            odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
-            odd_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
-            odd_ram[i].id_in = ID * 100 + i * 3 + 1;
-
-            tag_ram[i].addr_in = __EXPR((state_reg == ST_INIT) ? init_set_reg :
-                                        (write_in() ? input_set_comb_func() :
-                                         ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
-            tag_ram[i].data_in = __EXPR((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
-            tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
-                                        ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i) ||
-                                        write_in());
-            tag_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
-            tag_ram[i].id_in = ID * 100 + i * 3 + 2;
         }
     }
 };

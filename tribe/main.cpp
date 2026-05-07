@@ -53,6 +53,83 @@ public:
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
 
+    void _assign()
+    {
+//        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
+        dec.pc_in          = __VAR( pc );
+	        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
+        dec.instr_in       = icache.read_data_out;
+        dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
+        dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
+        dec._assign();  // outputs are ready
+
+        exe.state_in       = __VAR( exe_state_comb_func() );
+        exe._assign();  // outputs are ready
+
+        wb.state_in       = __VAR( state_reg[1] );
+        wb.mem_data_in    = __EXPR(load_data_valid_reg ? (uint32_t)load_data_reg :
+            ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+              dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
+                dcache.read_data_out() : (uint32_t)0));
+        wb.alu_result_in  = __VAR( alu_result_reg );
+        wb._assign();  // outputs are ready
+
+        regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
+        regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
+        regs.write_in = __EXPR(wb.regs_write_out() &&
+            !memory_wait_comb_func() &&
+            (state_reg[1].wb_op != Wb::MEM || load_data_valid_reg ||
+                (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
+        regs.write_addr_in = wb.regs_wr_id_out;
+        regs.write_data_in = wb.regs_data_out;
+        regs.debugen_in = debugen_in;
+        regs.__inst_name = __inst_name + "/regs";
+        regs._assign();
+
+        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache.busy_out() );
+        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache.busy_out() );
+        dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
+        dcache.write_data_in = exe.mem_write_data_out;
+        dcache.write_mask_in = exe.mem_write_mask_out;
+        dcache.mem_read_data_in = dmem_read_data_in;
+        dcache.stall_in = __EXPR(branch_stall_comb_func());
+        dcache.flush_in = __EXPR(false);
+        dcache.debugen_in = debugen_in;
+        dcache.__inst_name = __inst_name + "/dcache";
+        dcache._assign();
+
+        bp.lookup_valid_in = __EXPR(decode_branch_valid_comb_func());
+        bp.lookup_pc_in = __EXPR((uint32_t)dec.state_out().pc);
+        bp.lookup_target_in = __EXPR(decode_branch_target_comb_func());
+        bp.lookup_fallthrough_in = __EXPR(decode_fallthrough_comb_func());
+        bp.lookup_br_op_in = __EXPR((u<4>)dec.state_out().br_op);
+        bp.update_valid_in = __EXPR(state_reg[0].valid && state_reg[0].br_op != Br::BNONE && !memory_wait_comb_func());
+        bp.update_pc_in = __EXPR((uint32_t)state_reg[0].pc);
+        bp.update_taken_in = __EXPR(exe.branch_taken_out());
+        bp.update_target_in = __EXPR(exe.branch_target_out());
+        bp.__inst_name = __inst_name + "/bp";
+        bp._assign();
+
+        icache.read_in = __EXPR( true );
+        icache.addr_in = __EXPR( fetch_addr_comb_func() );
+        icache.write_in = __EXPR( false );
+        icache.write_data_in = __EXPR( (uint32_t)0 );
+        icache.write_mask_in = __EXPR( (uint8_t)0 );
+        icache.mem_read_data_in = imem_read_data_in;
+        icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
+        icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
+        icache.debugen_in = debugen_in;
+        icache.__inst_name = __inst_name + "/icache";
+        icache._assign();
+
+        dmem_write_out      = dcache.mem_write_out;
+        dmem_write_data_out = dcache.mem_write_data_out;
+        dmem_write_mask_out = dcache.mem_write_mask_out;
+        dmem_read_out       = dcache.mem_read_out;
+        dmem_addr_out       = dcache.mem_addr_out;
+        imem_read_addr_out  = icache.mem_addr_out;
+    }
+
 private:
 
     reg<u32>        pc;
@@ -445,82 +522,6 @@ public:
         bp._strobe();
     }
 
-    void _assign()
-    {
-//        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
-        dec.pc_in          = __VAR( pc );
-	        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
-        dec.instr_in       = icache.read_data_out;
-        dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
-        dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
-        dec._assign();  // outputs are ready
-
-        exe.state_in       = __VAR( exe_state_comb_func() );
-        exe._assign();  // outputs are ready
-
-        wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = __EXPR(load_data_valid_reg ? (uint32_t)load_data_reg :
-            ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-              dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
-                dcache.read_data_out() : (uint32_t)0));
-        wb.alu_result_in  = __VAR( alu_result_reg );
-        wb._assign();  // outputs are ready
-
-        regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
-        regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
-        regs.write_in = __EXPR(wb.regs_write_out() &&
-            !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || load_data_valid_reg ||
-                (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
-        regs.write_addr_in = wb.regs_wr_id_out;
-        regs.write_data_in = wb.regs_data_out;
-        regs.debugen_in = debugen_in;
-        regs.__inst_name = __inst_name + "/regs";
-        regs._assign();
-
-        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache.busy_out() );
-        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache.busy_out() );
-        dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
-        dcache.write_data_in = exe.mem_write_data_out;
-        dcache.write_mask_in = exe.mem_write_mask_out;
-        dcache.mem_read_data_in = dmem_read_data_in;
-        dcache.stall_in = __EXPR(branch_stall_comb_func());
-        dcache.flush_in = __EXPR(false);
-        dcache.debugen_in = debugen_in;
-        dcache.__inst_name = __inst_name + "/dcache";
-        dcache._assign();
-
-        bp.lookup_valid_in = __EXPR(decode_branch_valid_comb_func());
-        bp.lookup_pc_in = __EXPR((uint32_t)dec.state_out().pc);
-        bp.lookup_target_in = __EXPR(decode_branch_target_comb_func());
-        bp.lookup_fallthrough_in = __EXPR(decode_fallthrough_comb_func());
-        bp.lookup_br_op_in = __EXPR((u<4>)dec.state_out().br_op);
-        bp.update_valid_in = __EXPR(state_reg[0].valid && state_reg[0].br_op != Br::BNONE && !memory_wait_comb_func());
-        bp.update_pc_in = __EXPR((uint32_t)state_reg[0].pc);
-        bp.update_taken_in = __EXPR(exe.branch_taken_out());
-        bp.update_target_in = __EXPR(exe.branch_target_out());
-        bp.__inst_name = __inst_name + "/bp";
-        bp._assign();
-
-        icache.read_in = __EXPR( true );
-        icache.addr_in = __EXPR( fetch_addr_comb_func() );
-        icache.write_in = __EXPR( false );
-        icache.write_data_in = __EXPR( (uint32_t)0 );
-        icache.write_mask_in = __EXPR( (uint8_t)0 );
-        icache.mem_read_data_in = imem_read_data_in;
-        icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
-        icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
-        icache.debugen_in = debugen_in;
-        icache.__inst_name = __inst_name + "/icache";
-        icache._assign();
-
-        dmem_write_out      = dcache.mem_write_out;
-        dmem_write_data_out = dcache.mem_write_data_out;
-        dmem_write_mask_out = dcache.mem_write_mask_out;
-        dmem_read_out       = dcache.mem_read_out;
-        dmem_addr_out       = dcache.mem_addr_out;
-        imem_read_addr_out  = icache.mem_addr_out;
-    }
 
 };
 
