@@ -387,6 +387,39 @@ buffer1_byteenable._next[addr_sub+i] = 1;
 host_addr.bits(39,32) = *s_writedata_in >> 32;
 ```
 
+&nbsp;&nbsp;&nbsp;&nbsp;The *.bits(hi,lo)* arguments can be expressions, so indexed slices such as
+`bits(word * 16 + 15, word * 16)` are supported and converted to SystemVerilog indexed part-selects.
+The slice width must be statically implied by the expression shape: use the same base expression on
+both sides plus a constant width, keep `hi >= lo`, and keep the selected range inside the `logic<>`
+width. Dynamic indexed slices are intended for contiguous read/write fields, not for arbitrary
+variable-width ranges.
+
+Examples from `tests/datatypes/LogicBitsIndexing.cpp`:
+
+```cpp
+logic<128> source_comb;
+logic<16> direct_comb;
+logic<8> byte_comb;
+
+direct_comb = source_comb.bits(word * 16 + 15, word * 16);
+byte_comb = source_comb.bits(word * 8 + 7, word * 8);
+```
+
+Writing indexed slices is supported as well:
+
+```cpp
+logic<128> edited_comb;
+
+edited_comb.bits(word * 16 + 15, word * 16) =
+    logic<16>((uint64_t)seed_in() ^ 0x55aa);
+
+edited_comb.bits((word + 1) * 16 + 15, (word + 1) * 16) =
+    logic<16>((uint64_t)seed_in() ^ 0xaa55);
+
+edited_comb.bits(word * 8 + 7, word * 8) =
+    logic<8>((uint64_t)seed_in() ^ 0x5a);
+```
+
 ### u`<WIDTH>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;*u`<>`* is a basic unsigned value of variable size which supports all math operators and castable to a logic`<>` variable.
@@ -653,6 +686,140 @@ interfaces such as valid-ready, where one module drives `valid` and `data`, whil
 * Each structure or union is converted into SystemVerilog package in a separate file
 * The order of fields is reversed due to differences between C++ and SystemVerilog
 * Anonymous structures and unions declared inside other structures get 'anon' name substitution
+* CppHDL aligns non-bitfield structure members to byte boundaries and emits hidden `_alignN` fields when padding is needed
+* Packed unions use the largest branch size; smaller struct/union branches get hidden `_padN` fields so all union alternatives have the same packed width
+* `cpphdl::array<T,N>` fields are emitted as packed SystemVerilog arrays inside the generated struct package
+
+Example from `tests/structs/ArrayInStruct.cpp`:
+
+```cpp
+struct ArrayPayload
+{
+    unsigned prefix:4;
+    array<u8, 3> bytes;
+    unsigned mid:3;
+    array<u16, 1> halfs;
+    unsigned tail:5;
+} __PACKED;
+```
+
+Generated SystemVerilog:
+
+```systemverilog
+package ArrayPayload_pkg;
+
+typedef struct packed {
+    logic[3-1:0] _align0;
+    logic[5-1:0] tail;
+    logic[1-1:0][16-1:0] halfs;
+    logic[5-1:0] _align2;
+    logic[3-1:0] mid;
+    logic[3-1:0][8-1:0] bytes;
+    logic[4-1:0] _align1;
+    logic[4-1:0] prefix;
+} ArrayPayload;
+
+endpackage
+```
+
+Example from `tests/structs/StructAlignment.cpp`:
+
+```cpp
+struct TinyBits
+{
+    unsigned a:1;
+    unsigned b:2;
+    unsigned c:3;
+} __PACKED;
+
+struct MixedBits
+{
+    unsigned flag:1;
+    unsigned code:4;
+    u<3> state;
+    unsigned tail:2;
+} __PACKED;
+
+struct OuterBits
+{
+    unsigned head:3;
+    TinyBits tiny;
+    unsigned mid:5;
+    MixedBits mixed;
+    u<4> nibble;
+    unsigned last:1;
+} __PACKED;
+```
+
+Generated SystemVerilog:
+
+```systemverilog
+package OuterBits_pkg;
+import TinyBits_pkg::*;
+import MixedBits_pkg::*;
+
+typedef struct packed {
+    logic[7-1:0] _align0;
+    logic[1-1:0] last;
+    logic[4-1:0] _align3;
+    logic[4-1:0] nibble;
+    MixedBits mixed;
+    logic[3-1:0] _align2;
+    logic[5-1:0] mid;
+    TinyBits tiny;
+    logic[5-1:0] _align1;
+    logic[3-1:0] head;
+} OuterBits;
+
+endpackage
+```
+
+Packed union branches are also normalized to a common size:
+
+```cpp
+struct UnionStruct
+{
+    unsigned sa:4;
+    u<6> sb;
+    unsigned sc:1;
+} __PACKED;
+
+union UnionWithStruct
+{
+    struct {
+        unsigned us0:2;
+        UnionStruct nested;
+        unsigned us1:3;
+    } __PACKED branch;
+    struct {
+        u<11> other0;
+        unsigned other1:5;
+    } __PACKED other;
+} __PACKED;
+```
+
+Generated SystemVerilog:
+
+```systemverilog
+package UnionWithStruct_pkg;
+
+typedef union packed {
+    struct packed {
+        logic[24-1:0] _pad1;
+        logic[5-1:0] other1;
+        logic[11-1:0] other0;
+    } other;
+    struct packed {
+        logic[5-1:0] _align0;
+        logic[3-1:0] us1;
+        UnionStruct nested;
+        logic[6-1:0] _align1;
+        logic[2-1:0] us0;
+    } branch;
+} UnionWithStruct;
+
+endpackage
+```
 
 ## Templates
 
@@ -672,3 +839,49 @@ cpphdl <source.h> <source.cpp> ... [compilation parameters]
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The cpphdl tool is based on llvm clang and supports all usual C++ command line parameters.
+
+# Annotations
+
+## CPPHDL_REPLACEMENT
+
+* `[[clang::annotate("CPPHDL_REPLACEMENT=...;")]]` can be attached to a `cpphdl::Module` class.
+* During conversion cpphdl stores the text after `CPPHDL_REPLACEMENT=` in `Module::replacement`; a trailing metadata `;` is stripped.
+* When project generation sees replacement text, it writes that text directly to the module `.sv` file.
+* Normal import, port, register, method, and module body generation is skipped for that module.
+
+Example from `tests/format/AnnotateReplacement.cpp`:
+
+```cpp
+class [[clang::annotate(
+    "CPPHDL_REPLACEMENT="
+    "`default_nettype none\n"
+    "\n"
+    "module AnnotateReplacement (\n"
+    "    input wire clk\n"
+    ",   input wire reset\n"
+    ",   input wire[8-1:0] value_in\n"
+    ",   output wire[8-1:0] value_out\n"
+    ");\n"
+    "    assign value_out = value_in ^ 8'hA5;\n"
+    "endmodule\n"
+    ";"
+)]] AnnotateReplacement : public Module
+{
+public:
+    __PORT(u<8>) value_in;
+    __PORT(u<8>) value_out = __VAR(value_comb_func());
+
+private:
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = value_in() ^ u<8>(0xa5);
+    }
+
+public:
+    void _work(bool reset) {}
+    void _strobe() {}
+    void _assign() {}
+};
+```
