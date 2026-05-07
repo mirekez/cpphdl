@@ -12,9 +12,12 @@
 #include "Writeback.h"
 #include "BranchPredictor.h"
 #include "cache/L1Cache.h"
+#include "cache/L2Cache.h"
 
 #define RAM_SIZE 2048
 #define CACHE_ADDR_BITS 13
+#define L2_AXI_WIDTH 256
+#define L2_AXI_BYTES (L2_AXI_WIDTH / 8)
 #define BRANCH_PREDICTOR_ENTRIES 16
 #define BRANCH_PREDICTOR_COUNTER_BITS 2
 
@@ -38,6 +41,7 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<1024,32,2,0,CACHE_ADDR_BITS> icache;
     L1Cache<1024,32,2,1,CACHE_ADDR_BITS> dcache;
+    L2Cache<8192,L2_AXI_WIDTH,32,4,CACHE_ADDR_BITS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -47,9 +51,29 @@ public:
     __PORT(uint8_t)   dmem_write_mask_out;
     __PORT(bool)      dmem_read_out;
     __PORT(uint32_t)  dmem_addr_out;
-    __PORT(uint32_t)  dmem_read_data_in;
     __PORT(uint32_t)  imem_read_addr_out;
-    __PORT(uint32_t)  imem_read_data_in;
+
+    __PORT(bool) axi_awvalid_out;
+    __PORT(u<CACHE_ADDR_BITS>) axi_awaddr_out;
+    __PORT(u<4>) axi_awid_out;
+    __PORT(bool) axi_awready_in;
+    __PORT(bool) axi_wvalid_out;
+    __PORT(logic<L2_AXI_WIDTH>) axi_wdata_out;
+    __PORT(bool) axi_wlast_out;
+    __PORT(bool) axi_wready_in;
+    __PORT(bool) axi_bready_out;
+    __PORT(bool) axi_bvalid_in;
+    __PORT(u<4>) axi_bid_in;
+    __PORT(bool) axi_arvalid_out;
+    __PORT(u<CACHE_ADDR_BITS>) axi_araddr_out;
+    __PORT(u<4>) axi_arid_out;
+    __PORT(bool) axi_arready_in;
+    __PORT(bool) axi_rready_out;
+    __PORT(bool) axi_rvalid_in;
+    __PORT(logic<L2_AXI_WIDTH>) axi_rdata_in;
+    __PORT(bool) axi_rlast_in;
+    __PORT(u<4>) axi_rid_in;
+
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
 
@@ -91,7 +115,8 @@ public:
         dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
         dcache.write_data_in = exe.mem_write_data_out;
         dcache.write_mask_in = exe.mem_write_mask_out;
-        dcache.mem_read_data_in = dmem_read_data_in;
+        dcache.mem_read_data_in = l2cache.d_read_data_out;
+        dcache.mem_wait_in = l2cache.d_wait_out;
         dcache.stall_in = __EXPR(branch_stall_comb_func());
         dcache.flush_in = __EXPR(false);
         dcache.debugen_in = debugen_in;
@@ -115,12 +140,36 @@ public:
         icache.write_in = __EXPR( false );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
-        icache.mem_read_data_in = imem_read_data_in;
+        icache.mem_read_data_in = l2cache.i_read_data_out;
+        icache.mem_wait_in = l2cache.i_wait_out;
         icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
         icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
+
+        l2cache.i_read_in = icache.mem_read_out;
+        l2cache.i_write_in = __EXPR(false);
+        l2cache.i_addr_in = icache.mem_addr_out;
+        l2cache.i_write_data_in = __EXPR((uint32_t)0);
+        l2cache.i_write_mask_in = __EXPR((uint8_t)0);
+        l2cache.d_read_in = dcache.mem_read_out;
+        l2cache.d_write_in = dcache.mem_write_out;
+        l2cache.d_addr_in = dcache.mem_addr_out;
+        l2cache.d_write_data_in = dcache.mem_write_data_out;
+        l2cache.d_write_mask_in = dcache.mem_write_mask_out;
+        l2cache.axi_awready_in = axi_awready_in;
+        l2cache.axi_wready_in = axi_wready_in;
+        l2cache.axi_bvalid_in = axi_bvalid_in;
+        l2cache.axi_bid_in = axi_bid_in;
+        l2cache.axi_arready_in = axi_arready_in;
+        l2cache.axi_rvalid_in = axi_rvalid_in;
+        l2cache.axi_rdata_in = axi_rdata_in;
+        l2cache.axi_rlast_in = axi_rlast_in;
+        l2cache.axi_rid_in = axi_rid_in;
+        l2cache.debugen_in = debugen_in;
+        l2cache.__inst_name = __inst_name + "/l2cache";
+        l2cache._assign();
 
         dmem_write_out      = dcache.mem_write_out;
         dmem_write_data_out = dcache.mem_write_data_out;
@@ -128,6 +177,17 @@ public:
         dmem_read_out       = dcache.mem_read_out;
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
+        axi_awvalid_out = l2cache.axi_awvalid_out;
+        axi_awaddr_out = l2cache.axi_awaddr_out;
+        axi_awid_out = l2cache.axi_awid_out;
+        axi_wvalid_out = l2cache.axi_wvalid_out;
+        axi_wdata_out = l2cache.axi_wdata_out;
+        axi_wlast_out = l2cache.axi_wlast_out;
+        axi_bready_out = l2cache.axi_bready_out;
+        axi_arvalid_out = l2cache.axi_arvalid_out;
+        axi_araddr_out = l2cache.axi_araddr_out;
+        axi_arid_out = l2cache.axi_arid_out;
+        axi_rready_out = l2cache.axi_rready_out;
     }
 
 private:
@@ -149,6 +209,7 @@ private:
     reg<u32>        debug_alu_b_reg;
     reg<u32>        debug_branch_target_reg;
     reg<u1>         debug_branch_taken_reg;
+    reg<u1>         output_write_active_reg;
 
     __LAZY_COMB(hazard_stall_comb, bool)
         const auto& dec_state_tmp = dec.state_out();
@@ -191,7 +252,8 @@ private:
     }
 
     __LAZY_COMB(memory_wait_comb, bool)
-        memory_wait_comb = dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+        memory_wait_comb = dcache.busy_out() || (exe.mem_write_out() && l2cache.d_wait_out()) ||
+            (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
         return memory_wait_comb;
     }
@@ -349,11 +411,11 @@ public:
 
     void _work(bool reset)
     {
-        if (debugen_in) {
+        if (debugen_in && !reset) {
             debug();
         }
 
-        if (dmem_addr_out() == 0x11223344 && dmem_write_out()) {
+        if (dmem_addr_out() == 0x11223344 && dmem_write_out() && !output_write_active_reg) {
             FILE* out = fopen("out.txt", "a");
             if (debugen_in) {
                 std::print("OUTPUT pc={} data={:08x} char={:02x}\n", pc, dmem_write_data_out(), dmem_write_data_out() & 0xFF);
@@ -361,6 +423,7 @@ public:
             fprintf(out, "%c", dmem_write_data_out()&0xFF);
             fclose(out);
         }
+        output_write_active_reg._next = dmem_addr_out() == 0x11223344 && dmem_write_out();
 
         if (memory_wait_comb_func()) {
             pc._next = pc;
@@ -430,6 +493,7 @@ public:
         wb._work(reset);
         icache._work(reset);
         dcache._work(reset);
+        l2cache._work(reset);
         bp._work(reset);
 
         if (reset) {
@@ -442,6 +506,7 @@ public:
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
+            output_write_active_reg.clr();
         }
     }
 
@@ -452,7 +517,7 @@ public:
     void debug()
     {
         State tmp;
-        Rv32im instr = {{{imem_read_data_in()}}};
+        Rv32im instr = {{{icache.read_data_out()}}};
         instr.decode(tmp);
 
         std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
@@ -512,6 +577,7 @@ public:
         debug_alu_b_reg.strobe();
         debug_branch_target_reg.strobe();
         debug_branch_taken_reg.strobe();
+        output_write_active_reg.strobe();
 
         regs._strobe();
         dec._strobe();
@@ -520,6 +586,7 @@ public:
         icache._strobe();
         dcache._strobe();
         bp._strobe();
+        l2cache._strobe();
     }
 
 
@@ -540,6 +607,7 @@ public:
 #include <fstream>
 
 #include "Ram.h"
+#include "Axi4Ram.h"
 
 #include <tuple>
 #include <utility>
@@ -553,6 +621,21 @@ static TribePerf verilator_tribe_perf(uint64_t bits)
     return *reinterpret_cast<TribePerf*>(&storage);
 }
 
+template<size_t WORDS>
+static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
+{
+    logic<WORDS * 32> out = 0;
+    memcpy(out.bytes, bits.m_storage, sizeof(out.bytes));
+    return out;
+}
+
+template<size_t WIDTH, size_t WORDS>
+static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits)
+{
+    static_assert(WIDTH == WORDS * 32);
+    memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
+}
+
 #define PORT_VALUE(port) verilator_tribe_perf((uint64_t)(port))
 #else
 #define PORT_VALUE(port) (port())
@@ -560,8 +643,8 @@ static TribePerf verilator_tribe_perf(uint64_t bits)
 
 class TestTribe : public Module
 {
-    Ram<32,RAM_SIZE,0> imem;
-    Ram<32,RAM_SIZE,1> dmem;
+    static constexpr size_t AXI_RAM_LINES = RAM_SIZE * 4 / L2_AXI_BYTES;
+    Axi4Ram<CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_LINES> mem;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -569,9 +652,6 @@ class TestTribe : public Module
     Tribe tribe;
 #endif
 
-    bool imem_write = false;
-    uint32_t imem_write_addr;
-    uint32_t imem_write_data;
     bool error;
 
     uint64_t perf_clocks = 0;
@@ -606,51 +686,48 @@ public:
 #ifndef VERILATOR
         tribe._assign();
 
-        tribe.dmem_read_data_in = dmem.read_data_out;
-        tribe.imem_read_data_in = imem.read_data_out;
+        tribe.axi_awready_in = mem.axi_awready_out;
+        tribe.axi_wready_in = mem.axi_wready_out;
+        tribe.axi_bvalid_in = mem.axi_bvalid_out;
+        tribe.axi_bid_in = mem.axi_bid_out;
+        tribe.axi_arready_in = mem.axi_arready_out;
+        tribe.axi_rvalid_in = mem.axi_rvalid_out;
+        tribe.axi_rdata_in = mem.axi_rdata_out;
+        tribe.axi_rlast_in = mem.axi_rlast_out;
+        tribe.axi_rid_in = mem.axi_rid_out;
         tribe.debugen_in = debugen_in;
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
 
-        dmem.read_in = tribe.dmem_read_out;
-        dmem.read_addr_in = tribe.dmem_addr_out;
-        dmem.write_in = tribe.dmem_write_out;
-        dmem.write_addr_in = tribe.dmem_addr_out;
-        dmem.write_data_in = tribe.dmem_write_data_out;
-        dmem.write_mask_in = tribe.dmem_write_mask_out;
-        dmem.debugen_in = debugen_in;
-        dmem.__inst_name = __inst_name + "/dmem";
-        dmem._assign();
-
-        imem.read_in = __EXPR( !imem_write );
-        imem.read_addr_in = tribe.imem_read_addr_out;
-        imem.write_in = __VAR( imem_write );
-        imem.write_addr_in = __VAR( imem_write_addr );
-        imem.write_data_in = __VAR( imem_write_data );
-        imem.write_mask_in = __EXPR( (uint8_t)0xF );
-        imem.debugen_in = debugen_in;
-        imem.__inst_name = __inst_name + "/imem";
-        imem._assign();
+        mem.axi_awvalid_in = tribe.axi_awvalid_out;
+        mem.axi_awaddr_in = tribe.axi_awaddr_out;
+        mem.axi_awid_in = tribe.axi_awid_out;
+        mem.axi_wvalid_in = tribe.axi_wvalid_out;
+        mem.axi_wdata_in = tribe.axi_wdata_out;
+        mem.axi_wlast_in = tribe.axi_wlast_out;
+        mem.axi_bready_in = tribe.axi_bready_out;
+        mem.axi_arvalid_in = tribe.axi_arvalid_out;
+        mem.axi_araddr_in = tribe.axi_araddr_out;
+        mem.axi_arid_in = tribe.axi_arid_out;
+        mem.axi_rready_in = tribe.axi_rready_out;
+        mem.debugen_in = debugen_in;
+        mem.__inst_name = __inst_name + "/mem";
+        mem._assign();
 #else  // connecting Verilator to CppHDL
-        dmem.read_in = __EXPR( (bool)tribe.dmem_read_out );
-        dmem.read_addr_in = __EXPR( (uint32_t)tribe.dmem_addr_out );
-        dmem.write_in = __EXPR( (bool)tribe.dmem_write_out );
-        dmem.write_addr_in = __EXPR( (uint32_t)tribe.dmem_addr_out );
-        dmem.write_data_in = __EXPR( (uint32_t)tribe.dmem_write_data_out );
-        dmem.write_mask_in = __EXPR( (uint8_t)tribe.dmem_write_mask_out );
-        dmem.debugen_in = debugen_in;
-        dmem.__inst_name = __inst_name + "/dmem";
-        dmem._assign();
-
-        imem.read_in = __EXPR( (bool)!imem_write );
-        imem.read_addr_in = __EXPR( (uint32_t)tribe.imem_read_addr_out );
-        imem.write_in = __EXPR( (bool)imem_write );
-        imem.write_addr_in = __EXPR( (uint32_t)imem_write_addr );
-        imem.write_data_in = __EXPR( (uint32_t)imem_write_data );
-        imem.write_mask_in = __EXPR( (uint8_t)0xF );
-        imem.debugen_in = debugen_in;
-        imem.__inst_name = __inst_name + "/imem";
-        imem._assign();
+        mem.axi_awvalid_in = __EXPR((bool)tribe.axi_awvalid_out);
+        mem.axi_awaddr_in = __EXPR((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out);
+        mem.axi_awid_in = __EXPR((u<4>)(uint32_t)tribe.axi_awid_out);
+        mem.axi_wvalid_in = __EXPR((bool)tribe.axi_wvalid_out);
+        mem.axi_wdata_in = __EXPR(verilator_wide_to_logic(tribe.axi_wdata_out));
+        mem.axi_wlast_in = __EXPR((bool)tribe.axi_wlast_out);
+        mem.axi_bready_in = __EXPR((bool)tribe.axi_bready_out);
+        mem.axi_arvalid_in = __EXPR((bool)tribe.axi_arvalid_out);
+        mem.axi_araddr_in = __EXPR((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out);
+        mem.axi_arid_in = __EXPR((u<4>)(uint32_t)tribe.axi_arid_out);
+        mem.axi_rready_in = __EXPR((bool)tribe.axi_rready_out);
+        mem.debugen_in = debugen_in;
+        mem.__inst_name = __inst_name + "/mem";
+        mem._assign();
 #endif
     }
 
@@ -672,11 +749,17 @@ public:
         tribe.clk = 1;
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
-        tribe.dmem_read_data_in = dmem.read_data_out();
-        tribe.imem_read_data_in = imem.read_data_out();
+        tribe.axi_awready_in = mem.axi_awready_out();
+        tribe.axi_wready_in = mem.axi_wready_out();
+        tribe.axi_bvalid_in = mem.axi_bvalid_out();
+        tribe.axi_bid_in = mem.axi_bid_out();
+        tribe.axi_arready_in = mem.axi_arready_out();
+        tribe.axi_rvalid_in = mem.axi_rvalid_out();
+        verilator_logic_to_wide(tribe.axi_rdata_in, mem.axi_rdata_out());
+        tribe.axi_rlast_in = mem.axi_rlast_out();
+        tribe.axi_rid_in = mem.axi_rid_out();
 #endif
-        dmem._work(reset);
-        imem._work(reset);
+        mem._work(reset);
 
         if (reset) {
             error = false;
@@ -689,8 +772,7 @@ public:
 #ifndef VERILATOR
         tribe._strobe();
 #endif
-        dmem._strobe();  // we use these modules in Verilator test
-        imem._strobe();
+        mem._strobe();  // we use this module in Verilator test
     }
 
     void _work_neg(bool reset)
@@ -826,21 +908,19 @@ public:
         int read_bytes = fread(ram, 1, 4*RAM_SIZE, fbin);
         std::print("Reading program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
 
-        imem_write = true;
-        imem._work(1);
-        for (size_t addr = 0; addr < RAM_SIZE; ++addr) {
-            imem._strobe();
-            ++sys_clock;
-            imem_write_addr = addr*4;
-            imem_write_data = ram[addr];
-            imem._work(0);
-            if (debugen_in) {
-                std::print("{:04x}: {:08x}\n", addr, ram[addr]);
+        for (size_t line_idx = 0; line_idx < AXI_RAM_LINES; ++line_idx) {
+            logic<L2_AXI_WIDTH> line = 0;
+            for (size_t word = 0; word < L2_AXI_BYTES / 4; ++word) {
+                size_t addr = line_idx * (L2_AXI_BYTES / 4) + word;
+                line.bits(word * 32 + 31, word * 32) = ram[addr];
+                if (debugen_in) {
+                    std::print("{:04x}: {:08x}\n", addr, ram[addr]);
+                }
             }
+            mem.ram.buffer[line_idx] = line;
         }
-        imem_write = false;
+        mem.ram.buffer.apply();
         fclose(fbin);
-        dmem.ram.buffer = imem.ram.buffer;  // we need data from binary
         ///////////////////////////////////////
 
         auto start = std::chrono::high_resolution_clock::now();
@@ -905,6 +985,7 @@ int main (int argc, char** argv)
                   "File",
                   "RAM1PORT",
                   "L1Cache",
+                  "L2Cache",
                   "BranchPredictor",
                   "Decode",
                   "Execute",

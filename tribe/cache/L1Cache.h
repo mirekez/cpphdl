@@ -58,6 +58,7 @@ public:
     __PORT(bool)      mem_read_out = __VAR(mem_read_comb_func());
     __PORT(uint32_t)  mem_addr_out = __VAR(mem_addr_comb_func());
     __PORT(uint32_t)  mem_read_data_in;
+    __PORT(bool)      mem_wait_in;
     __PORT(L1CachePerf) perf_out = __VAR(perf_comb_func());
 
     bool debugen_in;
@@ -369,24 +370,23 @@ public:
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
             if (req_cacheable_reg) {
-                refill_even_line_reg._next = refill_even_line_comb_func();
-                refill_odd_line_reg._next = refill_odd_line_comb_func();
-                if (refill_word_reg == LINE_WORDS - 1) {
-                    last_addr_reg._next = req_addr_reg;
-                    last_data_reg._next = refill_data_comb_func();
-                    last_valid_reg._next = true;
-                    victim_reg._next = victim_reg + 1;
-                    state_reg._next = ST_DONE;
-                }
-                else {
-                    refill_word_reg._next = refill_word_reg + 1;
+                if (!mem_wait_in()) {
+                    refill_even_line_reg._next = refill_even_line_comb_func();
+                    refill_odd_line_reg._next = refill_odd_line_comb_func();
+                    if (refill_word_reg == LINE_WORDS - 1) {
+                        last_addr_reg._next = req_addr_reg;
+                        last_data_reg._next = refill_data_comb_func();
+                        last_valid_reg._next = true;
+                        victim_reg._next = victim_reg + 1;
+                        state_reg._next = ST_DONE;
+                    }
+                    else {
+                        refill_word_reg._next = refill_word_reg + 1;
+                    }
                 }
             }
             else {
-                if (refill_word_reg == 0) {
-                    refill_word_reg._next = 1;
-                }
-                else {
+                if (!mem_wait_in()) {
                     last_addr_reg._next = req_addr_reg;
                     last_data_reg._next = mem_read_data_in();
                     last_valid_reg._next = true;

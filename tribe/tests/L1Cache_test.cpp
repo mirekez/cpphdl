@@ -78,6 +78,7 @@ public:
         cache.write_data_in = __VAR(write_data);
         cache.write_mask_in = __VAR(write_mask);
         cache.mem_read_data_in = ram.read_data_out;
+        cache.mem_wait_in = __EXPR(false);
         cache.stall_in = __VAR(stall);
         cache.flush_in = __VAR(flush);
         cache.debugen_in = false;
@@ -170,6 +171,7 @@ public:
         cache.write_data_in = write_data;
         cache.write_mask_in = write_mask;
         cache.mem_read_data_in = ram.read_data_out();
+        cache.mem_wait_in = false;
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.debugen_in = false;
@@ -499,7 +501,7 @@ int main(int argc, char** argv)
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
-            {"../../../../include", "../../../../tribe/common", "../../../../tribe/cache"},
+            {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
             CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
