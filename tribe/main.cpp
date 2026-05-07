@@ -10,10 +10,13 @@
 #include "Decode.h"
 #include "Execute.h"
 #include "Writeback.h"
+#include "BranchPredictor.h"
 #include "cache/L1Cache.h"
 
 #define RAM_SIZE 2048
 #define CACHE_ADDR_BITS 13
+#define BRANCH_PREDICTOR_ENTRIES 16
+#define BRANCH_PREDICTOR_COUNTER_BITS 2
 
 long sys_clock = -1;
 
@@ -35,6 +38,7 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<1024,32,2,0,CACHE_ADDR_BITS> icache;
     L1Cache<1024,32,2,1,CACHE_ADDR_BITS> dcache;
+    BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
 
@@ -59,6 +63,9 @@ private:
     reg<u1>         load_data_valid_reg;
 
     reg<array<State,STAGES_NUM-1>> state_reg;
+    reg<array<u32,STAGES_NUM-1>> predicted_next_reg;
+    reg<array<u32,STAGES_NUM-1>> fallthrough_reg;
+    reg<array<u1,STAGES_NUM-1>> predicted_taken_reg;
 
     // debug
     reg<u32>        debug_alu_a_reg;
@@ -82,12 +89,12 @@ private:
     }
 
     __LAZY_COMB(branch_stall_comb, bool)
-        branch_stall_comb = state_reg[0].valid && state_reg[0].br_op != Br::BNONE;
+        branch_stall_comb = branch_mispredict_comb_func();
         return branch_stall_comb;
     }
 
     __LAZY_COMB(branch_flush_comb, bool)
-        branch_flush_comb = state_reg[0].valid && exe.branch_taken_out() && !branch_stall_comb_func();
+        branch_flush_comb = branch_mispredict_comb_func();
         return branch_flush_comb;
     }
 
@@ -106,13 +113,60 @@ private:
         return perf_comb;
     }
 
+    __LAZY_COMB(memory_wait_comb, bool)
+        memory_wait_comb = dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
+        return memory_wait_comb;
+    }
+
+    __LAZY_COMB(fetch_valid_comb, bool)
+        return fetch_valid_comb = valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc;
+    }
+
+    __LAZY_COMB(decode_fallthrough_comb, uint32_t)
+        return decode_fallthrough_comb = pc + ((dec.instr_in()&3)==3?4:2);
+    }
+
+    __LAZY_COMB(decode_branch_valid_comb, bool)
+        decode_branch_valid_comb = fetch_valid_comb_func() && dec.state_out().valid && dec.state_out().br_op != Br::BNONE && !stall_comb_func();
+        return decode_branch_valid_comb;
+    }
+
+    __LAZY_COMB(decode_branch_target_comb, uint32_t)
+        const auto& dec_state_tmp = dec.state_out();
+        decode_branch_target_comb = 0;
+        if (dec_state_tmp.br_op == Br::JAL) {
+            decode_branch_target_comb = dec_state_tmp.pc + dec_state_tmp.imm;
+        }
+        else if (dec_state_tmp.br_op == Br::JALR || dec_state_tmp.br_op == Br::JR) {
+            decode_branch_target_comb = (dec_state_tmp.rs1_val + dec_state_tmp.imm) & ~1U;
+        }
+        else {
+            decode_branch_target_comb = dec_state_tmp.pc + dec_state_tmp.imm;
+        }
+        return decode_branch_target_comb;
+    }
+
+    __LAZY_COMB(branch_actual_next_comb, uint32_t)
+        return branch_actual_next_comb = exe.branch_taken_out() ? exe.branch_target_out() : (uint32_t)fallthrough_reg[0];
+    }
+
+    __LAZY_COMB(branch_mispredict_comb, bool)
+        branch_mispredict_comb = state_reg[0].valid && state_reg[0].br_op != Br::BNONE &&
+            branch_actual_next_comb_func() != (uint32_t)predicted_next_reg[0];
+        return branch_mispredict_comb;
+    }
+
     __LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
-        if (valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc && !stall_comb_func()) {
-            fetch_addr_comb = pc + ((dec.instr_in()&3)==3?4:2);
+        if (fetch_valid_comb_func() && !stall_comb_func()) {
+            fetch_addr_comb = decode_fallthrough_comb_func();
         }
-        if (state_reg[0].valid && exe.branch_taken_out()) {
-            fetch_addr_comb = exe.branch_target_out();
+        if (decode_branch_valid_comb_func()) {
+            fetch_addr_comb = bp.predict_next_out();
+        }
+        if (branch_mispredict_comb_func()) {
+            fetch_addr_comb = branch_actual_next_comb_func();
         }
         return fetch_addr_comb;
     }
@@ -166,6 +220,22 @@ private:
             }
         }
 
+        if (state_reg[1].valid && (state_reg[1].wb_op == Wb::PC2 || state_reg[1].wb_op == Wb::PC4) && state_reg[1].rd != 0) {  // Mem/Wb link
+            uint32_t link_value = state_reg[1].pc + (state_reg[1].wb_op == Wb::PC2 ? 2 : 4);
+            if (dec_state_tmp.rs1 == state_reg[1].rd) {
+                state_reg._next[0].rs1_val = link_value;
+                if (debugen_in) {
+                    printf("forwarding %.08x from LINK to RS1\n", link_value);
+                }
+            }
+            if (dec_state_tmp.rs2 == state_reg[1].rd) {
+                state_reg._next[0].rs2_val = link_value;
+                if (debugen_in) {
+                    printf("forwarding %.08x from LINK to RS2\n", link_value);
+                }
+            }
+        }
+
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
             if (dec_state_tmp.rs1 == state_reg[0].rd) {
                 state_reg._next[0].rs1_val = exe.alu_result_out();
@@ -177,6 +247,22 @@ private:
                 state_reg._next[0].rs2_val = exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
+                }
+            }
+        }
+
+        if (state_reg[0].valid && (state_reg[0].wb_op == Wb::PC2 || state_reg[0].wb_op == Wb::PC4) && state_reg[0].rd != 0) {  // Ex/Mem link
+            uint32_t link_value = state_reg[0].pc + (state_reg[0].wb_op == Wb::PC2 ? 2 : 4);
+            if (dec_state_tmp.rs1 == state_reg[0].rd) {
+                state_reg._next[0].rs1_val = link_value;
+                if (debugen_in) {
+                    printf("forwarding %.08x from LINK to RS1\n", link_value);
+                }
+            }
+            if (dec_state_tmp.rs2 == state_reg[0].rd) {
+                state_reg._next[0].rs2_val = link_value;
+                if (debugen_in) {
+                    printf("forwarding %.08x from LINK to RS2\n", link_value);
                 }
             }
         }
@@ -199,11 +285,13 @@ public:
             fclose(out);
         }
 
-        if (dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))) {
+        if (memory_wait_comb_func()) {
             pc._next = pc;
             valid._next = valid;
             state_reg._next = state_reg;
+            predicted_next_reg._next = predicted_next_reg;
+            fallthrough_reg._next = fallthrough_reg;
+            predicted_taken_reg._next = predicted_taken_reg;
             alu_result_reg._next = alu_result_reg;
             if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
                 dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) {
@@ -222,11 +310,14 @@ public:
             debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
         else {
-            if (valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc && !stall_comb_func()) {
-                pc._next = pc + ((dec.instr_in()&3)==3?4:2);
+            if (fetch_valid_comb_func() && !stall_comb_func()) {
+                pc._next = decode_fallthrough_comb_func();
             }
-            if (state_reg[0].valid && exe.branch_taken_out()) {
-                pc._next = exe.branch_target_out();
+            if (decode_branch_valid_comb_func()) {
+                pc._next = bp.predict_next_out();
+            }
+            if (branch_mispredict_comb_func()) {
+                pc._next = branch_actual_next_comb_func();
             }
 
             valid._next = true;
@@ -234,13 +325,22 @@ public:
             if (hazard_stall_comb_func()) {
                 state_reg._next[0] = State{};
                 state_reg._next[0].valid = false;
+                predicted_next_reg._next[0] = pc;
+                fallthrough_reg._next[0] = pc;
+                predicted_taken_reg._next[0] = false;
             }
             else {
                 state_reg._next[0] = dec.state_out();
                 state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
+                predicted_next_reg._next[0] = decode_branch_valid_comb_func() ? (uint32_t)bp.predict_next_out() : decode_fallthrough_comb_func();
+                fallthrough_reg._next[0] = decode_fallthrough_comb_func();
+                predicted_taken_reg._next[0] = decode_branch_valid_comb_func() && bp.predict_taken_out();
                 forward();
             }
             state_reg._next[1] = state_reg[0];
+            predicted_next_reg._next[1] = predicted_next_reg[0];
+            fallthrough_reg._next[1] = fallthrough_reg[0];
+            predicted_taken_reg._next[1] = predicted_taken_reg[0];
             alu_result_reg._next = exe.alu_result_out();
             load_data_valid_reg._next = false;
             debug_branch_target_reg._next = exe.branch_target_out();
@@ -253,6 +353,7 @@ public:
         wb._work(reset);
         icache._work(reset);
         dcache._work(reset);
+        bp._work(reset);
 
         if (reset) {
             state_reg._next[0].valid = 0;
@@ -261,6 +362,9 @@ public:
             valid.clr();
             load_data_reg.clr();
             load_data_valid_reg.clr();
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
         }
     }
 
@@ -308,12 +412,11 @@ public:
             interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_reg[1].wb_op], wb.regs_wr_id_out());
         }
             //
-        std::print(": {}\n", interpret);
+        std::print(": {}", interpret);
         debug_alu_a_reg._next = exe.debug_alu_a_out();
         debug_alu_b_reg._next = exe.debug_alu_b_out();
         debug_branch_target_reg = exe.branch_target_out();
 #else
-        std::print("\n");
 #endif
     }
 
@@ -322,6 +425,9 @@ public:
         pc.strobe();
         valid.strobe();
         state_reg.strobe();
+        predicted_next_reg.strobe();
+        fallthrough_reg.strobe();
+        predicted_taken_reg.strobe();
         alu_result_reg.strobe();
         load_data_reg.strobe();
         load_data_valid_reg.strobe();
@@ -336,13 +442,14 @@ public:
         wb._strobe();
         icache._strobe();
         dcache._strobe();
+        bp._strobe();
     }
 
     void _assign()
     {
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
-        dec.instr_valid_in = __EXPR(valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc);
+	        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
         dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
@@ -362,8 +469,7 @@ public:
         regs.read_addr0_in = __EXPR( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
         regs.write_in = __EXPR(wb.regs_write_out() &&
-            !(dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))) &&
+            !memory_wait_comb_func() &&
             (state_reg[1].wb_op != Wb::MEM || load_data_valid_reg ||
                 (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
         regs.write_addr_in = wb.regs_wr_id_out;
@@ -384,16 +490,26 @@ public:
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
 
+        bp.lookup_valid_in = __EXPR(decode_branch_valid_comb_func());
+        bp.lookup_pc_in = __EXPR((uint32_t)dec.state_out().pc);
+        bp.lookup_target_in = __EXPR(decode_branch_target_comb_func());
+        bp.lookup_fallthrough_in = __EXPR(decode_fallthrough_comb_func());
+        bp.lookup_br_op_in = __EXPR((u<4>)dec.state_out().br_op);
+        bp.update_valid_in = __EXPR(state_reg[0].valid && state_reg[0].br_op != Br::BNONE && !memory_wait_comb_func());
+        bp.update_pc_in = __EXPR((uint32_t)state_reg[0].pc);
+        bp.update_taken_in = __EXPR(exe.branch_taken_out());
+        bp.update_target_in = __EXPR(exe.branch_target_out());
+        bp.__inst_name = __inst_name + "/bp";
+        bp._assign();
+
         icache.read_in = __EXPR( true );
         icache.addr_in = __EXPR( fetch_addr_comb_func() );
         icache.write_in = __EXPR( false );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
         icache.mem_read_data_in = imem_read_data_in;
-        icache.stall_in = __EXPR(dcache.busy_out() || stall_comb_func());
-        icache.flush_in = __EXPR(state_reg[0].valid && exe.branch_taken_out() &&
-            !(dcache.busy_out() || (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)))));
+        icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
+        icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
@@ -644,6 +760,22 @@ public:
         perf_stall += hazard || branch || dcache_wait || icache_wait;
     }
 
+    void debug_perf_counters_print()
+    {
+        std::print(" perf[c{:04x} s{:04x} h{:04x} b{:04x} dc{:04x} ic{:04x} ii{:04x} il{:04x} ih{:04x} ir{:04x} in{:04x}]\n",
+            (uint16_t)perf_clocks,
+            (uint16_t)perf_stall,
+            (uint16_t)perf_hazard,
+            (uint16_t)perf_branch,
+            (uint16_t)perf_dcache_wait,
+            (uint16_t)perf_icache_wait,
+            (uint16_t)perf_icache_issue_wait_cycles,
+            (uint16_t)perf_icache_lookup_wait_cycles,
+            (uint16_t)perf_icache_hit_lookup_cycles,
+            (uint16_t)perf_icache_refill_wait_cycles,
+            (uint16_t)perf_icache_init_wait_cycles);
+    }
+
     void perf_print()
     {
         auto percent = [&](uint64_t value) {
@@ -731,6 +863,9 @@ public:
             ++sys_clock;
             perf_sample();
             _work(0);
+            if (debugen_in) {
+                debug_perf_counters_print();
+            }
             _strobe_neg();
             _work_neg(0);
         }
@@ -782,6 +917,7 @@ int main (int argc, char** argv)
                   "File",
                   "RAM1PORT",
                   "L1Cache",
+                  "BranchPredictor",
                   "Decode",
                   "Execute",
                   "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
