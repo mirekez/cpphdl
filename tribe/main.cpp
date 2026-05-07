@@ -664,6 +664,11 @@ public:
 
 //        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
 
+        if (reset) {
+            tribe.clk = 0;
+            tribe.reset = reset;
+            tribe.eval();
+        }
         tribe.clk = 1;
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
