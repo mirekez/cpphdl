@@ -267,9 +267,12 @@ public:
 #ifdef VERILATOR
 #ifdef VERILATOR_DRIVER
 #else
-        driver.source_out = bus;
+        driver.source_out.ready_out = __VAR(bus.ready);
         driver._assign();
 #endif
+        verilated.clk = 0;
+        verilated.reset = 1;
+        verilated.eval();
 #else
         driver.__inst_name = __inst_name + "/driver";
         responder.__inst_name = __inst_name + "/responder";
@@ -307,8 +310,10 @@ public:
 #else
         bus.ready = verilated.sink_in___05Fready_out;
         driver._work(reset);
+        bus.valid = driver.source_out.valid_in();
+        bus.data = driver.source_out.data_in();
         verilated.sink_in___05Fvalid_in = bus.valid;
-        memcpy(&verilated.sink_in___05Fdata_in, &bus.data, sizeof(verilated.sink_in___05Fdata_in));
+        verilated.sink_in___05Fdata_in = (uint64_t)bus.data;
         verilated.clk = 1;
         verilated.reset = reset;
         verilated.eval();
