@@ -62,6 +62,12 @@ size_t prepareStructLayout(Struct& st)
     size_t unionSize = 0;
     std::vector<size_t> unionFieldSizes;
 
+    if (st.type == Struct::STRUCT_STRUCT && st.fields.empty()) {
+        st.fields.emplace_back(makePadField(st, 1));
+        st.declSize = 1;
+        return st.declSize;
+    }
+
     for (size_t i = 0; i < st.fields.size(); ++i) {
         Field& f = st.fields[i];
 
