@@ -1,3 +1,5 @@
+#pragma once
+
 #include "cpphdl.h"
 
 using namespace cpphdl;
