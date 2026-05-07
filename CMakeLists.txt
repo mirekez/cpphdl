@@ -22,16 +22,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 SET (CMAKE_C_FLAGS_DEBUG_INIT          "-g")
-SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
-SET (CMAKE_C_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
+SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG -g")
+SET (CMAKE_C_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG -g")
 SET (CMAKE_C_FLAGS_RELWITHDEBINFO_INIT "-O2")
 
 SET (CMAKE_CXX_FLAGS_DEBUG_INIT          "-g")
-SET (CMAKE_CXX_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG")
-SET (CMAKE_CXX_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG")
+SET (CMAKE_CXX_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG -g")
+SET (CMAKE_CXX_FLAGS_RELEASE_INIT        "-O2 -DNDEBUG -g")
 SET (CMAKE_CXX_FLAGS_RELWITHDEBINFO_INIT "-O2")
 
-set(CMAKE_CXX_FLAGS "-g -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
+set(CMAKE_CXX_FLAGS "-fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Wno-missing-field-initializers")
 set(CMAKE_CXX_LINK_FLAGS "-static-libstdc++ -static-libgcc")
 
 project(cpphdl
