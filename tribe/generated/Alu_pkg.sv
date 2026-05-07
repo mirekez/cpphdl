@@ -15,8 +15,12 @@ enum {
     PASS,
     MUL,
     MULH,
+    MULHSU,
+    MULHU,
     DIV,
-    REM
+    DIVU,
+    REM,
+    REMU
 } Alu;
 
 

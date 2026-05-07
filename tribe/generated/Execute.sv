@@ -1,10 +1,10 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import Alu_pkg::*;
-import Br_pkg::*;
-import Mem_pkg::*;
 import State_pkg::*;
+import Alu_pkg::*;
+import Mem_pkg::*;
+import Br_pkg::*;
 
 
 module Execute (
@@ -12,22 +12,23 @@ module Execute (
 ,   input wire reset
 ,   input State state_in
 ,   output wire mem_write_out
-,   output logic[31:0] mem_write_addr_out
-,   output logic[31:0] mem_write_data_out
-,   output logic[7:0] mem_write_mask_out
+,   output wire[31:0] mem_write_addr_out
+,   output wire[31:0] mem_write_data_out
+,   output wire[7:0] mem_write_mask_out
 ,   output wire mem_read_out
-,   output logic[31:0] mem_read_addr_out
-,   output logic[31:0] alu_result_out
-,   output logic[31:0] debug_alu_a_out
-,   output logic[31:0] debug_alu_b_out
+,   output wire[31:0] mem_read_addr_out
+,   output wire[31:0] alu_result_out
+,   output wire[31:0] debug_alu_a_out
+,   output wire[31:0] debug_alu_b_out
 ,   output wire branch_taken_out
-,   output logic[31:0] branch_target_out
+,   output wire[31:0] branch_target_out
 );
 
+
     // regs and combs
-    reg[31:0] mem_addr_reg;
-    reg[31:0] mem_data_reg;
-    reg[7:0] mem_mask_reg;
+    reg[32-1:0] mem_addr_reg;
+    reg[32-1:0] mem_data_reg;
+    reg[8-1:0] mem_mask_reg;
     reg mem_write_reg;
     reg mem_read_reg;
     logic[31:0] alu_a_comb;
@@ -42,141 +43,152 @@ module Execute (
 ;
 
     // members
+    genvar gi, gj, gk;
 
     // tmp variables
-    logic[31:0] mem_addr_reg_tmp;
-    logic[31:0] mem_data_reg_tmp;
-    logic[7:0] mem_mask_reg_tmp;
+    logic[8-1:0] mem_mask_reg_tmp;
     logic mem_write_reg_tmp;
     logic mem_read_reg_tmp;
 
 
     always @(*) begin  // alu_a_comb_func
-        alu_a_comb = state_in.rs1_val;
+        alu_a_comb=state_in.rs1_val;
     end
 
     always @(*) begin  // alu_b_comb_func
-        alu_b_comb = (state_in.alu_op == Alu_pkg::ADD && state_in.mem_op != Mem_pkg::MNONE) ? unsigned'(32'(state_in.imm)) : (state_in.rs2 || state_in.br_op == Br_pkg::BEQZ || state_in.br_op == Br_pkg::BNEZ) ? state_in.rs2_val : unsigned'(32'(state_in.imm));
+        alu_b_comb=(((state_in.alu_op == Alu_pkg::ADD) && (state_in.mem_op != Mem_pkg::MNONE))) ? (unsigned'(32'(state_in.imm))) : ((((state_in.rs2 || (state_in.br_op == Br_pkg::BEQZ)) || (state_in.br_op == Br_pkg::BNEZ))) ? (state_in.rs2_val) : (unsigned'(32'(state_in.imm))));
     end
 
     always @(*) begin  // alu_result_comb_func
         logic[31:0] a;
         logic[31:0] b;
         logic[31:0] alu_op;
-        a = alu_a_comb;
-        b = alu_b_comb;
-        alu_result_comb = 0;
-        alu_op = state_in.alu_op;
+        a=alu_a_comb;
+        b=alu_b_comb;
+        alu_result_comb='h0;
+        alu_op=state_in.alu_op;
         case (alu_op)
         Alu_pkg::ADD: begin
-            alu_result_comb = a + b;
+            alu_result_comb=a + b;
         end
         Alu_pkg::SUB: begin
-            alu_result_comb = a - b;
+            alu_result_comb=a - b;
         end
         Alu_pkg::AND: begin
-            alu_result_comb = a & b;
+            alu_result_comb=a & b;
         end
         Alu_pkg::OR: begin
-            alu_result_comb = a | b;
+            alu_result_comb=a | b;
         end
         Alu_pkg::XOR: begin
-            alu_result_comb = a ^ b;
+            alu_result_comb=a ^ b;
         end
         Alu_pkg::SLL: begin
-            alu_result_comb = a <<< (b & 31);
+            alu_result_comb=a <<< ((b & 'h1F));
         end
         Alu_pkg::SRL: begin
-            alu_result_comb = a >>> (b & 31);
+            alu_result_comb=a >>> ((b & 'h1F));
         end
         Alu_pkg::SRA: begin
-            alu_result_comb = unsigned'(32'(signed'(32'(a)) >>> (b & 31)));
+            alu_result_comb=unsigned'(32'(signed'(32'(a)) >>> ((b & 'h1F))));
         end
         Alu_pkg::SLT: begin
-            alu_result_comb = (signed'(32'(a)) < signed'(32'(b)));
+            alu_result_comb=(signed'(32'(a)) < signed'(32'(b)));
         end
         Alu_pkg::SLTU: begin
-            alu_result_comb = (a < b);
+            alu_result_comb=(a < b);
         end
         Alu_pkg::PASS: begin
-            alu_result_comb = b;
+            alu_result_comb=b;
         end
         Alu_pkg::MUL: begin
-            alu_result_comb = a*b;
+            alu_result_comb=a*b;
         end
         Alu_pkg::MULH: begin
-            alu_result_comb = (unsigned'(64'(a))*b) >>> 32;
+            alu_result_comb=(unsigned'(64'((signed'(64'(signed'(32'(a))))*signed'(64'(signed'(32'(b))))))) >>> 'h20);
+        end
+        Alu_pkg::MULHSU: begin
+            alu_result_comb=(unsigned'(64'((signed'(64'(signed'(32'(a))))*signed'(64'(unsigned'(64'(b))))))) >>> 'h20);
+        end
+        Alu_pkg::MULHU: begin
+            alu_result_comb=((unsigned'(64'(a))*b)) >>> 'h20;
         end
         Alu_pkg::DIV: begin
-            alu_result_comb = a/b;
+            alu_result_comb=(b == 'h0) ? (~'h0) : ((((a == 'h80000000) && (b == 'hFFFFFFFF)) ? (a) : (unsigned'(32'(signed'(32'(a))/signed'(32'(b)))))));
+        end
+        Alu_pkg::DIVU: begin
+            alu_result_comb=(b == 'h0) ? (~'h0) : (a/b);
         end
         Alu_pkg::REM: begin
-            alu_result_comb = a % b;
+            alu_result_comb=(b == 'h0) ? (a) : ((((a == 'h80000000) && (b == 'hFFFFFFFF)) ? ('h0) : (unsigned'(32'(signed'(32'(a)) % signed'(32'(b)))))));
+        end
+        Alu_pkg::REMU: begin
+            alu_result_comb=(b == 'h0) ? (a) : (a % b);
         end
         Alu_pkg::ANONE: begin
         end
         endcase
-        if (alu_op == Alu_pkg::SLT || alu_op == Alu_pkg::SLTU) begin
-            alu_result_comb |= (unsigned'(64'((a == b)))) <<< 32;
+        if ((alu_op == Alu_pkg::SLT) || (alu_op == Alu_pkg::SLTU)) begin
+            alu_result_comb|=(unsigned'(64'(((a == b))))) <<< 'h20;
         end
     end
 
     always @(*) begin  // branch_taken_comb_func
         logic[63:0] alu_result;
-        alu_result = alu_result_comb;
-        branch_taken_comb = 0;
+        alu_result=alu_result_comb;
+        branch_taken_comb=0;
         case (state_in.br_op)
         Br_pkg::BEQZ: begin
-            branch_taken_comb = alu_result >>> 32;
+            branch_taken_comb=alu_result >>> 'h20;
         end
         Br_pkg::BNEZ: begin
-            branch_taken_comb = !(alu_result >>> 32);
+            branch_taken_comb=!(alu_result >>> 'h20);
         end
         Br_pkg::BEQ: begin
-            branch_taken_comb = alu_result >>> 32;
+            branch_taken_comb=alu_result >>> 'h20;
         end
         Br_pkg::BNE: begin
-            branch_taken_comb = !(alu_result >>> 32);
+            branch_taken_comb=!(alu_result >>> 'h20);
         end
         Br_pkg::BLT: begin
-            branch_taken_comb = alu_result & 4294967295;
+            branch_taken_comb=alu_result & 'hFFFFFFFF;
         end
         Br_pkg::BGE: begin
-            branch_taken_comb = !(alu_result & 4294967295);
+            branch_taken_comb=!(alu_result & 'hFFFFFFFF);
         end
         Br_pkg::BLTU: begin
-            branch_taken_comb = alu_result & 4294967295;
+            branch_taken_comb=alu_result & 'hFFFFFFFF;
         end
         Br_pkg::BGEU: begin
-            branch_taken_comb = !(alu_result & 4294967295);
+            branch_taken_comb=!(alu_result & 'hFFFFFFFF);
         end
         Br_pkg::JAL: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::JALR: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::JR: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::BNONE: begin
         end
         endcase
-        branch_taken_comb = branch_taken_comb && state_in.valid;
+        branch_taken_comb=branch_taken_comb && state_in.valid;
     end
 
     always @(*) begin  // branch_target_comb_func
-        branch_target_comb = 0;
+        branch_target_comb='h0;
         if (state_in.br_op != Br_pkg::BNONE) begin
             if (state_in.br_op == Br_pkg::JAL) begin
-                branch_target_comb = state_in.pc + state_in.imm;
+                branch_target_comb=state_in.pc + state_in.imm;
             end
             else begin
-                if (state_in.br_op == Br_pkg::JALR || state_in.br_op == Br_pkg::JR) begin
-                    branch_target_comb = (state_in.rs1_val + state_in.imm) & ~1;
+                if ((state_in.br_op == Br_pkg::JALR) || (state_in.br_op == Br_pkg::JR)) begin
+                    branch_target_comb=((state_in.rs1_val + state_in.imm)) & ~'h1;
                 end
                 else begin
-                    branch_target_comb = state_in.pc + state_in.imm;
+                    branch_target_comb=state_in.pc + state_in.imm;
                 end
             end
         end
@@ -184,43 +196,43 @@ module Execute (
 
     task do_memory ();
     begin: do_memory
-        mem_addr_reg_tmp = alu_result_comb;
-        mem_data_reg_tmp = state_in.rs2_val;
-        mem_write_reg_tmp = 0;
-        mem_mask_reg_tmp = 0;
-        if (state_in.mem_op == Mem_pkg::STORE && state_in.valid) begin
+        mem_addr_reg <= alu_result_comb;
+        mem_data_reg <= state_in.rs2_val;
+        mem_write_reg_tmp = 'h0;
+        mem_mask_reg_tmp = 'h0;
+        if ((state_in.mem_op == Mem_pkg::STORE) && state_in.valid) begin
             case (state_in.funct3)
-            0: begin
+            'h0: begin
                 mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 1;
+                mem_mask_reg_tmp = 'h1;
             end
-            1: begin
+            'h1: begin
                 mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 3;
+                mem_mask_reg_tmp = 'h3;
             end
-            2: begin
+            'h2: begin
                 mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 15;
+                mem_mask_reg_tmp = 'hF;
             end
             endcase
         end
-        mem_read_reg_tmp = 0;
-        if (state_in.mem_op == Mem_pkg::LOAD && state_in.valid) begin
+        mem_read_reg_tmp = 'h0;
+        if ((state_in.mem_op == Mem_pkg::LOAD) && state_in.valid) begin
             case (state_in.funct3)
-            0: begin
-                mem_read_reg_tmp = 1;
+            'h0: begin
+                mem_read_reg_tmp = 'h1;
             end
-            1: begin
-                mem_read_reg_tmp = 1;
+            'h1: begin
+                mem_read_reg_tmp = 'h1;
             end
-            2: begin
-                mem_read_reg_tmp = 1;
+            'h2: begin
+                mem_read_reg_tmp = 'h1;
             end
-            4: begin
-                mem_read_reg_tmp = 1;
+            'h4: begin
+                mem_read_reg_tmp = 'h1;
             end
-            5: begin
-                mem_read_reg_tmp = 1;
+            'h5: begin
+                mem_read_reg_tmp = 'h1;
             end
             default: begin
             end
@@ -243,10 +255,12 @@ module Execute (
     endgenerate
 
     always @(posedge clk) begin
+        mem_mask_reg_tmp = mem_mask_reg;
+        mem_write_reg_tmp = mem_write_reg;
+        mem_read_reg_tmp = mem_read_reg;
+
         _work(reset);
 
-        mem_addr_reg <= mem_addr_reg_tmp;
-        mem_data_reg <= mem_data_reg_tmp;
         mem_mask_reg <= mem_mask_reg_tmp;
         mem_write_reg <= mem_write_reg_tmp;
         mem_read_reg <= mem_read_reg_tmp;

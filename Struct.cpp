@@ -7,10 +7,185 @@
 
 #include <iostream>
 #include <fstream>
+#include <cstring>
 
 using namespace cpphdl;
 
 Struct* currStruct = nullptr;
+
+namespace
+{
+
+size_t fieldPayloadBitSize(Field& f);
+size_t fieldStorageBitSize(Field& f);
+void ensureStructStorageSize(Struct& st, size_t bitSize);
+
+size_t alignToByte(size_t bitSize)
+{
+    return (bitSize + 7) & ~size_t(7);
+}
+
+bool isAlignField(const Field& f)
+{
+    return f.name.find("_align") == 0;
+}
+
+bool isPadField(const Field& f)
+{
+    return f.name.find("_pad") == 0;
+}
+
+Field makeAlignField(Struct& st, size_t bits)
+{
+    Field align{std::string("_align") + std::to_string(st.alignNo), {Expr{"uint8_t", Expr::EXPR_TYPE}}};
+    align.bitwidth = Expr{std::to_string(bits), Expr::EXPR_NUM};
+    ++st.alignNo;
+    return align;
+}
+
+Field makePadField(Struct& st, size_t bits)
+{
+    Field pad{std::string("_pad") + std::to_string(st.alignNo), {Expr{"uint8_t", Expr::EXPR_TYPE}}};
+    pad.bitwidth = Expr{std::to_string(bits), Expr::EXPR_NUM};
+    ++st.alignNo;
+    return pad;
+}
+
+void setAlignWidth(Field& f, size_t bits)
+{
+    f.bitwidth = Expr{std::to_string(bits), Expr::EXPR_NUM};
+}
+
+size_t prepareStructLayout(Struct& st)
+{
+    size_t bitSize = 0;
+    size_t unionSize = 0;
+    std::vector<size_t> unionFieldSizes;
+
+    for (size_t i = 0; i < st.fields.size(); ++i) {
+        Field& f = st.fields[i];
+
+        if (isAlignField(f)) {
+            size_t alignBits = st.type == Struct::STRUCT_STRUCT ? ((8 - bitSize % 8) % 8) : 0;
+            if (alignBits == 0) {
+                st.fields.erase(st.fields.begin() + i);
+                --i;
+                continue;
+            }
+            setAlignWidth(f, alignBits);
+            bitSize += alignBits;
+            continue;
+        }
+
+        bool bitField = f.bitwidth.type != Expr::EXPR_NONE;
+        if (st.type == Struct::STRUCT_STRUCT && !bitField && bitSize % 8) {
+            size_t alignBits = 8 - bitSize % 8;
+            st.fields.insert(st.fields.begin() + i, makeAlignField(st, alignBits));
+            bitSize += alignBits;
+            ++i;
+        }
+
+        size_t rawSize = fieldPayloadBitSize(st.fields[i]);
+        size_t fSize = bitField ? rawSize : fieldStorageBitSize(st.fields[i]);
+
+        if (st.type == Struct::STRUCT_STRUCT) {
+            bitSize += rawSize;
+            if (!bitField && fSize > rawSize) {
+                size_t alignBits = fSize - rawSize;
+                if (i + 1 < st.fields.size() && isAlignField(st.fields[i + 1])) {
+                    setAlignWidth(st.fields[i + 1], alignBits);
+                } else {
+                    st.fields.insert(st.fields.begin() + i + 1, makeAlignField(st, alignBits));
+                }
+                bitSize += fSize - rawSize;
+                ++i;
+            }
+        } else {
+            unionSize = std::max(unionSize, fSize);
+            unionFieldSizes.push_back(fSize);
+        }
+    }
+
+    st.declSize = st.type == Struct::STRUCT_STRUCT ? bitSize : unionSize;
+    if (st.type == Struct::STRUCT_UNION) {
+        size_t unionFieldIndex = 0;
+        for (size_t i = 0; i < st.fields.size(); ++i) {
+            Field& f = st.fields[i];
+            if (isAlignField(f)) {
+                continue;
+            }
+            if (f.definition.type != Struct::STRUCT_EMPTY && unionFieldIndex < unionFieldSizes.size()) {
+                ensureStructStorageSize(f.definition, unionSize);
+            }
+            ++unionFieldIndex;
+        }
+    }
+    return st.declSize;
+}
+
+size_t cpphdlScalarWidth(Expr& expr)
+{
+    if (expr.type == Expr::EXPR_TEMPLATE && expr.value.find("cpphdl_") == 0 && expr.sub.size()) {
+        return atoi(expr.sub[0].str().c_str());
+    }
+    if (expr.type == Expr::EXPR_TYPE) {
+        if (expr.value.find("cpphdl_u") == 0) {
+            return atoi(expr.value.c_str() + strlen("cpphdl_u"));
+        }
+        if (expr.value.find("cpphdl_i") == 0) {
+            return atoi(expr.value.c_str() + strlen("cpphdl_i"));
+        }
+        if (expr.value == "cpphdl_logic" || expr.value == "bool" || expr.value == "_Bool") {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+size_t fieldPayloadBitSize(Field& f)
+{
+    if (f.definition.type != Struct::STRUCT_EMPTY) {
+        return prepareStructLayout(f.definition);
+    }
+
+    f.expr.str();
+    if (f.bitwidth.type != Expr::EXPR_NONE) {
+        return atoi(f.bitwidth.str().c_str());
+    }
+    size_t scalarWidth = cpphdlScalarWidth(f.expr);
+    if (scalarWidth) {
+        return scalarWidth;
+    }
+    return f.expr.declSize;
+}
+
+size_t fieldStorageBitSize(Field& f)
+{
+    if (f.definition.type != Struct::STRUCT_EMPTY) {
+        return prepareStructLayout(f.definition);
+    }
+
+    f.expr.str();
+    return alignToByte(f.expr.declSize);
+}
+
+void ensureStructStorageSize(Struct& st, size_t bitSize)
+{
+    size_t currSize = prepareStructLayout(st);
+    if (currSize >= bitSize) {
+        return;
+    }
+
+    size_t alignBits = bitSize - currSize;
+    if (st.fields.size() && isPadField(st.fields.back())) {
+        setAlignWidth(st.fields.back(), alignBits);
+    } else {
+        st.fields.emplace_back(makePadField(st, alignBits));
+    }
+    st.declSize = bitSize;
+}
+
+}
 
 bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
 {
@@ -20,47 +195,11 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
 //        params = &parameters;
 //    }
 
-    // we need to pass structure in straight order first to calculate size and make alignment
-    size_t countSize = 0;
-    for (size_t i=0; i < fields.size(); ++i) {
-        if (fields[i].definition.type != STRUCT_EMPTY) {  // inline struct/union
-            countSize += getStructSize(fields[i].name, &fields[i].definition);
-            if (fields[i].definition.type == STRUCT_STRUCT) {
-                countSize = 8; // dont align structs - they should be aligned
-            }
-        } else {  // not a struct or union
-            if (fields[i].name.find("_align") == 0) {
-//                fields[i].name += "_";
-//                fields[i].name += std::to_string(countSize);
-                fields[i].bitwidth = Expr{std::to_string(8-countSize%8), Expr::EXPR_NUM};
-                if (countSize%8 == 0 && countSize != 0) {
-                    fields.erase(fields.begin() + i);  // we neednt alignment here
-                    --i;
-                    countSize = 0;
-                    continue;
-                }
-                countSize = 0;
-            }
-            else {  // any other field
-                fields[i].expr.str();  // calculate size
-//                fields[i].name += "_";
-//                fields[i].name += std::to_string(fields[i].expr.declSize);
-                if (fields[i].bitwidth.type != Expr::EXPR_NONE) {  // special case
-                    countSize += atoi(fields[i].bitwidth.str().c_str());
-                    if (type != STRUCT_STRUCT) {  // union
-                        countSize = atoi(fields[i].bitwidth.str().c_str());
-                    }
-                }
-                else {
-                    countSize += fields[i].expr.declSize;
-                    if (type != STRUCT_STRUCT) {  // union
-                        countSize = fields[i].expr.declSize;
-                    }
-                }
-            }
-        }
-    }
-    declSize += countSize;
+    // First walk in C++ declaration order. SystemVerilog packed structs are
+    // printed in reverse order below, but padding must be calculated from the
+    // low-address/low-bit side used by C++ bitfields.
+    prepareStructLayout(*this);
+    prepareStructLayout(*this);
 //    if (type != STRUCT_STRUCT) *declSize = 8;  // hotfix union is always aligned?
 
     if (!out) {
@@ -98,37 +237,8 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
 size_t cpphdl::getStructSize(std::string name, Struct* st)
 {
     if (st) {
-        size_t structSize = 0;
-        for (auto& f : st->fields) {
-            if (f.name.find("_align") == 0) {
-                continue;
-            }
-            size_t tmp = 0;
-            if (f.definition.type != Struct::STRUCT_EMPTY) {  // inline struct/union
-                tmp = cpphdl::getStructSize(f.definition.name, &f.definition);
-            } else {  // not a struct
-                f.expr.str();
-                if (f.bitwidth.type != Expr::EXPR_NONE) {  // special case
-                    tmp = atoi(f.bitwidth.str().c_str());
-                }
-                else {
-                    tmp = f.expr.declSize;
-                }
-            }
-            if (st->type == Struct::STRUCT_STRUCT) {
-                structSize += tmp;
-            } else
-            if (st->type == Struct::STRUCT_UNION) {
-                if (structSize == 0) {
-                    structSize = tmp;
-                } else
-                if (tmp != structSize) {
-                    std::cerr << "WARNING: different sizes in union " << st->name << ": " << f.name << " size "  << tmp << " != " << structSize << "(" << f.expr.str()
-                              << (f.bitwidth.type != Expr::EXPR_NONE?std::string(":")+f.bitwidth.str():"") << ") for '" << name << "'\n";
-                }
-            }
-        }
-        return structSize;
+        prepareStructLayout(*st);
+        return prepareStructLayout(*st);
     }
 
     for (auto& s : currProject->structs) {
