@@ -32,6 +32,13 @@ static constexpr size_t ADDR_BITS = 13;
 static constexpr size_t RAM_WORDS = 2048;
 static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
 
+#ifdef VERILATOR
+#define PORT_VALUE(val) val
+#else
+#define PORT_VALUE(val) val()
+#endif
+#define PORT_EXPR(val) __EXPR(PORT_VALUE(val))
+
 static uint32_t prbs32(uint32_t x)
 {
     x ^= x << 13;
@@ -84,27 +91,17 @@ public:
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();
-
-        ram.read_in = cache.mem_read_out;
-        ram.read_addr_in = cache.mem_addr_out;
-        ram.write_in = cache.mem_write_out;
-        ram.write_addr_in = cache.mem_addr_out;
-        ram.write_data_in = cache.mem_write_data_out;
-        ram.write_mask_in = cache.mem_write_mask_out;
-        ram.debugen_in = false;
-        ram.__inst_name = __inst_name + "/ram";
-        ram._assign();
-#else
-        ram.read_in = __EXPR((bool)cache.mem_read_out);
-        ram.read_addr_in = __EXPR((uint32_t)cache.mem_addr_out);
-        ram.write_in = __EXPR((bool)cache.mem_write_out);
-        ram.write_addr_in = __EXPR((uint32_t)cache.mem_addr_out);
-        ram.write_data_in = __EXPR((uint32_t)cache.mem_write_data_out);
-        ram.write_mask_in = __EXPR((uint8_t)cache.mem_write_mask_out);
-        ram.debugen_in = false;
-        ram.__inst_name = __inst_name + "/ram";
-        ram._assign();
 #endif
+
+        ram.read_in = PORT_EXPR(cache.mem_read_out);
+        ram.read_addr_in = PORT_EXPR(cache.mem_addr_out);
+        ram.write_in = PORT_EXPR(cache.mem_write_out);
+        ram.write_addr_in = PORT_EXPR(cache.mem_addr_out);
+        ram.write_data_in = PORT_EXPR(cache.mem_write_data_out);
+        ram.write_mask_in = PORT_EXPR(cache.mem_write_mask_out);
+        ram.debugen_in = false;
+        ram.__inst_name = __inst_name + "/ram";
+        ram._assign();
     }
 
     void preload_ram()
@@ -117,38 +114,22 @@ public:
 
     bool busy()
     {
-#ifdef VERILATOR
-        return cache.busy_out;
-#else
-        return cache.busy_out();
-#endif
+        return PORT_VALUE(cache.busy_out);
     }
 
     bool valid()
     {
-#ifdef VERILATOR
-        return cache.read_valid_out;
-#else
-        return cache.read_valid_out();
-#endif
+        return PORT_VALUE(cache.read_valid_out);
     }
 
     uint32_t rdata()
     {
-#ifdef VERILATOR
-        return cache.read_data_out;
-#else
-        return cache.read_data_out();
-#endif
+        return PORT_VALUE(cache.read_data_out);
     }
 
     uint32_t raddr()
     {
-#ifdef VERILATOR
-        return cache.read_addr_out;
-#else
-        return cache.read_addr_out();
-#endif
+        return PORT_VALUE(cache.read_addr_out);
     }
 
     uint32_t expected_ram_read(uint32_t request_addr)
