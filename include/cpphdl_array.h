@@ -13,7 +13,7 @@ struct array : public bitops<logic<COUNT*sizeof(TYPE)*8>>
     constexpr static size_t SIZE = COUNT*sizeof(TYPE);
     TYPE data[COUNT];
 
-    array() {}
+    array() = default;
 
     array(const array<TYPE,COUNT>& other) = default;
 

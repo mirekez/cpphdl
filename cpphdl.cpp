@@ -102,19 +102,17 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 
             cpphdl::Expr expr;
             DEBUG_AST1(" (");
-//            if (templateToExpr(QT, expr)) {
-//            std::vector<cpphdl::Field> params;
-//            if (ArgToExpr(FD, params)) {
-//                DEBUG_AST1(" template) " << expr.value);
-//            }
-//            else {
+            if (hlp.templateToExpr(QT, expr)) {
+                DEBUG_AST1(" template) " << expr.value);
+            }
+            else {
                 QT = QT.getCanonicalType();
                 QT = QT.getDesugaredType(*hlp.ctx);
                 std::string str = QT.getAsString(hlp.ctx->getPrintingPolicy());
                 DEBUG_AST1(str << " type)");
                 expr.value = genTypeName(str);
                 expr.type = cpphdl::Expr::EXPR_TYPE;
-//            }
+            }
 
             if (array) {
                 arrayExpr.sub.emplace_back(std::move(expr));

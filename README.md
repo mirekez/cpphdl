@@ -36,5 +36,7 @@ This work is not subsidized or paid.
 
 # development plan
 
-- asynchronous resets?
-
+- asynchronous resets
+- CDC approach
+- comb. loops check
+- regs/luts estimation

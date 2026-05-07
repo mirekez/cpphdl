@@ -52,7 +52,7 @@ private:
     }
 
 public:
-    bitops() {}
+    bitops() = default;
 
     template<typename T>
     bitops(const T& other)
