@@ -88,6 +88,17 @@ def write_tribe_rvmodel_macros(path: pathlib.Path) -> None:
     )
 
 
+def write_tribe_rvtest_config(path: pathlib.Path) -> None:
+    path.write_text(
+        """#define RVMODEL_PMP_GRAIN 4
+#define RVMODEL_NUM_PMPS 0
+
+#define ZCA_SUPPORTED
+""",
+        encoding="utf-8",
+    )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("usage: run_riscv_arch_test.py <tribe-bin> <checkout-dir> <work-dir>", file=sys.stderr)
@@ -185,6 +196,7 @@ def main(argv: list[str]) -> int:
         if src.exists():
             shutil.copy2(src, overlay / name)
     write_tribe_rvmodel_macros(overlay / "rvmodel_macros.h")
+    write_tribe_rvtest_config(overlay / "rvtest_config.h")
 
     cmd = [
         "make",

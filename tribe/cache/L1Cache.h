@@ -51,6 +51,7 @@ public:
     __PORT(bool)      busy_out = __VAR(busy_comb_func());
     __PORT(bool)      stall_in;
     __PORT(bool)      flush_in;
+    __PORT(bool)      invalidate_in;
 
     __PORT(bool)      mem_write_out = __EXPR(write_in());
     __PORT(uint32_t)  mem_write_data_out = __EXPR(write_data_in());
@@ -314,7 +315,13 @@ public:
     {
         size_t i;
 
-        if (flush_in()) {
+        if (invalidate_in()) {
+            req_read_reg._next = false;
+            last_valid_reg._next = false;
+            init_set_reg._next = 0;
+            state_reg._next = ST_INIT;
+        }
+        else if (flush_in()) {
             req_addr_reg._next = addr_in();
             req_read_reg._next = read_in();
             req_cacheable_reg._next = input_cacheable_comb_func();

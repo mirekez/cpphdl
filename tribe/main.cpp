@@ -131,6 +131,7 @@ public:
         dcache.mem_wait_in = l2cache.d_wait_out;
         dcache.stall_in = __EXPR(branch_stall_comb_func());
         dcache.flush_in = __EXPR(false);
+        dcache.invalidate_in = __EXPR(false);
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
@@ -156,6 +157,7 @@ public:
         icache.mem_wait_in = l2cache.i_wait_out;
         icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
         icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
+        icache.invalidate_in = __VAR(icache_invalidate_comb_func());
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
@@ -546,6 +548,10 @@ private:
             exe_state_comb.rs1_val = csr.epc_out();
             exe_state_comb.imm = 0;
         }
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI) {
+            exe_state_comb.rs1_val = state_reg[0].pc + 4;
+            exe_state_comb.imm = 0;
+        }
         if (load_data_ready_comb_func() && state_reg[1].rd != 0) {
             if (state_reg[0].rs1 == state_reg[1].rd) {
                 exe_state_comb.rs1_val = load_result_comb_func();
@@ -563,6 +569,10 @@ private:
             csr_state_comb.valid = false;
         }
         return csr_state_comb;
+    }
+
+    __LAZY_COMB(icache_invalidate_comb, bool)
+        return icache_invalidate_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI && !memory_wait_comb_func();
     }
 
     void forward()

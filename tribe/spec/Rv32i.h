@@ -171,6 +171,10 @@ struct Rv32i
             state_out.imm = imm_U();
             state_out.alu_op = Alu::ADD;  // PC + imm
             state_out.wb_op = Wb::ALU;
+        } else
+        if (r.opcode == 0b0001111 && i.funct3 == 0b001) {  // FENCE.I
+            state_out.sys_op = Sys::FENCEI;
+            state_out.br_op = Br::JR;
         }
 //      else if (r.opcode == 0b1110011) {  // CSR
 //            switch (i.funct3) {
@@ -223,6 +227,7 @@ struct Rv32i
         case 0b1100111: return "jalr  ";
         case 0b0110111: return "lui   ";
         case 0b0010111: return "auipc ";
+        case 0b0001111: return f3 == 0b001 ? "fencei" : "fence ";
         default:        return "unknwn";
         }
         return "unknwn";

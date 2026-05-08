@@ -162,7 +162,7 @@ private:
             case 0x105: stvec_reg._next = value; break;
             case 0x106: scounteren_reg._next = value; break;
             case 0x140: sscratch_reg._next = value; break;
-            case 0x141: sepc_reg._next = value; break;
+            case 0x141: sepc_reg._next = value & ~1u; break;
             case 0x142: scause_reg._next = value; break;
             case 0x143: stval_reg._next = value; break;
             case 0x144: sip_reg._next = value; break;
@@ -175,7 +175,7 @@ private:
             case 0x306: mcounteren_reg._next = value; break;
             case 0x320: mcountinhibit_reg._next = value; break;
             case 0x340: mscratch_reg._next = value; break;
-            case 0x341: mepc_reg._next = value; break;
+            case 0x341: mepc_reg._next = value & ~1u; break;
             case 0x342: mcause_reg._next = value; break;
             case 0x343: mtval_reg._next = value; break;
             case 0x344: mip_reg._next = value; break;
@@ -188,7 +188,7 @@ private:
             case 0xB82: instret_reg._next = (uint64_t(value) << 32) | (uint32_t)instret_reg; break;
 
             case 0x7B0: dcsr_reg._next = value; break;
-            case 0x7B1: dpc_reg._next = value; break;
+            case 0x7B1: dpc_reg._next = value & ~1u; break;
             case 0x7B2: dscratch0_reg._next = value; break;
             case 0x7B3: dscratch1_reg._next = value; break;
         }

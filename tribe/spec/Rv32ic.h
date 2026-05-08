@@ -51,7 +51,7 @@ struct Rv32ic : public Rv32i
             if (i.base.funct3 == 0b000) {  // ADDI4SPN
                 state_out.rd = i.base.rd_p+8;
                 state_out.rs1 = 2; // sp
-                state_out.imm = (bits(10,7) << 6) | (bits(12,11) << 4) | (bits(6,5) << 2);
+                state_out.imm = (bits(10,7) << 6) | (bits(12,11) << 4) | (bit(5) << 3) | (bit(6) << 2);
                 state_out.alu_op = Alu::ADD;
                 state_out.wb_op  = Wb::ALU;
             }

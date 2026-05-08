@@ -66,7 +66,7 @@ constexpr uint32_t c_imm_i(uint32_t raw)
 constexpr uint32_t c_imm_addi4spn(uint32_t raw)
 {
     return (bits(raw, 10, 7) << 6) | (bits(raw, 12, 11) << 4) |
-           (bits(raw, 6, 5) << 2);
+           (bit(raw, 5) << 3) | (bit(raw, 6) << 2);
 }
 
 constexpr uint32_t c_imm_lw_sw(uint32_t raw)
