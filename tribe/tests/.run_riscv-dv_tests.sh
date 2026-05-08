@@ -111,7 +111,7 @@ export RISCV="${RISCV:-${RISCV_HOME}}"
 export TRIBE_RISCV_DV_PYTHON="${TRIBE_RISCV_DV_PYTHON:-/usr/bin/python3}"
 export PYTHONPATH="${BUILD_DIR}/pydeps:${PYTHONPATH:-}"
 
-make -C "${BUILD_DIR}" tribe
+make -C "${BUILD_DIR}" tribe256 tribe128 tribe64
 
 if ! "${TRIBE_RISCV_DV_PYTHON}" -c 'import vsc' >/dev/null 2>&1; then
     echo "Installing riscv-dv Python dependencies into ${BUILD_DIR}/pydeps"
@@ -121,9 +121,9 @@ if ! "${TRIBE_RISCV_DV_PYTHON}" -c 'import vsc' >/dev/null 2>&1; then
 fi
 
 echo "Running riscv-dv generated tests on C++ Tribe model"
-ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_dv$'
+ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_dv$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
     echo "Running riscv-dv generated tests on Verilator Tribe model"
-    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_dv_verilator$'
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_dv_verilator$'
 fi

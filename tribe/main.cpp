@@ -5,9 +5,16 @@
 
 #include "File.h"
 
-#define STAGES_NUM 3
-#define CACHE_LINE_SIZE 32
-#define ADDR_BITS 32
+static constexpr size_t STAGES_NUM = 3;
+static constexpr size_t CACHE_LINE_SIZE = 32;
+static constexpr size_t ADDR_BITS = 32;
+
+#ifdef L2_AXI_WIDTH
+static constexpr size_t TRIBE_L2_AXI_WIDTH = L2_AXI_WIDTH;
+#undef L2_AXI_WIDTH
+#else
+static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
+#endif
 
 #include "Decode.h"
 #include "Execute.h"
@@ -17,15 +24,14 @@
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
-#define DEFAULT_RAM_SIZE 32768
-#define MAX_RAM_SIZE 524288
-#define L1_CACHE_SIZE 1024
-#define L2_CACHE_SIZE 8192
-#define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
-#define L2_AXI_WIDTH 256
+static constexpr size_t DEFAULT_RAM_SIZE = 32768;
+static constexpr size_t MAX_RAM_SIZE = 524288;
+static constexpr size_t L1_CACHE_SIZE = 1024;
+static constexpr size_t L2_CACHE_SIZE = 8192;
+static constexpr size_t L2_CACHE_ADDR_BITS = cpphdl::clog2(MAX_RAM_SIZE);
 #define L2_MEM_PORTS 4
-#define BRANCH_PREDICTOR_ENTRIES 16
-#define BRANCH_PREDICTOR_COUNTER_BITS 2
+static constexpr size_t BRANCH_PREDICTOR_ENTRIES = 16;
+static constexpr size_t BRANCH_PREDICTOR_COUNTER_BITS = 2;
 
 long sys_clock = -1;
 
@@ -46,9 +52,9 @@ class Tribe: public Module
     Writeback       wb;
     CSR             csr;
     File<32,32>     regs;
-    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,0,ADDR_BITS,L2_AXI_WIDTH> icache;
-    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,1,ADDR_BITS,L2_AXI_WIDTH> dcache;
-    L2Cache<L2_CACHE_SIZE,L2_AXI_WIDTH,CACHE_LINE_SIZE,4,ADDR_BITS,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
+    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,4,ADDR_BITS,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -68,7 +74,7 @@ public:
     __PORT(u<4>) axi_awid_out[L2_MEM_PORTS];
     __PORT(bool) axi_awready_in[L2_MEM_PORTS];
     __PORT(bool) axi_wvalid_out[L2_MEM_PORTS];
-    __PORT(logic<L2_AXI_WIDTH>) axi_wdata_out[L2_MEM_PORTS];
+    __PORT(logic<TRIBE_L2_AXI_WIDTH>) axi_wdata_out[L2_MEM_PORTS];
     __PORT(bool) axi_wlast_out[L2_MEM_PORTS];
     __PORT(bool) axi_wready_in[L2_MEM_PORTS];
     __PORT(bool) axi_bready_out[L2_MEM_PORTS];
@@ -80,7 +86,7 @@ public:
     __PORT(bool) axi_arready_in[L2_MEM_PORTS];
     __PORT(bool) axi_rready_out[L2_MEM_PORTS];
     __PORT(bool) axi_rvalid_in[L2_MEM_PORTS];
-    __PORT(logic<L2_AXI_WIDTH>) axi_rdata_in[L2_MEM_PORTS];
+    __PORT(logic<TRIBE_L2_AXI_WIDTH>) axi_rdata_in[L2_MEM_PORTS];
     __PORT(bool) axi_rlast_in[L2_MEM_PORTS];
     __PORT(u<4>) axi_rid_in[L2_MEM_PORTS];
 
@@ -945,11 +951,21 @@ static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
     return out;
 }
 
+static logic<64> verilator_wide_to_logic(const QData& bits)
+{
+    return (uint64_t)bits;
+}
+
 template<size_t WIDTH, size_t WORDS>
 static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits)
 {
     static_assert(WIDTH == WORDS * 32);
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
+}
+
+static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
+{
+    out = (uint64_t)bits;
 }
 
 #define PORT_VALUE(port) (port)
@@ -961,8 +977,8 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 
 class TestTribe : public Module
 {
-    static constexpr size_t AXI_RAM_DEPTH_PER_PORT = (MAX_RAM_SIZE / (L2_AXI_WIDTH/8)) / L2_MEM_PORTS;
-    Axi4Ram<L2_CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_DEPTH_PER_PORT> mem[L2_MEM_PORTS];
+    static constexpr size_t AXI_RAM_DEPTH_PER_PORT = (MAX_RAM_SIZE / (TRIBE_L2_AXI_WIDTH/8)) / L2_MEM_PORTS;
+    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM_DEPTH_PER_PORT> mem[L2_MEM_PORTS];
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -1342,11 +1358,11 @@ public:
             std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
         }
 
-        const size_t active_lines = (ram_size * 4 + (L2_AXI_WIDTH/8) - 1) / (L2_AXI_WIDTH/8);
+        const size_t active_lines = (ram_size * 4 + (TRIBE_L2_AXI_WIDTH/8) - 1) / (TRIBE_L2_AXI_WIDTH/8);
         for (size_t line_idx = 0; line_idx < active_lines; ++line_idx) {
-            logic<L2_AXI_WIDTH> line = 0;
-            for (size_t word = 0; word < (L2_AXI_WIDTH/8) / 4; ++word) {
-                size_t addr = line_idx * ((L2_AXI_WIDTH/8) / 4) + word;
+            logic<TRIBE_L2_AXI_WIDTH> line = 0;
+            for (size_t word = 0; word < (TRIBE_L2_AXI_WIDTH/8) / 4; ++word) {
+                size_t addr = line_idx * ((TRIBE_L2_AXI_WIDTH/8) / 4) + word;
                 line.bits(word * 32 + 31, word * 32) = ram[addr];
                 if (debugen_in) {
                     std::print("{:04x}: {:08x}\n", addr, ram[addr]);
@@ -1469,6 +1485,8 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
+        std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
+        setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "State_pkg",

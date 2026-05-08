@@ -47,6 +47,7 @@ class L2Cache : public Module
     static constexpr uint64_t ST_EVICT_W = 11;
     static constexpr uint64_t ST_EVICT_B = 12;
     static constexpr uint64_t ST_CROSS_WRITE_LOOKUP = 13;
+    static constexpr uint64_t ST_CROSS_DONE = 14;
 
 public:
     __PORT(bool) i_read_in;
@@ -111,6 +112,7 @@ private:
     reg<u<SET_BITS>> init_set_reg;
     reg<logic<PORT_BITWIDTH>> last_data_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
+    reg<logic<PORT_BITWIDTH>> cross_high_reg;
     reg<u<LINE_BEAT_BITS>> fill_beat_reg;
     reg<u<LINE_BEAT_BITS>> evict_beat_reg;
 
@@ -230,7 +232,7 @@ private:
             line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)req_beat_comb_func() * PORT_BYTES);
         }
         if (state_reg == ST_CROSS_AR1 || state_reg == ST_CROSS_R1) {
-            line_addr += CACHE_LINE_SIZE;
+            line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
         }
         return axi_araddr_full_comb = line_addr;
     }
@@ -627,11 +629,18 @@ private:
 
     __LAZY_COMB(cross_read_data_comb, logic<PORT_BITWIDTH>)
         uint32_t low_word;
+        uint32_t byte;
+        uint32_t low;
+        uint32_t high;
+        uint32_t data;
         cross_read_data_comb = cross_low_reg;
+        byte = (uint32_t)req_addr_reg & 3u;
         low_word = (uint32_t)req_addr_reg % PORT_BYTES / 4u;
-        cross_read_data_comb.bits(31, 0) = axi_rdata_selected_comb_func().bits(31, 0);
-        cross_read_data_comb.bits(low_word * 32 + 31, low_word * 32) =
-            cross_low_reg.bits(low_word * 32 + 31, low_word * 32);
+        low = (uint32_t)cross_low_reg.bits(low_word * 32 + 31, low_word * 32);
+        high = (uint32_t)cross_high_reg.bits(31, 0);
+        data = (low >> (byte * 8u)) | (high << (32u - byte * 8u));
+        cross_read_data_comb = 0;
+        cross_read_data_comb.bits(31, 0) = data;
         return cross_read_data_comb;
     }
 
@@ -650,7 +659,7 @@ private:
         if (state_reg == ST_DONE) {
             read_data_comb = last_data_reg;
         }
-        else if (state_reg == ST_CROSS_R1) {
+        else if (state_reg == ST_CROSS_DONE) {
             read_data_comb = cross_read_data_comb_func();
         }
         else if (state_reg == ST_LOOKUP && hit_comb_func()) {
@@ -899,9 +908,13 @@ public:
         }
         else if (state_reg == ST_CROSS_R1) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                last_data_reg._next = cross_read_data_comb_func();
-                state_reg._next = ST_DONE;
+                cross_high_reg._next = axi_rdata_selected_comb_func();
+                state_reg._next = ST_CROSS_DONE;
             }
+        }
+        else if (state_reg == ST_CROSS_DONE) {
+            last_data_reg._next = cross_read_data_comb_func();
+            state_reg._next = ST_DONE;
         }
         else if (state_reg == ST_DONE) {
             state_reg._next = ST_IDLE;
@@ -920,6 +933,7 @@ public:
             init_set_reg.clr();
             last_data_reg.clr();
             cross_low_reg.clr();
+            cross_high_reg.clr();
             fill_beat_reg.clr();
             evict_beat_reg.clr();
             state_reg._next = ST_INIT;
@@ -948,6 +962,7 @@ public:
         init_set_reg.strobe();
         last_data_reg.strobe();
         cross_low_reg.strobe();
+        cross_high_reg.strobe();
         fill_beat_reg.strobe();
         evict_beat_reg.strobe();
     }

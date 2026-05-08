@@ -22,15 +22,14 @@ PATTERN="rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
 export PATH="${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 
-make -C "${BUILD_DIR}" tribe
+make -C "${BUILD_DIR}" tribe256 tribe128 tribe64
 
 echo "Running supported RV32 riscv-tests on C++ model"
 TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
-    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_tests_rv32$'
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_tests_rv32$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
     echo "Running supported RV32 riscv-tests on Verilator model"
     TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
-    TRIBE_RISCV_TESTS_BACKEND=verilator \
-        ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_tests_rv32$'
+        ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_tests_rv32_verilator_supported$'
 fi

@@ -223,14 +223,20 @@ private:
     __LAZY_COMB(direct_data_comb, uint32_t)
         uint32_t byte;
         uint32_t word;
-        word = (((uint32_t)req_addr_reg % PORT_BYTES) / 4u);
-        byte = (uint32_t)req_addr_reg & 3u;
-        direct_data_comb = (uint32_t)mem_read_data_in().bits(word * 32 + 31, word * 32) >> (byte * 8u);
-        if (byte != 0 && word + 1 < PORT_WORDS) {
-            direct_data_comb |= (uint32_t)mem_read_data_in().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
+        if (((uint32_t)req_addr_reg & 3u) != 0 &&
+            (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
+            direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
-        else if (byte != 0) {
-            direct_data_comb |= (uint32_t)mem_read_data_in().bits(31, 0) << (32u - byte * 8u);
+        else {
+            word = (((uint32_t)req_addr_reg % PORT_BYTES) / 4u);
+            byte = (uint32_t)req_addr_reg & 3u;
+            direct_data_comb = (uint32_t)mem_read_data_in().bits(word * 32 + 31, word * 32) >> (byte * 8u);
+            if (byte != 0 && word + 1 < PORT_WORDS) {
+                direct_data_comb |= (uint32_t)mem_read_data_in().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
+            }
+            else if (byte != 0) {
+                direct_data_comb |= (uint32_t)mem_read_data_in().bits(31, 0) << (32u - byte * 8u);
+            }
         }
         return direct_data_comb;
     }

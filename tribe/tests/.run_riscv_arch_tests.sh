@@ -40,6 +40,8 @@ export MISE_DATA_DIR="${MISE_DATA_DIR:-${BUILD_DIR}/mise-data}"
 export MISE_CACHE_DIR="${MISE_CACHE_DIR:-${BUILD_DIR}/mise-cache}"
 export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-${BUILD_DIR}/mise-config}"
 export MISE_STATE_DIR="${MISE_STATE_DIR:-${BUILD_DIR}/mise-state}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${BUILD_DIR}/xdg-data}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${BUILD_DIR}/xdg-cache}"
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "Installing uv into ${BUILD_DIR}/pydeps"
@@ -52,12 +54,12 @@ if command -v mise >/dev/null 2>&1 && [[ -f "${ROOT_DIR}/tribe/tests/riscv-arch-
     mise trust "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml"
 fi
 
-make -C "${BUILD_DIR}" tribe
+make -C "${BUILD_DIR}" tribe256 tribe128 tribe64
 
 echo "Running RISC-V architectural tests on C++ Tribe model"
-ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_arch_test$'
+ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_arch_test$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
     echo "Running RISC-V architectural tests on Verilator Tribe model"
-    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_arch_test_verilator$'
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_arch_test_verilator$'
 fi

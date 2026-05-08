@@ -99,6 +99,14 @@ def write_tribe_rvtest_config(path: pathlib.Path) -> None:
     )
 
 
+def prewarm_udb_z3_cache(env: dict[str, str]) -> None:
+    dest = pathlib.Path(env["XDG_CACHE_HOME"]) / "udb" / "z3"
+    source = pathlib.Path.home() / ".cache" / "udb" / "z3"
+    if dest.resolve() == source.resolve() or dest.exists() or not source.exists():
+        return
+    shutil.copytree(source, dest, dirs_exist_ok=True)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("usage: run_riscv_arch_test.py <tribe-bin> <checkout-dir> <work-dir>", file=sys.stderr)
@@ -117,6 +125,11 @@ def main(argv: list[str]) -> int:
     env["PATH"] = f"{riscv_home}/bin:" + env.get("PATH", "")
     env.setdefault("RISCV", riscv_home)
     env.setdefault("UV_CACHE_DIR", str(work / "uv-cache"))
+    env.setdefault("XDG_DATA_HOME", str(work / "xdg-data"))
+    env.setdefault("XDG_CACHE_HOME", str(work / "xdg-cache"))
+    pathlib.Path(env["XDG_DATA_HOME"]).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+    prewarm_udb_z3_cache(env)
 
     if shutil.which("make", path=env["PATH"]) is None:
         print("ERROR: make is not available")

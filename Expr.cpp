@@ -579,13 +579,27 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
             if (sub.size() >= 1) {
-                return (flags&FLAG_ASSIGN) ? indent_str + sub[0].str() :
-                            ((flags&FLAG_COMB) ? (sub[0].type==EXPR_MEMBER||sub[0].type==EXPR_VAR
-                                ||(sub[0].type==EXPR_CAST&&(sub[0].sub[0].type==EXPR_MEMBER||sub[0].sub[0].type==EXPR_VAR))
-                                    ?"":indent_str + sub[0].str()) : indent_str + "return " + sub[0].str());
+                if (flags&FLAG_ASSIGN) {
+                    return indent_str + sub[0].str();
+                }
+                if (flags&FLAG_COMB) {
+                    std::string ret;
+                    std::string method_name = currMethod ? escapeIdentifier(currMethod->name) : "";
+                    bool is_current_value = sub[0].type==EXPR_MEMBER||sub[0].type==EXPR_VAR
+                        ||(sub[0].type==EXPR_CAST&&(sub[0].sub[0].type==EXPR_MEMBER||sub[0].sub[0].type==EXPR_VAR));
+                    if (!is_current_value) {
+                        ret = indent_str + sub[0].str();
+                        if (!ret.empty()) {
+                            ret += ";\n";
+                        }
+                    }
+                    ret += indent_str + "disable " + method_name;
+                    return ret;
+                }
+                return indent_str + "return " + sub[0].str();
             }
             else {
-                return indent_str + "disable " + currMethod->name;
+                return indent_str + "disable " + escapeIdentifier(currMethod->name);
             }
 
 /* ((flags&FLAG_RETURN) && sub.size()==1) ?

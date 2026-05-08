@@ -2,6 +2,12 @@
 
 const std::string compilerParams = " -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
 
+inline std::string VerilatorExtraCflags()
+{
+    const char* extra = std::getenv("CPPHDL_VERILATOR_CFLAGS");
+    return extra ? std::string(" ") + extra : std::string();
+}
+
 inline int SystemEcho(const char* cmd)
 {
     std::cout << cmd << "\n";
@@ -34,7 +40,7 @@ inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::
     // running Verilator
     SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc " + modules_list + " " + name + ".sv --exe " + cpp_name + " --top-module " + name +
-        " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + name + " " + compilerParams + "\"").c_str());
+        " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + name + " " + compilerParams + VerilatorExtraCflags() + "\"").c_str());
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
         "; make -j4 -f V" + name + ".mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };
