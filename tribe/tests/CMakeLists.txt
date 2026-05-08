@@ -76,9 +76,6 @@ foreach(src ${TRIBE_TEST_SOURCES})
     )
 
     set(test_args --noveril)
-    if(target_name STREQUAL "L2Cache_test")
-        set(test_args)
-    endif()
 
     add_test(
         NAME ${target_name}

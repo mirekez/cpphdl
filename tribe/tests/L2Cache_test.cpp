@@ -38,6 +38,18 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
     static_assert(WIDTH == WORDS * 32);
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
 }
+
+template<size_t WORDS>
+static uint32_t port_word(const VlWide<WORDS>& bits, size_t word)
+{
+    return bits.m_storage[word];
+}
+#else
+template<size_t WIDTH>
+static uint32_t port_word(logic<WIDTH> bits, size_t word)
+{
+    return (uint32_t)bits.bits(word * 32 + 31, word * 32);
+}
 #endif
 
 long sys_clock = -1;
@@ -64,7 +76,7 @@ class TestL2Cache : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
-    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, MEM_PORTS> l2;
+    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS> l2;
 #endif
     Axi4Ram<32, 4, PORT_BITS, RAM_LINES_PER_PORT> ram[MEM_PORTS];
 
@@ -90,6 +102,8 @@ public:
         l2.d_addr_in = __VAR(addr);
         l2.d_write_data_in = __VAR(wdata);
         l2.d_write_mask_in = __VAR(wmask);
+        l2.memory_base_in = __EXPR((uint32_t)0);
+        l2.memory_size_in = __EXPR((uint32_t)0xffffffffu);
         l2.debugen_in = false;
         l2.__inst_name = "l2";
         l2._assign();
@@ -141,6 +155,8 @@ public:
         l2.d_addr_in = addr;
         l2.d_write_data_in = wdata;
         l2.d_write_mask_in = wmask;
+        l2.memory_base_in = 0;
+        l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.axi_awready_in[i] = ram[i].axi_awready_out();
             l2.axi_wready_in[i] = ram[i].axi_wready_out();
@@ -203,9 +219,11 @@ public:
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.i_wait_out); ++i) {
             cycle(false);
         }
-        if (L2_VALUE(l2.i_wait_out) || L2_VALUE(l2.i_read_data_out) != expected) {
+        uint32_t beat_word = ((request_addr % (PORT_BITS / 8)) / 4);
+        uint32_t data = port_word(L2_VALUE(l2.i_read_data_out), beat_word);
+        if (L2_VALUE(l2.i_wait_out) || data != expected) {
             std::print("\nread ERROR addr={:#x} wait={} data={:#x} expected={:#x}\n",
-                request_addr, L2_VALUE(l2.i_wait_out), L2_VALUE(l2.i_read_data_out), expected);
+                request_addr, L2_VALUE(l2.i_wait_out), data, expected);
             error = true;
         }
         cycle(false);
@@ -326,11 +344,11 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
             {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
-            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, MEM_PORTS);
+            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L2Cache_4096_256_32_4_32_4/obj_dir/VL2Cache") == 0;
+        ok = ok && std::system("L2Cache_4096_256_32_4_32_32_4/obj_dir/VL2Cache") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

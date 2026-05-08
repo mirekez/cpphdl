@@ -88,6 +88,7 @@ public:
         cache.mem_wait_in = __EXPR(false);
         cache.stall_in = __VAR(stall);
         cache.flush_in = __VAR(flush);
+        cache.invalidate_in = __EXPR(false);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();
@@ -155,6 +156,7 @@ public:
         cache.mem_wait_in = false;
         cache.stall_in = stall;
         cache.flush_in = flush;
+        cache.invalidate_in = false;
         cache.debugen_in = false;
         cache.clk = 1;
         cache.reset = reset;
@@ -467,6 +469,144 @@ public:
     }
 };
 
+#ifndef VERILATOR
+template<size_t PORT_BITS>
+class TestL1CacheWideRefill : public Module
+{
+    static constexpr int CACHE_ID = 0;
+    L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS, PORT_BITS> cache;
+
+    bool read = false;
+    uint32_t addr = 0;
+    bool error = false;
+
+public:
+    void _assign()
+    {
+        cache.read_in = __VAR(read);
+        cache.write_in = __EXPR(false);
+        cache.addr_in = __VAR(addr);
+        cache.write_data_in = __EXPR(0);
+        cache.write_mask_in = __EXPR(0);
+        cache.mem_read_data_in = __EXPR(mem_read_data_comb_func());
+        cache.mem_wait_in = __EXPR(false);
+        cache.stall_in = __EXPR(false);
+        cache.flush_in = __EXPR(false);
+        cache.invalidate_in = __EXPR(false);
+        cache.debugen_in = false;
+        cache.__inst_name = __inst_name + "/cache";
+        cache._assign();
+    }
+
+    __LAZY_COMB(mem_read_data_comb, logic<PORT_BITS>)
+        uint32_t base_word;
+        size_t i;
+        mem_read_data_comb = 0;
+        base_word = ((uint32_t)cache.mem_addr_out() & ~(uint32_t)((PORT_BITS / 8) - 1)) >> 2;
+        for (i = 0; i < PORT_BITS / 32; ++i) {
+            mem_read_data_comb.bits(i * 32 + 31, i * 32) = mem_word(base_word + i);
+        }
+        return mem_read_data_comb;
+    }
+
+    uint32_t expected_ram_read(uint32_t request_addr)
+    {
+        uint32_t lo = mem_word(request_addr >> 2);
+        uint32_t shift = (request_addr & 0x3) * 8;
+        if (shift == 0) {
+            return lo;
+        }
+        uint32_t hi = mem_word((request_addr >> 2) + 1);
+        return (lo >> shift) | (hi << (32 - shift));
+    }
+
+    void cycle(bool reset = false)
+    {
+        cache._work(reset);
+        cache._strobe();
+        ++sys_clock;
+    }
+
+    void reset_cache()
+    {
+        read = false;
+        addr = 0;
+        cycle(true);
+        for (size_t i = 0; i < SETS + 8 && cache.busy_out(); ++i) {
+            cycle(false);
+        }
+        if (cache.busy_out()) {
+            std::print("\nERROR: wide cache did not leave init state\n");
+            error = true;
+        }
+    }
+
+    void idle()
+    {
+        read = false;
+        for (size_t i = 0; i < 8 && (cache.busy_out() || cache.read_valid_out()); ++i) {
+            cycle(false);
+        }
+    }
+
+    void read_check(const char* phase, uint32_t request_addr, bool expect_hit)
+    {
+        bool saw_busy = false;
+        bool got = false;
+        idle();
+        addr = request_addr;
+        read = true;
+        cycle(false);
+        for (size_t i = 0; i < 80 && !got; ++i) {
+            saw_busy |= cache.busy_out();
+            if (cache.read_valid_out() && (uint32_t)cache.read_addr_out() == request_addr) {
+                got = true;
+                break;
+            }
+            cycle(false);
+        }
+        if (!got || (!expect_hit && !saw_busy)) {
+            std::print("\n{} ERROR addr={:#x}: got={} saw_busy={} valid={} raddr={:#x} busy={}\n",
+                phase, request_addr, got, saw_busy, (bool)cache.read_valid_out(),
+                (uint32_t)cache.read_addr_out(), (bool)cache.busy_out());
+            error = true;
+        }
+        uint32_t data = (uint32_t)cache.read_data_out();
+        uint32_t expected = expected_ram_read(request_addr);
+        if ((request_addr & (LINE_SIZE - 1)) == LINE_SIZE - 2) {
+            data &= 0xffffu;
+            expected &= 0xffffu;
+        }
+        if (data != expected) {
+            std::print("\n{} ERROR addr={:#x}: data={:#x} expected={:#x}\n",
+                phase, request_addr, (uint32_t)cache.read_data_out(), expected_ram_read(request_addr));
+            error = true;
+        }
+        read = false;
+        cycle(false);
+    }
+
+    bool run()
+    {
+        std::print("CppHDL TestL1CacheWideRefill<{}>...", PORT_BITS);
+        auto start = std::chrono::high_resolution_clock::now();
+        __inst_name = "l1cache_wide_refill_test";
+        _assign();
+        reset_cache();
+
+        uint32_t base = 3 * SETS * LINE_SIZE + 5 * LINE_SIZE;
+        for (uint32_t half = 0; half < LINE_SIZE && !error; half += 2) {
+            read_check("wide refill", base + half, half != 0);
+        }
+
+        std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
+            (std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::high_resolution_clock::now() - start)).count());
+        return !error;
+    }
+};
+#endif
+
 int main(int argc, char** argv)
 {
     bool noveril = false;
@@ -483,11 +623,11 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
             {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
-            CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS);
+            CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS, 32);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L1Cache_1024_32_2_0_13/obj_dir/VL1Cache") == 0;
+        ok = ok && std::system("L1Cache_1024_32_2_0_13_32/obj_dir/VL1Cache") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
@@ -499,6 +639,7 @@ int main(int argc, char** argv)
 #else
     ok = ok && TestL1Cache<0>().run();
     ok = ok && TestL1Cache<1>().run();
+    ok = ok && TestL1CacheWideRefill<256>().run();
 #endif
     return !ok;
 }

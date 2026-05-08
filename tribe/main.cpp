@@ -6,6 +6,8 @@
 #include "File.h"
 
 #define STAGES_NUM 3
+#define CACHE_LINE_SIZE 32
+#define ADDR_BITS 32
 
 #include "Decode.h"
 #include "Execute.h"
@@ -17,6 +19,8 @@
 
 #define DEFAULT_RAM_SIZE 32768
 #define MAX_RAM_SIZE 524288
+#define L1_CACHE_SIZE 1024
+#define L2_CACHE_SIZE 8192
 #define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
 #define L2_AXI_WIDTH 256
 #define L2_MEM_PORTS 4
@@ -42,9 +46,9 @@ class Tribe: public Module
     Writeback       wb;
     CSR             csr;
     File<32,32>     regs;
-    L1Cache<1024,32,2,0,32> icache;
-    L1Cache<1024,32,2,1,32> dcache;
-    L2Cache<8192,L2_AXI_WIDTH,32,4,32,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,0,ADDR_BITS,L2_AXI_WIDTH> icache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,1,ADDR_BITS,L2_AXI_WIDTH> dcache;
+    L2Cache<L2_CACHE_SIZE,L2_AXI_WIDTH,CACHE_LINE_SIZE,4,ADDR_BITS,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -88,7 +92,7 @@ public:
         size_t i;
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
-	        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
+        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
         dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = __EXPR( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = __EXPR( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );

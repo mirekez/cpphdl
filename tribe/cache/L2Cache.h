@@ -9,13 +9,18 @@ template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LIN
 class L2Cache : public Module
 {
     static_assert(CACHE_LINE_SIZE == 32, "L2Cache uses 32-byte cache lines");
-    static_assert(PORT_BITWIDTH == CACHE_LINE_SIZE * 8, "Current L2Cache AXI path uses one full-line AXI beat");
+    static_assert(PORT_BITWIDTH >= 32 && PORT_BITWIDTH % 32 == 0, "L2Cache port must be a whole number of 32-bit words");
+    static_assert((CACHE_LINE_SIZE * 8) % PORT_BITWIDTH == 0, "L2Cache port must divide a cache line");
     static_assert(WAYS == 4, "L2Cache is intended to be 4-way set associative");
     static_assert(CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L2Cache geometry must divide evenly");
     static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
     static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
+    static constexpr size_t PORT_BYTES = PORT_BITWIDTH / 8;
+    static constexpr size_t PORT_WORDS = PORT_BITWIDTH / 32;
+    static constexpr size_t LINE_BEATS = CACHE_LINE_SIZE / PORT_BYTES;
+    static constexpr size_t LINE_BEAT_BITS = LINE_BEATS <= 1 ? 1 : clog2(LINE_BEATS);
     static constexpr size_t SETS = CACHE_SIZE / CACHE_LINE_SIZE / WAYS;
     static constexpr size_t SET_BITS = clog2(SETS);
     static constexpr size_t LINE_BITS = clog2(CACHE_LINE_SIZE);
@@ -49,7 +54,7 @@ public:
     __PORT(uint32_t) i_addr_in;
     __PORT(uint32_t) i_write_data_in;
     __PORT(uint8_t) i_write_mask_in;
-    __PORT(uint32_t) i_read_data_out = __VAR(read_data_comb_func());
+    __PORT(logic<PORT_BITWIDTH>) i_read_data_out = __VAR(read_data_comb_func());
     __PORT(bool) i_wait_out = __VAR(i_wait_comb_func());
 
     __PORT(bool) d_read_in;
@@ -57,7 +62,7 @@ public:
     __PORT(uint32_t) d_addr_in;
     __PORT(uint32_t) d_write_data_in;
     __PORT(uint8_t) d_write_mask_in;
-    __PORT(uint32_t) d_read_data_out = __VAR(read_data_comb_func());
+    __PORT(logic<PORT_BITWIDTH>) d_read_data_out = __VAR(read_data_comb_func());
     __PORT(bool) d_wait_out = __VAR(d_wait_comb_func());
 
     __PORT(uint32_t) memory_base_in;
@@ -104,8 +109,10 @@ private:
     reg<u<WAY_BITS>> victim_reg;
     reg<u<WAY_BITS>> fill_way_reg;
     reg<u<SET_BITS>> init_set_reg;
-    reg<u32> last_data_reg;
-    reg<u32> cross_low_reg;
+    reg<logic<PORT_BITWIDTH>> last_data_reg;
+    reg<logic<PORT_BITWIDTH>> cross_low_reg;
+    reg<u<LINE_BEAT_BITS>> fill_beat_reg;
+    reg<u<LINE_BEAT_BITS>> evict_beat_reg;
 
     __LAZY_COMB(active_is_d_comb, bool)
         return active_is_d_comb = d_write_in() || d_read_in();
@@ -141,6 +148,10 @@ private:
 
     __LAZY_COMB(req_word_comb, u<WORD_BITS>)
         return req_word_comb = (u<WORD_BITS>)(((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1));
+    }
+
+    __LAZY_COMB(req_beat_comb, u<LINE_BEAT_BITS>)
+        return req_beat_comb = (u<LINE_BEAT_BITS>)(((uint32_t)req_addr_reg & (CACHE_LINE_SIZE - 1)) / PORT_BYTES);
     }
 
     __LAZY_COMB(req_tag_comb, u<TAG_BITS>)
@@ -214,8 +225,11 @@ private:
 
     __LAZY_COMB(axi_araddr_full_comb, uint32_t)
         uint32_t line_addr;
-        line_addr = (uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1);
-        if (state_reg == ST_CROSS_AR1) {
+        line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)fill_beat_reg * PORT_BYTES);
+        if (state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_R0) {
+            line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)req_beat_comb_func() * PORT_BYTES);
+        }
+        if (state_reg == ST_CROSS_AR1 || state_reg == ST_CROSS_R1) {
             line_addr += CACHE_LINE_SIZE;
         }
         return axi_araddr_full_comb = line_addr;
@@ -322,8 +336,8 @@ private:
 
     __LAZY_COMB(axi_awaddr_full_comb, uint32_t)
         uint32_t addr;
-        addr = ((uint32_t)evict_tag_comb_func() << (SET_BITS + LINE_BITS)) |
-            ((uint32_t)req_set_comb_func() << LINE_BITS);
+        addr = (((uint32_t)evict_tag_comb_func() << (SET_BITS + LINE_BITS)) |
+            ((uint32_t)req_set_comb_func() << LINE_BITS)) + ((uint32_t)evict_beat_reg * PORT_BYTES);
         return axi_awaddr_full_comb = addr;
     }
 
@@ -390,14 +404,19 @@ private:
         size_t i;
         size_t way;
         size_t word;
+        size_t beat_word;
         way = 0;
         word = 0;
+        beat_word = 0;
         evict_line_comb = 0;
         for (i = 0; i < DATA_BANKS; ++i) {
             way = i / LINE_WORDS;
             word = i % LINE_WORDS;
-            if (evict_way_comb_func() == way) {
-                evict_line_comb.bits(word * 32 + 31, word * 32) = data_ram[i].q_out();
+            if (evict_way_comb_func() == way &&
+                word >= (uint32_t)evict_beat_reg * PORT_WORDS &&
+                word < ((uint32_t)evict_beat_reg + 1u) * PORT_WORDS) {
+                beat_word = word - (uint32_t)evict_beat_reg * PORT_WORDS;
+                evict_line_comb.bits(beat_word * 32 + 31, beat_word * 32) = data_ram[i].q_out();
             }
         }
         return evict_line_comb;
@@ -527,7 +546,7 @@ private:
 
     __LAZY_COMB(axi_aligned_word_comb, uint32_t)
         uint32_t word;
-        word = (uint32_t)req_word_comb_func();
+        word = (uint32_t)req_word_comb_func() % PORT_WORDS;
         return axi_aligned_word_comb = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
     }
 
@@ -563,9 +582,9 @@ private:
         uint32_t byte;
         uint32_t word;
         byte = (uint32_t)req_addr_reg & 3u;
-        word = (uint32_t)req_word_comb_func() + 1;
+        word = ((uint32_t)req_word_comb_func() + 1) % PORT_WORDS;
         old_data = 0;
-        if (word < LINE_WORDS) {
+        if ((uint32_t)req_word_comb_func() + 1 < LINE_WORDS) {
             old_data = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
         }
         new_data = byte == 0 ? (uint32_t)0 : (uint32_t)req_write_data_reg >> (32 - byte * 8);
@@ -584,21 +603,36 @@ private:
         return fill_write_next_word_comb;
     }
 
-    __LAZY_COMB(fill_read_data_comb, uint32_t)
-        uint32_t word;
-        uint32_t byte;
-        uint32_t low;
-        uint32_t high;
-        word = (uint32_t)req_word_comb_func();
-        byte = (uint32_t)req_addr_reg & 3u;
-        low = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
-        high = 0;
-        fill_read_data_comb = low >> (byte * 8);
-        if (byte != 0 && word + 1 < LINE_WORDS) {
-            high = (uint32_t)axi_rdata_selected_comb_func().bits((word + 1) * 32 + 31, (word + 1) * 32);
-            fill_read_data_comb |= high << (32 - byte * 8);
+    __LAZY_COMB(hit_beat_comb, logic<PORT_BITWIDTH>)
+        size_t i;
+        size_t way;
+        size_t word_index;
+        size_t beat_word;
+        way = 0;
+        word_index = 0;
+        beat_word = 0;
+        hit_beat_comb = 0;
+        for (i = 0; i < DATA_BANKS; ++i) {
+            way = i / LINE_WORDS;
+            word_index = i % LINE_WORDS;
+            if (hit_way_comb_func() == way &&
+                word_index >= (uint32_t)req_beat_comb_func() * PORT_WORDS &&
+                word_index < ((uint32_t)req_beat_comb_func() + 1u) * PORT_WORDS) {
+                beat_word = word_index - (uint32_t)req_beat_comb_func() * PORT_WORDS;
+                hit_beat_comb.bits(beat_word * 32 + 31, beat_word * 32) = data_ram[i].q_out();
+            }
         }
-        return fill_read_data_comb;
+        return hit_beat_comb;
+    }
+
+    __LAZY_COMB(cross_read_data_comb, logic<PORT_BITWIDTH>)
+        uint32_t low_word;
+        cross_read_data_comb = cross_low_reg;
+        low_word = (uint32_t)req_addr_reg % PORT_BYTES / 4u;
+        cross_read_data_comb.bits(31, 0) = axi_rdata_selected_comb_func().bits(31, 0);
+        cross_read_data_comb.bits(low_word * 32 + 31, low_word * 32) =
+            cross_low_reg.bits(low_word * 32 + 31, low_word * 32);
+        return cross_read_data_comb;
     }
 
     __LAZY_COMB(tag_write_data_comb, logic<TAG_BITS + 2>)
@@ -612,19 +646,18 @@ private:
         return tag_write_data_comb;
     }
 
-    __LAZY_COMB(read_data_comb, uint32_t)
+    __LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
         if (state_reg == ST_DONE) {
             read_data_comb = last_data_reg;
         }
         else if (state_reg == ST_CROSS_R1) {
-            read_data_comb = cross_low_reg |
-                ((uint32_t)axi_rdata_selected_comb_func().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
+            read_data_comb = cross_read_data_comb_func();
         }
         else if (state_reg == ST_LOOKUP && hit_comb_func()) {
-            read_data_comb = hit_word_comb_func();
+            read_data_comb = hit_beat_comb_func();
         }
         else {
-            read_data_comb = fill_read_data_comb_func();
+            read_data_comb = axi_rdata_selected_comb_func();
         }
         return read_data_comb;
     }
@@ -683,7 +716,9 @@ public:
             data_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
             data_ram[i].wr_in = __EXPR_I(
-                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS)) ||
+                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS) &&
+                    (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
+                    (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() &&
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (req_word_comb_func() == (i % LINE_WORDS) ||
@@ -693,7 +728,7 @@ public:
                     write_next_word_comb_func() : write_word_comb_func()) :
                 ((req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_write_reg && ((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
-                    (uint32_t)axi_rdata_selected_comb_func().bits((i % LINE_WORDS) * 32 + 31, (i % LINE_WORDS) * 32)));
+                    (uint32_t)axi_rdata_selected_comb_func().bits(((i % LINE_WORDS) % PORT_WORDS) * 32 + 31, ((i % LINE_WORDS) % PORT_WORDS) * 32)));
             data_ram[i].id_in = 2000 + i;
         }
 
@@ -703,7 +738,7 @@ public:
             tag_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
             tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
-                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == i) ||
+                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == i) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() && hit_way_comb_func() == i));
             tag_ram[i].data_in = __VAR(tag_write_data_comb_func());
             tag_ram[i].id_in = 2100 + i;
@@ -763,7 +798,7 @@ public:
             }
             else if (hit_comb_func()) {
                 if (req_read_reg) {
-                    last_data_reg._next = hit_word_comb_func();
+                    last_data_reg._next = hit_beat_comb_func();
                 }
                 if (req_cross_line_write_comb_func()) {
                     req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
@@ -777,6 +812,8 @@ public:
             }
             else {
                 fill_way_reg._next = victim_reg;
+                fill_beat_reg._next = 0;
+                evict_beat_reg._next = 0;
                 state_reg._next = (evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR;
             }
         }
@@ -789,6 +826,8 @@ public:
             }
             else {
                 fill_way_reg._next = victim_reg;
+                fill_beat_reg._next = 0;
+                evict_beat_reg._next = 0;
                 state_reg._next = (evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR;
             }
         }
@@ -804,7 +843,14 @@ public:
         }
         else if (state_reg == ST_EVICT_B) {
             if (axi_bvalid_selected_comb_func()) {
-                state_reg._next = ST_AXI_AR;
+                if (evict_beat_reg == LINE_BEATS - 1) {
+                    fill_beat_reg._next = 0;
+                    state_reg._next = ST_AXI_AR;
+                }
+                else {
+                    evict_beat_reg._next = evict_beat_reg + 1;
+                    state_reg._next = ST_EVICT_AW;
+                }
             }
         }
         else if (state_reg == ST_AXI_AR) {
@@ -814,18 +860,24 @@ public:
         }
         else if (state_reg == ST_AXI_R) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                if (req_read_reg) {
-                    last_data_reg._next = fill_read_data_comb_func();
+                if (req_read_reg && fill_beat_reg == req_beat_comb_func()) {
+                    last_data_reg._next = axi_rdata_selected_comb_func();
                 }
-                victim_reg._next = victim_reg + 1;
-                if (req_cross_line_write_comb_func()) {
-                    req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
-                    req_write_data_reg._next = cross_write_data_comb_func();
-                    req_write_mask_reg._next = cross_write_mask_comb_func();
-                    state_reg._next = ST_CROSS_WRITE_LOOKUP;
+                if (fill_beat_reg == LINE_BEATS - 1) {
+                    victim_reg._next = victim_reg + 1;
+                    if (req_cross_line_write_comb_func()) {
+                        req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
+                        req_write_data_reg._next = cross_write_data_comb_func();
+                        req_write_mask_reg._next = cross_write_mask_comb_func();
+                        state_reg._next = ST_CROSS_WRITE_LOOKUP;
+                    }
+                    else {
+                        state_reg._next = ST_DONE;
+                    }
                 }
                 else {
-                    state_reg._next = ST_DONE;
+                    fill_beat_reg._next = fill_beat_reg + 1;
+                    state_reg._next = ST_AXI_AR;
                 }
             }
         }
@@ -836,8 +888,7 @@ public:
         }
         else if (state_reg == ST_CROSS_R0) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                cross_low_reg._next = (uint32_t)axi_rdata_selected_comb_func().bits((LINE_WORDS - 1) * 32 + 31, (LINE_WORDS - 1) * 32) >>
-                    (((uint32_t)req_addr_reg & 3u) * 8);
+                cross_low_reg._next = axi_rdata_selected_comb_func();
                 state_reg._next = ST_CROSS_AR1;
             }
         }
@@ -848,8 +899,7 @@ public:
         }
         else if (state_reg == ST_CROSS_R1) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                last_data_reg._next = cross_low_reg |
-                    ((uint32_t)axi_rdata_selected_comb_func().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
+                last_data_reg._next = cross_read_data_comb_func();
                 state_reg._next = ST_DONE;
             }
         }
@@ -870,6 +920,8 @@ public:
             init_set_reg.clr();
             last_data_reg.clr();
             cross_low_reg.clr();
+            fill_beat_reg.clr();
+            evict_beat_reg.clr();
             state_reg._next = ST_INIT;
         }
     }
@@ -896,5 +948,7 @@ public:
         init_set_reg.strobe();
         last_data_reg.strobe();
         cross_low_reg.strobe();
+        fill_beat_reg.strobe();
+        evict_beat_reg.strobe();
     }
 };

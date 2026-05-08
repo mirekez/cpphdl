@@ -15,10 +15,12 @@ struct L1CachePerf
     u<3> state;
 } __PACKED;
 
-template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0, size_t ADDR_BITS = 32>
+template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0, size_t ADDR_BITS = 32, size_t PORT_BITWIDTH = 32>
 class L1Cache : public Module
 {
     static_assert(CACHE_LINE_SIZE == 32, "L1Cache uses 32-byte cache lines");
+    static_assert(PORT_BITWIDTH >= 32 && PORT_BITWIDTH % 32 == 0, "L1Cache refill port must be a whole number of 32-bit words");
+    static_assert((CACHE_LINE_SIZE * 8) % PORT_BITWIDTH == 0, "L1Cache refill port must divide a cache line");
     static_assert(WAYS > 0, "L1Cache needs at least one way");
     static_assert(TOTAL_CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L1Cache geometry must divide evenly");
     static_assert(ADDR_BITS > 0 && ADDR_BITS <= 32, "L1Cache address width must be in 1..32 bits");
@@ -29,6 +31,10 @@ class L1Cache : public Module
     static constexpr size_t WORD_BITS = clog2(LINE_WORDS);
     static constexpr size_t LINE_BITS = clog2(CACHE_LINE_SIZE);
     static constexpr size_t HALF_LINE_BITS = CACHE_LINE_SIZE * 4;
+    static constexpr size_t PORT_BYTES = PORT_BITWIDTH / 8;
+    static constexpr size_t PORT_WORDS = PORT_BITWIDTH / 32;
+    static constexpr size_t REFILL_BEATS = CACHE_LINE_SIZE / PORT_BYTES;
+    static constexpr size_t REFILL_BEAT_BITS = REFILL_BEATS <= 1 ? 1 : clog2(REFILL_BEATS);
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t WAY_BITS = WAYS <= 1 ? 1 : clog2(WAYS);
     static_assert(ADDR_BITS > SET_BITS + LINE_BITS, "L1Cache address width must include tag bits");
@@ -58,7 +64,7 @@ public:
     __PORT(uint8_t)   mem_write_mask_out = __EXPR(write_mask_in());
     __PORT(bool)      mem_read_out = __VAR(mem_read_comb_func());
     __PORT(uint32_t)  mem_addr_out = __VAR(mem_addr_comb_func());
-    __PORT(uint32_t)  mem_read_data_in;
+    __PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
     __PORT(bool)      mem_wait_in;
     __PORT(L1CachePerf) perf_out = __VAR(perf_comb_func());
 
@@ -70,13 +76,13 @@ public:
         for (i = 0; i < WAYS; ++i) {
             even_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
             even_ram[i].data_in = __EXPR(refill_even_line_comb_func());
-            even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
+            even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
             even_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
             even_ram[i].id_in = ID * 100 + i * 3;
 
             odd_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
             odd_ram[i].data_in = __EXPR(refill_odd_line_comb_func());
-            odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i);
+            odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
             odd_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
             odd_ram[i].id_in = ID * 100 + i * 3 + 1;
 
@@ -85,7 +91,7 @@ public:
                                          ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
             tag_ram[i].data_in = __EXPR((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
             tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
-                                        ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_word_reg == LINE_WORDS - 1 && victim_reg == i) ||
+                                        ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i) ||
                                         write_in());
             tag_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
             tag_ram[i].id_in = ID * 100 + i * 3 + 2;
@@ -101,7 +107,7 @@ private:
     reg<u32> req_addr_reg;
     reg<u1> req_read_reg;
     reg<u1> req_cacheable_reg;
-    reg<u<WORD_BITS>> refill_word_reg;
+    reg<u<REFILL_BEAT_BITS>> refill_beat_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<SET_BITS>> init_set_reg;
     reg<u32> last_addr_reg;
@@ -169,17 +175,27 @@ private:
 
     // Next even-half line image while streaming refill words from memory.
     __LAZY_COMB(refill_even_line_comb, logic<HALF_LINE_BITS>)
-        uint32_t word = (uint32_t)refill_word_reg;
+        size_t i;
+        uint32_t word;
         refill_even_line_comb = refill_even_line_reg;
-        refill_even_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() & 0xFFFF;
+        for (i = 0; i < PORT_WORDS; ++i) {
+            word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
+            refill_even_line_comb.bits(word * 16 + 15, word * 16) =
+                (uint32_t)mem_read_data_in().bits(i * 32 + 15, i * 32);
+        }
         return refill_even_line_comb;
     }
 
     // Next odd-half line image while streaming refill words from memory.
     __LAZY_COMB(refill_odd_line_comb, logic<HALF_LINE_BITS>)
-        uint32_t word = (uint32_t)refill_word_reg;
+        size_t i;
+        uint32_t word;
         refill_odd_line_comb = refill_odd_line_reg;
-        refill_odd_line_comb.bits(word * 16 + 15, word * 16) = mem_read_data_in() >> 16;
+        for (i = 0; i < PORT_WORDS; ++i) {
+            word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
+            refill_odd_line_comb.bits(word * 16 + 15, word * 16) =
+                (uint32_t)mem_read_data_in().bits(i * 32 + 31, i * 32 + 16);
+        }
         return refill_odd_line_comb;
     }
 
@@ -192,13 +208,31 @@ private:
         even_half = (uint32_t)refill_even_line_comb_func().bits(word * 16 + 15, word * 16);
         odd_half = (uint32_t)refill_odd_line_comb_func().bits(word * 16 + 15, word * 16);
         if (req_addr_reg & 0x2) {
-            even_half = (uint32_t)refill_even_line_comb_func().bits((word + 1) * 16 + 15, (word + 1) * 16);
+            even_half = 0;
+            if (word + 1 < LINE_WORDS) {
+                even_half = (uint32_t)refill_even_line_comb_func().bits((word + 1) * 16 + 15, (word + 1) * 16);
+            }
             refill_data_comb = odd_half | (even_half << 16);
         }
         else {
             refill_data_comb = even_half | (odd_half << 16);
         }
         return refill_data_comb;
+    }
+
+    __LAZY_COMB(direct_data_comb, uint32_t)
+        uint32_t byte;
+        uint32_t word;
+        word = (((uint32_t)req_addr_reg % PORT_BYTES) / 4u);
+        byte = (uint32_t)req_addr_reg & 3u;
+        direct_data_comb = (uint32_t)mem_read_data_in().bits(word * 32 + 31, word * 32) >> (byte * 8u);
+        if (byte != 0 && word + 1 < PORT_WORDS) {
+            direct_data_comb |= (uint32_t)mem_read_data_in().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
+        }
+        else if (byte != 0) {
+            direct_data_comb |= (uint32_t)mem_read_data_in().bits(31, 0) << (32u - byte * 8u);
+        }
+        return direct_data_comb;
     }
 
     // Associative tag compare for the registered request.
@@ -232,7 +266,10 @@ private:
                 even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 if (req_addr_reg & 0x2) {
-                    even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                    even_half = 0;
+                    if (word + 1 < LINE_WORDS) {
+                        even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                    }
                     cache_data_comb = odd_half | (even_half << 16);
                 }
                 else {
@@ -252,7 +289,7 @@ private:
             read_data_comb = last_data_reg;
         }
         else {
-            read_data_comb = mem_read_data_in();
+            read_data_comb = direct_data_comb_func();
         }
         return read_data_comb;
     }
@@ -299,7 +336,7 @@ private:
     // Backing memory address: refill word address or direct request address.
     __LAZY_COMB(mem_addr_comb, uint32_t)
         if (state_reg == ST_REFILL && req_read_reg && req_cacheable_reg) {
-            mem_addr_comb = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)refill_word_reg * 4);
+            mem_addr_comb = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)refill_beat_reg * PORT_BYTES);
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
             mem_addr_comb = req_addr_reg;
@@ -369,7 +406,7 @@ public:
                 }
             }
             else {
-                refill_word_reg._next = 0;
+                refill_beat_reg._next = 0;
                 refill_even_line_reg._next = 0;
                 refill_odd_line_reg._next = 0;
                 state_reg._next = ST_REFILL;
@@ -380,7 +417,7 @@ public:
                 if (!mem_wait_in()) {
                     refill_even_line_reg._next = refill_even_line_comb_func();
                     refill_odd_line_reg._next = refill_odd_line_comb_func();
-                    if (refill_word_reg == LINE_WORDS - 1) {
+                    if (refill_beat_reg == REFILL_BEATS - 1) {
                         last_addr_reg._next = req_addr_reg;
                         last_data_reg._next = refill_data_comb_func();
                         last_valid_reg._next = true;
@@ -388,14 +425,14 @@ public:
                         state_reg._next = ST_DONE;
                     }
                     else {
-                        refill_word_reg._next = refill_word_reg + 1;
+                        refill_beat_reg._next = refill_beat_reg + 1;
                     }
                 }
             }
             else {
                 if (!mem_wait_in()) {
                     last_addr_reg._next = req_addr_reg;
-                    last_data_reg._next = mem_read_data_in();
+                    last_data_reg._next = direct_data_comb_func();
                     last_valid_reg._next = true;
                     state_reg._next = ST_DONE;
                 }
@@ -431,7 +468,7 @@ public:
             req_addr_reg.clr();
             req_read_reg.clr();
             req_cacheable_reg.clr();
-            refill_word_reg.clr();
+            refill_beat_reg.clr();
             victim_reg.clr();
             init_set_reg.clr();
             last_addr_reg.clr();
@@ -449,7 +486,7 @@ public:
         req_addr_reg.strobe();
         req_read_reg.strobe();
         req_cacheable_reg.strobe();
-        refill_word_reg.strobe();
+        refill_beat_reg.strobe();
         victim_reg.strobe();
         init_set_reg.strobe();
         last_addr_reg.strobe();
