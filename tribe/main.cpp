@@ -15,10 +15,12 @@
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
-#define RAM_SIZE 32768
-#define CACHE_ADDR_BITS 17
+#define DEFAULT_RAM_SIZE 32768
+#define MAX_RAM_SIZE 131072
+#define CACHE_ADDR_BITS 19
 #define L2_AXI_WIDTH 256
 #define L2_AXI_BYTES (L2_AXI_WIDTH / 8)
+#define L2_MEM_PORTS 4
 #define BRANCH_PREDICTOR_ENTRIES 16
 #define BRANCH_PREDICTOR_COUNTER_BITS 2
 
@@ -41,9 +43,9 @@ class Tribe: public Module
     Writeback       wb;
     CSR             csr;
     File<32,32>     regs;
-    L1Cache<1024,32,2,0,CACHE_ADDR_BITS> icache;
-    L1Cache<1024,32,2,1,CACHE_ADDR_BITS> dcache;
-    L2Cache<8192,L2_AXI_WIDTH,32,4,CACHE_ADDR_BITS> l2cache;
+    L1Cache<1024,32,2,0,32> icache;
+    L1Cache<1024,32,2,1,32> dcache;
+    L2Cache<8192,L2_AXI_WIDTH,32,4,32,CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -54,33 +56,37 @@ public:
     __PORT(bool)      dmem_read_out;
     __PORT(uint32_t)  dmem_addr_out;
     __PORT(uint32_t)  imem_read_addr_out;
+    __PORT(uint32_t)  reset_pc_in;
+    __PORT(uint32_t)  memory_base_in;
+    __PORT(uint32_t)  memory_size_in;
 
-    __PORT(bool) axi_awvalid_out;
-    __PORT(u<CACHE_ADDR_BITS>) axi_awaddr_out;
-    __PORT(u<4>) axi_awid_out;
-    __PORT(bool) axi_awready_in;
-    __PORT(bool) axi_wvalid_out;
-    __PORT(logic<L2_AXI_WIDTH>) axi_wdata_out;
-    __PORT(bool) axi_wlast_out;
-    __PORT(bool) axi_wready_in;
-    __PORT(bool) axi_bready_out;
-    __PORT(bool) axi_bvalid_in;
-    __PORT(u<4>) axi_bid_in;
-    __PORT(bool) axi_arvalid_out;
-    __PORT(u<CACHE_ADDR_BITS>) axi_araddr_out;
-    __PORT(u<4>) axi_arid_out;
-    __PORT(bool) axi_arready_in;
-    __PORT(bool) axi_rready_out;
-    __PORT(bool) axi_rvalid_in;
-    __PORT(logic<L2_AXI_WIDTH>) axi_rdata_in;
-    __PORT(bool) axi_rlast_in;
-    __PORT(u<4>) axi_rid_in;
+    __PORT(bool) axi_awvalid_out[L2_MEM_PORTS];
+    __PORT(u<CACHE_ADDR_BITS>) axi_awaddr_out[L2_MEM_PORTS];
+    __PORT(u<4>) axi_awid_out[L2_MEM_PORTS];
+    __PORT(bool) axi_awready_in[L2_MEM_PORTS];
+    __PORT(bool) axi_wvalid_out[L2_MEM_PORTS];
+    __PORT(logic<L2_AXI_WIDTH>) axi_wdata_out[L2_MEM_PORTS];
+    __PORT(bool) axi_wlast_out[L2_MEM_PORTS];
+    __PORT(bool) axi_wready_in[L2_MEM_PORTS];
+    __PORT(bool) axi_bready_out[L2_MEM_PORTS];
+    __PORT(bool) axi_bvalid_in[L2_MEM_PORTS];
+    __PORT(u<4>) axi_bid_in[L2_MEM_PORTS];
+    __PORT(bool) axi_arvalid_out[L2_MEM_PORTS];
+    __PORT(u<CACHE_ADDR_BITS>) axi_araddr_out[L2_MEM_PORTS];
+    __PORT(u<4>) axi_arid_out[L2_MEM_PORTS];
+    __PORT(bool) axi_arready_in[L2_MEM_PORTS];
+    __PORT(bool) axi_rready_out[L2_MEM_PORTS];
+    __PORT(bool) axi_rvalid_in[L2_MEM_PORTS];
+    __PORT(logic<L2_AXI_WIDTH>) axi_rdata_in[L2_MEM_PORTS];
+    __PORT(bool) axi_rlast_in[L2_MEM_PORTS];
+    __PORT(u<4>) axi_rid_in[L2_MEM_PORTS];
 
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
 
     void _assign()
     {
+        size_t i;
 //        dec.state_in       = __VAR( state_reg[0] );  // execute stage input is same
         dec.pc_in          = __VAR( pc );
 	        dec.instr_valid_in = __EXPR(fetch_valid_comb_func());
@@ -164,15 +170,19 @@ public:
         l2cache.d_addr_in = dcache.mem_addr_out;
         l2cache.d_write_data_in = dcache.mem_write_data_out;
         l2cache.d_write_mask_in = dcache.mem_write_mask_out;
-        l2cache.axi_awready_in = axi_awready_in;
-        l2cache.axi_wready_in = axi_wready_in;
-        l2cache.axi_bvalid_in = axi_bvalid_in;
-        l2cache.axi_bid_in = axi_bid_in;
-        l2cache.axi_arready_in = axi_arready_in;
-        l2cache.axi_rvalid_in = axi_rvalid_in;
-        l2cache.axi_rdata_in = axi_rdata_in;
-        l2cache.axi_rlast_in = axi_rlast_in;
-        l2cache.axi_rid_in = axi_rid_in;
+        l2cache.memory_base_in = memory_base_in;
+        l2cache.memory_size_in = memory_size_in;
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            l2cache.axi_awready_in[i] = axi_awready_in[i];
+            l2cache.axi_wready_in[i] = axi_wready_in[i];
+            l2cache.axi_bvalid_in[i] = axi_bvalid_in[i];
+            l2cache.axi_bid_in[i] = axi_bid_in[i];
+            l2cache.axi_arready_in[i] = axi_arready_in[i];
+            l2cache.axi_rvalid_in[i] = axi_rvalid_in[i];
+            l2cache.axi_rdata_in[i] = axi_rdata_in[i];
+            l2cache.axi_rlast_in[i] = axi_rlast_in[i];
+            l2cache.axi_rid_in[i] = axi_rid_in[i];
+        }
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
         l2cache._assign();
@@ -183,17 +193,19 @@ public:
         dmem_read_out       = dcache.mem_read_out;
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
-        axi_awvalid_out = l2cache.axi_awvalid_out;
-        axi_awaddr_out = l2cache.axi_awaddr_out;
-        axi_awid_out = l2cache.axi_awid_out;
-        axi_wvalid_out = l2cache.axi_wvalid_out;
-        axi_wdata_out = l2cache.axi_wdata_out;
-        axi_wlast_out = l2cache.axi_wlast_out;
-        axi_bready_out = l2cache.axi_bready_out;
-        axi_arvalid_out = l2cache.axi_arvalid_out;
-        axi_araddr_out = l2cache.axi_araddr_out;
-        axi_arid_out = l2cache.axi_arid_out;
-        axi_rready_out = l2cache.axi_rready_out;
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            axi_awvalid_out[i] = l2cache.axi_awvalid_out[i];
+            axi_awaddr_out[i] = l2cache.axi_awaddr_out[i];
+            axi_awid_out[i] = l2cache.axi_awid_out[i];
+            axi_wvalid_out[i] = l2cache.axi_wvalid_out[i];
+            axi_wdata_out[i] = l2cache.axi_wdata_out[i];
+            axi_wlast_out[i] = l2cache.axi_wlast_out[i];
+            axi_bready_out[i] = l2cache.axi_bready_out[i];
+            axi_arvalid_out[i] = l2cache.axi_arvalid_out[i];
+            axi_araddr_out[i] = l2cache.axi_araddr_out[i];
+            axi_arid_out[i] = l2cache.axi_arid_out[i];
+            axi_rready_out[i] = l2cache.axi_rready_out[i];
+        }
     }
 
 private:
@@ -767,7 +779,7 @@ public:
         if (reset) {
             state_reg._next[0].valid = 0;
             state_reg._next[1].valid = 0;
-            pc.clr();
+            pc._next = reset_pc_in();
             valid.clr();
             load_data_reg.clr();
             load_data_valid_reg.clr();
@@ -936,8 +948,9 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 
 class TestTribe : public Module
 {
-    static constexpr size_t AXI_RAM_LINES = RAM_SIZE * 4 / L2_AXI_BYTES;
-    Axi4Ram<CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_LINES> mem;
+    static constexpr size_t AXI_RAM_LINES = MAX_RAM_SIZE * 4 / L2_AXI_BYTES;
+    static constexpr size_t AXI_RAM_LINES_PER_PORT = AXI_RAM_LINES / L2_MEM_PORTS;
+    Axi4Ram<CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_LINES_PER_PORT> mem[L2_MEM_PORTS];
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -960,6 +973,9 @@ class TestTribe : public Module
     uint64_t perf_icache_hit_lookup_cycles = 0;
     uint32_t tohost_addr = 0;
     uint32_t tohost_value = 0;
+    uint32_t reset_pc = 0;
+    uint32_t start_mem_addr = 0;
+    uint32_t ram_size = DEFAULT_RAM_SIZE;
     bool tohost_done = false;
 
     struct Elf32Header
@@ -992,7 +1008,7 @@ class TestTribe : public Module
         uint32_t align;
     } __PACKED;
 
-    bool load_elf(FILE* fbin, std::array<uint32_t, RAM_SIZE>& ram, size_t& read_bytes)
+    bool load_elf(FILE* fbin, std::array<uint32_t, MAX_RAM_SIZE>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry)
     {
         static constexpr uint32_t PT_LOAD = 1;
         Elf32Header ehdr = {};
@@ -1004,6 +1020,7 @@ class TestTribe : public Module
             ehdr.ident[4] != 1 || ehdr.ident[5] != 1 || ehdr.phentsize != sizeof(Elf32ProgramHeader)) {
             return false;
         }
+        entry = ehdr.entry;
 
         for (uint16_t i = 0; i < ehdr.phnum; ++i) {
             Elf32ProgramHeader phdr = {};
@@ -1015,11 +1032,12 @@ class TestTribe : public Module
                 continue;
             }
 
-            const uint32_t base = (phdr.paddr ? phdr.paddr : phdr.vaddr) & ((1u << CACHE_ADDR_BITS) - 1u);
-            if (base + phdr.filesz > RAM_SIZE * 4) {
-                std::print("ELF segment outside test RAM: base={:08x}, size={}\n", base, phdr.filesz);
+            const uint32_t phys = phdr.paddr ? phdr.paddr : phdr.vaddr;
+            if (phys < mem_base || phys - mem_base + phdr.filesz > mem_size_bytes) {
+                std::print("ELF segment outside test RAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, phdr.filesz);
                 return false;
             }
+            const uint32_t base = phys - mem_base;
 
             fseek(fbin, phdr.offset, SEEK_SET);
             for (uint32_t byte = 0; byte < phdr.filesz; ++byte) {
@@ -1053,61 +1071,78 @@ public:
 
     void _assign()
     {
+        size_t i;
 #ifndef VERILATOR
         tribe._assign();
 
-        tribe.axi_awready_in = mem.axi_awready_out;
-        tribe.axi_wready_in = mem.axi_wready_out;
-        tribe.axi_bvalid_in = mem.axi_bvalid_out;
-        tribe.axi_bid_in = mem.axi_bid_out;
-        tribe.axi_arready_in = mem.axi_arready_out;
-        tribe.axi_rvalid_in = mem.axi_rvalid_out;
-        tribe.axi_rdata_in = mem.axi_rdata_out;
-        tribe.axi_rlast_in = mem.axi_rlast_out;
-        tribe.axi_rid_in = mem.axi_rid_out;
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_awready_in[i] = mem[i].axi_awready_out;
+            tribe.axi_wready_in[i] = mem[i].axi_wready_out;
+            tribe.axi_bvalid_in[i] = mem[i].axi_bvalid_out;
+            tribe.axi_bid_in[i] = mem[i].axi_bid_out;
+            tribe.axi_arready_in[i] = mem[i].axi_arready_out;
+            tribe.axi_rvalid_in[i] = mem[i].axi_rvalid_out;
+            tribe.axi_rdata_in[i] = mem[i].axi_rdata_out;
+            tribe.axi_rlast_in[i] = mem[i].axi_rlast_out;
+            tribe.axi_rid_in[i] = mem[i].axi_rid_out;
+        }
         tribe.debugen_in = debugen_in;
+        tribe.reset_pc_in = __EXPR(reset_pc);
+        tribe.memory_base_in = __EXPR(start_mem_addr);
+        tribe.memory_size_in = __EXPR((uint32_t)(ram_size * 4));
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
 
-        mem.axi_awvalid_in = tribe.axi_awvalid_out;
-        mem.axi_awaddr_in = tribe.axi_awaddr_out;
-        mem.axi_awid_in = tribe.axi_awid_out;
-        mem.axi_wvalid_in = tribe.axi_wvalid_out;
-        mem.axi_wdata_in = tribe.axi_wdata_out;
-        mem.axi_wlast_in = tribe.axi_wlast_out;
-        mem.axi_bready_in = tribe.axi_bready_out;
-        mem.axi_arvalid_in = tribe.axi_arvalid_out;
-        mem.axi_araddr_in = tribe.axi_araddr_out;
-        mem.axi_arid_in = tribe.axi_arid_out;
-        mem.axi_rready_in = tribe.axi_rready_out;
-        mem.debugen_in = debugen_in;
-        mem.__inst_name = __inst_name + "/mem";
-        mem._assign();
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            mem[i].axi_awvalid_in = tribe.axi_awvalid_out[i];
+            mem[i].axi_awaddr_in = tribe.axi_awaddr_out[i];
+            mem[i].axi_awid_in = tribe.axi_awid_out[i];
+            mem[i].axi_wvalid_in = tribe.axi_wvalid_out[i];
+            mem[i].axi_wdata_in = tribe.axi_wdata_out[i];
+            mem[i].axi_wlast_in = tribe.axi_wlast_out[i];
+            mem[i].axi_bready_in = tribe.axi_bready_out[i];
+            mem[i].axi_arvalid_in = tribe.axi_arvalid_out[i];
+            mem[i].axi_araddr_in = tribe.axi_araddr_out[i];
+            mem[i].axi_arid_in = tribe.axi_arid_out[i];
+            mem[i].axi_rready_in = tribe.axi_rready_out[i];
+            mem[i].debugen_in = debugen_in;
+            mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
+            mem[i]._assign();
+        }
 #else  // connecting Verilator to CppHDL
-        mem.axi_awvalid_in = __EXPR((bool)tribe.axi_awvalid_out);
-        mem.axi_awaddr_in = __EXPR((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out);
-        mem.axi_awid_in = __EXPR((u<4>)(uint32_t)tribe.axi_awid_out);
-        mem.axi_wvalid_in = __EXPR((bool)tribe.axi_wvalid_out);
-        mem.axi_wdata_in = __EXPR(verilator_wide_to_logic(tribe.axi_wdata_out));
-        mem.axi_wlast_in = __EXPR((bool)tribe.axi_wlast_out);
-        mem.axi_bready_in = __EXPR((bool)tribe.axi_bready_out);
-        mem.axi_arvalid_in = __EXPR((bool)tribe.axi_arvalid_out);
-        mem.axi_araddr_in = __EXPR((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out);
-        mem.axi_arid_in = __EXPR((u<4>)(uint32_t)tribe.axi_arid_out);
-        mem.axi_rready_in = __EXPR((bool)tribe.axi_rready_out);
-        mem.debugen_in = debugen_in;
-        mem.__inst_name = __inst_name + "/mem";
-        mem._assign();
+        tribe.reset_pc_in = reset_pc;
+        tribe.memory_base_in = start_mem_addr;
+        tribe.memory_size_in = ram_size * 4;
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            mem[i].axi_awvalid_in = __EXPR_I((bool)tribe.axi_awvalid_out[i]);
+            mem[i].axi_awaddr_in = __EXPR_I((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out[i]);
+            mem[i].axi_awid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_awid_out[i]);
+            mem[i].axi_wvalid_in = __EXPR_I((bool)tribe.axi_wvalid_out[i]);
+            mem[i].axi_wdata_in = __EXPR_I(verilator_wide_to_logic(tribe.axi_wdata_out[i]));
+            mem[i].axi_wlast_in = __EXPR_I((bool)tribe.axi_wlast_out[i]);
+            mem[i].axi_bready_in = __EXPR_I((bool)tribe.axi_bready_out[i]);
+            mem[i].axi_arvalid_in = __EXPR_I((bool)tribe.axi_arvalid_out[i]);
+            mem[i].axi_araddr_in = __EXPR_I((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out[i]);
+            mem[i].axi_arid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_arid_out[i]);
+            mem[i].axi_rready_in = __EXPR_I((bool)tribe.axi_rready_out[i]);
+            mem[i].debugen_in = debugen_in;
+            mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
+            mem[i]._assign();
+        }
 #endif
     }
 
     void _work(bool reset)
     {
+        size_t i;
 #ifndef VERILATOR
         tribe._work(reset);
 #else
 //        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
         tribe.debugen_in    = debugen_in;
+        tribe.reset_pc_in = reset_pc;
+        tribe.memory_base_in = start_mem_addr;
+        tribe.memory_size_in = ram_size * 4;
 
 //        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
 
@@ -1119,17 +1154,21 @@ public:
         tribe.clk = 1;
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
-        tribe.axi_awready_in = mem.axi_awready_out();
-        tribe.axi_wready_in = mem.axi_wready_out();
-        tribe.axi_bvalid_in = mem.axi_bvalid_out();
-        tribe.axi_bid_in = mem.axi_bid_out();
-        tribe.axi_arready_in = mem.axi_arready_out();
-        tribe.axi_rvalid_in = mem.axi_rvalid_out();
-        verilator_logic_to_wide(tribe.axi_rdata_in, mem.axi_rdata_out());
-        tribe.axi_rlast_in = mem.axi_rlast_out();
-        tribe.axi_rid_in = mem.axi_rid_out();
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_awready_in[i] = mem[i].axi_awready_out();
+            tribe.axi_wready_in[i] = mem[i].axi_wready_out();
+            tribe.axi_bvalid_in[i] = mem[i].axi_bvalid_out();
+            tribe.axi_bid_in[i] = mem[i].axi_bid_out();
+            tribe.axi_arready_in[i] = mem[i].axi_arready_out();
+            tribe.axi_rvalid_in[i] = mem[i].axi_rvalid_out();
+            verilator_logic_to_wide(tribe.axi_rdata_in[i], mem[i].axi_rdata_out());
+            tribe.axi_rlast_in[i] = mem[i].axi_rlast_out();
+            tribe.axi_rid_in[i] = mem[i].axi_rid_out();
+        }
 #endif
-        mem._work(reset);
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            mem[i]._work(reset);
+        }
 
         if (reset) {
             error = false;
@@ -1139,10 +1178,13 @@ public:
 
     void _strobe()
     {
+        size_t i;
 #ifndef VERILATOR
         tribe._strobe();
 #endif
-        mem._strobe();  // we use this module in Verilator test
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            mem[i]._strobe();  // we use this module in Verilator test
+        }
     }
 
     void _work_neg(bool reset)
@@ -1251,17 +1293,22 @@ public:
             if (!(mask & (1u << byte))) {
                 continue;
             }
-            const uint32_t mem_addr = (addr + byte) & ((1u << CACHE_ADDR_BITS) - 1u);
+            const uint32_t full_addr = addr + byte;
+            if (full_addr < start_mem_addr || full_addr - start_mem_addr >= ram_size * 4) {
+                continue;
+            }
+            const uint32_t mem_addr = full_addr - start_mem_addr;
             const uint32_t line_idx = mem_addr / L2_AXI_BYTES;
+            const uint32_t port = line_idx / AXI_RAM_LINES_PER_PORT;
+            const uint32_t local_line_idx = line_idx % AXI_RAM_LINES_PER_PORT;
             const uint32_t line_byte = mem_addr % L2_AXI_BYTES;
-            logic<L2_AXI_WIDTH> line = mem.ram.buffer[line_idx];
+            logic<L2_AXI_WIDTH> line = mem[port].ram.buffer[local_line_idx];
             line.bits(line_byte * 8 + 7, line_byte * 8) = (data >> (byte * 8)) & 0xffu;
-            mem.ram.buffer[line_idx] = line;
+            mem[port].ram.buffer[local_line_idx] = line;
         }
-        mem.ram.buffer.apply();
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1277,33 +1324,35 @@ public:
         tohost_addr = tohost;
         tohost_value = 0;
         tohost_done = false;
-
-        __inst_name = "tribe_test";
-        _assign();
-        _strobe();
-        ++sys_clock;
-        _work(1);
-        _strobe_neg();
-        _work_neg(1);
+        start_mem_addr = mem_base;
+        reset_pc = mem_base;
+        ram_size = ram_words;
+        if (ram_size == 0 || ram_size > MAX_RAM_SIZE) {
+            std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, MAX_RAM_SIZE);
+            return false;
+        }
 
         /////////////// read program to memory
-        std::array<uint32_t, RAM_SIZE> ram = {};
+        std::array<uint32_t, MAX_RAM_SIZE> ram = {};
         FILE* fbin = fopen(filename.c_str(), "r");
         if (!fbin) {
             std::print("can't open file '{}'\n", filename);
             return false;
         }
         size_t read_bytes = 0;
-        if (load_elf(fbin, ram, read_bytes)) {
+        uint32_t elf_entry = 0;
+        if (load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry)) {
+            reset_pc = elf_entry;
             std::print("Reading ELF program into memory (size: {})\n", read_bytes);
         }
         else {
             fseek(fbin, start_offset, SEEK_SET);
-            read_bytes = fread(ram.data(), 1, 4 * RAM_SIZE, fbin);
+            read_bytes = fread(ram.data(), 1, 4 * ram_size, fbin);
             std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
         }
 
-        for (size_t line_idx = 0; line_idx < AXI_RAM_LINES; ++line_idx) {
+        const size_t active_lines = (ram_size * 4 + L2_AXI_BYTES - 1) / L2_AXI_BYTES;
+        for (size_t line_idx = 0; line_idx < active_lines; ++line_idx) {
             logic<L2_AXI_WIDTH> line = 0;
             for (size_t word = 0; word < L2_AXI_BYTES / 4; ++word) {
                 size_t addr = line_idx * (L2_AXI_BYTES / 4) + word;
@@ -1312,11 +1361,20 @@ public:
                     std::print("{:04x}: {:08x}\n", addr, ram[addr]);
                 }
             }
-            mem.ram.buffer[line_idx] = line;
+            size_t port = line_idx / AXI_RAM_LINES_PER_PORT;
+            size_t local_line_idx = line_idx % AXI_RAM_LINES_PER_PORT;
+            mem[port].ram.buffer[local_line_idx] = line;
         }
-        mem.ram.buffer.apply();
         fclose(fbin);
         ///////////////////////////////////////
+
+        __inst_name = "tribe_test";
+        _assign();
+        _strobe();
+        ++sys_clock;
+        _work(1);
+        _strobe_neg();
+        _work_neg(1);
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
@@ -1376,6 +1434,8 @@ int main (int argc, char** argv)
     size_t start_offset = 0x37c;
     int max_cycles = 2000000;
     uint32_t tohost = 0;
+    uint32_t start_mem_addr = 0;
+    uint32_t ram_size = DEFAULT_RAM_SIZE;
     int only = -1;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
@@ -1402,6 +1462,14 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--tohost") == 0 && i + 1 < argc) {
             tohost = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--start-mem-addr") == 0 && i + 1 < argc) {
+            start_mem_addr = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--ram-size") == 0 && i + 1 < argc) {
+            ram_size = std::stoul(argv[++i], nullptr, 0);
             continue;
         }
         if (argv[i][0] != '-') {
@@ -1450,7 +1518,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size))
     );
 }
 

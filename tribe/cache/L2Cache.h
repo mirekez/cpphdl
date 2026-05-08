@@ -5,13 +5,15 @@
 
 using namespace cpphdl;
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
 class L2Cache : public Module
 {
     static_assert(CACHE_LINE_SIZE == 32, "L2Cache uses 32-byte cache lines");
     static_assert(PORT_BITWIDTH == CACHE_LINE_SIZE * 8, "Current L2Cache AXI path uses one full-line AXI beat");
     static_assert(WAYS == 4, "L2Cache is intended to be 4-way set associative");
     static_assert(CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L2Cache geometry must divide evenly");
+    static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
+    static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
     static constexpr size_t SETS = CACHE_SIZE / CACHE_LINE_SIZE / WAYS;
@@ -21,6 +23,10 @@ class L2Cache : public Module
     static constexpr size_t WAY_BITS = clog2(WAYS);
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
+    static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
+    static constexpr size_t MEM_PORT_ADDR_BITS = MEM_ADDR_BITS - MEM_PORT_BITS;
+    static constexpr uint64_t MEM_ADDR_MASK64 = (MEM_ADDR_BITS >= 64) ? ~0ull : ((1ull << MEM_ADDR_BITS) - 1ull);
+    static constexpr uint64_t MEM_PORT_ADDR_MASK64 = (MEM_PORT_ADDR_BITS >= 64) ? ~0ull : ((1ull << MEM_PORT_ADDR_BITS) - 1ull);
 
     static constexpr uint64_t ST_IDLE = 0;
     static constexpr uint64_t ST_INIT = 1;
@@ -54,30 +60,33 @@ public:
     __PORT(uint32_t) d_read_data_out = __VAR(read_data_comb_func());
     __PORT(bool) d_wait_out = __VAR(d_wait_comb_func());
 
-    __PORT(bool) axi_awvalid_out = __EXPR(state_reg == ST_EVICT_AW);
-    __PORT(u<ADDR_BITS>) axi_awaddr_out = __VAR(axi_awaddr_comb_func());
-    __PORT(u<4>) axi_awid_out = __EXPR((u<4>)0);
-    __PORT(bool) axi_awready_in;
+    __PORT(uint32_t) memory_base_in;
+    __PORT(uint32_t) memory_size_in;
 
-    __PORT(bool) axi_wvalid_out = __EXPR(state_reg == ST_EVICT_W);
-    __PORT(logic<PORT_BITWIDTH>) axi_wdata_out = __VAR(evict_line_comb_func());
-    __PORT(bool) axi_wlast_out = __EXPR(state_reg == ST_EVICT_W);
-    __PORT(bool) axi_wready_in;
+    __PORT(bool) axi_awvalid_out[MEM_PORTS];
+    __PORT(u<MEM_ADDR_BITS>) axi_awaddr_out[MEM_PORTS];
+    __PORT(u<4>) axi_awid_out[MEM_PORTS];
+    __PORT(bool) axi_awready_in[MEM_PORTS];
 
-    __PORT(bool) axi_bready_out = __EXPR(true);
-    __PORT(bool) axi_bvalid_in;
-    __PORT(u<4>) axi_bid_in;
+    __PORT(bool) axi_wvalid_out[MEM_PORTS];
+    __PORT(logic<PORT_BITWIDTH>) axi_wdata_out[MEM_PORTS];
+    __PORT(bool) axi_wlast_out[MEM_PORTS];
+    __PORT(bool) axi_wready_in[MEM_PORTS];
 
-    __PORT(bool) axi_arvalid_out = __EXPR(state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1);
-    __PORT(u<ADDR_BITS>) axi_araddr_out = __VAR(axi_araddr_comb_func());
-    __PORT(u<4>) axi_arid_out = __EXPR((u<4>)0);
-    __PORT(bool) axi_arready_in;
+    __PORT(bool) axi_bready_out[MEM_PORTS];
+    __PORT(bool) axi_bvalid_in[MEM_PORTS];
+    __PORT(u<4>) axi_bid_in[MEM_PORTS];
 
-    __PORT(bool) axi_rready_out = __EXPR(state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1);
-    __PORT(bool) axi_rvalid_in;
-    __PORT(logic<PORT_BITWIDTH>) axi_rdata_in;
-    __PORT(bool) axi_rlast_in;
-    __PORT(u<4>) axi_rid_in;
+    __PORT(bool) axi_arvalid_out[MEM_PORTS];
+    __PORT(u<MEM_ADDR_BITS>) axi_araddr_out[MEM_PORTS];
+    __PORT(u<4>) axi_arid_out[MEM_PORTS];
+    __PORT(bool) axi_arready_in[MEM_PORTS];
+
+    __PORT(bool) axi_rready_out[MEM_PORTS];
+    __PORT(bool) axi_rvalid_in[MEM_PORTS];
+    __PORT(logic<PORT_BITWIDTH>) axi_rdata_in[MEM_PORTS];
+    __PORT(bool) axi_rlast_in[MEM_PORTS];
+    __PORT(u<4>) axi_rid_in[MEM_PORTS];
 
     bool debugen_in;
 
@@ -181,13 +190,95 @@ private:
         return cross_write_mask_comb;
     }
 
-    __LAZY_COMB(axi_araddr_comb, u<ADDR_BITS>)
+    __LAZY_COMB(addr_in_memory_comb, bool)
+        uint32_t addr;
+        uint32_t local;
+        uint32_t size;
+        addr = active_addr_comb_func();
+        local = addr - memory_base_in();
+        size = memory_size_in();
+        addr_in_memory_comb = addr >= memory_base_in() && size != 0 && local < size;
+        return addr_in_memory_comb;
+    }
+
+    __LAZY_COMB(req_addr_in_memory_comb, bool)
+        uint32_t addr;
+        uint32_t local;
+        uint32_t size;
+        addr = req_addr_reg;
+        local = addr - memory_base_in();
+        size = memory_size_in();
+        req_addr_in_memory_comb = addr >= memory_base_in() && size != 0 && local < size;
+        return req_addr_in_memory_comb;
+    }
+
+    __LAZY_COMB(axi_araddr_full_comb, uint32_t)
         uint32_t line_addr;
         line_addr = (uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1);
         if (state_reg == ST_CROSS_AR1) {
             line_addr += CACHE_LINE_SIZE;
         }
-        return axi_araddr_comb = (u<ADDR_BITS>)line_addr;
+        return axi_araddr_full_comb = line_addr;
+    }
+
+    __LAZY_COMB(axi_araddr_total_local_comb, uint32_t)
+        return axi_araddr_total_local_comb = axi_araddr_full_comb_func() - memory_base_in();
+    }
+
+    __LAZY_COMB(axi_araddr_local_comb, u<MEM_ADDR_BITS>)
+        return axi_araddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)axi_araddr_total_local_comb_func() & MEM_PORT_ADDR_MASK64);
+    }
+
+    __LAZY_COMB(axi_ar_sel_comb, uint32_t)
+        if constexpr (MEM_PORTS == 1) {
+            axi_ar_sel_comb = 0;
+        }
+        else {
+            axi_ar_sel_comb = (axi_araddr_total_local_comb_func() >> MEM_PORT_ADDR_BITS) & (MEM_PORTS - 1);
+        }
+        return axi_ar_sel_comb;
+    }
+
+    __LAZY_COMB(axi_arvalid_comb, bool)
+        return axi_arvalid_comb = req_addr_in_memory_comb_func() &&
+            (state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1);
+    }
+
+    __LAZY_COMB(axi_rready_comb, bool)
+        return axi_rready_comb = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1;
+    }
+
+    __LAZY_COMB(axi_arready_selected_comb, bool)
+        size_t i;
+        axi_arready_selected_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_ar_sel_comb_func() == i) {
+                axi_arready_selected_comb = axi_arready_in[i]();
+            }
+        }
+        return axi_arready_selected_comb;
+    }
+
+    __LAZY_COMB(axi_rvalid_selected_comb, bool)
+        size_t i;
+        axi_rvalid_selected_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_ar_sel_comb_func() == i) {
+                axi_rvalid_selected_comb = axi_rvalid_in[i]();
+            }
+        }
+        return axi_rvalid_selected_comb;
+    }
+
+    __LAZY_COMB(axi_rdata_selected_comb, logic<PORT_BITWIDTH>)
+        size_t i;
+        axi_rdata_selected_comb = 0;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_ar_sel_comb_func() == i) {
+                axi_rdata_selected_comb = axi_rdata_in[i]();
+            }
+        }
+        return axi_rdata_selected_comb;
     }
 
     __LAZY_COMB(evict_way_comb, u<WAY_BITS>)
@@ -229,11 +320,70 @@ private:
         return evict_tag_comb;
     }
 
-    __LAZY_COMB(axi_awaddr_comb, u<ADDR_BITS>)
+    __LAZY_COMB(axi_awaddr_full_comb, uint32_t)
         uint32_t addr;
         addr = ((uint32_t)evict_tag_comb_func() << (SET_BITS + LINE_BITS)) |
             ((uint32_t)req_set_comb_func() << LINE_BITS);
-        return axi_awaddr_comb = (u<ADDR_BITS>)addr;
+        return axi_awaddr_full_comb = addr;
+    }
+
+    __LAZY_COMB(axi_awaddr_total_local_comb, uint32_t)
+        return axi_awaddr_total_local_comb = axi_awaddr_full_comb_func() - memory_base_in();
+    }
+
+    __LAZY_COMB(axi_awaddr_local_comb, u<MEM_ADDR_BITS>)
+        return axi_awaddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)axi_awaddr_total_local_comb_func() & MEM_PORT_ADDR_MASK64);
+    }
+
+    __LAZY_COMB(axi_aw_sel_comb, uint32_t)
+        if constexpr (MEM_PORTS == 1) {
+            axi_aw_sel_comb = 0;
+        }
+        else {
+            axi_aw_sel_comb = (axi_awaddr_total_local_comb_func() >> MEM_PORT_ADDR_BITS) & (MEM_PORTS - 1);
+        }
+        return axi_aw_sel_comb;
+    }
+
+    __LAZY_COMB(axi_awvalid_comb, bool)
+        return axi_awvalid_comb = req_addr_in_memory_comb_func() && state_reg == ST_EVICT_AW;
+    }
+
+    __LAZY_COMB(axi_wvalid_comb, bool)
+        return axi_wvalid_comb = req_addr_in_memory_comb_func() && state_reg == ST_EVICT_W;
+    }
+
+    __LAZY_COMB(axi_awready_selected_comb, bool)
+        size_t i;
+        axi_awready_selected_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_aw_sel_comb_func() == i) {
+                axi_awready_selected_comb = axi_awready_in[i]();
+            }
+        }
+        return axi_awready_selected_comb;
+    }
+
+    __LAZY_COMB(axi_wready_selected_comb, bool)
+        size_t i;
+        axi_wready_selected_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_aw_sel_comb_func() == i) {
+                axi_wready_selected_comb = axi_wready_in[i]();
+            }
+        }
+        return axi_wready_selected_comb;
+    }
+
+    __LAZY_COMB(axi_bvalid_selected_comb, bool)
+        size_t i;
+        axi_bvalid_selected_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_aw_sel_comb_func() == i) {
+                axi_bvalid_selected_comb = axi_bvalid_in[i]();
+            }
+        }
+        return axi_bvalid_selected_comb;
     }
 
     __LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
@@ -378,7 +528,7 @@ private:
     __LAZY_COMB(axi_aligned_word_comb, uint32_t)
         uint32_t word;
         word = (uint32_t)req_word_comb_func();
-        return axi_aligned_word_comb = (uint32_t)axi_rdata_in().bits(word * 32 + 31, word * 32);
+        return axi_aligned_word_comb = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
     }
 
     __LAZY_COMB(fill_write_word_comb, uint32_t)
@@ -416,7 +566,7 @@ private:
         word = (uint32_t)req_word_comb_func() + 1;
         old_data = 0;
         if (word < LINE_WORDS) {
-            old_data = (uint32_t)axi_rdata_in().bits(word * 32 + 31, word * 32);
+            old_data = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
         }
         new_data = byte == 0 ? (uint32_t)0 : (uint32_t)req_write_data_reg >> (32 - byte * 8);
         mask = 0;
@@ -441,11 +591,11 @@ private:
         uint32_t high;
         word = (uint32_t)req_word_comb_func();
         byte = (uint32_t)req_addr_reg & 3u;
-        low = (uint32_t)axi_rdata_in().bits(word * 32 + 31, word * 32);
+        low = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
         high = 0;
         fill_read_data_comb = low >> (byte * 8);
         if (byte != 0 && word + 1 < LINE_WORDS) {
-            high = (uint32_t)axi_rdata_in().bits((word + 1) * 32 + 31, (word + 1) * 32);
+            high = (uint32_t)axi_rdata_selected_comb_func().bits((word + 1) * 32 + 31, (word + 1) * 32);
             fill_read_data_comb |= high << (32 - byte * 8);
         }
         return fill_read_data_comb;
@@ -468,7 +618,7 @@ private:
         }
         else if (state_reg == ST_CROSS_R1) {
             read_data_comb = cross_low_reg |
-                ((uint32_t)axi_rdata_in().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
+                ((uint32_t)axi_rdata_selected_comb_func().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
         }
         else if (state_reg == ST_LOOKUP && hit_comb_func()) {
             read_data_comb = hit_word_comb_func();
@@ -533,7 +683,7 @@ public:
             data_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
             data_ram[i].wr_in = __EXPR_I(
-                (state_reg == ST_AXI_R && axi_rvalid_in() && axi_rready_out() && fill_way_reg == (i / LINE_WORDS)) ||
+                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS)) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() &&
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (req_word_comb_func() == (i % LINE_WORDS) ||
@@ -543,7 +693,7 @@ public:
                     write_next_word_comb_func() : write_word_comb_func()) :
                 ((req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_write_reg && ((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
-                    (uint32_t)axi_rdata_in().bits((i % LINE_WORDS) * 32 + 31, (i % LINE_WORDS) * 32)));
+                    (uint32_t)axi_rdata_selected_comb_func().bits((i % LINE_WORDS) * 32 + 31, (i % LINE_WORDS) * 32)));
             data_ram[i].id_in = 2000 + i;
         }
 
@@ -553,10 +703,24 @@ public:
             tag_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
             tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
-                (state_reg == ST_AXI_R && axi_rvalid_in() && axi_rready_out() && fill_way_reg == i) ||
+                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == i) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() && hit_way_comb_func() == i));
             tag_ram[i].data_in = __VAR(tag_write_data_comb_func());
             tag_ram[i].id_in = 2100 + i;
+        }
+
+        for (i = 0; i < MEM_PORTS; ++i) {
+            axi_awvalid_out[i] = __EXPR_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_awaddr_out[i] = __VAR(axi_awaddr_local_comb_func());
+            axi_awid_out[i] = __EXPR((u<4>)0);
+            axi_wvalid_out[i] = __EXPR_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_wdata_out[i] = __VAR(evict_line_comb_func());
+            axi_wlast_out[i] = __EXPR_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_bready_out[i] = __EXPR_I(axi_aw_sel_comb_func() == i);
+            axi_arvalid_out[i] = __EXPR_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
+            axi_araddr_out[i] = __VAR(axi_araddr_local_comb_func());
+            axi_arid_out[i] = __EXPR((u<4>)0);
+            axi_rready_out[i] = __EXPR_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
         }
     }
 
@@ -620,27 +784,27 @@ public:
             }
         }
         else if (state_reg == ST_EVICT_AW) {
-            if (axi_awvalid_out() && axi_awready_in()) {
+            if (axi_awvalid_comb_func() && axi_awready_selected_comb_func()) {
                 state_reg._next = ST_EVICT_W;
             }
         }
         else if (state_reg == ST_EVICT_W) {
-            if (axi_wvalid_out() && axi_wready_in()) {
+            if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
                 state_reg._next = ST_EVICT_B;
             }
         }
         else if (state_reg == ST_EVICT_B) {
-            if (axi_bvalid_in()) {
+            if (axi_bvalid_selected_comb_func()) {
                 state_reg._next = ST_AXI_AR;
             }
         }
         else if (state_reg == ST_AXI_AR) {
-            if (axi_arvalid_out() && axi_arready_in()) {
+            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
                 state_reg._next = ST_AXI_R;
             }
         }
         else if (state_reg == ST_AXI_R) {
-            if (axi_rvalid_in() && axi_rready_out()) {
+            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
                 if (req_read_reg) {
                     last_data_reg._next = fill_read_data_comb_func();
                 }
@@ -657,26 +821,26 @@ public:
             }
         }
         else if (state_reg == ST_CROSS_AR0) {
-            if (axi_arvalid_out() && axi_arready_in()) {
+            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
                 state_reg._next = ST_CROSS_R0;
             }
         }
         else if (state_reg == ST_CROSS_R0) {
-            if (axi_rvalid_in() && axi_rready_out()) {
-                cross_low_reg._next = (uint32_t)axi_rdata_in().bits((LINE_WORDS - 1) * 32 + 31, (LINE_WORDS - 1) * 32) >>
+            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+                cross_low_reg._next = (uint32_t)axi_rdata_selected_comb_func().bits((LINE_WORDS - 1) * 32 + 31, (LINE_WORDS - 1) * 32) >>
                     (((uint32_t)req_addr_reg & 3u) * 8);
                 state_reg._next = ST_CROSS_AR1;
             }
         }
         else if (state_reg == ST_CROSS_AR1) {
-            if (axi_arvalid_out() && axi_arready_in()) {
+            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
                 state_reg._next = ST_CROSS_R1;
             }
         }
         else if (state_reg == ST_CROSS_R1) {
-            if (axi_rvalid_in() && axi_rready_out()) {
+            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
                 last_data_reg._next = cross_low_reg |
-                    ((uint32_t)axi_rdata_in().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
+                    ((uint32_t)axi_rdata_selected_comb_func().bits(31, 0) << (32 - (((uint32_t)req_addr_reg & 3u) * 8)));
                 state_reg._next = ST_DONE;
             }
         }

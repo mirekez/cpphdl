@@ -160,9 +160,8 @@ add_test(
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 set_tests_properties(Tribe_riscv_arch_test PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv"
+    TIMEOUT 1200
+    ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state"
 )
 
 add_test(
@@ -175,9 +174,8 @@ add_test(
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 set_tests_properties(Tribe_riscv_arch_test_verilator PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_ARCH_TEST_BACKEND=verilator"
+    TIMEOUT 1200
+    ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;TRIBE_ARCH_TEST_BACKEND=verilator"
 )
 
 add_test(

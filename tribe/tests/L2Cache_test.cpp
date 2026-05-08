@@ -46,6 +46,8 @@ static constexpr size_t L2_SIZE = 4096;
 static constexpr size_t LINE_SIZE = 32;
 static constexpr size_t PORT_BITS = 256;
 static constexpr size_t RAM_LINES = 256;
+static constexpr size_t MEM_PORTS = 4;
+static constexpr size_t RAM_LINES_PER_PORT = RAM_LINES / MEM_PORTS;
 static constexpr size_t WAIT_LIMIT = 128;
 
 #ifdef VERILATOR
@@ -62,9 +64,9 @@ class TestL2Cache : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
-    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32> l2;
+    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, MEM_PORTS> l2;
 #endif
-    Axi4Ram<32, 4, PORT_BITS, RAM_LINES> ram;
+    Axi4Ram<32, 4, PORT_BITS, RAM_LINES_PER_PORT> ram[MEM_PORTS];
 
     bool read = false;
     bool write = false;
@@ -93,32 +95,36 @@ public:
         l2._assign();
 #endif
 
-        ram.axi_awvalid_in = PORT_EXPR(l2.axi_awvalid_out);
-        ram.axi_awaddr_in = PORT_EXPR(l2.axi_awaddr_out);
-        ram.axi_awid_in = PORT_EXPR(l2.axi_awid_out);
-        ram.axi_wvalid_in = PORT_EXPR(l2.axi_wvalid_out);
-        ram.axi_wdata_in = __EXPR(copy_to_logic<PORT_BITS>(PORT_VALUE(l2.axi_wdata_out)));
-        ram.axi_wlast_in = PORT_EXPR(l2.axi_wlast_out);
-        ram.axi_bready_in = PORT_EXPR(l2.axi_bready_out);
-        ram.axi_arvalid_in = PORT_EXPR(l2.axi_arvalid_out);
-        ram.axi_araddr_in = PORT_EXPR(l2.axi_araddr_out);
-        ram.axi_arid_in = PORT_EXPR(l2.axi_arid_out);
-        ram.axi_rready_in = PORT_EXPR(l2.axi_rready_out);
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            ram[i].axi_awvalid_in = __EXPR_I(PORT_VALUE(l2.axi_awvalid_out[i]));
+            ram[i].axi_awaddr_in = __EXPR_I(PORT_VALUE(l2.axi_awaddr_out[i]));
+            ram[i].axi_awid_in = __EXPR_I(PORT_VALUE(l2.axi_awid_out[i]));
+            ram[i].axi_wvalid_in = __EXPR_I(PORT_VALUE(l2.axi_wvalid_out[i]));
+            ram[i].axi_wdata_in = __EXPR_I(copy_to_logic<PORT_BITS>(PORT_VALUE(l2.axi_wdata_out[i])));
+            ram[i].axi_wlast_in = __EXPR_I(PORT_VALUE(l2.axi_wlast_out[i]));
+            ram[i].axi_bready_in = __EXPR_I(PORT_VALUE(l2.axi_bready_out[i]));
+            ram[i].axi_arvalid_in = __EXPR_I(PORT_VALUE(l2.axi_arvalid_out[i]));
+            ram[i].axi_araddr_in = __EXPR_I(PORT_VALUE(l2.axi_araddr_out[i]));
+            ram[i].axi_arid_in = __EXPR_I(PORT_VALUE(l2.axi_arid_out[i]));
+            ram[i].axi_rready_in = __EXPR_I(PORT_VALUE(l2.axi_rready_out[i]));
 
-        ram.debugen_in = false;
-        ram.__inst_name = "ram";
-        ram._assign();
+            ram[i].debugen_in = false;
+            ram[i].__inst_name = "ram" + std::to_string(i);
+            ram[i]._assign();
+        }
 
 #ifndef VERILATOR
-        l2.axi_awready_in = ram.axi_awready_out;
-        l2.axi_wready_in = ram.axi_wready_out;
-        l2.axi_bvalid_in = ram.axi_bvalid_out;
-        l2.axi_bid_in = ram.axi_bid_out;
-        l2.axi_arready_in = ram.axi_arready_out;
-        l2.axi_rvalid_in = ram.axi_rvalid_out;
-        l2.axi_rdata_in = ram.axi_rdata_out;
-        l2.axi_rlast_in = ram.axi_rlast_out;
-        l2.axi_rid_in = ram.axi_rid_out;
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            l2.axi_awready_in[i] = ram[i].axi_awready_out;
+            l2.axi_wready_in[i] = ram[i].axi_wready_out;
+            l2.axi_bvalid_in[i] = ram[i].axi_bvalid_out;
+            l2.axi_bid_in[i] = ram[i].axi_bid_out;
+            l2.axi_arready_in[i] = ram[i].axi_arready_out;
+            l2.axi_rvalid_in[i] = ram[i].axi_rvalid_out;
+            l2.axi_rdata_in[i] = ram[i].axi_rdata_out;
+            l2.axi_rlast_in[i] = ram[i].axi_rlast_out;
+            l2.axi_rid_in[i] = ram[i].axi_rid_out;
+        }
 #endif
     }
 
@@ -135,15 +141,17 @@ public:
         l2.d_addr_in = addr;
         l2.d_write_data_in = wdata;
         l2.d_write_mask_in = wmask;
-        l2.axi_awready_in = ram.axi_awready_out();
-        l2.axi_wready_in = ram.axi_wready_out();
-        l2.axi_bvalid_in = ram.axi_bvalid_out();
-        l2.axi_bid_in = ram.axi_bid_out();
-        l2.axi_arready_in = ram.axi_arready_out();
-        l2.axi_rvalid_in = ram.axi_rvalid_out();
-        verilator_logic_to_wide(l2.axi_rdata_in, ram.axi_rdata_out());
-        l2.axi_rlast_in = ram.axi_rlast_out();
-        l2.axi_rid_in = ram.axi_rid_out();
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            l2.axi_awready_in[i] = ram[i].axi_awready_out();
+            l2.axi_wready_in[i] = ram[i].axi_wready_out();
+            l2.axi_bvalid_in[i] = ram[i].axi_bvalid_out();
+            l2.axi_bid_in[i] = ram[i].axi_bid_out();
+            l2.axi_arready_in[i] = ram[i].axi_arready_out();
+            l2.axi_rvalid_in[i] = ram[i].axi_rvalid_out();
+            verilator_logic_to_wide(l2.axi_rdata_in[i], ram[i].axi_rdata_out());
+            l2.axi_rlast_in[i] = ram[i].axi_rlast_out();
+            l2.axi_rid_in[i] = ram[i].axi_rid_out();
+        }
         l2.debugen_in = false;
         l2.reset = reset;
         l2.eval();
@@ -155,17 +163,25 @@ public:
 #ifdef VERILATOR
         l2.clk = 0;
         eval_l2(reset);
-        ram._work(reset);
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            ram[i]._work(reset);
+        }
         l2.clk = 1;
         eval_l2(reset);
-        ram._strobe();
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            ram[i]._strobe();
+        }
         l2.clk = 0;
         eval_l2(reset);
 #else
         l2._work(reset);
-        ram._work(reset);
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            ram[i]._work(reset);
+        }
         l2._strobe();
-        ram._strobe();
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            ram[i]._strobe();
+        }
 #endif
         ++sys_clock;
     }
@@ -176,8 +192,7 @@ public:
         for (size_t i = 0; i < LINE_SIZE / 4; ++i) {
             line.bits(i * 32 + 31, i * 32) = 0xa5000000u + i;
         }
-        ram.ram.buffer[0] = line;
-        ram.ram.buffer.apply();
+        ram[0].ram.buffer[0] = line;
     }
 
     void read_check(uint32_t request_addr, uint32_t expected)
@@ -311,11 +326,11 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
             {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
-            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32);
+            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, MEM_PORTS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L2Cache_4096_256_32_4_32/obj_dir/VL2Cache") == 0;
+        ok = ok && std::system("L2Cache_4096_256_32_4_32_4/obj_dir/VL2Cache") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

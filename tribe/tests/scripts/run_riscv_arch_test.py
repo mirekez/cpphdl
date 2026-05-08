@@ -10,7 +10,6 @@ import subprocess
 import sys
 
 
-SKIP = 77
 REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
 
 
@@ -109,24 +108,24 @@ def main(argv: list[str]) -> int:
     env.setdefault("UV_CACHE_DIR", str(work / "uv-cache"))
 
     if shutil.which("make", path=env["PATH"]) is None:
-        print("SKIP: make is not available")
-        return SKIP
+        print("ERROR: make is not available")
+        return 1
 
     gcc = os.environ.get("TRIBE_ARCH_TEST_GCC", "riscv32-unknown-elf-gcc")
     objdump = os.environ.get("TRIBE_ARCH_TEST_OBJDUMP", "riscv32-unknown-elf-objdump")
     ref_model = os.environ.get("TRIBE_ARCH_TEST_REF_MODEL", "sail_riscv_sim")
     if shutil.which(gcc, path=env["PATH"]) is None:
-        print(f"SKIP: {gcc} is not available")
-        return SKIP
+        print(f"ERROR: {gcc} is not available")
+        return 1
     if shutil.which(objdump, path=env["PATH"]) is None:
-        print(f"SKIP: {objdump} is not available")
-        return SKIP
+        print(f"ERROR: {objdump} is not available")
+        return 1
     if shutil.which("riscv32-unknown-elf-readelf", path=env["PATH"]) is None:
-        print("SKIP: riscv32-unknown-elf-readelf is not available")
-        return SKIP
+        print("ERROR: riscv32-unknown-elf-readelf is not available")
+        return 1
     if not tribe.exists():
-        print(f"SKIP: Tribe binary not found: {tribe}")
-        return SKIP
+        print(f"ERROR: Tribe binary not found: {tribe}")
+        return 1
 
     backend = os.environ.get("TRIBE_ARCH_TEST_BACKEND", "cpphdl")
     if backend not in ("cpphdl", "verilator"):
@@ -149,15 +148,15 @@ def main(argv: list[str]) -> int:
         tribe_base_args = []
 
     if shutil.which(ref_model, path=env["PATH"]) is None:
-        print(f"SKIP: {ref_model} is not available")
-        return SKIP
+        print(f"ERROR: {ref_model} is not available")
+        return 1
 
     if shutil.which("uv", path=env["PATH"]) is None and shutil.which("mise", path=env["PATH"]) is None:
-        print("SKIP: riscv-arch-test requires uv or mise")
-        return SKIP
+        print("ERROR: riscv-arch-test requires uv or mise")
+        return 1
     if shutil.which("mise", path=env["PATH"]) is None and shutil.which("bundle", path=env["PATH"]) is None:
-        print("SKIP: riscv-arch-test requires bundle when mise is not available")
-        return SKIP
+        print("ERROR: riscv-arch-test requires bundle when mise is not available")
+        return 1
 
     config = os.environ.get(
         "TRIBE_ARCH_TEST_CONFIG",
@@ -195,6 +194,7 @@ def main(argv: list[str]) -> int:
         f"WORKDIR={work}",
         f"EXTENSIONS={extensions}",
         f"EXCLUDE_EXTENSIONS={exclude}",
+        f"JOBS={os.environ.get('TRIBE_ARCH_TEST_JOBS', '1')}",
         "FAST=True",
     ]
     if run(cmd, checkout, env) != 0:
@@ -207,12 +207,14 @@ def main(argv: list[str]) -> int:
         patterns = pattern.split()
         elfs = [path for path in elfs if any(fnmatch.fnmatch(path.name, item) for item in patterns)]
     if not elfs:
-        print(f"SKIP: no riscv-arch-test ELFs found in {work}")
-        return SKIP
+        print(f"ERROR: no riscv-arch-test ELFs found in {work}")
+        return 1
 
     cycles = os.environ.get("TRIBE_ARCH_TEST_CYCLES", "1000000")
     offset = os.environ.get("TRIBE_ARCH_TEST_OFFSET", "0x1000")
-    addr_mask = int(os.environ.get("TRIBE_ARCH_TEST_ADDR_MASK", "0x1ffff"), 0)
+    addr_mask = int(os.environ.get("TRIBE_ARCH_TEST_ADDR_MASK", "0xffffffff"), 0)
+    start_mem_addr = os.environ.get("TRIBE_ARCH_TEST_START_MEM_ADDR", "0x80000000")
+    ram_size = os.environ.get("TRIBE_ARCH_TEST_RAM_SIZE", "131072")
     failed: list[str] = []
     for elf in elfs:
         print(f"== {elf.relative_to(work)} ==")
@@ -228,6 +230,8 @@ def main(argv: list[str]) -> int:
                 "--program", str(elf),
                 "--offset", offset,
                 "--tohost", hex(tohost & addr_mask),
+                "--start-mem-addr", start_mem_addr,
+                "--ram-size", ram_size,
                 "--cycles", cycles,
             ],
             text=True,
