@@ -118,10 +118,9 @@ def main(argv: list[str]) -> int:
         verilator_bin = pathlib.Path(
             os.environ.get("TRIBE_RISCV_DV_VERILATOR_BIN", tribe.parent / "Tribe" / "obj_dir" / "VTribe")
         )
-        if not verilator_bin.exists():
-            if run([str(tribe), "1"], tribe.parent, env) != 0:
-                print("failed to build Verilator Tribe model")
-                return 1
+        if run([str(tribe), "1"], tribe.parent, env) != 0:
+            print("failed to build Verilator Tribe model")
+            return 1
         if not verilator_bin.exists():
             print(f"Verilator Tribe binary not found: {verilator_bin}")
             return 1

@@ -124,11 +124,32 @@ def main(argv: list[str]) -> int:
     if shutil.which("riscv32-unknown-elf-readelf", path=env["PATH"]) is None:
         print("SKIP: riscv32-unknown-elf-readelf is not available")
         return SKIP
-    if shutil.which(ref_model, path=env["PATH"]) is None:
-        print(f"SKIP: {ref_model} is not available")
-        return SKIP
     if not tribe.exists():
         print(f"SKIP: Tribe binary not found: {tribe}")
+        return SKIP
+
+    backend = os.environ.get("TRIBE_ARCH_TEST_BACKEND", "cpphdl")
+    if backend not in ("cpphdl", "verilator"):
+        print(f"unsupported TRIBE_ARCH_TEST_BACKEND={backend!r}")
+        return 2
+
+    tribe_runner = tribe
+    tribe_base_args: list[str] = ["--noveril"]
+    if backend == "verilator":
+        verilator_bin = pathlib.Path(
+            os.environ.get("TRIBE_ARCH_TEST_VERILATOR_BIN", tribe.parent / "Tribe" / "obj_dir" / "VTribe")
+        )
+        if run([str(tribe), "1"], tribe.parent, env) != 0:
+            print("failed to build Verilator Tribe model")
+            return 1
+        if not verilator_bin.exists():
+            print(f"Verilator Tribe binary not found: {verilator_bin}")
+            return 1
+        tribe_runner = verilator_bin
+        tribe_base_args = []
+
+    if shutil.which(ref_model, path=env["PATH"]) is None:
+        print(f"SKIP: {ref_model} is not available")
         return SKIP
 
     if shutil.which("uv", path=env["PATH"]) is None and shutil.which("mise", path=env["PATH"]) is None:
@@ -178,27 +199,6 @@ def main(argv: list[str]) -> int:
     ]
     if run(cmd, checkout, env) != 0:
         return 1
-
-    backend = os.environ.get("TRIBE_ARCH_TEST_BACKEND", "cpphdl")
-    if backend not in ("cpphdl", "verilator"):
-        print(f"unsupported TRIBE_ARCH_TEST_BACKEND={backend!r}")
-        return 2
-
-    tribe_runner = tribe
-    tribe_base_args: list[str] = ["--noveril"]
-    if backend == "verilator":
-        verilator_bin = pathlib.Path(
-            os.environ.get("TRIBE_ARCH_TEST_VERILATOR_BIN", tribe.parent / "Tribe" / "obj_dir" / "VTribe")
-        )
-        if not verilator_bin.exists():
-            if run([str(tribe), "1"], tribe.parent, env) != 0:
-                print("failed to build Verilator Tribe model")
-                return 1
-        if not verilator_bin.exists():
-            print(f"Verilator Tribe binary not found: {verilator_bin}")
-            return 1
-        tribe_runner = verilator_bin
-        tribe_base_args = []
 
     pattern = os.environ.get("TRIBE_ARCH_TEST_PATTERN")
     elfs = sorted(path for path in work.glob("*/elfs/**/*.elf") if path.is_file())

@@ -111,8 +111,5 @@ fi
 echo "Running riscv-dv generated tests on C++ Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_dv$'
 
-echo "Building Verilator Tribe model"
-(cd "${BUILD_DIR}/tribe" && ./tribe 1)
-
 echo "Running riscv-dv generated tests on Verilator Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_dv_verilator$'
