@@ -107,6 +107,20 @@ set_tests_properties(Tribe_rv32_spike_fragments PROPERTIES
 )
 
 add_test(
+    NAME Tribe_rv32_spike_fragments_verilator
+    COMMAND Python3::Interpreter
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
+            "$<TARGET_FILE:tribe>"
+            "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments-verilator"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(Tribe_rv32_spike_fragments_verilator PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};TRIBE_SPIKE_FRAGMENTS_BACKEND=verilator"
+)
+
+add_test(
     NAME Tribe_riscv_tests_rv32
     COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"

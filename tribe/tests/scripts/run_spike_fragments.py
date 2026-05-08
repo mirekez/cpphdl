@@ -299,7 +299,15 @@ FRAGMENTS = [
 ]
 
 
-def run_fragment(fragment: Fragment, gcc: str, objcopy: str, spike: str, tribe: pathlib.Path, work: pathlib.Path) -> int:
+def run_fragment(
+    fragment: Fragment,
+    gcc: str,
+    objcopy: str,
+    spike: str,
+    tribe_runner: pathlib.Path,
+    tribe_base_args: list[str],
+    work: pathlib.Path,
+) -> int:
     src = work / f"{fragment.name}.S"
     elf = work / f"{fragment.name}.elf"
     bin_file = work / f"{fragment.name}.bin"
@@ -342,7 +350,7 @@ def run_fragment(fragment: Fragment, gcc: str, objcopy: str, spike: str, tribe: 
 
     run([objcopy, "-O", "binary", str(elf), str(bin_file)])
     tribe_result = run(
-        [str(tribe), "--noveril", "--program", str(bin_file), "--offset", "0", "--log", str(expected)],
+        [str(tribe_runner), *tribe_base_args, "--program", str(bin_file), "--offset", "0", "--log", str(expected)],
         cwd=work,
         check=False,
     )
@@ -369,10 +377,30 @@ def main(argv: list[str]) -> int:
         print("SKIP: missing external tool(s): " + ", ".join(missing))
         return SKIP
 
+    backend = os.environ.get("TRIBE_SPIKE_FRAGMENTS_BACKEND", "cpphdl")
+    if backend not in ("cpphdl", "verilator"):
+        print(f"unsupported TRIBE_SPIKE_FRAGMENTS_BACKEND={backend!r}")
+        return 2
+
+    tribe_runner = tribe
+    tribe_base_args: list[str] = ["--noveril"]
+    if backend == "verilator":
+        verilator_bin = pathlib.Path(
+            os.environ.get("TRIBE_SPIKE_FRAGMENTS_VERILATOR_BIN", tribe.parent / "Tribe" / "obj_dir" / "VTribe")
+        )
+        if run([str(tribe), "1"], cwd=tribe.parent, check=False).returncode != 0:
+            print("failed to build Verilator Tribe model")
+            return 1
+        if not verilator_bin.exists():
+            print(f"Verilator Tribe binary not found: {verilator_bin}")
+            return 1
+        tribe_runner = verilator_bin
+        tribe_base_args = []
+
     failed = []
     for fragment in FRAGMENTS:
         print(f"== {fragment.name} ==")
-        if run_fragment(fragment, gcc, objcopy, spike, tribe, work) != 0:
+        if run_fragment(fragment, gcc, objcopy, spike, tribe_runner, tribe_base_args, work) != 0:
             failed.append(fragment.name)
 
     if failed:
