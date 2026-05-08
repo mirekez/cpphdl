@@ -353,37 +353,91 @@ private:
 
     __LAZY_COMB(load_data_raw_comb, uint32_t)
         uint32_t raw;
+        uint32_t result;
+        uint32_t load_addr;
+        uint32_t byte_addr;
+        uint32_t store_addr;
+        uint32_t store_data;
+        uint32_t store_byte;
+        uint32_t diff;
+        uint8_t store_mask;
+        uint32_t shift;
         if (split_load_comb_func()) {
-            uint32_t shift = ((uint32_t)alu_result_reg & 3u) * 8u;
+            shift = ((uint32_t)alu_result_reg & 3u) * 8u;
             raw = (split_load_low_data_comb_func() >> shift) |
                 (split_load_high_data_comb_func() << (32u - shift));
         }
         else {
             raw = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
         }
-        load_data_raw_comb = store_forward_load_data_comb_func(raw);
-        return load_data_raw_comb;
-    }
 
-    uint32_t store_forward_load_data_comb_func(uint32_t raw)
-    {
-        uint32_t result = raw;
-        uint32_t load_addr = (uint32_t)alu_result_reg;
-        for (uint32_t out_byte = 0; out_byte < 4; ++out_byte) {
-            uint32_t byte_addr = load_addr + out_byte;
-            for (int entry = 1; entry >= 0; --entry) {
-                if (store_forward_valid_reg[entry]) {
-                    for (uint32_t store_byte = 0; store_byte < 4; ++store_byte) {
-                        if (((uint8_t)store_forward_mask_reg[entry] & (1u << store_byte)) &&
-                            (uint32_t)store_forward_addr_reg[entry] + store_byte == byte_addr) {
-                            result = (result & ~(0xffu << (out_byte * 8u))) |
-                                ((((uint32_t)store_forward_data_reg[entry] >> (store_byte * 8u)) & 0xffu) << (out_byte * 8u));
-                        }
-                    }
-                }
+        result = raw;
+        load_addr = (uint32_t)alu_result_reg;
+
+        if (store_forward_valid_reg[1]) {
+            store_addr = store_forward_addr_reg[1];
+            store_data = store_forward_data_reg[1];
+            store_mask = store_forward_mask_reg[1];
+
+            byte_addr = load_addr;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xffu) | store_byte;
+            }
+            byte_addr = load_addr + 1u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff00u) | (store_byte << 8u);
+            }
+            byte_addr = load_addr + 2u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff0000u) | (store_byte << 16u);
+            }
+            byte_addr = load_addr + 3u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff000000u) | (store_byte << 24u);
             }
         }
-        return result;
+
+        if (store_forward_valid_reg[0]) {
+            store_addr = store_forward_addr_reg[0];
+            store_data = store_forward_data_reg[0];
+            store_mask = store_forward_mask_reg[0];
+
+            byte_addr = load_addr;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xffu) | store_byte;
+            }
+            byte_addr = load_addr + 1u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff00u) | (store_byte << 8u);
+            }
+            byte_addr = load_addr + 2u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff0000u) | (store_byte << 16u);
+            }
+            byte_addr = load_addr + 3u;
+            diff = byte_addr - store_addr;
+            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
+                store_byte = (store_data >> (diff * 8u)) & 0xffu;
+                result = (result & ~0xff000000u) | (store_byte << 24u);
+            }
+        }
+
+        load_data_raw_comb = result;
+        return load_data_raw_comb;
     }
 
     __LAZY_COMB(wb_mem_data_comb, uint32_t)
@@ -873,9 +927,11 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
 }
 
-#define PORT_VALUE(port) verilator_tribe_perf((uint64_t)(port))
+#define PORT_VALUE(port) (port)
+#define PERF_VALUE(port) verilator_tribe_perf((uint64_t)(port))
 #else
 #define PORT_VALUE(port) (port())
+#define PERF_VALUE(port) (port())
 #endif
 
 class TestTribe : public Module
@@ -1125,7 +1181,7 @@ public:
 
     void perf_sample()
     {
-        auto perf = PORT_VALUE(tribe.perf_out);
+        auto perf = PERF_VALUE(tribe.perf_out);
         bool hazard = perf.hazard_stall;
         bool branch = perf.branch_stall;
         bool dcache_wait = perf.dcache_wait;
@@ -1367,6 +1423,7 @@ int main (int argc, char** argv)
                   "Zicsr_pkg",
                   "Alu_pkg",
                   "Br_pkg",
+                  "Sys_pkg",
                   "Csr_pkg",
                   "Mem_pkg",
                   "Wb_pkg",
