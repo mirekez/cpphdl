@@ -23,6 +23,20 @@ enum Wb
     WNONE,   ALU,   MEM,   PC2,   PC4
 };
 
+constexpr const char* COPS[] =
+  {"CNONE", "CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"};
+enum Csr
+{
+    CNONE,   CSRRW,   CSRRS,   CSRRC,   CSRRWI,   CSRRSI,   CSRRCI
+};
+
+constexpr const char* SOPS[] =
+  {"SNONE", "ECALL", "MRET"};
+enum Sys
+{
+    SNONE,   ECALL,   MRET
+};
+
 constexpr const char* BOPS[] =
   {"BNONE", "BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU", "JAL", "JALR", "JR", "BEQZ", "BNEZ"};
 enum Br
@@ -47,4 +61,8 @@ struct State
     uint8_t rd:5;
     uint8_t rs1:5;
     uint8_t rs2:5;
+    uint16_t csr_addr:12;
+    uint8_t csr_op:3;
+    uint8_t csr_imm:5;
+    uint8_t sys_op:2;
 };//__PACKED;

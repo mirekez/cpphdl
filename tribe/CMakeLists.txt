@@ -5,41 +5,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 include(CTest)
 
-set(TRIBE_TEST_ALL_SCRIPT "${CMAKE_BINARY_DIR}/tribe/.test_all.sh")
-file(WRITE "${TRIBE_TEST_ALL_SCRIPT}" [=[
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT"
-
-DIR="tests"
-if [[ ! -d "$DIR" ]]; then
-    echo "Missing tests directory: $ROOT/$DIR" >&2
-    exit 1
-fi
-
-while IFS= read -r -d '' EXE; do
-    echo "==> ${EXE}"
-    EXE_DIR="$(dirname "$EXE")"
-    EXE_NAME="$(basename "$EXE")"
-    set +e
-    OUTPUT="$(cd "$EXE_DIR" && "./$EXE_NAME" 2>&1)"
-    STATUS=$?
-    set -e
-    printf '%s\n' "$OUTPUT"
-    if [[ $STATUS -ne 0 ]]; then
-        exit "$STATUS"
-    fi
-    if ! grep -q "PASSED" <<< "$OUTPUT"; then
-        echo "Test did not report PASSED: $EXE" >&2
-        exit 1
-    fi
-done < <(find "$DIR" -maxdepth 1 -type f -perm -111 -print0 | sort -z)
-]=])
-file(CHMOD "${TRIBE_TEST_ALL_SCRIPT}"
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-
 add_executable(tribe main.cpp)
 
 #target_compile_options(tribe PRIVATE "-O2")

@@ -10,12 +10,13 @@
 #include "Decode.h"
 #include "Execute.h"
 #include "Writeback.h"
+#include "CSR.h"
 #include "BranchPredictor.h"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
-#define RAM_SIZE 2048
-#define CACHE_ADDR_BITS 13
+#define RAM_SIZE 32768
+#define CACHE_ADDR_BITS 17
 #define L2_AXI_WIDTH 256
 #define L2_AXI_BYTES (L2_AXI_WIDTH / 8)
 #define BRANCH_PREDICTOR_ENTRIES 16
@@ -38,6 +39,7 @@ class Tribe: public Module
     Decode          dec;
     Execute         exe;
     Writeback       wb;
+    CSR             csr;
     File<32,32>     regs;
     L1Cache<1024,32,2,0,CACHE_ADDR_BITS> icache;
     L1Cache<1024,32,2,1,CACHE_ADDR_BITS> dcache;
@@ -88,13 +90,18 @@ public:
         dec._assign();  // outputs are ready
 
         exe.state_in       = __VAR( exe_state_comb_func() );
+        exe.mem_stall_in   = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
         exe._assign();  // outputs are ready
 
+        csr.state_in       = __VAR( csr_state_comb_func() );
+        csr.__inst_name = __inst_name + "/csr";
+        csr._assign();
+
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = __EXPR(load_data_valid_reg ? (uint32_t)load_data_reg :
-            ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-              dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
-                dcache.read_data_out() : (uint32_t)0));
+        wb.mem_data_in    = __VAR(wb_mem_data_comb_func());
+        wb.mem_data_hi_in = __VAR(wb_mem_data_hi_comb_func());
+        wb.mem_addr_in    = __VAR(alu_result_reg);
+        wb.mem_split_in   = __VAR(split_load_comb_func());
         wb.alu_result_in  = __VAR( alu_result_reg );
         wb._assign();  // outputs are ready
 
@@ -102,8 +109,7 @@ public:
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
         regs.write_in = __EXPR(wb.regs_write_out() &&
             !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || load_data_valid_reg ||
-                (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
+            (state_reg[1].wb_op != Wb::MEM || load_data_ready_comb_func()));
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
@@ -198,6 +204,14 @@ private:
     reg<u32>        alu_result_reg;
     reg<u32>        load_data_reg;
     reg<u1>         load_data_valid_reg;
+    reg<u32>        split_load_low_reg;
+    reg<u32>        split_load_high_reg;
+    reg<u1>         split_load_low_valid_reg;
+    reg<u1>         split_load_high_valid_reg;
+    reg<array<u32,2>> store_forward_addr_reg;
+    reg<array<u32,2>> store_forward_data_reg;
+    reg<array<u8,2>>  store_forward_mask_reg;
+    reg<array<u1,2>>  store_forward_valid_reg;
 
     reg<array<State,STAGES_NUM-1>> state_reg;
     reg<array<u32,STAGES_NUM-1>> predicted_next_reg;
@@ -222,6 +236,9 @@ private:
             if (state_reg[0].rd == dec_state_tmp.rs2) {
                 hazard_stall_comb = true;
             }
+        }
+        if (exe.mem_split_out() || exe.mem_split_busy_out()) {
+            hazard_stall_comb = true;
         }
         return hazard_stall_comb;
     }
@@ -252,10 +269,153 @@ private:
     }
 
     __LAZY_COMB(memory_wait_comb, bool)
-        memory_wait_comb = dcache.busy_out() || (exe.mem_write_out() && l2cache.d_wait_out()) ||
+        memory_wait_comb = dcache.busy_out() ||
+            exe.mem_split_busy_out() ||
+            ((exe.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            !(load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg)));
+            !load_data_ready_comb_func());
         return memory_wait_comb;
+    }
+
+    __LAZY_COMB(split_load_comb, bool)
+        uint32_t size;
+        size = state_mem_size_comb_func();
+        split_load_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            size != 0 && (((uint32_t)alu_result_reg & 0x1f) + size > 32);
+        return split_load_comb;
+    }
+
+    __LAZY_COMB(state_mem_size_comb, uint32_t)
+        state_mem_size_comb = 0;
+        switch (state_reg[1].funct3) {
+            case 0b000: state_mem_size_comb = 1; break;
+            case 0b001: state_mem_size_comb = 2; break;
+            case 0b010: state_mem_size_comb = 4; break;
+            case 0b100: state_mem_size_comb = 1; break;
+            case 0b101: state_mem_size_comb = 2; break;
+            default: break;
+        }
+        return state_mem_size_comb;
+    }
+
+    __LAZY_COMB(split_load_low_addr_comb, uint32_t)
+        return split_load_low_addr_comb = (uint32_t)alu_result_reg & ~3u;
+    }
+
+    __LAZY_COMB(split_load_high_addr_comb, uint32_t)
+        return split_load_high_addr_comb = split_load_low_addr_comb_func() + 4;
+    }
+
+    __LAZY_COMB(split_load_current_low_valid_comb, bool)
+        split_load_current_low_valid_comb = dcache.read_valid_out() &&
+            dcache.read_addr_out() == split_load_low_addr_comb_func();
+        return split_load_current_low_valid_comb;
+    }
+
+    __LAZY_COMB(split_load_current_high_valid_comb, bool)
+        split_load_current_high_valid_comb = dcache.read_valid_out() &&
+            dcache.read_addr_out() == split_load_high_addr_comb_func();
+        return split_load_current_high_valid_comb;
+    }
+
+    __LAZY_COMB(split_load_low_ready_comb, bool)
+        split_load_low_ready_comb = split_load_low_valid_reg || split_load_current_low_valid_comb_func();
+        return split_load_low_ready_comb;
+    }
+
+    __LAZY_COMB(split_load_high_ready_comb, bool)
+        split_load_high_ready_comb = split_load_high_valid_reg || split_load_current_high_valid_comb_func();
+        return split_load_high_ready_comb;
+    }
+
+    __LAZY_COMB(split_load_low_data_comb, uint32_t)
+        split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg :
+            (split_load_current_low_valid_comb_func() ? dcache.read_data_out() : (uint32_t)0);
+        return split_load_low_data_comb;
+    }
+
+    __LAZY_COMB(split_load_high_data_comb, uint32_t)
+        split_load_high_data_comb = split_load_high_valid_reg ? (uint32_t)split_load_high_reg :
+            (split_load_current_high_valid_comb_func() ? dcache.read_data_out() : (uint32_t)0);
+        return split_load_high_data_comb;
+    }
+
+    __LAZY_COMB(load_data_ready_comb, bool)
+        if (split_load_comb_func()) {
+            load_data_ready_comb = split_load_low_ready_comb_func() && split_load_high_ready_comb_func();
+        }
+        else {
+            load_data_ready_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg));
+        }
+        return load_data_ready_comb;
+    }
+
+    __LAZY_COMB(load_data_raw_comb, uint32_t)
+        uint32_t raw;
+        if (split_load_comb_func()) {
+            uint32_t shift = ((uint32_t)alu_result_reg & 3u) * 8u;
+            raw = (split_load_low_data_comb_func() >> shift) |
+                (split_load_high_data_comb_func() << (32u - shift));
+        }
+        else {
+            raw = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
+        }
+        load_data_raw_comb = store_forward_load_data_comb_func(raw);
+        return load_data_raw_comb;
+    }
+
+    uint32_t store_forward_load_data_comb_func(uint32_t raw)
+    {
+        uint32_t result = raw;
+        uint32_t load_addr = (uint32_t)alu_result_reg;
+        for (uint32_t out_byte = 0; out_byte < 4; ++out_byte) {
+            uint32_t byte_addr = load_addr + out_byte;
+            for (int entry = 1; entry >= 0; --entry) {
+                if (store_forward_valid_reg[entry]) {
+                    for (uint32_t store_byte = 0; store_byte < 4; ++store_byte) {
+                        if (((uint8_t)store_forward_mask_reg[entry] & (1u << store_byte)) &&
+                            (uint32_t)store_forward_addr_reg[entry] + store_byte == byte_addr) {
+                            result = (result & ~(0xffu << (out_byte * 8u))) |
+                                ((((uint32_t)store_forward_data_reg[entry] >> (store_byte * 8u)) & 0xffu) << (out_byte * 8u));
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    __LAZY_COMB(wb_mem_data_comb, uint32_t)
+        if (split_load_comb_func()) {
+            wb_mem_data_comb = split_load_low_data_comb_func();
+        }
+        else {
+            wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
+                ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                  dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
+                    dcache.read_data_out() : (uint32_t)0);
+        }
+        return wb_mem_data_comb;
+    }
+
+    __LAZY_COMB(wb_mem_data_hi_comb, uint32_t)
+        wb_mem_data_hi_comb = split_load_comb_func() ? split_load_high_data_comb_func() : (uint32_t)0;
+        return wb_mem_data_hi_comb;
+    }
+
+    __LAZY_COMB(load_result_comb, uint32_t)
+        uint32_t raw;
+        raw = load_data_raw_comb_func();
+        load_result_comb = 0;
+        switch (state_reg[1].funct3) {
+            case 0b000: load_result_comb = uint32_t(int32_t(int8_t(raw)));   break;
+            case 0b001: load_result_comb = uint32_t(int32_t(int16_t(raw)));  break;
+            case 0b010: load_result_comb = raw;                              break;
+            case 0b100: load_result_comb = uint8_t(raw);                     break;
+            case 0b101: load_result_comb = uint16_t(raw);                    break;
+        }
+        return load_result_comb;
     }
 
     __LAZY_COMB(fetch_valid_comb, bool)
@@ -312,16 +472,31 @@ private:
 
     __LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
-            (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg))) {
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::ECALL) {
+            exe_state_comb.rs1_val = csr.trap_vector_out();
+            exe_state_comb.imm = 0;
+        }
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::MRET) {
+            exe_state_comb.rs1_val = csr.epc_out();
+            exe_state_comb.imm = 0;
+        }
+        if (load_data_ready_comb_func() && state_reg[1].rd != 0) {
             if (state_reg[0].rs1 == state_reg[1].rd) {
-                exe_state_comb.rs1_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
+                exe_state_comb.rs1_val = load_result_comb_func();
             }
             if (state_reg[0].rs2 == state_reg[1].rd) {
-                exe_state_comb.rs2_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
+                exe_state_comb.rs2_val = load_result_comb_func();
             }
         }
         return exe_state_comb;
+    }
+
+    __LAZY_COMB(csr_state_comb, State)
+        csr_state_comb = exe_state_comb_func();
+        if (memory_wait_comb_func()) {
+            csr_state_comb.valid = false;
+        }
+        return csr_state_comb;
     }
 
     void forward()
@@ -343,18 +518,17 @@ private:
             }
         }
 
-        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && state_reg[1].rd != 0 &&
-            (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg))) {  // Mem/Wb mem
+        if (load_data_ready_comb_func() && state_reg[1].rd != 0) {  // Mem/Wb mem
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg._next[0].rs1_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
+                state_reg._next[0].rs1_val = load_result_comb_func();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS1\n", load_data_valid_reg ? (uint32_t)load_data_reg : (uint32_t)dcache.read_data_out());
+                    printf("forwarding %.08x from MEM to RS1\n", (uint32_t)load_result_comb_func());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg._next[0].rs2_val = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
+                state_reg._next[0].rs2_val = load_result_comb_func();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS2\n", load_data_valid_reg ? (uint32_t)load_data_reg : (uint32_t)dcache.read_data_out());
+                    printf("forwarding %.08x from MEM to RS2\n", (uint32_t)load_result_comb_func());
                 }
             }
         }
@@ -375,17 +549,17 @@ private:
             }
         }
 
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu
+        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu/csr
             if (dec_state_tmp.rs1 == state_reg[0].rd) {
-                state_reg._next[0].rs1_val = exe.alu_result_out();
+                state_reg._next[0].rs1_val = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)exe.alu_result_out());
+                    printf("forwarding %.08x from ALU to RS1\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[0].rd) {
-                state_reg._next[0].rs2_val = exe.alu_result_out();
+                state_reg._next[0].rs2_val = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
+                    printf("forwarding %.08x from ALU to RS2\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
                 }
             }
         }
@@ -415,6 +589,23 @@ public:
             debug();
         }
 
+        if (dcache.mem_write_out() && dcache.mem_write_mask_out()) {
+            bool same_head = store_forward_valid_reg[0] &&
+                (uint32_t)store_forward_addr_reg[0] == dcache.mem_addr_out() &&
+                (uint32_t)store_forward_data_reg[0] == dcache.mem_write_data_out() &&
+                (uint8_t)store_forward_mask_reg[0] == dcache.mem_write_mask_out();
+            if (!same_head) {
+                store_forward_addr_reg._next[1] = store_forward_addr_reg[0];
+                store_forward_data_reg._next[1] = store_forward_data_reg[0];
+                store_forward_mask_reg._next[1] = store_forward_mask_reg[0];
+                store_forward_valid_reg._next[1] = store_forward_valid_reg[0];
+            }
+            store_forward_addr_reg._next[0] = dcache.mem_addr_out();
+            store_forward_data_reg._next[0] = dcache.mem_write_data_out();
+            store_forward_mask_reg._next[0] = dcache.mem_write_mask_out();
+            store_forward_valid_reg._next[0] = true;
+        }
+
         if (dmem_addr_out() == 0x11223344 && dmem_write_out() && !output_write_active_reg) {
             FILE* out = fopen("out.txt", "a");
             if (debugen_in) {
@@ -433,16 +624,36 @@ public:
             fallthrough_reg._next = fallthrough_reg;
             predicted_taken_reg._next = predicted_taken_reg;
             alu_result_reg._next = alu_result_reg;
-            if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) {
-                load_data_reg._next = dcache.read_data_out();
-                load_data_valid_reg._next = true;
-                if (state_reg[1].rd != 0 && state_reg[0].valid) {
+            if (split_load_comb_func()) {
+                if (split_load_current_low_valid_comb_func()) {
+                    split_load_low_reg._next = dcache.read_data_out();
+                    split_load_low_valid_reg._next = true;
+                }
+                if (split_load_current_high_valid_comb_func()) {
+                    split_load_high_reg._next = dcache.read_data_out();
+                    split_load_high_valid_reg._next = true;
+                }
+                if (load_data_ready_comb_func() && state_reg[1].rd != 0 && state_reg[0].valid) {
                     if (state_reg[0].rs1 == state_reg[1].rd) {
-                        state_reg._next[0].rs1_val = dcache.read_data_out();
+                        state_reg._next[0].rs1_val = load_result_comb_func();
                     }
                     if (state_reg[0].rs2 == state_reg[1].rd) {
-                        state_reg._next[0].rs2_val = dcache.read_data_out();
+                        state_reg._next[0].rs2_val = load_result_comb_func();
+                    }
+                }
+            }
+            else {
+                if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                    dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) {
+                    load_data_reg._next = dcache.read_data_out();
+                    load_data_valid_reg._next = true;
+                    if (state_reg[1].rd != 0 && state_reg[0].valid) {
+                        if (state_reg[0].rs1 == state_reg[1].rd) {
+                            state_reg._next[0].rs1_val = load_result_comb_func();
+                        }
+                        if (state_reg[0].rs2 == state_reg[1].rd) {
+                            state_reg._next[0].rs2_val = load_result_comb_func();
+                        }
                     }
                 }
             }
@@ -481,8 +692,10 @@ public:
             predicted_next_reg._next[1] = predicted_next_reg[0];
             fallthrough_reg._next[1] = fallthrough_reg[0];
             predicted_taken_reg._next[1] = predicted_taken_reg[0];
-            alu_result_reg._next = exe.alu_result_out();
+            alu_result_reg._next = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
             load_data_valid_reg._next = false;
+            split_load_low_valid_reg._next = false;
+            split_load_high_valid_reg._next = false;
             debug_branch_target_reg._next = exe.branch_target_out();
             debug_branch_taken_reg._next = exe.branch_taken_out();
         }
@@ -491,6 +704,7 @@ public:
         dec._work(reset);
         exe._work(reset);
         wb._work(reset);
+        csr._work(reset);
         icache._work(reset);
         dcache._work(reset);
         l2cache._work(reset);
@@ -503,6 +717,14 @@ public:
             valid.clr();
             load_data_reg.clr();
             load_data_valid_reg.clr();
+            split_load_low_reg.clr();
+            split_load_high_reg.clr();
+            split_load_low_valid_reg.clr();
+            split_load_high_valid_reg.clr();
+            store_forward_addr_reg.clr();
+            store_forward_data_reg.clr();
+            store_forward_mask_reg.clr();
+            store_forward_valid_reg.clr();
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -517,7 +739,7 @@ public:
     void debug()
     {
         State tmp;
-        Rv32im instr = {{{icache.read_data_out()}}};
+        Zicsr instr = {{{icache.read_data_out()}}};
         instr.decode(tmp);
 
         std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
@@ -550,6 +772,9 @@ public:
         if (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE) {
             interpret += std::format("STOR({:08x}) {:08x} from r{:02d} ", (uint32_t)alu_result_reg, state_reg[1].rs2_val, (int)state_reg[1].rs2);
         }
+        if (state_reg[1].valid && state_reg[1].csr_op != Csr::CNONE) {
+            interpret += std::format("{}({:03x}) ", COPS[state_reg[1].csr_op], (int)state_reg[1].csr_addr);
+        }
         if (state_reg[1].valid && state_reg[1].wb_op != Wb::WNONE && wb.regs_write_out()) {
             interpret += std::format("wb {:08x} from {} to r{:02d} ", wb.regs_data_out(), WOPS[state_reg[1].wb_op], wb.regs_wr_id_out());
         }
@@ -573,6 +798,14 @@ public:
         alu_result_reg.strobe();
         load_data_reg.strobe();
         load_data_valid_reg.strobe();
+        split_load_low_reg.strobe();
+        split_load_high_reg.strobe();
+        split_load_low_valid_reg.strobe();
+        split_load_high_valid_reg.strobe();
+        store_forward_addr_reg.strobe();
+        store_forward_data_reg.strobe();
+        store_forward_mask_reg.strobe();
+        store_forward_valid_reg.strobe();
         debug_alu_a_reg.strobe();
         debug_alu_b_reg.strobe();
         debug_branch_target_reg.strobe();
@@ -583,6 +816,7 @@ public:
         dec._strobe();
         exe._strobe();
         wb._strobe();
+        csr._strobe();
         icache._strobe();
         dcache._strobe();
         bp._strobe();
@@ -604,6 +838,9 @@ public:
 #include "../examples/tools.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 
 #include "Ram.h"
@@ -665,6 +902,83 @@ class TestTribe : public Module
     uint64_t perf_icache_refill_wait_cycles = 0;
     uint64_t perf_icache_init_wait_cycles = 0;
     uint64_t perf_icache_hit_lookup_cycles = 0;
+    uint32_t tohost_addr = 0;
+    uint32_t tohost_value = 0;
+    bool tohost_done = false;
+
+    struct Elf32Header
+    {
+        unsigned char ident[16];
+        uint16_t type;
+        uint16_t machine;
+        uint32_t version;
+        uint32_t entry;
+        uint32_t phoff;
+        uint32_t shoff;
+        uint32_t flags;
+        uint16_t ehsize;
+        uint16_t phentsize;
+        uint16_t phnum;
+        uint16_t shentsize;
+        uint16_t shnum;
+        uint16_t shstrndx;
+    } __PACKED;
+
+    struct Elf32ProgramHeader
+    {
+        uint32_t type;
+        uint32_t offset;
+        uint32_t vaddr;
+        uint32_t paddr;
+        uint32_t filesz;
+        uint32_t memsz;
+        uint32_t flags;
+        uint32_t align;
+    } __PACKED;
+
+    bool load_elf(FILE* fbin, std::array<uint32_t, RAM_SIZE>& ram, size_t& read_bytes)
+    {
+        static constexpr uint32_t PT_LOAD = 1;
+        Elf32Header ehdr = {};
+        fseek(fbin, 0, SEEK_SET);
+        if (fread(&ehdr, 1, sizeof(ehdr), fbin) != sizeof(ehdr)) {
+            return false;
+        }
+        if (ehdr.ident[0] != 0x7f || ehdr.ident[1] != 'E' || ehdr.ident[2] != 'L' || ehdr.ident[3] != 'F' ||
+            ehdr.ident[4] != 1 || ehdr.ident[5] != 1 || ehdr.phentsize != sizeof(Elf32ProgramHeader)) {
+            return false;
+        }
+
+        for (uint16_t i = 0; i < ehdr.phnum; ++i) {
+            Elf32ProgramHeader phdr = {};
+            fseek(fbin, ehdr.phoff + i * sizeof(phdr), SEEK_SET);
+            if (fread(&phdr, 1, sizeof(phdr), fbin) != sizeof(phdr)) {
+                return false;
+            }
+            if (phdr.type != PT_LOAD || phdr.filesz == 0) {
+                continue;
+            }
+
+            const uint32_t base = (phdr.paddr ? phdr.paddr : phdr.vaddr) & ((1u << CACHE_ADDR_BITS) - 1u);
+            if (base + phdr.filesz > RAM_SIZE * 4) {
+                std::print("ELF segment outside test RAM: base={:08x}, size={}\n", base, phdr.filesz);
+                return false;
+            }
+
+            fseek(fbin, phdr.offset, SEEK_SET);
+            for (uint32_t byte = 0; byte < phdr.filesz; ++byte) {
+                int c = fgetc(fbin);
+                if (c == EOF) {
+                    return false;
+                }
+                const uint32_t addr = base + byte;
+                const uint32_t shift = (addr & 3u) * 8u;
+                ram[addr / 4] = (ram[addr / 4] & ~(0xffu << shift)) | (uint32_t(uint8_t(c)) << shift);
+            }
+            read_bytes += phdr.filesz;
+        }
+        return read_bytes != 0;
+    }
 
 //    size_t i;
 
@@ -875,7 +1189,23 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset)
+    void mirror_dmem_write(uint32_t addr, uint32_t data, uint8_t mask)
+    {
+        for (uint32_t byte = 0; byte < 4; ++byte) {
+            if (!(mask & (1u << byte))) {
+                continue;
+            }
+            const uint32_t mem_addr = (addr + byte) & ((1u << CACHE_ADDR_BITS) - 1u);
+            const uint32_t line_idx = mem_addr / L2_AXI_BYTES;
+            const uint32_t line_byte = mem_addr % L2_AXI_BYTES;
+            logic<L2_AXI_WIDTH> line = mem.ram.buffer[line_idx];
+            line.bits(line_byte * 8 + 7, line_byte * 8) = (data >> (byte * 8)) & 0xffu;
+            mem.ram.buffer[line_idx] = line;
+        }
+        mem.ram.buffer.apply();
+    }
+
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -888,6 +1218,9 @@ public:
 
         FILE* out = fopen("out.txt", "w");
         fclose(out);
+        tohost_addr = tohost;
+        tohost_value = 0;
+        tohost_done = false;
 
         __inst_name = "tribe_test";
         _assign();
@@ -898,15 +1231,21 @@ public:
         _work_neg(1);
 
         /////////////// read program to memory
-        uint32_t ram[RAM_SIZE];
+        std::array<uint32_t, RAM_SIZE> ram = {};
         FILE* fbin = fopen(filename.c_str(), "r");
         if (!fbin) {
             std::print("can't open file '{}'\n", filename);
             return false;
         }
-        fseek(fbin, start_offset, SEEK_SET);
-        int read_bytes = fread(ram, 1, 4*RAM_SIZE, fbin);
-        std::print("Reading program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
+        size_t read_bytes = 0;
+        if (load_elf(fbin, ram, read_bytes)) {
+            std::print("Reading ELF program into memory (size: {})\n", read_bytes);
+        }
+        else {
+            fseek(fbin, start_offset, SEEK_SET);
+            read_bytes = fread(ram.data(), 1, 4 * RAM_SIZE, fbin);
+            std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
+        }
 
         for (size_t line_idx = 0; line_idx < AXI_RAM_LINES; ++line_idx) {
             logic<L2_AXI_WIDTH> line = 0;
@@ -925,12 +1264,20 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
-        int cycles = 2000000;
-        while (--cycles && !error) {
+        int cycles = max_cycles;
+        while (--cycles && !error && !tohost_done) {
             _strobe();
             ++sys_clock;
             perf_sample();
             _work(0);
+            if (PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_write_mask_out)) {
+                mirror_dmem_write(PORT_VALUE(tribe.dmem_addr_out), PORT_VALUE(tribe.dmem_write_data_out), PORT_VALUE(tribe.dmem_write_mask_out));
+            }
+            if (tohost_addr && PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_addr_out) == tohost_addr &&
+                PORT_VALUE(tribe.dmem_write_mask_out) && PORT_VALUE(tribe.dmem_write_data_out)) {
+                tohost_value = PORT_VALUE(tribe.dmem_write_data_out);
+                tohost_done = true;
+            }
             if (debugen_in) {
                 debug_perf_counters_print();
             }
@@ -938,8 +1285,24 @@ public:
             _work_neg(0);
         }
 
-        std::ifstream a("rv32i.log", std::ios::binary), b("out.txt", std::ios::binary);
-        error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
+        if (tohost_addr) {
+            if (!tohost_done) {
+                std::print("tohost was not written before cycle limit\n");
+                error = true;
+            }
+            else if (tohost_value != 1) {
+                std::print("tohost reported failure value {:08x}\n", tohost_value);
+                error = true;
+            }
+        }
+        else {
+            std::ifstream a(expected_log, std::ios::binary), b("out.txt", std::ios::binary);
+            if (!a) {
+                std::print("can't open expected output '{}'\n", expected_log);
+                error = true;
+            }
+            error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
+        }
 
         perf_print();
         std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
@@ -952,6 +1315,11 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
+    std::string program = "rv32i.bin";
+    std::string expected_log = "rv32i.log";
+    size_t start_offset = 0x37c;
+    int max_cycles = 2000000;
+    uint32_t tohost = 0;
     int only = -1;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
@@ -959,6 +1327,26 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
+        }
+        if (strcmp(argv[i], "--program") == 0 && i + 1 < argc) {
+            program = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--log") == 0 && i + 1 < argc) {
+            expected_log = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--offset") == 0 && i + 1 < argc) {
+            start_offset = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc) {
+            max_cycles = std::stoi(argv[++i]);
+            continue;
+        }
+        if (strcmp(argv[i], "--tohost") == 0 && i + 1 < argc) {
+            tohost = std::stoul(argv[++i], nullptr, 0);
+            continue;
         }
         if (argv[i][0] != '-') {
             only = atoi(argv[argc-1]);
@@ -976,8 +1364,10 @@ int main (int argc, char** argv)
                   "Rv32ic_pkg",
                   "Rv32ic_rv16_pkg",
                   "Rv32im_pkg",
+                  "Zicsr_pkg",
                   "Alu_pkg",
                   "Br_pkg",
+                  "Csr_pkg",
                   "Mem_pkg",
                   "Wb_pkg",
                   "L1CachePerf_pkg",
@@ -989,6 +1379,7 @@ int main (int argc, char** argv)
                   "BranchPredictor",
                   "Decode",
                   "Execute",
+                  "CSR",
                   "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
@@ -1002,7 +1393,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run("rv32i.bin", 0x37c))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost))
     );
 }
 

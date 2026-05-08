@@ -2,7 +2,7 @@
 
 using namespace cpphdl;
 
-#include "Rv32im.h"
+#include "Zicsr.h"
 
 class Decode: public Module
 {
@@ -20,7 +20,7 @@ private:
 
     __LAZY_COMB(state_comb, State)
 
-        Rv32im instr = {{{instr_in()}}};
+        Zicsr instr = {{{instr_in()}}};
         instr.decode(state_comb);
         if ((instr.raw&3) == 3 && instr.r.opcode == 0b0010111) {  // auipc needs pc()
             state_comb.rs1_val = pc_in();

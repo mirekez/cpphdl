@@ -95,14 +95,23 @@ struct Rv32ic : public Rv32i
                 state_out.alu_op = Alu::PASS;
                 state_out.wb_op = Wb::ALU;
             }
-            else if (i.base.funct3 == 0b011) {  // ADDI16SP
-                state_out.rd = 2;
-                state_out.rs1 = 2; // sp
-                imm_tmp = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
-                imm_tmp = (imm_tmp << 22) >> 22;
-                state_out.imm = imm_tmp;
-                state_out.alu_op = Alu::ADD;
-                state_out.wb_op = Wb::ALU;
+            else if (i.base.funct3 == 0b011) {  // ADDI16SP / LUI
+                if (i.avg.rs1 == 2) {
+                    state_out.rd = 2;
+                    state_out.rs1 = 2; // sp
+                    imm_tmp = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
+                    imm_tmp = (imm_tmp << 22) >> 22;
+                    state_out.imm = imm_tmp;
+                    state_out.alu_op = Alu::ADD;
+                    state_out.wb_op = Wb::ALU;
+                } else {
+                    state_out.rd = i.avg.rs1;
+                    imm_tmp = (bit(12) << 5) | bits(6,2);
+                    imm_tmp = (imm_tmp << 26) >> 14;
+                    state_out.imm = imm_tmp;
+                    state_out.alu_op = Alu::PASS;
+                    state_out.wb_op = Wb::ALU;
+                }
             }
             else if (i.base.funct3 == 0b100) {
                 if (i.base.bits11_10 == 0) {  // C.SRLI
