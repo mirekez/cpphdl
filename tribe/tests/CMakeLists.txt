@@ -140,13 +140,30 @@ add_test(
     NAME Tribe_riscv_arch_test
     COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
+            "$<TARGET_FILE:tribe>"
             "${TRIBE_RISCV_ARCH_TEST_DIR}"
             "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 set_tests_properties(Tribe_riscv_arch_test PROPERTIES
     SKIP_RETURN_CODE 77
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH}"
+    TIMEOUT 300
+    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv"
+)
+
+add_test(
+    NAME Tribe_riscv_arch_test_verilator
+    COMMAND Python3::Interpreter
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
+            "$<TARGET_FILE:tribe>"
+            "${TRIBE_RISCV_ARCH_TEST_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work-verilator"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(Tribe_riscv_arch_test_verilator PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_ARCH_TEST_BACKEND=verilator"
 )
 
 add_test(
