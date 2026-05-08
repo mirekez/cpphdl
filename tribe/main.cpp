@@ -16,10 +16,9 @@
 #include "cache/L2Cache.h"
 
 #define DEFAULT_RAM_SIZE 32768
-#define MAX_RAM_SIZE 131072
-#define CACHE_ADDR_BITS 19
+#define MAX_RAM_SIZE 524288
+#define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
 #define L2_AXI_WIDTH 256
-#define L2_AXI_BYTES (L2_AXI_WIDTH / 8)
 #define L2_MEM_PORTS 4
 #define BRANCH_PREDICTOR_ENTRIES 16
 #define BRANCH_PREDICTOR_COUNTER_BITS 2
@@ -45,7 +44,7 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<1024,32,2,0,32> icache;
     L1Cache<1024,32,2,1,32> dcache;
-    L2Cache<8192,L2_AXI_WIDTH,32,4,32,CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
+    L2Cache<8192,L2_AXI_WIDTH,32,4,32,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -61,7 +60,7 @@ public:
     __PORT(uint32_t)  memory_size_in;
 
     __PORT(bool) axi_awvalid_out[L2_MEM_PORTS];
-    __PORT(u<CACHE_ADDR_BITS>) axi_awaddr_out[L2_MEM_PORTS];
+    __PORT(u<L2_CACHE_ADDR_BITS>) axi_awaddr_out[L2_MEM_PORTS];
     __PORT(u<4>) axi_awid_out[L2_MEM_PORTS];
     __PORT(bool) axi_awready_in[L2_MEM_PORTS];
     __PORT(bool) axi_wvalid_out[L2_MEM_PORTS];
@@ -72,7 +71,7 @@ public:
     __PORT(bool) axi_bvalid_in[L2_MEM_PORTS];
     __PORT(u<4>) axi_bid_in[L2_MEM_PORTS];
     __PORT(bool) axi_arvalid_out[L2_MEM_PORTS];
-    __PORT(u<CACHE_ADDR_BITS>) axi_araddr_out[L2_MEM_PORTS];
+    __PORT(u<L2_CACHE_ADDR_BITS>) axi_araddr_out[L2_MEM_PORTS];
     __PORT(u<4>) axi_arid_out[L2_MEM_PORTS];
     __PORT(bool) axi_arready_in[L2_MEM_PORTS];
     __PORT(bool) axi_rready_out[L2_MEM_PORTS];
@@ -104,10 +103,10 @@ public:
         csr._assign();
 
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = __VAR(wb_mem_data_comb_func());
-        wb.mem_data_hi_in = __VAR(wb_mem_data_hi_comb_func());
+        wb.mem_data_in    = __VAR(load_data_raw_comb_func());
+        wb.mem_data_hi_in = __EXPR((uint32_t)0);
         wb.mem_addr_in    = __VAR(alu_result_reg);
-        wb.mem_split_in   = __VAR(split_load_comb_func());
+        wb.mem_split_in   = __EXPR(false);
         wb.alu_result_in  = __VAR( alu_result_reg );
         wb._assign();  // outputs are ready
 
@@ -958,9 +957,8 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 
 class TestTribe : public Module
 {
-    static constexpr size_t AXI_RAM_LINES = MAX_RAM_SIZE * 4 / L2_AXI_BYTES;
-    static constexpr size_t AXI_RAM_LINES_PER_PORT = AXI_RAM_LINES / L2_MEM_PORTS;
-    Axi4Ram<CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_LINES_PER_PORT> mem[L2_MEM_PORTS];
+    static constexpr size_t AXI_RAM_DEPTH_PER_PORT = (MAX_RAM_SIZE / (L2_AXI_WIDTH/8)) / L2_MEM_PORTS;
+    Axi4Ram<L2_CACHE_ADDR_BITS,4,L2_AXI_WIDTH,AXI_RAM_DEPTH_PER_PORT> mem[L2_MEM_PORTS];
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -1018,7 +1016,7 @@ class TestTribe : public Module
         uint32_t align;
     } __PACKED;
 
-    bool load_elf(FILE* fbin, std::array<uint32_t, MAX_RAM_SIZE>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry)
+    bool load_elf(FILE* fbin, std::array<uint32_t, MAX_RAM_SIZE/4>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry)
     {
         static constexpr uint32_t PT_LOAD = 1;
         Elf32Header ehdr = {};
@@ -1125,14 +1123,14 @@ public:
         tribe.memory_size_in = ram_size * 4;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             mem[i].axi_awvalid_in = __EXPR_I((bool)tribe.axi_awvalid_out[i]);
-            mem[i].axi_awaddr_in = __EXPR_I((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out[i]);
+            mem[i].axi_awaddr_in = __EXPR_I((u<L2_CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out[i]);
             mem[i].axi_awid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_awid_out[i]);
             mem[i].axi_wvalid_in = __EXPR_I((bool)tribe.axi_wvalid_out[i]);
             mem[i].axi_wdata_in = __EXPR_I(verilator_wide_to_logic(tribe.axi_wdata_out[i]));
             mem[i].axi_wlast_in = __EXPR_I((bool)tribe.axi_wlast_out[i]);
             mem[i].axi_bready_in = __EXPR_I((bool)tribe.axi_bready_out[i]);
             mem[i].axi_arvalid_in = __EXPR_I((bool)tribe.axi_arvalid_out[i]);
-            mem[i].axi_araddr_in = __EXPR_I((u<CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out[i]);
+            mem[i].axi_araddr_in = __EXPR_I((u<L2_CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out[i]);
             mem[i].axi_arid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_arid_out[i]);
             mem[i].axi_rready_in = __EXPR_I((bool)tribe.axi_rready_out[i]);
             mem[i].debugen_in = debugen_in;
@@ -1297,27 +1295,6 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    void mirror_dmem_write(uint32_t addr, uint32_t data, uint8_t mask)
-    {
-        for (uint32_t byte = 0; byte < 4; ++byte) {
-            if (!(mask & (1u << byte))) {
-                continue;
-            }
-            const uint32_t full_addr = addr + byte;
-            if (full_addr < start_mem_addr || full_addr - start_mem_addr >= ram_size * 4) {
-                continue;
-            }
-            const uint32_t mem_addr = full_addr - start_mem_addr;
-            const uint32_t line_idx = mem_addr / L2_AXI_BYTES;
-            const uint32_t port = line_idx / AXI_RAM_LINES_PER_PORT;
-            const uint32_t local_line_idx = line_idx % AXI_RAM_LINES_PER_PORT;
-            const uint32_t line_byte = mem_addr % L2_AXI_BYTES;
-            logic<L2_AXI_WIDTH> line = mem[port].ram.buffer[local_line_idx];
-            line.bits(line_byte * 8 + 7, line_byte * 8) = (data >> (byte * 8)) & 0xffu;
-            mem[port].ram.buffer[local_line_idx] = line;
-        }
-    }
-
     bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE)
     {
 #ifdef VERILATOR
@@ -1337,13 +1314,13 @@ public:
         start_mem_addr = mem_base;
         reset_pc = mem_base;
         ram_size = ram_words;
-        if (ram_size == 0 || ram_size > MAX_RAM_SIZE) {
-            std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, MAX_RAM_SIZE);
+        if (ram_size == 0 || ram_size > MAX_RAM_SIZE/4) {
+            std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, MAX_RAM_SIZE/4);
             return false;
         }
 
         /////////////// read program to memory
-        std::array<uint32_t, MAX_RAM_SIZE> ram = {};
+        std::array<uint32_t, MAX_RAM_SIZE/4> ram = {};
         FILE* fbin = fopen(filename.c_str(), "r");
         if (!fbin) {
             std::print("can't open file '{}'\n", filename);
@@ -1361,18 +1338,18 @@ public:
             std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
         }
 
-        const size_t active_lines = (ram_size * 4 + L2_AXI_BYTES - 1) / L2_AXI_BYTES;
+        const size_t active_lines = (ram_size * 4 + (L2_AXI_WIDTH/8) - 1) / (L2_AXI_WIDTH/8);
         for (size_t line_idx = 0; line_idx < active_lines; ++line_idx) {
             logic<L2_AXI_WIDTH> line = 0;
-            for (size_t word = 0; word < L2_AXI_BYTES / 4; ++word) {
-                size_t addr = line_idx * (L2_AXI_BYTES / 4) + word;
+            for (size_t word = 0; word < (L2_AXI_WIDTH/8) / 4; ++word) {
+                size_t addr = line_idx * ((L2_AXI_WIDTH/8) / 4) + word;
                 line.bits(word * 32 + 31, word * 32) = ram[addr];
                 if (debugen_in) {
                     std::print("{:04x}: {:08x}\n", addr, ram[addr]);
                 }
             }
-            size_t port = line_idx / AXI_RAM_LINES_PER_PORT;
-            size_t local_line_idx = line_idx % AXI_RAM_LINES_PER_PORT;
+            size_t port = line_idx / AXI_RAM_DEPTH_PER_PORT;
+            size_t local_line_idx = line_idx % AXI_RAM_DEPTH_PER_PORT;
             mem[port].ram.buffer[local_line_idx] = line;
         }
         fclose(fbin);
@@ -1394,9 +1371,6 @@ public:
             ++sys_clock;
             perf_sample();
             _work(0);
-            if (PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_write_mask_out)) {
-                mirror_dmem_write(PORT_VALUE(tribe.dmem_addr_out), PORT_VALUE(tribe.dmem_write_data_out), PORT_VALUE(tribe.dmem_write_mask_out));
-            }
             if (tohost_addr && PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_addr_out) == tohost_addr &&
                 PORT_VALUE(tribe.dmem_write_mask_out) && PORT_VALUE(tribe.dmem_write_data_out)) {
                 tohost_value = PORT_VALUE(tribe.dmem_write_data_out);

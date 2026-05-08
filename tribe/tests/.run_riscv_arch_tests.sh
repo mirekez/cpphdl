@@ -2,6 +2,18 @@
 set -euo pipefail
 
 export RISCV_HOME="${RISCV_HOME:-/home/me/riscv}"
+NO_VERIL=0
+for arg in "$@"; do
+    case "${arg}" in
+        --noveril)
+            NO_VERIL=1
+            ;;
+        *)
+            echo "unknown option: ${arg}" >&2
+            exit 2
+            ;;
+    esac
+done
 
 RISCV_ARCH_TEST_PYTHON_DEPS=(
     uv
@@ -45,5 +57,7 @@ make -C "${BUILD_DIR}" tribe
 echo "Running RISC-V architectural tests on C++ Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_arch_test$'
 
-echo "Running RISC-V architectural tests on Verilator Tribe model"
-ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_arch_test_verilator$'
+if [[ "${NO_VERIL}" -eq 0 ]]; then
+    echo "Running RISC-V architectural tests on Verilator Tribe model"
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_arch_test_verilator$'
+fi

@@ -2,6 +2,18 @@
 set -euo pipefail
 
 export RISCV_HOME="${RISCV_HOME:-/home/me/riscv}"
+NO_VERIL=0
+for arg in "$@"; do
+    case "${arg}" in
+        --noveril)
+            NO_VERIL=1
+            ;;
+        *)
+            echo "unknown option: ${arg}" >&2
+            exit 2
+            ;;
+    esac
+done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
@@ -16,7 +28,9 @@ echo "Running supported RV32 riscv-tests on C++ model"
 TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
     ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_tests_rv32$'
 
-echo "Running supported RV32 riscv-tests on Verilator model"
-TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
-TRIBE_RISCV_TESTS_BACKEND=verilator \
-    ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_tests_rv32$'
+if [[ "${NO_VERIL}" -eq 0 ]]; then
+    echo "Running supported RV32 riscv-tests on Verilator model"
+    TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
+    TRIBE_RISCV_TESTS_BACKEND=verilator \
+        ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe_riscv_tests_rv32$'
+fi

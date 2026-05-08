@@ -755,7 +755,13 @@ public:
             }
         }
         else if (state_reg == ST_LOOKUP) {
-            if (hit_comb_func()) {
+            if (!req_addr_in_memory_comb_func()) {
+                if (req_read_reg) {
+                    last_data_reg._next = 0;
+                }
+                state_reg._next = ST_DONE;
+            }
+            else if (hit_comb_func()) {
                 if (req_read_reg) {
                     last_data_reg._next = hit_word_comb_func();
                 }
@@ -775,7 +781,10 @@ public:
             }
         }
         else if (state_reg == ST_CROSS_WRITE_LOOKUP) {
-            if (hit_comb_func()) {
+            if (!req_addr_in_memory_comb_func()) {
+                state_reg._next = ST_DONE;
+            }
+            else if (hit_comb_func()) {
                 state_reg._next = ST_DONE;
             }
             else {
