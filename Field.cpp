@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <vector>
 
 using namespace cpphdl;
 
@@ -23,12 +24,94 @@ bool isStructOrUnionType(const Expr& expr)
     }) != currProject->structs.end();
 }
 
-bool isUnpackedStructArray(const Expr& expr)
+std::string dimToString(Expr dim)
 {
-    return expr.type == Expr::EXPR_TEMPLATE &&
-        expr.value == "cpphdl_array" &&
-        expr.sub.size() >= 2 &&
-        isStructOrUnionType(expr.sub[0]);
+    dim.flags = Expr::FLAG_SPECVAL;
+    return dim.str();
+}
+
+size_t dimToSize(Expr dim)
+{
+    std::string text = dimToString(dim);
+    return std::strtoull(text.c_str(), nullptr, 0);
+}
+
+struct ArrayShape
+{
+    Expr base;
+    std::vector<Expr> cpphdlDims;
+    std::vector<Expr> unpackedDims;
+    bool hasArray = false;
+};
+
+ArrayShape flattenArrayShape(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() >= 2) {
+        ArrayShape shape = flattenArrayShape(expr.sub.back());
+        shape.hasArray = true;
+        shape.unpackedDims.insert(shape.unpackedDims.begin(), expr.sub.begin(), expr.sub.end() - 1);
+        return shape;
+    }
+
+    if (expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        ArrayShape shape = flattenArrayShape(expr.sub[0]);
+        shape.hasArray = true;
+        shape.cpphdlDims.insert(shape.cpphdlDims.begin(), expr.sub[1]);
+        return shape;
+    }
+
+    return ArrayShape{expr};
+}
+
+bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& nameSuffix)
+{
+    ArrayShape shape = flattenArrayShape(field.expr);
+    if (!shape.hasArray) {
+        return false;
+    }
+
+    shape.base.indent = field.indent;
+    shape.base.flags |= field.expr.flags;
+
+    auto printUnpackedDims = [&](const std::vector<Expr>& dims) {
+        for (const auto& dim : dims) {
+            out << "[" << dimToString(dim) << "]";
+        }
+    };
+    auto appendPackedDims = [](std::string& packedDims, const std::vector<Expr>& dims) {
+        for (const auto& dim : dims) {
+            packedDims += "[" + dimToString(dim) + "-1:0]";
+        }
+    };
+
+    if (currStruct && currStruct->type == Struct::STRUCT_UNION) {
+        std::string packedDims;
+        appendPackedDims(packedDims, shape.unpackedDims);
+        appendPackedDims(packedDims, shape.cpphdlDims);
+        out << shape.base.str("", packedDims) << " " << field.name << nameSuffix << ";\n";
+    } else
+
+    if (isStructOrUnionType(shape.base)) {
+        out << shape.base.str() << " " << field.name << nameSuffix;
+        printUnpackedDims(shape.unpackedDims);
+        printUnpackedDims(shape.cpphdlDims);
+        out << ";\n";
+    } else {
+        std::string packedDims;
+        appendPackedDims(packedDims, shape.cpphdlDims);
+        out << shape.base.str("", packedDims) << " " << field.name << nameSuffix;
+        printUnpackedDims(shape.unpackedDims);
+        out << ";\n";
+    }
+
+    field.expr.declSize = shape.base.declSize;
+    for (const auto& dim : shape.cpphdlDims) {
+        field.expr.declSize *= dimToSize(dim);
+    }
+    for (const auto& dim : shape.unpackedDims) {
+        field.expr.declSize *= dimToSize(dim);
+    }
+    return true;
 }
 
 }
@@ -37,13 +120,7 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
 {
     currField = this;
 
-    if (inStruct && isUnpackedStructArray(expr)) {
-        Expr element = expr.sub[0];
-        Expr count = expr.sub[1];
-        element.indent = indent;
-        element.flags |= expr.flags;
-        out << element.str() << " " << name << nameSuffix << "[" << count.str() << "];\n";
-        expr.declSize = element.declSize * atoi(count.str().c_str());
+    if (inStruct && printStructFieldArray(out, *this, nameSuffix)) {
         return true;
     }
 

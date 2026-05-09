@@ -203,18 +203,21 @@ bool isProjectStructType(const Expr& expr)
     }) != currProject->structs.end();
 }
 
-bool isUnpackedStructArray(const Expr& expr)
+bool arrayHasStructBase(const Expr& expr, bool inArray = false)
 {
-    return expr.type == Expr::EXPR_TEMPLATE &&
-        expr.value == "cpphdl_array" &&
-        expr.sub.size() >= 2 &&
-        isProjectStructType(expr.sub[0]);
+    if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() >= 2) {
+        return arrayHasStructBase(expr.sub.back(), true);
+    }
+    if (expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        return arrayHasStructBase(expr.sub[0], true);
+    }
+    return inArray && isProjectStructType(expr);
 }
 
 bool containsUnpackedStructArray(const Struct& st)
 {
     for (const auto& field : st.fields) {
-        if (isUnpackedStructArray(field.expr)) {
+        if (arrayHasStructBase(field.expr)) {
             return true;
         }
         if (field.definition.type != Struct::STRUCT_EMPTY && containsUnpackedStructArray(field.definition)) {
@@ -249,7 +252,7 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    bool packed = !containsUnpackedStructArray(*this);
+    bool packed = type == STRUCT_UNION || !containsUnpackedStructArray(*this);
     out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << (packed ? " packed" : "") << " {\n";
 
     ++indent;

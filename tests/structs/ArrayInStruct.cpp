@@ -23,14 +23,29 @@ union PayloadChoice
     u8 raw;
 } __PACKED;
 
+union PayloadBusData
+{
+    u8 bytes[2];
+    array<PayloadItem, 2> values;
+} __PACKED;
+
 struct ArrayPayload
 {
     unsigned prefix:4;
     array<u8, 3> bytes;
+    array<array<u8, 2>, 3> byte_matrix;
+    array<u8, 2> byte_rows[3];
+    array<array<u8, 2>, 3> byte_tables[4];
+    array<array<u8, 2>, 3> byte_grid[4][5];
     array<PayloadItem, 2> items;
+    array<array<PayloadItem, 2>, 3> item_matrix;
+    array<PayloadItem, 2> item_rows[3];
+    array<array<PayloadItem, 2>, 3> item_tables[4];
+    array<array<PayloadItem, 2>, 3> item_grid[4][5];
     unsigned mid:3;
     array<u16, 1> halfs;
     array<PayloadChoice, 2> choices;
+    PayloadBusData bus_data;
     unsigned tail:5;
 } __PACKED;
 
@@ -63,6 +78,10 @@ private:
         payload.choices[0].s.value = (seed + 6) & 0x1f;
         payload.choices[1].s.tag = (seed + 7) & 0x7;
         payload.choices[1].s.value = (seed + 8) & 0x1f;
+        payload.bus_data.values[0].lo = (seed + 9) & 0xf;
+        payload.bus_data.values[0].hi = (seed + 10) & 0xf;
+        payload.bus_data.values[1].lo = (seed + 11) & 0xf;
+        payload.bus_data.values[1].hi = (seed + 12) & 0xf;
         payload.tail = (seed + 0x17) & 0x1f;
         return payload;
     }
@@ -85,6 +104,10 @@ private:
         direct_comb.choices[0].s.value ^= in_payload.choices[1].s.value;
         direct_comb.choices[1].s.tag ^= in_payload.choices[0].s.tag;
         direct_comb.choices[1].s.value ^= in_payload.choices[0].s.value;
+        direct_comb.bus_data.values[0].lo ^= in_payload.bus_data.values[1].hi;
+        direct_comb.bus_data.values[0].hi ^= in_payload.bus_data.values[1].lo;
+        direct_comb.bus_data.values[1].lo ^= in_payload.bus_data.values[0].hi;
+        direct_comb.bus_data.values[1].hi ^= in_payload.bus_data.values[0].lo;
         direct_comb.tail ^= in_payload.tail;
         return direct_comb;
     }
@@ -147,6 +170,10 @@ static ArrayPayload expected_payload(uint32_t seed)
     payload.choices[0].s.value = (seed + 6) & 0x1f;
     payload.choices[1].s.tag = (seed + 7) & 0x7;
     payload.choices[1].s.value = (seed + 8) & 0x1f;
+    payload.bus_data.values[0].lo = (seed + 9) & 0xf;
+    payload.bus_data.values[0].hi = (seed + 10) & 0xf;
+    payload.bus_data.values[1].lo = (seed + 11) & 0xf;
+    payload.bus_data.values[1].hi = (seed + 12) & 0xf;
     payload.tail = (seed + 0x17) & 0x1f;
     return payload;
 }
@@ -168,6 +195,10 @@ static ArrayPayload expected_direct(uint32_t seed, const ArrayPayload& input)
     payload.choices[0].s.value ^= input.choices[1].s.value;
     payload.choices[1].s.tag ^= input.choices[0].s.tag;
     payload.choices[1].s.value ^= input.choices[0].s.value;
+    payload.bus_data.values[0].lo ^= input.bus_data.values[1].hi;
+    payload.bus_data.values[0].hi ^= input.bus_data.values[1].lo;
+    payload.bus_data.values[1].lo ^= input.bus_data.values[0].hi;
+    payload.bus_data.values[1].hi ^= input.bus_data.values[0].lo;
     payload.tail ^= input.tail;
     return payload;
 }
@@ -188,6 +219,10 @@ static bool same_fields(const ArrayPayload& got, const ArrayPayload& exp)
         got.choices[0].s.value == exp.choices[0].s.value &&
         got.choices[1].s.tag == exp.choices[1].s.tag &&
         got.choices[1].s.value == exp.choices[1].s.value &&
+        got.bus_data.values[0].lo == exp.bus_data.values[0].lo &&
+        got.bus_data.values[0].hi == exp.bus_data.values[0].hi &&
+        got.bus_data.values[1].lo == exp.bus_data.values[1].lo &&
+        got.bus_data.values[1].hi == exp.bus_data.values[1].hi &&
         got.tail == exp.tail;
 }
 
@@ -215,25 +250,63 @@ static std::filesystem::path generated_sv_path(const std::string& file)
 
 static bool generated_sv_has_unpacked_struct_arrays()
 {
-    const auto path = generated_sv_path("ArrayPayload_pkg.sv");
-    std::ifstream in(path);
-    if (!in) {
-        std::print("\nERROR: can't open generated SystemVerilog file {}\n", path.string());
+    auto read_file = [](const std::filesystem::path& path, std::string& text) {
+        std::ifstream in(path);
+        if (!in) {
+            std::print("\nERROR: can't open generated SystemVerilog file {}\n", path.string());
+            return false;
+        }
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        return true;
+    };
+
+    const auto payload_path = generated_sv_path("ArrayPayload_pkg.sv");
+    std::string payload_text;
+    if (!read_file(payload_path, payload_text)) {
         return false;
     }
 
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     std::vector<std::string> required = {
         "import PayloadItem_pkg::*;",
         "import PayloadChoice_pkg::*;",
+        "import PayloadBusData_pkg::*;",
+        "logic[3-1:0][8-1:0] bytes;",
+        "logic[3-1:0][2-1:0][8-1:0] byte_matrix;",
+        "logic[2-1:0][8-1:0] byte_rows[3];",
+        "logic[3-1:0][2-1:0][8-1:0] byte_tables[4];",
+        "logic[3-1:0][2-1:0][8-1:0] byte_grid[4][5];",
         "PayloadItem items[2];",
-        "PayloadChoice choices[2];"
+        "PayloadItem item_matrix[3][2];",
+        "PayloadItem item_rows[3][2];",
+        "PayloadItem item_tables[4][3][2];",
+        "PayloadItem item_grid[4][5][3][2];",
+        "PayloadChoice choices[2];",
+        "PayloadBusData bus_data;",
+        "typedef struct {"
     };
 
     bool ok = true;
     for (const auto& needle : required) {
-        if (text.find(needle) == std::string::npos) {
-            std::print("\nERROR: {} does not contain '{}'\n", path.string(), needle);
+        if (payload_text.find(needle) == std::string::npos) {
+            std::print("\nERROR: {} does not contain '{}'\n", payload_path.string(), needle);
+            ok = false;
+        }
+    }
+
+    const auto bus_path = generated_sv_path("PayloadBusData_pkg.sv");
+    std::string bus_text;
+    if (!read_file(bus_path, bus_text)) {
+        return false;
+    }
+    std::vector<std::string> bus_required = {
+        "import PayloadItem_pkg::*;",
+        "typedef union packed {",
+        "PayloadItem[2-1:0] values;",
+        "logic[2-1:0][8-1:0] bytes;"
+    };
+    for (const auto& needle : bus_required) {
+        if (bus_text.find(needle) == std::string::npos) {
+            std::print("\nERROR: {} does not contain '{}'\n", bus_path.string(), needle);
             ok = false;
         }
     }
@@ -248,6 +321,8 @@ static void write_verilated_payload(VerilatedPayload& dst, const ArrayPayload& s
     dst.__PVT__tail = src.tail;
     dst.__PVT__choices[0] = (uint8_t(src.choices[0].s.value) << 3) | uint8_t(src.choices[0].s.tag);
     dst.__PVT__choices[1] = (uint8_t(src.choices[1].s.value) << 3) | uint8_t(src.choices[1].s.tag);
+    dst.__PVT__bus_data = ((uint8_t(src.bus_data.values[1].hi) << 4) | uint8_t(src.bus_data.values[1].lo)) << 8 |
+        ((uint8_t(src.bus_data.values[0].hi) << 4) | uint8_t(src.bus_data.values[0].lo));
     dst.__PVT__halfs = uint16_t(src.halfs[0]);
     dst.__PVT___align2 = 0;
     dst.__PVT__mid = src.mid;
@@ -276,6 +351,10 @@ static ArrayPayload read_verilated_payload(const VerilatedPayload& src)
     ret.choices[0].s.value = (src.__PVT__choices[0] >> 3) & 0x1f;
     ret.choices[1].s.tag = src.__PVT__choices[1] & 0x7;
     ret.choices[1].s.value = (src.__PVT__choices[1] >> 3) & 0x1f;
+    ret.bus_data.values[0].lo = src.__PVT__bus_data & 0xf;
+    ret.bus_data.values[0].hi = (src.__PVT__bus_data >> 4) & 0xf;
+    ret.bus_data.values[1].lo = (src.__PVT__bus_data >> 8) & 0xf;
+    ret.bus_data.values[1].hi = (src.__PVT__bus_data >> 12) & 0xf;
     ret.tail = src.__PVT__tail;
     return ret;
 }
@@ -421,6 +500,7 @@ int main(int argc, char** argv)
             "Predef_pkg",
             "PayloadItem_pkg",
             "PayloadChoice_pkg",
+            "PayloadBusData_pkg",
             "ArrayPayload_pkg"
         }, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
