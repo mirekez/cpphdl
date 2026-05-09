@@ -26,24 +26,38 @@ const Struct* findStructByName(const std::string& name)
     return nullptr;
 }
 
+void collectStructImports(const Struct& st, std::vector<std::string>& imports, std::unordered_set<std::string>& seen);
+
+void addStructImport(const std::string& name, std::vector<std::string>& imports, std::unordered_set<std::string>& seen)
+{
+    if (!seen.insert(name).second) {
+        return;
+    }
+
+    imports.push_back(name);
+    if (const Struct* imported = findStructByName(name)) {
+        collectStructImports(*imported, imports, seen);
+    }
+}
+
+void collectExprStructImports(const Expr& expr, const Struct& owner, std::vector<std::string>& imports, std::unordered_set<std::string>& seen)
+{
+    if (expr.type == Expr::EXPR_TYPE && expr.value != owner.name && findStructByName(expr.value)) {
+        addStructImport(expr.value, imports, seen);
+    }
+    for (const auto& sub : expr.sub) {
+        collectExprStructImports(sub, owner, imports, seen);
+    }
+}
+
 void collectStructImports(const Struct& st, std::vector<std::string>& imports, std::unordered_set<std::string>& seen)
 {
-    auto addImport = [&](const std::string& name) {
-        if (!seen.insert(name).second) {
-            return;
-        }
-
-        imports.push_back(name);
-        if (const Struct* imported = findStructByName(name)) {
-            collectStructImports(*imported, imports, seen);
-        }
-    };
-
     for (const auto& imp : st.imports) {
-        addImport(imp.name);
+        addStructImport(imp.name, imports, seen);
     }
 
     for (const auto& field : st.fields) {
+        collectExprStructImports(field.expr, st, imports, seen);
         if (field.definition.type != Struct::STRUCT_EMPTY) {
             collectStructImports(field.definition, imports, seen);
         }

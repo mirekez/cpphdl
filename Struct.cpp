@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <algorithm>
 
 using namespace cpphdl;
 
@@ -19,6 +20,7 @@ namespace
 size_t fieldPayloadBitSize(Field& f);
 size_t fieldStorageBitSize(Field& f);
 void ensureStructStorageSize(Struct& st, size_t bitSize);
+bool containsUnpackedStructArray(const Struct& st);
 
 size_t alignToByte(size_t bitSize)
 {
@@ -191,6 +193,37 @@ void ensureStructStorageSize(Struct& st, size_t bitSize)
     st.declSize = bitSize;
 }
 
+bool isProjectStructType(const Expr& expr)
+{
+    if (expr.type != Expr::EXPR_TYPE) {
+        return false;
+    }
+    return std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](const auto& st) {
+        return st.name == expr.value;
+    }) != currProject->structs.end();
+}
+
+bool isUnpackedStructArray(const Expr& expr)
+{
+    return expr.type == Expr::EXPR_TEMPLATE &&
+        expr.value == "cpphdl_array" &&
+        expr.sub.size() >= 2 &&
+        isProjectStructType(expr.sub[0]);
+}
+
+bool containsUnpackedStructArray(const Struct& st)
+{
+    for (const auto& field : st.fields) {
+        if (isUnpackedStructArray(field.expr)) {
+            return true;
+        }
+        if (field.definition.type != Struct::STRUCT_EMPTY && containsUnpackedStructArray(field.definition)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }
 
 bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
@@ -216,7 +249,8 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
+    bool packed = !containsUnpackedStructArray(*this);
+    out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << (packed ? " packed" : "") << " {\n";
 
     ++indent;
     for (int i=fields.size()-1; i >= 0; --i) {  // reverse order in SystemVerilog
@@ -225,7 +259,7 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
             fields[i].definition.print(out/*, params*/);
         } else {
             fields[i].indent = indent;
-            fields[i].print(out);
+            fields[i].print(out, "", true);
 //            out << fields[i].bitwidth.debug() << "\n";
         }
     }

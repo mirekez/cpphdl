@@ -18,7 +18,7 @@ struct Field
     // methods
     int indent = 0;
 
-    bool print(std::ofstream& out, std::string nameSuffix = "");
+    bool print(std::ofstream& out, std::string nameSuffix = "", bool inStruct = false);
     bool printPort(std::ofstream& out);
 };
 
