@@ -20,7 +20,6 @@ namespace
 size_t fieldPayloadBitSize(Field& f);
 size_t fieldStorageBitSize(Field& f);
 void ensureStructStorageSize(Struct& st, size_t bitSize);
-bool containsUnpackedStructArray(const Struct& st);
 
 size_t alignToByte(size_t bitSize)
 {
@@ -193,40 +192,6 @@ void ensureStructStorageSize(Struct& st, size_t bitSize)
     st.declSize = bitSize;
 }
 
-bool isProjectStructType(const Expr& expr)
-{
-    if (expr.type != Expr::EXPR_TYPE) {
-        return false;
-    }
-    return std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](const auto& st) {
-        return st.name == expr.value;
-    }) != currProject->structs.end();
-}
-
-bool arrayHasStructBase(const Expr& expr, bool inArray = false)
-{
-    if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() >= 2) {
-        return arrayHasStructBase(expr.sub.back(), true);
-    }
-    if (expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
-        return arrayHasStructBase(expr.sub[0], true);
-    }
-    return inArray && isProjectStructType(expr);
-}
-
-bool containsUnpackedStructArray(const Struct& st)
-{
-    for (const auto& field : st.fields) {
-        if (arrayHasStructBase(field.expr)) {
-            return true;
-        }
-        if (field.definition.type != Struct::STRUCT_EMPTY && containsUnpackedStructArray(field.definition)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 }
 
 bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
@@ -252,8 +217,7 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    bool packed = type == STRUCT_UNION || !containsUnpackedStructArray(*this);
-    out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << (packed ? " packed" : "") << " {\n";
+    out << ( type == STRUCT_STRUCT ? "struct" : "union" ) << " packed {\n";
 
     ++indent;
     for (int i=fields.size()-1; i >= 0; --i) {  // reverse order in SystemVerilog

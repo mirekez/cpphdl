@@ -272,17 +272,17 @@ static bool generated_sv_has_unpacked_struct_arrays()
         "import PayloadBusData_pkg::*;",
         "logic[3-1:0][8-1:0] bytes;",
         "logic[3-1:0][2-1:0][8-1:0] byte_matrix;",
-        "logic[2-1:0][8-1:0] byte_rows[3];",
-        "logic[3-1:0][2-1:0][8-1:0] byte_tables[4];",
-        "logic[3-1:0][2-1:0][8-1:0] byte_grid[4][5];",
-        "PayloadItem items[2];",
-        "PayloadItem item_matrix[3][2];",
-        "PayloadItem item_rows[3][2];",
-        "PayloadItem item_tables[4][3][2];",
-        "PayloadItem item_grid[4][5][3][2];",
-        "PayloadChoice choices[2];",
+        "logic[3-1:0][2-1:0][8-1:0] byte_rows;",
+        "logic[4-1:0][3-1:0][2-1:0][8-1:0] byte_tables;",
+        "logic[4-1:0][5-1:0][3-1:0][2-1:0][8-1:0] byte_grid;",
+        "PayloadItem[2-1:0] items;",
+        "PayloadItem[3-1:0][2-1:0] item_matrix;",
+        "PayloadItem[3-1:0][2-1:0] item_rows;",
+        "PayloadItem[4-1:0][3-1:0][2-1:0] item_tables;",
+        "PayloadItem[4-1:0][5-1:0][3-1:0][2-1:0] item_grid;",
+        "PayloadChoice[2-1:0] choices;",
         "PayloadBusData bus_data;",
-        "typedef struct {"
+        "typedef struct packed {"
     };
 
     bool ok = true;
@@ -315,47 +315,88 @@ static bool generated_sv_has_unpacked_struct_arrays()
 
 #ifdef VERILATOR
 template<typename VerilatedPayload>
+static void clear_verilated_payload(VerilatedPayload& dst)
+{
+    for (size_t i = 0; i < 82; ++i) {
+        dst[i] = 0;
+    }
+}
+
+template<typename VerilatedPayload>
+static void set_verilated_bits(VerilatedPayload& dst, size_t offset, size_t width, uint32_t value)
+{
+    for (size_t i = 0; i < width; ++i) {
+        size_t bit = offset + i;
+        uint32_t mask = uint32_t(1) << (bit & 31);
+        if ((value >> i) & 1) {
+            dst[bit >> 5] |= mask;
+        } else {
+            dst[bit >> 5] &= ~mask;
+        }
+    }
+}
+
+template<typename VerilatedPayload>
+static uint32_t get_verilated_bits(const VerilatedPayload& src, size_t offset, size_t width)
+{
+    uint32_t value = 0;
+    for (size_t i = 0; i < width; ++i) {
+        size_t bit = offset + i;
+        if ((src[bit >> 5] >> (bit & 31)) & 1) {
+            value |= uint32_t(1) << i;
+        }
+    }
+    return value;
+}
+
+template<typename VerilatedPayload>
 static void write_verilated_payload(VerilatedPayload& dst, const ArrayPayload& src)
 {
-    dst.__PVT___align0 = 0;
-    dst.__PVT__tail = src.tail;
-    dst.__PVT__choices[0] = (uint8_t(src.choices[0].s.value) << 3) | uint8_t(src.choices[0].s.tag);
-    dst.__PVT__choices[1] = (uint8_t(src.choices[1].s.value) << 3) | uint8_t(src.choices[1].s.tag);
-    dst.__PVT__bus_data = ((uint8_t(src.bus_data.values[1].hi) << 4) | uint8_t(src.bus_data.values[1].lo)) << 8 |
-        ((uint8_t(src.bus_data.values[0].hi) << 4) | uint8_t(src.bus_data.values[0].lo));
-    dst.__PVT__halfs = uint16_t(src.halfs[0]);
-    dst.__PVT___align2 = 0;
-    dst.__PVT__mid = src.mid;
-    dst.__PVT__items[0] = (uint8_t(src.items[0].hi) << 4) | uint8_t(src.items[0].lo);
-    dst.__PVT__items[1] = (uint8_t(src.items[1].hi) << 4) | uint8_t(src.items[1].lo);
-    dst.__PVT__bytes = uint32_t(src.bytes[0]) | (uint32_t(src.bytes[1]) << 8) | (uint32_t(src.bytes[2]) << 16);
-    dst.__PVT___align1 = 0;
-    dst.__PVT__prefix = src.prefix;
+    clear_verilated_payload(dst);
+    set_verilated_bits(dst, 0, 4, src.prefix);
+    set_verilated_bits(dst, 8, 8, uint8_t(src.bytes[0]));
+    set_verilated_bits(dst, 16, 8, uint8_t(src.bytes[1]));
+    set_verilated_bits(dst, 24, 8, uint8_t(src.bytes[2]));
+    set_verilated_bits(dst, 1280, 8, (uint8_t(src.items[0].hi) << 4) | uint8_t(src.items[0].lo));
+    set_verilated_bits(dst, 1288, 8, (uint8_t(src.items[1].hi) << 4) | uint8_t(src.items[1].lo));
+    set_verilated_bits(dst, 2544, 3, src.mid);
+    set_verilated_bits(dst, 2552, 16, uint16_t(src.halfs[0]));
+    set_verilated_bits(dst, 2568, 8, (uint8_t(src.choices[0].s.value) << 3) | uint8_t(src.choices[0].s.tag));
+    set_verilated_bits(dst, 2576, 8, (uint8_t(src.choices[1].s.value) << 3) | uint8_t(src.choices[1].s.tag));
+    set_verilated_bits(dst, 2584, 8, (uint8_t(src.bus_data.values[0].hi) << 4) | uint8_t(src.bus_data.values[0].lo));
+    set_verilated_bits(dst, 2592, 8, (uint8_t(src.bus_data.values[1].hi) << 4) | uint8_t(src.bus_data.values[1].lo));
+    set_verilated_bits(dst, 2600, 5, src.tail);
 }
 
 template<typename VerilatedPayload>
 static ArrayPayload read_verilated_payload(const VerilatedPayload& src)
 {
     ArrayPayload ret{};
-    ret.prefix = src.__PVT__prefix;
-    ret.bytes[0] = u8(src.__PVT__bytes);
-    ret.bytes[1] = u8(src.__PVT__bytes >> 8);
-    ret.bytes[2] = u8(src.__PVT__bytes >> 16);
-    ret.items[0].lo = src.__PVT__items[0] & 0xf;
-    ret.items[0].hi = (src.__PVT__items[0] >> 4) & 0xf;
-    ret.items[1].lo = src.__PVT__items[1] & 0xf;
-    ret.items[1].hi = (src.__PVT__items[1] >> 4) & 0xf;
-    ret.mid = src.__PVT__mid;
-    ret.halfs[0] = u16(src.__PVT__halfs);
-    ret.choices[0].s.tag = src.__PVT__choices[0] & 0x7;
-    ret.choices[0].s.value = (src.__PVT__choices[0] >> 3) & 0x1f;
-    ret.choices[1].s.tag = src.__PVT__choices[1] & 0x7;
-    ret.choices[1].s.value = (src.__PVT__choices[1] >> 3) & 0x1f;
-    ret.bus_data.values[0].lo = src.__PVT__bus_data & 0xf;
-    ret.bus_data.values[0].hi = (src.__PVT__bus_data >> 4) & 0xf;
-    ret.bus_data.values[1].lo = (src.__PVT__bus_data >> 8) & 0xf;
-    ret.bus_data.values[1].hi = (src.__PVT__bus_data >> 12) & 0xf;
-    ret.tail = src.__PVT__tail;
+    ret.prefix = get_verilated_bits(src, 0, 4);
+    ret.bytes[0] = u8(get_verilated_bits(src, 8, 8));
+    ret.bytes[1] = u8(get_verilated_bits(src, 16, 8));
+    ret.bytes[2] = u8(get_verilated_bits(src, 24, 8));
+    uint32_t item0 = get_verilated_bits(src, 1280, 8);
+    uint32_t item1 = get_verilated_bits(src, 1288, 8);
+    ret.items[0].lo = item0 & 0xf;
+    ret.items[0].hi = (item0 >> 4) & 0xf;
+    ret.items[1].lo = item1 & 0xf;
+    ret.items[1].hi = (item1 >> 4) & 0xf;
+    ret.mid = get_verilated_bits(src, 2544, 3);
+    ret.halfs[0] = u16(get_verilated_bits(src, 2552, 16));
+    uint32_t choice0 = get_verilated_bits(src, 2568, 8);
+    uint32_t choice1 = get_verilated_bits(src, 2576, 8);
+    ret.choices[0].s.tag = choice0 & 0x7;
+    ret.choices[0].s.value = (choice0 >> 3) & 0x1f;
+    ret.choices[1].s.tag = choice1 & 0x7;
+    ret.choices[1].s.value = (choice1 >> 3) & 0x1f;
+    uint32_t bus0 = get_verilated_bits(src, 2584, 8);
+    uint32_t bus1 = get_verilated_bits(src, 2592, 8);
+    ret.bus_data.values[0].lo = bus0 & 0xf;
+    ret.bus_data.values[0].hi = (bus0 >> 4) & 0xf;
+    ret.bus_data.values[1].lo = bus1 & 0xf;
+    ret.bus_data.values[1].hi = (bus1 >> 4) & 0xf;
+    ret.tail = get_verilated_bits(src, 2600, 5);
     return ret;
 }
 #endif

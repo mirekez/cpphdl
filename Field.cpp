@@ -14,16 +14,6 @@ Field* currField;
 namespace
 {
 
-bool isStructOrUnionType(const Expr& expr)
-{
-    if (expr.type != Expr::EXPR_TYPE) {
-        return false;
-    }
-    return std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](const auto& st) {
-        return st.name == expr.value;
-    }) != currProject->structs.end();
-}
-
 std::string dimToString(Expr dim)
 {
     dim.flags = Expr::FLAG_SPECVAL;
@@ -73,36 +63,16 @@ bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& 
     shape.base.indent = field.indent;
     shape.base.flags |= field.expr.flags;
 
-    auto printUnpackedDims = [&](const std::vector<Expr>& dims) {
-        for (const auto& dim : dims) {
-            out << "[" << dimToString(dim) << "]";
-        }
-    };
     auto appendPackedDims = [](std::string& packedDims, const std::vector<Expr>& dims) {
         for (const auto& dim : dims) {
             packedDims += "[" + dimToString(dim) + "-1:0]";
         }
     };
 
-    if (currStruct && currStruct->type == Struct::STRUCT_UNION) {
-        std::string packedDims;
-        appendPackedDims(packedDims, shape.unpackedDims);
-        appendPackedDims(packedDims, shape.cpphdlDims);
-        out << shape.base.str("", packedDims) << " " << field.name << nameSuffix << ";\n";
-    } else
-
-    if (isStructOrUnionType(shape.base)) {
-        out << shape.base.str() << " " << field.name << nameSuffix;
-        printUnpackedDims(shape.unpackedDims);
-        printUnpackedDims(shape.cpphdlDims);
-        out << ";\n";
-    } else {
-        std::string packedDims;
-        appendPackedDims(packedDims, shape.cpphdlDims);
-        out << shape.base.str("", packedDims) << " " << field.name << nameSuffix;
-        printUnpackedDims(shape.unpackedDims);
-        out << ";\n";
-    }
+    std::string packedDims;
+    appendPackedDims(packedDims, shape.unpackedDims);
+    appendPackedDims(packedDims, shape.cpphdlDims);
+    out << shape.base.str("", packedDims) << " " << field.name << nameSuffix << ";\n";
 
     field.expr.declSize = shape.base.declSize;
     for (const auto& dim : shape.cpphdlDims) {
