@@ -89,6 +89,7 @@ public:
         cache.stall_in = __VAR(stall);
         cache.flush_in = __VAR(flush);
         cache.invalidate_in = __EXPR(false);
+        cache.cache_disable_in = __EXPR(false);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();
@@ -157,6 +158,7 @@ public:
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.invalidate_in = false;
+        cache.cache_disable_in = false;
         cache.debugen_in = false;
         cache.clk = 1;
         cache.reset = reset;
@@ -493,6 +495,7 @@ public:
         cache.stall_in = __EXPR(false);
         cache.flush_in = __EXPR(false);
         cache.invalidate_in = __EXPR(false);
+        cache.cache_disable_in = __EXPR(false);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();

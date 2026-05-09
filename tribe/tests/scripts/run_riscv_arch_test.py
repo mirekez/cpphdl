@@ -135,8 +135,14 @@ def main(argv: list[str]) -> int:
     env.setdefault("UV_CACHE_DIR", str(work / "uv-cache"))
     env.setdefault("XDG_DATA_HOME", str(work / "xdg-data"))
     env.setdefault("XDG_CACHE_HOME", str(work / "xdg-cache"))
+    env.setdefault("MISE_DATA_DIR", str(work / "mise-data"))
+    env.setdefault("MISE_CACHE_DIR", str(work / "mise-cache"))
+    env.setdefault("MISE_CONFIG_DIR", str(work / "mise-config"))
+    env.setdefault("MISE_STATE_DIR", str(work / "mise-state"))
     pathlib.Path(env["XDG_DATA_HOME"]).mkdir(parents=True, exist_ok=True)
     pathlib.Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+    for key in ("MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_CONFIG_DIR", "MISE_STATE_DIR"):
+        pathlib.Path(env[key]).mkdir(parents=True, exist_ok=True)
     prewarm_udb_z3_cache(env)
 
     if shutil.which("make", path=env["PATH"]) is None:
@@ -250,7 +256,9 @@ def main(argv: list[str]) -> int:
     offset = os.environ.get("TRIBE_ARCH_TEST_OFFSET", "0x1000")
     addr_mask = int(os.environ.get("TRIBE_ARCH_TEST_ADDR_MASK", "0xffffffff"), 0)
     start_mem_addr = os.environ.get("TRIBE_ARCH_TEST_START_MEM_ADDR", "0x80000000")
-    ram_size = os.environ.get("TRIBE_ARCH_TEST_RAM_SIZE", "131072")
+    # --ram-size is expressed in 32-bit words by Tribe. The default memory map
+    # reserves the top 64 KiB of MAX_RAM_SIZE for MMIO, leaving 448 KiB RAM.
+    ram_size = os.environ.get("TRIBE_ARCH_TEST_RAM_SIZE", "114688")
     failed: list[str] = []
     for elf in elfs:
         print(f"== {elf.relative_to(work)} ==")

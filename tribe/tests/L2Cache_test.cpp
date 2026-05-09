@@ -104,6 +104,10 @@ public:
         l2.d_write_mask_in = __VAR(wmask);
         l2.memory_base_in = __EXPR((uint32_t)0);
         l2.memory_size_in = __EXPR((uint32_t)0xffffffffu);
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            l2.mem_region_size_in[i] = __EXPR((uint32_t)0x40000000u);
+            l2.mem_region_uncached_in[i] = __EXPR(false);
+        }
         l2.debugen_in = false;
         l2.__inst_name = "l2";
         l2._assign();
@@ -143,6 +147,10 @@ public:
         l2.d_write_mask_in = wmask;
         l2.memory_base_in = 0;
         l2.memory_size_in = 0xffffffffu;
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            l2.mem_region_size_in[i] = 0x40000000u;
+            l2.mem_region_uncached_in[i] = false;
+        }
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM_VERILATOR(l2, ram[i].axi_in, i);
         }

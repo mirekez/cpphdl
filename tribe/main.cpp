@@ -24,11 +24,18 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
 #include "CSR.h"
 #include "BranchPredictor.h"
 #include "Axi4.h"
+#include "Axi4RegionMux.h"
+#include "devices/IOUART.h"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
 static constexpr size_t DEFAULT_RAM_SIZE = 32768;
 static constexpr size_t MAX_RAM_SIZE = 524288;
+static constexpr size_t TRIBE_MEM_REGION0_SIZE = 256 * 1024;
+static constexpr size_t TRIBE_MEM_REGION1_SIZE = 128 * 1024;
+static constexpr size_t TRIBE_MEM_REGION2_SIZE = 64 * 1024;
+static constexpr size_t TRIBE_IO_REGION_SIZE = MAX_RAM_SIZE - TRIBE_MEM_REGION0_SIZE - TRIBE_MEM_REGION1_SIZE - TRIBE_MEM_REGION2_SIZE;
+static constexpr size_t TRIBE_RAM_BYTES = TRIBE_MEM_REGION0_SIZE + TRIBE_MEM_REGION1_SIZE + TRIBE_MEM_REGION2_SIZE;
 static constexpr size_t L1_CACHE_SIZE = 1024;
 static constexpr size_t L2_CACHE_SIZE = 8192;
 static constexpr size_t L2_CACHE_ADDR_BITS = cpphdl::clog2(MAX_RAM_SIZE);
@@ -73,6 +80,7 @@ public:
     __PORT(uint32_t)  reset_pc_in;
     __PORT(uint32_t)  memory_base_in;
     __PORT(uint32_t)  memory_size_in;
+    __PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
 
     Axi4If<L2_CACHE_ADDR_BITS, 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
@@ -149,6 +157,11 @@ public:
         dcache.stall_in = __EXPR(branch_stall_comb_func());
         dcache.flush_in = __EXPR(false);
         dcache.invalidate_in = __EXPR(false);
+        dcache.cache_disable_in = __EXPR(
+            (exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out()) >=
+                memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
+            (exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out()) <
+                memory_base_in() + memory_size_in());
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
@@ -175,6 +188,7 @@ public:
         icache.stall_in = __EXPR(memory_wait_comb_func() || stall_comb_func());
         icache.flush_in = __EXPR(branch_mispredict_comb_func() && !memory_wait_comb_func());
         icache.invalidate_in = __VAR(icache_invalidate_comb_func());
+        icache.cache_disable_in = __EXPR(false);
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
@@ -191,6 +205,13 @@ public:
         l2cache.d_write_mask_in = dcache.mem_write_mask_out;
         l2cache.memory_base_in = memory_base_in;
         l2cache.memory_size_in = memory_size_in;
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            l2cache.mem_region_size_in[i] = mem_region_size_in[i];
+        }
+        l2cache.mem_region_uncached_in[0] = __EXPR(false);
+        l2cache.mem_region_uncached_in[1] = __EXPR(false);
+        l2cache.mem_region_uncached_in[2] = __EXPR(false);
+        l2cache.mem_region_uncached_in[3] = __EXPR(true);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             l2cache.axi_out[i].awready_out = __EXPR_I(axi_out[i].awready_out());
             l2cache.axi_out[i].wready_out = __EXPR_I(axi_out[i].wready_out());
@@ -722,8 +743,14 @@ static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
 
 class TestTribe : public Module
 {
-    static constexpr size_t AXI_RAM_DEPTH_PER_PORT = (MAX_RAM_SIZE / (TRIBE_L2_AXI_WIDTH/8)) / L2_MEM_PORTS;
-    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM_DEPTH_PER_PORT> mem[L2_MEM_PORTS];
+    static constexpr size_t AXI_RAM0_DEPTH = TRIBE_MEM_REGION0_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    static constexpr size_t AXI_RAM1_DEPTH = TRIBE_MEM_REGION1_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    static constexpr size_t AXI_RAM2_DEPTH = TRIBE_MEM_REGION2_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
+    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
+    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
+    Axi4RegionMux<1,L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH> iospace;
+    IOUART<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH> uart;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -844,46 +871,81 @@ public:
 
     void _assign()
     {
-        size_t i;
+#ifdef VERILATOR
+        size_t i = 0;
+#endif
 	#ifndef VERILATOR
         tribe.debugen_in = debugen_in;
         tribe.reset_pc_in = __EXPR(reset_pc);
         tribe.memory_base_in = __EXPR(start_mem_addr);
-        tribe.memory_size_in = __EXPR((uint32_t)(ram_size * 4));
+        tribe.memory_size_in = __EXPR((uint32_t)MAX_RAM_SIZE);
+        tribe.mem_region_size_in[0] = __EXPR((uint32_t)TRIBE_MEM_REGION0_SIZE);
+        tribe.mem_region_size_in[1] = __EXPR((uint32_t)TRIBE_MEM_REGION1_SIZE);
+        tribe.mem_region_size_in[2] = __EXPR((uint32_t)TRIBE_MEM_REGION2_SIZE);
+        tribe.mem_region_size_in[3] = __EXPR((uint32_t)TRIBE_IO_REGION_SIZE);
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
 
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_DRIVER_FROM(mem[i].axi_in, tribe.axi_out[i]);
-            mem[i].debugen_in = debugen_in;
-            mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
-            mem[i]._assign();
-        }
+        AXI4_DRIVER_FROM(mem0.axi_in, tribe.axi_out[0]);
+        AXI4_DRIVER_FROM(mem1.axi_in, tribe.axi_out[1]);
+        AXI4_DRIVER_FROM(mem2.axi_in, tribe.axi_out[2]);
+        AXI4_DRIVER_FROM(iospace.slave_in, tribe.axi_out[3]);
+        mem0.debugen_in = debugen_in;
+        mem1.debugen_in = debugen_in;
+        mem2.debugen_in = debugen_in;
+        mem0.__inst_name = __inst_name + "/mem0";
+        mem1.__inst_name = __inst_name + "/mem1";
+        mem2.__inst_name = __inst_name + "/mem2";
+        iospace.region_base_in[0] = __EXPR((uint32_t)0);
+        iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
+        iospace.__inst_name = __inst_name + "/iospace";
+        iospace._assign();
+        AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        uart.__inst_name = __inst_name + "/uart";
+        mem0._assign();
+        mem1._assign();
+        mem2._assign();
+        uart._assign();
 
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_RESPONDER_FROM(tribe.axi_out[i], mem[i].axi_in);
-        }
+        AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[2], mem2.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
         tribe.memory_base_in = start_mem_addr;
-        tribe.memory_size_in = ram_size * 4;
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_DRIVER_FROM_VERILATOR(
-                mem[i].axi_in,
-                tribe,
-                i,
-                u<L2_CACHE_ADDR_BITS>,
-                verilator_wide_to_logic);
-            mem[i].debugen_in = debugen_in;
-            mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
-            mem[i]._assign();
-        }
+        tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
+        tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
+        tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
+        tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+        AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(mem2.axi_in, tribe, 2, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(iospace.slave_in, tribe, 3, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
+        mem0.debugen_in = debugen_in;
+        mem1.debugen_in = debugen_in;
+        mem2.debugen_in = debugen_in;
+        mem0.__inst_name = __inst_name + "/mem0";
+        mem1.__inst_name = __inst_name + "/mem1";
+        mem2.__inst_name = __inst_name + "/mem2";
+        iospace.region_base_in[0] = __EXPR((uint32_t)0);
+        iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
+        iospace.__inst_name = __inst_name + "/iospace";
+        iospace._assign();
+        AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        uart.__inst_name = __inst_name + "/uart";
+        mem0._assign();
+        mem1._assign();
+        mem2._assign();
+        uart._assign();
+        AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
 #endif
     }
 
     void _work(bool reset)
     {
-        size_t i;
 #ifndef VERILATOR
         tribe._work(reset);
 #else
@@ -891,7 +953,11 @@ public:
         tribe.debugen_in    = debugen_in;
         tribe.reset_pc_in = reset_pc;
         tribe.memory_base_in = start_mem_addr;
-        tribe.memory_size_in = ram_size * 4;
+        tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
+        tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
+        tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
+        tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
 
 //        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
 
@@ -903,13 +969,16 @@ public:
         tribe.clk = 1;
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_RESPONDER_FROM_VERILATOR(tribe, mem[i].axi_in, i);
-        }
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem2.axi_in, 2);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
 #endif
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            mem[i]._work(reset);
-        }
+        mem0._work(reset);
+        mem1._work(reset);
+        mem2._work(reset);
+        iospace._work(reset);
+        uart._work(reset);
 
         if (reset) {
             error = false;
@@ -919,13 +988,14 @@ public:
 
     void _strobe()
     {
-        size_t i;
 #ifndef VERILATOR
         tribe._strobe();
 #endif
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            mem[i]._strobe();  // we use this module in Verilator test
-        }
+        mem0._strobe();  // we use these modules in Verilator test
+        mem1._strobe();
+        mem2._strobe();
+        iospace._strobe();
+        uart._strobe();
     }
 
     void _work_neg(bool reset)
@@ -1047,8 +1117,8 @@ public:
         start_mem_addr = mem_base;
         reset_pc = mem_base;
         ram_size = ram_words;
-        if (ram_size == 0 || ram_size > MAX_RAM_SIZE/4) {
-            std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, MAX_RAM_SIZE/4);
+        if (ram_size == 0 || ram_size > TRIBE_RAM_BYTES/4) {
+            std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, TRIBE_RAM_BYTES/4);
             return false;
         }
 
@@ -1081,9 +1151,15 @@ public:
                     std::print("{:04x}: {:08x}\n", addr, ram[addr]);
                 }
             }
-            size_t port = line_idx / AXI_RAM_DEPTH_PER_PORT;
-            size_t local_line_idx = line_idx % AXI_RAM_DEPTH_PER_PORT;
-            mem[port].ram.buffer[local_line_idx] = line;
+            if (line_idx < AXI_RAM0_DEPTH) {
+                mem0.ram.buffer[line_idx] = line;
+            }
+            else if (line_idx < AXI_RAM0_DEPTH + AXI_RAM1_DEPTH) {
+                mem1.ram.buffer[line_idx - AXI_RAM0_DEPTH] = line;
+            }
+            else {
+                mem2.ram.buffer[line_idx - AXI_RAM0_DEPTH - AXI_RAM1_DEPTH] = line;
+            }
         }
         fclose(fbin);
         ///////////////////////////////////////
@@ -1104,6 +1180,13 @@ public:
             ++sys_clock;
             perf_sample();
             _work(0);
+            if (uart.uart_valid_out()) {
+                FILE* uart_out = fopen("out.txt", "ab");
+                if (uart_out) {
+                    fputc(uart.uart_data_out(), uart_out);
+                    fclose(uart_out);
+                }
+            }
             if (tohost_addr && PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_addr_out) == tohost_addr &&
                 PORT_VALUE(tribe.dmem_write_mask_out) && PORT_VALUE(tribe.dmem_write_data_out)) {
                 tohost_value = PORT_VALUE(tribe.dmem_write_data_out);
@@ -1226,7 +1309,7 @@ int main (int argc, char** argv)
 	                  "ExecuteMem",
 	                  "CSR",
 	                  "Writeback",
-	                  "WritebackMem"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
+	                  "WritebackMem"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache", "../../../../tribe/devices"});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok

@@ -15,6 +15,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         "common"
         "spec"
         "cache"
+        "devices"
         "../examples/axi"
     )
 
@@ -28,7 +29,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.bin ${CMAKE_BINARY_DIR}/${output_subdir}/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.log ${CMAKE_BINARY_DIR}/${output_subdir}/"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}

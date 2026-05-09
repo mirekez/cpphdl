@@ -58,6 +58,7 @@ public:
     __PORT(bool)      stall_in;
     __PORT(bool)      flush_in;
     __PORT(bool)      invalidate_in;
+    __PORT(bool)      cache_disable_in;
 
     __PORT(bool)      mem_write_out = __EXPR(write_in());
     __PORT(uint32_t)  mem_write_data_out = __EXPR(write_data_in());
@@ -138,7 +139,7 @@ private:
 
     // Whether the incoming address can be served from this cache line format.
     __LAZY_COMB(input_cacheable_comb, bool)
-        input_cacheable_comb = !(addr_in() & 0x1);
+        input_cacheable_comb = !cache_disable_in() && !(addr_in() & 0x1);
         if ((addr_in() & 0x3u) != 0 &&
             (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
             // A 32-bit read starting at the final line word needs bytes from the next line.
