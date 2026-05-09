@@ -679,7 +679,7 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
+#if !defined(SYNTHESIS)
 
 #include <chrono>
 #include <iostream>
@@ -1098,7 +1098,7 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1131,7 +1131,7 @@ public:
         }
         size_t read_bytes = 0;
         uint32_t elf_entry = 0;
-        if (load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry)) {
+        if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry)) {
             reset_pc = elf_entry;
             std::print("Reading ELF program into memory (size: {})\n", read_bytes);
         }
@@ -1225,12 +1225,39 @@ public:
     }
 };
 
+static std::filesystem::path absolute_from(const std::filesystem::path& base, const std::string& path)
+{
+    std::filesystem::path p(path);
+    return p.is_absolute() ? p : std::filesystem::absolute(base / p);
+}
+
+static void use_executable_workdir_if_needed(const char* argv0)
+{
+    namespace fs = std::filesystem;
+
+    if (fs::exists("generated/Tribe.sv") || fs::exists("rv32i.elf") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
+        return;
+    }
+
+    fs::path exe = fs::absolute(argv0);
+    fs::path exe_dir = exe.parent_path();
+    if (!exe_dir.empty() && (fs::exists(exe_dir / "generated" / "Tribe.sv") || fs::exists(exe_dir / "rv32i.elf") || fs::exists(exe_dir / "uart.elf") || fs::exists(exe_dir / "rv32i.bin"))) {
+        fs::current_path(exe_dir);
+    }
+}
+
+#if !defined(NO_MAINFILE)
+
 int main (int argc, char** argv)
 {
+    const std::filesystem::path original_cwd = std::filesystem::current_path();
     bool debug = false;
     bool noveril = false;
-    std::string program = "rv32i.bin";
+    std::string program = "rv32i.elf";
     std::string expected_log = "rv32i.log";
+    bool program_arg = false;
+    bool log_arg = false;
+    bool raw_program = false;
     size_t start_offset = 0x37c;
     int max_cycles = 2000000;
     uint32_t tohost = 0;
@@ -1246,10 +1273,21 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--program") == 0 && i + 1 < argc) {
             program = argv[++i];
+            program_arg = true;
+            raw_program = false;
             continue;
         }
         if (strcmp(argv[i], "--log") == 0 && i + 1 < argc) {
             expected_log = argv[++i];
+            log_arg = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--raw") == 0) {
+            raw_program = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--elf") == 0) {
+            raw_program = false;
             continue;
         }
         if (strcmp(argv[i], "--offset") == 0 && i + 1 < argc) {
@@ -1276,6 +1314,14 @@ int main (int argc, char** argv)
             only = atoi(argv[argc-1]);
         }
     }
+
+    if (program_arg) {
+        program = absolute_from(original_cwd, program).string();
+    }
+    if (log_arg) {
+        expected_log = absolute_from(original_cwd, expected_log).string();
+    }
+    use_executable_workdir_if_needed(argv[0]);
 
     bool ok = true;
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
@@ -1322,13 +1368,15 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program))
     );
 }
 
+#endif  // !NO_MAINFILE
+
 /////////////////////////////////////////////////////////////////////////
 
-#endif  // !SYNTHESIS && !NO_MAINFILE
+#endif  // !SYNTHESIS
 
 #ifdef MAIN_FILE_INCLUDED
 #undef NO_MAINFILE
