@@ -6,10 +6,59 @@
 #include "Struct.h"
 #include "Enum.h"
 
+#include <unordered_set>
+
 using namespace cpphdl;
 
 Project prj;
 Project* currProject = &prj;
+
+namespace
+{
+
+const Struct* findStructByName(const std::string& name)
+{
+    for (const auto& st : currProject->structs) {
+        if (st.name == name) {
+            return &st;
+        }
+    }
+    return nullptr;
+}
+
+void collectStructImports(const Struct& st, std::vector<std::string>& imports, std::unordered_set<std::string>& seen)
+{
+    auto addImport = [&](const std::string& name) {
+        if (!seen.insert(name).second) {
+            return;
+        }
+
+        imports.push_back(name);
+        if (const Struct* imported = findStructByName(name)) {
+            collectStructImports(*imported, imports, seen);
+        }
+    };
+
+    for (const auto& imp : st.imports) {
+        addImport(imp.name);
+    }
+
+    for (const auto& field : st.fields) {
+        if (field.definition.type != Struct::STRUCT_EMPTY) {
+            collectStructImports(field.definition, imports, seen);
+        }
+    }
+}
+
+}
+
+std::vector<std::string> cpphdl::collectStructPackageImports(const Struct& st)
+{
+    std::vector<std::string> imports;
+    std::unordered_set<std::string> seen;
+    collectStructImports(st, imports, seen);
+    return imports;
+}
 
 void Project::generate(const std::string& outDir)
 {
@@ -63,8 +112,8 @@ void Project::generate(const std::string& outDir)
         }
         out << "package " << fname << "_pkg;\n";
 
-        for (auto& imp : str.imports) {
-            out << "import " << imp.name << "_pkg::*;\n";
+        for (const auto& imp : collectStructPackageImports(str)) {
+            out << "import " << imp << "_pkg::*;\n";
         }
 
         out << "\n";

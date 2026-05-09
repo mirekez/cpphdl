@@ -32,6 +32,17 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
             importsSet->insert(name);
             out << "import " << name << "_pkg::*;\n";
         }
+        auto st = std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](auto& s) {
+            return s.name == name;
+        });
+        if (st != currProject->structs.end()) {
+            for (const auto& subImport : collectStructPackageImports(*st)) {
+                if (importsSet->find(subImport) == importsSet->end()) {
+                    importsSet->insert(subImport);
+                    out << "import " << subImport << "_pkg::*;\n";
+                }
+            }
+        }
     }
 }
 

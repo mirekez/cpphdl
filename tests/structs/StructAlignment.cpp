@@ -169,8 +169,10 @@ public:
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 #include "../../examples/tools.h"
 
 #ifdef VERILATOR
@@ -231,6 +233,65 @@ static void print_bytes(const char* name, const T& sample)
         std::print(" {:02x}", bytes[i]);
     }
     std::print("\n");
+}
+
+static std::filesystem::path generated_sv_path(const std::string& file)
+{
+    std::filesystem::path copied = std::filesystem::path("StructAlignment_1") / file;
+    std::filesystem::path generated = std::filesystem::path("generated") / file;
+    if (std::filesystem::exists(copied) && (!std::filesystem::exists(generated) ||
+            std::filesystem::last_write_time(copied) >= std::filesystem::last_write_time(generated))) {
+        return copied;
+    }
+    return generated;
+}
+
+static bool file_has_import(const std::filesystem::path& path, const std::string& package)
+{
+    std::ifstream in(path);
+    if (!in) {
+        std::print("\nERROR: can't open generated SystemVerilog file {}\n", path.string());
+        return false;
+    }
+
+    const std::string needle = "import " + package + "_pkg::*;";
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return text.find(needle) != std::string::npos;
+}
+
+static bool check_imports(const std::string& file, const std::vector<std::string>& packages)
+{
+    bool ok = true;
+    const auto path = generated_sv_path(file);
+    for (const auto& package : packages) {
+        if (!file_has_import(path, package)) {
+            std::print("\nERROR: {} does not import {}_pkg::*\n", path.string(), package);
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+static bool generated_sv_has_struct_package_imports()
+{
+    bool ok = true;
+    ok &= check_imports("OuterBits_pkg.sv", {"TinyBits", "MixedBits"});
+    ok &= check_imports("StructWithUnion_pkg.sv", {"InnerUnion"});
+    ok &= check_imports("UnionContainingStructContainingUnion_pkg.sv", {"StructWithUnion", "InnerUnion"});
+    ok &= check_imports("UnionWithStruct_pkg.sv", {"UnionStruct"});
+    ok &= check_imports("StructContainingUnionContainingStruct_pkg.sv", {"UnionWithStruct", "UnionStruct"});
+    ok &= check_imports("StructAlignment.sv", {
+        "TinyBits",
+        "MixedBits",
+        "OuterBits",
+        "InnerUnion",
+        "StructWithUnion",
+        "UnionContainingStructContainingUnion",
+        "UnionStruct",
+        "UnionWithStruct",
+        "StructContainingUnionContainingStruct"
+    });
+    return ok;
 }
 
 class TestStructAlignment : Module
@@ -429,6 +490,7 @@ int main(int argc, char** argv)
         ok = ok && std::system("StructAlignment_1/obj_dir/VStructAlignment") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
+    ok &= generated_sv_has_struct_package_imports();
 #else
     Verilated::commandArgs(argc, argv);
 #endif

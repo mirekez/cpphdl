@@ -24,6 +24,7 @@ struct Project
     Module* findModule(const std::string& name);
 };
 
+std::vector<std::string> collectStructPackageImports(const Struct& st);
 
 }
 
