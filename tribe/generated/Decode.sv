@@ -1,6 +1,7 @@
 `default_nettype none
 
 import Predef_pkg::*;
+import Zicsr_pkg::*;
 import Rv32im_pkg::*;
 import Rv32ic_pkg::*;
 import Rv32ic_rv16_pkg::*;
@@ -9,6 +10,8 @@ import Mem_pkg::*;
 import Alu_pkg::*;
 import Wb_pkg::*;
 import Br_pkg::*;
+import Sys_pkg::*;
+import Csr_pkg::*;
 import State_pkg::*;
 
 
@@ -224,6 +227,12 @@ module Decode (
                                             state_out.alu_op=Alu_pkg::ADD;
                                             state_out.wb_op=Wb_pkg::ALU;
                                         end
+                                        else begin
+                                            if ((_this._.r.opcode == 'hF) && (_this._.i.funct3 == 'h1)) begin
+                                                state_out.sys_op=Sys_pkg::FENCEI;
+                                                state_out.br_op=Br_pkg::JR;
+                                            end
+                                        end
                                     end
                                 end
                             end
@@ -267,7 +276,7 @@ module Decode (
             if (i.base.funct3 == 'h0) begin
                 state_out.rd=i.base.rd_p + 'h8;
                 state_out.rs1='h2;
-                state_out.imm=(((Rv32ic___bits(_this, 'hA, 'h7) <<< 'h6)) | ((Rv32ic___bits(_this, 'hC, 'hB) <<< 'h4))) | ((Rv32ic___bits(_this, 'h6, 'h5) <<< 'h2));
+                state_out.imm=((((Rv32ic___bits(_this, 'hA, 'h7) <<< 'h6)) | ((Rv32ic___bits(_this, 'hC, 'hB) <<< 'h4))) | ((Rv32ic___bit(_this, 'h5) <<< 'h3))) | ((Rv32ic___bit(_this, 'h6) <<< 'h2));
                 state_out.alu_op=Alu_pkg::ADD;
                 state_out.wb_op=Wb_pkg::ALU;
             end
@@ -320,13 +329,22 @@ module Decode (
                         end
                         else begin
                             if (i.base.funct3 == 'h3) begin
-                                state_out.rd='h2;
-                                state_out.rs1='h2;
-                                imm_tmp=((((((Rv32ic___bit(_this, 'hC) <<< 'h9)) | ((Rv32ic___bit(_this, 'h4) <<< 'h8))) | ((Rv32ic___bit(_this, 'h3) <<< 'h7))) | ((Rv32ic___bit(_this, 'h5) <<< 'h6))) | ((Rv32ic___bit(_this, 'h2) <<< 'h5))) | ((Rv32ic___bit(_this, 'h6) <<< 'h4));
-                                imm_tmp=((imm_tmp <<< 'h16)) >>> 'h16;
-                                state_out.imm=imm_tmp;
-                                state_out.alu_op=Alu_pkg::ADD;
-                                state_out.wb_op=Wb_pkg::ALU;
+                                if (i.avg.rs1 == 'h2) begin
+                                    state_out.rd='h2;
+                                    state_out.rs1='h2;
+                                    imm_tmp=((((((Rv32ic___bit(_this, 'hC) <<< 'h9)) | ((Rv32ic___bit(_this, 'h4) <<< 'h8))) | ((Rv32ic___bit(_this, 'h3) <<< 'h7))) | ((Rv32ic___bit(_this, 'h5) <<< 'h6))) | ((Rv32ic___bit(_this, 'h2) <<< 'h5))) | ((Rv32ic___bit(_this, 'h6) <<< 'h4));
+                                    state_out.imm=Rv32i___sext(_this, imm_tmp, 'hA);
+                                    state_out.alu_op=Alu_pkg::ADD;
+                                    state_out.wb_op=Wb_pkg::ALU;
+                                end
+                                else begin
+                                    state_out.rd=i.avg.rs1;
+                                    imm_tmp=((Rv32ic___bit(_this, 'hC) <<< 'h5)) | Rv32ic___bits(_this, 'h6, 'h2);
+                                    imm_tmp=((imm_tmp <<< 'h1A)) >>> 'hE;
+                                    state_out.imm=imm_tmp;
+                                    state_out.alu_op=Alu_pkg::PASS;
+                                    state_out.wb_op=Wb_pkg::ALU;
+                                end
                             end
                             else begin
                                 if (i.base.funct3 == 'h4) begin
@@ -509,9 +527,68 @@ module Decode (
     end
     endtask
 
-    always @(*) begin  // state_comb_func
-        Rv32im instr; instr = {instr_in};
-        Rv32im___decode(instr, state_comb);
+    task Zicsr___decode (
+        input Zicsr _this
+,       output State state_out
+    );
+    begin: Zicsr___decode
+        state_out = 0;
+        Rv32im___decode(_this, state_out);
+        if (((((_this._.raw & 'h3)) == 'h3) && (_this._.r.opcode == 'h73)) && (_this._.i.funct3 == 'h0)) begin
+            if (_this._.raw == 'h73) begin
+                state_out.sys_op=Sys_pkg::ECALL;
+                state_out.br_op=Br_pkg::JR;
+            end
+            else begin
+                if (_this._.raw == 'h30200073) begin
+                    state_out.sys_op=Sys_pkg::MRET;
+                    state_out.br_op=Br_pkg::JR;
+                end
+            end
+        end
+        if (((((_this._.raw & 'h3)) == 'h3) && (_this._.r.opcode == 'h73)) && (_this._.i.funct3 != 'h0)) begin
+            state_out.rd=_this._.i.rd;
+            state_out.funct3=_this._.i.funct3;
+            state_out.csr_addr=_this._.i.imm11_0;
+            state_out.csr_imm=_this._.i.rs1;
+            case (_this._.i.funct3)
+            'h1: begin
+                state_out.csr_op=Csr_pkg::CSRRW;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h2: begin
+                state_out.csr_op=Csr_pkg::CSRRS;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h3: begin
+                state_out.csr_op=Csr_pkg::CSRRC;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h5: begin
+                state_out.csr_op=Csr_pkg::CSRRWI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h6: begin
+                state_out.csr_op=Csr_pkg::CSRRSI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h7: begin
+                state_out.csr_op=Csr_pkg::CSRRCI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            default: begin
+            end
+            endcase
+        end
+    end
+    endtask
+
+    always_comb begin : state_comb_func  // state_comb_func
+        Zicsr instr; instr = {instr_in};
+        Zicsr___decode(instr, state_comb);
         if ((((instr._.raw & 'h3)) == 'h3) && (instr._.r.opcode == 'h17)) begin
             state_comb.rs1_val=pc_in;
         end
@@ -523,14 +600,17 @@ module Decode (
         if (state_comb.rs2) begin
             state_comb.rs2_val=regs_data1_in;
         end
+        disable state_comb_func;
     end
 
-    always @(*) begin  // rs1_out_comb_func
+    always_comb begin : rs1_out_comb_func  // rs1_out_comb_func
         rs1_out_comb = state_comb.rs1;
+        disable rs1_out_comb_func;
     end
 
-    always @(*) begin  // rs2_out_comb_func
+    always_comb begin : rs2_out_comb_func  // rs2_out_comb_func
         rs2_out_comb = state_comb.rs2;
+        disable rs2_out_comb_func;
     end
 
     task _work (input logic reset);

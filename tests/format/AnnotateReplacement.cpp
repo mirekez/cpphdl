@@ -42,6 +42,27 @@ public:
     void _assign() {}
 };
 
+class [[clang::annotate("CPPHDL_REPLACEMENT_SCRIPT=AnnotateReplacementScript.sh;")]]
+AnnotateReplacementScript : public Module
+{
+public:
+    __PORT(u<8>) value_in;
+    __PORT(u<8>) value_out = __VAR(value_comb_func());
+
+private:
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = value_in() ^ u<8>(0x3c);
+    }
+
+public:
+    void _work(bool reset) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
 /////////////////////////////////////////////////////////////////////////
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
@@ -49,6 +70,7 @@ public:
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -64,10 +86,9 @@ public:
 
 long sys_clock = -1;
 
-#ifdef VERILATOR
-static bool generated_sv_is_replacement()
+static bool generated_sv_is_replacement(const std::filesystem::path& sv_path,
+    const std::string& marker)
 {
-    const std::filesystem::path sv_path = "AnnotateReplacement_1/AnnotateReplacement.sv";
     std::ifstream in(sv_path);
     if (!in) {
         std::print("\nERROR: can't open generated SystemVerilog file {}\n", sv_path.string());
@@ -75,7 +96,7 @@ static bool generated_sv_is_replacement()
     }
 
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    bool has_marker = text.find("CPPHDL_ANNOTATE_REPLACEMENT_MARKER") != std::string::npos;
+    bool has_marker = text.find(marker) != std::string::npos;
     bool has_normal_import = text.find("import Predef_pkg::*;") != std::string::npos;
     bool has_cpphdl_regs_comment = text.find("// regs and combs") != std::string::npos;
 
@@ -86,20 +107,35 @@ static bool generated_sv_is_replacement()
     }
     return true;
 }
-#endif
 
+template <typename NativeDut>
 class TestAnnotateReplacement : Module
 {
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
-    AnnotateReplacement dut;
+    NativeDut dut;
 #endif
 
     u<8> value;
     bool error = false;
+    const char* label;
+    uint8_t mask;
+    std::filesystem::path generated_path;
+    std::string marker;
 
 public:
+    TestAnnotateReplacement(const char* label,
+        uint8_t mask,
+        std::filesystem::path generated_path,
+        std::string marker)
+        : label(label)
+        , mask(mask)
+        , generated_path(std::move(generated_path))
+        , marker(std::move(marker))
+    {
+    }
+
     void _assign()
     {
 #ifndef VERILATOR
@@ -144,22 +180,20 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestAnnotateReplacement...");
+        std::print("VERILATOR {}...", label);
 #else
-        std::print("CppHDL TestAnnotateReplacement...");
+        std::print("CppHDL {}...", label);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "annotate_replacement_test";
         _assign();
 
-#ifdef VERILATOR
-        error |= !generated_sv_is_replacement();
-#endif
+        error |= !generated_sv_is_replacement(generated_path, marker);
 
         for (uint32_t i = 0; i < 256 && !error; ++i) {
             value = u<8>(i);
             eval(false);
-            u<8> expected = u<8>(i ^ 0xa5);
+            u<8> expected = u<8>(i ^ mask);
             if (value_out() != expected) {
                 std::print("\nvalue ERROR at {}: got {}, expected {}\n", i, value_out(), expected);
                 error = true;
@@ -190,17 +224,47 @@ int main(int argc, char** argv)
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "AnnotateReplacement", {"Predef_pkg"}, {"../../../../include"}, 1);
+        setenv("CPPHDL_VERILATOR_CFLAGS", "-DCPPHDL_SCRIPT_REPLACEMENT_TOP", 1);
+        ok &= VerilatorCompile(__FILE__, "AnnotateReplacementScript", {"Predef_pkg"}, {"../../../../include"}, 1);
+        unsetenv("CPPHDL_VERILATOR_CFLAGS");
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok && std::system("AnnotateReplacement_1/obj_dir/VAnnotateReplacement") == 0;
+        ok = ok && std::system("AnnotateReplacementScript_1/obj_dir/VAnnotateReplacementScript") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !(ok && TestAnnotateReplacement().run());
+#ifdef VERILATOR
+#ifdef CPPHDL_SCRIPT_REPLACEMENT_TOP
+    return !(ok && TestAnnotateReplacement<AnnotateReplacementScript>(
+        "TestAnnotateReplacementScript",
+        0x3c,
+        "AnnotateReplacementScript_1/AnnotateReplacementScript.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER").run());
+#else
+    return !(ok && TestAnnotateReplacement<AnnotateReplacement>(
+        "TestAnnotateReplacement",
+        0xa5,
+        "AnnotateReplacement_1/AnnotateReplacement.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER").run());
+#endif
+#else
+    ok = ok && TestAnnotateReplacement<AnnotateReplacement>(
+        "TestAnnotateReplacement",
+        0xa5,
+        "generated/AnnotateReplacement.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER").run();
+    ok = ok && TestAnnotateReplacement<AnnotateReplacementScript>(
+        "TestAnnotateReplacementScript",
+        0x3c,
+        "generated/AnnotateReplacementScript.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER").run();
+    return !ok;
+#endif
 }
 
 /////////////////////////////////////////////////////////////////////////

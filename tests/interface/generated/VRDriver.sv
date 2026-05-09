@@ -33,8 +33,9 @@ module VRDriver #(
     logic[DATAWIDTH-1:0] data_reg_tmp;
 
 
-    always @(*) begin  // done_comb_func
+    always_comb begin : done_comb_func  // done_comb_func
         done_comb=sent_reg>='h100;
+        disable done_comb_func;
     end
 
     generate  // _assign

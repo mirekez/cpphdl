@@ -10,7 +10,7 @@ using namespace cpphdl;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
-class TaskReturn : public Module
+class CodeReturn : public Module
 {
 public:
     __PORT(bool)  early_in;
@@ -121,7 +121,7 @@ static uint32_t expected_function_value(bool early, uint32_t first, uint32_t sec
 #ifdef VERILATOR
 static bool generated_sv_has_comb_return_disable()
 {
-    const std::filesystem::path sv_path = "TaskReturn_1/TaskReturn.sv";
+    const std::filesystem::path sv_path = "CodeReturn_1/CodeReturn.sv";
     std::ifstream in(sv_path);
     if (!in) {
         std::print("\nERROR: can't open generated SystemVerilog file {}\n", sv_path.string());
@@ -147,12 +147,12 @@ static bool generated_sv_has_comb_return_disable()
 }
 #endif
 
-class TestTaskReturn : Module
+class TestCodeReturn : Module
 {
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
-    TaskReturn dut;
+    CodeReturn dut;
 #endif
 
     bool early = false;
@@ -257,9 +257,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestTaskReturn...");
+        std::print("VERILATOR TestCodeReturn...");
 #else
-        std::print("CppHDL TestTaskReturn...");
+        std::print("CppHDL TestCodeReturn...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "task_return_test";
@@ -295,18 +295,18 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "TaskReturn", {"Predef_pkg"}, {"../../../../include"}, 1);
+        ok &= VerilatorCompile(__FILE__, "CodeReturn", {"Predef_pkg"}, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("TaskReturn_1/obj_dir/VTaskReturn") == 0;
+        ok = ok && std::system("CodeReturn_1/obj_dir/VCodeReturn") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !(ok && TestTaskReturn().run());
+    return !(ok && TestCodeReturn().run());
 }
 
 /////////////////////////////////////////////////////////////////////////

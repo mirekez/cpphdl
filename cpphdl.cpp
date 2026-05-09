@@ -18,6 +18,10 @@
 #include "Expr.h"
 #include "Struct.h"
 
+#include <array>
+#include <cstdio>
+#include <filesystem>
+#include <iostream>
 #include <map>
 #include <string_view>
 
@@ -26,20 +30,90 @@ using namespace clang;
 namespace
 {
 
-std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD)
+std::string stripAnnotationValue(std::string text, std::string_view prefix)
 {
-    constexpr std::string_view prefix = "CPPHDL_REPLACEMENT=";
+    text.erase(0, prefix.size());
+    size_t end = text.find_last_not_of(" \t\r\n");
+    if (end != std::string::npos && text[end] == ';') {
+        text.erase(end);
+    }
+    return text;
+}
+
+std::string shellQuote(const std::filesystem::path& path)
+{
+    std::string quoted = "'";
+    for (char ch : path.string()) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+std::filesystem::path resolveScriptPath(const std::string& script, const CXXRecordDecl* RD, const ASTContext& ctx)
+{
+    namespace fs = std::filesystem;
+
+    fs::path path(script);
+    if (path.is_absolute() || fs::exists(path)) {
+        return path;
+    }
+
+    const SourceManager& sm = ctx.getSourceManager();
+    std::string source = sm.getFilename(sm.getSpellingLoc(RD->getLocation())).str();
+    if (!source.empty()) {
+        fs::path from_source = fs::path(source).parent_path() / path;
+        if (fs::exists(from_source)) {
+            return from_source;
+        }
+    }
+
+    return path;
+}
+
+std::string readReplacementFromScript(const std::filesystem::path& script)
+{
+    std::string command = shellQuote(script);
+    std::array<char, 4096> buffer{};
+    std::string result;
+
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        std::cerr << "ERROR: failed to run CPPHDL_REPLACEMENT_SCRIPT '" << script.string() << "'\n";
+        return {};
+    }
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
+        result += buffer.data();
+    }
+
+    int status = pclose(pipe);
+    if (status != 0) {
+        std::cerr << "ERROR: CPPHDL_REPLACEMENT_SCRIPT '" << script.string() << "' failed with status " << status << "\n";
+        return {};
+    }
+
+    return result;
+}
+
+std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTContext& ctx)
+{
+    constexpr std::string_view replacement_prefix = "CPPHDL_REPLACEMENT=";
+    constexpr std::string_view script_prefix = "CPPHDL_REPLACEMENT_SCRIPT=";
 
     for (const Attr* attr : RD->attrs()) {
         if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
             std::string text = ann->getAnnotation().str();
-            if (text.rfind(prefix, 0) == 0) {
-                text.erase(0, prefix.size());
-                size_t end = text.find_last_not_of(" \t\r\n");
-                if (end != std::string::npos && text[end] == ';') {
-                    text.erase(end);
-                }
-                return text;
+            if (text.rfind(replacement_prefix, 0) == 0) {
+                return stripAnnotationValue(std::move(text), replacement_prefix);
+            }
+            if (text.rfind(script_prefix, 0) == 0) {
+                std::string script = stripAnnotationValue(std::move(text), script_prefix);
+                return readReplacementFromScript(resolveScriptPath(script, RD, ctx));
             }
         }
     }
@@ -790,7 +864,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
         mod->parameters = std::move(params);
         mod->origName = RD->getQualifiedNameAsString();
-        mod->replacement = cpphdlReplacementFromAnnotations(RD);
+        mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
 
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod->name << ")"); on_return ret_debug([](){ --debugIndent; });
 

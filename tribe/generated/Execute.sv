@@ -11,12 +11,6 @@ module Execute (
     input wire clk
 ,   input wire reset
 ,   input State state_in
-,   output wire mem_write_out
-,   output wire[31:0] mem_write_addr_out
-,   output wire[31:0] mem_write_data_out
-,   output wire[7:0] mem_write_mask_out
-,   output wire mem_read_out
-,   output wire[31:0] mem_read_addr_out
 ,   output wire[31:0] alu_result_out
 ,   output wire[31:0] debug_alu_a_out
 ,   output wire[31:0] debug_alu_b_out
@@ -26,11 +20,6 @@ module Execute (
 
 
     // regs and combs
-    reg[32-1:0] mem_addr_reg;
-    reg[32-1:0] mem_data_reg;
-    reg[8-1:0] mem_mask_reg;
-    reg mem_write_reg;
-    reg mem_read_reg;
     logic[31:0] alu_a_comb;
 ;
     logic[31:0] alu_b_comb;
@@ -46,20 +35,19 @@ module Execute (
     genvar gi, gj, gk;
 
     // tmp variables
-    logic[8-1:0] mem_mask_reg_tmp;
-    logic mem_write_reg_tmp;
-    logic mem_read_reg_tmp;
 
 
-    always @(*) begin  // alu_a_comb_func
+    always_comb begin : alu_a_comb_func  // alu_a_comb_func
         alu_a_comb=state_in.rs1_val;
+        disable alu_a_comb_func;
     end
 
-    always @(*) begin  // alu_b_comb_func
-        alu_b_comb=(((state_in.alu_op == Alu_pkg::ADD) && (state_in.mem_op != Mem_pkg::MNONE))) ? (unsigned'(32'(state_in.imm))) : ((((state_in.rs2 || (state_in.br_op == Br_pkg::BEQZ)) || (state_in.br_op == Br_pkg::BNEZ))) ? (state_in.rs2_val) : (unsigned'(32'(state_in.imm))));
+    always_comb begin : alu_b_comb_func  // alu_b_comb_func
+        alu_b_comb=(((state_in.alu_op == Alu_pkg::ADD) && (state_in.mem_op != Mem_pkg::MNONE))) ? (unsigned'(32'(state_in.imm))) : ((((state_in.br_op != Br_pkg::BNONE) || state_in.rs2)) ? (state_in.rs2_val) : (unsigned'(32'(state_in.imm))));
+        disable alu_b_comb_func;
     end
 
-    always @(*) begin  // alu_result_comb_func
+    always_comb begin : alu_result_comb_func  // alu_result_comb_func
         logic[31:0] a;
         logic[31:0] b;
         logic[31:0] alu_op;
@@ -131,9 +119,10 @@ module Execute (
         if ((alu_op == Alu_pkg::SLT) || (alu_op == Alu_pkg::SLTU)) begin
             alu_result_comb|=(unsigned'(64'(((a == b))))) <<< 'h20;
         end
+        disable alu_result_comb_func;
     end
 
-    always @(*) begin  // branch_taken_comb_func
+    always_comb begin : branch_taken_comb_func  // branch_taken_comb_func
         logic[63:0] alu_result;
         alu_result=alu_result_comb;
         branch_taken_comb=0;
@@ -175,9 +164,10 @@ module Execute (
         end
         endcase
         branch_taken_comb=branch_taken_comb && state_in.valid;
+        disable branch_taken_comb_func;
     end
 
-    always @(*) begin  // branch_target_comb_func
+    always_comb begin : branch_target_comb_func  // branch_target_comb_func
         branch_target_comb='h0;
         if (state_in.br_op != Br_pkg::BNONE) begin
             if (state_in.br_op == Br_pkg::JAL) begin
@@ -192,62 +182,11 @@ module Execute (
                 end
             end
         end
+        disable branch_target_comb_func;
     end
-
-    task do_memory ();
-    begin: do_memory
-        mem_addr_reg <= alu_result_comb;
-        mem_data_reg <= state_in.rs2_val;
-        mem_write_reg_tmp = 'h0;
-        mem_mask_reg_tmp = 'h0;
-        if ((state_in.mem_op == Mem_pkg::STORE) && state_in.valid) begin
-            case (state_in.funct3)
-            'h0: begin
-                mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 'h1;
-            end
-            'h1: begin
-                mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 'h3;
-            end
-            'h2: begin
-                mem_write_reg_tmp = state_in.valid;
-                mem_mask_reg_tmp = 'hF;
-            end
-            endcase
-        end
-        mem_read_reg_tmp = 'h0;
-        if ((state_in.mem_op == Mem_pkg::LOAD) && state_in.valid) begin
-            case (state_in.funct3)
-            'h0: begin
-                mem_read_reg_tmp = 'h1;
-            end
-            'h1: begin
-                mem_read_reg_tmp = 'h1;
-            end
-            'h2: begin
-                mem_read_reg_tmp = 'h1;
-            end
-            'h4: begin
-                mem_read_reg_tmp = 'h1;
-            end
-            'h5: begin
-                mem_read_reg_tmp = 'h1;
-            end
-            default: begin
-            end
-            endcase
-        end
-    end
-    endtask
 
     task _work (input logic reset);
     begin: _work
-        do_memory();
-        if (reset) begin
-            mem_write_reg_tmp = '0;
-            mem_read_reg_tmp = '0;
-        end
     end
     endtask
 
@@ -255,28 +194,10 @@ module Execute (
     endgenerate
 
     always @(posedge clk) begin
-        mem_mask_reg_tmp = mem_mask_reg;
-        mem_write_reg_tmp = mem_write_reg;
-        mem_read_reg_tmp = mem_read_reg;
 
         _work(reset);
 
-        mem_mask_reg <= mem_mask_reg_tmp;
-        mem_write_reg <= mem_write_reg_tmp;
-        mem_read_reg <= mem_read_reg_tmp;
     end
-
-    assign mem_write_out = mem_write_reg;
-
-    assign mem_write_addr_out = mem_addr_reg;
-
-    assign mem_write_data_out = mem_data_reg;
-
-    assign mem_write_mask_out = mem_mask_reg;
-
-    assign mem_read_out = mem_read_reg;
-
-    assign mem_read_addr_out = mem_addr_reg;
 
     assign alu_result_out = unsigned'(32'(alu_result_comb));
 

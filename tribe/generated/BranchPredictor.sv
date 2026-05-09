@@ -90,21 +90,24 @@ module BranchPredictor #(
     generate  // _assign
     endgenerate
 
-    always @(*) begin  // lookup_index_comb_func
+    always_comb begin : lookup_index_comb_func  // lookup_index_comb_func
         lookup_index_comb=(lookup_pc_in >>> 'h1);
+        disable lookup_index_comb_func;
     end
 
-    always @(*) begin  // lookup_unconditional_comb_func
+    always_comb begin : lookup_unconditional_comb_func  // lookup_unconditional_comb_func
         lookup_unconditional_comb=((lookup_br_op_in == Br_pkg::JAL) || (lookup_br_op_in == Br_pkg::JALR)) || (lookup_br_op_in == Br_pkg::JR);
+        disable lookup_unconditional_comb_func;
     end
 
-    always @(*) begin  // lookup_hit_comb_func
+    always_comb begin : lookup_hit_comb_func  // lookup_hit_comb_func
         logic[31:0] index;
         index=unsigned'(32'(lookup_index_comb));
         lookup_hit_comb=valid_reg[index] && (tag_reg[index] == lookup_pc_in);
+        disable lookup_hit_comb_func;
     end
 
-    always @(*) begin  // predict_taken_comb_func
+    always_comb begin : predict_taken_comb_func  // predict_taken_comb_func
         logic[31:0] index;
         index=unsigned'(32'(lookup_index_comb));
         predict_taken_comb=0;
@@ -118,15 +121,17 @@ module BranchPredictor #(
                 end
             end
         end
+        disable predict_taken_comb_func;
     end
 
-    always @(*) begin  // predict_next_comb_func
+    always_comb begin : predict_next_comb_func  // predict_next_comb_func
         logic[31:0] index;
         index=unsigned'(32'(lookup_index_comb));
         predict_next_comb=lookup_fallthrough_in;
         if (predict_taken_comb) begin
             predict_next_comb=(lookup_hit_comb) ? (unsigned'(32'(target_reg[index]))) : (lookup_target_in);
         end
+        disable predict_next_comb_func;
     end
 
     always @(posedge clk) begin

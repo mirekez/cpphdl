@@ -11,6 +11,9 @@ module Writeback (
 ,   input State state_in
 ,   input wire[31:0] alu_result_in
 ,   input wire[31:0] mem_data_in
+,   input wire[31:0] mem_data_hi_in
+,   input wire[31:0] mem_addr_in
+,   input wire mem_split_in
 ,   output wire[31:0] regs_data_out
 ,   output wire[7:0] regs_wr_id_out
 ,   output wire regs_write_out
@@ -18,6 +21,8 @@ module Writeback (
 
 
     // regs and combs
+    logic[31:0] mem_word_comb;
+;
     logic[31:0] regs_out_comb;
 ;
     logic regs_write_comb;
@@ -29,8 +34,22 @@ module Writeback (
     // tmp variables
 
 
-    always @(*) begin  // regs_out_comb_func
+    always_comb begin : mem_word_comb_func  // mem_word_comb_func
+        logic[31:0] shift;
+        shift=mem_addr_in & 'h3;
+        if (mem_split_in) begin
+            mem_word_comb=((mem_data_in >>> ((shift*'h8)))) | ((mem_data_hi_in <<< (((('h4 - shift))*'h8))));
+        end
+        else begin
+            mem_word_comb=mem_data_in;
+        end
+        disable mem_word_comb_func;
+    end
+
+    always_comb begin : regs_out_comb_func  // regs_out_comb_func
+        logic[31:0] mem_word;
         regs_out_comb='h0;
+        mem_word=mem_word_comb;
         if (state_in.wb_op == Wb_pkg::PC2) begin
             regs_out_comb=state_in.pc + 'h2;
         end
@@ -46,32 +65,34 @@ module Writeback (
                     if (state_in.wb_op == Wb_pkg::MEM) begin
                         case (state_in.funct3)
                         'h0: begin
-                            regs_out_comb=signed'(8'(mem_data_in));
+                            regs_out_comb=signed'(8'(mem_word));
                         end
                         'h1: begin
-                            regs_out_comb=signed'(16'(mem_data_in));
+                            regs_out_comb=signed'(16'(mem_word));
                         end
                         'h2: begin
-                            regs_out_comb=signed'(32'(mem_data_in));
+                            regs_out_comb=signed'(32'(mem_word));
                         end
                         'h4: begin
-                            regs_out_comb=unsigned'(8'(mem_data_in));
+                            regs_out_comb=unsigned'(8'(mem_word));
                         end
                         'h5: begin
-                            regs_out_comb=unsigned'(16'(mem_data_in));
+                            regs_out_comb=unsigned'(16'(mem_word));
                         end
                         endcase
                     end
                 end
             end
         end
+        disable regs_out_comb_func;
     end
 
-    always @(*) begin  // regs_write_comb_func
+    always_comb begin : regs_write_comb_func  // regs_write_comb_func
         regs_write_comb='h0;
         if (state_in.wb_op != Wb_pkg::WNONE) begin
             regs_write_comb=state_in.valid;
         end
+        disable regs_write_comb_func;
     end
 
     task _work (input logic reset);

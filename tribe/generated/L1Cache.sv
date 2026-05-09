@@ -10,6 +10,7 @@ module L1Cache #(
 ,   parameter WAYS
 ,   parameter ID
 ,   parameter ADDR_BITS
+,   parameter PORT_BITWIDTH
  )
  (
     input wire clk
@@ -25,12 +26,15 @@ module L1Cache #(
 ,   output wire busy_out
 ,   input wire stall_in
 ,   input wire flush_in
+,   input wire invalidate_in
+,   input wire cache_disable_in
 ,   output wire mem_write_out
 ,   output wire[31:0] mem_write_data_out
 ,   output wire[7:0] mem_write_mask_out
 ,   output wire mem_read_out
 ,   output wire[31:0] mem_addr_out
-,   input wire[31:0] mem_read_data_in
+,   input wire[PORT_BITWIDTH-1:0] mem_read_data_in
+,   input wire mem_wait_in
 ,   output L1CachePerf perf_out
 ,   input wire debugen_in
 );
@@ -40,6 +44,10 @@ module L1Cache #(
     parameter  WORD_BITS = $clog2(LINE_WORDS);
     parameter  LINE_BITS = $clog2(CACHE_LINE_SIZE);
     parameter  HALF_LINE_BITS = CACHE_LINE_SIZE*'h4;
+    parameter  PORT_BYTES = PORT_BITWIDTH/'h8;
+    parameter  PORT_WORDS = PORT_BITWIDTH/'h20;
+    parameter  REFILL_BEATS = CACHE_LINE_SIZE/PORT_BYTES;
+    parameter  REFILL_BEAT_BITS = (REFILL_BEATS<='h1) ? ('h1) : ($clog2(REFILL_BEATS));
     parameter  TAG_BITS = (ADDR_BITS - SET_BITS) - LINE_BITS;
     parameter  WAY_BITS = (WAYS<='h1) ? ('h1) : ($clog2(WAYS));
     parameter  ST_IDLE = 'h0;
@@ -54,7 +62,7 @@ module L1Cache #(
     reg[32-1:0] req_addr_reg;
     reg req_read_reg;
     reg req_cacheable_reg;
-    reg[WORD_BITS-1:0] refill_word_reg;
+    reg[REFILL_BEAT_BITS-1:0] refill_beat_reg;
     reg[WAY_BITS-1:0] victim_reg;
     reg[SET_BITS-1:0] init_set_reg;
     reg[32-1:0] last_addr_reg;
@@ -83,6 +91,8 @@ module L1Cache #(
     logic[HALF_LINE_BITS-1:0] refill_odd_line_comb;
 ;
     logic[31:0] refill_data_comb;
+;
+    logic[31:0] direct_data_comb;
 ;
     logic hit_comb;
 ;
@@ -180,7 +190,7 @@ module L1Cache #(
     logic[32-1:0] req_addr_reg_tmp;
     logic req_read_reg_tmp;
     logic req_cacheable_reg_tmp;
-    logic[WORD_BITS-1:0] refill_word_reg_tmp;
+    logic[REFILL_BEAT_BITS-1:0] refill_beat_reg_tmp;
     logic[WAY_BITS-1:0] victim_reg_tmp;
     logic[SET_BITS-1:0] init_set_reg_tmp;
     logic[32-1:0] last_addr_reg_tmp;
@@ -190,31 +200,12 @@ module L1Cache #(
     logic[HALF_LINE_BITS-1:0] refill_odd_line_reg_tmp;
 
 
-    always @(*) begin  // req_set_comb_func
-        req_set_comb = unsigned'(4'((unsigned'(32'(req_addr_reg)) >>> LINE_BITS)));
+    always_comb begin : req_tag_comb_func  // req_tag_comb_func
+        req_tag_comb = unsigned'(23'((unsigned'(32'(req_addr_reg)) >>> ((LINE_BITS + SET_BITS)))));
+        disable req_tag_comb_func;
     end
 
-    always @(*) begin  // req_tag_comb_func
-        req_tag_comb = unsigned'(4'((unsigned'(32'(req_addr_reg)) >>> ((LINE_BITS + SET_BITS)))));
-    end
-
-    always @(*) begin  // req_word_comb_func
-        req_word_comb = unsigned'(3'((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))));
-    end
-
-    always @(*) begin  // input_set_comb_func
-        input_set_comb = unsigned'(4'((addr_in >>> LINE_BITS)));
-    end
-
-    always @(*) begin  // input_cacheable_comb_func
-        logic[31:0] word; word = ((addr_in >>> 'h2)) & ((LINE_WORDS - 'h1));
-        input_cacheable_comb=!(addr_in & 'h1);
-        if (((addr_in & 'h2)) && (word == (LINE_WORDS - 'h1))) begin
-            input_cacheable_comb=0;
-        end
-    end
-
-    always @(*) begin  // hit_comb_func
+    always_comb begin : hit_comb_func  // hit_comb_func
         logic[63:0] i;
         hit_comb=0;
         if (((state_reg == ST_LOOKUP) && req_read_reg) && req_cacheable_reg) begin
@@ -224,9 +215,10 @@ module L1Cache #(
                 end
             end
         end
+        disable hit_comb_func;
     end
 
-    always @(*) begin  // start_read_comb_func
+    always_comb begin : start_read_comb_func  // start_read_comb_func
         start_read_comb=0;
         if (read_in && !stall_in) begin
             if (state_reg == ST_IDLE) begin
@@ -239,29 +231,85 @@ module L1Cache #(
                 start_read_comb=1;
             end
         end
+        disable start_read_comb_func;
     end
 
-    always @(*) begin  // issue_read_comb_func
+    always_comb begin : issue_read_comb_func  // issue_read_comb_func
         issue_read_comb=((flush_in && read_in)) || start_read_comb;
+        disable issue_read_comb_func;
     end
 
-    always @(*) begin  // refill_tag_comb_func
-        refill_tag_comb = (((unsigned'(64'('h1)) <<< TAG_BITS)) | unsigned'(64'(req_tag_comb)));
+    always_comb begin : req_set_comb_func  // req_set_comb_func
+        req_set_comb = unsigned'(4'((unsigned'(32'(req_addr_reg)) >>> LINE_BITS)));
+        disable req_set_comb_func;
     end
 
-    always @(*) begin  // refill_even_line_comb_func
-        logic[31:0] word; word = unsigned'(32'(refill_word_reg));
+    always_comb begin : input_set_comb_func  // input_set_comb_func
+        input_set_comb = unsigned'(4'((addr_in >>> LINE_BITS)));
+        disable input_set_comb_func;
+    end
+
+    always_comb begin : refill_even_line_comb_func  // refill_even_line_comb_func
+        logic[63:0] i;
+        logic[31:0] word;
         refill_even_line_comb = refill_even_line_reg;
-        refill_even_line_comb[word*'h10 +:16] = mem_read_data_in & 'hFFFF;
+        for (i='h0;i < PORT_WORDS;i=i+1) begin
+            word=(unsigned'(32'(refill_beat_reg))*PORT_WORDS) + i;
+            refill_even_line_comb[word*'h10 +:16] = unsigned'(32'(mem_read_data_in[i*'h20 +:16]));
+        end
+        disable refill_even_line_comb_func;
     end
 
-    always @(*) begin  // refill_odd_line_comb_func
-        logic[31:0] word; word = unsigned'(32'(refill_word_reg));
+    always_comb begin : input_cacheable_comb_func  // input_cacheable_comb_func
+        input_cacheable_comb=!cache_disable_in && !((addr_in & 'h1));
+        if ((((addr_in & 'h3)) != 'h0) && ((((((addr_in >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1)))) begin
+            input_cacheable_comb=0;
+        end
+        disable input_cacheable_comb_func;
+    end
+
+    always_comb begin : refill_odd_line_comb_func  // refill_odd_line_comb_func
+        logic[63:0] i;
+        logic[31:0] word;
         refill_odd_line_comb = refill_odd_line_reg;
-        refill_odd_line_comb[word*'h10 +:16] = mem_read_data_in >>> 'h10;
+        for (i='h0;i < PORT_WORDS;i=i+1) begin
+            word=(unsigned'(32'(refill_beat_reg))*PORT_WORDS) + i;
+            refill_odd_line_comb[word*'h10 +:16] = unsigned'(32'(mem_read_data_in[(i*'h20) + 'h10 +:16]));
+        end
+        disable refill_odd_line_comb_func;
     end
 
-    always @(*) begin  // refill_data_comb_func
+    always_comb begin : refill_tag_comb_func  // refill_tag_comb_func
+        refill_tag_comb = (((unsigned'(64'('h1)) <<< TAG_BITS)) | unsigned'(64'(req_tag_comb)));
+        disable refill_tag_comb_func;
+    end
+
+    generate  // _assign
+        for (gi='h0;gi < WAYS;gi=gi+1) begin
+            assign even_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
+            assign even_ram__data_in[gi] = refill_even_line_comb;
+            assign even_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi);
+            assign even_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
+            assign even_ram__id_in[gi]=(ID*'h64) + (gi*'h3);
+            assign odd_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
+            assign odd_ram__data_in[gi] = refill_odd_line_comb;
+            assign odd_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi);
+            assign odd_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
+            assign odd_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h1;
+            assign tag_ram__addr_in[gi] = ((state_reg == ST_INIT)) ? (init_set_reg) : (((write_in) ? (input_set_comb) : (((((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb)))));
+            assign tag_ram__data_in[gi] = ((state_reg == ST_REFILL)) ? (refill_tag_comb) : ('h0);
+            assign tag_ram__wr_in[gi] = (((state_reg == ST_INIT)) || (((((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi)))) || write_in;
+            assign tag_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
+            assign tag_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h2;
+        end
+    endgenerate
+
+    always_comb begin : req_word_comb_func  // req_word_comb_func
+        req_word_comb = unsigned'(3'((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))));
+        disable req_word_comb_func;
+    end
+
+    always_comb begin : refill_data_comb_func  // refill_data_comb_func
         logic[31:0] word;
         logic[31:0] even_half;
         logic[31:0] odd_half;
@@ -269,15 +317,41 @@ module L1Cache #(
         even_half=unsigned'(32'(refill_even_line_comb[word*'h10 +:16]));
         odd_half=unsigned'(32'(refill_odd_line_comb[word*'h10 +:16]));
         if (req_addr_reg & 'h2) begin
-            even_half=unsigned'(32'(refill_even_line_comb[((word + 'h1))*'h10 +:16]));
+            even_half='h0;
+            if ((word + 'h1) < LINE_WORDS) begin
+                even_half=unsigned'(32'(refill_even_line_comb[((word + 'h1))*'h10 +:16]));
+            end
             refill_data_comb=odd_half | ((even_half <<< 'h10));
         end
         else begin
             refill_data_comb=even_half | ((odd_half <<< 'h10));
         end
+        disable refill_data_comb_func;
     end
 
-    always @(*) begin  // cache_data_comb_func
+    always_comb begin : direct_data_comb_func  // direct_data_comb_func
+        logic[31:0] _byte;
+        logic[31:0] word;
+        if ((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && (((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1))) begin
+            direct_data_comb=unsigned'(32'(mem_read_data_in['h0 +:32]));
+        end
+        else begin
+            word=(((unsigned'(32'(req_addr_reg)) % PORT_BYTES))/'h4);
+            _byte=unsigned'(32'(req_addr_reg)) & 'h3;
+            direct_data_comb=unsigned'(32'(mem_read_data_in[(word*'h20) +:32])) >>> ((_byte*'h8));
+            if ((_byte != 'h0) && ((word + 'h1) < PORT_WORDS)) begin
+                direct_data_comb|=unsigned'(32'(mem_read_data_in[(((word + 'h1))*'h20) +:32])) <<< (('h20 - (_byte*'h8)));
+            end
+            else begin
+                if (_byte != 'h0) begin
+                    direct_data_comb|=unsigned'(32'(mem_read_data_in['h0 +:32])) <<< (('h20 - (_byte*'h8)));
+                end
+            end
+        end
+        disable direct_data_comb_func;
+    end
+
+    always_comb begin : cache_data_comb_func  // cache_data_comb_func
         logic[63:0] i;
         logic[31:0] word;
         logic[31:0] even_half;
@@ -291,7 +365,10 @@ module L1Cache #(
                 even_half=unsigned'(32'(even_ram__q_out[i][word*'h10 +:16]));
                 odd_half=unsigned'(32'(odd_ram__q_out[i][word*'h10 +:16]));
                 if (req_addr_reg & 'h2) begin
-                    even_half=unsigned'(32'(even_ram__q_out[i][((word + 'h1))*'h10 +:16]));
+                    even_half='h0;
+                    if ((word + 'h1) < LINE_WORDS) begin
+                        even_half=unsigned'(32'(even_ram__q_out[i][((word + 'h1))*'h10 +:16]));
+                    end
                     cache_data_comb=odd_half | ((even_half <<< 'h10));
                 end
                 else begin
@@ -299,111 +376,119 @@ module L1Cache #(
                 end
             end
         end
+        disable cache_data_comb_func;
     end
 
     task _work (input logic reset);
     begin: _work
         logic[63:0] i;
-        if (flush_in) begin
-            req_addr_reg_tmp = addr_in;
-            req_read_reg_tmp = read_in;
-            req_cacheable_reg_tmp = input_cacheable_comb;
+        if (invalidate_in) begin
+            req_read_reg_tmp = 0;
             last_valid_reg_tmp = 0;
-            state_reg_tmp = (read_in) ? (ST_LOOKUP) : (ST_IDLE);
+            init_set_reg_tmp = 'h0;
+            state_reg_tmp = ST_INIT;
         end
         else begin
-            if (state_reg == ST_INIT) begin
-                req_read_reg_tmp = 0;
+            if (flush_in) begin
+                req_addr_reg_tmp = addr_in;
+                req_read_reg_tmp = read_in;
+                req_cacheable_reg_tmp = input_cacheable_comb;
                 last_valid_reg_tmp = 0;
-                if (init_set_reg == (SETS - 'h1)) begin
-                    state_reg_tmp = ST_IDLE;
-                end
-                else begin
-                    init_set_reg_tmp = init_set_reg + 'h1;
-                end
+                state_reg_tmp = (read_in) ? (ST_LOOKUP) : (ST_IDLE);
             end
             else begin
-                if (state_reg == ST_IDLE) begin
+                if (state_reg == ST_INIT) begin
+                    req_read_reg_tmp = 0;
                     last_valid_reg_tmp = 0;
-                    if (read_in) begin
-                        req_addr_reg_tmp = addr_in;
-                        req_read_reg_tmp = 1;
-                        req_cacheable_reg_tmp = input_cacheable_comb;
-                        state_reg_tmp = ST_LOOKUP;
+                    if (init_set_reg == (SETS - 'h1)) begin
+                        state_reg_tmp = ST_IDLE;
+                    end
+                    else begin
+                        init_set_reg_tmp = init_set_reg + 'h1;
                     end
                 end
                 else begin
-                    if ((state_reg == ST_LOOKUP) && req_read_reg) begin
-                        if (hit_comb) begin
-                            if (stall_in) begin
-                                last_addr_reg_tmp = req_addr_reg;
-                                last_data_reg_tmp = cache_data_comb;
-                                last_valid_reg_tmp = 1;
-                                state_reg_tmp = ST_DONE;
-                            end
-                            else begin
-                                if (start_read_comb) begin
-                                    req_addr_reg_tmp = addr_in;
-                                    req_cacheable_reg_tmp = input_cacheable_comb;
-                                    last_valid_reg_tmp = 0;
-                                    state_reg_tmp = ST_LOOKUP;
-                                end
-                                else begin
-                                    req_read_reg_tmp = 0;
-                                    req_cacheable_reg_tmp = 0;
-                                    last_valid_reg_tmp = 0;
-                                    state_reg_tmp = ST_IDLE;
-                                end
-                            end
-                        end
-                        else begin
-                            refill_word_reg_tmp = 'h0;
-                            refill_even_line_reg_tmp = 'h0;
-                            refill_odd_line_reg_tmp = 'h0;
-                            state_reg_tmp = ST_REFILL;
+                    if (state_reg == ST_IDLE) begin
+                        last_valid_reg_tmp = 0;
+                        if (read_in && !stall_in) begin
+                            req_addr_reg_tmp = addr_in;
+                            req_read_reg_tmp = 1;
+                            req_cacheable_reg_tmp = input_cacheable_comb;
+                            state_reg_tmp = ST_LOOKUP;
                         end
                     end
                     else begin
-                        if ((state_reg == ST_REFILL) && req_read_reg) begin
-                            if (req_cacheable_reg) begin
-                                refill_even_line_reg_tmp = refill_even_line_comb;
-                                refill_odd_line_reg_tmp = refill_odd_line_comb;
-                                if (refill_word_reg == (LINE_WORDS - 'h1)) begin
+                        if ((state_reg == ST_LOOKUP) && req_read_reg) begin
+                            if (hit_comb) begin
+                                if (stall_in) begin
                                     last_addr_reg_tmp = req_addr_reg;
-                                    last_data_reg_tmp = refill_data_comb;
+                                    last_data_reg_tmp = cache_data_comb;
                                     last_valid_reg_tmp = 1;
-                                    victim_reg_tmp = victim_reg + 'h1;
                                     state_reg_tmp = ST_DONE;
                                 end
                                 else begin
-                                    refill_word_reg_tmp = refill_word_reg + 'h1;
+                                    if (start_read_comb) begin
+                                        req_addr_reg_tmp = addr_in;
+                                        req_cacheable_reg_tmp = input_cacheable_comb;
+                                        last_valid_reg_tmp = 0;
+                                        state_reg_tmp = ST_LOOKUP;
+                                    end
+                                    else begin
+                                        req_read_reg_tmp = 0;
+                                        req_cacheable_reg_tmp = 0;
+                                        last_valid_reg_tmp = 0;
+                                        state_reg_tmp = ST_IDLE;
+                                    end
                                 end
                             end
                             else begin
-                                if (refill_word_reg == 'h0) begin
-                                    refill_word_reg_tmp = 'h1;
-                                end
-                                else begin
-                                    last_addr_reg_tmp = req_addr_reg;
-                                    last_data_reg_tmp = mem_read_data_in;
-                                    last_valid_reg_tmp = 1;
-                                    state_reg_tmp = ST_DONE;
-                                end
+                                refill_beat_reg_tmp = 'h0;
+                                refill_even_line_reg_tmp = 'h0;
+                                refill_odd_line_reg_tmp = 'h0;
+                                state_reg_tmp = ST_REFILL;
                             end
                         end
                         else begin
-                            if ((state_reg == ST_DONE) && !stall_in) begin
-                                last_valid_reg_tmp = 0;
-                                if (start_read_comb) begin
-                                    req_addr_reg_tmp = addr_in;
-                                    req_read_reg_tmp = 1;
-                                    req_cacheable_reg_tmp = input_cacheable_comb;
-                                    state_reg_tmp = ST_LOOKUP;
+                            if ((state_reg == ST_REFILL) && req_read_reg) begin
+                                if (req_cacheable_reg) begin
+                                    if (!mem_wait_in) begin
+                                        refill_even_line_reg_tmp = refill_even_line_comb;
+                                        refill_odd_line_reg_tmp = refill_odd_line_comb;
+                                        if (refill_beat_reg == (REFILL_BEATS - 'h1)) begin
+                                            last_addr_reg_tmp = req_addr_reg;
+                                            last_data_reg_tmp = refill_data_comb;
+                                            last_valid_reg_tmp = 1;
+                                            victim_reg_tmp = victim_reg + 'h1;
+                                            state_reg_tmp = ST_DONE;
+                                        end
+                                        else begin
+                                            refill_beat_reg_tmp = refill_beat_reg + 'h1;
+                                        end
+                                    end
                                 end
                                 else begin
-                                    req_read_reg_tmp = 0;
-                                    req_cacheable_reg_tmp = 0;
-                                    state_reg_tmp = ST_IDLE;
+                                    if (!mem_wait_in) begin
+                                        last_addr_reg_tmp = req_addr_reg;
+                                        last_data_reg_tmp = direct_data_comb;
+                                        last_valid_reg_tmp = 1;
+                                        state_reg_tmp = ST_DONE;
+                                    end
+                                end
+                            end
+                            else begin
+                                if ((state_reg == ST_DONE) && !stall_in) begin
+                                    last_valid_reg_tmp = 0;
+                                    if (start_read_comb) begin
+                                        req_addr_reg_tmp = addr_in;
+                                        req_read_reg_tmp = 1;
+                                        req_cacheable_reg_tmp = input_cacheable_comb;
+                                        state_reg_tmp = ST_LOOKUP;
+                                    end
+                                    else begin
+                                        req_read_reg_tmp = 0;
+                                        req_cacheable_reg_tmp = 0;
+                                        state_reg_tmp = ST_IDLE;
+                                    end
                                 end
                             end
                         end
@@ -421,7 +506,7 @@ module L1Cache #(
             req_addr_reg_tmp = '0;
             req_read_reg_tmp = '0;
             req_cacheable_reg_tmp = '0;
-            refill_word_reg_tmp = '0;
+            refill_beat_reg_tmp = '0;
             victim_reg_tmp = '0;
             init_set_reg_tmp = '0;
             last_addr_reg_tmp = '0;
@@ -434,27 +519,7 @@ module L1Cache #(
     end
     endtask
 
-    generate  // _assign
-        for (gi='h0;gi < WAYS;gi=gi+1) begin
-            assign even_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
-            assign even_ram__data_in[gi] = refill_even_line_comb;
-            assign even_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_word_reg == (LINE_WORDS - 'h1))) && (victim_reg == gi);
-            assign even_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign even_ram__id_in[gi]=(ID*'h64) + (gi*'h3);
-            assign odd_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
-            assign odd_ram__data_in[gi] = refill_odd_line_comb;
-            assign odd_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_word_reg == (LINE_WORDS - 'h1))) && (victim_reg == gi);
-            assign odd_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign odd_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h1;
-            assign tag_ram__addr_in[gi] = ((state_reg == ST_INIT)) ? (init_set_reg) : (((write_in) ? (input_set_comb) : (((((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb)))));
-            assign tag_ram__data_in[gi] = ((state_reg == ST_REFILL)) ? (refill_tag_comb) : ('h0);
-            assign tag_ram__wr_in[gi] = (((state_reg == ST_INIT)) || (((((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_word_reg == (LINE_WORDS - 'h1))) && (victim_reg == gi)))) || write_in;
-            assign tag_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign tag_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h2;
-        end
-    endgenerate
-
-    always @(*) begin  // read_data_comb_func
+    always_comb begin : read_data_comb_func  // read_data_comb_func
         if (((state_reg == ST_LOOKUP) && req_read_reg) && hit_comb) begin
             read_data_comb=cache_data_comb;
         end
@@ -463,20 +528,23 @@ module L1Cache #(
                 read_data_comb=last_data_reg;
             end
             else begin
-                read_data_comb=mem_read_data_in;
+                read_data_comb=direct_data_comb;
             end
         end
+        disable read_data_comb_func;
     end
 
-    always @(*) begin  // read_addr_comb_func
+    always_comb begin : read_addr_comb_func  // read_addr_comb_func
         read_addr_comb=(last_valid_reg) ? (unsigned'(32'(last_addr_reg))) : (unsigned'(32'(req_addr_reg)));
+        disable read_addr_comb_func;
     end
 
-    always @(*) begin  // read_valid_comb_func
+    always_comb begin : read_valid_comb_func  // read_valid_comb_func
         read_valid_comb=last_valid_reg || ((((state_reg == ST_LOOKUP) && req_read_reg) && hit_comb));
+        disable read_valid_comb_func;
     end
 
-    always @(*) begin  // busy_comb_func
+    always_comb begin : busy_comb_func  // busy_comb_func
         if ((state_reg == ST_INIT) || (state_reg == ST_REFILL)) begin
             busy_comb=1;
         end
@@ -488,15 +556,17 @@ module L1Cache #(
                 busy_comb=0;
             end
         end
+        disable busy_comb_func;
     end
 
-    always @(*) begin  // mem_read_comb_func
+    always_comb begin : mem_read_comb_func  // mem_read_comb_func
         mem_read_comb=(state_reg == ST_REFILL) && req_read_reg;
+        disable mem_read_comb_func;
     end
 
-    always @(*) begin  // mem_addr_comb_func
+    always_comb begin : mem_addr_comb_func  // mem_addr_comb_func
         if (((state_reg == ST_REFILL) && req_read_reg) && req_cacheable_reg) begin
-            mem_addr_comb=((unsigned'(32'(req_addr_reg)) & ~unsigned'(32'(((CACHE_LINE_SIZE - 'h1)))))) + ((unsigned'(32'(refill_word_reg))*'h4));
+            mem_addr_comb=((unsigned'(32'(req_addr_reg)) & ~unsigned'(32'(((CACHE_LINE_SIZE - 'h1)))))) + ((unsigned'(32'(refill_beat_reg))*PORT_BYTES));
         end
         else begin
             if ((state_reg == ST_REFILL) && req_read_reg) begin
@@ -506,15 +576,17 @@ module L1Cache #(
                 mem_addr_comb=addr_in;
             end
         end
+        disable mem_addr_comb_func;
     end
 
-    always @(*) begin  // perf_comb_func
+    always_comb begin : perf_comb_func  // perf_comb_func
         perf_comb.state = state_reg;
         perf_comb.hit=hit_comb;
         perf_comb.lookup_wait=busy_comb && (state_reg == ST_LOOKUP);
         perf_comb.refill_wait=busy_comb && (state_reg == ST_REFILL);
         perf_comb.init_wait=busy_comb && (state_reg == ST_INIT);
         perf_comb.issue_wait=read_in && (state_reg == ST_IDLE);
+        disable perf_comb_func;
     end
 
     always @(posedge clk) begin
@@ -522,7 +594,7 @@ module L1Cache #(
         req_addr_reg_tmp = req_addr_reg;
         req_read_reg_tmp = req_read_reg;
         req_cacheable_reg_tmp = req_cacheable_reg;
-        refill_word_reg_tmp = refill_word_reg;
+        refill_beat_reg_tmp = refill_beat_reg;
         victim_reg_tmp = victim_reg;
         init_set_reg_tmp = init_set_reg;
         last_addr_reg_tmp = last_addr_reg;
@@ -537,7 +609,7 @@ module L1Cache #(
         req_addr_reg <= req_addr_reg_tmp;
         req_read_reg <= req_read_reg_tmp;
         req_cacheable_reg <= req_cacheable_reg_tmp;
-        refill_word_reg <= refill_word_reg_tmp;
+        refill_beat_reg <= refill_beat_reg_tmp;
         victim_reg <= victim_reg_tmp;
         init_set_reg <= init_set_reg_tmp;
         last_addr_reg <= last_addr_reg_tmp;

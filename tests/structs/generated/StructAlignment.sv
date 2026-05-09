@@ -33,7 +33,7 @@ module StructAlignment (
     // tmp variables
 
 
-    always @(*) begin  // sample_comb_func
+    always_comb begin : sample_comb_func  // sample_comb_func
         logic[31:0] seed; seed = seed_in;
         sample_comb = {00};
         sample_comb.head=seed & 'h7;
@@ -47,9 +47,10 @@ module StructAlignment (
         sample_comb.mixed.tail=((seed >>> 'h5)) & 'h3;
         sample_comb.nibble = unsigned'(4'(seed ^ 'hA));
         sample_comb.last=((seed >>> 'h7)) & 'h1;
+        disable sample_comb_func;
     end
 
-    always @(*) begin  // union_struct_comb_func
+    always_comb begin : union_struct_comb_func  // union_struct_comb_func
         logic[31:0] seed; seed = seed_in;
         union_struct_comb = {{0}};
         union_struct_comb.wrapped.ua=seed & 'h1;
@@ -58,9 +59,10 @@ module StructAlignment (
         union_struct_comb.wrapped.nested.inner.s.ib = unsigned'(5'(seed + 'h3));
         union_struct_comb.wrapped.nested.inner.s.ic=((seed >>> 'h2)) & 'h7;
         union_struct_comb.wrapped.ub=((seed + 'h5)) & 'h3F;
+        disable union_struct_comb_func;
     end
 
-    always @(*) begin  // struct_union_comb_func
+    always_comb begin : struct_union_comb_func  // struct_union_comb_func
         logic[31:0] seed; seed = seed_in;
         struct_union_comb = {{0}};
         struct_union_comb.head=((seed >>> 'h2)) & 'h3;
@@ -70,6 +72,7 @@ module StructAlignment (
         struct_union_comb.u.branch.nested.sc=((seed >>> 'h6)) & 'h1;
         struct_union_comb.u.branch.us1=((seed >>> 'h3)) & 'h7;
         struct_union_comb.tail=((seed + 'hD)) & 'h7F;
+        disable struct_union_comb_func;
     end
 
     task _work (input logic reset);

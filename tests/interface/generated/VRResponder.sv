@@ -38,12 +38,14 @@ module VRResponder #(
     logic error_reg_tmp;
 
 
-    always @(*) begin  // done_comb_func
+    always_comb begin : done_comb_func  // done_comb_func
         done_comb=received_reg>='h100;
+        disable done_comb_func;
     end
 
-    always @(*) begin  // error_comb_func
+    always_comb begin : error_comb_func  // error_comb_func
         error_comb=error_reg;
+        disable error_comb_func;
     end
 
     generate  // _assign

@@ -43,31 +43,35 @@ module LogicBitsIndexing (
     end
     endtask
 
-    always @(*) begin  // direct_comb_func
+    always_comb begin : direct_comb_func  // direct_comb_func
         logic[31:0] word; word = unsigned'(32'(word_in));
         build_source();
         direct_comb = source_comb[word*'h10 +:16];
+        disable direct_comb_func;
     end
 
-    always @(*) begin  // next_comb_func
+    always_comb begin : next_comb_func  // next_comb_func
         logic[31:0] word; word = unsigned'(32'(word_in));
         build_source();
         next_comb = source_comb[((word + 'h1))*'h10 +:16];
+        disable next_comb_func;
     end
 
-    always @(*) begin  // byte_comb_func
+    always_comb begin : byte_comb_func  // byte_comb_func
         logic[31:0] word; word = unsigned'(32'(word_in));
         build_source();
         byte_comb = source_comb[word*'h8 +:8];
+        disable byte_comb_func;
     end
 
-    always @(*) begin  // edited_comb_func
+    always_comb begin : edited_comb_func  // edited_comb_func
         logic[31:0] word; word = unsigned'(32'(word_in));
         build_source();
         edited_comb = source_comb;
         edited_comb[word*'h10 +:16] = unsigned'(64'(seed_in)) ^ 'h55AA;
         edited_comb[((word + 'h1))*'h10 +:16] = unsigned'(64'(seed_in)) ^ 'hAA55;
         edited_comb[word*'h8 +:8] = unsigned'(64'(seed_in)) ^ 'h5A;
+        disable edited_comb_func;
     end
 
     task _work (input logic reset);

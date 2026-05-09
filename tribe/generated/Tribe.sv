@@ -1,6 +1,7 @@
 `default_nettype none
 
 import Predef_pkg::*;
+import Zicsr_pkg::*;
 import Rv32im_pkg::*;
 import Rv32ic_pkg::*;
 import Rv32ic_rv16_pkg::*;
@@ -9,6 +10,8 @@ import Mem_pkg::*;
 import Alu_pkg::*;
 import Wb_pkg::*;
 import Br_pkg::*;
+import Sys_pkg::*;
+import Csr_pkg::*;
 import State_pkg::*;
 import L1CachePerf_pkg::*;
 import TribePerf_pkg::*;
@@ -22,9 +25,31 @@ module Tribe (
 ,   output wire[7:0] dmem_write_mask_out
 ,   output wire dmem_read_out
 ,   output wire[31:0] dmem_addr_out
-,   input wire[31:0] dmem_read_data_in
 ,   output wire[31:0] imem_read_addr_out
-,   input wire[31:0] imem_read_data_in
+,   input wire[31:0] reset_pc_in
+,   input wire[31:0] memory_base_in
+,   input wire[31:0] memory_size_in
+,   input wire[31:0] mem_region_size_in[4]
+,   output wire axi_out__awvalid_out[4]
+,   input wire axi_out__awready_in[4]
+,   output wire[19-1:0] axi_out__awaddr_out[4]
+,   output wire[4-1:0] axi_out__awid_out[4]
+,   output wire axi_out__wvalid_out[4]
+,   input wire axi_out__wready_in[4]
+,   output wire[256-1:0] axi_out__wdata_out[4]
+,   output wire axi_out__wlast_out[4]
+,   input wire axi_out__bvalid_in[4]
+,   output wire axi_out__bready_out[4]
+,   input wire[4-1:0] axi_out__bid_in[4]
+,   output wire axi_out__arvalid_out[4]
+,   input wire axi_out__arready_in[4]
+,   output wire[19-1:0] axi_out__araddr_out[4]
+,   output wire[4-1:0] axi_out__arid_out[4]
+,   input wire axi_out__rvalid_in[4]
+,   output wire axi_out__rready_out[4]
+,   input wire[256-1:0] axi_out__rdata_in[4]
+,   input wire axi_out__rlast_in[4]
+,   input wire[4-1:0] axi_out__rid_in[4]
 ,   output TribePerf perf_out
 ,   input wire debugen_in
 );
@@ -34,8 +59,6 @@ module Tribe (
     reg[32-1:0] pc;
     reg valid;
     reg[32-1:0] alu_result_reg;
-    reg[32-1:0] load_data_reg;
-    reg load_data_valid_reg;
     State[2-1:0] state_reg;
     reg[2-1:0][32-1:0] predicted_next_reg;
     reg[2-1:0][32-1:0] fallthrough_reg;
@@ -44,6 +67,7 @@ module Tribe (
     reg[32-1:0] debug_alu_b_reg;
     reg[32-1:0] debug_branch_target_reg;
     reg debug_branch_taken_reg;
+    reg output_write_active_reg;
     logic hazard_stall_comb;
 ;
     logic branch_stall_comb;
@@ -72,6 +96,10 @@ module Tribe (
 ;
     State exe_state_comb;
 ;
+    State csr_state_comb;
+;
+    logic icache_invalidate_comb;
+;
 
     // members
     genvar gi, gj, gk;
@@ -96,12 +124,6 @@ module Tribe (
 ,       .state_out(dec__state_out)
     );
       State exe__state_in;
-      wire exe__mem_write_out;
-      wire[31:0] exe__mem_write_addr_out;
-      wire[31:0] exe__mem_write_data_out;
-      wire[7:0] exe__mem_write_mask_out;
-      wire exe__mem_read_out;
-      wire[31:0] exe__mem_read_addr_out;
       wire[31:0] exe__alu_result_out;
       wire[31:0] exe__debug_alu_a_out;
       wire[31:0] exe__debug_alu_b_out;
@@ -111,21 +133,52 @@ module Tribe (
         .clk(clk)
 ,       .reset(reset)
 ,       .state_in(exe__state_in)
-,       .mem_write_out(exe__mem_write_out)
-,       .mem_write_addr_out(exe__mem_write_addr_out)
-,       .mem_write_data_out(exe__mem_write_data_out)
-,       .mem_write_mask_out(exe__mem_write_mask_out)
-,       .mem_read_out(exe__mem_read_out)
-,       .mem_read_addr_out(exe__mem_read_addr_out)
 ,       .alu_result_out(exe__alu_result_out)
 ,       .debug_alu_a_out(exe__debug_alu_a_out)
 ,       .debug_alu_b_out(exe__debug_alu_b_out)
 ,       .branch_taken_out(exe__branch_taken_out)
 ,       .branch_target_out(exe__branch_target_out)
     );
+      State exe_mem__state_in;
+      wire[31:0] exe_mem__alu_result_in;
+      wire exe_mem__mem_stall_in;
+      wire exe_mem__hold_in;
+      wire exe_mem__mem_write_out;
+      wire[31:0] exe_mem__mem_write_addr_out;
+      wire[31:0] exe_mem__mem_write_data_out;
+      wire[7:0] exe_mem__mem_write_mask_out;
+      wire exe_mem__mem_read_out;
+      wire[31:0] exe_mem__mem_read_addr_out;
+      wire exe_mem__mem_split_out;
+      wire exe_mem__mem_split_busy_out;
+      wire exe_mem__split_load_out;
+      wire[31:0] exe_mem__split_load_low_out;
+      wire[31:0] exe_mem__split_load_high_out;
+    ExecuteMem      exe_mem (
+        .clk(clk)
+,       .reset(reset)
+,       .state_in(exe_mem__state_in)
+,       .alu_result_in(exe_mem__alu_result_in)
+,       .mem_stall_in(exe_mem__mem_stall_in)
+,       .hold_in(exe_mem__hold_in)
+,       .mem_write_out(exe_mem__mem_write_out)
+,       .mem_write_addr_out(exe_mem__mem_write_addr_out)
+,       .mem_write_data_out(exe_mem__mem_write_data_out)
+,       .mem_write_mask_out(exe_mem__mem_write_mask_out)
+,       .mem_read_out(exe_mem__mem_read_out)
+,       .mem_read_addr_out(exe_mem__mem_read_addr_out)
+,       .mem_split_out(exe_mem__mem_split_out)
+,       .mem_split_busy_out(exe_mem__mem_split_busy_out)
+,       .split_load_out(exe_mem__split_load_out)
+,       .split_load_low_out(exe_mem__split_load_low_out)
+,       .split_load_high_out(exe_mem__split_load_high_out)
+    );
       State wb__state_in;
       wire[31:0] wb__alu_result_in;
       wire[31:0] wb__mem_data_in;
+      wire[31:0] wb__mem_data_hi_in;
+      wire[31:0] wb__mem_addr_in;
+      wire wb__mem_split_in;
       wire[31:0] wb__regs_data_out;
       wire[7:0] wb__regs_wr_id_out;
       wire wb__regs_write_out;
@@ -135,9 +188,64 @@ module Tribe (
 ,       .state_in(wb__state_in)
 ,       .alu_result_in(wb__alu_result_in)
 ,       .mem_data_in(wb__mem_data_in)
+,       .mem_data_hi_in(wb__mem_data_hi_in)
+,       .mem_addr_in(wb__mem_addr_in)
+,       .mem_split_in(wb__mem_split_in)
 ,       .regs_data_out(wb__regs_data_out)
 ,       .regs_wr_id_out(wb__regs_wr_id_out)
 ,       .regs_write_out(wb__regs_write_out)
+    );
+      State wb_mem__state_in;
+      wire[31:0] wb_mem__alu_result_in;
+      wire wb_mem__split_load_in;
+      wire[31:0] wb_mem__split_load_low_addr_in;
+      wire[31:0] wb_mem__split_load_high_addr_in;
+      wire wb_mem__dcache_read_valid_in;
+      wire[31:0] wb_mem__dcache_read_addr_in;
+      wire[31:0] wb_mem__dcache_read_data_in;
+      wire wb_mem__dcache_write_valid_in;
+      wire[31:0] wb_mem__dcache_write_addr_in;
+      wire[31:0] wb_mem__dcache_write_data_in;
+      wire[7:0] wb_mem__dcache_write_mask_in;
+      wire wb_mem__hold_in;
+      wire wb_mem__load_ready_out;
+      wire[31:0] wb_mem__load_raw_out;
+      wire[31:0] wb_mem__load_result_out;
+      wire[31:0] wb_mem__wb_mem_data_out;
+      wire[31:0] wb_mem__wb_mem_data_hi_out;
+    WritebackMem      wb_mem (
+        .clk(clk)
+,       .reset(reset)
+,       .state_in(wb_mem__state_in)
+,       .alu_result_in(wb_mem__alu_result_in)
+,       .split_load_in(wb_mem__split_load_in)
+,       .split_load_low_addr_in(wb_mem__split_load_low_addr_in)
+,       .split_load_high_addr_in(wb_mem__split_load_high_addr_in)
+,       .dcache_read_valid_in(wb_mem__dcache_read_valid_in)
+,       .dcache_read_addr_in(wb_mem__dcache_read_addr_in)
+,       .dcache_read_data_in(wb_mem__dcache_read_data_in)
+,       .dcache_write_valid_in(wb_mem__dcache_write_valid_in)
+,       .dcache_write_addr_in(wb_mem__dcache_write_addr_in)
+,       .dcache_write_data_in(wb_mem__dcache_write_data_in)
+,       .dcache_write_mask_in(wb_mem__dcache_write_mask_in)
+,       .hold_in(wb_mem__hold_in)
+,       .load_ready_out(wb_mem__load_ready_out)
+,       .load_raw_out(wb_mem__load_raw_out)
+,       .load_result_out(wb_mem__load_result_out)
+,       .wb_mem_data_out(wb_mem__wb_mem_data_out)
+,       .wb_mem_data_hi_out(wb_mem__wb_mem_data_hi_out)
+    );
+      State csr__state_in;
+      wire[31:0] csr__read_data_out;
+      wire[31:0] csr__trap_vector_out;
+      wire[31:0] csr__epc_out;
+    CSR      csr (
+        .clk(clk)
+,       .reset(reset)
+,       .state_in(csr__state_in)
+,       .read_data_out(csr__read_data_out)
+,       .trap_vector_out(csr__trap_vector_out)
+,       .epc_out(csr__epc_out)
     );
       wire[7:0] regs__write_addr_in;
       wire regs__write_in;
@@ -175,12 +283,15 @@ module Tribe (
       wire icache__busy_out;
       wire icache__stall_in;
       wire icache__flush_in;
+      wire icache__invalidate_in;
+      wire icache__cache_disable_in;
       wire icache__mem_write_out;
       wire[31:0] icache__mem_write_data_out;
       wire[7:0] icache__mem_write_mask_out;
       wire icache__mem_read_out;
       wire[31:0] icache__mem_addr_out;
-      wire[31:0] icache__mem_read_data_in;
+      wire[(256)-1:0] icache__mem_read_data_in;
+      wire icache__mem_wait_in;
       L1CachePerf icache__perf_out;
       wire icache__debugen_in;
     L1Cache #(
@@ -188,7 +299,8 @@ module Tribe (
 ,       32
 ,       2
 ,       0
-,       13
+,       32
+,       256
     ) icache (
         .clk(clk)
 ,       .reset(reset)
@@ -203,12 +315,15 @@ module Tribe (
 ,       .busy_out(icache__busy_out)
 ,       .stall_in(icache__stall_in)
 ,       .flush_in(icache__flush_in)
+,       .invalidate_in(icache__invalidate_in)
+,       .cache_disable_in(icache__cache_disable_in)
 ,       .mem_write_out(icache__mem_write_out)
 ,       .mem_write_data_out(icache__mem_write_data_out)
 ,       .mem_write_mask_out(icache__mem_write_mask_out)
 ,       .mem_read_out(icache__mem_read_out)
 ,       .mem_addr_out(icache__mem_addr_out)
 ,       .mem_read_data_in(icache__mem_read_data_in)
+,       .mem_wait_in(icache__mem_wait_in)
 ,       .perf_out(icache__perf_out)
 ,       .debugen_in(icache__debugen_in)
     );
@@ -223,12 +338,15 @@ module Tribe (
       wire dcache__busy_out;
       wire dcache__stall_in;
       wire dcache__flush_in;
+      wire dcache__invalidate_in;
+      wire dcache__cache_disable_in;
       wire dcache__mem_write_out;
       wire[31:0] dcache__mem_write_data_out;
       wire[7:0] dcache__mem_write_mask_out;
       wire dcache__mem_read_out;
       wire[31:0] dcache__mem_addr_out;
-      wire[31:0] dcache__mem_read_data_in;
+      wire[(256)-1:0] dcache__mem_read_data_in;
+      wire dcache__mem_wait_in;
       L1CachePerf dcache__perf_out;
       wire dcache__debugen_in;
     L1Cache #(
@@ -236,7 +354,8 @@ module Tribe (
 ,       32
 ,       2
 ,       1
-,       13
+,       32
+,       256
     ) dcache (
         .clk(clk)
 ,       .reset(reset)
@@ -251,14 +370,107 @@ module Tribe (
 ,       .busy_out(dcache__busy_out)
 ,       .stall_in(dcache__stall_in)
 ,       .flush_in(dcache__flush_in)
+,       .invalidate_in(dcache__invalidate_in)
+,       .cache_disable_in(dcache__cache_disable_in)
 ,       .mem_write_out(dcache__mem_write_out)
 ,       .mem_write_data_out(dcache__mem_write_data_out)
 ,       .mem_write_mask_out(dcache__mem_write_mask_out)
 ,       .mem_read_out(dcache__mem_read_out)
 ,       .mem_addr_out(dcache__mem_addr_out)
 ,       .mem_read_data_in(dcache__mem_read_data_in)
+,       .mem_wait_in(dcache__mem_wait_in)
 ,       .perf_out(dcache__perf_out)
 ,       .debugen_in(dcache__debugen_in)
+    );
+      wire l2cache__i_read_in;
+      wire l2cache__i_write_in;
+      wire[31:0] l2cache__i_addr_in;
+      wire[31:0] l2cache__i_write_data_in;
+      wire[7:0] l2cache__i_write_mask_in;
+      wire[(256)-1:0] l2cache__i_read_data_out;
+      wire l2cache__i_wait_out;
+      wire l2cache__d_read_in;
+      wire l2cache__d_write_in;
+      wire[31:0] l2cache__d_addr_in;
+      wire[31:0] l2cache__d_write_data_in;
+      wire[7:0] l2cache__d_write_mask_in;
+      wire[(256)-1:0] l2cache__d_read_data_out;
+      wire l2cache__d_wait_out;
+      wire[31:0] l2cache__memory_base_in;
+      wire[31:0] l2cache__memory_size_in;
+      wire[31:0] l2cache__mem_region_size_in[(4)];
+      wire l2cache__mem_region_uncached_in[(4)];
+      wire l2cache__axi_out__awvalid_out[(4)];
+      wire l2cache__axi_out__awready_in[(4)];
+      wire[(19)-1:0] l2cache__axi_out__awaddr_out[(4)];
+      wire['h4-1:0] l2cache__axi_out__awid_out[(4)];
+      wire l2cache__axi_out__wvalid_out[(4)];
+      wire l2cache__axi_out__wready_in[(4)];
+      wire[(256)-1:0] l2cache__axi_out__wdata_out[(4)];
+      wire l2cache__axi_out__wlast_out[(4)];
+      wire l2cache__axi_out__bvalid_in[(4)];
+      wire l2cache__axi_out__bready_out[(4)];
+      wire['h4-1:0] l2cache__axi_out__bid_in[(4)];
+      wire l2cache__axi_out__arvalid_out[(4)];
+      wire l2cache__axi_out__arready_in[(4)];
+      wire[(19)-1:0] l2cache__axi_out__araddr_out[(4)];
+      wire['h4-1:0] l2cache__axi_out__arid_out[(4)];
+      wire l2cache__axi_out__rvalid_in[(4)];
+      wire l2cache__axi_out__rready_out[(4)];
+      wire[(256)-1:0] l2cache__axi_out__rdata_in[(4)];
+      wire l2cache__axi_out__rlast_in[(4)];
+      wire['h4-1:0] l2cache__axi_out__rid_in[(4)];
+      wire l2cache__debugen_in;
+    L2Cache #(
+        8192
+,       256
+,       32
+,       4
+,       32
+,       19
+,       4
+    ) l2cache (
+        .clk(clk)
+,       .reset(reset)
+,       .i_read_in(l2cache__i_read_in)
+,       .i_write_in(l2cache__i_write_in)
+,       .i_addr_in(l2cache__i_addr_in)
+,       .i_write_data_in(l2cache__i_write_data_in)
+,       .i_write_mask_in(l2cache__i_write_mask_in)
+,       .i_read_data_out(l2cache__i_read_data_out)
+,       .i_wait_out(l2cache__i_wait_out)
+,       .d_read_in(l2cache__d_read_in)
+,       .d_write_in(l2cache__d_write_in)
+,       .d_addr_in(l2cache__d_addr_in)
+,       .d_write_data_in(l2cache__d_write_data_in)
+,       .d_write_mask_in(l2cache__d_write_mask_in)
+,       .d_read_data_out(l2cache__d_read_data_out)
+,       .d_wait_out(l2cache__d_wait_out)
+,       .memory_base_in(l2cache__memory_base_in)
+,       .memory_size_in(l2cache__memory_size_in)
+,       .mem_region_size_in(l2cache__mem_region_size_in)
+,       .mem_region_uncached_in(l2cache__mem_region_uncached_in)
+,       .axi_out__awvalid_out(l2cache__axi_out__awvalid_out)
+,       .axi_out__awready_in(l2cache__axi_out__awready_in)
+,       .axi_out__awaddr_out(l2cache__axi_out__awaddr_out)
+,       .axi_out__awid_out(l2cache__axi_out__awid_out)
+,       .axi_out__wvalid_out(l2cache__axi_out__wvalid_out)
+,       .axi_out__wready_in(l2cache__axi_out__wready_in)
+,       .axi_out__wdata_out(l2cache__axi_out__wdata_out)
+,       .axi_out__wlast_out(l2cache__axi_out__wlast_out)
+,       .axi_out__bvalid_in(l2cache__axi_out__bvalid_in)
+,       .axi_out__bready_out(l2cache__axi_out__bready_out)
+,       .axi_out__bid_in(l2cache__axi_out__bid_in)
+,       .axi_out__arvalid_out(l2cache__axi_out__arvalid_out)
+,       .axi_out__arready_in(l2cache__axi_out__arready_in)
+,       .axi_out__araddr_out(l2cache__axi_out__araddr_out)
+,       .axi_out__arid_out(l2cache__axi_out__arid_out)
+,       .axi_out__rvalid_in(l2cache__axi_out__rvalid_in)
+,       .axi_out__rready_out(l2cache__axi_out__rready_out)
+,       .axi_out__rdata_in(l2cache__axi_out__rdata_in)
+,       .axi_out__rlast_in(l2cache__axi_out__rlast_in)
+,       .axi_out__rid_in(l2cache__axi_out__rid_in)
+,       .debugen_in(l2cache__debugen_in)
     );
       wire bp__lookup_valid_in;
       wire[31:0] bp__lookup_pc_in;
@@ -294,8 +506,6 @@ module Tribe (
     logic[32-1:0] pc_tmp;
     logic valid_tmp;
     logic[32-1:0] alu_result_reg_tmp;
-    logic[32-1:0] load_data_reg_tmp;
-    logic load_data_valid_reg_tmp;
     State[2-1:0] state_reg_tmp;
     logic[2-1:0][32-1:0] predicted_next_reg_tmp;
     logic[2-1:0][32-1:0] fallthrough_reg_tmp;
@@ -304,9 +514,10 @@ module Tribe (
     logic[32-1:0] debug_alu_b_reg_tmp;
     logic[32-1:0] debug_branch_target_reg_tmp;
     logic debug_branch_taken_reg_tmp;
+    logic output_write_active_reg_tmp;
 
 
-    always @(*) begin  // hazard_stall_comb_func
+    always_comb begin : hazard_stall_comb_func  // hazard_stall_comb_func
         hazard_stall_comb=0;
         if ((state_reg['h0].valid && (state_reg['h0].wb_op == Wb_pkg::MEM)) && (state_reg['h0].rd != 'h0)) begin
             if (state_reg['h0].rd == dec__state_out.rs1) begin
@@ -316,54 +527,91 @@ module Tribe (
                 hazard_stall_comb=1;
             end
         end
+        if (exe_mem__mem_split_out || exe_mem__mem_split_busy_out) begin
+            hazard_stall_comb=1;
+        end
+        disable hazard_stall_comb_func;
     end
 
-    always @(*) begin  // branch_actual_next_comb_func
+    always_comb begin : branch_actual_next_comb_func  // branch_actual_next_comb_func
         branch_actual_next_comb=(exe__branch_taken_out) ? (exe__branch_target_out) : (unsigned'(32'(fallthrough_reg['h0])));
+        disable branch_actual_next_comb_func;
     end
 
-    always @(*) begin  // branch_mispredict_comb_func
+    always_comb begin : branch_mispredict_comb_func  // branch_mispredict_comb_func
         branch_mispredict_comb=(state_reg['h0].valid && (state_reg['h0].br_op != Br_pkg::BNONE)) && (branch_actual_next_comb != unsigned'(32'(predicted_next_reg['h0])));
+        disable branch_mispredict_comb_func;
     end
 
-    always @(*) begin  // branch_stall_comb_func
+    always_comb begin : branch_stall_comb_func  // branch_stall_comb_func
         branch_stall_comb=branch_mispredict_comb;
+        disable branch_stall_comb_func;
     end
 
-    always @(*) begin  // perf_comb_func
+    always_comb begin : perf_comb_func  // perf_comb_func
         perf_comb.hazard_stall=hazard_stall_comb;
         perf_comb.branch_stall=branch_stall_comb;
         perf_comb.dcache_wait=dcache__busy_out;
         perf_comb.icache_wait=icache__busy_out;
         perf_comb.icache = icache__perf_out;
         perf_comb.dcache = dcache__perf_out;
+        disable perf_comb_func;
     end
 
-    always @(*) begin  // branch_flush_comb_func
-        branch_flush_comb=branch_mispredict_comb;
-    end
-
-    always @(*) begin  // stall_comb_func
-        stall_comb=hazard_stall_comb || branch_stall_comb;
-    end
-
-    always @(*) begin  // memory_wait_comb_func
-        memory_wait_comb=dcache__busy_out || (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && !((load_data_valid_reg || ((dcache__read_valid_out && (dcache__read_addr_out == unsigned'(32'(alu_result_reg)))))))));
-    end
-
-    always @(*) begin  // fetch_valid_comb_func
+    always_comb begin : fetch_valid_comb_func  // fetch_valid_comb_func
         fetch_valid_comb=(valid && icache__read_valid_out) && (icache__read_addr_out == unsigned'(32'(pc)));
+        disable fetch_valid_comb_func;
     end
 
-    always @(*) begin  // decode_fallthrough_comb_func
-        decode_fallthrough_comb=pc + (((((dec__instr_in & 'h3)) == 'h3)) ? ('h4) : ('h2));
+    always_comb begin : exe_state_comb_func  // exe_state_comb_func
+        exe_state_comb = state_reg['h0];
+        if (state_reg['h0].valid && (state_reg['h0].sys_op == Sys_pkg::ECALL)) begin
+            exe_state_comb.rs1_val=csr__trap_vector_out;
+            exe_state_comb.imm='h0;
+        end
+        if (state_reg['h0].valid && (state_reg['h0].sys_op == Sys_pkg::MRET)) begin
+            exe_state_comb.rs1_val=csr__epc_out;
+            exe_state_comb.imm='h0;
+        end
+        if (state_reg['h0].valid && (state_reg['h0].sys_op == Sys_pkg::FENCEI)) begin
+            exe_state_comb.rs1_val=state_reg['h0].pc + 'h4;
+            exe_state_comb.imm='h0;
+        end
+        if (wb_mem__load_ready_out && (state_reg['h1].rd != 'h0)) begin
+            if (state_reg['h0].rs1 == state_reg['h1].rd) begin
+                exe_state_comb.rs1_val=wb_mem__load_result_out;
+            end
+            if (state_reg['h0].rs2 == state_reg['h1].rd) begin
+                exe_state_comb.rs2_val=wb_mem__load_result_out;
+            end
+        end
+        disable exe_state_comb_func;
     end
 
-    always @(*) begin  // decode_branch_valid_comb_func
+    always_comb begin : memory_wait_comb_func  // memory_wait_comb_func
+        memory_wait_comb=((dcache__busy_out || exe_mem__mem_split_busy_out) || ((((exe_mem__mem_write_out || ((state_reg['h1].valid && (state_reg['h1].mem_op == Mem_pkg::STORE))))) && l2cache__d_wait_out))) || (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && !wb_mem__load_ready_out));
+        disable memory_wait_comb_func;
+    end
+
+    always_comb begin : csr_state_comb_func  // csr_state_comb_func
+        csr_state_comb = exe_state_comb;
+        if (memory_wait_comb) begin
+            csr_state_comb.valid=0;
+        end
+        disable csr_state_comb_func;
+    end
+
+    always_comb begin : stall_comb_func  // stall_comb_func
+        stall_comb=hazard_stall_comb || branch_stall_comb;
+        disable stall_comb_func;
+    end
+
+    always_comb begin : decode_branch_valid_comb_func  // decode_branch_valid_comb_func
         decode_branch_valid_comb=((fetch_valid_comb && dec__state_out.valid) && (dec__state_out.br_op != Br_pkg::BNONE)) && !stall_comb;
+        disable decode_branch_valid_comb_func;
     end
 
-    always @(*) begin  // decode_branch_target_comb_func
+    always_comb begin : decode_branch_target_comb_func  // decode_branch_target_comb_func
         decode_branch_target_comb='h0;
         if (dec__state_out.br_op == Br_pkg::JAL) begin
             decode_branch_target_comb=dec__state_out.pc + dec__state_out.imm;
@@ -376,31 +624,152 @@ module Tribe (
                 decode_branch_target_comb=dec__state_out.pc + dec__state_out.imm;
             end
         end
+        disable decode_branch_target_comb_func;
     end
 
-    always @(*) begin  // fetch_addr_comb_func
+    always_comb begin : decode_fallthrough_comb_func  // decode_fallthrough_comb_func
+        decode_fallthrough_comb=pc + (((((dec__instr_in & 'h3)) == 'h3)) ? ('h4) : ('h2));
+        disable decode_fallthrough_comb_func;
+    end
+
+    always_comb begin : fetch_addr_comb_func  // fetch_addr_comb_func
         fetch_addr_comb=pc;
-        if (fetch_valid_comb && !stall_comb) begin
-            fetch_addr_comb=decode_fallthrough_comb;
-        end
-        if (decode_branch_valid_comb) begin
-            fetch_addr_comb=bp__predict_next_out;
-        end
         if (branch_mispredict_comb) begin
             fetch_addr_comb=branch_actual_next_comb;
         end
+        disable fetch_addr_comb_func;
     end
 
-    always @(*) begin  // exe_state_comb_func
-        exe_state_comb = state_reg['h0];
-        if (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && (state_reg['h1].rd != 'h0)) && ((load_data_valid_reg || ((dcache__read_valid_out && (dcache__read_addr_out == unsigned'(32'(alu_result_reg)))))))) begin
-            if (state_reg['h0].rs1 == state_reg['h1].rd) begin
-                exe_state_comb.rs1_val=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (dcache__read_data_out);
-            end
-            if (state_reg['h0].rs2 == state_reg['h1].rd) begin
-                exe_state_comb.rs2_val=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (dcache__read_data_out);
-            end
+    always_comb begin : icache_invalidate_comb_func  // icache_invalidate_comb_func
+        icache_invalidate_comb=(state_reg['h0].valid && (state_reg['h0].sys_op == Sys_pkg::FENCEI)) && !memory_wait_comb;
+        disable icache_invalidate_comb_func;
+    end
+
+    generate  // _assign
+        assign dec__pc_in = pc;
+        assign dec__instr_valid_in = fetch_valid_comb;
+        assign dec__instr_in = icache__read_data_out;
+        assign dec__regs_data0_in = (dec__rs1_out == 'h0) ? ('h0) : (regs__read_data0_out);
+        assign dec__regs_data1_in = (dec__rs2_out == 'h0) ? ('h0) : (regs__read_data1_out);
+        assign exe__state_in = exe_state_comb;
+        assign exe_mem__state_in = exe_state_comb;
+        assign exe_mem__alu_result_in = exe__alu_result_out;
+        assign exe_mem__mem_stall_in = dcache__busy_out || l2cache__d_wait_out;
+        assign exe_mem__hold_in = memory_wait_comb;
+        assign wb_mem__state_in = state_reg['h1];
+        assign wb_mem__alu_result_in = alu_result_reg;
+        assign wb_mem__split_load_in = exe_mem__split_load_out;
+        assign wb_mem__split_load_low_addr_in = exe_mem__split_load_low_out;
+        assign wb_mem__split_load_high_addr_in = exe_mem__split_load_high_out;
+        assign wb_mem__dcache_read_valid_in = dcache__read_valid_out;
+        assign wb_mem__dcache_read_addr_in = dcache__read_addr_out;
+        assign wb_mem__dcache_read_data_in = dcache__read_data_out;
+        assign wb_mem__dcache_write_valid_in = dcache__mem_write_out;
+        assign wb_mem__dcache_write_addr_in = dcache__mem_addr_out;
+        assign wb_mem__dcache_write_data_in = dcache__mem_write_data_out;
+        assign wb_mem__dcache_write_mask_in = dcache__mem_write_mask_out;
+        assign wb_mem__hold_in = memory_wait_comb;
+        assign csr__state_in = csr_state_comb;
+        assign wb__state_in = state_reg['h1];
+        assign wb__mem_data_in = wb_mem__load_raw_out;
+        assign wb__mem_data_hi_in = unsigned'(32'('h0));
+        assign wb__mem_addr_in = alu_result_reg;
+        assign wb__mem_split_in = 0;
+        assign wb__alu_result_in = alu_result_reg;
+        assign regs__read_addr0_in = unsigned'(8'(dec__rs1_out));
+        assign regs__read_addr1_in = unsigned'(8'(dec__rs2_out));
+        assign regs__write_in = (wb__regs_write_out && !memory_wait_comb) && (((state_reg['h1].wb_op != Wb_pkg::MEM) || wb_mem__load_ready_out));
+        assign regs__write_addr_in = wb__regs_wr_id_out;
+        assign regs__write_data_in = wb__regs_data_out;
+        assign regs__debugen_in=debugen_in;
+        assign dcache__read_in = exe_mem__mem_read_out && !dcache__busy_out;
+        assign dcache__write_in = exe_mem__mem_write_out && !dcache__busy_out;
+        assign dcache__addr_in = (exe_mem__mem_read_out) ? (unsigned'(32'(exe_mem__mem_read_addr_out))) : (unsigned'(32'(exe_mem__mem_write_addr_out)));
+        assign dcache__write_data_in = exe_mem__mem_write_data_out;
+        assign dcache__write_mask_in = exe_mem__mem_write_mask_out;
+        assign dcache__mem_read_data_in = l2cache__d_read_data_out;
+        assign dcache__mem_wait_in = l2cache__d_wait_out;
+        assign dcache__stall_in = branch_stall_comb;
+        assign dcache__flush_in = 0;
+        assign dcache__invalidate_in = 0;
+        assign dcache__cache_disable_in = (exe_mem__mem_read_out) ? (unsigned'(32'(exe_mem__mem_read_addr_out))) : (unsigned'(32'(exe_mem__mem_write_addr_out)))>=(((memory_base_in + mem_region_size_in['h0]) + mem_region_size_in['h1]) + mem_region_size_in['h2]) && (((exe_mem__mem_read_out) ? (unsigned'(32'(exe_mem__mem_read_addr_out))) : (unsigned'(32'(exe_mem__mem_write_addr_out)))) < (memory_base_in + memory_size_in));
+        assign dcache__debugen_in=debugen_in;
+        assign bp__lookup_valid_in = decode_branch_valid_comb;
+        assign bp__lookup_pc_in = unsigned'(32'(dec__state_out.pc));
+        assign bp__lookup_target_in = decode_branch_target_comb;
+        assign bp__lookup_fallthrough_in = decode_fallthrough_comb;
+        assign bp__lookup_br_op_in = unsigned'(4'(dec__state_out.br_op));
+        assign bp__update_valid_in = (state_reg['h0].valid && (state_reg['h0].br_op != Br_pkg::BNONE)) && !memory_wait_comb;
+        assign bp__update_pc_in = unsigned'(32'(state_reg['h0].pc));
+        assign bp__update_taken_in = exe__branch_taken_out;
+        assign bp__update_target_in = exe__branch_target_out;
+        assign icache__read_in = 1;
+        assign icache__addr_in = fetch_addr_comb;
+        assign icache__write_in = 0;
+        assign icache__write_data_in = unsigned'(32'('h0));
+        assign icache__write_mask_in = unsigned'(8'('h0));
+        assign icache__mem_read_data_in = l2cache__i_read_data_out;
+        assign icache__mem_wait_in = l2cache__i_wait_out;
+        assign icache__stall_in = memory_wait_comb || stall_comb;
+        assign icache__flush_in = branch_mispredict_comb && !memory_wait_comb;
+        assign icache__invalidate_in = icache_invalidate_comb;
+        assign icache__cache_disable_in = 0;
+        assign icache__debugen_in=debugen_in;
+        assign l2cache__i_read_in = icache__mem_read_out;
+        assign l2cache__i_write_in = 0;
+        assign l2cache__i_addr_in = icache__mem_addr_out;
+        assign l2cache__i_write_data_in = unsigned'(32'('h0));
+        assign l2cache__i_write_mask_in = unsigned'(8'('h0));
+        assign l2cache__d_read_in = dcache__mem_read_out;
+        assign l2cache__d_write_in = dcache__mem_write_out;
+        assign l2cache__d_addr_in = dcache__mem_addr_out;
+        assign l2cache__d_write_data_in = dcache__mem_write_data_out;
+        assign l2cache__d_write_mask_in = dcache__mem_write_mask_out;
+        assign l2cache__memory_base_in = memory_base_in;
+        assign l2cache__memory_size_in = memory_size_in;
+        for (gi='h0;gi < 'h4;gi=gi+1) begin
+            assign l2cache__mem_region_size_in[gi] = mem_region_size_in[gi];
         end
+        assign l2cache__mem_region_uncached_in['h0] = 0;
+        assign l2cache__mem_region_uncached_in['h1] = 0;
+        assign l2cache__mem_region_uncached_in['h2] = 0;
+        assign l2cache__mem_region_uncached_in['h3] = 1;
+        for (gi='h0;gi < 'h4;gi=gi+1) begin
+            assign l2cache__axi_out__awready_in[gi] = axi_out__awready_in[gi];
+            assign l2cache__axi_out__wready_in[gi] = axi_out__wready_in[gi];
+            assign l2cache__axi_out__bvalid_in[gi] = axi_out__bvalid_in[gi];
+            assign l2cache__axi_out__bid_in[gi] = axi_out__bid_in[gi];
+            assign l2cache__axi_out__arready_in[gi] = axi_out__arready_in[gi];
+            assign l2cache__axi_out__rvalid_in[gi] = axi_out__rvalid_in[gi];
+            assign l2cache__axi_out__rdata_in[gi] = axi_out__rdata_in[gi];
+            assign l2cache__axi_out__rlast_in[gi] = axi_out__rlast_in[gi];
+            assign l2cache__axi_out__rid_in[gi] = axi_out__rid_in[gi];
+        end
+        assign l2cache__debugen_in=debugen_in;
+        assign dmem_write_out = dcache__mem_write_out;
+        assign dmem_write_data_out = dcache__mem_write_data_out;
+        assign dmem_write_mask_out = dcache__mem_write_mask_out;
+        assign dmem_read_out = dcache__mem_read_out;
+        assign dmem_addr_out = dcache__mem_addr_out;
+        assign imem_read_addr_out = icache__mem_addr_out;
+        for (gi='h0;gi < 'h4;gi=gi+1) begin
+            assign axi_out__awvalid_out[gi] = l2cache__axi_out__awvalid_out[gi];
+            assign axi_out__awaddr_out[gi] = l2cache__axi_out__awaddr_out[gi];
+            assign axi_out__awid_out[gi] = l2cache__axi_out__awid_out[gi];
+            assign axi_out__wvalid_out[gi] = l2cache__axi_out__wvalid_out[gi];
+            assign axi_out__wdata_out[gi] = l2cache__axi_out__wdata_out[gi];
+            assign axi_out__wlast_out[gi] = l2cache__axi_out__wlast_out[gi];
+            assign axi_out__bready_out[gi] = l2cache__axi_out__bready_out[gi];
+            assign axi_out__arvalid_out[gi] = l2cache__axi_out__arvalid_out[gi];
+            assign axi_out__araddr_out[gi] = l2cache__axi_out__araddr_out[gi];
+            assign axi_out__arid_out[gi] = l2cache__axi_out__arid_out[gi];
+            assign axi_out__rready_out[gi] = l2cache__axi_out__rready_out[gi];
+        end
+    endgenerate
+
+    always_comb begin : branch_flush_comb_func  // branch_flush_comb_func
+        branch_flush_comb=branch_mispredict_comb;
+        disable branch_flush_comb_func;
     end
 
     task forward ();
@@ -419,17 +788,17 @@ module Tribe (
                 end
             end
         end
-        if (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && (state_reg['h1].rd != 'h0)) && ((load_data_valid_reg || ((dcache__read_valid_out && (dcache__read_addr_out == unsigned'(32'(alu_result_reg)))))))) begin
+        if (wb_mem__load_ready_out && (state_reg['h1].rd != 'h0)) begin
             if (dec__state_out.rs1 == state_reg['h1].rd) begin
-                state_reg_tmp['h0].rs1_val=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (dcache__read_data_out);
+                state_reg_tmp['h0].rs1_val=wb_mem__load_result_out;
                 if (debugen_in) begin
-                    $write("forwarding %.08x from MEM to RS1\n", (load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (unsigned'(32'(dcache__read_data_out))));
+                    $write("forwarding %.08x from MEM to RS1\n", unsigned'(32'(wb_mem__load_result_out)));
                 end
             end
             if (dec__state_out.rs2 == state_reg['h1].rd) begin
-                state_reg_tmp['h0].rs2_val=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (dcache__read_data_out);
+                state_reg_tmp['h0].rs2_val=wb_mem__load_result_out;
                 if (debugen_in) begin
-                    $write("forwarding %.08x from MEM to RS2\n", (load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (unsigned'(32'(dcache__read_data_out))));
+                    $write("forwarding %.08x from MEM to RS2\n", unsigned'(32'(wb_mem__load_result_out)));
                 end
             end
         end
@@ -450,15 +819,15 @@ module Tribe (
         end
         if ((state_reg['h0].valid && (state_reg['h0].wb_op == Wb_pkg::ALU)) && (state_reg['h0].rd != 'h0)) begin
             if (dec__state_out.rs1 == state_reg['h0].rd) begin
-                state_reg_tmp['h0].rs1_val=exe__alu_result_out;
+                state_reg_tmp['h0].rs1_val=(state_reg['h0].csr_op != Csr_pkg::CNONE) ? (csr__read_data_out) : (exe__alu_result_out);
                 if (debugen_in) begin
-                    $write("forwarding %.08x from ALU to RS1\n", unsigned'(32'(exe__alu_result_out)));
+                    $write("forwarding %.08x from ALU to RS1\n", (state_reg['h0].csr_op != Csr_pkg::CNONE) ? (unsigned'(32'(csr__read_data_out))) : (unsigned'(32'(exe__alu_result_out))));
                 end
             end
             if (dec__state_out.rs2 == state_reg['h0].rd) begin
-                state_reg_tmp['h0].rs2_val=exe__alu_result_out;
+                state_reg_tmp['h0].rs2_val=(state_reg['h0].csr_op != Csr_pkg::CNONE) ? (csr__read_data_out) : (exe__alu_result_out);
                 if (debugen_in) begin
-                    $write("forwarding %.08x from ALU to RS2\n", unsigned'(32'(exe__alu_result_out)));
+                    $write("forwarding %.08x from ALU to RS2\n", (state_reg['h0].csr_op != Csr_pkg::CNONE) ? (unsigned'(32'(csr__read_data_out))) : (unsigned'(32'(exe__alu_result_out))));
                 end
             end
         end
@@ -664,6 +1033,12 @@ module Tribe (
                                             state_out.alu_op=Alu_pkg::ADD;
                                             state_out.wb_op=Wb_pkg::ALU;
                                         end
+                                        else begin
+                                            if ((_this._.r.opcode == 'hF) && (_this._.i.funct3 == 'h1)) begin
+                                                state_out.sys_op=Sys_pkg::FENCEI;
+                                                state_out.br_op=Br_pkg::JR;
+                                            end
+                                        end
                                     end
                                 end
                             end
@@ -707,7 +1082,7 @@ module Tribe (
             if (i.base.funct3 == 'h0) begin
                 state_out.rd=i.base.rd_p + 'h8;
                 state_out.rs1='h2;
-                state_out.imm=(((Rv32ic___bits(_this, 'hA, 'h7) <<< 'h6)) | ((Rv32ic___bits(_this, 'hC, 'hB) <<< 'h4))) | ((Rv32ic___bits(_this, 'h6, 'h5) <<< 'h2));
+                state_out.imm=((((Rv32ic___bits(_this, 'hA, 'h7) <<< 'h6)) | ((Rv32ic___bits(_this, 'hC, 'hB) <<< 'h4))) | ((Rv32ic___bit(_this, 'h5) <<< 'h3))) | ((Rv32ic___bit(_this, 'h6) <<< 'h2));
                 state_out.alu_op=Alu_pkg::ADD;
                 state_out.wb_op=Wb_pkg::ALU;
             end
@@ -760,13 +1135,22 @@ module Tribe (
                         end
                         else begin
                             if (i.base.funct3 == 'h3) begin
-                                state_out.rd='h2;
-                                state_out.rs1='h2;
-                                imm_tmp=((((((Rv32ic___bit(_this, 'hC) <<< 'h9)) | ((Rv32ic___bit(_this, 'h4) <<< 'h8))) | ((Rv32ic___bit(_this, 'h3) <<< 'h7))) | ((Rv32ic___bit(_this, 'h5) <<< 'h6))) | ((Rv32ic___bit(_this, 'h2) <<< 'h5))) | ((Rv32ic___bit(_this, 'h6) <<< 'h4));
-                                imm_tmp=((imm_tmp <<< 'h16)) >>> 'h16;
-                                state_out.imm=imm_tmp;
-                                state_out.alu_op=Alu_pkg::ADD;
-                                state_out.wb_op=Wb_pkg::ALU;
+                                if (i.avg.rs1 == 'h2) begin
+                                    state_out.rd='h2;
+                                    state_out.rs1='h2;
+                                    imm_tmp=((((((Rv32ic___bit(_this, 'hC) <<< 'h9)) | ((Rv32ic___bit(_this, 'h4) <<< 'h8))) | ((Rv32ic___bit(_this, 'h3) <<< 'h7))) | ((Rv32ic___bit(_this, 'h5) <<< 'h6))) | ((Rv32ic___bit(_this, 'h2) <<< 'h5))) | ((Rv32ic___bit(_this, 'h6) <<< 'h4));
+                                    state_out.imm=Rv32i___sext(_this, imm_tmp, 'hA);
+                                    state_out.alu_op=Alu_pkg::ADD;
+                                    state_out.wb_op=Wb_pkg::ALU;
+                                end
+                                else begin
+                                    state_out.rd=i.avg.rs1;
+                                    imm_tmp=((Rv32ic___bit(_this, 'hC) <<< 'h5)) | Rv32ic___bits(_this, 'h6, 'h2);
+                                    imm_tmp=((imm_tmp <<< 'h1A)) >>> 'hE;
+                                    state_out.imm=imm_tmp;
+                                    state_out.alu_op=Alu_pkg::PASS;
+                                    state_out.wb_op=Wb_pkg::ALU;
+                                end
                             end
                             else begin
                                 if (i.base.funct3 == 'h4) begin
@@ -949,6 +1333,65 @@ module Tribe (
     end
     endtask
 
+    task Zicsr___decode (
+        input Zicsr _this
+,       output State state_out
+    );
+    begin: Zicsr___decode
+        state_out = 0;
+        Rv32im___decode(_this, state_out);
+        if (((((_this._.raw & 'h3)) == 'h3) && (_this._.r.opcode == 'h73)) && (_this._.i.funct3 == 'h0)) begin
+            if (_this._.raw == 'h73) begin
+                state_out.sys_op=Sys_pkg::ECALL;
+                state_out.br_op=Br_pkg::JR;
+            end
+            else begin
+                if (_this._.raw == 'h30200073) begin
+                    state_out.sys_op=Sys_pkg::MRET;
+                    state_out.br_op=Br_pkg::JR;
+                end
+            end
+        end
+        if (((((_this._.raw & 'h3)) == 'h3) && (_this._.r.opcode == 'h73)) && (_this._.i.funct3 != 'h0)) begin
+            state_out.rd=_this._.i.rd;
+            state_out.funct3=_this._.i.funct3;
+            state_out.csr_addr=_this._.i.imm11_0;
+            state_out.csr_imm=_this._.i.rs1;
+            case (_this._.i.funct3)
+            'h1: begin
+                state_out.csr_op=Csr_pkg::CSRRW;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h2: begin
+                state_out.csr_op=Csr_pkg::CSRRS;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h3: begin
+                state_out.csr_op=Csr_pkg::CSRRC;
+                state_out.rs1=_this._.i.rs1;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h5: begin
+                state_out.csr_op=Csr_pkg::CSRRWI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h6: begin
+                state_out.csr_op=Csr_pkg::CSRRSI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            'h7: begin
+                state_out.csr_op=Csr_pkg::CSRRCI;
+                state_out.wb_op=(_this._.i.rd) ? (Wb_pkg::ALU) : (Wb_pkg::WNONE);
+            end
+            default: begin
+            end
+            endcase
+        end
+    end
+    endtask
+
     function string Rv32i___mnemonic (input Rv32i _this);
         logic[31:0] op;
         logic[31:0] f3;
@@ -1052,6 +1495,9 @@ module Tribe (
         end
         'h17: begin
             return "auipc ";
+        end
+        'hF: begin
+            return (f3 == 'h1) ? ("fencei") : ("fence ");
         end
         default: begin
         end
@@ -1220,21 +1666,51 @@ module Tribe (
         return Rv32ic___mnemonic(_this);
     endfunction
 
+    function string Zicsr___mnemonic (input Zicsr _this);
+        if ((((_this._.raw & 'h3)) == 'h3) && (_this._.r.opcode == 'h73)) begin
+            if (_this._.raw == 'h73) begin
+                return "ecall ";
+            end
+            if (_this._.raw == 'h30200073) begin
+                return "mret  ";
+            end
+            if (_this._.i.funct3 == 'h1) begin
+                return "csrrw ";
+            end
+            if (_this._.i.funct3 == 'h2) begin
+                return "csrrs ";
+            end
+            if (_this._.i.funct3 == 'h3) begin
+                return "csrrc ";
+            end
+            if (_this._.i.funct3 == 'h5) begin
+                return "csrrwi";
+            end
+            if (_this._.i.funct3 == 'h6) begin
+                return "csrrsi";
+            end
+            if (_this._.i.funct3 == 'h7) begin
+                return "csrrci";
+            end
+        end
+        return Rv32im___mnemonic(_this);
+    endfunction
+
     task debug ();
     begin: debug
         State tmp;
-        Rv32im instr; instr = {imem_read_data_in};
-        Rv32im___decode(instr, tmp);
-        $write("(%d/%d)%x st[h%x b%x dc%x ic%x is%x ds%x ih%x]: [%s]%08x  rs%02d/%02d,imm:%08x,rd%02d => (%d)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%d)%08x => mem(%d/%d@%08x)%08x/%01x (%d)wop(%x),r(%d)%08x@%02d", valid, stall_comb, pc, hazard_stall_comb, branch_stall_comb, dcache__busy_out, icache__busy_out, unsigned'(32'(icache__perf_out.state)), unsigned'(32'(dcache__perf_out.state)), icache__perf_out.hit, Rv32im___mnemonic(instr), (((instr._.raw & 'h3)) == 'h3) ? (instr._.raw) : ((instr._.raw | 'hFFFF0000)), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), state_reg['h0].valid, unsigned'(8'(state_reg['h0].alu_op)), unsigned'(8'(state_reg['h0].mem_op)), unsigned'(8'(state_reg['h0].br_op)), unsigned'(8'(state_reg['h0].wb_op)), signed'(32'(state_reg['h0].rs1)), signed'(32'(state_reg['h0].rs2)), state_reg['h0].rs1_val, state_reg['h0].rs2_val, state_reg['h0].imm, exe__alu_result_out, signed'(32'(state_reg['h0].rd)), exe__branch_taken_out, exe__branch_target_out, exe__mem_write_out, exe__mem_read_out, exe__mem_write_addr_out, exe__mem_write_data_out, exe__mem_write_mask_out, state_reg['h1].valid, unsigned'(8'(state_reg['h1].wb_op)), wb__regs_write_out, wb__regs_data_out, wb__regs_wr_id_out);
+        Zicsr instr; instr = {icache__read_data_out};
+        Zicsr___decode(instr, tmp);
+        $write("(%d/%d)%x st[h%x b%x dc%x ic%x is%x ds%x ih%x]: [%s]%08x  rs%02d/%02d,imm:%08x,rd%02d => (%d)ops:%02d/%x/%x/%x rs%02d/%02d:%08x/%08x,imm:%08x,alu:%09x,rd%02d br(%d)%08x => mem(%d/%d@%08x)%08x/%01x (%d)wop(%x),r(%d)%08x@%02d", valid, stall_comb, pc, hazard_stall_comb, branch_stall_comb, dcache__busy_out, icache__busy_out, unsigned'(32'(icache__perf_out.state)), unsigned'(32'(dcache__perf_out.state)), icache__perf_out.hit, Zicsr___mnemonic(instr), (((instr._.raw & 'h3)) == 'h3) ? (instr._.raw) : ((instr._.raw | 'hFFFF0000)), signed'(32'(tmp.rs1)), signed'(32'(tmp.rs2)), tmp.imm, signed'(32'(tmp.rd)), state_reg['h0].valid, unsigned'(8'(state_reg['h0].alu_op)), unsigned'(8'(state_reg['h0].mem_op)), unsigned'(8'(state_reg['h0].br_op)), unsigned'(8'(state_reg['h0].wb_op)), signed'(32'(state_reg['h0].rs1)), signed'(32'(state_reg['h0].rs2)), state_reg['h0].rs1_val, state_reg['h0].rs2_val, state_reg['h0].imm, exe__alu_result_out, signed'(32'(state_reg['h0].rd)), exe__branch_taken_out, exe__branch_target_out, exe_mem__mem_write_out, exe_mem__mem_read_out, exe_mem__mem_write_addr_out, exe_mem__mem_write_data_out, exe_mem__mem_write_mask_out, state_reg['h1].valid, unsigned'(8'(state_reg['h1].wb_op)), wb__regs_write_out, wb__regs_data_out, wb__regs_wr_id_out);
     end
     endtask
 
     task _work (input logic reset);
     begin: _work
-        if (debugen_in) begin
+        if (debugen_in && !reset) begin
             debug();
         end
-        if ((dmem_addr_out == 'h11223344) && dmem_write_out) begin
+        if (((dmem_addr_out == 'h11223344) && dmem_write_out) && !output_write_active_reg) begin
             logic signed[31:0] out; out = $fopen("out.txt", "a");
             if (debugen_in) begin
                 $write("OUTPUT pc=%x data=%08x char=%02x\n", pc, dmem_write_data_out, dmem_write_data_out & 'hFF);
@@ -1242,6 +1718,7 @@ module Tribe (
             $fwrite(out, "%c", dmem_write_data_out & 'hFF);
             $fclose(out);
         end
+        output_write_active_reg_tmp = (dmem_addr_out == 'h11223344) && dmem_write_out;
         if (memory_wait_comb) begin
             pc_tmp = pc;
             valid_tmp = valid;
@@ -1250,16 +1727,12 @@ module Tribe (
             fallthrough_reg_tmp = fallthrough_reg;
             predicted_taken_reg_tmp = predicted_taken_reg;
             alu_result_reg_tmp = alu_result_reg;
-            if (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && dcache__read_valid_out) && (dcache__read_addr_out == unsigned'(32'(alu_result_reg)))) begin
-                load_data_reg_tmp = dcache__read_data_out;
-                load_data_valid_reg_tmp = 1;
-                if ((state_reg['h1].rd != 'h0) && state_reg['h0].valid) begin
-                    if (state_reg['h0].rs1 == state_reg['h1].rd) begin
-                        state_reg_tmp['h0].rs1_val=dcache__read_data_out;
-                    end
-                    if (state_reg['h0].rs2 == state_reg['h1].rd) begin
-                        state_reg_tmp['h0].rs2_val=dcache__read_data_out;
-                    end
+            if ((wb_mem__load_ready_out && (state_reg['h1].rd != 'h0)) && state_reg['h0].valid) begin
+                if (state_reg['h0].rs1 == state_reg['h1].rd) begin
+                    state_reg_tmp['h0].rs1_val=wb_mem__load_result_out;
+                end
+                if (state_reg['h0].rs2 == state_reg['h1].rd) begin
+                    state_reg_tmp['h0].rs2_val=wb_mem__load_result_out;
                 end
             end
             debug_branch_target_reg_tmp = debug_branch_target_reg;
@@ -1284,32 +1757,39 @@ module Tribe (
                 predicted_taken_reg_tmp['h0] = 0;
             end
             else begin
-                state_reg_tmp['h0] = dec__state_out;
-                state_reg_tmp['h0].valid=(dec__instr_valid_in && !branch_stall_comb) && !branch_flush_comb;
-                predicted_next_reg_tmp['h0] = (decode_branch_valid_comb) ? (unsigned'(32'(bp__predict_next_out))) : (decode_fallthrough_comb);
-                fallthrough_reg_tmp['h0] = decode_fallthrough_comb;
-                predicted_taken_reg_tmp['h0] = decode_branch_valid_comb && bp__predict_taken_out;
-                forward();
+                if (fetch_valid_comb) begin
+                    state_reg_tmp['h0] = dec__state_out;
+                    state_reg_tmp['h0].valid=(dec__instr_valid_in && !branch_stall_comb) && !branch_flush_comb;
+                    predicted_next_reg_tmp['h0] = (decode_branch_valid_comb) ? (unsigned'(32'(bp__predict_next_out))) : (decode_fallthrough_comb);
+                    fallthrough_reg_tmp['h0] = decode_fallthrough_comb;
+                    predicted_taken_reg_tmp['h0] = decode_branch_valid_comb && bp__predict_taken_out;
+                    forward();
+                end
+                else begin
+                    state_reg_tmp['h0] = 0;
+                    state_reg_tmp['h0].valid=0;
+                    predicted_next_reg_tmp['h0] = pc;
+                    fallthrough_reg_tmp['h0] = pc;
+                    predicted_taken_reg_tmp['h0] = 0;
+                end
             end
             state_reg_tmp['h1] = state_reg['h0];
             predicted_next_reg_tmp['h1] = predicted_next_reg['h0];
             fallthrough_reg_tmp['h1] = fallthrough_reg['h0];
             predicted_taken_reg_tmp['h1] = predicted_taken_reg['h0];
-            alu_result_reg_tmp = exe__alu_result_out;
-            load_data_valid_reg_tmp = 0;
+            alu_result_reg_tmp = (state_reg['h0].csr_op != Csr_pkg::CNONE) ? (csr__read_data_out) : (exe__alu_result_out);
             debug_branch_target_reg_tmp = exe__branch_target_out;
             debug_branch_taken_reg_tmp = exe__branch_taken_out;
         end
         if (reset) begin
             state_reg_tmp['h0].valid='h0;
             state_reg_tmp['h1].valid='h0;
-            pc_tmp = '0;
+            pc_tmp = reset_pc_in;
             valid_tmp = '0;
-            load_data_reg_tmp = '0;
-            load_data_valid_reg_tmp = '0;
             predicted_next_reg_tmp = '0;
             fallthrough_reg_tmp = '0;
             predicted_taken_reg_tmp = '0;
+            output_write_active_reg_tmp = '0;
         end
     end
     endtask
@@ -1319,63 +1799,10 @@ module Tribe (
     end
     endtask
 
-    generate  // _assign
-        assign dec__pc_in = pc;
-        assign dec__instr_valid_in = fetch_valid_comb;
-        assign dec__instr_in = icache__read_data_out;
-        assign dec__regs_data0_in = (dec__rs1_out == 'h0) ? ('h0) : (regs__read_data0_out);
-        assign dec__regs_data1_in = (dec__rs2_out == 'h0) ? ('h0) : (regs__read_data1_out);
-        assign exe__state_in = exe_state_comb;
-        assign wb__state_in = state_reg['h1];
-        assign wb__mem_data_in = (load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : ((((((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && dcache__read_valid_out) && (dcache__read_addr_out == unsigned'(32'(alu_result_reg))))) ? (dcache__read_data_out) : (unsigned'(32'('h0)))));
-        assign wb__alu_result_in = alu_result_reg;
-        assign regs__read_addr0_in = unsigned'(8'(dec__rs1_out));
-        assign regs__read_addr1_in = unsigned'(8'(dec__rs2_out));
-        assign regs__write_in = (wb__regs_write_out && !memory_wait_comb) && ((((state_reg['h1].wb_op != Wb_pkg::MEM) || load_data_valid_reg) || ((dcache__read_valid_out && (dcache__read_addr_out == unsigned'(32'(alu_result_reg)))))));
-        assign regs__write_addr_in = wb__regs_wr_id_out;
-        assign regs__write_data_in = wb__regs_data_out;
-        assign regs__debugen_in=debugen_in;
-        assign dcache__read_in = exe__mem_read_out && !dcache__busy_out;
-        assign dcache__write_in = exe__mem_write_out && !dcache__busy_out;
-        assign dcache__addr_in = (exe__mem_read_out) ? (unsigned'(32'(exe__mem_read_addr_out))) : (unsigned'(32'(exe__mem_write_addr_out)));
-        assign dcache__write_data_in = exe__mem_write_data_out;
-        assign dcache__write_mask_in = exe__mem_write_mask_out;
-        assign dcache__mem_read_data_in = dmem_read_data_in;
-        assign dcache__stall_in = branch_stall_comb;
-        assign dcache__flush_in = 0;
-        assign dcache__debugen_in=debugen_in;
-        assign bp__lookup_valid_in = decode_branch_valid_comb;
-        assign bp__lookup_pc_in = unsigned'(32'(dec__state_out.pc));
-        assign bp__lookup_target_in = decode_branch_target_comb;
-        assign bp__lookup_fallthrough_in = decode_fallthrough_comb;
-        assign bp__lookup_br_op_in = unsigned'(4'(dec__state_out.br_op));
-        assign bp__update_valid_in = (state_reg['h0].valid && (state_reg['h0].br_op != Br_pkg::BNONE)) && !memory_wait_comb;
-        assign bp__update_pc_in = unsigned'(32'(state_reg['h0].pc));
-        assign bp__update_taken_in = exe__branch_taken_out;
-        assign bp__update_target_in = exe__branch_target_out;
-        assign icache__read_in = 1;
-        assign icache__addr_in = fetch_addr_comb;
-        assign icache__write_in = 0;
-        assign icache__write_data_in = unsigned'(32'('h0));
-        assign icache__write_mask_in = unsigned'(8'('h0));
-        assign icache__mem_read_data_in = imem_read_data_in;
-        assign icache__stall_in = memory_wait_comb || stall_comb;
-        assign icache__flush_in = branch_mispredict_comb && !memory_wait_comb;
-        assign icache__debugen_in=debugen_in;
-        assign dmem_write_out = dcache__mem_write_out;
-        assign dmem_write_data_out = dcache__mem_write_data_out;
-        assign dmem_write_mask_out = dcache__mem_write_mask_out;
-        assign dmem_read_out = dcache__mem_read_out;
-        assign dmem_addr_out = dcache__mem_addr_out;
-        assign imem_read_addr_out = icache__mem_addr_out;
-    endgenerate
-
     always @(posedge clk) begin
         pc_tmp = pc;
         valid_tmp = valid;
         alu_result_reg_tmp = alu_result_reg;
-        load_data_reg_tmp = load_data_reg;
-        load_data_valid_reg_tmp = load_data_valid_reg;
         state_reg_tmp = state_reg;
         predicted_next_reg_tmp = predicted_next_reg;
         fallthrough_reg_tmp = fallthrough_reg;
@@ -1384,14 +1811,13 @@ module Tribe (
         debug_alu_b_reg_tmp = debug_alu_b_reg;
         debug_branch_target_reg_tmp = debug_branch_target_reg;
         debug_branch_taken_reg_tmp = debug_branch_taken_reg;
+        output_write_active_reg_tmp = output_write_active_reg;
 
         _work(reset);
 
         pc <= pc_tmp;
         valid <= valid_tmp;
         alu_result_reg <= alu_result_reg_tmp;
-        load_data_reg <= load_data_reg_tmp;
-        load_data_valid_reg <= load_data_valid_reg_tmp;
         state_reg <= state_reg_tmp;
         predicted_next_reg <= predicted_next_reg_tmp;
         fallthrough_reg <= fallthrough_reg_tmp;
@@ -1400,6 +1826,7 @@ module Tribe (
         debug_alu_b_reg <= debug_alu_b_reg_tmp;
         debug_branch_target_reg <= debug_branch_target_reg_tmp;
         debug_branch_taken_reg <= debug_branch_taken_reg_tmp;
+        output_write_active_reg <= output_write_active_reg_tmp;
     end
 
     always @(negedge clk) begin

@@ -22,8 +22,9 @@ module BlockingOptimize (
     // tmp variables
 
 
-    always @(*) begin  // value_comb_func
+    always_comb begin : value_comb_func  // value_comb_func
         value_comb = once_accessed_reg;
+        disable value_comb_func;
     end
 
     task update_once_accessed (input logic reset);

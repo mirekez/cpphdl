@@ -1,4 +1,5 @@
 package UnionWithStruct_pkg;
+import UnionStruct_pkg::*;
 
 typedef union packed {
     struct packed {

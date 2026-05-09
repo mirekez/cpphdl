@@ -1,5 +1,6 @@
 package StructContainingUnionContainingStruct_pkg;
 import UnionWithStruct_pkg::*;
+import UnionStruct_pkg::*;
 
 typedef struct packed {
     logic[1-1:0] _align0;

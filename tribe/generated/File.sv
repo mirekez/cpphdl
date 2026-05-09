@@ -56,12 +56,14 @@ module File #(
     generate  // _assign
     endgenerate
 
-    always @(*) begin  // data0_out_comb_func
+    always_comb begin : data0_out_comb_func  // data0_out_comb_func
         data0_out_comb=buffer[read_addr0_in];
+        disable data0_out_comb_func;
     end
 
-    always @(*) begin  // data1_out_comb_func
+    always_comb begin : data1_out_comb_func  // data1_out_comb_func
         data1_out_comb=buffer[read_addr1_in];
+        disable data1_out_comb_func;
     end
 
     always @(posedge clk) begin
