@@ -91,11 +91,12 @@ public:
         dec._assign();  // outputs are ready
 
         exe.state_in       = __VAR( exe_state_comb_func() );
-        exe.mem_stall_in   = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
         exe._assign();  // outputs are ready
 
-        exe_mem.state_in = __VAR(state_reg[1]);
-        exe_mem.alu_result_in = __VAR(alu_result_reg);
+        exe_mem.state_in = __VAR(exe_state_comb_func());
+        exe_mem.alu_result_in = exe.alu_result_out;
+        exe_mem.mem_stall_in = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
+        exe_mem.hold_in = __EXPR( memory_wait_comb_func() );
         exe_mem.__inst_name = __inst_name + "/exe_mem";
         exe_mem._assign();
 
@@ -138,11 +139,11 @@ public:
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = __EXPR( exe.mem_read_out() && !dcache.busy_out() );
-        dcache.write_in = __EXPR( exe.mem_write_out() && !dcache.busy_out() );
-        dcache.addr_in = __EXPR( exe.mem_read_out() ? (uint32_t)exe.mem_read_addr_out() : (uint32_t)exe.mem_write_addr_out() );
-        dcache.write_data_in = exe.mem_write_data_out;
-        dcache.write_mask_in = exe.mem_write_mask_out;
+        dcache.read_in = __EXPR( exe_mem.mem_read_out() && !dcache.busy_out() );
+        dcache.write_in = __EXPR( exe_mem.mem_write_out() && !dcache.busy_out() );
+        dcache.addr_in = __EXPR( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+        dcache.write_data_in = exe_mem.mem_write_data_out;
+        dcache.write_mask_in = exe_mem.mem_write_mask_out;
         dcache.mem_read_data_in = l2cache.d_read_data_out;
         dcache.mem_wait_in = l2cache.d_wait_out;
         dcache.stall_in = __EXPR(branch_stall_comb_func());
@@ -257,7 +258,7 @@ private:
                 hazard_stall_comb = true;
             }
         }
-        if (exe.mem_split_out() || exe.mem_split_busy_out()) {
+        if (exe_mem.mem_split_out() || exe_mem.mem_split_busy_out()) {
             hazard_stall_comb = true;
         }
         return hazard_stall_comb;
@@ -290,8 +291,8 @@ private:
 
     __LAZY_COMB(memory_wait_comb, bool)
         memory_wait_comb = dcache.busy_out() ||
-            exe.mem_split_busy_out() ||
-            ((exe.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
+            exe_mem.mem_split_busy_out() ||
+            ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !wb_mem.load_ready_out());
         return memory_wait_comb;
@@ -590,7 +591,7 @@ public:
             (bool)state_reg[0].valid, (uint8_t)state_reg[0].alu_op, (uint8_t)state_reg[0].mem_op, (uint8_t)state_reg[0].br_op, (uint8_t)state_reg[0].wb_op,
             (int)state_reg[0].rs1, (int)state_reg[0].rs2, state_reg[0].rs1_val, state_reg[0].rs2_val, state_reg[0].imm, exe.alu_result_out(), (int)state_reg[0].rd,
             (bool)exe.branch_taken_out(), exe.branch_target_out(),
-            (bool)exe.mem_write_out(), (bool)exe.mem_read_out(), exe.mem_write_addr_out(), exe.mem_write_data_out(), exe.mem_write_mask_out(),
+            (bool)exe_mem.mem_write_out(), (bool)exe_mem.mem_read_out(), exe_mem.mem_write_addr_out(), exe_mem.mem_write_data_out(), exe_mem.mem_write_mask_out(),
             (bool)state_reg[1].valid, (uint8_t)state_reg[1].wb_op, (bool)wb.regs_write_out(), wb.regs_data_out(), wb.regs_wr_id_out());
 
 #ifndef SYNTHESIS

@@ -7,16 +7,6 @@ class Execute: public Module
 public:
     __PORT(State)  state_in;
 
-    __PORT(bool)      mem_write_out      = __VAR( mem_write_reg );
-    __PORT(uint32_t)  mem_write_addr_out = __VAR( mem_addr_reg );
-    __PORT(uint32_t)  mem_write_data_out = __VAR( mem_data_reg );
-    __PORT(uint8_t)   mem_write_mask_out = __VAR( mem_mask_reg );
-    __PORT(bool)      mem_read_out       = __VAR( mem_read_reg );
-    __PORT(uint32_t)  mem_read_addr_out  = __VAR( mem_addr_reg );
-    __PORT(bool)      mem_split_out      = __VAR( mem_split_comb_func() );
-    __PORT(bool)      mem_split_busy_out = __VAR( mem_split_pending_reg );
-    __PORT(bool)      mem_stall_in;
-
     __PORT(uint32_t) alu_result_out      = __EXPR( (uint32_t)alu_result_comb_func() );
     __PORT(uint32_t) debug_alu_a_out     = __VAR( alu_a_comb_func() );
     __PORT(uint32_t) debug_alu_b_out     = __VAR( alu_b_comb_func() );
@@ -24,19 +14,6 @@ public:
     __PORT(uint32_t) branch_target_out   = __VAR( branch_target_comb_func() );
 
 private:
-
-    reg<u32> mem_addr_reg;
-    reg<u32> mem_data_reg;
-    reg<u8>  mem_mask_reg;
-    reg<u1>  mem_write_reg;
-    reg<u1>  mem_read_reg;
-    reg<u1>  mem_split_pending_reg;
-    reg<u32> mem_split_addr_reg;
-    reg<u32> mem_split_data_reg;
-    reg<u<2>> mem_split_offset_reg;
-    reg<u<3>> mem_split_size_reg;
-    reg<u1>  mem_split_write_reg;
-    reg<u1>  mem_split_read_reg;
 
     __LAZY_COMB(alu_a_comb, uint32_t)
         return alu_a_comb = state_in().rs1_val;
@@ -128,167 +105,14 @@ private:
         return branch_target_comb;
     }
 
-    __LAZY_COMB(mem_split_comb, bool)
-        uint32_t addr;
-        uint32_t size;
-        addr = (uint32_t)alu_result_comb_func();
-        size = mem_size_comb_func();
-        mem_split_comb = state_in().valid &&
-            (state_in().mem_op == Mem::LOAD || state_in().mem_op == Mem::STORE) &&
-            size != 0 &&
-            ((addr & 0x1f) + size > 32);
-        return mem_split_comb;
-    }
-
-    __LAZY_COMB(mem_size_comb, uint32_t)
-        mem_size_comb = 0;
-        switch (state_in().funct3) {
-            case 0b000: mem_size_comb = 1; break;
-            case 0b001: mem_size_comb = 2; break;
-            case 0b010: mem_size_comb = 4; break;
-            case 0b100: mem_size_comb = 1; break;
-            case 0b101: mem_size_comb = 2; break;
-            default: break;
-        }
-        return mem_size_comb;
-    }
-
-    __LAZY_COMB(first_split_mask_comb, uint8_t)
-        uint32_t size;
-        uint32_t offset;
-        uint32_t low_size;
-        size = mem_size_comb_func();
-        offset = (uint32_t)alu_result_comb_func() & 3u;
-        low_size = 4u - offset;
-        if (state_in().mem_op == Mem::STORE) {
-            first_split_mask_comb = (uint8_t)((1u << low_size) - 1u);
-        }
-        else {
-            first_split_mask_comb = (uint8_t)((((1u << size) - 1u) << offset) & 0xfu);
-        }
-        return first_split_mask_comb;
-    }
-
-    __LAZY_COMB(second_split_mask_comb, uint8_t)
-        uint32_t overflow;
-        overflow = (uint32_t)mem_split_offset_reg + (uint32_t)mem_split_size_reg - 4u;
-        second_split_mask_comb = (uint8_t)((1u << overflow) - 1u);
-        return second_split_mask_comb;
-    }
-
-    void do_memory()
-    {
-        mem_write_reg._next = 0;
-        mem_read_reg._next = 0;
-        mem_mask_reg._next = 0;
-        if (mem_stall_in()) {
-            mem_addr_reg._next = mem_addr_reg;
-            mem_data_reg._next = mem_data_reg;
-            mem_write_reg._next = mem_write_reg;
-            mem_read_reg._next = mem_read_reg;
-            mem_mask_reg._next = mem_mask_reg;
-            mem_split_pending_reg._next = mem_split_pending_reg;
-            mem_split_addr_reg._next = mem_split_addr_reg;
-            mem_split_data_reg._next = mem_split_data_reg;
-            mem_split_offset_reg._next = mem_split_offset_reg;
-            mem_split_size_reg._next = mem_split_size_reg;
-            mem_split_write_reg._next = mem_split_write_reg;
-            mem_split_read_reg._next = mem_split_read_reg;
-            return;
-        }
-
-        if (mem_split_pending_reg) {
-            uint32_t overflow = (uint32_t)mem_split_offset_reg + (uint32_t)mem_split_size_reg - 4u;
-            mem_addr_reg._next = ((uint32_t)mem_split_addr_reg & ~3u) + 4;
-            mem_data_reg._next = (uint32_t)mem_split_data_reg >> (((uint32_t)mem_split_size_reg - overflow) * 8u);
-            mem_write_reg._next = mem_split_write_reg;
-            mem_read_reg._next = mem_split_read_reg;
-            mem_mask_reg._next = second_split_mask_comb_func();
-            mem_split_pending_reg._next = false;
-            return;
-        }
-
-        mem_addr_reg._next = alu_result_comb_func();
-        mem_data_reg._next = state_in().rs2_val;
-
-        if (mem_split_comb_func()) {
-            uint32_t offset = (uint32_t)alu_result_comb_func() & 3u;
-            mem_addr_reg._next = state_in().mem_op == Mem::STORE ?
-                (uint32_t)alu_result_comb_func() : ((uint32_t)alu_result_comb_func() & ~3u);
-            mem_data_reg._next = state_in().mem_op == Mem::STORE ?
-                state_in().rs2_val : (state_in().rs2_val << (offset * 8u));
-            mem_write_reg._next = state_in().mem_op == Mem::STORE;
-            mem_read_reg._next = state_in().mem_op == Mem::LOAD;
-            mem_mask_reg._next = state_in().mem_op == Mem::STORE ? first_split_mask_comb_func() : (uint8_t)0;
-            mem_split_pending_reg._next = true;
-            mem_split_addr_reg._next = alu_result_comb_func();
-            mem_split_data_reg._next = state_in().rs2_val;
-            mem_split_offset_reg._next = (uint32_t)alu_result_comb_func() & 3u;
-            mem_split_size_reg._next = mem_size_comb_func();
-            mem_split_write_reg._next = state_in().mem_op == Mem::STORE;
-            mem_split_read_reg._next = state_in().mem_op == Mem::LOAD;
-            return;
-        }
-
-        if (state_in().mem_op == Mem::STORE && state_in().valid) {  // parallel case, full case
-            switch (state_in().funct3)
-            {
-                case 0b000: // LB
-                    mem_write_reg._next = state_in().valid;
-                    mem_mask_reg._next = 0x1;
-                    break;
-                case 0b001: // LH
-                    mem_write_reg._next = state_in().valid;
-                    mem_mask_reg._next = 0x3;
-                    break;
-                case 0b010: // LW
-                    mem_write_reg._next = state_in().valid;
-                    mem_mask_reg._next = 0xF;
-                    break;
-            }
-        }
-
-        if (state_in().mem_op == Mem::LOAD && state_in().valid)
-        {
-            switch (state_in().funct3)
-            {
-                case 0b000: mem_read_reg._next = 1; break;
-                case 0b001: mem_read_reg._next = 1; break;
-                case 0b010: mem_read_reg._next = 1; break;
-                case 0b100: mem_read_reg._next = 1; break;
-                case 0b101: mem_read_reg._next = 1; break;
-                default: break;
-            }
-        }
-    }
-
 public:
 
     void _work(bool reset)
     {
-        do_memory();
-
-        if (reset) {
-            mem_write_reg.clr();
-            mem_read_reg.clr();
-            mem_split_pending_reg.clr();
-        }
     }
 
     void _strobe()
     {
-        mem_addr_reg.strobe();
-        mem_data_reg.strobe();
-        mem_mask_reg.strobe();
-        mem_write_reg.strobe();
-        mem_read_reg.strobe();
-        mem_split_pending_reg.strobe();
-        mem_split_addr_reg.strobe();
-        mem_split_data_reg.strobe();
-        mem_split_offset_reg.strobe();
-        mem_split_size_reg.strobe();
-        mem_split_write_reg.strobe();
-        mem_split_read_reg.strobe();
     }
 
     void _assign()
