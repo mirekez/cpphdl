@@ -500,11 +500,25 @@ public:
 
     __LAZY_COMB(mem_read_data_comb, logic<PORT_BITS>)
         uint32_t base_word;
+        uint32_t request_addr;
+        uint32_t low;
+        uint32_t high;
+        uint32_t byte;
         size_t i;
         mem_read_data_comb = 0;
-        base_word = ((uint32_t)cache.mem_addr_out() & ~(uint32_t)((PORT_BITS / 8) - 1)) >> 2;
-        for (i = 0; i < PORT_BITS / 32; ++i) {
-            mem_read_data_comb.bits(i * 32 + 31, i * 32) = mem_word(base_word + i);
+        request_addr = (uint32_t)cache.mem_addr_out();
+        if ((request_addr & 3u) != 0 && ((request_addr & (LINE_SIZE - 1)) == LINE_SIZE - 2)) {
+            // Match L2 direct cross-line behavior: assembled 32-bit data is returned in bits [31:0].
+            byte = request_addr & 3u;
+            low = mem_word(request_addr >> 2);
+            high = mem_word((request_addr >> 2) + 1);
+            mem_read_data_comb.bits(31, 0) = (low >> (byte * 8u)) | (high << (32u - byte * 8u));
+        }
+        else {
+            base_word = (request_addr & ~(uint32_t)((PORT_BITS / 8) - 1)) >> 2;
+            for (i = 0; i < PORT_BITS / 32; ++i) {
+                mem_read_data_comb.bits(i * 32 + 31, i * 32) = mem_word(base_word + i);
+            }
         }
         return mem_read_data_comb;
     }

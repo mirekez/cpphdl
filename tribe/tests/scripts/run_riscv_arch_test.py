@@ -107,6 +107,14 @@ def prewarm_udb_z3_cache(env: dict[str, str]) -> None:
     shutil.copytree(source, dest, dirs_exist_ok=True)
 
 
+def trust_mise_config(checkout: pathlib.Path, env: dict[str, str]) -> int:
+    mise = shutil.which("mise", path=env["PATH"])
+    config = checkout / ".mise.toml"
+    if mise is None or not config.exists():
+        return 0
+    return run([mise, "trust", str(config)], checkout, env)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("usage: run_riscv_arch_test.py <tribe-bin> <checkout-dir> <work-dir>", file=sys.stderr)
@@ -180,6 +188,9 @@ def main(argv: list[str]) -> int:
         return 1
     if shutil.which("mise", path=env["PATH"]) is None and shutil.which("bundle", path=env["PATH"]) is None:
         print("ERROR: riscv-arch-test requires bundle when mise is not available")
+        return 1
+    if trust_mise_config(checkout, env) != 0:
+        print("ERROR: failed to trust riscv-arch-test mise config")
         return 1
 
     config = os.environ.get(

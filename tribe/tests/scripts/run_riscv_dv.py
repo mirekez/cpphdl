@@ -12,6 +12,18 @@ import sys
 
 SKIP = 77
 REPO = "https://github.com/google/riscv-dv.git"
+PYTHON_DEPS = [
+    "bitarray",
+    "bitstring",
+    "numpy",
+    "pandas",
+    "pyboolector",
+    "pyucis",
+    "pyvsc",
+    "PyYAML",
+    "tabulate",
+    "toposort",
+]
 
 
 def run(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> int:
@@ -57,11 +69,17 @@ def main(argv: list[str]) -> int:
         return SKIP
 
     env = os.environ.copy()
-    env["PATH"] = "/usr/bin:/home/me/riscv/bin:" + env.get("PATH", "")
-    env.setdefault("RISCV", "/home/me/riscv")
+    riscv_home = env.get("RISCV_HOME", "/home/me/riscv")
+    env["PATH"] = "/usr/bin:" + str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
+    env.setdefault("RISCV", riscv_home)
     pydeps = repo_root / "build" / "pydeps"
-    if pydeps.exists():
-        env["PYTHONPATH"] = str(pydeps) + os.pathsep + env.get("PYTHONPATH", "")
+    pydeps.mkdir(parents=True, exist_ok=True)
+    env["PYTHONPATH"] = str(pydeps) + os.pathsep + env.get("PYTHONPATH", "")
+
+    if subprocess.run([python, "-c", "import vsc"], env=env).returncode != 0:
+        print(f"Installing riscv-dv Python dependencies into {pydeps}")
+        if subprocess.run([python, "-m", "pip", "install", "--target", str(pydeps), *PYTHON_DEPS], env=env).returncode != 0:
+            return 1
 
     missing = [
         tool for tool in (
@@ -88,9 +106,9 @@ def main(argv: list[str]) -> int:
         if test.strip()
     ]
 
-    env["RISCV_GCC"] = os.environ.get("RISCV_GCC", "/home/me/riscv/bin/riscv32-unknown-elf-gcc")
-    env["RISCV_OBJCOPY"] = os.environ.get("RISCV_OBJCOPY", "/home/me/riscv/bin/riscv32-unknown-elf-objcopy")
-    env["SPIKE_PATH"] = os.environ.get("SPIKE_PATH", "/home/me/riscv/bin")
+    env["RISCV_GCC"] = os.environ.get("RISCV_GCC", str(pathlib.Path(riscv_home) / "bin" / "riscv32-unknown-elf-gcc"))
+    env["RISCV_OBJCOPY"] = os.environ.get("RISCV_OBJCOPY", str(pathlib.Path(riscv_home) / "bin" / "riscv32-unknown-elf-objcopy"))
+    env["SPIKE_PATH"] = os.environ.get("SPIKE_PATH", str(pathlib.Path(riscv_home) / "bin"))
     env["PYTHONPATH"] = (
         str(pydeps) + os.pathsep +
         str(checkout / "pygen") + os.pathsep +

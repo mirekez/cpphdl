@@ -18,7 +18,9 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
 
 #include "Decode.h"
 #include "Execute.h"
+#include "ExecuteMem.h"
 #include "Writeback.h"
+#include "WritebackMem.h"
 #include "CSR.h"
 #include "BranchPredictor.h"
 #include "Axi4.h"
@@ -50,7 +52,9 @@ class Tribe: public Module
 {
     Decode          dec;
     Execute         exe;
+    ExecuteMem      exe_mem;
     Writeback       wb;
+    WritebackMem    wb_mem;
     CSR             csr;
     File<32,32>     regs;
     L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
@@ -90,12 +94,33 @@ public:
         exe.mem_stall_in   = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
         exe._assign();  // outputs are ready
 
+        exe_mem.state_in = __VAR(state_reg[1]);
+        exe_mem.alu_result_in = __VAR(alu_result_reg);
+        exe_mem.__inst_name = __inst_name + "/exe_mem";
+        exe_mem._assign();
+
+        wb_mem.state_in = __VAR(state_reg[1]);
+        wb_mem.alu_result_in = __VAR(alu_result_reg);
+        wb_mem.split_load_in = exe_mem.split_load_out;
+        wb_mem.split_load_low_addr_in = exe_mem.split_load_low_out;
+        wb_mem.split_load_high_addr_in = exe_mem.split_load_high_out;
+        wb_mem.dcache_read_valid_in = dcache.read_valid_out;
+        wb_mem.dcache_read_addr_in = dcache.read_addr_out;
+        wb_mem.dcache_read_data_in = dcache.read_data_out;
+        wb_mem.dcache_write_valid_in = dcache.mem_write_out;
+        wb_mem.dcache_write_addr_in = dcache.mem_addr_out;
+        wb_mem.dcache_write_data_in = dcache.mem_write_data_out;
+        wb_mem.dcache_write_mask_in = dcache.mem_write_mask_out;
+        wb_mem.hold_in = __EXPR(memory_wait_comb_func());
+        wb_mem.__inst_name = __inst_name + "/wb_mem";
+        wb_mem._assign();
+
         csr.state_in       = __VAR( csr_state_comb_func() );
         csr.__inst_name = __inst_name + "/csr";
         csr._assign();
 
         wb.state_in       = __VAR( state_reg[1] );
-        wb.mem_data_in    = __VAR(load_data_raw_comb_func());
+        wb.mem_data_in    = wb_mem.load_raw_out;
         wb.mem_data_hi_in = __EXPR((uint32_t)0);
         wb.mem_addr_in    = __VAR(alu_result_reg);
         wb.mem_split_in   = __EXPR(false);
@@ -106,7 +131,7 @@ public:
         regs.read_addr1_in = __EXPR( (uint8_t)dec.rs2_out() );
         regs.write_in = __EXPR(wb.regs_write_out() &&
             !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || load_data_ready_comb_func()));
+            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.debugen_in = debugen_in;
@@ -166,15 +191,15 @@ public:
         l2cache.memory_base_in = memory_base_in;
         l2cache.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            l2cache.axi_out[i].awready_out = axi_out[i].awready_out;
-            l2cache.axi_out[i].wready_out = axi_out[i].wready_out;
-            l2cache.axi_out[i].bvalid_out = axi_out[i].bvalid_out;
-            l2cache.axi_out[i].bid_out = axi_out[i].bid_out;
-            l2cache.axi_out[i].arready_out = axi_out[i].arready_out;
-            l2cache.axi_out[i].rvalid_out = axi_out[i].rvalid_out;
-            l2cache.axi_out[i].rdata_out = axi_out[i].rdata_out;
-            l2cache.axi_out[i].rlast_out = axi_out[i].rlast_out;
-            l2cache.axi_out[i].rid_out = axi_out[i].rid_out;
+            l2cache.axi_out[i].awready_out = __EXPR_I(axi_out[i].awready_out());
+            l2cache.axi_out[i].wready_out = __EXPR_I(axi_out[i].wready_out());
+            l2cache.axi_out[i].bvalid_out = __EXPR_I(axi_out[i].bvalid_out());
+            l2cache.axi_out[i].bid_out = __EXPR_I(axi_out[i].bid_out());
+            l2cache.axi_out[i].arready_out = __EXPR_I(axi_out[i].arready_out());
+            l2cache.axi_out[i].rvalid_out = __EXPR_I(axi_out[i].rvalid_out());
+            l2cache.axi_out[i].rdata_out = __EXPR_I(axi_out[i].rdata_out());
+            l2cache.axi_out[i].rlast_out = __EXPR_I(axi_out[i].rlast_out());
+            l2cache.axi_out[i].rid_out = __EXPR_I(axi_out[i].rid_out());
         }
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
@@ -207,16 +232,6 @@ private:
     reg<u1>         valid;
 
     reg<u32>        alu_result_reg;
-    reg<u32>        load_data_reg;
-    reg<u1>         load_data_valid_reg;
-    reg<u32>        split_load_low_reg;
-    reg<u32>        split_load_high_reg;
-    reg<u1>         split_load_low_valid_reg;
-    reg<u1>         split_load_high_valid_reg;
-    reg<array<u32,2>> store_forward_addr_reg;
-    reg<array<u32,2>> store_forward_data_reg;
-    reg<array<u8,2>>  store_forward_mask_reg;
-    reg<array<u1,2>>  store_forward_valid_reg;
 
     reg<array<State,STAGES_NUM-1>> state_reg;
     reg<array<u32,STAGES_NUM-1>> predicted_next_reg;
@@ -231,10 +246,10 @@ private:
     reg<u1>         output_write_active_reg;
 
     __LAZY_COMB(hazard_stall_comb, bool)
-        const auto& dec_state_tmp = dec.state_out();
-
         hazard_stall_comb = false;
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
+            const auto& dec_state_tmp = dec.state_out();
+
             if (state_reg[0].rd == dec_state_tmp.rs1) {
                 hazard_stall_comb = true;
             }
@@ -278,203 +293,8 @@ private:
             exe.mem_split_busy_out() ||
             ((exe.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            !load_data_ready_comb_func());
+            !wb_mem.load_ready_out());
         return memory_wait_comb;
-    }
-
-    __LAZY_COMB(split_load_comb, bool)
-        uint32_t size;
-        size = state_mem_size_comb_func();
-        split_load_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-            size != 0 && (((uint32_t)alu_result_reg & 0x1f) + size > 32);
-        return split_load_comb;
-    }
-
-    __LAZY_COMB(state_mem_size_comb, uint32_t)
-        state_mem_size_comb = 0;
-        switch (state_reg[1].funct3) {
-            case 0b000: state_mem_size_comb = 1; break;
-            case 0b001: state_mem_size_comb = 2; break;
-            case 0b010: state_mem_size_comb = 4; break;
-            case 0b100: state_mem_size_comb = 1; break;
-            case 0b101: state_mem_size_comb = 2; break;
-            default: break;
-        }
-        return state_mem_size_comb;
-    }
-
-    __LAZY_COMB(split_load_low_addr_comb, uint32_t)
-        return split_load_low_addr_comb = (uint32_t)alu_result_reg & ~3u;
-    }
-
-    __LAZY_COMB(split_load_high_addr_comb, uint32_t)
-        return split_load_high_addr_comb = split_load_low_addr_comb_func() + 4;
-    }
-
-    __LAZY_COMB(split_load_current_low_valid_comb, bool)
-        split_load_current_low_valid_comb = dcache.read_valid_out() &&
-            dcache.read_addr_out() == split_load_low_addr_comb_func();
-        return split_load_current_low_valid_comb;
-    }
-
-    __LAZY_COMB(split_load_current_high_valid_comb, bool)
-        split_load_current_high_valid_comb = dcache.read_valid_out() &&
-            dcache.read_addr_out() == split_load_high_addr_comb_func();
-        return split_load_current_high_valid_comb;
-    }
-
-    __LAZY_COMB(split_load_low_ready_comb, bool)
-        split_load_low_ready_comb = split_load_low_valid_reg || split_load_current_low_valid_comb_func();
-        return split_load_low_ready_comb;
-    }
-
-    __LAZY_COMB(split_load_high_ready_comb, bool)
-        split_load_high_ready_comb = split_load_high_valid_reg || split_load_current_high_valid_comb_func();
-        return split_load_high_ready_comb;
-    }
-
-    __LAZY_COMB(split_load_low_data_comb, uint32_t)
-        split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg :
-            (split_load_current_low_valid_comb_func() ? dcache.read_data_out() : (uint32_t)0);
-        return split_load_low_data_comb;
-    }
-
-    __LAZY_COMB(split_load_high_data_comb, uint32_t)
-        split_load_high_data_comb = split_load_high_valid_reg ? (uint32_t)split_load_high_reg :
-            (split_load_current_high_valid_comb_func() ? dcache.read_data_out() : (uint32_t)0);
-        return split_load_high_data_comb;
-    }
-
-    __LAZY_COMB(load_data_ready_comb, bool)
-        if (split_load_comb_func()) {
-            load_data_ready_comb = split_load_low_ready_comb_func() && split_load_high_ready_comb_func();
-        }
-        else {
-            load_data_ready_comb = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                (load_data_valid_reg || (dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg));
-        }
-        return load_data_ready_comb;
-    }
-
-    __LAZY_COMB(load_data_raw_comb, uint32_t)
-        uint32_t raw;
-        uint32_t result;
-        uint32_t load_addr;
-        uint32_t byte_addr;
-        uint32_t store_addr;
-        uint32_t store_data;
-        uint32_t store_byte;
-        uint32_t diff;
-        uint8_t store_mask;
-        uint32_t shift;
-        if (split_load_comb_func()) {
-            shift = ((uint32_t)alu_result_reg & 3u) * 8u;
-            raw = (split_load_low_data_comb_func() >> shift) |
-                (split_load_high_data_comb_func() << (32u - shift));
-        }
-        else {
-            raw = load_data_valid_reg ? (uint32_t)load_data_reg : dcache.read_data_out();
-        }
-
-        result = raw;
-        load_addr = (uint32_t)alu_result_reg;
-
-        if (store_forward_valid_reg[1]) {
-            store_addr = store_forward_addr_reg[1];
-            store_data = store_forward_data_reg[1];
-            store_mask = store_forward_mask_reg[1];
-
-            byte_addr = load_addr;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xffu) | store_byte;
-            }
-            byte_addr = load_addr + 1u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff00u) | (store_byte << 8u);
-            }
-            byte_addr = load_addr + 2u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff0000u) | (store_byte << 16u);
-            }
-            byte_addr = load_addr + 3u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff000000u) | (store_byte << 24u);
-            }
-        }
-
-        if (store_forward_valid_reg[0]) {
-            store_addr = store_forward_addr_reg[0];
-            store_data = store_forward_data_reg[0];
-            store_mask = store_forward_mask_reg[0];
-
-            byte_addr = load_addr;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xffu) | store_byte;
-            }
-            byte_addr = load_addr + 1u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff00u) | (store_byte << 8u);
-            }
-            byte_addr = load_addr + 2u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff0000u) | (store_byte << 16u);
-            }
-            byte_addr = load_addr + 3u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff000000u) | (store_byte << 24u);
-            }
-        }
-
-        load_data_raw_comb = result;
-        return load_data_raw_comb;
-    }
-
-    __LAZY_COMB(wb_mem_data_comb, uint32_t)
-        if (split_load_comb_func()) {
-            wb_mem_data_comb = split_load_low_data_comb_func();
-        }
-        else {
-            wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
-                ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                  dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) ?
-                    dcache.read_data_out() : (uint32_t)0);
-        }
-        return wb_mem_data_comb;
-    }
-
-    __LAZY_COMB(wb_mem_data_hi_comb, uint32_t)
-        wb_mem_data_hi_comb = split_load_comb_func() ? split_load_high_data_comb_func() : (uint32_t)0;
-        return wb_mem_data_hi_comb;
-    }
-
-    __LAZY_COMB(load_result_comb, uint32_t)
-        uint32_t raw;
-        raw = load_data_raw_comb_func();
-        load_result_comb = 0;
-        switch (state_reg[1].funct3) {
-            case 0b000: load_result_comb = uint32_t(int32_t(int8_t(raw)));   break;
-            case 0b001: load_result_comb = uint32_t(int32_t(int16_t(raw)));  break;
-            case 0b010: load_result_comb = raw;                              break;
-            case 0b100: load_result_comb = uint8_t(raw);                     break;
-            case 0b101: load_result_comb = uint16_t(raw);                    break;
-        }
-        return load_result_comb;
     }
 
     __LAZY_COMB(fetch_valid_comb, bool)
@@ -517,12 +337,6 @@ private:
 
     __LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
-        if (fetch_valid_comb_func() && !stall_comb_func()) {
-            fetch_addr_comb = decode_fallthrough_comb_func();
-        }
-        if (decode_branch_valid_comb_func()) {
-            fetch_addr_comb = bp.predict_next_out();
-        }
         if (branch_mispredict_comb_func()) {
             fetch_addr_comb = branch_actual_next_comb_func();
         }
@@ -543,12 +357,12 @@ private:
             exe_state_comb.rs1_val = state_reg[0].pc + 4;
             exe_state_comb.imm = 0;
         }
-        if (load_data_ready_comb_func() && state_reg[1].rd != 0) {
+        if (wb_mem.load_ready_out() && state_reg[1].rd != 0) {
             if (state_reg[0].rs1 == state_reg[1].rd) {
-                exe_state_comb.rs1_val = load_result_comb_func();
+                exe_state_comb.rs1_val = wb_mem.load_result_out();
             }
             if (state_reg[0].rs2 == state_reg[1].rd) {
-                exe_state_comb.rs2_val = load_result_comb_func();
+                exe_state_comb.rs2_val = wb_mem.load_result_out();
             }
         }
         return exe_state_comb;
@@ -585,17 +399,17 @@ private:
             }
         }
 
-        if (load_data_ready_comb_func() && state_reg[1].rd != 0) {  // Mem/Wb mem
+        if (wb_mem.load_ready_out() && state_reg[1].rd != 0) {  // Mem/Wb mem
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
-                state_reg._next[0].rs1_val = load_result_comb_func();
+                state_reg._next[0].rs1_val = wb_mem.load_result_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS1\n", (uint32_t)load_result_comb_func());
+                    printf("forwarding %.08x from MEM to RS1\n", (uint32_t)wb_mem.load_result_out());
                 }
             }
             if (dec_state_tmp.rs2 == state_reg[1].rd) {
-                state_reg._next[0].rs2_val = load_result_comb_func();
+                state_reg._next[0].rs2_val = wb_mem.load_result_out();
                 if (debugen_in) {
-                    printf("forwarding %.08x from MEM to RS2\n", (uint32_t)load_result_comb_func());
+                    printf("forwarding %.08x from MEM to RS2\n", (uint32_t)wb_mem.load_result_out());
                 }
             }
         }
@@ -656,23 +470,6 @@ public:
             debug();
         }
 
-        if (dcache.mem_write_out() && dcache.mem_write_mask_out()) {
-            bool same_head = store_forward_valid_reg[0] &&
-                (uint32_t)store_forward_addr_reg[0] == dcache.mem_addr_out() &&
-                (uint32_t)store_forward_data_reg[0] == dcache.mem_write_data_out() &&
-                (uint8_t)store_forward_mask_reg[0] == dcache.mem_write_mask_out();
-            if (!same_head) {
-                store_forward_addr_reg._next[1] = store_forward_addr_reg[0];
-                store_forward_data_reg._next[1] = store_forward_data_reg[0];
-                store_forward_mask_reg._next[1] = store_forward_mask_reg[0];
-                store_forward_valid_reg._next[1] = store_forward_valid_reg[0];
-            }
-            store_forward_addr_reg._next[0] = dcache.mem_addr_out();
-            store_forward_data_reg._next[0] = dcache.mem_write_data_out();
-            store_forward_mask_reg._next[0] = dcache.mem_write_mask_out();
-            store_forward_valid_reg._next[0] = true;
-        }
-
         if (dmem_addr_out() == 0x11223344 && dmem_write_out() && !output_write_active_reg) {
             FILE* out = fopen("out.txt", "a");
             if (debugen_in) {
@@ -691,37 +488,12 @@ public:
             fallthrough_reg._next = fallthrough_reg;
             predicted_taken_reg._next = predicted_taken_reg;
             alu_result_reg._next = alu_result_reg;
-            if (split_load_comb_func()) {
-                if (split_load_current_low_valid_comb_func()) {
-                    split_load_low_reg._next = dcache.read_data_out();
-                    split_load_low_valid_reg._next = true;
+            if (wb_mem.load_ready_out() && state_reg[1].rd != 0 && state_reg[0].valid) {
+                if (state_reg[0].rs1 == state_reg[1].rd) {
+                    state_reg._next[0].rs1_val = wb_mem.load_result_out();
                 }
-                if (split_load_current_high_valid_comb_func()) {
-                    split_load_high_reg._next = dcache.read_data_out();
-                    split_load_high_valid_reg._next = true;
-                }
-                if (load_data_ready_comb_func() && state_reg[1].rd != 0 && state_reg[0].valid) {
-                    if (state_reg[0].rs1 == state_reg[1].rd) {
-                        state_reg._next[0].rs1_val = load_result_comb_func();
-                    }
-                    if (state_reg[0].rs2 == state_reg[1].rd) {
-                        state_reg._next[0].rs2_val = load_result_comb_func();
-                    }
-                }
-            }
-            else {
-                if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                    dcache.read_valid_out() && dcache.read_addr_out() == (uint32_t)alu_result_reg) {
-                    load_data_reg._next = dcache.read_data_out();
-                    load_data_valid_reg._next = true;
-                    if (state_reg[1].rd != 0 && state_reg[0].valid) {
-                        if (state_reg[0].rs1 == state_reg[1].rd) {
-                            state_reg._next[0].rs1_val = load_result_comb_func();
-                        }
-                        if (state_reg[0].rs2 == state_reg[1].rd) {
-                            state_reg._next[0].rs2_val = load_result_comb_func();
-                        }
-                    }
+                if (state_reg[0].rs2 == state_reg[1].rd) {
+                    state_reg._next[0].rs2_val = wb_mem.load_result_out();
                 }
             }
             debug_branch_target_reg._next = debug_branch_target_reg;
@@ -748,21 +520,27 @@ public:
                 predicted_taken_reg._next[0] = false;
             }
             else {
-                state_reg._next[0] = dec.state_out();
-                state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
-                predicted_next_reg._next[0] = decode_branch_valid_comb_func() ? (uint32_t)bp.predict_next_out() : decode_fallthrough_comb_func();
-                fallthrough_reg._next[0] = decode_fallthrough_comb_func();
-                predicted_taken_reg._next[0] = decode_branch_valid_comb_func() && bp.predict_taken_out();
-                forward();
+                if (fetch_valid_comb_func()) {
+                    state_reg._next[0] = dec.state_out();
+                    state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
+                    predicted_next_reg._next[0] = decode_branch_valid_comb_func() ? (uint32_t)bp.predict_next_out() : decode_fallthrough_comb_func();
+                    fallthrough_reg._next[0] = decode_fallthrough_comb_func();
+                    predicted_taken_reg._next[0] = decode_branch_valid_comb_func() && bp.predict_taken_out();
+                    forward();
+                }
+                else {
+                    state_reg._next[0] = State{};
+                    state_reg._next[0].valid = false;
+                    predicted_next_reg._next[0] = pc;
+                    fallthrough_reg._next[0] = pc;
+                    predicted_taken_reg._next[0] = false;
+                }
             }
             state_reg._next[1] = state_reg[0];
             predicted_next_reg._next[1] = predicted_next_reg[0];
             fallthrough_reg._next[1] = fallthrough_reg[0];
             predicted_taken_reg._next[1] = predicted_taken_reg[0];
             alu_result_reg._next = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
-            load_data_valid_reg._next = false;
-            split_load_low_valid_reg._next = false;
-            split_load_high_valid_reg._next = false;
             debug_branch_target_reg._next = exe.branch_target_out();
             debug_branch_taken_reg._next = exe.branch_taken_out();
         }
@@ -770,7 +548,9 @@ public:
         regs._work(reset);
         dec._work(reset);
         exe._work(reset);
+        exe_mem._work(reset);
         wb._work(reset);
+        wb_mem._work(reset);
         csr._work(reset);
         icache._work(reset);
         dcache._work(reset);
@@ -782,16 +562,6 @@ public:
             state_reg._next[1].valid = 0;
             pc._next = reset_pc_in();
             valid.clr();
-            load_data_reg.clr();
-            load_data_valid_reg.clr();
-            split_load_low_reg.clr();
-            split_load_high_reg.clr();
-            split_load_low_valid_reg.clr();
-            split_load_high_valid_reg.clr();
-            store_forward_addr_reg.clr();
-            store_forward_data_reg.clr();
-            store_forward_mask_reg.clr();
-            store_forward_valid_reg.clr();
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -863,16 +633,6 @@ public:
         fallthrough_reg.strobe();
         predicted_taken_reg.strobe();
         alu_result_reg.strobe();
-        load_data_reg.strobe();
-        load_data_valid_reg.strobe();
-        split_load_low_reg.strobe();
-        split_load_high_reg.strobe();
-        split_load_low_valid_reg.strobe();
-        split_load_high_valid_reg.strobe();
-        store_forward_addr_reg.strobe();
-        store_forward_data_reg.strobe();
-        store_forward_mask_reg.strobe();
-        store_forward_valid_reg.strobe();
         debug_alu_a_reg.strobe();
         debug_alu_b_reg.strobe();
         debug_branch_target_reg.strobe();
@@ -882,7 +642,9 @@ public:
         regs._strobe();
         dec._strobe();
         exe._strobe();
+        exe_mem._strobe();
         wb._strobe();
+        wb_mem._strobe();
         csr._strobe();
         icache._strobe();
         dcache._strobe();
@@ -1082,20 +844,7 @@ public:
     void _assign()
     {
         size_t i;
-#ifndef VERILATOR
-        tribe._assign();
-
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            tribe.axi_out[i].awready_out = mem[i].axi_in.awready_out;
-            tribe.axi_out[i].wready_out = mem[i].axi_in.wready_out;
-            tribe.axi_out[i].bvalid_out = mem[i].axi_in.bvalid_out;
-            tribe.axi_out[i].bid_out = mem[i].axi_in.bid_out;
-            tribe.axi_out[i].arready_out = mem[i].axi_in.arready_out;
-            tribe.axi_out[i].rvalid_out = mem[i].axi_in.rvalid_out;
-            tribe.axi_out[i].rdata_out = mem[i].axi_in.rdata_out;
-            tribe.axi_out[i].rlast_out = mem[i].axi_in.rlast_out;
-            tribe.axi_out[i].rid_out = mem[i].axi_in.rid_out;
-        }
+	#ifndef VERILATOR
         tribe.debugen_in = debugen_in;
         tribe.reset_pc_in = __EXPR(reset_pc);
         tribe.memory_base_in = __EXPR(start_mem_addr);
@@ -1104,22 +853,16 @@ public:
         tribe._assign();
 
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            mem[i].axi_in.awvalid_in = tribe.axi_out[i].awvalid_in;
-            mem[i].axi_in.awaddr_in = tribe.axi_out[i].awaddr_in;
-            mem[i].axi_in.awid_in = tribe.axi_out[i].awid_in;
-            mem[i].axi_in.wvalid_in = tribe.axi_out[i].wvalid_in;
-            mem[i].axi_in.wdata_in = tribe.axi_out[i].wdata_in;
-            mem[i].axi_in.wlast_in = tribe.axi_out[i].wlast_in;
-            mem[i].axi_in.bready_in = tribe.axi_out[i].bready_in;
-            mem[i].axi_in.arvalid_in = tribe.axi_out[i].arvalid_in;
-            mem[i].axi_in.araddr_in = tribe.axi_out[i].araddr_in;
-            mem[i].axi_in.arid_in = tribe.axi_out[i].arid_in;
-            mem[i].axi_in.rready_in = tribe.axi_out[i].rready_in;
+            AXI4_DRIVER_FROM(mem[i].axi_in, tribe.axi_out[i]);
             mem[i].debugen_in = debugen_in;
             mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
             mem[i]._assign();
         }
-#else  // connecting Verilator to CppHDL
+
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            AXI4_RESPONDER_FROM(tribe.axi_out[i], mem[i].axi_in);
+        }
+	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = ram_size * 4;
@@ -1477,10 +1220,12 @@ int main (int argc, char** argv)
                   "L1Cache",
                   "L2Cache",
                   "BranchPredictor",
-                  "Decode",
-                  "Execute",
-                  "CSR",
-                  "Writeback"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
+	                  "Decode",
+	                  "Execute",
+	                  "ExecuteMem",
+	                  "CSR",
+	                  "Writeback",
+	                  "WritebackMem"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache"});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok

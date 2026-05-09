@@ -133,7 +133,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32 PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv"
+        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
     )
 
     add_test(
@@ -254,7 +254,7 @@ add_test(
 set_tests_properties(Tribe_riscv_tests_rv32 PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv"
+    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
 )
 
 add_test(

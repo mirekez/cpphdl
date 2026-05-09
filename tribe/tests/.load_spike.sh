@@ -2,12 +2,53 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="${SCRIPT_DIR}/riscv-isa-sim"
 BUILD_DIR="${REPO_DIR}/build"
 DTC_DIR="${SCRIPT_DIR}/dtc"
-PREFIX="${SPIKE_PREFIX:-/home/me/riscv}"
+RISCV_HOME="${RISCV_HOME:-/home/me/riscv}"
+PREFIX="${SPIKE_PREFIX:-${RISCV_HOME}}"
 REPO_URL="${SPIKE_REPO_URL:-https://github.com/riscv-software-src/riscv-isa-sim.git}"
 DTC_REPO_URL="${DTC_REPO_URL:-https://github.com/dgibson/dtc.git}"
+RISCV_TESTS_DIR="${RISCV_TESTS_DIR:-${SCRIPT_DIR}/riscv-tests}"
+RISCV_TESTS_REPO_URL="${RISCV_TESTS_REPO_URL:-https://github.com/riscv-software-src/riscv-tests.git}"
+RISCV_DV_DIR="${RISCV_DV_DIR:-${SCRIPT_DIR}/riscv-dv}"
+RISCV_DV_REPO_URL="${RISCV_DV_REPO_URL:-https://github.com/google/riscv-dv.git}"
+PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+
+RISCV_DV_PYTHON_DEPS=(
+  Jinja2
+  Markdown
+  MarkupSafe
+  PyYAML
+  bitarray
+  bitstring
+  google-api-python-client
+  libconf
+  numpy
+  pandas
+  pyboolector
+  pygen
+  pyucis
+  pyvsc
+  PyYAML
+  riscv-config
+  riscv-isac
+  tabulate
+  toposort
+)
+
+clone_or_update() {
+  local url="$1"
+  local dir="$2"
+
+  if [[ ! -d "${dir}/.git" ]]; then
+    git clone "${url}" "${dir}"
+  else
+    git -C "${dir}" fetch --tags --prune
+  fi
+}
 
 if ! command -v git >/dev/null 2>&1; then
   echo "error: git is required" >&2
@@ -19,24 +60,22 @@ if ! command -v make >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "error: ${PYTHON_BIN} is required" >&2
+  exit 1
+fi
+
 if ! command -v dtc >/dev/null 2>&1 && [[ ! -x "${PREFIX}/bin/dtc" ]]; then
-  if [[ ! -d "${DTC_DIR}/.git" ]]; then
-    git clone "${DTC_REPO_URL}" "${DTC_DIR}"
-  else
-    git -C "${DTC_DIR}" fetch --tags --prune
-  fi
+  clone_or_update "${DTC_REPO_URL}" "${DTC_DIR}"
 
   make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 PREFIX="${PREFIX}" -j"$(nproc)"
   make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 PREFIX="${PREFIX}" install
 fi
 
 export PATH="${PREFIX}/bin:${PATH}"
+export RISCV="${RISCV:-${PREFIX}}"
 
-if [[ ! -d "${REPO_DIR}/.git" ]]; then
-  git clone "${REPO_URL}" "${REPO_DIR}"
-else
-  git -C "${REPO_DIR}" fetch --tags --prune
-fi
+clone_or_update "${REPO_URL}" "${REPO_DIR}"
 
 git -C "${REPO_DIR}" submodule update --init --recursive
 
@@ -51,3 +90,14 @@ make -j"$(nproc)"
 make install
 
 "${PREFIX}/bin/spike" --help >/dev/null
+
+clone_or_update "${RISCV_TESTS_REPO_URL}" "${RISCV_TESTS_DIR}"
+git -C "${RISCV_TESTS_DIR}" submodule update --init --recursive
+
+clone_or_update "${RISCV_DV_REPO_URL}" "${RISCV_DV_DIR}"
+git -C "${RISCV_DV_DIR}" submodule update --init --recursive
+
+mkdir -p "${PYDEPS_DIR}"
+if ! PYTHONPATH="${PYDEPS_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" -c 'import vsc' >/dev/null 2>&1; then
+  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" "${RISCV_DV_PYTHON_DEPS[@]}"
+fi

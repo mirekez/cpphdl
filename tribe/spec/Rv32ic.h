@@ -100,8 +100,7 @@ struct Rv32ic : public Rv32i
                     state_out.rd = 2;
                     state_out.rs1 = 2; // sp
                     imm_tmp = (bit(12) << 9) | (bit(4) << 8) | (bit(3) << 7) | (bit(5) << 6) | (bit(2) << 5) | (bit(6) << 4);
-                    imm_tmp = (imm_tmp << 22) >> 22;
-                    state_out.imm = imm_tmp;
+                    state_out.imm = sext(imm_tmp, 10);
                     state_out.alu_op = Alu::ADD;
                     state_out.wb_op = Wb::ALU;
                 } else {

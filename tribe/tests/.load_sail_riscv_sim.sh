@@ -2,15 +2,32 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PREFIX="${SAIL_RISCV_PREFIX:-${RISCV_HOME:-/home/me/riscv}}"
 REPO_DIR="${SAIL_RISCV_REPO_DIR:-${SCRIPT_DIR}/sail-riscv}"
 REPO_URL="${SAIL_RISCV_REPO_URL:-https://github.com/riscv/sail-riscv.git}"
+RISCV_ARCH_TEST_DIR="${RISCV_ARCH_TEST_DIR:-${SCRIPT_DIR}/riscv-arch-test}"
+RISCV_ARCH_TEST_REPO_URL="${RISCV_ARCH_TEST_REPO_URL:-https://github.com/riscv-non-isa/riscv-arch-test.git}"
 SAIL_RISCV_VERSION="${SAIL_RISCV_VERSION:-0.11}"
 SAIL_COMPILER_VERSION="${SAIL_COMPILER_VERSION:-0.20.1}"
 SAIL_COMPILER_REQUIRED_VERSION="${SAIL_COMPILER_REQUIRED_VERSION:-0.20.1}"
 SAIL_COMPILER_REPO="${SAIL_COMPILER_REPO:-https://github.com/rems-project/sail}"
 MISE_PREFIX="${MISE_PREFIX:-${HOME}/.local}"
 MISE_INSTALL_URL="${MISE_INSTALL_URL:-https://mise.jdx.dev/install.sh}"
+PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+
+RISCV_ARCH_TEST_PYTHON_DEPS=(
+  uv
+  uv-build
+  pydantic
+  pyjson5
+  rich
+  ruamel-yaml
+  typer
+  pyright
+  ruff
+)
 
 need_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -24,6 +41,18 @@ need_tool make
 need_tool cmake
 need_tool curl
 need_tool tar
+need_tool "${PYTHON_BIN}"
+
+clone_or_update() {
+  local url="$1"
+  local dir="$2"
+
+  if [[ ! -d "${dir}/.git" ]]; then
+    git clone "${url}" "${dir}"
+  else
+    git -C "${dir}" fetch --tags --prune
+  fi
+}
 
 mkdir -p "${PREFIX}/bin"
 mkdir -p "${MISE_PREFIX}/bin"
@@ -89,11 +118,7 @@ fi
 
 sail --version
 
-if [[ ! -d "${REPO_DIR}/.git" ]]; then
-  git clone "${REPO_URL}" "${REPO_DIR}"
-else
-  git -C "${REPO_DIR}" fetch --tags --prune
-fi
+clone_or_update "${REPO_URL}" "${REPO_DIR}"
 
 git -C "${REPO_DIR}" checkout "${SAIL_RISCV_VERSION}"
 git -C "${REPO_DIR}" submodule update --init --recursive
@@ -116,3 +141,11 @@ fi
 install -m 0755 "${SIM}" "${PREFIX}/bin/sail_riscv_sim"
 
 "${PREFIX}/bin/sail_riscv_sim" --version
+
+clone_or_update "${RISCV_ARCH_TEST_REPO_URL}" "${RISCV_ARCH_TEST_DIR}"
+git -C "${RISCV_ARCH_TEST_DIR}" submodule update --init --recursive
+
+mkdir -p "${PYDEPS_DIR}"
+if ! PATH="${PYDEPS_DIR}/bin:${PATH}" command -v uv >/dev/null 2>&1; then
+  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" "${RISCV_ARCH_TEST_PYTHON_DEPS[@]}"
+fi

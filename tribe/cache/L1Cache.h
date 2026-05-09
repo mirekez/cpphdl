@@ -138,9 +138,11 @@ private:
 
     // Whether the incoming address can be served from this cache line format.
     __LAZY_COMB(input_cacheable_comb, bool)
-        uint32_t word = (addr_in() >> 2) & (LINE_WORDS - 1);
         input_cacheable_comb = !(addr_in() & 0x1);
-        if ((addr_in() & 0x2) && word == LINE_WORDS - 1) {
+        if ((addr_in() & 0x3u) != 0 &&
+            (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
+            // A 32-bit read starting at the final line word needs bytes from the next line.
+            // Let L2's cross-line path assemble it instead of filling an incomplete L1 line.
             input_cacheable_comb = false;
         }
         return input_cacheable_comb;
@@ -229,7 +231,7 @@ private:
         uint32_t word;
         if (((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
-            // Cross-line direct reads are already addressed at the high line; the first word is the missing tail.
+            // L2 returns an assembled cross-line direct read in the low 32 bits of the beat.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
         else {
@@ -393,7 +395,7 @@ public:
         }
         else if (state_reg == ST_IDLE) {
             last_valid_reg._next = false;
-            if (read_in()) {
+            if (read_in() && !stall_in()) {
                 req_addr_reg._next = addr_in();
                 req_read_reg._next = true;
                 req_cacheable_reg._next = input_cacheable_comb_func();
