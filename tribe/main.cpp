@@ -21,6 +21,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
 #include "Writeback.h"
 #include "CSR.h"
 #include "BranchPredictor.h"
+#include "Axi4.h"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
@@ -69,26 +70,7 @@ public:
     __PORT(uint32_t)  memory_base_in;
     __PORT(uint32_t)  memory_size_in;
 
-    __PORT(bool) axi_awvalid_out[L2_MEM_PORTS];
-    __PORT(u<L2_CACHE_ADDR_BITS>) axi_awaddr_out[L2_MEM_PORTS];
-    __PORT(u<4>) axi_awid_out[L2_MEM_PORTS];
-    __PORT(bool) axi_awready_in[L2_MEM_PORTS];
-    __PORT(bool) axi_wvalid_out[L2_MEM_PORTS];
-    __PORT(logic<TRIBE_L2_AXI_WIDTH>) axi_wdata_out[L2_MEM_PORTS];
-    __PORT(bool) axi_wlast_out[L2_MEM_PORTS];
-    __PORT(bool) axi_wready_in[L2_MEM_PORTS];
-    __PORT(bool) axi_bready_out[L2_MEM_PORTS];
-    __PORT(bool) axi_bvalid_in[L2_MEM_PORTS];
-    __PORT(u<4>) axi_bid_in[L2_MEM_PORTS];
-    __PORT(bool) axi_arvalid_out[L2_MEM_PORTS];
-    __PORT(u<L2_CACHE_ADDR_BITS>) axi_araddr_out[L2_MEM_PORTS];
-    __PORT(u<4>) axi_arid_out[L2_MEM_PORTS];
-    __PORT(bool) axi_arready_in[L2_MEM_PORTS];
-    __PORT(bool) axi_rready_out[L2_MEM_PORTS];
-    __PORT(bool) axi_rvalid_in[L2_MEM_PORTS];
-    __PORT(logic<TRIBE_L2_AXI_WIDTH>) axi_rdata_in[L2_MEM_PORTS];
-    __PORT(bool) axi_rlast_in[L2_MEM_PORTS];
-    __PORT(u<4>) axi_rid_in[L2_MEM_PORTS];
+    Axi4If<L2_CACHE_ADDR_BITS, 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
@@ -184,15 +166,15 @@ public:
         l2cache.memory_base_in = memory_base_in;
         l2cache.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            l2cache.axi_awready_in[i] = axi_awready_in[i];
-            l2cache.axi_wready_in[i] = axi_wready_in[i];
-            l2cache.axi_bvalid_in[i] = axi_bvalid_in[i];
-            l2cache.axi_bid_in[i] = axi_bid_in[i];
-            l2cache.axi_arready_in[i] = axi_arready_in[i];
-            l2cache.axi_rvalid_in[i] = axi_rvalid_in[i];
-            l2cache.axi_rdata_in[i] = axi_rdata_in[i];
-            l2cache.axi_rlast_in[i] = axi_rlast_in[i];
-            l2cache.axi_rid_in[i] = axi_rid_in[i];
+            l2cache.axi_out[i].awready_out = axi_out[i].awready_out;
+            l2cache.axi_out[i].wready_out = axi_out[i].wready_out;
+            l2cache.axi_out[i].bvalid_out = axi_out[i].bvalid_out;
+            l2cache.axi_out[i].bid_out = axi_out[i].bid_out;
+            l2cache.axi_out[i].arready_out = axi_out[i].arready_out;
+            l2cache.axi_out[i].rvalid_out = axi_out[i].rvalid_out;
+            l2cache.axi_out[i].rdata_out = axi_out[i].rdata_out;
+            l2cache.axi_out[i].rlast_out = axi_out[i].rlast_out;
+            l2cache.axi_out[i].rid_out = axi_out[i].rid_out;
         }
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
@@ -205,17 +187,17 @@ public:
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            axi_awvalid_out[i] = l2cache.axi_awvalid_out[i];
-            axi_awaddr_out[i] = l2cache.axi_awaddr_out[i];
-            axi_awid_out[i] = l2cache.axi_awid_out[i];
-            axi_wvalid_out[i] = l2cache.axi_wvalid_out[i];
-            axi_wdata_out[i] = l2cache.axi_wdata_out[i];
-            axi_wlast_out[i] = l2cache.axi_wlast_out[i];
-            axi_bready_out[i] = l2cache.axi_bready_out[i];
-            axi_arvalid_out[i] = l2cache.axi_arvalid_out[i];
-            axi_araddr_out[i] = l2cache.axi_araddr_out[i];
-            axi_arid_out[i] = l2cache.axi_arid_out[i];
-            axi_rready_out[i] = l2cache.axi_rready_out[i];
+            axi_out[i].awvalid_in = l2cache.axi_out[i].awvalid_in;
+            axi_out[i].awaddr_in = l2cache.axi_out[i].awaddr_in;
+            axi_out[i].awid_in = l2cache.axi_out[i].awid_in;
+            axi_out[i].wvalid_in = l2cache.axi_out[i].wvalid_in;
+            axi_out[i].wdata_in = l2cache.axi_out[i].wdata_in;
+            axi_out[i].wlast_in = l2cache.axi_out[i].wlast_in;
+            axi_out[i].bready_in = l2cache.axi_out[i].bready_in;
+            axi_out[i].arvalid_in = l2cache.axi_out[i].arvalid_in;
+            axi_out[i].araddr_in = l2cache.axi_out[i].araddr_in;
+            axi_out[i].arid_in = l2cache.axi_out[i].arid_in;
+            axi_out[i].rready_in = l2cache.axi_out[i].rready_in;
         }
     }
 
@@ -1104,15 +1086,15 @@ public:
         tribe._assign();
 
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            tribe.axi_awready_in[i] = mem[i].axi_awready_out;
-            tribe.axi_wready_in[i] = mem[i].axi_wready_out;
-            tribe.axi_bvalid_in[i] = mem[i].axi_bvalid_out;
-            tribe.axi_bid_in[i] = mem[i].axi_bid_out;
-            tribe.axi_arready_in[i] = mem[i].axi_arready_out;
-            tribe.axi_rvalid_in[i] = mem[i].axi_rvalid_out;
-            tribe.axi_rdata_in[i] = mem[i].axi_rdata_out;
-            tribe.axi_rlast_in[i] = mem[i].axi_rlast_out;
-            tribe.axi_rid_in[i] = mem[i].axi_rid_out;
+            tribe.axi_out[i].awready_out = mem[i].axi_in.awready_out;
+            tribe.axi_out[i].wready_out = mem[i].axi_in.wready_out;
+            tribe.axi_out[i].bvalid_out = mem[i].axi_in.bvalid_out;
+            tribe.axi_out[i].bid_out = mem[i].axi_in.bid_out;
+            tribe.axi_out[i].arready_out = mem[i].axi_in.arready_out;
+            tribe.axi_out[i].rvalid_out = mem[i].axi_in.rvalid_out;
+            tribe.axi_out[i].rdata_out = mem[i].axi_in.rdata_out;
+            tribe.axi_out[i].rlast_out = mem[i].axi_in.rlast_out;
+            tribe.axi_out[i].rid_out = mem[i].axi_in.rid_out;
         }
         tribe.debugen_in = debugen_in;
         tribe.reset_pc_in = __EXPR(reset_pc);
@@ -1122,17 +1104,17 @@ public:
         tribe._assign();
 
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            mem[i].axi_awvalid_in = tribe.axi_awvalid_out[i];
-            mem[i].axi_awaddr_in = tribe.axi_awaddr_out[i];
-            mem[i].axi_awid_in = tribe.axi_awid_out[i];
-            mem[i].axi_wvalid_in = tribe.axi_wvalid_out[i];
-            mem[i].axi_wdata_in = tribe.axi_wdata_out[i];
-            mem[i].axi_wlast_in = tribe.axi_wlast_out[i];
-            mem[i].axi_bready_in = tribe.axi_bready_out[i];
-            mem[i].axi_arvalid_in = tribe.axi_arvalid_out[i];
-            mem[i].axi_araddr_in = tribe.axi_araddr_out[i];
-            mem[i].axi_arid_in = tribe.axi_arid_out[i];
-            mem[i].axi_rready_in = tribe.axi_rready_out[i];
+            mem[i].axi_in.awvalid_in = tribe.axi_out[i].awvalid_in;
+            mem[i].axi_in.awaddr_in = tribe.axi_out[i].awaddr_in;
+            mem[i].axi_in.awid_in = tribe.axi_out[i].awid_in;
+            mem[i].axi_in.wvalid_in = tribe.axi_out[i].wvalid_in;
+            mem[i].axi_in.wdata_in = tribe.axi_out[i].wdata_in;
+            mem[i].axi_in.wlast_in = tribe.axi_out[i].wlast_in;
+            mem[i].axi_in.bready_in = tribe.axi_out[i].bready_in;
+            mem[i].axi_in.arvalid_in = tribe.axi_out[i].arvalid_in;
+            mem[i].axi_in.araddr_in = tribe.axi_out[i].araddr_in;
+            mem[i].axi_in.arid_in = tribe.axi_out[i].arid_in;
+            mem[i].axi_in.rready_in = tribe.axi_out[i].rready_in;
             mem[i].debugen_in = debugen_in;
             mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
             mem[i]._assign();
@@ -1142,17 +1124,12 @@ public:
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = ram_size * 4;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            mem[i].axi_awvalid_in = __EXPR_I((bool)tribe.axi_awvalid_out[i]);
-            mem[i].axi_awaddr_in = __EXPR_I((u<L2_CACHE_ADDR_BITS>)(uint32_t)tribe.axi_awaddr_out[i]);
-            mem[i].axi_awid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_awid_out[i]);
-            mem[i].axi_wvalid_in = __EXPR_I((bool)tribe.axi_wvalid_out[i]);
-            mem[i].axi_wdata_in = __EXPR_I(verilator_wide_to_logic(tribe.axi_wdata_out[i]));
-            mem[i].axi_wlast_in = __EXPR_I((bool)tribe.axi_wlast_out[i]);
-            mem[i].axi_bready_in = __EXPR_I((bool)tribe.axi_bready_out[i]);
-            mem[i].axi_arvalid_in = __EXPR_I((bool)tribe.axi_arvalid_out[i]);
-            mem[i].axi_araddr_in = __EXPR_I((u<L2_CACHE_ADDR_BITS>)(uint32_t)tribe.axi_araddr_out[i]);
-            mem[i].axi_arid_in = __EXPR_I((u<4>)(uint32_t)tribe.axi_arid_out[i]);
-            mem[i].axi_rready_in = __EXPR_I((bool)tribe.axi_rready_out[i]);
+            AXI4_DRIVER_FROM_VERILATOR(
+                mem[i].axi_in,
+                tribe,
+                i,
+                u<L2_CACHE_ADDR_BITS>,
+                verilator_wide_to_logic);
             mem[i].debugen_in = debugen_in;
             mem[i].__inst_name = __inst_name + "/mem" + std::to_string(i);
             mem[i]._assign();
@@ -1183,15 +1160,7 @@ public:
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            tribe.axi_awready_in[i] = mem[i].axi_awready_out();
-            tribe.axi_wready_in[i] = mem[i].axi_wready_out();
-            tribe.axi_bvalid_in[i] = mem[i].axi_bvalid_out();
-            tribe.axi_bid_in[i] = mem[i].axi_bid_out();
-            tribe.axi_arready_in[i] = mem[i].axi_arready_out();
-            tribe.axi_rvalid_in[i] = mem[i].axi_rvalid_out();
-            verilator_logic_to_wide(tribe.axi_rdata_in[i], mem[i].axi_rdata_out());
-            tribe.axi_rlast_in[i] = mem[i].axi_rlast_out();
-            tribe.axi_rid_in[i] = mem[i].axi_rid_out();
+            AXI4_RESPONDER_FROM_VERILATOR(tribe, mem[i].axi_in, i);
         }
 #endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {

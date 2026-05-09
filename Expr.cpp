@@ -738,6 +738,33 @@ std::string Expr::typeToSV(std::string type, std::string size)
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG)&&!(flags&FLAG_NOTREG) ? "reg" : "logic");
 
     std::string str = type;//genTypeName(type);
+    auto templateWidth = [](const std::string& value, const char* prefix) -> std::string {
+        size_t pos = value.find(prefix);
+        if (pos == std::string::npos) {
+            return "";
+        }
+        pos += strlen(prefix);
+        size_t end = value.find('>', pos);
+        if (end == std::string::npos) {
+            return "";
+        }
+        return value.substr(pos, end - pos);
+    };
+    std::string u_width = templateWidth(type, "u<");
+    std::string i_width = templateWidth(type, "i<");
+    std::string logic_width = templateWidth(type, "logic<");
+    if (!u_width.empty()) {
+        str = logic + size + "[" + u_width + "-1:0]";
+        declSize = 8;
+    } else
+    if (!i_width.empty()) {
+        str = logic + " signed" + size + "[" + i_width + "-1:0]";
+        declSize = 8;
+    } else
+    if (!logic_width.empty()) {
+        str = logic + size + "[" + logic_width + "-1:0]";
+        declSize = 8;
+    } else
     if (type == "cpphdl_logic") {
         str = logic + size;
         declSize = 1;

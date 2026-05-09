@@ -180,6 +180,7 @@ private:
         refill_even_line_comb = refill_even_line_reg;
         for (i = 0; i < PORT_WORDS; ++i) {
             word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
+            // Store bits [15:0] from each 32-bit refill word in the even half RAM.
             refill_even_line_comb.bits(word * 16 + 15, word * 16) =
                 (uint32_t)mem_read_data_in().bits(i * 32 + 15, i * 32);
         }
@@ -193,6 +194,7 @@ private:
         refill_odd_line_comb = refill_odd_line_reg;
         for (i = 0; i < PORT_WORDS; ++i) {
             word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
+            // Store bits [31:16] from each 32-bit refill word in the odd half RAM.
             refill_odd_line_comb.bits(word * 16 + 15, word * 16) =
                 (uint32_t)mem_read_data_in().bits(i * 32 + 31, i * 32 + 16);
         }
@@ -208,6 +210,7 @@ private:
         even_half = (uint32_t)refill_even_line_comb_func().bits(word * 16 + 15, word * 16);
         odd_half = (uint32_t)refill_odd_line_comb_func().bits(word * 16 + 15, word * 16);
         if (req_addr_reg & 0x2) {
+            // Half-word shifted access: low half comes from current odd half, high half from next even half.
             even_half = 0;
             if (word + 1 < LINE_WORDS) {
                 even_half = (uint32_t)refill_even_line_comb_func().bits((word + 1) * 16 + 15, (word + 1) * 16);
@@ -220,21 +223,26 @@ private:
         return refill_data_comb;
     }
 
+    // Direct memory bypass data, including unaligned words inside or across a memory beat.
     __LAZY_COMB(direct_data_comb, uint32_t)
         uint32_t byte;
         uint32_t word;
         if (((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
+            // Cross-line direct reads are already addressed at the high line; the first word is the missing tail.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
         else {
             word = (((uint32_t)req_addr_reg % PORT_BYTES) / 4u);
             byte = (uint32_t)req_addr_reg & 3u;
+            // Start with the addressed word shifted down by the byte offset.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(word * 32 + 31, word * 32) >> (byte * 8u);
             if (byte != 0 && word + 1 < PORT_WORDS) {
+                // Unaligned access within the same beat: take the remaining high bytes from the next word.
                 direct_data_comb |= (uint32_t)mem_read_data_in().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
             }
             else if (byte != 0) {
+                // Unaligned access at the end of the beat: the high bytes wrap to word zero of the next beat.
                 direct_data_comb |= (uint32_t)mem_read_data_in().bits(31, 0) << (32u - byte * 8u);
             }
         }
@@ -272,6 +280,7 @@ private:
                 even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 if (req_addr_reg & 0x2) {
+                    // Half-word shifted cached read mirrors refill assembly: current odd half plus next even half.
                     even_half = 0;
                     if (word + 1 < LINE_WORDS) {
                         even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
@@ -324,6 +333,7 @@ private:
         return busy_comb;
     }
 
+    // Performance/debug snapshot for the current L1 state.
     __LAZY_COMB(perf_comb, L1CachePerf)
         perf_comb.state = state_reg;
         perf_comb.hit = hit_comb_func();
@@ -393,6 +403,7 @@ public:
         else if (state_reg == ST_LOOKUP && req_read_reg) {
             if (hit_comb_func()) {
                 if (stall_in()) {
+                    // Downstream stall: hold the assembled hit data stable in ST_DONE.
                     last_addr_reg._next = req_addr_reg;
                     last_data_reg._next = cache_data_comb_func();
                     last_valid_reg._next = true;
@@ -412,6 +423,7 @@ public:
                 }
             }
             else {
+                // Miss path starts a PORT_BITWIDTH beat stream and rebuilds the split even/odd line image.
                 refill_beat_reg._next = 0;
                 refill_even_line_reg._next = 0;
                 refill_odd_line_reg._next = 0;
@@ -421,6 +433,7 @@ public:
         else if (state_reg == ST_REFILL && req_read_reg) {
             if (req_cacheable_reg) {
                 if (!mem_wait_in()) {
+                    // Each accepted beat updates the partial line image; the final beat commits tag/data RAMs.
                     refill_even_line_reg._next = refill_even_line_comb_func();
                     refill_odd_line_reg._next = refill_odd_line_comb_func();
                     if (refill_beat_reg == REFILL_BEATS - 1) {

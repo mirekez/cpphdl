@@ -205,7 +205,7 @@ bool Method::printComb(std::ofstream& out)
 {
     currMethod = this;
 
-    out << "    always @(*) begin : " << escapeIdentifier(name) << "  // " << name <<"\n";
+    out << "    always_comb begin : " << escapeIdentifier(name) << "  // " << name <<"\n";
     for (auto& stmt : statements) {
 //        out << stmt.debug() << "\n";
         stmt.indent = 2;

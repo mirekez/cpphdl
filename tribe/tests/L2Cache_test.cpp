@@ -110,17 +110,11 @@ public:
 #endif
 
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            ram[i].axi_awvalid_in = __EXPR_I(PORT_VALUE(l2.axi_awvalid_out[i]));
-            ram[i].axi_awaddr_in = __EXPR_I(PORT_VALUE(l2.axi_awaddr_out[i]));
-            ram[i].axi_awid_in = __EXPR_I(PORT_VALUE(l2.axi_awid_out[i]));
-            ram[i].axi_wvalid_in = __EXPR_I(PORT_VALUE(l2.axi_wvalid_out[i]));
-            ram[i].axi_wdata_in = __EXPR_I(copy_to_logic<PORT_BITS>(PORT_VALUE(l2.axi_wdata_out[i])));
-            ram[i].axi_wlast_in = __EXPR_I(PORT_VALUE(l2.axi_wlast_out[i]));
-            ram[i].axi_bready_in = __EXPR_I(PORT_VALUE(l2.axi_bready_out[i]));
-            ram[i].axi_arvalid_in = __EXPR_I(PORT_VALUE(l2.axi_arvalid_out[i]));
-            ram[i].axi_araddr_in = __EXPR_I(PORT_VALUE(l2.axi_araddr_out[i]));
-            ram[i].axi_arid_in = __EXPR_I(PORT_VALUE(l2.axi_arid_out[i]));
-            ram[i].axi_rready_in = __EXPR_I(PORT_VALUE(l2.axi_rready_out[i]));
+#ifndef VERILATOR
+            AXI4_DRIVER_FROM(ram[i].axi_in, l2.axi_out[i]);
+#else
+            AXI4_DRIVER_FROM_VERILATOR(ram[i].axi_in, l2, i, u<32>, copy_to_logic<PORT_BITS>);
+#endif
 
             ram[i].debugen_in = false;
             ram[i].__inst_name = "ram" + std::to_string(i);
@@ -129,15 +123,7 @@ public:
 
 #ifndef VERILATOR
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.axi_awready_in[i] = ram[i].axi_awready_out;
-            l2.axi_wready_in[i] = ram[i].axi_wready_out;
-            l2.axi_bvalid_in[i] = ram[i].axi_bvalid_out;
-            l2.axi_bid_in[i] = ram[i].axi_bid_out;
-            l2.axi_arready_in[i] = ram[i].axi_arready_out;
-            l2.axi_rvalid_in[i] = ram[i].axi_rvalid_out;
-            l2.axi_rdata_in[i] = ram[i].axi_rdata_out;
-            l2.axi_rlast_in[i] = ram[i].axi_rlast_out;
-            l2.axi_rid_in[i] = ram[i].axi_rid_out;
+            AXI4_RESPONDER_FROM(l2.axi_out[i], ram[i].axi_in);
         }
 #endif
     }
@@ -158,15 +144,7 @@ public:
         l2.memory_base_in = 0;
         l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.axi_awready_in[i] = ram[i].axi_awready_out();
-            l2.axi_wready_in[i] = ram[i].axi_wready_out();
-            l2.axi_bvalid_in[i] = ram[i].axi_bvalid_out();
-            l2.axi_bid_in[i] = ram[i].axi_bid_out();
-            l2.axi_arready_in[i] = ram[i].axi_arready_out();
-            l2.axi_rvalid_in[i] = ram[i].axi_rvalid_out();
-            verilator_logic_to_wide(l2.axi_rdata_in[i], ram[i].axi_rdata_out());
-            l2.axi_rlast_in[i] = ram[i].axi_rlast_out();
-            l2.axi_rid_in[i] = ram[i].axi_rid_out();
+            AXI4_RESPONDER_FROM_VERILATOR(l2, ram[i].axi_in, i);
         }
         l2.debugen_in = false;
         l2.reset = reset;

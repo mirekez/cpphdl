@@ -17,9 +17,31 @@ public:
     __PORT(u<32>) first_in;
     __PORT(u<32>) second_in;
     __PORT(u<32>) value_out = __VAR(value_comb_func());
+    __PORT(u<32>) task_value_out = __VAR(task_value_comb_func());
+    __PORT(u<32>) function_value_out = __VAR(function_value_comb_func());
 
 private:
     u<32> value_comb;
+    u<32> task_value_comb;
+    u<32> function_value_comb;
+
+    void value_task(u<32>& task_out)
+    {
+        task_out = first_in() + u<32>(0x2000);
+        if (early_in()) {
+            task_out = first_in() + u<32>(0x155);
+            return;
+        }
+        task_out = second_in() + u<32>(0x1aa);
+    }
+
+    u<32> value_function()
+    {
+        if (early_in()) {
+            return first_in() + u<32>(0x255);
+        }
+        return second_in() + u<32>(0x2aa);
+    }
 
     u<32>& value_comb_func()
     {
@@ -29,6 +51,18 @@ private:
         }
         value_comb = second_in() + u<32>(0xaa);
         return value_comb;
+    }
+
+    u<32>& task_value_comb_func()
+    {
+        value_task(task_value_comb);
+        return task_value_comb;
+    }
+
+    u<32>& function_value_comb_func()
+    {
+        function_value_comb = value_function();
+        return function_value_comb;
     }
 
 public:
@@ -74,6 +108,16 @@ static uint32_t expected_value(bool early, uint32_t first, uint32_t second)
     return early ? first + 0x55u : second + 0xaau;
 }
 
+static uint32_t expected_task_value(bool early, uint32_t first, uint32_t second)
+{
+    return early ? first + 0x155u : second + 0x1aau;
+}
+
+static uint32_t expected_function_value(bool early, uint32_t first, uint32_t second)
+{
+    return early ? first + 0x255u : second + 0x2aau;
+}
+
 #ifdef VERILATOR
 static bool generated_sv_has_comb_return_disable()
 {
@@ -85,11 +129,18 @@ static bool generated_sv_has_comb_return_disable()
     }
 
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const bool has_always_comb = text.find("always_comb begin : value_comb_func") != std::string::npos;
     const bool has_named_block = text.find("begin : value_comb_func") != std::string::npos;
     const bool has_disable = text.find("disable value_comb_func") != std::string::npos;
-    if (!has_named_block || !has_disable) {
+    const bool has_task = text.find("task value_task") != std::string::npos;
+    const bool has_task_disable = text.find("disable value_task") != std::string::npos;
+    const bool has_function = text.find("function logic[32-1:0] value_function") != std::string::npos;
+    const bool has_function_return = text.find("return first_in + unsigned'(32'('h255))") != std::string::npos;
+    if (!has_always_comb || !has_named_block || !has_disable || !has_task || !has_task_disable || !has_function || !has_function_return) {
         std::print("\nERROR: early comb return was not emitted as named-block disable\n");
-        std::print("       named block: {}, disable: {}\n", has_named_block, has_disable);
+        std::print("       always_comb: {}, named block: {}, disable: {}\n", has_always_comb, has_named_block, has_disable);
+        std::print("       task: {}, task disable: {}, function: {}, function return: {}\n",
+            has_task, has_task_disable, has_function, has_function_return);
         return false;
     }
     return true;
@@ -155,6 +206,24 @@ public:
 #endif
     }
 
+    u<32> task_value()
+    {
+#ifdef VERILATOR
+        return verilator_read<u<32>>(&dut.task_value_out);
+#else
+        return dut.task_value_out();
+#endif
+    }
+
+    u<32> function_value()
+    {
+#ifdef VERILATOR
+        return verilator_read<u<32>>(&dut.function_value_out);
+#else
+        return dut.function_value_out();
+#endif
+    }
+
     bool check(bool early_value, uint32_t first_value, uint32_t second_value)
     {
         early = early_value;
@@ -165,9 +234,21 @@ public:
         ++sys_clock;
 
         u<32> expected = expected_value(early_value, first_value, second_value);
+        u<32> expected_task = expected_task_value(early_value, first_value, second_value);
+        u<32> expected_function = expected_function_value(early_value, first_value, second_value);
         if (value() != expected) {
             std::print("\nvalue ERROR: early={}, first={:08x}, second={:08x}, got {:08x}, expected {:08x}\n",
                 early_value, first_value, second_value, (uint32_t)value(), (uint32_t)expected);
+            return false;
+        }
+        if (task_value() != expected_task) {
+            std::print("\ntask value ERROR: early={}, first={:08x}, second={:08x}, got {:08x}, expected {:08x}\n",
+                early_value, first_value, second_value, (uint32_t)task_value(), (uint32_t)expected_task);
+            return false;
+        }
+        if (function_value() != expected_function) {
+            std::print("\nfunction value ERROR: early={}, first={:08x}, second={:08x}, got {:08x}, expected {:08x}\n",
+                early_value, first_value, second_value, (uint32_t)function_value(), (uint32_t)expected_function);
             return false;
         }
         return true;
