@@ -8,6 +8,11 @@
 
 using namespace cpphdl;
 
+#define CPPHDL_STR2(x) #x
+#define CPPHDL_STR(x) CPPHDL_STR2(x)
+#define CPPHDL_REPLACEMENT_MASK A5
+#define CPPHDL_REPLACEMENT_SCRIPT_MASK 3C
+
 class [[clang::annotate(
     "CPPHDL_REPLACEMENT="
     "`default_nettype none\n"
@@ -18,8 +23,8 @@ class [[clang::annotate(
     ",   input wire[8-1:0] value_in\n"
     ",   output wire[8-1:0] value_out\n"
     ");\n"
-    "    // CPPHDL_ANNOTATE_REPLACEMENT_MARKER\n"
-    "    assign value_out = value_in ^ 8'hA5;\n"
+    "    // CPPHDL_ANNOTATE_REPLACEMENT_MARKER_" CPPHDL_STR(CPPHDL_REPLACEMENT_MASK) "\n"
+    "    assign value_out = value_in ^ 8'h" CPPHDL_STR(CPPHDL_REPLACEMENT_MASK) ";\n"
     "endmodule\n"
     ";"
 )]] AnnotateReplacement : public Module
@@ -42,7 +47,11 @@ public:
     void _assign() {}
 };
 
-class [[clang::annotate("CPPHDL_REPLACEMENT_SCRIPT=AnnotateReplacementScript.sh;")]]
+class [[clang::annotate(
+    "CPPHDL_REPLACEMENT_SCRIPT=AnnotateReplacementScript.sh "
+    CPPHDL_STR(CPPHDL_REPLACEMENT_SCRIPT_MASK)
+    ";"
+)]]
 AnnotateReplacementScript : public Module
 {
 public:
@@ -55,6 +64,27 @@ private:
     u<8>& value_comb_func()
     {
         return value_comb = value_in() ^ u<8>(0x3c);
+    }
+
+public:
+    void _work(bool reset) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=AnnotateReplacementFile.sv;")]]
+AnnotateReplacementFile : public Module
+{
+public:
+    __PORT(u<8>) value_in;
+    __PORT(u<8>) value_out = __VAR(value_comb_func());
+
+private:
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = value_in() ^ u<8>(0x5a);
     }
 
 public:
@@ -226,12 +256,15 @@ int main(int argc, char** argv)
         ok &= VerilatorCompile(__FILE__, "AnnotateReplacement", {"Predef_pkg"}, {"../../../../include"}, 1);
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DCPPHDL_SCRIPT_REPLACEMENT_TOP", 1);
         ok &= VerilatorCompile(__FILE__, "AnnotateReplacementScript", {"Predef_pkg"}, {"../../../../include"}, 1);
+        setenv("CPPHDL_VERILATOR_CFLAGS", "-DCPPHDL_FILE_REPLACEMENT_TOP", 1);
+        ok &= VerilatorCompile(__FILE__, "AnnotateReplacementFile", {"Predef_pkg"}, {"../../../../include"}, 1);
         unsetenv("CPPHDL_VERILATOR_CFLAGS");
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok && std::system("AnnotateReplacement_1/obj_dir/VAnnotateReplacement") == 0;
         ok = ok && std::system("AnnotateReplacementScript_1/obj_dir/VAnnotateReplacementScript") == 0;
+        ok = ok && std::system("AnnotateReplacementFile_1/obj_dir/VAnnotateReplacementFile") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
@@ -239,30 +272,41 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef VERILATOR
-#ifdef CPPHDL_SCRIPT_REPLACEMENT_TOP
+#ifdef CPPHDL_FILE_REPLACEMENT_TOP
+    return !(ok && TestAnnotateReplacement<AnnotateReplacementFile>(
+        "TestAnnotateReplacementFile",
+        0x5a,
+        "AnnotateReplacementFile_1/AnnotateReplacementFile.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_FILE_MARKER").run());
+#elif defined(CPPHDL_SCRIPT_REPLACEMENT_TOP)
     return !(ok && TestAnnotateReplacement<AnnotateReplacementScript>(
         "TestAnnotateReplacementScript",
         0x3c,
         "AnnotateReplacementScript_1/AnnotateReplacementScript.sv",
-        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER").run());
+        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER_3C").run());
 #else
     return !(ok && TestAnnotateReplacement<AnnotateReplacement>(
         "TestAnnotateReplacement",
         0xa5,
         "AnnotateReplacement_1/AnnotateReplacement.sv",
-        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER").run());
+        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER_A5").run());
 #endif
 #else
     ok = ok && TestAnnotateReplacement<AnnotateReplacement>(
         "TestAnnotateReplacement",
         0xa5,
         "generated/AnnotateReplacement.sv",
-        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER").run();
+        "CPPHDL_ANNOTATE_REPLACEMENT_MARKER_A5").run();
     ok = ok && TestAnnotateReplacement<AnnotateReplacementScript>(
         "TestAnnotateReplacementScript",
         0x3c,
         "generated/AnnotateReplacementScript.sv",
-        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER").run();
+        "CPPHDL_ANNOTATE_REPLACEMENT_SCRIPT_MARKER_3C").run();
+    ok = ok && TestAnnotateReplacement<AnnotateReplacementFile>(
+        "TestAnnotateReplacementFile",
+        0x5a,
+        "generated/AnnotateReplacementFile.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_FILE_MARKER").run();
     return !ok;
 #endif
 }

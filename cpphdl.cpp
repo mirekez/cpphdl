@@ -21,8 +21,10 @@
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string_view>
 
 using namespace clang;
@@ -54,11 +56,11 @@ std::string shellQuote(const std::filesystem::path& path)
     return quoted;
 }
 
-std::filesystem::path resolveScriptPath(const std::string& script, const CXXRecordDecl* RD, const ASTContext& ctx)
+std::filesystem::path resolveAnnotationPath(const std::string& annotation_path, const CXXRecordDecl* RD, const ASTContext& ctx)
 {
     namespace fs = std::filesystem;
 
-    fs::path path(script);
+    fs::path path(annotation_path);
     if (path.is_absolute() || fs::exists(path)) {
         return path;
     }
@@ -75,15 +77,41 @@ std::filesystem::path resolveScriptPath(const std::string& script, const CXXReco
     return path;
 }
 
-std::string readReplacementFromScript(const std::filesystem::path& script)
+std::string scriptCommandFromAnnotation(const std::string& annotation_command, const CXXRecordDecl* RD, const ASTContext& ctx)
 {
-    std::string command = shellQuote(script);
+    size_t begin = annotation_command.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+
+    size_t end = annotation_command.find_first_of(" \t\r\n", begin);
+    std::string script = annotation_command.substr(begin, end - begin);
+    std::string args = end == std::string::npos ? std::string{} : annotation_command.substr(end);
+
+    return shellQuote(resolveAnnotationPath(script, RD, ctx)) + args;
+}
+
+std::string readReplacementFromFile(const std::filesystem::path& file)
+{
+    std::ifstream in(file);
+    if (!in) {
+        std::cerr << "ERROR: failed to open CPPHDL_REPLACEMENT_FILE '" << file.string() << "'\n";
+        return {};
+    }
+
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
+}
+
+std::string readReplacementFromScript(const std::string& command)
+{
     std::array<char, 4096> buffer{};
     std::string result;
 
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe) {
-        std::cerr << "ERROR: failed to run CPPHDL_REPLACEMENT_SCRIPT '" << script.string() << "'\n";
+        std::cerr << "ERROR: failed to run CPPHDL_REPLACEMENT_SCRIPT '" << command << "'\n";
         return {};
     }
 
@@ -93,7 +121,7 @@ std::string readReplacementFromScript(const std::filesystem::path& script)
 
     int status = pclose(pipe);
     if (status != 0) {
-        std::cerr << "ERROR: CPPHDL_REPLACEMENT_SCRIPT '" << script.string() << "' failed with status " << status << "\n";
+        std::cerr << "ERROR: CPPHDL_REPLACEMENT_SCRIPT '" << command << "' failed with status " << status << "\n";
         return {};
     }
 
@@ -104,6 +132,7 @@ std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTC
 {
     constexpr std::string_view replacement_prefix = "CPPHDL_REPLACEMENT=";
     constexpr std::string_view script_prefix = "CPPHDL_REPLACEMENT_SCRIPT=";
+    constexpr std::string_view file_prefix = "CPPHDL_REPLACEMENT_FILE=";
 
     for (const Attr* attr : RD->attrs()) {
         if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
@@ -113,7 +142,11 @@ std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTC
             }
             if (text.rfind(script_prefix, 0) == 0) {
                 std::string script = stripAnnotationValue(std::move(text), script_prefix);
-                return readReplacementFromScript(resolveScriptPath(script, RD, ctx));
+                return readReplacementFromScript(scriptCommandFromAnnotation(script, RD, ctx));
+            }
+            if (text.rfind(file_prefix, 0) == 0) {
+                std::string file = stripAnnotationValue(std::move(text), file_prefix);
+                return readReplacementFromFile(resolveAnnotationPath(file, RD, ctx));
             }
         }
     }
