@@ -993,7 +993,7 @@ void Helpers::ArgToExpr(const TemplateArgument& arg, cpphdl::Expr& expr, bool sp
         expr.sub.emplace_back(std::move(expr1));
 
         auto* CRD = resolveCXXRecordDecl(QT);  // types embedded in any templates
-        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+        if (specialization && CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
             auto st = exportStruct(CRD, *this);
             if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {
                 auto ret = mod->imports.emplace_back(st.name);
@@ -1121,7 +1121,9 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
                 for (const TemplateArgument &arg : args[i].getPackAsArray()) {
                     DEBUG_AST(debugIndent++, "# pArg " << Params->getParam(i)->getNameAsString() << ": "); on_return ret_debug([](){ --debugIndent; });
                     cpphdl::Expr tmp;
-                    ArgToExpr(arg, tmp);
+                    // Specialization names only need the type expression. Exporting a
+                    // type argument here can recursively re-enter exportStruct().
+                    ArgToExpr(arg, tmp, false);
                     for (auto& expr: tmp.sub) {
                         genSpecializationTypeName(first, name, expr, onlyTypes);
                         first = false;
@@ -1134,7 +1136,9 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
             }
             DEBUG_AST(debugIndent++, "# Arg " << Params->getParam(i)->getNameAsString() << ": "); on_return ret_debug([](){ --debugIndent; });
             cpphdl::Expr tmp;
-            ArgToExpr(args[i], tmp);
+            // Specialization names only need the type expression. Exporting a
+            // type argument here can recursively re-enter exportStruct().
+            ArgToExpr(args[i], tmp, false);
             for (auto& expr: tmp.sub) {
                 genSpecializationTypeName(first, name, expr, onlyTypes);
                 first = false;
