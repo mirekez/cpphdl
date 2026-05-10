@@ -1186,6 +1186,21 @@ public:
                 expected_output.assign(std::istreambuf_iterator<char>(expected_file), std::istreambuf_iterator<char>());
             }
         }
+        auto output_file_reached_expected = [&]() {
+            if (tohost_addr || expected_output.empty()) {
+                return false;
+            }
+            std::ifstream out_file("out.txt", std::ios::binary);
+            if (!out_file) {
+                return false;
+            }
+            std::string current_output((std::istreambuf_iterator<char>(out_file)), std::istreambuf_iterator<char>());
+            if (current_output.size() < expected_output.size()) {
+                return false;
+            }
+            error = current_output != expected_output;
+            return true;
+        };
         int cycles = max_cycles;
         while (--cycles && !error && !tohost_done) {
             _strobe();
@@ -1206,6 +1221,9 @@ public:
                         }
                     }
                 }
+            }
+            if (!tohost_addr && (perf_clocks & 0xffu) == 0 && output_file_reached_expected()) {
+                break;
             }
             if (tohost_addr && PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_addr_out) == tohost_addr &&
                 PORT_VALUE(tribe.dmem_write_mask_out) && PORT_VALUE(tribe.dmem_write_data_out)) {

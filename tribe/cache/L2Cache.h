@@ -289,9 +289,9 @@ private:
             (state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1 || state_reg == ST_IO_AR);
     }
 
-    // AXI read data ready while waiting for a normal fill or cross-line read beat.
+    // AXI read data ready while waiting for a normal fill, cross-line beat, or uncached IO read.
     __LAZY_COMB(axi_rready_comb, bool)
-        return axi_rready_comb = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1;
+        return axi_rready_comb = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1 || state_reg == ST_IO_R;
     }
 
     // Ready from the currently selected AXI read-address port.
