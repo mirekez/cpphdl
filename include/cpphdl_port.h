@@ -144,6 +144,7 @@ public:
             std::print(stderr, "Backtrace: \n{}\n", std::stacktrace::current());
 #endif
 #endif
+            *(volatile char*)0 = 0;
         }
         prev_call_sys_clock = sys_clock;
         cache = func1_();
