@@ -44,6 +44,17 @@ std::string packedDims(const std::vector<Expr>& dims)
     return text;
 }
 
+std::vector<Expr> sliceDims(const std::vector<Expr>& dims, size_t begin, size_t count)
+{
+    std::vector<Expr> out;
+    if (begin >= dims.size()) {
+        return out;
+    }
+    size_t end = std::min(dims.size(), begin + count);
+    out.insert(out.end(), dims.begin() + begin, dims.begin() + end);
+    return out;
+}
+
 struct ArrayShape
 {
     Expr base;
@@ -136,9 +147,13 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
     if (array.size()) {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
         tmp.indent = indent;
-        if (packedArray) {
+        if (packedArray || packedArrayDims) {
             tmp.sub[0].indent = indent;
-            out << tmp.sub[0].str("", packedDims(array)) << " " << name << nameSuffix << ";\n";
+            size_t packCount = packedArrayDims ? packedArrayDims : array.size();
+            size_t unpackCount = array.size() > packCount ? array.size() - packCount : 0;
+            auto packed = sliceDims(array, unpackCount, packCount);
+            auto unpacked = sliceDims(array, 0, unpackCount);
+            out << tmp.sub[0].str("", packedDims(packed)) << " " << name << nameSuffix << unpackedDims(unpacked) << ";\n";
         }
         else {
             out << tmp.str("", nameSuffix) + unpackedDims(array) + ";\n";
@@ -162,8 +177,12 @@ bool Field::printPort(std::ofstream& out)
     currField = this;
     expr.flags = Expr::FLAG_WIRE;
     if (array.size()) {
-        if (packedArray) {
-            out << expr.str(!str_ending(name, "_out") ? "input " : "output ", packedDims(array)) << " " << name << "\n";
+        if (packedArray || packedArrayDims) {
+            size_t packCount = packedArrayDims ? packedArrayDims : array.size();
+            size_t unpackCount = array.size() > packCount ? array.size() - packCount : 0;
+            auto packed = sliceDims(array, unpackCount, packCount);
+            auto unpacked = sliceDims(array, 0, unpackCount);
+            out << expr.str(!str_ending(name, "_out") ? "input " : "output ", packedDims(packed)) << " " << name << unpackedDims(unpacked) << "\n";
         }
         else {
             out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << unpackedDims(array) << "\n";

@@ -801,6 +801,9 @@ std::string Expr::typeToSV(std::string type, std::string size)
         }
         return value.substr(pos, end - pos);
     };
+    if (type.compare(0, 5, "const") == 0) {
+        type = type.substr(5);
+    }
     std::string u_width = templateWidth(type, "u<");
     std::string i_width = templateWidth(type, "i<");
     std::string logic_width = templateWidth(type, "logic<");

@@ -8,6 +8,12 @@
 
 using namespace cpphdl;
 
+struct PackedVarItem
+{
+    unsigned lo:4;
+    unsigned hi:4;
+} __PACKED;
+
 class VarArray : public Module
 {
 public:
@@ -29,6 +35,10 @@ private:
     array<array<u<16>, 3>, 2> cpp_2d;
     array<array<array<u<16>, 2>, 2>, 2> cpp_3d;
     array<u<16>, 2> mixed_c_cpp[2][2];
+    array<PackedVarItem, 2> cpp_struct_1d;
+    array<u<16>, 4> cpp_type_1d;
+    array<array<PackedVarItem, 2>, 3> cpp_struct_2d;
+    array<array<u<16>, 3>, 2> cpp_type_2d;
 
     reg<u<16>> reg_1d[2];
     reg<u<16>> reg_2d[2][2];
@@ -91,7 +101,33 @@ private:
         mixed_c_cpp[1][1][0] = cpp_3d[1][1][1] + u<16>(76);
         mixed_c_cpp[1][1][1] = mixed_c_cpp[1][1][0] + u<16>(77);
 
-        return comb_comb = c_3d[1][1][1] + cpp_3d[1][1][1] + mixed_c_cpp[1][1][1];
+        cpp_struct_1d[0].lo = static_cast<unsigned>(mixed_c_cpp[1][1][1]) & 0xf;
+        cpp_struct_1d[0].hi = (static_cast<unsigned>(mixed_c_cpp[1][1][1]) >> 4) & 0xf;
+        cpp_struct_1d[1].lo = (cpp_struct_1d[0].lo + 1) & 0xf;
+        cpp_struct_1d[1].hi = (cpp_struct_1d[0].hi + 2) & 0xf;
+        cpp_type_1d[0] = mixed_c_cpp[1][1][1] + u<16>(80);
+        cpp_type_1d[1] = cpp_type_1d[0] + u<16>(81);
+        cpp_type_1d[2] = cpp_type_1d[1] + u<16>(82);
+        cpp_type_1d[3] = cpp_type_1d[2] + u<16>(83);
+        cpp_struct_2d[0][0] = cpp_struct_1d[0];
+        cpp_struct_2d[0][1] = cpp_struct_1d[1];
+        cpp_struct_2d[1][0].lo = (cpp_struct_2d[0][1].lo + 3) & 0xf;
+        cpp_struct_2d[1][0].hi = (cpp_struct_2d[0][1].hi + 4) & 0xf;
+        cpp_struct_2d[1][1].lo = (cpp_struct_2d[1][0].lo + 5) & 0xf;
+        cpp_struct_2d[1][1].hi = (cpp_struct_2d[1][0].hi + 6) & 0xf;
+        cpp_struct_2d[2][0].lo = (cpp_struct_2d[1][1].lo + 7) & 0xf;
+        cpp_struct_2d[2][0].hi = (cpp_struct_2d[1][1].hi + 8) & 0xf;
+        cpp_struct_2d[2][1].lo = (cpp_struct_2d[2][0].lo + 9) & 0xf;
+        cpp_struct_2d[2][1].hi = (cpp_struct_2d[2][0].hi + 10) & 0xf;
+        cpp_type_2d[0][0] = cpp_type_1d[3] + u<16>(84);
+        cpp_type_2d[0][1] = cpp_type_2d[0][0] + u<16>(85);
+        cpp_type_2d[0][2] = cpp_type_2d[0][1] + u<16>(86);
+        cpp_type_2d[1][0] = cpp_type_2d[0][2] + u<16>(87);
+        cpp_type_2d[1][1] = cpp_type_2d[1][0] + u<16>(88);
+        cpp_type_2d[1][2] = cpp_type_2d[1][1] + u<16>(89);
+
+        return comb_comb = c_3d[1][1][1] + cpp_3d[1][1][1] + mixed_c_cpp[1][1][1]
+            + u<16>(cpp_struct_2d[2][1].lo) + u<16>(cpp_struct_2d[2][1].hi) + cpp_type_2d[1][2];
     }
 
     logic<16>& logic_comb_func()
@@ -236,6 +272,12 @@ static uint16_t expected_comb(uint16_t seed)
     uint16_t a2[2][3] = {};
     uint16_t a3[2][2][2] = {};
     uint16_t mixed[2][2][2] = {};
+    uint8_t s1_lo[2] = {};
+    uint8_t s1_hi[2] = {};
+    uint16_t t1[4] = {};
+    uint8_t s2_lo[3][2] = {};
+    uint8_t s2_hi[3][2] = {};
+    uint16_t t2[2][3] = {};
 
     c1[0] = seed + 1;
     c1[1] = c1[0] + 2;
@@ -282,7 +324,34 @@ static uint16_t expected_comb(uint16_t seed)
     mixed[1][1][0] = a3[1][1][1] + 76;
     mixed[1][1][1] = mixed[1][1][0] + 77;
 
-    return c3[1][1][1] + a3[1][1][1] + mixed[1][1][1];
+    s1_lo[0] = mixed[1][1][1] & 0xf;
+    s1_hi[0] = (mixed[1][1][1] >> 4) & 0xf;
+    s1_lo[1] = (s1_lo[0] + 1) & 0xf;
+    s1_hi[1] = (s1_hi[0] + 2) & 0xf;
+    t1[0] = mixed[1][1][1] + 80;
+    t1[1] = t1[0] + 81;
+    t1[2] = t1[1] + 82;
+    t1[3] = t1[2] + 83;
+    s2_lo[0][0] = s1_lo[0];
+    s2_hi[0][0] = s1_hi[0];
+    s2_lo[0][1] = s1_lo[1];
+    s2_hi[0][1] = s1_hi[1];
+    s2_lo[1][0] = (s2_lo[0][1] + 3) & 0xf;
+    s2_hi[1][0] = (s2_hi[0][1] + 4) & 0xf;
+    s2_lo[1][1] = (s2_lo[1][0] + 5) & 0xf;
+    s2_hi[1][1] = (s2_hi[1][0] + 6) & 0xf;
+    s2_lo[2][0] = (s2_lo[1][1] + 7) & 0xf;
+    s2_hi[2][0] = (s2_hi[1][1] + 8) & 0xf;
+    s2_lo[2][1] = (s2_lo[2][0] + 9) & 0xf;
+    s2_hi[2][1] = (s2_hi[2][0] + 10) & 0xf;
+    t2[0][0] = t1[3] + 84;
+    t2[0][1] = t2[0][0] + 85;
+    t2[0][2] = t2[0][1] + 86;
+    t2[1][0] = t2[0][2] + 87;
+    t2[1][1] = t2[1][0] + 88;
+    t2[1][2] = t2[1][1] + 89;
+
+    return c3[1][1][1] + a3[1][1][1] + mixed[1][1][1] + s2_lo[2][1] + s2_hi[2][1] + t2[1][2];
 }
 
 static logic<16> expected_logic(uint16_t seed)
@@ -358,17 +427,23 @@ static bool generated_sv_has_var_arrays()
     bool has_c_2d = text.find("c_2d[2][3]") != std::string::npos;
     bool has_c_3d = text.find("c_3d[2][2][2]") != std::string::npos;
     bool has_logic_3d = text.find("logic_3d[2][2][2]") != std::string::npos;
-    bool has_cpp_1d = text.find("cpp_1d[3]") != std::string::npos;
-    bool has_cpp_2d = text.find("cpp_2d[2][3]") != std::string::npos;
-    bool has_cpp_3d = text.find("cpp_3d[2][2][2]") != std::string::npos;
-    bool has_mixed = text.find("mixed_c_cpp[2][2][2]") != std::string::npos;
+    bool has_cpp_1d = text.find("logic[3-1:0][16-1:0] cpp_1d;") != std::string::npos;
+    bool has_cpp_2d = text.find("logic[2-1:0][3-1:0][16-1:0] cpp_2d;") != std::string::npos;
+    bool has_cpp_3d = text.find("logic[2-1:0][2-1:0][2-1:0][16-1:0] cpp_3d;") != std::string::npos;
+    bool has_mixed = text.find("logic[2-1:0][16-1:0] mixed_c_cpp[2][2]") != std::string::npos;
+    bool has_cpp_struct_1d = text.find("PackedVarItem[2-1:0] cpp_struct_1d;") != std::string::npos;
+    bool has_cpp_type_1d = text.find("logic[4-1:0][16-1:0] cpp_type_1d;") != std::string::npos;
+    bool has_cpp_struct_2d = text.find("PackedVarItem[3-1:0][2-1:0] cpp_struct_2d;") != std::string::npos;
+    bool has_cpp_type_2d = text.find("logic[2-1:0][3-1:0][16-1:0] cpp_type_2d;") != std::string::npos;
     bool has_reg = text.find("reg_3d[2][2][2]") != std::string::npos;
     bool has_reg_mixed = text.find("reg_mixed[2][2]") != std::string::npos;
 
     if (!has_c_1d || !has_c_2d || !has_c_3d || !has_logic_3d || !has_cpp_1d || !has_cpp_2d
-        || !has_cpp_3d || !has_mixed || !has_reg || !has_reg_mixed) {
-        std::print("\nERROR: generated SV var arrays are incomplete: c1={}, c2={}, c3={}, logic3={}, cpp1={}, cpp2={}, cpp3={}, mixed={}, reg={}, reg_mixed={}\n",
-            has_c_1d, has_c_2d, has_c_3d, has_logic_3d, has_cpp_1d, has_cpp_2d, has_cpp_3d, has_mixed, has_reg, has_reg_mixed);
+        || !has_cpp_3d || !has_mixed || !has_cpp_struct_1d || !has_cpp_type_1d || !has_cpp_struct_2d || !has_cpp_type_2d
+        || !has_reg || !has_reg_mixed) {
+        std::print("\nERROR: generated SV var arrays are incomplete: c1={}, c2={}, c3={}, logic3={}, cpp1={}, cpp2={}, cpp3={}, mixed={}, cpp_struct1={}, cpp_type1={}, cpp_struct2={}, cpp_type2={}, reg={}, reg_mixed={}\n",
+            has_c_1d, has_c_2d, has_c_3d, has_logic_3d, has_cpp_1d, has_cpp_2d, has_cpp_3d, has_mixed,
+            has_cpp_struct_1d, has_cpp_type_1d, has_cpp_struct_2d, has_cpp_type_2d, has_reg, has_reg_mixed);
         return false;
     }
     return true;
@@ -526,7 +601,7 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "VarArray", {"Predef_pkg"}, {"../../../../include"}, 1);
+        ok &= VerilatorCompile(__FILE__, "VarArray", {"Predef_pkg", "PackedVarItem_pkg"}, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";

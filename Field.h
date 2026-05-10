@@ -15,6 +15,7 @@ struct Field
     Expr bitwidth;
     Struct definition;
     bool packedArray = false;
+    size_t packedArrayDims = 0;
 
     // methods
     int indent = 0;

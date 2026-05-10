@@ -358,13 +358,6 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 //!!!    QT = QT.getCanonicalType();
 //    auto T = QT.getUnqualifiedType();
 
-    auto isTopCpphdlArray = [&](QualType type) {
-        auto* TSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(hlp.resolveCXXRecordDecl(type));
-        return TSD && TSD->getSpecializedTemplate()->getQualifiedNameAsString() == "cpphdl::array";
-    };
-
-    bool directCpphdlArray = isTopCpphdlArray(QT);
-
     auto* CRD = hlp.resolveCXXRecordDecl(QT);
 
     std::vector<cpphdl::Expr> array_dim;
@@ -378,6 +371,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             array_dim.emplace_back(hlp.exprToExpr(DAT->getSizeExpr()));
         }
     }
+    size_t cArrayDims = array_dim.size();
+    size_t cppArrayDims = 0;
     while (true) {
         auto* TSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(hlp.resolveCXXRecordDecl(QT));
         if (!TSD || TSD->getSpecializedTemplate()->getQualifiedNameAsString() != "cpphdl::array"
@@ -395,6 +390,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         hlp.ArgToExpr(sizeArg, sizeExpr);
         if (!sizeExpr.sub.empty()) {
             array_dim.emplace_back(std::move(sizeExpr.sub.front()));
+            ++cppArrayDims;
         }
 
         QT = typeArg.getAsType().getNonReferenceType();
@@ -422,33 +418,14 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
 
     cpphdl::Expr expr = hlp.digQT(QT);
-    auto isPrimitiveExpr = [](const cpphdl::Expr& e) {
-        if (e.type != cpphdl::Expr::EXPR_TYPE) {
-            cpphdl::Expr tmp = e;
-            std::string sv = tmp.str();
-            return sv.rfind("logic", 0) == 0
-                || sv.rfind("wire", 0) == 0
-                || sv.rfind("reg", 0) == 0;
+    const bool packedArray = functionRefCpphdlArray || cppArrayDims != 0;
+    size_t packedArrayDims = cppArrayDims;
+    if (functionRefCpphdlArray && packedArrayDims == 0) {
+        packedArrayDims = array_dim.size() - cArrayDims;
+        if (packedArrayDims == 0) {
+            packedArrayDims = array_dim.size();
         }
-        return e.value == "bool"
-            || e.value == "_Bool"
-            || e.value == "char"
-            || e.value == "signedchar"
-            || e.value == "unsignedchar"
-            || e.value == "short"
-            || e.value == "unsignedshort"
-            || e.value == "int"
-            || e.value == "unsignedint"
-            || e.value == "long"
-            || e.value == "unsignedlong"
-            || e.value == "longlong"
-            || e.value == "unsignedlonglong"
-            || e.value == "size_t"
-            || e.value == "cpphdl_logic"
-            || e.value.find("cpphdl_u") == 0
-            || e.value.find("cpphdl_i") == 0;
-    };
-    const bool packedArray = functionRefCpphdlArray || (directCpphdlArray && !isPrimitiveExpr(expr));
+    }
 
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
         DEBUG_AST1(" {port " << fieldName << "} ");
@@ -470,6 +447,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (!CRD || !CRD->isDerivedFrom(InterfaceClass)) {
                 field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});  // normal field, not Interface
                 field->packedArray = packedArray;
+                field->packedArrayDims = packedArrayDims;
             }
         }
         else {  // looks like it's Abstract for the Module, need update all Abstract information about parameters to Interface struct and array size expression
@@ -509,6 +487,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         if (field) {  // normal field, not Interface struct
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
                 field->packedArray = field->packedArray || packedArray;
+                field->packedArrayDims = std::max(field->packedArrayDims, packedArrayDims);
             }
             DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
 
@@ -586,6 +565,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod->members.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
                 field->packedArray = packedArray;
+                field->packedArrayDims = packedArrayDims;
             }
             else {
                 return;
@@ -594,6 +574,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (field) {
                 if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
                     field->packedArray = field->packedArray || packedArray;
+                    field->packedArrayDims = std::max(field->packedArrayDims, packedArrayDims);
                 }
             }
         }
@@ -613,6 +594,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod->vars.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
                 field->packedArray = packedArray;
+                field->packedArrayDims = packedArrayDims;
             }
             else {
                 return;
@@ -621,6 +603,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (field) {
                 if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
                     field->packedArray = field->packedArray || packedArray;
+                    field->packedArrayDims = std::max(field->packedArrayDims, packedArrayDims);
                 }
             }
 

@@ -1,6 +1,7 @@
 `default_nettype none
 
 import Predef_pkg::*;
+import PackedVarItem_pkg::*;
 
 
 module VarArray (
@@ -20,10 +21,14 @@ module VarArray (
     logic[16-1:0] logic_1d[2];
     logic[16-1:0] logic_2d[2][2];
     logic[16-1:0] logic_3d[2][2][2];
-    logic[16-1:0] cpp_1d[3];
-    logic[16-1:0] cpp_2d[2][3];
-    logic[16-1:0] cpp_3d[2][2][2];
-    logic[16-1:0] mixed_c_cpp[2][2][2];
+    logic[3-1:0][16-1:0] cpp_1d;
+    logic[2-1:0][3-1:0][16-1:0] cpp_2d;
+    logic[2-1:0][2-1:0][2-1:0][16-1:0] cpp_3d;
+    logic[2-1:0][16-1:0] mixed_c_cpp[2][2];
+    PackedVarItem[2-1:0] cpp_struct_1d;
+    logic[4-1:0][16-1:0] cpp_type_1d;
+    PackedVarItem[3-1:0][2-1:0] cpp_struct_2d;
+    logic[2-1:0][3-1:0][16-1:0] cpp_type_2d;
     reg[16-1:0] reg_1d[2];
     reg[16-1:0] reg_2d[2][2];
     reg[16-1:0] reg_3d[2][2][2];
@@ -34,7 +39,6 @@ module VarArray (
     logic[16-1:0] reg_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[16-1:0] reg_1d_tmp[2];
@@ -87,7 +91,31 @@ module VarArray (
         mixed_c_cpp['h1]['h0]['h1] = mixed_c_cpp['h1]['h0]['h0] + unsigned'(16'('h4B));
         mixed_c_cpp['h1]['h1]['h0] = cpp_3d['h1]['h1]['h1] + unsigned'(16'('h4C));
         mixed_c_cpp['h1]['h1]['h1] = mixed_c_cpp['h1]['h1]['h0] + unsigned'(16'('h4D));
-        comb_comb = (c_3d['h1]['h1]['h1] + cpp_3d['h1]['h1]['h1]) + mixed_c_cpp['h1]['h1]['h1];
+        cpp_struct_1d['h0].lo=mixed_c_cpp['h1]['h1]['h1] & 'hF;
+        cpp_struct_1d['h0].hi=((mixed_c_cpp['h1]['h1]['h1] >>> 'h4)) & 'hF;
+        cpp_struct_1d['h1].lo=((cpp_struct_1d['h0].lo + 'h1)) & 'hF;
+        cpp_struct_1d['h1].hi=((cpp_struct_1d['h0].hi + 'h2)) & 'hF;
+        cpp_type_1d['h0] = mixed_c_cpp['h1]['h1]['h1] + unsigned'(16'('h50));
+        cpp_type_1d['h1] = cpp_type_1d['h0] + unsigned'(16'('h51));
+        cpp_type_1d['h2] = cpp_type_1d['h1] + unsigned'(16'('h52));
+        cpp_type_1d['h3] = cpp_type_1d['h2] + unsigned'(16'('h53));
+        cpp_struct_2d['h0]['h0] = cpp_struct_1d['h0];
+        cpp_struct_2d['h0]['h1] = cpp_struct_1d['h1];
+        cpp_struct_2d['h1]['h0].lo=((cpp_struct_2d['h0]['h1].lo + 'h3)) & 'hF;
+        cpp_struct_2d['h1]['h0].hi=((cpp_struct_2d['h0]['h1].hi + 'h4)) & 'hF;
+        cpp_struct_2d['h1]['h1].lo=((cpp_struct_2d['h1]['h0].lo + 'h5)) & 'hF;
+        cpp_struct_2d['h1]['h1].hi=((cpp_struct_2d['h1]['h0].hi + 'h6)) & 'hF;
+        cpp_struct_2d['h2]['h0].lo=((cpp_struct_2d['h1]['h1].lo + 'h7)) & 'hF;
+        cpp_struct_2d['h2]['h0].hi=((cpp_struct_2d['h1]['h1].hi + 'h8)) & 'hF;
+        cpp_struct_2d['h2]['h1].lo=((cpp_struct_2d['h2]['h0].lo + 'h9)) & 'hF;
+        cpp_struct_2d['h2]['h1].hi=((cpp_struct_2d['h2]['h0].hi + 'hA)) & 'hF;
+        cpp_type_2d['h0]['h0] = cpp_type_1d['h3] + unsigned'(16'('h54));
+        cpp_type_2d['h0]['h1] = cpp_type_2d['h0]['h0] + unsigned'(16'('h55));
+        cpp_type_2d['h0]['h2] = cpp_type_2d['h0]['h1] + unsigned'(16'('h56));
+        cpp_type_2d['h1]['h0] = cpp_type_2d['h0]['h2] + unsigned'(16'('h57));
+        cpp_type_2d['h1]['h1] = cpp_type_2d['h1]['h0] + unsigned'(16'('h58));
+        cpp_type_2d['h1]['h2] = cpp_type_2d['h1]['h1] + unsigned'(16'('h59));
+        comb_comb = ((((c_3d['h1]['h1]['h1] + cpp_3d['h1]['h1]['h1]) + mixed_c_cpp['h1]['h1]['h1]) + unsigned'(16'(cpp_struct_2d['h2]['h1].lo))) + unsigned'(16'(cpp_struct_2d['h2]['h1].hi))) + cpp_type_2d['h1]['h2];
         disable comb_comb_func;
     end
 
