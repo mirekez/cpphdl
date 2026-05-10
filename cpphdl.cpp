@@ -355,6 +355,29 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             array_dim.emplace_back(hlp.exprToExpr(DAT->getSizeExpr()));
         }
     }
+    while (true) {
+        auto* TSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(hlp.resolveCXXRecordDecl(QT));
+        if (!TSD || TSD->getSpecializedTemplate()->getQualifiedNameAsString() != "cpphdl::array"
+            || TSD->getTemplateArgs().size() < 2) {
+            break;
+        }
+
+        const TemplateArgument& typeArg = TSD->getTemplateArgs()[0];
+        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[1];
+        if (typeArg.getKind() != TemplateArgument::Type) {
+            break;
+        }
+
+        cpphdl::Expr sizeExpr;
+        hlp.ArgToExpr(sizeArg, sizeExpr);
+        if (!sizeExpr.sub.empty()) {
+            array_dim.emplace_back(std::move(sizeExpr.sub.front()));
+        }
+
+        QT = typeArg.getAsType().getNonReferenceType();
+        QT = QT.getDesugaredType(*hlp.ctx);
+        CRD = hlp.resolveCXXRecordDecl(QT);
+    }
 
     if ((CRD && CRD->getQualifiedNameAsString().find("std::") == (size_t)0
         && CRD->getQualifiedNameAsString().find("std_function") == (size_t)-1

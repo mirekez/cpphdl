@@ -7,6 +7,45 @@
 
 using namespace cpphdl;
 
+namespace
+{
+
+bool collectIndexChain(Expr expr, std::string& root, std::vector<Expr>& indices)
+{
+    if (expr.type == Expr::EXPR_INDEX && expr.sub.size() == 2) {
+        if (!collectIndexChain(expr.sub[0], root, indices)) {
+            return false;
+        }
+        indices.push_back(expr.sub[1]);
+        return true;
+    }
+
+    root = expr.str();
+    return !root.empty();
+}
+
+bool isMemberName(const std::string& name)
+{
+    return currModule && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == name; });
+}
+
+std::string memberArrayPortRef(Expr indexed, const std::string& member, const std::string& suffix)
+{
+    std::string root;
+    std::vector<Expr> indices;
+    if (!collectIndexChain(std::move(indexed), root, indices) || !isMemberName(root)) {
+        return {};
+    }
+
+    std::string text = root + "__" + member + suffix;
+    for (auto& index : indices) {
+        text += "[" + index.str() + "]";
+    }
+    return text;
+}
+
+}
+
 std::string Expr::str(std::string prefix, std::string suffix)
 {
     std::string indent_str;
@@ -392,19 +431,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
 //                base = sub[0].sub[0].str();  dont break base
-                if (base != "_this" && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); })) {
+                std::string memberRef = memberArrayPortRef(sub[0], member, suffix);
+                if (!memberRef.empty()) {
                     if (member == "_work") {  // dont call _work() for members
                         return "";
                     }
-                    if (interface && str_ending(sub[0].sub[0].str(), "_out")) {  // for Port structs
-                        if (str_ending(member, "_out")) {
-                            member.replace(member.length() - 4, 4, "_in");
-                        } else
-                        if (str_ending(member, "_in")) {
-                            member.replace(member.length() - 3, 3, "_out");
-                        }
-                    }
-                    return indent_str + prefix + sub[0].str("", "__" + member + suffix);
+                    return indent_str + prefix + memberRef;
                 }
             }
             if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
@@ -458,8 +490,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
 //                base = sub[0].sub[0].str();  dont do this, dont break base
-                if (sub[0].sub[0].str() != "_this"
-                    && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == sub[0].sub[0].str(); }) || interface)) {
+                std::string memberRef = memberArrayPortRef(sub[0], member, suffix);
+                if (!memberRef.empty()) {
                     if (interface && str_ending(sub[0].sub[0].str(), "_out")) {  // for Port structs
                         if (str_ending(member, "_out")) {
                             member.replace(member.length() - 4, 4, "_in");
@@ -468,7 +500,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                             member.replace(member.length() - 3, 3, "_out");
                         }
                     }
-                    return indent_str + prefix + sub[0].str("", "__" + member + suffix);
+                    return indent_str + prefix + memberRef;
                 }
             }
             return indent_str + prefix + base + delim + member + suffix;
@@ -477,6 +509,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT(sub.size()==2);
             deparenth();  // we dont want parentheses to be before []
+
+            if (!suffix.empty()) {
+                std::string root;
+                std::vector<Expr> indices;
+                if (collectIndexChain(*this, root, indices)) {
+                    std::string text = indent_str + prefix + root + suffix;
+                    for (auto& index : indices) {
+                        text += "[" + index.str() + "]";
+                    }
+                    return text;
+                }
+            }
 
             return indent_str + prefix + sub[0].str() + suffix + "[" + sub[1].str() + "]";
         }
@@ -613,8 +657,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub[1].str() == "") {  // all __ vars are hidden
                 return "";
             }
+            std::string init = sub[0].str();
+            if ((flags&FLAG_ASSIGN) && init.empty()
+                && sub[0].type == EXPR_BODY && sub[0].sub.size() == 1
+                && sub[0].sub[0].type == EXPR_DECL && sub[0].sub[0].sub.size() > 1) {
+                init = sub[0].sub[0].value + " = " + sub[0].sub[0].sub[1].str();
+            }
             std::string str;
-            str += indent_str + "for (" + sub[0].str() + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
+            str += indent_str + "for (" + init + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;
             str += sub[3].str(prefix);
             if (!str.empty() && str.back() != '\n') {

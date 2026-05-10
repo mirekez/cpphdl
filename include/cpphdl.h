@@ -75,12 +75,17 @@ struct cpphdl_exception
 #define __PORT(A...) cpphdl::function_ref<A>
 #define __VAR(a...)  [&]() { return &a; } // variable
 #define __EXPR(a...) [&]() { return a; }  // expression
+#define CPPHDL_UNPAREN(a...) a
+#define __VAR_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; } // variable
+#define __EXPR_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
 #define __VAR_I(a...)  [&,i]() { return &a; } // variable
 #define __EXPR_I(a...) [&,i]() { return a; }  // expression
 #define __VAR_J(a...)  [&,j]() { return &a; } // variable
 #define __EXPR_J(a...) [&,j]() { return a; }  // expression
 #define __VAR_IJ(a...)  [&,i,j]() { return &a; } // variable
 #define __EXPR_IJ(a...) [&,i,j]() { return a; }  // expression
+#define __VAR_IJK(a...)  [&,i,j,k]() { return &a; } // variable
+#define __EXPR_IJK(a...) [&,i,j,k]() { return a; }  // expression
 
 #define __LAZY_COMB(name, type...) \
     type name; \

@@ -6,10 +6,92 @@
 #include "Optimizer.h"
 
 #include <fstream>
+#include <sstream>
 
 using namespace cpphdl;
 
 Module* currModule = nullptr;
+
+namespace
+{
+
+std::string svArrayDims(const std::vector<Expr>& dims)
+{
+    std::string text;
+    for (auto dim : dims) {
+        text += "[" + dim.str() + "]";
+    }
+    return text;
+}
+
+std::string svIndex(const std::vector<std::string>& indices)
+{
+    std::string text;
+    for (const auto& index : indices) {
+        text += "[" + index + "]";
+    }
+    return text;
+}
+
+std::vector<std::string> memberArrayIndices(size_t dims)
+{
+    static const std::vector<std::string> names = {"gi", "gj", "gk"};
+    return std::vector<std::string>(names.begin(), names.begin() + std::min(dims, names.size()));
+}
+
+void replaceModuleParameterRefs(Expr& expr, const Module& mod, const Field& member)
+{
+    for (size_t i=0; i < mod.parameters.size(); ++i) {
+        expr.traverseIf( [&](Expr& e) {
+                if (e.type == Expr::EXPR_VAR && e.value == mod.parameters[i].name) {
+                    size_t memberParamIndex = -1;
+                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {
+                        ++memberParamIndex;
+                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {
+                            ++j;
+                        }
+                    }
+                    Expr memberParam = member.expr.sub[memberParamIndex];
+                    e.value = std::string("(") + memberParam.str() + ")";
+                }
+                return false;
+            });
+    }
+}
+
+void replaceModuleConstRefs(Expr& expr, const Module& mod)
+{
+    for (size_t i=0; i < mod.consts.size(); ++i) {
+        expr.traverseIf( [&](Expr& e) {
+                if (e.type == Expr::EXPR_VAR && e.value == mod.consts[i].name) {
+                    e = mod.consts[i].expr.sub[0];
+                }
+                return false;
+            });
+    }
+}
+
+Expr portArrayExpr(const Field& port, const Module& mod, const Field& member)
+{
+    Expr array;
+    if (port.array.size()) {
+        array = port.array[0];
+        replaceModuleParameterRefs(array, mod, member);
+    }
+    return array;
+}
+
+Expr portWireExpr(const Field& port, const Module& mod, const Field& member)
+{
+    Expr expr = port.expr;
+    expr.flags = Expr::FLAG_WIRE;
+    replaceModuleConstRefs(expr, mod);
+    replaceModuleParameterRefs(expr, mod, member);
+    return expr;
+}
+
+}
 
 void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* importsSet)
 {
@@ -196,62 +278,25 @@ bool Module::printMembers(std::ofstream& out)
     for (auto& member : members) {
         member.indent = 1;
         if (member.array.size()) {  // array of members
+            if (member.array.size() > 3) {
+                std::cerr << "ERROR: member array '" << member.name << "' has " << member.array.size()
+                          << " dimensions, but only up to 3 dimensions are supported\n";
+                return false;
+            }
+
             Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
-                for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
-                    Expr expr = port.expr;
-                    expr.flags = Expr::FLAG_WIRE;
-                    for (size_t i=0; i < mod->consts.size(); ++i) {
-                        expr.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->consts[i].name) {  // port of mod depends on its parameter
-                                    e = mod->consts[i].expr.sub[0];
-                                }
-                                return false;
-                            });
-                    }
-                    for (size_t i=0; i < mod->parameters.size(); ++i) {
-                        expr.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
-                                    size_t memberParamIndex = -1;
-                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
-                                        ++memberParamIndex;
-                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
-                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
-                                            ++j;
-                                        }
-                                    }
-                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
-                                }
-                                return false;
-                            });
-                    }
-                    Expr array;
-                    if (port.array.size()) {  // supporting only one dimension now
-                        array = port.array[0];
-                    }
-                    for (size_t i=0; i < mod->parameters.size(); ++i) {
-                        array.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
-                                    size_t memberParamIndex = -1;
-                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
-                                        ++memberParamIndex;
-                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
-                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
-                                            ++j;
-                                        }
-                                    }
-                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
-                                }
-                                return false;
-                            });
-                    }
-//                    out << expr.debug() << "\n";
+                for (auto& port : mod->ports) {
+                    Expr expr = portWireExpr(port, *mod, member);
+                    Expr array = portArrayExpr(port, *mod, member);
                     if (array.type != Expr::EXPR_NONE) {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << member.expr.sub[0].str() << "]" << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name
+                            << svArrayDims(member.array) << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
                         wires.push_back(Field{member.name + "__" + port.name, expr});
                     }
                     else {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << member.array[0].str() << "]" << ";\n";  // cant be reg or memory
+                        out << "      " << expr.str() << " " << member.name << "__" << port.name
+                            << svArrayDims(member.array) << ";\n";  // cant be reg or memory
                         wires.push_back(Field{member.name + "__" + port.name, expr});
                     }
                 }
@@ -262,8 +307,13 @@ bool Module::printMembers(std::ofstream& out)
             }
 
             out << "    generate\n";
-            out << "    for (gi=0; gi < " << member.array[0].str() << "; gi = gi + 1) begin\n";
-            out << "        " << member.expr.str() << " ";
+            auto indices = memberArrayIndices(member.array.size());
+            for (size_t dim = 0; dim < member.array.size(); ++dim) {
+                out << std::string(4 + dim * 4, ' ') << "for (" << indices[dim] << "=0; "
+                    << indices[dim] << " < " << member.array[dim].str() << "; "
+                    << indices[dim] << " = " << indices[dim] << " + 1) begin\n";
+            }
+            out << std::string(4 + member.array.size() * 4, ' ') << member.expr.str() << " ";
             if (member.expr.sub.size()) {
                 out << "#(\n";
             }
@@ -276,19 +326,22 @@ bool Module::printMembers(std::ofstream& out)
                 }
             }
             if (member.expr.sub.size()) {
-                out << "    )";
+                out << std::string(4 + member.array.size() * 4, ' ') << ")";
             }
             else {
-                out << "    ";
+                out << std::string(4 + member.array.size() * 4, ' ');
             }
             out << " " << member.name << " (" << "\n";
-            out << "            .clk(clk)\n" ;
-            out << ",           .reset(reset)\n" ;
+            out << std::string(8 + member.array.size() * 4, ' ') << ".clk(clk)\n" ;
+            out << std::string(4 + member.array.size() * 4, ' ') << ",           .reset(reset)\n" ;
             for (auto& port : mod->ports) {
-                out << ",           ." << port.name << "(" << member.name << "__" << port.name << "[gi]" << ")" << "\n";  // cant be reg or memory
+                out << std::string(4 + member.array.size() * 4, ' ') << ",           ." << port.name
+                    << "(" << member.name << "__" << port.name << svIndex(indices) << ")" << "\n";  // cant be reg or memory
             }
-            out << "        );\n";
-            out << "    end\n";
+            out << std::string(4 + member.array.size() * 4, ' ') << ");\n";
+            for (size_t dim = member.array.size(); dim > 0; --dim) {
+                out << std::string(4 + (dim - 1) * 4, ' ') << "end\n";
+            }
             out << "    endgenerate\n";
         }
         else {

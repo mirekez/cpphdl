@@ -9,6 +9,33 @@ using namespace cpphdl;
 
 Method* currMethod = nullptr;
 
+namespace
+{
+
+std::string indexedRootName(Expr expr)
+{
+    while (expr.type == Expr::EXPR_INDEX && expr.sub.size() == 2) {
+        expr = expr.sub[0];
+    }
+    return expr.str();
+}
+
+std::string assignedWireName(Expr expr)
+{
+    if (expr.type == Expr::EXPR_MEMBER && expr.sub.size() && expr.sub[0].type == Expr::EXPR_INDEX) {
+        return indexedRootName(expr.sub[0]) + "__" + expr.value;
+    }
+    if (expr.type == Expr::EXPR_INDEX) {
+        return indexedRootName(expr);
+    }
+    if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() > 1) {
+        return expr.sub[1].str();
+    }
+    return expr.str();
+}
+
+}
+
 bool Method::print(std::ofstream& out)
 {
     currMethod = this;
@@ -92,12 +119,22 @@ bool Method::printAssigns(std::ofstream& out)
                     }
                     vars.push_back(e.sub[0].sub[0].value);
                 }
+                if (e.type == Expr::EXPR_FOR
+                    && e.sub.size() > 0 && e.sub[0].type == Expr::EXPR_BODY
+                    && e.sub[0].sub.size() == 1 && e.sub[0].sub[0].type == Expr::EXPR_DECL) {
+                    for (auto& str : vars) {
+                        if (str == e.sub[0].sub[0].value) {
+                            return false;
+                        }
+                    }
+                    vars.push_back(e.sub[0].sub[0].value);
+                }
                 return false;
             } );
     }
     for (auto& stmt : statements) {  // replacing index names
         stmt.traverseIf( [&](Expr& e) {
-                if (e.type == Expr::EXPR_MEMBER || e.type == Expr::EXPR_VAR) {
+                if (e.type == Expr::EXPR_MEMBER || e.type == Expr::EXPR_VAR || e.type == Expr::EXPR_DECL) {
                     for (auto& str : vars) {
                         if (str == e.value) {
                             e.value = std::string("g") + str;
@@ -112,7 +149,7 @@ bool Method::printAssigns(std::ofstream& out)
     out << "    generate  // " << name <<"\n";
     for (auto& var : vars) {
         if (var != "i" && var != "j" && var != "k") {
-            out << "genvar" << "g" << var << ";\n";
+            out << "        genvar " << "g" << var << ";\n";
         }
     }
     for (auto& stmt : statements) {
@@ -127,19 +164,7 @@ bool Method::printAssigns(std::ofstream& out)
         stmt.traverseIf( [&](Expr& e) {
                     if ((e.type == Expr::EXPR_OPERATORCALL && e.value == "=") ||
                         (e.type == Expr::EXPR_BINARY && e.value == "=")) {
-                        std::string wname;
-                        if (e.sub[0].type == Expr::EXPR_MEMBER && e.sub[0].sub[0].type == Expr::EXPR_INDEX) {
-                            wname = e.sub[0].sub[0].sub[0].str() + "__" + e.sub[0].value;
-                        } else
-                        if (e.sub[0].type == Expr::EXPR_INDEX) {
-                            wname = e.sub[0].sub[0].str();
-                        } else
-                        if (e.sub[0].type == Expr::EXPR_ARRAY) {
-                            wname = e.sub[0].sub[1].str();
-                        }
-                        else {
-                            wname = e.sub[0].str();
-                        }
+                        std::string wname = assignedWireName(e.sub[0]);
                         if (!any_of(currModule->wires.begin(), currModule->wires.end(), [&](auto& w){ return w.name == wname; } ) && wname.length() > 2) {
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";
                         }
@@ -148,17 +173,17 @@ bool Method::printAssigns(std::ofstream& out)
                         auto tmp = Expr{"gen", Expr::EXPR_BODY};
                         std::string left = e.sub[3].str();
                         if (e.sub[3].type == Expr::EXPR_MEMBER && e.sub[3].sub[0].type == Expr::EXPR_INDEX) {
-                            left = e.sub[3].sub[0].sub[0].str() + "__" + e.sub[3].value;
+                            left = indexedRootName(e.sub[3].sub[0]) + "__" + e.sub[3].value;
                         } else
                         if (e.sub[3].type == Expr::EXPR_INDEX) {
-                            left = e.sub[3].sub[0].str();
+                            left = indexedRootName(e.sub[3]);
                         }
                         std::string right = e.sub[4].str();
                         if (e.sub[4].type == Expr::EXPR_MEMBER && e.sub[4].sub[0].type == Expr::EXPR_INDEX) {
-                            right = e.sub[4].sub[0].sub[0].str() + "__" + e.sub[4].value;
+                            right = indexedRootName(e.sub[4].sub[0]) + "__" + e.sub[4].value;
                         } else
                         if (e.sub[4].type == Expr::EXPR_INDEX) {
-                            right = e.sub[4].sub[0].str();
+                            right = indexedRootName(e.sub[4]);
                         }
                         for (auto& wire : currModule->wires) {
                             if (wire.name.find(left) == 0 && str_ending(wire.name, "_in")) {

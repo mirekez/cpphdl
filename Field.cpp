@@ -26,6 +26,15 @@ size_t dimToSize(Expr dim)
     return std::strtoull(text.c_str(), nullptr, 0);
 }
 
+std::string unpackedDims(const std::vector<Expr>& dims)
+{
+    std::string text;
+    for (auto dim : dims) {
+        text += "[" + dim.str() + "]";
+    }
+    return text;
+}
+
 struct ArrayShape
 {
     Expr base;
@@ -118,7 +127,7 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
     if (array.size()) {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr)}};
         tmp.indent = indent;
-        out << tmp.str("", nameSuffix) + "[" + array[0].str() + "];\n";
+        out << tmp.str("", nameSuffix) + unpackedDims(array) + ";\n";
 //        out << tmp.debug() + "\n";
         expr = std::move(tmp.sub[0]);  // return expr back
     }
@@ -138,7 +147,7 @@ bool Field::printPort(std::ofstream& out)
     currField = this;
     expr.flags = Expr::FLAG_WIRE;
     if (array.size()) {
-        out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << "[" << array[0].str() << "]\n";
+        out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << unpackedDims(array) << "\n";
         return true;
     }
     out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << "\n";
