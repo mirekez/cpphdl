@@ -155,6 +155,26 @@ std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTC
     return {};
 }
 
+bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
+{
+    constexpr std::string_view replacement_prefix = "CPPHDL_REPLACEMENT=";
+    constexpr std::string_view script_prefix = "CPPHDL_REPLACEMENT_SCRIPT=";
+    constexpr std::string_view file_prefix = "CPPHDL_REPLACEMENT_FILE=";
+
+    for (const Attr* attr : RD->attrs()) {
+        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+            std::string text = ann->getAnnotation().str();
+            if (text.rfind(replacement_prefix, 0) == 0
+                || text.rfind(script_prefix, 0) == 0
+                || text.rfind(file_prefix, 0) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+
 }
 
 void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
@@ -631,6 +651,17 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 
     if (MD->getNameAsString() == "_strobe") {  // never need them in SV
         return "";
+    }
+
+    if (MD->getParent()->isDerivedFrom(ModuleClass)) {
+        auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& mod) {
+            return mod.origName == MD->getParent()->getQualifiedNameAsString();
+        });
+        if (((it != currProject->modules.end() && !it->replacement.empty())
+                || hasCpphdlReplacementAnnotation(MD->getParent()))
+            && hlp.mod->origName != MD->getParent()->getQualifiedNameAsString()) {
+            return "";
+        }
     }
 
     if (MD->getQualifiedNameAsString().find("::" + hlp.parent->getNameAsString()) != (size_t)-1  // constructor

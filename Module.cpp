@@ -111,7 +111,7 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
 //out << "importing " << (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) << "..." << m.origName << "\n";
  return (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) == m.origName; });
 
-            if (it != currProject->modules.end()) {
+            if (it != currProject->modules.end() && it->replacement.empty()) {
                 it->printImports(out, importsSet);
             }
         }
