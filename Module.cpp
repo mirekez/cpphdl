@@ -35,8 +35,14 @@ std::string svIndex(const std::vector<std::string>& indices)
 
 std::vector<std::string> memberArrayIndices(size_t dims)
 {
-    static const std::vector<std::string> names = {"gi", "gj", "gk"};
-    return std::vector<std::string>(names.begin(), names.begin() + std::min(dims, names.size()));
+    static const std::vector<std::string> names = {
+        "__i", "__j", "__k", "__l", "__m", "__n", "__o", "__p"
+    };
+    std::vector<std::string> indices;
+    for (size_t i = 0; i < dims; ++i) {
+        indices.push_back(i < names.size() ? names[i] : "__i" + std::to_string(i));
+    }
+    return indices;
 }
 
 void replaceModuleParameterRefs(Expr& expr, const Module& mod, const Field& member)
@@ -272,18 +278,23 @@ bool Module::printMembers(std::ofstream& out)
 {
     currModule = this;
 
-    out << "    genvar gi, gj, gk;\n";
+    size_t maxMemberDims = 0;
+    for (auto& member : members) {
+        maxMemberDims = std::max(maxMemberDims, member.array.size());
+    }
+    if (maxMemberDims) {
+        auto indices = memberArrayIndices(maxMemberDims);
+        out << "    genvar ";
+        for (size_t i = 0; i < indices.size(); ++i) {
+            out << (i ? ", " : "") << indices[i];
+        }
+        out << ";\n";
+    }
 
     // printWires for members
     for (auto& member : members) {
         member.indent = 1;
         if (member.array.size()) {  // array of members
-            if (member.array.size() > 3) {
-                std::cerr << "ERROR: member array '" << member.name << "' has " << member.array.size()
-                          << " dimensions, but only up to 3 dimensions are supported\n";
-                return false;
-            }
-
             Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {

@@ -148,9 +148,7 @@ bool Method::printAssigns(std::ofstream& out)
 
     out << "    generate  // " << name <<"\n";
     for (auto& var : vars) {
-        if (var != "i" && var != "j" && var != "k") {
-            out << "        genvar " << "g" << var << ";\n";
-        }
+        out << "        genvar " << "g" << var << ";\n";
     }
     for (auto& stmt : statements) {
         if (stmt.traverseIf( [](Expr& e) { return e.value == "__inst_name";} )) {

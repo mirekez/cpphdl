@@ -177,7 +177,7 @@ static bool generated_sv_has_member_arrays()
     bool has_1d = text.find("line__base_in[3]") != std::string::npos;
     bool has_2d = text.find("grid__base_in[2][3]") != std::string::npos;
     bool has_3d = text.find("cube__base_in[2][2][2]") != std::string::npos;
-    bool has_3d_index = text.find(".base_in(cube__base_in[gi][gj][gk])") != std::string::npos;
+    bool has_3d_index = text.find(".base_in(cube__base_in[__i][__j][__k])") != std::string::npos;
 
     if (!has_1d || !has_2d || !has_3d || !has_3d_index) {
         std::print("\nERROR: generated SV member arrays are incomplete: 1d={}, 2d={}, 3d={}, 3d_index={}\n",

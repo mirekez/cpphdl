@@ -265,7 +265,7 @@ static bool generated_sv_has_assign_port_arrays()
         && text.find("var_ijk__value_in[2][2][2]") != std::string::npos;
     const bool has_cap = text.find("expr_cap__value_in[2][2][2]") != std::string::npos
         && text.find("var_cap__value_in[2][2][2]") != std::string::npos;
-    const bool has_cap_index = text.find(".value_in(expr_cap__value_in[gi][gj][gk])") != std::string::npos;
+    const bool has_cap_index = text.find(".value_in(expr_cap__value_in[__i][__j][__k])") != std::string::npos;
 
     if (!has_i || !has_j || !has_ij || !has_ijk || !has_cap || !has_cap_index) {
         std::print("\nERROR: generated SV assign-port arrays are incomplete: i={}, j={}, ij={}, ijk={}, cap={}, cap_index={}\n",
