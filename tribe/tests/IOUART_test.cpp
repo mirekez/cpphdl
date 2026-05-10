@@ -48,7 +48,7 @@ int main(int argc, char** argv)
         const auto source_root = source_root_dir();
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
-        ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
+        ok &= VerilatorCompileInFolder(__FILE__, "IOUART", "Tribe", {"Predef_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",
@@ -80,7 +80,7 @@ int main(int argc, char** argv)
                       (source_root / "tribe" / "spec").string(),
                       (source_root / "tribe" / "cache").string(),
                       (source_root / "tribe" / "devices").string()});
-        ok &= std::system((std::string("Tribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= std::system((std::string("IOUART/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else
     Verilated::commandArgs(argc, argv);
