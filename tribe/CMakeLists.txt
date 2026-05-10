@@ -46,18 +46,14 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
     target_link_libraries(${target_name} PRIVATE stdc++exp)
 endfunction()
 
-add_tribe_target(tribe 256 tribe)
 add_tribe_target(tribe256 256 tribe256)
 add_tribe_target(tribe128 128 tribe128)
 add_tribe_target(tribe64 64 tribe64)
-
-#target_compile_options(tribe PRIVATE "-O2")
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c)
     check_cxx_compiler_flag("${flag}" HAS_FLAG)
     if(HAS_FLAG)
-        target_compile_options(tribe PRIVATE "${flag}")
         target_compile_options(tribe256 PRIVATE "${flag}")
         target_compile_options(tribe128 PRIVATE "${flag}")
         target_compile_options(tribe64 PRIVATE "${flag}")

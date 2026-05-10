@@ -1174,6 +1174,18 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        std::string expected_output;
+        std::string captured_output;
+        if (!tohost_addr) {
+            std::ifstream expected_file(expected_log, std::ios::binary);
+            if (!expected_file) {
+                std::print("can't open expected output '{}'\n", expected_log);
+                error = true;
+            }
+            else {
+                expected_output.assign(std::istreambuf_iterator<char>(expected_file), std::istreambuf_iterator<char>());
+            }
+        }
         int cycles = max_cycles;
         while (--cycles && !error && !tohost_done) {
             _strobe();
@@ -1183,8 +1195,16 @@ public:
             if (uart.uart_valid_out()) {
                 FILE* uart_out = fopen("out.txt", "ab");
                 if (uart_out) {
-                    fputc(uart.uart_data_out(), uart_out);
+                    char ch = (char)uart.uart_data_out();
+                    fputc(ch, uart_out);
                     fclose(uart_out);
+                    if (!tohost_addr) {
+                        captured_output.push_back(ch);
+                        if (captured_output.size() >= expected_output.size()) {
+                            error = captured_output != expected_output;
+                            break;
+                        }
+                    }
                 }
             }
             if (tohost_addr && PORT_VALUE(tribe.dmem_write_out) && PORT_VALUE(tribe.dmem_addr_out) == tohost_addr &&
@@ -1211,10 +1231,6 @@ public:
         }
         else {
             std::ifstream a(expected_log, std::ios::binary), b("out.txt", std::ios::binary);
-            if (!a) {
-                std::print("can't open expected output '{}'\n", expected_log);
-                error = true;
-            }
             error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
         }
 

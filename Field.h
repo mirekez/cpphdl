@@ -14,6 +14,7 @@ struct Field
     std::vector<Expr> array;
     Expr bitwidth;
     Struct definition;
+    bool packedArray = false;
 
     // methods
     int indent = 0;

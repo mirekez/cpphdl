@@ -29,12 +29,21 @@ bool isMemberName(const std::string& name)
     return currModule && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == name; });
 }
 
-std::string memberArrayPortRef(Expr indexed, const std::string& member, const std::string& suffix)
+std::string memberArrayPortRef(Expr indexed, std::string member, const std::string& suffix, bool allowInterface)
 {
     std::string root;
     std::vector<Expr> indices;
-    if (!collectIndexChain(std::move(indexed), root, indices) || !isMemberName(root)) {
+    if (!collectIndexChain(std::move(indexed), root, indices) || (!isMemberName(root) && !allowInterface)) {
         return {};
+    }
+
+    if (allowInterface && str_ending(root, "_out")) {
+        if (str_ending(member, "_out")) {
+            member.replace(member.length() - 4, 4, "_in");
+        } else
+        if (str_ending(member, "_in")) {
+            member.replace(member.length() - 3, 3, "_out");
+        }
     }
 
     std::string text = root + "__" + member + suffix;
@@ -431,7 +440,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
 //                base = sub[0].sub[0].str();  dont break base
-                std::string memberRef = memberArrayPortRef(sub[0], member, suffix);
+                std::string memberRef = memberArrayPortRef(sub[0], member, suffix, interface);
                 if (!memberRef.empty()) {
                     if (member == "_work") {  // dont call _work() for members
                         return "";
@@ -490,16 +499,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub[0].type == EXPR_INDEX && sub[0].sub.size()) {
 //                base = sub[0].sub[0].str();  dont do this, dont break base
-                std::string memberRef = memberArrayPortRef(sub[0], member, suffix);
+                std::string memberRef = memberArrayPortRef(sub[0], member, suffix, interface);
                 if (!memberRef.empty()) {
-                    if (interface && str_ending(sub[0].sub[0].str(), "_out")) {  // for Port structs
-                        if (str_ending(member, "_out")) {
-                            member.replace(member.length() - 4, 4, "_in");
-                        } else
-                        if (str_ending(member, "_in")) {
-                            member.replace(member.length() - 3, 3, "_out");
-                        }
-                    }
                     return indent_str + prefix + memberRef;
                 }
             }

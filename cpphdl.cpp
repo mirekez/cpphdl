@@ -18,7 +18,9 @@
 #include "Expr.h"
 #include "Struct.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -157,7 +159,21 @@ std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTC
 
 void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
 {
-    if (expr1.type == expr2.type && expr1.sub.size() == expr2.sub.size()) {
+    auto isTemplateTypeParam = [](const cpphdl::Expr& expr) {
+        if (expr.type != cpphdl::Expr::EXPR_TYPE || expr.value.empty()) {
+            return false;
+        }
+        return std::all_of(expr.value.begin(), expr.value.end(), [](unsigned char ch) {
+            return std::isupper(ch) || std::isdigit(ch) || ch == '_';
+        });
+    };
+
+    if (isTemplateTypeParam(expr1) && !(expr2.type == cpphdl::Expr::EXPR_TYPE && expr2.value == expr1.value)) {
+        expr1 = expr2;
+        return;
+    }
+
+    if (expr1.type == expr2.type && expr1.value == expr2.value && expr1.sub.size() == expr2.sub.size()) {
         for (size_t i=0; i < expr1.sub.size(); ++i) {
             updateExpr(expr1.sub[i], expr2.sub[i]);
         }
@@ -342,6 +358,13 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 //!!!    QT = QT.getCanonicalType();
 //    auto T = QT.getUnqualifiedType();
 
+    auto isTopCpphdlArray = [&](QualType type) {
+        auto* TSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(hlp.resolveCXXRecordDecl(type));
+        return TSD && TSD->getSpecializedTemplate()->getQualifiedNameAsString() == "cpphdl::array";
+    };
+
+    bool directCpphdlArray = isTopCpphdlArray(QT);
+
     auto* CRD = hlp.resolveCXXRecordDecl(QT);
 
     std::vector<cpphdl::Expr> array_dim;
@@ -395,7 +418,37 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 
     hlp.skipStdFunctionType(QT);
 
+    const std::string qtText = QT.getAsString(hlp.ctx->getPrintingPolicy());
+    const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
+
     cpphdl::Expr expr = hlp.digQT(QT);
+    auto isPrimitiveExpr = [](const cpphdl::Expr& e) {
+        if (e.type != cpphdl::Expr::EXPR_TYPE) {
+            cpphdl::Expr tmp = e;
+            std::string sv = tmp.str();
+            return sv.rfind("logic", 0) == 0
+                || sv.rfind("wire", 0) == 0
+                || sv.rfind("reg", 0) == 0;
+        }
+        return e.value == "bool"
+            || e.value == "_Bool"
+            || e.value == "char"
+            || e.value == "signedchar"
+            || e.value == "unsignedchar"
+            || e.value == "short"
+            || e.value == "unsignedshort"
+            || e.value == "int"
+            || e.value == "unsignedint"
+            || e.value == "long"
+            || e.value == "unsignedlong"
+            || e.value == "longlong"
+            || e.value == "unsignedlonglong"
+            || e.value == "size_t"
+            || e.value == "cpphdl_logic"
+            || e.value.find("cpphdl_u") == 0
+            || e.value.find("cpphdl_i") == 0;
+    };
+    const bool packedArray = functionRefCpphdlArray || (directCpphdlArray && !isPrimitiveExpr(expr));
 
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
         DEBUG_AST1(" {port " << fieldName << "} ");
@@ -416,6 +469,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // specialization (we start from it and then update just some info from abstract)
             if (!CRD || !CRD->isDerivedFrom(InterfaceClass)) {
                 field = &hlp.mod->ports.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});  // normal field, not Interface
+                field->packedArray = packedArray;
             }
         }
         else {  // looks like it's Abstract for the Module, need update all Abstract information about parameters to Interface struct and array size expression
@@ -453,6 +507,9 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         }
 
         if (field) {  // normal field, not Interface struct
+            if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
+                field->packedArray = field->packedArray || packedArray;
+            }
             DEBUG_EXPR1(" Expr: " << field->expr.debug(debugIndent));
 
             if (initializer) {
@@ -528,11 +585,17 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             } else
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod->members.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
+                field->packedArray = packedArray;
             }
             else {
                 return;
             }
             DEBUG_EXPR(debugIndent, " Expr: " << field->expr.debug(debugIndent));
+            if (field) {
+                if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
+                    field->packedArray = field->packedArray || packedArray;
+                }
+            }
         }
         else {
             DEBUG_AST1(" {var " << fieldName << "}");
@@ -549,11 +612,17 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             } else
             if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {  // dont need abstract declarations, only updateExpr
                 field = &hlp.mod->vars.emplace_back(cpphdl::Field{fieldName, std::move(expr), {}, array_dim});
+                field->packedArray = packedArray;
             }
             else {
                 return;
             }
             DEBUG_EXPR(debugIndent, " Expr: " << field->expr.debug(debugIndent));
+            if (field) {
+                if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
+                    field->packedArray = field->packedArray || packedArray;
+                }
+            }
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);
             if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {

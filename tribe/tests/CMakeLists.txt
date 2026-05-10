@@ -8,6 +8,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+ARGS=()
+for ARG in "$@"; do
+    case "$ARG" in
+        --noveril)
+            ARGS+=("$ARG")
+            ;;
+        -h|--help)
+            echo "usage: $0 [--noveril]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $ARG" >&2
+            echo "usage: $0 [--noveril]" >&2
+            exit 2
+            ;;
+    esac
+done
+
 DIR="tests"
 if [[ ! -d "$DIR" ]]; then
     echo "Missing tests directory: $ROOT/$DIR" >&2
@@ -18,8 +36,8 @@ while IFS= read -r -d '' EXE; do
     echo "==> ${EXE}"
     EXE_DIR="$(dirname "$EXE")"
     EXE_NAME="$(basename "$EXE")"
-    (cd "$EXE_DIR" && "./$EXE_NAME")
-done < <(find "$DIR" -maxdepth 1 -type f -perm -111 -print0 | sort -z)
+    (cd "$EXE_DIR" && "./$EXE_NAME" "${ARGS[@]}")
+done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' -print0 | sort -z)
 ]=])
 file(CHMOD "${TRIBE_TEST_ALL_SCRIPT}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
@@ -215,119 +233,3 @@ endfunction()
 add_tribe_width_tests(256 tribe256)
 add_tribe_width_tests(128 tribe128)
 add_tribe_width_tests(64 tribe64)
-
-add_test(
-    NAME Tribe_rv32_spike_fragments
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_SPIKE_WORK_DIR}"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_rv32_spike_fragments PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 180
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH}"
-)
-
-add_test(
-    NAME Tribe_rv32_spike_fragments_verilator
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
-            "$<TARGET_FILE:tribe>"
-            "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments-verilator"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_rv32_spike_fragments_verilator PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};TRIBE_SPIKE_FRAGMENTS_BACKEND=verilator"
-)
-
-add_test(
-    NAME Tribe_riscv_tests_rv32
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_TESTS_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_tests_rv32 PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
-)
-
-add_test(
-    NAME Tribe_riscv_tests_rv32_verilator_supported
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_TESTS_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_tests_rv32_verilator_supported PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 300
-    ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
-)
-
-add_test(
-    NAME Tribe_riscv_arch_test
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_ARCH_TEST_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_arch_test PROPERTIES
-    TIMEOUT 1200
-    ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
-)
-
-add_test(
-    NAME Tribe_riscv_arch_test_verilator
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_ARCH_TEST_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work-verilator"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_arch_test_verilator PROPERTIES
-    TIMEOUT 1200
-    ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
-)
-
-add_test(
-    NAME Tribe_riscv_dv
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_DV_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-dv-work"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_dv PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 120
-    ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3"
-)
-
-add_test(
-    NAME Tribe_riscv_dv_verilator
-    COMMAND Python3::Interpreter
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
-            "$<TARGET_FILE:tribe>"
-            "${TRIBE_RISCV_DV_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/riscv-dv-work-verilator"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(Tribe_riscv_dv_verilator PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 120
-    ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_BACKEND=verilator"
-)
