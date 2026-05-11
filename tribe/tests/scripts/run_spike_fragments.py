@@ -345,6 +345,61 @@ FRAGMENTS = [
         """,
     ),
     Fragment(
+        "CLINT",
+        "rv32im_zicsr",
+        "RV32IM_Zicsr",
+        """
+            #ifdef SPIKE_REFERENCE
+                li s0, 0x02000000
+            #else
+                li s0, 0x00070100
+            #endif
+            li s1, 0x4000
+            add s1, s0, s1          # mtimecmp
+            li s2, 0xBFF8
+            add s2, s0, s2          # mtime
+
+            la t0, mtimer_handler
+            csrw mtvec, t0
+            csrw mscratch, zero
+            li t0, -1
+            sw t0, 0(s1)
+            sw t0, 4(s1)
+            csrw mip, zero
+            li t0, 0x80             # mie.MTIE
+            csrw mie, t0
+            csrsi mstatus, 8        # mstatus.MIE
+            lw t1, 0(s2)
+            addi t1, t1, 32
+            sw t1, 0(s1)
+            sw zero, 4(s1)
+
+            li t2, 10000
+        wait_timer:
+            csrr t3, mscratch
+            bnez t3, timer_seen
+            addi t2, t2, -1
+            bnez t2, wait_timer
+            j fail
+
+        timer_seen:
+            li t4, 1
+            bne t3, t4, fail
+            j pass
+
+        mtimer_handler:
+            csrr t5, mcause
+            li t6, 0x80000007
+            bne t5, t6, fail
+            li t6, 1
+            csrw mscratch, t6
+            li t6, -1
+            sw t6, 0(s1)
+            sw t6, 4(s1)
+            mret
+        """,
+    ),
+    Fragment(
         "RV32A",
         "rv32ima_zicsr",
         "RV32IMA_Zicsr",

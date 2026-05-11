@@ -183,7 +183,7 @@ def main(argv: list[str]) -> int:
         test.strip()
         for test in os.environ.get(
             "TRIBE_RISCV_DV_TESTS",
-            "tribe_arithmetic_basic_test,tribe_amo_test,tribe_trap_test",
+            "tribe_arithmetic_basic_test,tribe_amo_test,tribe_trap_test,tribe_interrupt_test",
         ).split(",")
         if test.strip()
     ]
@@ -204,6 +204,8 @@ def main(argv: list[str]) -> int:
     target = os.environ.get("TRIBE_RISCV_DV_TARGET", ensure_tribe_atomic_target(checkout))
     iterations = os.environ.get("TRIBE_RISCV_DV_ITERATIONS", "1")
     cycles = os.environ.get("TRIBE_RISCV_DV_CYCLES", "300000")
+    spike_timeout = int(os.environ.get("TRIBE_RISCV_DV_SPIKE_TIMEOUT", "30"))
+    skip_spike_interrupt = os.environ.get("TRIBE_RISCV_DV_INTERRUPT_NO_SPIKE", "1") != "0"
     offset = os.environ.get("TRIBE_RISCV_DV_OFFSET", "0x1000")
     start_mem_addr = os.environ.get("TRIBE_RISCV_DV_START_MEM_ADDR", "0x80000000")
     addr_mask = int(os.environ.get("TRIBE_RISCV_DV_ADDR_MASK", "0xffffffff"), 0)
@@ -260,12 +262,32 @@ def main(argv: list[str]) -> int:
 
         for elf in elfs:
             print(f"== {elf.name} ==")
-            spike_result = subprocess.run(["spike", f"--isa={isa}", str(elf)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-            if spike_result.stdout:
-                print(spike_result.stdout, end="")
-            if spike_result.returncode != 0:
-                failed.append(elf.name)
-                continue
+            run_spike_reference = not (skip_spike_interrupt and "interrupt" in test)
+            spike_returncode = 0
+            if run_spike_reference:
+                try:
+                    spike_result = subprocess.run(
+                        ["spike", f"--isa={isa}", str(elf)],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        timeout=spike_timeout,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    print(f"Spike timed out after {spike_timeout}s for {elf.name}")
+                    if exc.stdout:
+                        print(exc.stdout, end="")
+                    failed.append(elf.name)
+                    continue
+                if spike_result.stdout:
+                    print(spike_result.stdout, end="")
+                spike_returncode = spike_result.returncode
+                if spike_returncode != 0:
+                    failed.append(elf.name)
+                    continue
+            else:
+                print("Skipping Spike reference for riscv-dv interrupt program; generated IRQ setup is target-driven.")
 
             tohost = symbol_addr(elf, "tohost", env)
             if tohost is None:
@@ -290,7 +312,7 @@ def main(argv: list[str]) -> int:
             )
             if tribe_result.stdout:
                 print(tribe_result.stdout, end="")
-            if tribe_result.returncode != spike_result.returncode:
+            if tribe_result.returncode != spike_returncode:
                 mismatched.append(elf.name)
 
     if failed or mismatched:

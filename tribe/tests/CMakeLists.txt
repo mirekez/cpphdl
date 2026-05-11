@@ -79,6 +79,9 @@ foreach(src ${TRIBE_TEST_SOURCES})
     )
 
     add_dependencies(${target_name} cpphdl)
+    if(target_name STREQUAL "CLINT_test")
+        add_dependencies(${target_name} tribe64)
+    endif()
 
     add_custom_command(
         TARGET ${target_name}

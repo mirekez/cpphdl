@@ -158,6 +158,7 @@ int main(int argc, char** argv)
                   "L1Cache",
                   "L2Cache",
                   "BranchPredictor",
+                  "InterruptController",
                   "Decode",
                   "Execute",
                   "ExecuteMem",
