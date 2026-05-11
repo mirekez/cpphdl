@@ -47,6 +47,15 @@ struct Zicsr: public PREV_SPEC
                 state_out.sys_op = Sys::WFI;
                 state_out.imm = raw;
             }
+#ifdef ENABLE_MMU_TLB
+            else if ((raw & 0xfe007fff) == 0x12000073) {
+                state_out = {};
+                state_out.sys_op = Sys::SFENCE_VMA;
+                state_out.rs1 = r.rs1;
+                state_out.rs2 = r.rs2;
+                state_out.imm = raw;
+            }
+#endif
             else {
                 state_out = {};
                 state_out.sys_op = Sys::TRAP;
@@ -111,6 +120,9 @@ struct Zicsr: public PREV_SPEC
             if (raw == 0x30200073) { return "mret  "; }
             if (raw == 0x10200073) { return "sret  "; }
             if (raw == 0x10500073) { return "wfi   "; }
+#ifdef ENABLE_MMU_TLB
+            if ((raw & 0xfe007fff) == 0x12000073) { return "sfence"; }
+#endif
             if (i.funct3 == 0b001) { return "csrrw "; }
             if (i.funct3 == 0b010) { return "csrrs "; }
             if (i.funct3 == 0b011) { return "csrrc "; }

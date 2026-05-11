@@ -24,6 +24,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "Writeback.h"
 #include "WritebackMem.h"
 #include "CSR.h"
+#include "MMU_TLB.h"
 #include "InterruptController.h"
 #include "BranchPredictor.h"
 #include "Axi4.h"
@@ -69,6 +70,10 @@ class Tribe: public Module
 #endif
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
     InterruptController irq;
+#endif
+#ifdef ENABLE_MMU_TLB
+    MMU_TLB<8>      immu;
+    MMU_TLB<8>      dmmu;
 #endif
     File<32,32>     regs;
     L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
@@ -169,6 +174,48 @@ public:
         csr._assign();
 #endif
 
+#ifdef ENABLE_MMU_TLB
+        immu.vaddr_in = __EXPR(fetch_addr_comb_func());
+        immu.read_in = __EXPR(false);
+        immu.write_in = __EXPR(false);
+        immu.execute_in = __EXPR(true);
+#ifdef ENABLE_ZICSR
+        immu.satp_in = csr.satp_out;
+        immu.priv_in = csr.priv_out;
+#else
+        immu.satp_in = __EXPR((uint32_t)0);
+        immu.priv_in = __EXPR((u<2>)3);
+#endif
+        immu.fill_in = __EXPR(false);
+        immu.fill_index_in = __EXPR((u<3>)0);
+        immu.fill_vpn_in = __EXPR((uint32_t)0);
+        immu.fill_ppn_in = __EXPR((uint32_t)0);
+        immu.fill_flags_in = __EXPR((uint8_t)0);
+        immu.sfence_in = __EXPR(sfence_vma_comb_func());
+        immu.__inst_name = __inst_name + "/immu";
+        immu._assign();
+
+        dmmu.vaddr_in = __EXPR(exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out());
+        dmmu.read_in = exe_mem.mem_read_out;
+        dmmu.write_in = exe_mem.mem_write_out;
+        dmmu.execute_in = __EXPR(false);
+#ifdef ENABLE_ZICSR
+        dmmu.satp_in = csr.satp_out;
+        dmmu.priv_in = csr.priv_out;
+#else
+        dmmu.satp_in = __EXPR((uint32_t)0);
+        dmmu.priv_in = __EXPR((u<2>)3);
+#endif
+        dmmu.fill_in = __EXPR(false);
+        dmmu.fill_index_in = __EXPR((u<3>)0);
+        dmmu.fill_vpn_in = __EXPR((uint32_t)0);
+        dmmu.fill_ppn_in = __EXPR((uint32_t)0);
+        dmmu.fill_flags_in = __EXPR((uint8_t)0);
+        dmmu.sfence_in = __EXPR(sfence_vma_comb_func());
+        dmmu.__inst_name = __inst_name + "/dmmu";
+        dmmu._assign();
+#endif
+
         wb.state_in       = __VAR( state_reg[1] );
         wb.mem_data_in    = wb_mem.load_raw_out;
         wb.mem_data_hi_in = __EXPR((uint32_t)0);
@@ -190,7 +237,12 @@ public:
 
         dcache.read_in = __EXPR( exe_mem.mem_read_out() && !dcache.busy_out() );
         dcache.write_in = __EXPR( exe_mem.mem_write_out() && !dcache.busy_out() );
-        dcache.addr_in = __EXPR( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+        dcache.addr_in =
+#ifdef ENABLE_MMU_TLB
+            dmmu.paddr_out;
+#else
+            __EXPR( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+#endif
         dcache.write_data_in = exe_mem.mem_write_data_out;
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
         dcache.mem_read_data_in = l2cache.d_read_data_out;
@@ -220,7 +272,12 @@ public:
         bp._assign();
 
         icache.read_in = __EXPR( true );
-        icache.addr_in = __EXPR( fetch_addr_comb_func() );
+        icache.addr_in =
+#ifdef ENABLE_MMU_TLB
+            immu.paddr_out;
+#else
+            __EXPR( fetch_addr_comb_func() );
+#endif
         icache.write_in = __EXPR( false );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
@@ -484,7 +541,13 @@ private:
 #endif
 
     __LAZY_COMB(icache_invalidate_comb, bool)
-        return icache_invalidate_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI && !memory_wait_comb_func();
+        return icache_invalidate_comb = state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+            !memory_wait_comb_func();
+    }
+
+    __LAZY_COMB(sfence_vma_comb, bool)
+        return sfence_vma_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func();
     }
 
     void forward()
@@ -685,6 +748,10 @@ public:
 #ifdef ENABLE_ZICSR
         csr._work(reset);
 #endif
+#ifdef ENABLE_MMU_TLB
+        immu._work(reset);
+        dmmu._work(reset);
+#endif
         icache._work(reset);
         dcache._work(reset);
         l2cache._work(reset);
@@ -780,6 +847,10 @@ public:
         wb_mem._strobe();
 #ifdef ENABLE_ZICSR
         csr._strobe();
+#endif
+#ifdef ENABLE_MMU_TLB
+        immu._strobe();
+        dmmu._strobe();
 #endif
         icache._strobe();
         dcache._strobe();
@@ -1538,6 +1609,7 @@ int main (int argc, char** argv)
 	                  "Execute",
 	                  "ExecuteMem",
 	                  "CSR",
+	                  "MMU_TLB",
 	                  "Writeback",
 	                  "WritebackMem"}, {
                           (source_root / "include").string(),

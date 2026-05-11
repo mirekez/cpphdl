@@ -21,6 +21,11 @@ public:
     __PORT(uint32_t) mie_out = __VAR(mie_reg);
     __PORT(uint32_t) mideleg_out = __VAR(mideleg_reg);
     __PORT(uint32_t) mip_sw_out = __VAR(mip_reg);
+#ifdef ENABLE_MMU_TLB
+    __PORT(uint32_t) satp_out = __VAR(satp_reg);
+#else
+    __PORT(uint32_t) satp_out = __EXPR((uint32_t)0);
+#endif
 #ifdef ENABLE_TRAPS
     __PORT(u<2>) priv_out = __VAR(priv_reg);
 #else
@@ -82,6 +87,9 @@ private:
     reg<u32> stval_reg;
     reg<u32> sip_reg;
     reg<u32> scounteren_reg;
+#ifdef ENABLE_MMU_TLB
+    reg<u32> satp_reg;
+#endif
 
     reg<u32> dcsr_reg;
     reg<u32> dpc_reg;
@@ -121,6 +129,9 @@ private:
             case Trap::BREAKPOINT: return 3;
             case Trap::LOAD_MISALIGNED: return 4;
             case Trap::STORE_MISALIGNED: return 6;
+            case Trap::INST_PAGE_FAULT: return 12;
+            case Trap::LOAD_PAGE_FAULT: return 13;
+            case Trap::STORE_PAGE_FAULT: return 15;
             case Trap::ECALL_U: return 8;
             case Trap::ECALL_S: return 9;
             case Trap::ECALL_M: return 11;
@@ -203,7 +214,13 @@ private:
         if (addr == 0x142) { return scause_reg; }
         if (addr == 0x143) { return stval_reg; }
         if (addr == 0x144) { return (sip_reg | irq_pending_bits_in()) & ((1u << 1) | (1u << 5) | (1u << 9)); }
-        if (addr == 0x180) { return 0; }                  // satp, excluded
+        if (addr == 0x180) {
+#ifdef ENABLE_MMU_TLB
+            return satp_reg;
+#else
+            return 0;
+#endif
+        }
 
         if (addr == 0x300) { return mstatus_reg; }
         if (addr == 0x301) { return MISA_RV32IMC; }
@@ -331,6 +348,11 @@ public:
         if (st.sys_op == Sys::SRET) {
             return priv_reg < PRIV_S;
         }
+#ifdef ENABLE_MMU_TLB
+        if (st.sys_op == Sys::SFENCE_VMA) {
+            return priv_reg < PRIV_S;
+        }
+#endif
         if (st.csr_op == Csr::CNONE) {
             return false;
         }
@@ -390,6 +412,9 @@ private:
             case 0x142: scause_reg._next = value; break;
             case 0x143: stval_reg._next = value; break;
             case 0x144: sip_reg._next = value; break;
+#ifdef ENABLE_MMU_TLB
+            case 0x180: satp_reg._next = value & 0x803fffffu; break;
+#endif
 
             case 0x300: mstatus_reg._next = sanitize_mstatus(value); sstatus_reg._next = value & SSTATUS_MASK; break;
             case 0x302: medeleg_reg._next = value; break;
@@ -520,6 +545,9 @@ public:
             stval_reg.clr();
             sip_reg.clr();
             scounteren_reg.clr();
+#ifdef ENABLE_MMU_TLB
+            satp_reg.clr();
+#endif
             dcsr_reg.clr();
             dpc_reg.clr();
             dscratch0_reg.clr();
@@ -557,6 +585,9 @@ public:
         stval_reg.strobe();
         sip_reg.strobe();
         scounteren_reg.strobe();
+#ifdef ENABLE_MMU_TLB
+        satp_reg.strobe();
+#endif
         dcsr_reg.strobe();
         dpc_reg.strobe();
         dscratch0_reg.strobe();

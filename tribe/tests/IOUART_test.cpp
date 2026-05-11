@@ -549,6 +549,7 @@ int main(int argc, char** argv)
                   "Execute",
                   "ExecuteMem",
                   "CSR",
+                  "MMU_TLB",
                   "Writeback",
                   "WritebackMem"}, {
                       (source_root / "include").string(),

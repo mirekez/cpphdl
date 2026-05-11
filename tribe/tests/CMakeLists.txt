@@ -79,7 +79,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
     )
 
     add_dependencies(${target_name} cpphdl)
-    if(target_name STREQUAL "CLINT_test")
+    if(target_name STREQUAL "CLINT_test" OR target_name STREQUAL "MMU_TLB_Test")
         add_dependencies(${target_name} tribe64)
     endif()
 
