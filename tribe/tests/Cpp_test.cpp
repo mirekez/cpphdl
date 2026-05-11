@@ -136,11 +136,13 @@ int main(int argc, char** argv)
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
+                  "Amo_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",
                   "Rv32ic_rv16_pkg",
                   "Rv32im_pkg",
+                  "Rv32ia_pkg",
                   "Zicsr_pkg",
                   "Alu_pkg",
                   "Br_pkg",

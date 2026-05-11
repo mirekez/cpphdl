@@ -49,6 +49,87 @@ def symbol_addr(elf: pathlib.Path, symbol: str, env: dict[str, str]) -> int | No
     return None
 
 
+def ensure_tribe_atomic_target(checkout: pathlib.Path) -> str:
+    target = "tribe_rv32imac_a"
+    source = checkout / "pygen" / "pygen_src" / "target" / "rv32imc"
+    dest = checkout / "pygen" / "pygen_src" / "target" / target
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / "riscvOVPsim.ic", dest / "riscvOVPsim.ic")
+    text = (source / "riscv_core_setting.py").read_text(encoding="utf-8")
+    text = text.replace(
+        "supported_isa = [riscv_instr_group_t.RV32I, riscv_instr_group_t.RV32M, riscv_instr_group_t.RV32C]",
+        "supported_isa = [riscv_instr_group_t.RV32I, riscv_instr_group_t.RV32M, "
+        "riscv_instr_group_t.RV32A, riscv_instr_group_t.RV32C]",
+    )
+    (dest / "riscv_core_setting.py").write_text(text, encoding="utf-8")
+    return target
+
+
+def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
+    path = checkout / "pygen" / "pygen_src" / "riscv_amo_instr_lib.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "        # User can specify a small group of available registers to generate various hazard condition\n"
+        "        self.avail_regs = vsc.randsz_list_t(vsc.enum_t(riscv_reg_t))\n",
+        "        # avail_regs is inherited from riscv_instr_stream.\n",
+    )
+    text = text.replace(
+        "        self.data_page_id = random.randrange(0, max_data_page_id - 1)\n",
+        "        self.data_page_id = random.randrange(0, max_data_page_id)\n",
+    )
+    text = text.replace(
+        "        self.reserved_rd.append(self.rs1_reg)\n",
+        "        self.reserved_rd.append(self.rs1_reg[0])\n",
+    )
+    text = text.replace(
+        "            self.amo_instr.append(riscv_instr.get_rand_instr(\n"
+        "                                  include_category=[riscv_instr_category_t.AMO]))\n",
+        "            self.amo_instr.append(riscv_instr.get_rand_instr(include_instr=[\n"
+        "                                  riscv_instr_name_t.AMOSWAP_W,\n"
+        "                                  riscv_instr_name_t.AMOADD_W,\n"
+        "                                  riscv_instr_name_t.AMOAND_W,\n"
+        "                                  riscv_instr_name_t.AMOOR_W,\n"
+        "                                  riscv_instr_name_t.AMOXOR_W,\n"
+        "                                  riscv_instr_name_t.AMOMIN_W,\n"
+        "                                  riscv_instr_name_t.AMOMAX_W,\n"
+        "                                  riscv_instr_name_t.AMOMINU_W,\n"
+        "                                  riscv_instr_name_t.AMOMAXU_W]))\n",
+    )
+    text = text.replace(
+        "                self.amo_instr[i].rd.inside(vsc.rangelist(self.rs1_reg))\n",
+        "                # Tribe patch: rd does not need to alias the AMO address register.\n",
+    )
+    text = text.replace(
+        "            self.instr_list.insert(0, self.amo_instr[i])\n",
+        "            self.amo_instr[i].rs1 = self.rs1_reg[0]\n"
+        "            self.amo_instr[i].rd = riscv_reg_t.ZERO\n"
+        "            self.instr_list.insert(0, self.amo_instr[i])\n",
+    )
+    text = text.replace(
+        "        self.instr_list.extend((self.lr_instr, self.sc_instr))\n",
+        "        self.lr_instr.rs1 = self.rs1_reg[0]\n"
+        "        self.sc_instr.rs1 = self.rs1_reg[0]\n"
+        "        self.instr_list.extend((self.lr_instr, self.sc_instr))\n",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    asm_path = checkout / "pygen" / "pygen_src" / "riscv_asm_program_gen.py"
+    text = asm_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "            self.callstack_gen.init(num_sub_program + 1)\n",
+        "            callstack_gen.init(num_sub_program + 1)\n",
+    )
+    asm_path.write_text(text, encoding="utf-8")
+
+    callstack_path = checkout / "pygen" / "pygen_src" / "riscv_callstack_gen.py"
+    text = callstack_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "            self.program_h[i] = riscv_program(\"program_{}\".format(i))\n",
+        "            self.program_h[i] = riscv_program()\n",
+    )
+    callstack_path.write_text(text, encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("usage: run_riscv_dv.py <tribe-bin> <checkout-dir> <work-dir>", file=sys.stderr)
@@ -62,6 +143,7 @@ def main(argv: list[str]) -> int:
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
     subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "run.py"], check=True)
+    patch_riscv_dv_amo_pygen(checkout)
 
     python = os.environ.get("TRIBE_RISCV_DV_PYTHON", "/usr/bin/python3")
     if shutil.which(python) is None:
@@ -101,7 +183,7 @@ def main(argv: list[str]) -> int:
         test.strip()
         for test in os.environ.get(
             "TRIBE_RISCV_DV_TESTS",
-            "tribe_arithmetic_basic_test",
+            "tribe_arithmetic_basic_test,tribe_amo_test",
         ).split(",")
         if test.strip()
     ]
@@ -119,12 +201,13 @@ def main(argv: list[str]) -> int:
         "TRIBE_RISCV_DV_TESTLIST",
         repo_root / "tribe" / "tests" / "riscv_dv_tribe_testlist.yaml",
     )).resolve()
-    target = os.environ.get("TRIBE_RISCV_DV_TARGET", "rv32imc")
+    target = os.environ.get("TRIBE_RISCV_DV_TARGET", ensure_tribe_atomic_target(checkout))
     iterations = os.environ.get("TRIBE_RISCV_DV_ITERATIONS", "1")
     cycles = os.environ.get("TRIBE_RISCV_DV_CYCLES", "300000")
     offset = os.environ.get("TRIBE_RISCV_DV_OFFSET", "0x1000")
-    addr_mask = int(os.environ.get("TRIBE_RISCV_DV_ADDR_MASK", "0x1ffff"), 0)
-    isa = os.environ.get("TRIBE_RISCV_DV_ISA", "rv32imc_zicsr_zifencei")
+    start_mem_addr = os.environ.get("TRIBE_RISCV_DV_START_MEM_ADDR", "0x80000000")
+    addr_mask = int(os.environ.get("TRIBE_RISCV_DV_ADDR_MASK", "0xffffffff"), 0)
+    isa = os.environ.get("TRIBE_RISCV_DV_ISA", "rv32imac_zicsr_zifencei")
     backend = os.environ.get("TRIBE_RISCV_DV_BACKEND", "cpphdl")
     if backend not in ("cpphdl", "verilator"):
         print(f"unsupported TRIBE_RISCV_DV_BACKEND={backend!r}")
@@ -149,10 +232,15 @@ def main(argv: list[str]) -> int:
     mismatched = []
     for test in tests:
         test_work = work / test
+        target_dir = checkout / "pygen" / "pygen_src" / "target" / target
         cmd = [
             python,
             str(checkout / "run.py"),
             "--target", target,
+            "--custom_target", str(target_dir),
+            "--isa", isa,
+            "--mabi", "ilp32",
+            "--sim_opts", os.environ.get("TRIBE_RISCV_DV_SIM_OPTS", ""),
             "--simulator", "pyflow",
             "--testlist", str(testlist),
             "--test", test,
@@ -192,6 +280,7 @@ def main(argv: list[str]) -> int:
                     "--program", str(elf),
                     "--offset", offset,
                     "--tohost", hex(tohost & addr_mask),
+                    "--start-mem-addr", start_mem_addr,
                     "--cycles", cycles,
                 ],
                 text=True,

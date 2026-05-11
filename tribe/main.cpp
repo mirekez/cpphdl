@@ -5,15 +5,17 @@
 
 #include "File.h"
 
-static constexpr size_t STAGES_NUM = 3;
+#include "Config.h"
+
+static constexpr size_t STAGES_NUM = 3;  // Decode, Execute, Writeback  (+ IFetch not counted here)
 static constexpr size_t CACHE_LINE_SIZE = 32;
 static constexpr size_t ADDR_BITS = 32;
 
 #ifdef L2_AXI_WIDTH
-static constexpr size_t TRIBE_L2_AXI_WIDTH = L2_AXI_WIDTH;
+static constexpr size_t TRIBE_L2_AXI_WIDTH = L2_AXI_WIDTH;  // 64, 128, 256 has special targets in Makefile
 #undef L2_AXI_WIDTH
 #else
-static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
+static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #endif
 
 #include "Decode.h"
@@ -29,6 +31,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
+// system configuration for cpp
 static constexpr size_t DEFAULT_RAM_SIZE = 32768;
 static constexpr size_t MAX_RAM_SIZE = 524288;
 static constexpr size_t TRIBE_MEM_REGION0_SIZE = 256 * 1024;
@@ -36,12 +39,9 @@ static constexpr size_t TRIBE_MEM_REGION1_SIZE = 128 * 1024;
 static constexpr size_t TRIBE_MEM_REGION2_SIZE = 64 * 1024;
 static constexpr size_t TRIBE_IO_REGION_SIZE = MAX_RAM_SIZE - TRIBE_MEM_REGION0_SIZE - TRIBE_MEM_REGION1_SIZE - TRIBE_MEM_REGION2_SIZE;
 static constexpr size_t TRIBE_RAM_BYTES = TRIBE_MEM_REGION0_SIZE + TRIBE_MEM_REGION1_SIZE + TRIBE_MEM_REGION2_SIZE;
-static constexpr size_t L1_CACHE_SIZE = 1024;
-static constexpr size_t L2_CACHE_SIZE = 8192;
-static constexpr size_t L2_CACHE_ADDR_BITS = cpphdl::clog2(MAX_RAM_SIZE);
 #define L2_MEM_PORTS 4
-static constexpr size_t BRANCH_PREDICTOR_ENTRIES = 16;
-static constexpr size_t BRANCH_PREDICTOR_COUNTER_BITS = 2;
+
+#define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
 
 long sys_clock = -1;
 
@@ -62,11 +62,13 @@ class Tribe: public Module
     ExecuteMem      exe_mem;
     Writeback       wb;
     WritebackMem    wb_mem;
+#ifdef ENABLE_ZICSR
     CSR             csr;
+#endif
     File<32,32>     regs;
-    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
-    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,2,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
-    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,4,ADDR_BITS,L2_CACHE_ADDR_BITS,L2_MEM_PORTS> l2cache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
+    L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
+    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
 
 public:
@@ -82,7 +84,7 @@ public:
     __PORT(uint32_t)  memory_size_in;
     __PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
 
-    Axi4If<L2_CACHE_ADDR_BITS, 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
+    Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
     bool              debugen_in;
@@ -103,6 +105,11 @@ public:
 
         exe_mem.state_in = __VAR(exe_state_comb_func());
         exe_mem.alu_result_in = exe.alu_result_out;
+#ifdef ENABLE_RV32IA
+        exe_mem.dcache_read_valid_in = dcache.read_valid_out;
+        exe_mem.dcache_read_addr_in = dcache.read_addr_out;
+        exe_mem.dcache_read_data_in = dcache.read_data_out;
+#endif
         exe_mem.mem_stall_in = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
         exe_mem.hold_in = __EXPR( memory_wait_comb_func() );
         exe_mem.__inst_name = __inst_name + "/exe_mem";
@@ -124,9 +131,11 @@ public:
         wb_mem.__inst_name = __inst_name + "/wb_mem";
         wb_mem._assign();
 
+#ifdef ENABLE_ZICSR
         csr.state_in       = __VAR( csr_state_comb_func() );
         csr.__inst_name = __inst_name + "/csr";
         csr._assign();
+#endif
 
         wb.state_in       = __VAR( state_reg[1] );
         wb.mem_data_in    = wb_mem.load_raw_out;
@@ -282,6 +291,11 @@ private:
         if (exe_mem.mem_split_out() || exe_mem.mem_split_busy_out()) {
             hazard_stall_comb = true;
         }
+#ifdef ENABLE_RV32IA
+        if (exe_mem.atomic_busy_out()) {
+            hazard_stall_comb = true;
+        }
+#endif
         return hazard_stall_comb;
     }
 
@@ -313,6 +327,9 @@ private:
     __LAZY_COMB(memory_wait_comb, bool)
         memory_wait_comb = dcache.busy_out() ||
             exe_mem.mem_split_busy_out() ||
+#ifdef ENABLE_RV32IA
+            exe_mem.atomic_busy_out() ||
+#endif
             ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !wb_mem.load_ready_out());
@@ -367,6 +384,7 @@ private:
 
     __LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
+#ifdef ENABLE_ZICSR
         if (state_reg[0].valid && state_reg[0].sys_op == Sys::ECALL) {
             exe_state_comb.rs1_val = csr.trap_vector_out();
             exe_state_comb.imm = 0;
@@ -379,6 +397,7 @@ private:
             exe_state_comb.rs1_val = state_reg[0].pc + 4;
             exe_state_comb.imm = 0;
         }
+#endif
         if (wb_mem.load_ready_out() && state_reg[1].rd != 0) {
             if (state_reg[0].rs1 == state_reg[1].rd) {
                 exe_state_comb.rs1_val = wb_mem.load_result_out();
@@ -390,6 +409,7 @@ private:
         return exe_state_comb;
     }
 
+#ifdef ENABLE_ZICSR
     __LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
         if (memory_wait_comb_func()) {
@@ -397,6 +417,7 @@ private:
         }
         return csr_state_comb;
     }
+#endif
 
     __LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI && !memory_wait_comb_func();
@@ -454,16 +475,32 @@ private:
 
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu/csr
             if (dec_state_tmp.rs1 == state_reg[0].rd) {
-                state_reg._next[0].rs1_val = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
+                state_reg._next[0].rs1_val =
+#ifdef ENABLE_RV32IA
+                        state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS1\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
                 }
+#else
+                        exe.alu_result_out();
+                if (debugen_in) {
+                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)exe.alu_result_out());
+                }
+#endif
             }
             if (dec_state_tmp.rs2 == state_reg[0].rd) {
-                state_reg._next[0].rs2_val = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
+                state_reg._next[0].rs2_val =
+#ifdef ENABLE_RV32IA
+                        state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
                 if (debugen_in) {
                     printf("forwarding %.08x from ALU to RS2\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
                 }
+#else
+                        exe.alu_result_out();
+                if (debugen_in) {
+                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
+                }
+#endif
             }
         }
 
@@ -562,7 +599,15 @@ public:
             predicted_next_reg._next[1] = predicted_next_reg[0];
             fallthrough_reg._next[1] = fallthrough_reg[0];
             predicted_taken_reg._next[1] = predicted_taken_reg[0];
-            alu_result_reg._next = state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
+            alu_result_reg._next =
+#ifdef ENABLE_ZICSR
+                state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() :
+#endif
+#ifdef ENABLE_RV32IA
+                (state_reg[0].amo_op == Amo::SC_W ? exe_mem.atomic_sc_result_out() : exe.alu_result_out());
+#else
+                 exe.alu_result_out();
+#endif
             debug_branch_target_reg._next = exe.branch_target_out();
             debug_branch_taken_reg._next = exe.branch_taken_out();
         }
@@ -573,7 +618,9 @@ public:
         exe_mem._work(reset);
         wb._work(reset);
         wb_mem._work(reset);
+#ifdef ENABLE_ZICSR
         csr._work(reset);
+#endif
         icache._work(reset);
         dcache._work(reset);
         l2cache._work(reset);
@@ -667,7 +714,9 @@ public:
         exe_mem._strobe();
         wb._strobe();
         wb_mem._strobe();
+#ifdef ENABLE_ZICSR
         csr._strobe();
+#endif
         icache._strobe();
         dcache._strobe();
         bp._strobe();
@@ -746,11 +795,11 @@ class TestTribe : public Module
     static constexpr size_t AXI_RAM0_DEPTH = TRIBE_MEM_REGION0_SIZE / (TRIBE_L2_AXI_WIDTH/8);
     static constexpr size_t AXI_RAM1_DEPTH = TRIBE_MEM_REGION1_SIZE / (TRIBE_L2_AXI_WIDTH/8);
     static constexpr size_t AXI_RAM2_DEPTH = TRIBE_MEM_REGION2_SIZE / (TRIBE_L2_AXI_WIDTH/8);
-    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
-    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
-    Axi4Ram<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<1,L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH> iospace;
-    IOUART<L2_CACHE_ADDR_BITS,4,TRIBE_L2_AXI_WIDTH> uart;
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
+    Axi4RegionMux<1,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    IOUART<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -920,10 +969,10 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
-        AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(mem2.axi_in, tribe, 2, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(iospace.slave_in, tribe, 3, u<L2_CACHE_ADDR_BITS>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(mem2.axi_in, tribe, 2, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR(iospace.slave_in, tribe, 3, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         mem0.debugen_in = debugen_in;
         mem1.debugen_in = debugen_in;
         mem2.debugen_in = debugen_in;
@@ -1365,11 +1414,13 @@ int main (int argc, char** argv)
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
+                  "Amo_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",
                   "Rv32ic_rv16_pkg",
                   "Rv32im_pkg",
+                  "Rv32ia_pkg",
                   "Zicsr_pkg",
                   "Alu_pkg",
                   "Br_pkg",

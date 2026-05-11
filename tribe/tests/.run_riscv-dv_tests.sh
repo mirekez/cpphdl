@@ -109,6 +109,7 @@ BUILD_DIR="${ROOT_DIR}/build"
 export PATH="/usr/bin:${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 export TRIBE_RISCV_DV_PYTHON="${TRIBE_RISCV_DV_PYTHON:-/usr/bin/python3}"
+export TRIBE_RISCV_DV_ISA="${TRIBE_RISCV_DV_ISA:-rv32imac_zicsr_zifencei}"
 export PYTHONPATH="${BUILD_DIR}/pydeps:${PYTHONPATH:-}"
 
 make -C "${BUILD_DIR}" tribe256 tribe128 tribe64

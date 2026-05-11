@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Config.h"
+
 using namespace cpphdl;
 
 class ExecuteMem: public Module
@@ -9,6 +11,11 @@ public:
     __PORT(State)    state_in;
     // ALU-computed effective address for load/store instructions.
     __PORT(uint32_t) alu_result_in;
+#ifdef ENABLE_RV32IA
+    __PORT(bool)     dcache_read_valid_in;
+    __PORT(uint32_t) dcache_read_addr_in;
+    __PORT(uint32_t) dcache_read_data_in;
+#endif
     // Holds the current memory request stable while dcache/L2 cannot accept it.
     __PORT(bool)     mem_stall_in;
     // Preserves issued-request metadata while the pipeline waits for writeback.
@@ -28,6 +35,10 @@ public:
     __PORT(bool)     split_load_out      = __VAR(split_load_reg);
     __PORT(uint32_t) split_load_low_out  = __VAR(split_load_low_addr_reg);
     __PORT(uint32_t) split_load_high_out = __VAR(split_load_high_addr_reg);
+#ifdef ENABLE_RV32IA
+    __PORT(bool)     atomic_busy_out     = __VAR(atomic_busy_comb_func());
+    __PORT(uint32_t) atomic_sc_result_out = __VAR(atomic_sc_result_comb_func());
+#endif
 
 private:
     reg<u32> mem_addr_reg;
@@ -45,17 +56,30 @@ private:
     reg<u1>  split_load_reg;
     reg<u32> split_load_low_addr_reg;
     reg<u32> split_load_high_addr_reg;
+#ifdef ENABLE_RV32IA
+    reg<u1>  reservation_valid_reg;
+    reg<u32> reservation_addr_reg;
+    reg<u1>  atomic_pending_reg;
+    reg<u32> atomic_addr_reg;
+    reg<u32> atomic_operand_reg;
+    reg<u<4>> atomic_op_reg;
+#endif
 
     // Decode funct3 into byte count for integer loads and stores.
     __LAZY_COMB(mem_size_comb, uint32_t)
-        mem_size_comb = 0;
-        switch (state_in().funct3) {
-            case 0b000: mem_size_comb = 1; break;
-            case 0b001: mem_size_comb = 2; break;
-            case 0b010: mem_size_comb = 4; break;
-            case 0b100: mem_size_comb = 1; break;
-            case 0b101: mem_size_comb = 2; break;
-            default: break;
+        if (state_in().amo_op != Amo::AMONONE) {
+            mem_size_comb = 4;
+        }
+        else {
+            mem_size_comb = 0;
+            switch (state_in().funct3) {
+                case 0b000: mem_size_comb = 1; break;
+                case 0b001: mem_size_comb = 2; break;
+                case 0b010: mem_size_comb = 4; break;
+                case 0b100: mem_size_comb = 1; break;
+                case 0b101: mem_size_comb = 2; break;
+                default: break;
+            }
         }
         return mem_size_comb;
     }
@@ -68,10 +92,54 @@ private:
         size = mem_size_comb_func();
         mem_split_comb = state_in().valid &&
             (state_in().mem_op == Mem::LOAD || state_in().mem_op == Mem::STORE) &&
+            state_in().amo_op == Amo::AMONONE &&
             size != 0 &&
             ((addr & 0x1f) + size > 32);
         return mem_split_comb;
     }
+
+#ifdef ENABLE_RV32IA
+    __LAZY_COMB(atomic_read_ready_comb, bool)
+        atomic_read_ready_comb = dcache_read_valid_in() &&
+            dcache_read_addr_in() == (uint32_t)atomic_addr_reg;
+        return atomic_read_ready_comb;
+    }
+
+    __LAZY_COMB(atomic_write_data_comb, uint32_t)
+        uint32_t old_value;
+        uint32_t operand;
+        old_value = dcache_read_data_in();
+        operand = atomic_operand_reg;
+        atomic_write_data_comb = old_value;
+        switch ((uint8_t)atomic_op_reg) {
+            case Amo::AMOSWAP_W: atomic_write_data_comb = operand; break;
+            case Amo::AMOADD_W:  atomic_write_data_comb = old_value + operand; break;
+            case Amo::AMOXOR_W:  atomic_write_data_comb = old_value ^ operand; break;
+            case Amo::AMOAND_W:  atomic_write_data_comb = old_value & operand; break;
+            case Amo::AMOOR_W:   atomic_write_data_comb = old_value | operand; break;
+            case Amo::AMOMIN_W:  atomic_write_data_comb = int32_t(old_value) < int32_t(operand) ? old_value : operand; break;
+            case Amo::AMOMAX_W:  atomic_write_data_comb = int32_t(old_value) > int32_t(operand) ? old_value : operand; break;
+            case Amo::AMOMINU_W: atomic_write_data_comb = old_value < operand ? old_value : operand; break;
+            case Amo::AMOMAXU_W: atomic_write_data_comb = old_value > operand ? old_value : operand; break;
+            default: break;
+        }
+        return atomic_write_data_comb;
+    }
+
+    __LAZY_COMB(atomic_sc_success_comb, bool)
+        atomic_sc_success_comb = reservation_valid_reg &&
+            ((uint32_t)reservation_addr_reg == (alu_result_in() & ~3u));
+        return atomic_sc_success_comb;
+    }
+
+    __LAZY_COMB(atomic_sc_result_comb, uint32_t)
+        return atomic_sc_result_comb = atomic_sc_success_comb_func() ? 0u : 1u;
+    }
+
+    __LAZY_COMB(atomic_busy_comb, bool)
+        return atomic_busy_comb = atomic_pending_reg;
+    }
+#endif
 
     // Mask for the first beat of a split access; stores write the low bytes.
     __LAZY_COMB(first_split_mask_comb, uint8_t)
@@ -129,8 +197,40 @@ private:
             split_load_reg._next = split_load_reg;
             split_load_low_addr_reg._next = split_load_low_addr_reg;
             split_load_high_addr_reg._next = split_load_high_addr_reg;
+#ifdef ENABLE_RV32IA
+            reservation_valid_reg._next = reservation_valid_reg;
+            reservation_addr_reg._next = reservation_addr_reg;
+            atomic_pending_reg._next = atomic_pending_reg;
+            atomic_addr_reg._next = atomic_addr_reg;
+            atomic_operand_reg._next = atomic_operand_reg;
+            atomic_op_reg._next = atomic_op_reg;
+#endif
             return;
         }
+
+#ifdef ENABLE_RV32IA
+        if (atomic_pending_reg) {
+            if (atomic_read_ready_comb_func()) {
+                if ((uint8_t)atomic_op_reg == Amo::LR_W) {
+                    reservation_valid_reg._next = true;
+                    reservation_addr_reg._next = atomic_addr_reg;
+                }
+                else {
+                    mem_addr_reg._next = atomic_addr_reg;
+                    mem_data_reg._next = atomic_write_data_comb_func();
+                    mem_write_reg._next = true;
+                    mem_mask_reg._next = 0xf;
+                    reservation_valid_reg._next = false;
+                }
+                atomic_pending_reg._next = false;
+            }
+            else {
+                mem_addr_reg._next = atomic_addr_reg;
+                mem_read_reg._next = true;
+            }
+            return;
+        }
+#endif
 
         if (mem_split_pending_reg) {
             uint32_t overflow = (uint32_t)mem_split_offset_reg + (uint32_t)mem_split_size_reg - 4u;
@@ -150,11 +250,31 @@ private:
             return;
         }
 
-        mem_addr_reg._next = alu_result_in();
+        mem_addr_reg._next = state_in().amo_op != Amo::AMONONE ? (alu_result_in() & ~3u) : alu_result_in();
         mem_data_reg._next = state_in().rs2_val;
         split_load_reg._next = state_in().valid && state_in().mem_op == Mem::LOAD && mem_split_comb_func();
         split_load_low_addr_reg._next = split_load_low_addr_comb_func();
         split_load_high_addr_reg._next = split_load_high_addr_comb_func();
+
+#ifdef ENABLE_RV32IA
+        if (state_in().valid && state_in().amo_op != Amo::AMONONE) {
+            if (state_in().amo_op == Amo::SC_W) {
+                if (atomic_sc_success_comb_func()) {
+                    mem_write_reg._next = true;
+                    mem_mask_reg._next = 0xf;
+                }
+                reservation_valid_reg._next = false;
+            }
+            else {
+                mem_read_reg._next = true;
+                atomic_pending_reg._next = true;
+                atomic_addr_reg._next = alu_result_in() & ~3u;
+                atomic_operand_reg._next = state_in().rs2_val;
+                atomic_op_reg._next = state_in().amo_op;
+            }
+            return;
+        }
+#endif
 
         if (mem_split_comb_func()) {
             uint32_t offset = alu_result_in() & 3u;
@@ -207,6 +327,10 @@ public:
             mem_read_reg.clr();
             mem_split_pending_reg.clr();
             split_load_reg.clr();
+#ifdef ENABLE_RV32IA
+            reservation_valid_reg.clr();
+            atomic_pending_reg.clr();
+#endif
         }
     }
 
@@ -227,6 +351,14 @@ public:
         split_load_reg.strobe();
         split_load_low_addr_reg.strobe();
         split_load_high_addr_reg.strobe();
+#ifdef ENABLE_RV32IA
+        reservation_valid_reg.strobe();
+        reservation_addr_reg.strobe();
+        atomic_pending_reg.strobe();
+        atomic_addr_reg.strobe();
+        atomic_operand_reg.strobe();
+        atomic_op_reg.strobe();
+#endif
     }
 
     void _assign()

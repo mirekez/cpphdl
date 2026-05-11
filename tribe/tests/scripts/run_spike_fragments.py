@@ -287,6 +287,97 @@ FRAGMENTS = [
         """,
     ),
     Fragment(
+        "RV32A",
+        "rv32ima_zicsr",
+        "RV32IMA_Zicsr",
+        """
+            la s0, atomic_word
+            li s1, 0x10
+            sw s1, 0(s0)
+
+            lr.w s2, (s0)
+            bne s2, s1, fail
+            li s3, 0x20
+            sc.w s4, s3, (s0)
+            bnez s4, fail
+            lw s5, 0(s0)
+            bne s5, s3, fail
+
+            li s1, 5
+            amoadd.w s2, s1, (s0)
+            li t0, 0x20
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            li t0, 0x25
+            bne s5, t0, fail
+
+            li s1, 0x55
+            amoswap.w s2, s1, (s0)
+            li t0, 0x25
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            bne s5, s1, fail
+
+            li s1, 0x0f
+            amoand.w s2, s1, (s0)
+            li t0, 0x55
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            li t0, 0x05
+            bne s5, t0, fail
+
+            li s1, 0x80
+            amoor.w s2, s1, (s0)
+            li t0, 0x05
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            li t0, 0x85
+            bne s5, t0, fail
+
+            li s1, 0xff
+            amoxor.w s2, s1, (s0)
+            li t0, 0x85
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            li t0, 0x7a
+            bne s5, t0, fail
+
+            li s1, -1
+            amomin.w s2, s1, (s0)
+            li t0, 0x7a
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            bne s5, s1, fail
+
+            li s1, 7
+            amomax.w s2, s1, (s0)
+            li t0, -1
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            bne s5, s1, fail
+
+            li s1, 3
+            amominu.w s2, s1, (s0)
+            li t0, 7
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            bne s5, s1, fail
+
+            li s1, 9
+            amomaxu.w s2, s1, (s0)
+            li t0, 3
+            bne s2, t0, fail
+            lw s5, 0(s0)
+            bne s5, s1, fail
+
+            j pass
+
+        .balign 4
+        atomic_word:
+            .word 0
+        """,
+    ),
+    Fragment(
         "Zifencei",
         "rv32im_zicsr_zifencei",
         "RV32IM_Zicsr_Zifencei",

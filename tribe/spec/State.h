@@ -16,6 +16,13 @@ enum Mem
     MNONE,   LOAD,   STORE
 };
 
+constexpr const char* AMOOPS[] =
+  {"AMONONE", "LR_W", "SC_W", "AMOSWAP_W", "AMOADD_W", "AMOXOR_W", "AMOAND_W", "AMOOR_W", "AMOMIN_W", "AMOMAX_W", "AMOMINU_W", "AMOMAXU_W"};
+enum Amo
+{
+    AMONONE,   LR_W,   SC_W,   AMOSWAP_W,   AMOADD_W,   AMOXOR_W,   AMOAND_W,   AMOOR_W,   AMOMIN_W,   AMOMAX_W,   AMOMINU_W,   AMOMAXU_W
+};
+
 constexpr const char* WOPS[] =
   {"WNONE", "ALU", "MEM", "PC2", "PC4"};
 enum Wb
@@ -61,6 +68,9 @@ struct State
     uint8_t rd:5;
     uint8_t rs1:5;
     uint8_t rs2:5;
+
+    uint8_t amo_op:4;
+
     uint16_t csr_addr:12;
     uint8_t csr_op:3;
     uint8_t csr_imm:5;

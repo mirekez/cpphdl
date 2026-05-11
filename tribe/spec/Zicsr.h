@@ -1,14 +1,20 @@
 #pragma once
 
-#include "Rv32im.h"
+#include "Rv32ia.h"
 
-struct Zicsr: public Rv32im
+#ifdef ENABLE_RV32IA
+#define PREV_SPEC Rv32ia
+#else
+#define PREV_SPEC Rv32im
+#endif
+
+struct Zicsr: public PREV_SPEC
 {
     void decode(State& state_out)
     {
         state_out = {};
 
-        Rv32im::decode(state_out);
+        PREV_SPEC::decode(state_out);
 
         if ((raw & 3) == 3 && r.opcode == 0b1110011 && i.funct3 == 0) {
             if (raw == 0x00000073) {
@@ -74,6 +80,6 @@ struct Zicsr: public Rv32im
             if (i.funct3 == 0b110) { return "csrrsi"; }
             if (i.funct3 == 0b111) { return "csrrci"; }
         }
-        return Rv32im::mnemonic();
+        return PREV_SPEC::mnemonic();
     }
 };

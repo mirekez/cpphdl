@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Config.h"
+
 using namespace cpphdl;
 
 class WritebackMem: public Module
@@ -96,6 +98,7 @@ private:
         uint32_t diff;
         uint8_t store_mask;
         uint32_t shift;
+        bool allow_store_forward;
 
         if (split_load_in()) {
             shift = (alu_result_in() & 3u) * 8u;
@@ -108,8 +111,9 @@ private:
 
         result = raw;
         load_addr = alu_result_in();
+        allow_store_forward = state_in().amo_op == Amo::AMONONE;
 
-        if (store_forward_valid_reg[1]) {
+        if (allow_store_forward && store_forward_valid_reg[1]) {
             store_addr = store_forward_addr_reg[1];
             store_data = store_forward_data_reg[1];
             store_mask = store_forward_mask_reg[1];
@@ -140,7 +144,7 @@ private:
             }
         }
 
-        if (store_forward_valid_reg[0]) {
+        if (allow_store_forward && store_forward_valid_reg[0]) {
             store_addr = store_forward_addr_reg[0];
             store_data = store_forward_data_reg[0];
             store_mask = store_forward_mask_reg[0];

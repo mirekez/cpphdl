@@ -153,7 +153,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32 PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
+        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc"
     )
 
     add_test(
@@ -168,7 +168,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32um-p-* rv32uc-p-rvc"
+        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc"
     )
 
     add_test(
@@ -211,7 +211,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3"
+        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
     )
 
     add_test(
@@ -226,7 +226,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_BACKEND=verilator"
+        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator"
     )
 endfunction()
 

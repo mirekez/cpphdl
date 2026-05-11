@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Config.h"
+
 using namespace cpphdl;
 
 class Execute: public Module

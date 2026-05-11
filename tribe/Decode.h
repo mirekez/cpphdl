@@ -2,6 +2,10 @@
 
 using namespace cpphdl;
 
+#include "Config.h"
+
+#include "Rv32im.h"
+#include "Rv32ia.h"
 #include "Zicsr.h"
 
 class Decode: public Module
@@ -20,7 +24,19 @@ private:
 
     __LAZY_COMB(state_comb, State)
 
+#ifdef ENABLE_RV32IA
+#ifdef ENABLE_ZICSR
         Zicsr instr = {{{instr_in()}}};
+#else
+        Rv32ia instr = {{{instr_in()}}};
+#endif
+#else
+#ifdef ENABLE_ZICSR
+        Zicsr instr = {{{instr_in()}}};
+#else
+        Rv32im instr = {{{instr_in()}}};
+#endif
+#endif
         instr.decode(state_comb);
         if ((instr.raw&3) == 3 && instr.r.opcode == 0b0010111) {  // auipc needs pc()
             state_comb.rs1_val = pc_in();

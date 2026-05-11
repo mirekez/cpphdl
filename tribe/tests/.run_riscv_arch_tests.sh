@@ -34,6 +34,8 @@ export PATH="${BUILD_DIR}/pydeps/bin:${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 export TRIBE_ARCH_TEST_GCC="${TRIBE_ARCH_TEST_GCC:-riscv32-unknown-elf-gcc}"
 export TRIBE_ARCH_TEST_OBJDUMP="${TRIBE_ARCH_TEST_OBJDUMP:-riscv32-unknown-elf-objdump}"
+export TRIBE_ARCH_TEST_EXTENSIONS="${TRIBE_ARCH_TEST_EXTENSIONS:-I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc}"
+export TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS="${TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS:-F,D,Zcf,Zcd,Zabha,Zicntr,Zihpm,Misalign,MisalignZca}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${BUILD_DIR}/tribe/tests/riscv-arch-test-uv-cache}"
 export UV_PYTHON="${UV_PYTHON:-/usr/bin/python3}"
 export MISE_DATA_DIR="${MISE_DATA_DIR:-${BUILD_DIR}/mise-data}"
@@ -52,6 +54,7 @@ fi
 
 if command -v mise >/dev/null 2>&1 && [[ -f "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml" ]]; then
     mise trust "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml"
+    mise install --cd "${ROOT_DIR}/tribe/tests/riscv-arch-test"
 fi
 
 make -C "${BUILD_DIR}" tribe256 tribe128 tribe64

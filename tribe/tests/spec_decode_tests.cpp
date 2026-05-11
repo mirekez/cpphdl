@@ -1,4 +1,4 @@
-#include "Rv32im.h"
+#include "Rv32ia.h"
 #include "riscv_opcode_cases.generated.h"
 
 #include <array>
@@ -121,12 +121,14 @@ constexpr uint8_t crs2(uint32_t raw) { return uint8_t(bits(raw, 6, 2)); }
 
 State expected(uint32_t imm = 0, Alu alu = Alu::ANONE, Mem mem = Mem::MNONE,
                Wb wb = Wb::WNONE, Br br = Br::BNONE, uint8_t f3 = 0,
-               uint8_t rd_id = 0, uint8_t rs1_id = 0, uint8_t rs2_id = 0)
+               uint8_t rd_id = 0, uint8_t rs1_id = 0, uint8_t rs2_id = 0,
+               Amo amo = Amo::AMONONE)
 {
     State s{};
     s.imm = imm;
     s.alu_op = alu;
     s.mem_op = mem;
+    s.amo_op = amo;
     s.wb_op = wb;
     s.br_op = br;
     s.funct3 = f3;
@@ -192,6 +194,26 @@ bool state_for(std::string_view name, uint32_t raw, State& out)
         if (name == "remu") op = Alu::REMU;
         out = expected(0, op, Mem::MNONE, Wb::ALU, Br::BNONE,
                        funct3(raw), rd(raw), rs1(raw), rs2(raw));
+    } else if (name == "lr.w" || name == "sc.w" || name == "amoswap.w" ||
+               name == "amoadd.w" || name == "amoxor.w" || name == "amoand.w" ||
+               name == "amoor.w" || name == "amomin.w" || name == "amomax.w" ||
+               name == "amominu.w" || name == "amomaxu.w") {
+        Amo amo = Amo::AMONONE;
+        Mem mem = Mem::LOAD;
+        Wb wb = Wb::MEM;
+        if (name == "lr.w") amo = Amo::LR_W;
+        if (name == "sc.w") { amo = Amo::SC_W; mem = Mem::STORE; wb = Wb::ALU; }
+        if (name == "amoswap.w") amo = Amo::AMOSWAP_W;
+        if (name == "amoadd.w") amo = Amo::AMOADD_W;
+        if (name == "amoxor.w") amo = Amo::AMOXOR_W;
+        if (name == "amoand.w") amo = Amo::AMOAND_W;
+        if (name == "amoor.w") amo = Amo::AMOOR_W;
+        if (name == "amomin.w") amo = Amo::AMOMIN_W;
+        if (name == "amomax.w") amo = Amo::AMOMAX_W;
+        if (name == "amominu.w") amo = Amo::AMOMINU_W;
+        if (name == "amomaxu.w") amo = Amo::AMOMAXU_W;
+        out = expected(0, Alu::ADD, mem, wb, Br::BNONE,
+                       funct3(raw), rd(raw), rs1(raw), rs2(raw), amo);
     } else if (name == "beq" || name == "bne" || name == "blt" || name == "bge" ||
                name == "bltu" || name == "bgeu") {
         Br br = Br::BNONE;
@@ -333,7 +355,7 @@ bool check_state(const RiscvOpcodeCase& opcode, uint32_t raw)
         return false;
     }
 
-    Rv32im instr = {{{raw}}};
+    Rv32ia instr = {{{raw}}};
     State actual{};
     instr.decode(actual);
 
@@ -345,6 +367,7 @@ bool check_state(const RiscvOpcodeCase& opcode, uint32_t raw)
     ok &= check_field(opcode.name, raw, "valid", actual.valid, expected_state.valid);
     ok &= check_field(opcode.name, raw, "alu_op", actual.alu_op, expected_state.alu_op);
     ok &= check_field(opcode.name, raw, "mem_op", actual.mem_op, expected_state.mem_op);
+    ok &= check_field(opcode.name, raw, "amo_op", actual.amo_op, expected_state.amo_op);
     ok &= check_field(opcode.name, raw, "wb_op", actual.wb_op, expected_state.wb_op);
     ok &= check_field(opcode.name, raw, "br_op", actual.br_op, expected_state.br_op);
     ok &= check_field(opcode.name, raw, "funct3", actual.funct3, expected_state.funct3);
@@ -498,6 +521,10 @@ int main()
     constexpr std::array<std::string_view, 8> rv32m_expected = {{
         "mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu",
     }};
+    constexpr std::array<std::string_view, 11> rv32a_expected = {{
+        "lr.w", "sc.w", "amoswap.w", "amoadd.w", "amoxor.w", "amoand.w",
+        "amoor.w", "amomin.w", "amomax.w", "amominu.w", "amomaxu.w",
+    }};
     constexpr std::array<std::string_view, 24> rv32c_expected = {{
         "c.addi4spn", "c.lw", "c.sw", "c.addi", "c.jal", "c.li", "c.addi16sp",
         "c.srli", "c.srai", "c.andi", "c.sub", "c.xor", "c.or", "c.and",
@@ -510,20 +537,22 @@ int main()
 
     ok &= check_spec_manifest("RV32I", kRv32iOpcodeCases, rv32i_expected);
     ok &= check_spec_manifest("RV32M", kRv32mOpcodeCases, rv32m_expected);
+    ok &= check_spec_manifest("RV32A", kRv32aOpcodeCases, rv32a_expected);
     ok &= check_spec_manifest("RV32C", kRv32cOpcodeCases, rv32c_expected);
 
     SpecRunResult rv32i = run_spec_section("RV32I", kRv32iOpcodeCases, rng, random_cases_per_instruction, free_bit_patterns);
     SpecRunResult rv32m = run_spec_section("RV32M", kRv32mOpcodeCases, rng, random_cases_per_instruction, free_bit_patterns);
+    SpecRunResult rv32a = run_spec_section("RV32A", kRv32aOpcodeCases, rng, random_cases_per_instruction, free_bit_patterns);
     SpecRunResult rv32c = run_spec_section("RV32C", kRv32cOpcodeCases, rng, random_cases_per_instruction, free_bit_patterns);
 
-    ok &= rv32i.ok && rv32m.ok && rv32c.ok;
+    ok &= rv32i.ok && rv32m.ok && rv32a.ok && rv32c.ok;
 
     if (!ok) {
         return EXIT_FAILURE;
     }
 
-    uint64_t checked_encodings = rv32i.encodings + rv32m.encodings + rv32c.encodings;
-    size_t checked_opcodes = kRv32iOpcodeCases.size() + kRv32mOpcodeCases.size() + kRv32cOpcodeCases.size();
+    uint64_t checked_encodings = rv32i.encodings + rv32m.encodings + rv32a.encodings + rv32c.encodings;
+    size_t checked_opcodes = kRv32iOpcodeCases.size() + kRv32mOpcodeCases.size() + kRv32aOpcodeCases.size() + kRv32cOpcodeCases.size();
 
     std::cout << "checked " << checked_opcodes << " riscv-opcodes instruction entries"
               << " across " << checked_encodings << " legal decode encodings"

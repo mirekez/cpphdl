@@ -20,6 +20,10 @@ SPEC_GROUPS = [
     ("RV32M", "kRv32mOpcodeCases", [
         "mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu",
     ]),
+    ("RV32A", "kRv32aOpcodeCases", [
+        "lr.w", "sc.w", "amoswap.w", "amoadd.w", "amoxor.w", "amoand.w",
+        "amoor.w", "amomin.w", "amomax.w", "amominu.w", "amomaxu.w",
+    ]),
     ("RV32C", "kRv32cOpcodeCases", [
         "c.addi4spn", "c.lw", "c.sw", "c.addi", "c.jal", "c.li", "c.addi16sp",
         "c.srli", "c.srai", "c.andi", "c.sub", "c.xor", "c.or", "c.and",
@@ -34,6 +38,7 @@ EXTENSION_FILES = [
     "rv_i",
     "rv32_i",
     "rv_m",
+    "rv_a",
     "rv_c",
     "rv32_c",
 ]

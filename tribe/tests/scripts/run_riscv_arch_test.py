@@ -115,6 +115,14 @@ def trust_mise_config(checkout: pathlib.Path, env: dict[str, str]) -> int:
     return run([mise, "trust", str(config)], checkout, env)
 
 
+def install_mise_tools(checkout: pathlib.Path, env: dict[str, str]) -> int:
+    mise = shutil.which("mise", path=env["PATH"])
+    config = checkout / ".mise.toml"
+    if mise is None or not config.exists():
+        return 0
+    return run([mise, "install", "--cd", str(checkout)], checkout, env)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("usage: run_riscv_arch_test.py <tribe-bin> <checkout-dir> <work-dir>", file=sys.stderr)
@@ -198,6 +206,9 @@ def main(argv: list[str]) -> int:
     if trust_mise_config(checkout, env) != 0:
         print("ERROR: failed to trust riscv-arch-test mise config")
         return 1
+    if install_mise_tools(checkout, env) != 0:
+        print("ERROR: failed to install riscv-arch-test mise tools")
+        return 1
 
     config = os.environ.get(
         "TRIBE_ARCH_TEST_CONFIG",
@@ -205,11 +216,11 @@ def main(argv: list[str]) -> int:
     )
     extensions = os.environ.get(
         "TRIBE_ARCH_TEST_EXTENSIONS",
-        "I,M,Zicsr,Zifencei,Zca",
+        "I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc",
     )
     exclude = os.environ.get(
         "TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS",
-        "F,D,Zcf,Zcd,Zaamo,Zalrsc,Zicntr,Zihpm,Misalign,MisalignZca",
+        "F,D,Zcf,Zcd,Zabha,Zicntr,Zihpm,Misalign,MisalignZca",
     )
 
     overlay = work / "tribe-rv32-config"
