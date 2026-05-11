@@ -30,6 +30,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "Axi4.h"
 #include "Axi4RegionMux.h"
 #include "devices/IOUART.h"
+#include "devices/NS16550A.h"
 #include "devices/CLINT.h"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
@@ -934,7 +935,7 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
     Axi4RegionMux<2,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
-    IOUART<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
+    NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
 
 #ifdef VERILATOR
