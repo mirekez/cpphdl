@@ -9,10 +9,28 @@ class CSR: public Module
 public:
     __PORT(State) state_in;
     __PORT(State) trap_check_state_in;
+    __PORT(bool) interrupt_valid_in;
+    __PORT(uint32_t) interrupt_cause_in;
+    __PORT(bool) interrupt_to_supervisor_in;
+    __PORT(uint32_t) irq_pending_bits_in;
     __PORT(uint32_t) read_data_out = __VAR(read_data_comb_func());
     __PORT(uint32_t) trap_vector_out = __VAR(trap_vector_comb_func());
     __PORT(uint32_t) epc_out = __VAR(epc_comb_func());
     __PORT(bool) illegal_trap_out = __VAR(illegal_trap_comb_func());
+    __PORT(uint32_t) mstatus_out = __VAR(mstatus_reg);
+    __PORT(uint32_t) mie_out = __VAR(mie_reg);
+    __PORT(uint32_t) mideleg_out = __VAR(mideleg_reg);
+    __PORT(uint32_t) mip_sw_out = __VAR(mip_reg);
+#ifdef ENABLE_MMU_TLB
+    __PORT(uint32_t) satp_out = __VAR(satp_reg);
+#else
+    __PORT(uint32_t) satp_out = __EXPR((uint32_t)0);
+#endif
+#ifdef ENABLE_TRAPS
+    __PORT(u<2>) priv_out = __VAR(priv_reg);
+#else
+    __PORT(u<2>) priv_out = __EXPR((u<2>)3);
+#endif
 
 private:
     static constexpr uint32_t MISA_RV32IMC =
@@ -69,6 +87,9 @@ private:
     reg<u32> stval_reg;
     reg<u32> sip_reg;
     reg<u32> scounteren_reg;
+#ifdef ENABLE_MMU_TLB
+    reg<u32> satp_reg;
+#endif
 
     reg<u32> dcsr_reg;
     reg<u32> dpc_reg;
@@ -88,6 +109,11 @@ private:
 
     uint32_t trap_cause_code()
     {
+#ifdef ENABLE_ISR
+        if (interrupt_valid_in()) {
+            return interrupt_cause_in();
+        }
+#endif
         if (state_in().sys_op == Sys::ECALL) {
 #ifdef ENABLE_TRAPS
             if (priv_reg == PRIV_U) { return 8; }
@@ -103,6 +129,9 @@ private:
             case Trap::BREAKPOINT: return 3;
             case Trap::LOAD_MISALIGNED: return 4;
             case Trap::STORE_MISALIGNED: return 6;
+            case Trap::INST_PAGE_FAULT: return 12;
+            case Trap::LOAD_PAGE_FAULT: return 13;
+            case Trap::STORE_PAGE_FAULT: return 15;
             case Trap::ECALL_U: return 8;
             case Trap::ECALL_S: return 9;
             case Trap::ECALL_M: return 11;
@@ -113,6 +142,11 @@ private:
 
     bool trap_to_supervisor(uint32_t cause)
     {
+#ifdef ENABLE_ISR
+        if (interrupt_valid_in()) {
+            return interrupt_to_supervisor_in();
+        }
+#endif
 #ifdef ENABLE_TRAPS
         return priv_reg != PRIV_M && ((medeleg_reg >> cause) & 1u);
 #else
@@ -122,8 +156,15 @@ private:
 
     __LAZY_COMB(trap_vector_comb, uint32_t)
         uint32_t cause;
+        uint32_t tvec;
         cause = trap_cause_code();
-        trap_vector_comb = (trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg) & ~3u;
+        tvec = trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg;
+        trap_vector_comb = tvec & ~3u;
+#ifdef ENABLE_ISR
+        if (interrupt_valid_in() && ((tvec & 3u) == 1u)) {
+            trap_vector_comb = (tvec & ~3u) + cause * 4u;
+        }
+#endif
         return trap_vector_comb;
     }
 
@@ -172,8 +213,14 @@ private:
         if (addr == 0x141) { return sepc_reg; }
         if (addr == 0x142) { return scause_reg; }
         if (addr == 0x143) { return stval_reg; }
-        if (addr == 0x144) { return sip_reg; }
-        if (addr == 0x180) { return 0; }                  // satp, excluded
+        if (addr == 0x144) { return (sip_reg | irq_pending_bits_in()) & ((1u << 1) | (1u << 5) | (1u << 9)); }
+        if (addr == 0x180) {
+#ifdef ENABLE_MMU_TLB
+            return satp_reg;
+#else
+            return 0;
+#endif
+        }
 
         if (addr == 0x300) { return mstatus_reg; }
         if (addr == 0x301) { return MISA_RV32IMC; }
@@ -188,7 +235,7 @@ private:
         if (addr == 0x341) { return mepc_reg; }
         if (addr == 0x342) { return mcause_reg; }
         if (addr == 0x343) { return mtval_reg; }
-        if (addr == 0x344) { return mip_reg; }
+        if (addr == 0x344) { return mip_reg | irq_pending_bits_in(); }
         if (addr == 0x348) { return mscratchcsw_reg; }
         if (addr == 0x349) { return mscratchcswl_reg; }
         if (addr == 0xF11) { return 0; }                  // mvendorid
@@ -301,6 +348,11 @@ public:
         if (st.sys_op == Sys::SRET) {
             return priv_reg < PRIV_S;
         }
+#ifdef ENABLE_MMU_TLB
+        if (st.sys_op == Sys::SFENCE_VMA) {
+            return priv_reg < PRIV_S;
+        }
+#endif
         if (st.csr_op == Csr::CNONE) {
             return false;
         }
@@ -330,6 +382,9 @@ private:
     bool sync_trap()
     {
         return state_in().valid && (
+#ifdef ENABLE_ISR
+            interrupt_valid_in() ||
+#endif
             state_in().sys_op == Sys::ECALL ||
             state_in().sys_op == Sys::EBREAK ||
             state_in().sys_op == Sys::TRAP ||
@@ -357,6 +412,9 @@ private:
             case 0x142: scause_reg._next = value; break;
             case 0x143: stval_reg._next = value; break;
             case 0x144: sip_reg._next = value; break;
+#ifdef ENABLE_MMU_TLB
+            case 0x180: satp_reg._next = value & 0x803fffffu; break;
+#endif
 
             case 0x300: mstatus_reg._next = sanitize_mstatus(value); sstatus_reg._next = value & SSTATUS_MASK; break;
             case 0x302: medeleg_reg._next = value; break;
@@ -394,6 +452,10 @@ public:
     {
         bool inhibit_cycle;
         bool inhibit_instret;
+        uint32_t cause;
+        uint32_t tval;
+        bool is_interrupt;
+        bool to_s;
         inhibit_cycle = mcountinhibit_reg & 1;
         inhibit_instret = (mcountinhibit_reg >> 2) & 1;
 
@@ -406,16 +468,17 @@ public:
 
 #ifdef ENABLE_TRAPS
         if (sync_trap()) {
-            uint32_t cause;
-            uint32_t tval;
-            bool to_s;
             cause = trap_cause_code();
-            tval = (cause == 2) ? state_in().imm : 0;
+            is_interrupt = false;
+#ifdef ENABLE_ISR
+            is_interrupt = interrupt_valid_in();
+#endif
+            tval = (!is_interrupt && cause == 2) ? state_in().imm : 0;
             to_s = trap_to_supervisor(cause);
 
             if (to_s) {
                 sepc_reg._next = state_in().pc & ~1u;
-                scause_reg._next = cause;
+                scause_reg._next = is_interrupt ? (cause | 0x80000000u) : cause;
                 stval_reg._next = tval;
                 mstatus_reg._next =
                     (mstatus_reg & ~(MSTATUS_SPIE | MSTATUS_SIE | MSTATUS_SPP)) |
@@ -425,7 +488,7 @@ public:
             }
             else {
                 mepc_reg._next = state_in().pc & ~1u;
-                mcause_reg._next = cause;
+                mcause_reg._next = is_interrupt ? (cause | 0x80000000u) : cause;
                 mtval_reg._next = tval;
                 mstatus_reg._next =
                     (mstatus_reg & ~(MSTATUS_MPIE | MSTATUS_MIE | MSTATUS_MPP_MASK)) |
@@ -482,6 +545,9 @@ public:
             stval_reg.clr();
             sip_reg.clr();
             scounteren_reg.clr();
+#ifdef ENABLE_MMU_TLB
+            satp_reg.clr();
+#endif
             dcsr_reg.clr();
             dpc_reg.clr();
             dscratch0_reg.clr();
@@ -519,6 +585,9 @@ public:
         stval_reg.strobe();
         sip_reg.strobe();
         scounteren_reg.strobe();
+#ifdef ENABLE_MMU_TLB
+        satp_reg.strobe();
+#endif
         dcsr_reg.strobe();
         dpc_reg.strobe();
         dscratch0_reg.strobe();

@@ -38,17 +38,17 @@ enum Csr
 };
 
 constexpr const char* SOPS[] =
-  {"SNONE", "ECALL", "EBREAK", "MRET", "SRET", "WFI", "FENCEI", "TRAP"};
+  {"SNONE", "ECALL", "EBREAK", "MRET", "SRET", "WFI", "FENCEI", "SFENCE_VMA", "TRAP"};
 enum Sys
 {
-    SNONE,   ECALL,   EBREAK,   MRET,   SRET,   WFI,   FENCEI,   TRAP
+    SNONE,   ECALL,   EBREAK,   MRET,   SRET,   WFI,   FENCEI,   SFENCE_VMA,   TRAP
 };
 
 constexpr const char* TOPS[] =
-  {"TNONE", "INST_MISALIGNED", "ILLEGAL_INST", "BREAKPOINT", "LOAD_MISALIGNED", "STORE_MISALIGNED", "ECALL_U", "ECALL_S", "ECALL_M"};
+  {"TNONE", "INST_MISALIGNED", "ILLEGAL_INST", "BREAKPOINT", "LOAD_MISALIGNED", "STORE_MISALIGNED", "INST_PAGE_FAULT", "LOAD_PAGE_FAULT", "STORE_PAGE_FAULT", "ECALL_U", "ECALL_S", "ECALL_M"};
 enum Trap
 {
-    TNONE,   INST_MISALIGNED,   ILLEGAL_INST,   BREAKPOINT,   LOAD_MISALIGNED,   STORE_MISALIGNED,   ECALL_U,   ECALL_S,   ECALL_M
+    TNONE,   INST_MISALIGNED,   ILLEGAL_INST,   BREAKPOINT,   LOAD_MISALIGNED,   STORE_MISALIGNED,   INST_PAGE_FAULT,   LOAD_PAGE_FAULT,   STORE_PAGE_FAULT,   ECALL_U,   ECALL_S,   ECALL_M
 };
 
 constexpr const char* BOPS[] =
@@ -81,6 +81,6 @@ struct State
     uint16_t csr_addr:12;
     uint8_t csr_op:3;
     uint8_t csr_imm:5;
-    uint8_t sys_op:3;
+    uint8_t sys_op:4;
     uint8_t trap_op:4;
 };//__PACKED;

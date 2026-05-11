@@ -24,10 +24,13 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "Writeback.h"
 #include "WritebackMem.h"
 #include "CSR.h"
+#include "MMU_TLB.h"
+#include "InterruptController.h"
 #include "BranchPredictor.h"
 #include "Axi4.h"
 #include "Axi4RegionMux.h"
 #include "devices/IOUART.h"
+#include "devices/CLINT.h"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
@@ -65,6 +68,13 @@ class Tribe: public Module
 #ifdef ENABLE_ZICSR
     CSR             csr;
 #endif
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+    InterruptController irq;
+#endif
+#ifdef ENABLE_MMU_TLB
+    MMU_TLB<8>      immu;
+    MMU_TLB<8>      dmmu;
+#endif
     File<32,32>     regs;
     L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
     L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
@@ -83,6 +93,10 @@ public:
     __PORT(uint32_t)  memory_base_in;
     __PORT(uint32_t)  memory_size_in;
     __PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+    __PORT(bool)      clint_msip_in;
+    __PORT(bool)      clint_mtip_in;
+#endif
 
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
@@ -132,10 +146,74 @@ public:
         wb_mem._assign();
 
 #ifdef ENABLE_ZICSR
+#ifdef ENABLE_ISR
+        irq.mstatus_in = csr.mstatus_out;
+        irq.mie_in = csr.mie_out;
+        irq.mideleg_in = csr.mideleg_out;
+        irq.mip_sw_in = csr.mip_sw_out;
+        irq.priv_in = csr.priv_out;
+        irq.clint_msip_in = clint_msip_in;
+        irq.clint_mtip_in = clint_mtip_in;
+        irq.__inst_name = __inst_name + "/irq";
+        irq._assign();
+#endif
         csr.state_in       = __VAR( csr_state_comb_func() );
         csr.trap_check_state_in = __VAR(state_reg[0]);
+#ifdef ENABLE_ISR
+        csr.interrupt_valid_in = irq.interrupt_valid_out;
+        csr.interrupt_cause_in = irq.interrupt_cause_out;
+        csr.interrupt_to_supervisor_in = irq.interrupt_to_supervisor_out;
+        csr.irq_pending_bits_in = irq.mip_out;
+#else
+        csr.interrupt_valid_in = __EXPR(false);
+        csr.interrupt_cause_in = __EXPR((uint32_t)0);
+        csr.interrupt_to_supervisor_in = __EXPR(false);
+        csr.irq_pending_bits_in = __EXPR((uint32_t)0);
+#endif
         csr.__inst_name = __inst_name + "/csr";
         csr._assign();
+#endif
+
+#ifdef ENABLE_MMU_TLB
+        immu.vaddr_in = __EXPR(fetch_addr_comb_func());
+        immu.read_in = __EXPR(false);
+        immu.write_in = __EXPR(false);
+        immu.execute_in = __EXPR(true);
+#ifdef ENABLE_ZICSR
+        immu.satp_in = csr.satp_out;
+        immu.priv_in = csr.priv_out;
+#else
+        immu.satp_in = __EXPR((uint32_t)0);
+        immu.priv_in = __EXPR((u<2>)3);
+#endif
+        immu.fill_in = __EXPR(false);
+        immu.fill_index_in = __EXPR((u<3>)0);
+        immu.fill_vpn_in = __EXPR((uint32_t)0);
+        immu.fill_ppn_in = __EXPR((uint32_t)0);
+        immu.fill_flags_in = __EXPR((uint8_t)0);
+        immu.sfence_in = __EXPR(sfence_vma_comb_func());
+        immu.__inst_name = __inst_name + "/immu";
+        immu._assign();
+
+        dmmu.vaddr_in = __EXPR(exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out());
+        dmmu.read_in = exe_mem.mem_read_out;
+        dmmu.write_in = exe_mem.mem_write_out;
+        dmmu.execute_in = __EXPR(false);
+#ifdef ENABLE_ZICSR
+        dmmu.satp_in = csr.satp_out;
+        dmmu.priv_in = csr.priv_out;
+#else
+        dmmu.satp_in = __EXPR((uint32_t)0);
+        dmmu.priv_in = __EXPR((u<2>)3);
+#endif
+        dmmu.fill_in = __EXPR(false);
+        dmmu.fill_index_in = __EXPR((u<3>)0);
+        dmmu.fill_vpn_in = __EXPR((uint32_t)0);
+        dmmu.fill_ppn_in = __EXPR((uint32_t)0);
+        dmmu.fill_flags_in = __EXPR((uint8_t)0);
+        dmmu.sfence_in = __EXPR(sfence_vma_comb_func());
+        dmmu.__inst_name = __inst_name + "/dmmu";
+        dmmu._assign();
 #endif
 
         wb.state_in       = __VAR( state_reg[1] );
@@ -159,7 +237,12 @@ public:
 
         dcache.read_in = __EXPR( exe_mem.mem_read_out() && !dcache.busy_out() );
         dcache.write_in = __EXPR( exe_mem.mem_write_out() && !dcache.busy_out() );
-        dcache.addr_in = __EXPR( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+        dcache.addr_in =
+#ifdef ENABLE_MMU_TLB
+            dmmu.paddr_out;
+#else
+            __EXPR( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+#endif
         dcache.write_data_in = exe_mem.mem_write_data_out;
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
         dcache.mem_read_data_in = l2cache.d_read_data_out;
@@ -189,7 +272,12 @@ public:
         bp._assign();
 
         icache.read_in = __EXPR( true );
-        icache.addr_in = __EXPR( fetch_addr_comb_func() );
+        icache.addr_in =
+#ifdef ENABLE_MMU_TLB
+            immu.paddr_out;
+#else
+            __EXPR( fetch_addr_comb_func() );
+#endif
         icache.write_in = __EXPR( false );
         icache.write_data_in = __EXPR( (uint32_t)0 );
         icache.write_mask_in = __EXPR( (uint8_t)0 );
@@ -370,7 +458,7 @@ private:
     }
 
     __LAZY_COMB(branch_mispredict_comb, bool)
-        branch_mispredict_comb = state_reg[0].valid && state_reg[0].br_op != Br::BNONE &&
+        branch_mispredict_comb = state_reg[0].valid && exe_state_comb_func().br_op != Br::BNONE &&
             branch_actual_next_comb_func() != (uint32_t)predicted_next_reg[0];
         return branch_mispredict_comb;
     }
@@ -387,13 +475,18 @@ private:
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
         if (state_reg[0].valid &&
-            (state_reg[0].sys_op == Sys::ECALL ||
+            (
+#ifdef ENABLE_ISR
+             irq.interrupt_valid_out() ||
+#endif
+             state_reg[0].sys_op == Sys::ECALL ||
              state_reg[0].sys_op == Sys::EBREAK ||
              state_reg[0].sys_op == Sys::TRAP ||
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out())) {
             exe_state_comb.rs1_val = csr.trap_vector_out();
             exe_state_comb.imm = 0;
+            exe_state_comb.br_op = Br::JR;
         }
         else if (state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             exe_state_comb.rs1_val = csr.epc_out();
@@ -418,10 +511,23 @@ private:
 #ifdef ENABLE_ZICSR
     __LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
-        if (csr.illegal_trap_out()) {
+        if (
+#ifdef ENABLE_ISR
+            irq.interrupt_valid_out() ||
+#endif
+            csr.illegal_trap_out()) {
             csr_state_comb = state_reg[0];
+#ifdef ENABLE_ISR
+            if (irq.interrupt_valid_out()) {
+                csr_state_comb.imm = 0;
+            }
+#endif
             csr_state_comb.sys_op = Sys::TRAP;
-            csr_state_comb.trap_op = Trap::ILLEGAL_INST;
+            csr_state_comb.trap_op =
+#ifdef ENABLE_ISR
+                irq.interrupt_valid_out() ? Trap::TNONE :
+#endif
+                Trap::ILLEGAL_INST;
             csr_state_comb.csr_op = Csr::CNONE;
             csr_state_comb.mem_op = Mem::MNONE;
             csr_state_comb.wb_op = Wb::WNONE;
@@ -435,7 +541,13 @@ private:
 #endif
 
     __LAZY_COMB(icache_invalidate_comb, bool)
-        return icache_invalidate_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI && !memory_wait_comb_func();
+        return icache_invalidate_comb = state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+            !memory_wait_comb_func();
+    }
+
+    __LAZY_COMB(sfence_vma_comb, bool)
+        return sfence_vma_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func();
     }
 
     void forward()
@@ -636,6 +748,10 @@ public:
 #ifdef ENABLE_ZICSR
         csr._work(reset);
 #endif
+#ifdef ENABLE_MMU_TLB
+        immu._work(reset);
+        dmmu._work(reset);
+#endif
         icache._work(reset);
         dcache._work(reset);
         l2cache._work(reset);
@@ -732,6 +848,10 @@ public:
 #ifdef ENABLE_ZICSR
         csr._strobe();
 #endif
+#ifdef ENABLE_MMU_TLB
+        immu._strobe();
+        dmmu._strobe();
+#endif
         icache._strobe();
         dcache._strobe();
         bp._strobe();
@@ -813,8 +933,9 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<1,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<2,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
     IOUART<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
+    CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -947,6 +1068,10 @@ public:
         tribe.mem_region_size_in[1] = __EXPR((uint32_t)TRIBE_MEM_REGION1_SIZE);
         tribe.mem_region_size_in[2] = __EXPR((uint32_t)TRIBE_MEM_REGION2_SIZE);
         tribe.mem_region_size_in[3] = __EXPR((uint32_t)TRIBE_IO_REGION_SIZE);
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out;
+        tribe.clint_mtip_in = clint.mtip_out;
+#endif
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
 
@@ -962,19 +1087,25 @@ public:
         mem2.__inst_name = __inst_name + "/mem2";
         iospace.region_base_in[0] = __EXPR((uint32_t)0);
         iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
+        iospace.region_base_in[1] = __EXPR((uint32_t)0x100);
+        iospace.region_size_in[1] = __EXPR((uint32_t)0xC000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         uart.__inst_name = __inst_name + "/uart";
+        clint.__inst_name = __inst_name + "/clint";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
+        clint._assign();
 
         AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[2], mem2.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
@@ -984,6 +1115,10 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out();
+        tribe.clint_mtip_in = clint.mtip_out();
+#endif
         AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         AXI4_DRIVER_FROM_VERILATOR(mem2.axi_in, tribe, 2, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
@@ -996,15 +1131,21 @@ public:
         mem2.__inst_name = __inst_name + "/mem2";
         iospace.region_base_in[0] = __EXPR((uint32_t)0);
         iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
+        iospace.region_base_in[1] = __EXPR((uint32_t)0x100);
+        iospace.region_size_in[1] = __EXPR((uint32_t)0xC000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         uart.__inst_name = __inst_name + "/uart";
+        clint.__inst_name = __inst_name + "/clint";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
+        clint._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
 #endif
     }
 
@@ -1022,6 +1163,10 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out();
+        tribe.clint_mtip_in = clint.mtip_out();
+#endif
 
 //        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
 
@@ -1043,6 +1188,7 @@ public:
         mem2._work(reset);
         iospace._work(reset);
         uart._work(reset);
+        clint._work(reset);
 
         if (reset) {
             error = false;
@@ -1060,6 +1206,7 @@ public:
         mem2._strobe();
         iospace._strobe();
         uart._strobe();
+        clint._strobe();
     }
 
     void _work_neg(bool reset)
@@ -1329,6 +1476,11 @@ static std::filesystem::path absolute_from(const std::filesystem::path& base, co
     return p.is_absolute() ? p : std::filesystem::absolute(base / p);
 }
 
+static std::filesystem::path tribe_source_root_dir()
+{
+    return std::filesystem::path(__FILE__).parent_path().parent_path();
+}
+
 static void use_executable_workdir_if_needed(const char* argv0)
 {
     namespace fs = std::filesystem;
@@ -1427,6 +1579,7 @@ int main (int argc, char** argv)
         std::cout << "Building verilator simulation... =============================================================\n";
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
+        const auto source_root = tribe_source_root_dir();
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "Amo_pkg",
@@ -1451,12 +1604,20 @@ int main (int argc, char** argv)
                   "L1Cache",
                   "L2Cache",
                   "BranchPredictor",
+                  "InterruptController",
 	                  "Decode",
 	                  "Execute",
 	                  "ExecuteMem",
 	                  "CSR",
+	                  "MMU_TLB",
 	                  "Writeback",
-	                  "WritebackMem"}, {"../../../../include", "../../../../tribe", "../../../../tribe/common", "../../../../tribe/spec", "../../../../tribe/cache", "../../../../tribe/devices"});
+	                  "WritebackMem"}, {
+                          (source_root / "include").string(),
+                          (source_root / "tribe").string(),
+                          (source_root / "tribe" / "common").string(),
+                          (source_root / "tribe" / "spec").string(),
+                          (source_root / "tribe" / "cache").string(),
+                          (source_root / "tribe" / "devices").string()});
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok

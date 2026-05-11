@@ -158,10 +158,12 @@ int main(int argc, char** argv)
                   "L1Cache",
                   "L2Cache",
                   "BranchPredictor",
+                  "InterruptController",
                   "Decode",
                   "Execute",
                   "ExecuteMem",
                   "CSR",
+                  "MMU_TLB",
                   "Writeback",
                   "WritebackMem"}, {
                       (source_root / "include").string(),
