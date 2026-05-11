@@ -60,7 +60,8 @@ struct Expr
         FLAG_USETHIS = 64,  // methods of structs
         FLAG_NOBASE = 128,  // dont use base of member expr (for constexpr of structs)
         FLAG_NOTREG = 256,  // declare logic instead of reg
-        FLAG_BRACKETS = 512
+        FLAG_BRACKETS = 512,
+        FLAG_COMB_TERMINAL_RETURN = 1024  // final comb return only assigns value; no named-block disable needed
     };
     unsigned flags = FLAG_NONE;
     bool interface = false;

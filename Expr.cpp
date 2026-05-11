@@ -638,6 +638,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
                             ret += ";\n";
                         }
                     }
+                    if (flags&FLAG_COMB_TERMINAL_RETURN) {
+                        return ret;
+                    }
                     ret += indent_str + "disable " + method_name;
                     return ret;
                 }

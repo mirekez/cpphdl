@@ -229,10 +229,14 @@ bool Method::printComb(std::ofstream& out)
     currMethod = this;
 
     out << "    always_comb begin : " << escapeIdentifier(name) << "  // " << name <<"\n";
-    for (auto& stmt : statements) {
+    for (size_t i = 0; i < statements.size(); ++i) {
+        auto& stmt = statements[i];
 //        out << stmt.debug() << "\n";
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
+        if (i + 1 == statements.size() && stmt.type == Expr::EXPR_RETURN) {
+            stmt.flags |= Expr::FLAG_COMB_TERMINAL_RETURN;
+        }
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
