@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -1104,6 +1105,7 @@ struct MyFrontendAction : public ASTFrontendAction
 int main(int argc, const char **argv)
 {
     std::vector<const char*> replace;
+    std::string generated_dir = "generated";
     bool saw_double_dash = false;
     bool injected_double_dash = false;
 
@@ -1113,6 +1115,24 @@ int main(int argc, const char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
+
+        if (!saw_double_dash && std::strcmp(arg, "--generated-dir") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--generated-dir requires a directory argument\n";
+                return 1;
+            }
+            generated_dir = argv[++i];
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--generated-dir=", 16) == 0) {
+            generated_dir = arg + 16;
+            if (generated_dir.empty()) {
+                llvm::errs() << "--generated-dir requires a non-empty directory argument\n";
+                return 1;
+            }
+            continue;
+        }
 
         if (std::strcmp(arg, "--") == 0) {
             saw_double_dash = true;
@@ -1169,6 +1189,6 @@ int main(int argc, const char **argv)
 
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
-    currProject->generate("generated");
+    currProject->generate(generated_dir);
     return ret;
 }
