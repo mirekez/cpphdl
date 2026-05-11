@@ -1,17 +1,49 @@
 #pragma once
 
+#include "Config.h"
+
 using namespace cpphdl;
 
 class CSR: public Module
 {
 public:
     __PORT(State) state_in;
+    __PORT(State) trap_check_state_in;
     __PORT(uint32_t) read_data_out = __VAR(read_data_comb_func());
-    __PORT(uint32_t) trap_vector_out = __VAR(mtvec_reg);
-    __PORT(uint32_t) epc_out = __VAR(mepc_reg);
+    __PORT(uint32_t) trap_vector_out = __VAR(trap_vector_comb_func());
+    __PORT(uint32_t) epc_out = __VAR(epc_comb_func());
+    __PORT(bool) illegal_trap_out = __VAR(illegal_trap_comb_func());
 
 private:
-    static constexpr uint32_t MISA_RV32IMC = 0x40001104u;
+    static constexpr uint32_t MISA_RV32IMC =
+        0x40000000u | (1u << ('I' - 'A')) | (1u << ('M' - 'A')) | (1u << ('C' - 'A'))
+#ifdef ENABLE_RV32IA
+        | (1u << ('A' - 'A'))
+#endif
+        ;
+
+    static constexpr uint32_t PRIV_U = 0;
+    static constexpr uint32_t PRIV_S = 1;
+    static constexpr uint32_t PRIV_M = 3;
+
+    static constexpr uint32_t MSTATUS_UIE  = 1u << 0;
+    static constexpr uint32_t MSTATUS_SIE  = 1u << 1;
+    static constexpr uint32_t MSTATUS_MIE  = 1u << 3;
+    static constexpr uint32_t MSTATUS_UPIE = 1u << 4;
+    static constexpr uint32_t MSTATUS_SPIE = 1u << 5;
+    static constexpr uint32_t MSTATUS_MPIE = 1u << 7;
+    static constexpr uint32_t MSTATUS_SPP  = 1u << 8;
+    static constexpr uint32_t MSTATUS_MPP_SHIFT = 11;
+    static constexpr uint32_t MSTATUS_MPP_MASK = 3u << MSTATUS_MPP_SHIFT;
+    static constexpr uint32_t MSTATUS_WRITABLE =
+        MSTATUS_UIE | MSTATUS_SIE | MSTATUS_MIE |
+        MSTATUS_UPIE | MSTATUS_SPIE | MSTATUS_MPIE |
+        MSTATUS_SPP | MSTATUS_MPP_MASK |
+        (3u << 13) | (3u << 15) | (3u << 17) | // FS/XS/MPRV-ish writable enough for tests
+        (1u << 18) | (1u << 19);
+    static constexpr uint32_t SSTATUS_MASK =
+        MSTATUS_UIE | MSTATUS_SIE | MSTATUS_UPIE | MSTATUS_SPIE |
+        MSTATUS_SPP | (3u << 13) | (3u << 15) | (1u << 18);
 
     reg<u32> mstatus_reg;
     reg<u32> mtvec_reg;
@@ -45,6 +77,70 @@ private:
 
     reg<u64> cycle_reg;
     reg<u64> instret_reg;
+#ifdef ENABLE_TRAPS
+    reg<u<2>> priv_reg;
+#endif
+
+    uint32_t sanitize_mstatus(uint32_t value)
+    {
+        return value & MSTATUS_WRITABLE;
+    }
+
+    uint32_t trap_cause_code()
+    {
+        if (state_in().sys_op == Sys::ECALL) {
+#ifdef ENABLE_TRAPS
+            if (priv_reg == PRIV_U) { return 8; }
+            if (priv_reg == PRIV_S) { return 9; }
+#endif
+            return 11;
+        }
+        if (state_in().sys_op == Sys::EBREAK) { return 3; }
+        switch (state_in().trap_op) {
+            case Trap::TNONE: return 2;
+            case Trap::INST_MISALIGNED: return 0;
+            case Trap::ILLEGAL_INST: return 2;
+            case Trap::BREAKPOINT: return 3;
+            case Trap::LOAD_MISALIGNED: return 4;
+            case Trap::STORE_MISALIGNED: return 6;
+            case Trap::ECALL_U: return 8;
+            case Trap::ECALL_S: return 9;
+            case Trap::ECALL_M: return 11;
+            default: return 2;
+        }
+        return 2;
+    }
+
+    bool trap_to_supervisor(uint32_t cause)
+    {
+#ifdef ENABLE_TRAPS
+        return priv_reg != PRIV_M && ((medeleg_reg >> cause) & 1u);
+#else
+        return false;
+#endif
+    }
+
+    __LAZY_COMB(trap_vector_comb, uint32_t)
+        uint32_t cause;
+        cause = trap_cause_code();
+        trap_vector_comb = (trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg) & ~3u;
+        return trap_vector_comb;
+    }
+
+    __LAZY_COMB(epc_comb, uint32_t)
+        epc_comb = mepc_reg;
+#ifdef ENABLE_TRAPS
+        if (state_in().sys_op == Sys::SRET) {
+            epc_comb = sepc_reg;
+        }
+#endif
+        return epc_comb;
+    }
+
+    __LAZY_COMB(illegal_trap_comb, bool)
+        illegal_trap_comb = state_causes_illegal_trap(trap_check_state_in());
+        return illegal_trap_comb;
+    }
 
     uint32_t csr_read(uint32_t addr)
     {
@@ -68,7 +164,7 @@ private:
             return 0;
         }
 
-        if (addr == 0x100) { return sstatus_reg; }
+        if (addr == 0x100) { return mstatus_reg & SSTATUS_MASK; }
         if (addr == 0x104) { return sie_reg; }
         if (addr == 0x105) { return stvec_reg; }
         if (addr == 0x106) { return scounteren_reg; }
@@ -139,25 +235,120 @@ private:
         return old_value;
     }
 
-    bool csr_writes()
+    bool csr_state_writes(State st)
     {
-        uint32_t op = state_in().csr_op;
-        if (!state_in().valid || op == Csr::CNONE) {
+        uint32_t op = st.csr_op;
+        if (!st.valid || op == Csr::CNONE) {
             return false;
         }
         if (op == Csr::CSRRS || op == Csr::CSRRC) {
-            return state_in().rs1 != 0;
+            return st.rs1 != 0;
         }
         if (op == Csr::CSRRSI || op == Csr::CSRRCI) {
-            return state_in().csr_imm != 0;
+            return st.csr_imm != 0;
         }
         return true;
+    }
+
+    bool csr_supported(uint32_t addr)
+    {
+        if (addr == 0x001 || addr == 0x002 || addr == 0x003) { return true; }
+
+        if (addr == 0xC00 || addr == 0xC80 || addr == 0xC01 || addr == 0xC81 ||
+            addr == 0xC02 || addr == 0xC82 || addr == 0xB00 || addr == 0xB80 ||
+            addr == 0xB02 || addr == 0xB82) {
+            return true;
+        }
+        if ((addr >= 0xC03 && addr <= 0xC1F) || (addr >= 0xC83 && addr <= 0xC9F) ||
+            (addr >= 0xB03 && addr <= 0xB1F) || (addr >= 0xB83 && addr <= 0xB9F)) {
+            return true;
+        }
+
+        if ((addr >= 0x100 && addr <= 0x106) || (addr >= 0x140 && addr <= 0x144) ||
+            addr == 0x180) {
+            return true;
+        }
+
+        if ((addr >= 0x300 && addr <= 0x306) || addr == 0x310 || addr == 0x320 ||
+            (addr >= 0x340 && addr <= 0x344) || addr == 0x348 || addr == 0x349 ||
+            (addr >= 0x323 && addr <= 0x33F) || (addr >= 0x3A0 && addr <= 0x3EF)) {
+            return true;
+        }
+
+        if (addr >= 0xF11 && addr <= 0xF15) { return true; }
+        if (addr >= 0x7B0 && addr <= 0x7B3) { return true; }
+        if ((addr >= 0x5A8 && addr <= 0x5AF) || (addr >= 0x7C0 && addr <= 0x7FF) ||
+            (addr >= 0x9C0 && addr <= 0x9FF) || (addr >= 0xA00 && addr <= 0xAFF)) {
+            return true;
+        }
+
+        return false;
+    }
+
+public:
+    bool state_causes_illegal_trap(State st)
+    {
+        uint32_t addr;
+        uint32_t csr_priv;
+        uint32_t index;
+#ifdef ENABLE_TRAPS
+        if (!st.valid) {
+            return false;
+        }
+        if (st.sys_op == Sys::MRET) {
+            return priv_reg != PRIV_M;
+        }
+        if (st.sys_op == Sys::SRET) {
+            return priv_reg < PRIV_S;
+        }
+        if (st.csr_op == Csr::CNONE) {
+            return false;
+        }
+
+        addr = st.csr_addr;
+        csr_priv = (addr >> 8) & 3u;
+        if (csr_priv > priv_reg) {
+            return true;
+        }
+        if (((addr >> 10) & 3u) == 3u && csr_state_writes(st)) {
+            return true;
+        }
+        if (!csr_supported(addr)) {
+            return true;
+        }
+        if (priv_reg != PRIV_M && addr >= 0xC00 && addr <= 0xC9F) {
+            index = addr & 0x1fu;
+            if (((mcounteren_reg >> index) & 1u) == 0) {
+                return true;
+            }
+        }
+#endif
+        return false;
+    }
+
+private:
+    bool sync_trap()
+    {
+        return state_in().valid && (
+            state_in().sys_op == Sys::ECALL ||
+            state_in().sys_op == Sys::EBREAK ||
+            state_in().sys_op == Sys::TRAP ||
+            state_in().trap_op != Trap::TNONE ||
+            state_causes_illegal_trap(state_in()));
+    }
+
+    bool csr_writes()
+    {
+        if (state_causes_illegal_trap(state_in())) {
+            return false;
+        }
+        return csr_state_writes(state_in());
     }
 
     void csr_write(uint32_t addr, uint32_t value)
     {
         switch (addr) {
-            case 0x100: sstatus_reg._next = value; break;
+            case 0x100: mstatus_reg._next = (mstatus_reg & ~SSTATUS_MASK) | (value & SSTATUS_MASK); sstatus_reg._next = value & SSTATUS_MASK; break;
             case 0x104: sie_reg._next = value; break;
             case 0x105: stvec_reg._next = value; break;
             case 0x106: scounteren_reg._next = value; break;
@@ -167,7 +358,7 @@ private:
             case 0x143: stval_reg._next = value; break;
             case 0x144: sip_reg._next = value; break;
 
-            case 0x300: mstatus_reg._next = value; break;
+            case 0x300: mstatus_reg._next = sanitize_mstatus(value); sstatus_reg._next = value & SSTATUS_MASK; break;
             case 0x302: medeleg_reg._next = value; break;
             case 0x303: mideleg_reg._next = value; break;
             case 0x304: mie_reg._next = value; break;
@@ -212,10 +403,60 @@ public:
         if (csr_writes()) {
             csr_write(state_in().csr_addr, csr_write_value(read_data_comb_func()));
         }
+
+#ifdef ENABLE_TRAPS
+        if (sync_trap()) {
+            uint32_t cause;
+            uint32_t tval;
+            bool to_s;
+            cause = trap_cause_code();
+            tval = (cause == 2) ? state_in().imm : 0;
+            to_s = trap_to_supervisor(cause);
+
+            if (to_s) {
+                sepc_reg._next = state_in().pc & ~1u;
+                scause_reg._next = cause;
+                stval_reg._next = tval;
+                mstatus_reg._next =
+                    (mstatus_reg & ~(MSTATUS_SPIE | MSTATUS_SIE | MSTATUS_SPP)) |
+                    ((mstatus_reg & MSTATUS_SIE) ? MSTATUS_SPIE : 0) |
+                    ((priv_reg == PRIV_S) ? MSTATUS_SPP : 0);
+                priv_reg._next = PRIV_S;
+            }
+            else {
+                mepc_reg._next = state_in().pc & ~1u;
+                mcause_reg._next = cause;
+                mtval_reg._next = tval;
+                mstatus_reg._next =
+                    (mstatus_reg & ~(MSTATUS_MPIE | MSTATUS_MIE | MSTATUS_MPP_MASK)) |
+                    ((mstatus_reg & MSTATUS_MIE) ? MSTATUS_MPIE : 0) |
+                    ((uint32_t)priv_reg << MSTATUS_MPP_SHIFT);
+                priv_reg._next = PRIV_M;
+            }
+        }
+        if (state_in().valid && state_in().sys_op == Sys::MRET) {
+            uint32_t mpp;
+            uint32_t mie_restore;
+            mpp = (mstatus_reg & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT;
+            mie_restore = (mstatus_reg & MSTATUS_MPIE) ? MSTATUS_MIE : 0;
+            priv_reg._next = mpp;
+            mstatus_reg._next =
+                ((mstatus_reg & ~MSTATUS_MIE) | mie_restore | MSTATUS_MPIE) & ~MSTATUS_MPP_MASK;
+        }
+        if (state_in().valid && state_in().sys_op == Sys::SRET) {
+            uint32_t spp;
+            uint32_t sie_restore;
+            spp = (mstatus_reg & MSTATUS_SPP) ? PRIV_S : PRIV_U;
+            sie_restore = (mstatus_reg & MSTATUS_SPIE) ? MSTATUS_SIE : 0;
+            priv_reg._next = spp;
+            mstatus_reg._next = ((mstatus_reg & ~MSTATUS_SIE) | sie_restore | MSTATUS_SPIE) & ~MSTATUS_SPP;
+        }
+#else
         if (state_in().valid && state_in().sys_op == Sys::ECALL) {
             mepc_reg._next = state_in().pc;
             mcause_reg._next = 11;
         }
+#endif
 
         if (reset) {
             mstatus_reg.clr();
@@ -247,6 +488,9 @@ public:
             dscratch1_reg.clr();
             cycle_reg.clr();
             instret_reg.clr();
+#ifdef ENABLE_TRAPS
+            priv_reg._next = PRIV_M;
+#endif
         }
     }
 
@@ -281,6 +525,9 @@ public:
         dscratch1_reg.strobe();
         cycle_reg.strobe();
         instret_reg.strobe();
+#ifdef ENABLE_TRAPS
+        priv_reg.strobe();
+#endif
     }
 
     void _assign()

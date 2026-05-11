@@ -1,7 +1,8 @@
 
 
-//#define ENABLE_RV32IA  // atomics
-//#define ENABLE_ZICSR   // CSR
+#define ENABLE_RV32IA  // atomics
+#define ENABLE_ZICSR   // CSR
+#define ENABLE_TRAPS   // privilege modes and synchronous traps
 
 #define L1_CACHE_SIZE 1024
 #define L2_CACHE_SIZE 8192

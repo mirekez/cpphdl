@@ -133,6 +133,7 @@ public:
 
 #ifdef ENABLE_ZICSR
         csr.state_in       = __VAR( csr_state_comb_func() );
+        csr.trap_check_state_in = __VAR(state_reg[0]);
         csr.__inst_name = __inst_name + "/csr";
         csr._assign();
 #endif
@@ -385,11 +386,16 @@ private:
     __LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
-        if (state_reg[0].valid && state_reg[0].sys_op == Sys::ECALL) {
+        if (state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::ECALL ||
+             state_reg[0].sys_op == Sys::EBREAK ||
+             state_reg[0].sys_op == Sys::TRAP ||
+             state_reg[0].trap_op != Trap::TNONE ||
+             csr.illegal_trap_out())) {
             exe_state_comb.rs1_val = csr.trap_vector_out();
             exe_state_comb.imm = 0;
         }
-        if (state_reg[0].valid && state_reg[0].sys_op == Sys::MRET) {
+        else if (state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             exe_state_comb.rs1_val = csr.epc_out();
             exe_state_comb.imm = 0;
         }
@@ -412,6 +418,15 @@ private:
 #ifdef ENABLE_ZICSR
     __LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
+        if (csr.illegal_trap_out()) {
+            csr_state_comb = state_reg[0];
+            csr_state_comb.sys_op = Sys::TRAP;
+            csr_state_comb.trap_op = Trap::ILLEGAL_INST;
+            csr_state_comb.csr_op = Csr::CNONE;
+            csr_state_comb.mem_op = Mem::MNONE;
+            csr_state_comb.wb_op = Wb::WNONE;
+            csr_state_comb.br_op = Br::JR;
+        }
         if (memory_wait_comb_func()) {
             csr_state_comb.valid = false;
         }
@@ -1415,6 +1430,7 @@ int main (int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "Amo_pkg",
+                  "Trap_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",

@@ -172,8 +172,24 @@ struct Rv32i
             state_out.alu_op = Alu::ADD;  // PC + imm
             state_out.wb_op = Wb::ALU;
         } else
-        if (r.opcode == 0b0001111 && i.funct3 == 0b001) {  // FENCE.I
-            state_out.sys_op = Sys::FENCEI;
+        if (r.opcode == 0b0001111) {  // FENCE/FENCE.I
+            if (i.funct3 == 0b001) {
+                state_out.sys_op = Sys::FENCEI;
+                state_out.br_op = Br::JR;
+            }
+            else if (i.funct3 == 0b000) {
+                state_out.sys_op = Sys::SNONE;
+            }
+            else {
+                state_out.sys_op = Sys::TRAP;
+                state_out.trap_op = Trap::ILLEGAL_INST;
+                state_out.imm = raw;
+                state_out.br_op = Br::JR;
+            }
+        } else {
+            state_out.sys_op = Sys::TRAP;
+            state_out.trap_op = Trap::ILLEGAL_INST;
+            state_out.imm = raw;
             state_out.br_op = Br::JR;
         }
 //      else if (r.opcode == 0b1110011) {  // CSR

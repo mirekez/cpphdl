@@ -38,6 +38,7 @@ struct Rv32ia: public Rv32im
         Rv32im::decode(state_out);
 
         if ((raw & 3) == 3 && r.opcode == 0b0101111 && r.funct3 == 0b010) {
+            state_out = {};
             state_out.rd = r.rd;
             state_out.rs1 = r.rs1;
             state_out.rs2 = r.rs2;
@@ -105,7 +106,17 @@ struct Rv32ia: public Rv32im
                     break;
                 default:
                     state_out = {};
+                    state_out.sys_op = Sys::TRAP;
+                    state_out.trap_op = Trap::ILLEGAL_INST;
+                    state_out.imm = raw;
+                    state_out.br_op = Br::JR;
                     break;
+            }
+            if (state_out.amo_op == Amo::AMONONE) {
+                state_out.sys_op = Sys::TRAP;
+                state_out.trap_op = Trap::ILLEGAL_INST;
+                state_out.imm = raw;
+                state_out.br_op = Br::JR;
             }
         }
     }

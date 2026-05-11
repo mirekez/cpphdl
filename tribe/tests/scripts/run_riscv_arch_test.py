@@ -216,7 +216,7 @@ def main(argv: list[str]) -> int:
     )
     extensions = os.environ.get(
         "TRIBE_ARCH_TEST_EXTENSIONS",
-        "I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc",
+        "I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc,ExceptionsS,ExceptionsU",
     )
     exclude = os.environ.get(
         "TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS",

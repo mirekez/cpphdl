@@ -17,6 +17,7 @@
 #include "Field.h"
 #include "Expr.h"
 #include "Struct.h"
+#include "Enum.h"
 
 #include <algorithm>
 #include <array>
@@ -174,6 +175,34 @@ bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
     return false;
 }
 
+void addEnumPackageImport(EnumDecl* ED, cpphdl::Struct* st)
+{
+    if (!ED) {
+        return;
+    }
+
+    std::string name = genTypeName(ED->getQualifiedNameAsString());
+    if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
+        st->imports.emplace_back(name);
+    }
+
+    if (std::find_if(currProject->enums.begin(), currProject->enums.end(), [&](auto& en){ return en.name == name; }) != currProject->enums.end()) {
+        return;
+    }
+
+    cpphdl::Enum en{name, ED->getQualifiedNameAsString()};
+    for (const EnumConstantDecl* ECD : ED->enumerators()) {
+        if (ECD->getInitExpr()) {
+            en.fields.emplace_back(cpphdl::Field{ECD->getName().str(),
+                {std::to_string(ECD->getInitVal().getSExtValue()), cpphdl::Expr::EXPR_NUM}});
+        }
+        else {
+            en.fields.emplace_back(cpphdl::Field{ECD->getName().str()});
+        }
+    }
+    currProject->enums.emplace_back(std::move(en));
+}
+
 
 }
 
@@ -295,6 +324,9 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st 
 //?                QT = QT.getCanonicalType();        // ensure you have the actual canonical form
 
                 auto* CRD = hlp.resolveCXXRecordDecl(QT);
+                if (const auto* ET = QT->getAs<EnumType>()) {
+                    addEnumPackageImport(ET->getDecl(), st);
+                }
                 DEBUG_AST1(" {var " << FD->getNameAsString() << "} " << (CRD && CRD->isAnonymousStructOrUnion()?"ANON":""));
                 st->fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
                 if (FD->isBitField()) {

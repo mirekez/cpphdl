@@ -4,6 +4,7 @@
 #include "Debug.h"
 #include "Project.h"
 #include "Module.h"
+#include "Enum.h"
 
 #include <iostream>
 #include <fstream>
@@ -259,6 +260,11 @@ size_t cpphdl::getStructSize(std::string name, Struct* st)
             }
             s.declSize = -1;
             break;
+        }
+    }
+    for (auto& e : currProject->enums) {
+        if (e.name == name) {
+            return 32;
         }
     }
     if (currModule) {

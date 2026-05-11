@@ -88,6 +88,25 @@ union UnionWithStruct
     } __PACKED other;
 } __PACKED;
 
+namespace AlignMode
+{
+enum MODES
+{
+    MODE_ZERO,
+    MODE_ONE,
+    MODE_TWO,
+    MODE_THREE
+};
+}
+
+struct StructWithEnum
+{
+    unsigned prefix:2;
+    AlignMode::MODES mode;
+    TinyBits tiny;
+    unsigned suffix:3;
+} __PACKED;
+
 struct StructContainingUnionContainingStruct
 {
     unsigned head:2;
@@ -102,11 +121,13 @@ public:
     __PORT(OuterBits) sample_out = __VAR(sample_comb_func());
     __PORT(UnionContainingStructContainingUnion) union_struct_out = __VAR(union_struct_comb_func());
     __PORT(StructContainingUnionContainingStruct) struct_union_out = __VAR(struct_union_comb_func());
+    __PORT(StructWithEnum) enum_struct_out = __VAR(enum_struct_comb_func());
 
 private:
     OuterBits sample_comb;
     UnionContainingStructContainingUnion union_struct_comb;
     StructContainingUnionContainingStruct struct_union_comb;
+    StructWithEnum enum_struct_comb;
 
     OuterBits& sample_comb_func()
     {
@@ -151,6 +172,19 @@ private:
         struct_union_comb.u.branch.us1 = (seed >> 3) & 0x7;
         struct_union_comb.tail = (seed + 13) & 0x7f;
         return struct_union_comb;
+    }
+
+    StructWithEnum& enum_struct_comb_func()
+    {
+        uint32_t seed = seed_in();
+        enum_struct_comb = {};
+        enum_struct_comb.prefix = seed & 0x3;
+        enum_struct_comb.mode = (seed & 0x1) ? AlignMode::MODE_THREE : AlignMode::MODE_ONE;
+        enum_struct_comb.tiny.a = (seed >> 1) & 0x1;
+        enum_struct_comb.tiny.b = (seed >> 2) & 0x3;
+        enum_struct_comb.tiny.c = (seed >> 4) & 0x7;
+        enum_struct_comb.suffix = (seed + 3) & 0x7;
+        return enum_struct_comb;
     }
 
 public:
@@ -224,6 +258,18 @@ static StructContainingUnionContainingStruct expected_struct_union(uint32_t seed
     return ret;
 }
 
+static StructWithEnum expected_enum_struct(uint32_t seed)
+{
+    StructWithEnum ret{};
+    ret.prefix = seed & 0x3;
+    ret.mode = (seed & 0x1) ? AlignMode::MODE_THREE : AlignMode::MODE_ONE;
+    ret.tiny.a = (seed >> 1) & 0x1;
+    ret.tiny.b = (seed >> 2) & 0x3;
+    ret.tiny.c = (seed >> 4) & 0x7;
+    ret.suffix = (seed + 3) & 0x7;
+    return ret;
+}
+
 template<typename T>
 static void print_bytes(const char* name, const T& sample)
 {
@@ -280,7 +326,9 @@ static bool generated_sv_has_struct_package_imports()
     ok &= check_imports("UnionContainingStructContainingUnion_pkg.sv", {"StructWithUnion", "InnerUnion"});
     ok &= check_imports("UnionWithStruct_pkg.sv", {"UnionStruct"});
     ok &= check_imports("StructContainingUnionContainingStruct_pkg.sv", {"UnionWithStruct", "UnionStruct"});
+    ok &= check_imports("StructWithEnum_pkg.sv", {"AlignMode_MODES", "TinyBits"});
     ok &= check_imports("StructAlignment.sv", {
+        "AlignMode_MODES",
         "TinyBits",
         "MixedBits",
         "OuterBits",
@@ -289,7 +337,8 @@ static bool generated_sv_has_struct_package_imports()
         "UnionContainingStructContainingUnion",
         "UnionStruct",
         "UnionWithStruct",
-        "StructContainingUnionContainingStruct"
+        "StructContainingUnionContainingStruct",
+        "StructWithEnum"
     });
     return ok;
 }
@@ -371,6 +420,17 @@ public:
 #endif
     }
 
+    StructWithEnum enum_struct()
+    {
+#ifdef VERILATOR
+        StructWithEnum ret{};
+        std::memcpy(&ret, &dut.enum_struct_out, sizeof(ret));
+        return ret;
+#else
+        return dut.enum_struct_out();
+#endif
+    }
+
     bool same_fields(const OuterBits& got, const OuterBits& exp)
     {
         return got.head == exp.head &&
@@ -407,6 +467,16 @@ public:
             got.tail == exp.tail;
     }
 
+    bool same_fields(const StructWithEnum& got, const StructWithEnum& exp)
+    {
+        return got.prefix == exp.prefix &&
+            got.mode == exp.mode &&
+            got.tiny.a == exp.tiny.a &&
+            got.tiny.b == exp.tiny.b &&
+            got.tiny.c == exp.tiny.c &&
+            got.suffix == exp.suffix;
+    }
+
     template<typename T>
     void check_fields(const char* name, uint32_t value, const T& got, const T& exp)
     {
@@ -423,6 +493,7 @@ public:
         check_fields("struct", value, sample(), expected_sample(value));
         check_fields("union_struct", value, union_struct(), expected_union_struct(value));
         check_fields("struct_union", value, struct_union(), expected_struct_union(value));
+        check_fields("enum_struct", value, enum_struct(), expected_enum_struct(value));
     }
 
     bool run()
@@ -449,11 +520,12 @@ public:
             ++sys_clock;
         }
 
-        std::print(" {} ({} us, sizes tiny/mixed/outer/union_struct/struct_union={}/{}/{}/{}/{})\n", !error ? "PASSED" : "FAILED",
+        std::print(" {} ({} us, sizes tiny/mixed/outer/union_struct/struct_union/enum_struct={}/{}/{}/{}/{}/{})\n", !error ? "PASSED" : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::high_resolution_clock::now() - start)).count(),
             sizeof(TinyBits), sizeof(MixedBits), sizeof(OuterBits),
-            sizeof(UnionContainingStructContainingUnion), sizeof(StructContainingUnionContainingStruct));
+            sizeof(UnionContainingStructContainingUnion), sizeof(StructContainingUnionContainingStruct),
+            sizeof(StructWithEnum));
         return !error;
     }
 };
@@ -474,6 +546,7 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "StructAlignment", {
             "Predef_pkg",
+            "AlignMode_MODES_pkg",
             "TinyBits_pkg",
             "MixedBits_pkg",
             "OuterBits_pkg",
@@ -482,7 +555,8 @@ int main(int argc, char** argv)
             "UnionContainingStructContainingUnion_pkg",
             "UnionStruct_pkg",
             "UnionWithStruct_pkg",
-            "StructContainingUnionContainingStruct_pkg"
+            "StructContainingUnionContainingStruct_pkg",
+            "StructWithEnum_pkg"
         }, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

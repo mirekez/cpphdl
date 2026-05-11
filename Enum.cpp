@@ -15,7 +15,7 @@ bool Enum::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "enum {\n";
+    out << "typedef enum {\n";
 
     ++indent;
     for (size_t i=0; i < fields.size(); ++i) {

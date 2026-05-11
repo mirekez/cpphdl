@@ -287,6 +287,64 @@ FRAGMENTS = [
         """,
     ),
     Fragment(
+        "Traps",
+        "rv32im_zicsr",
+        "RV32IM_Zicsr",
+        """
+            la t0, trap_vector
+            csrw mtvec, t0
+            csrw mscratch, zero
+            nop
+            nop
+
+        illegal_site:
+            .word 0xffffffff
+        after_illegal:
+            csrr t1, mscratch
+            li t2, 1
+            bne t1, t2, fail
+
+        ebreak_site:
+            ebreak
+        after_ebreak:
+            csrr t1, mscratch
+            li t2, 2
+            bne t1, t2, fail
+            j pass
+
+        trap_vector:
+            csrr t3, mcause
+            csrr t4, mepc
+            li t5, 2
+            beq t3, t5, handle_illegal
+            li t5, 3
+            beq t3, t5, handle_break
+            j fail
+
+        handle_illegal:
+            la t5, illegal_site
+            bne t4, t5, fail
+            li t6, 1
+            csrw mscratch, t6
+            la t5, after_illegal
+            csrw mepc, t5
+            nop
+            nop
+            mret
+
+        handle_break:
+            la t5, ebreak_site
+            bne t4, t5, fail
+            li t6, 2
+            csrw mscratch, t6
+            la t5, after_ebreak
+            csrw mepc, t5
+            nop
+            nop
+            mret
+        """,
+    ),
+    Fragment(
         "RV32A",
         "rv32ima_zicsr",
         "RV32IMA_Zicsr",

@@ -137,6 +137,7 @@ int main(int argc, char** argv)
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "Amo_pkg",
+                  "Trap_pkg",
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",

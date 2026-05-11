@@ -18,20 +18,51 @@ struct Zicsr: public PREV_SPEC
 
         if ((raw & 3) == 3 && r.opcode == 0b1110011 && i.funct3 == 0) {
             if (raw == 0x00000073) {
+                state_out = {};
                 state_out.sys_op = Sys::ECALL;
+                state_out.imm = raw;
+                state_out.br_op = Br::JR;
+            }
+            else if (raw == 0x00100073) {
+                state_out = {};
+                state_out.sys_op = Sys::EBREAK;
+                state_out.trap_op = Trap::BREAKPOINT;
+                state_out.imm = raw;
                 state_out.br_op = Br::JR;
             }
             else if (raw == 0x30200073) {
+                state_out = {};
                 state_out.sys_op = Sys::MRET;
+                state_out.imm = raw;
+                state_out.br_op = Br::JR;
+            }
+            else if (raw == 0x10200073) {
+                state_out = {};
+                state_out.sys_op = Sys::SRET;
+                state_out.imm = raw;
+                state_out.br_op = Br::JR;
+            }
+            else if (raw == 0x10500073) {
+                state_out = {};
+                state_out.sys_op = Sys::WFI;
+                state_out.imm = raw;
+            }
+            else {
+                state_out = {};
+                state_out.sys_op = Sys::TRAP;
+                state_out.trap_op = Trap::ILLEGAL_INST;
+                state_out.imm = raw;
                 state_out.br_op = Br::JR;
             }
         }
 
         if ((raw & 3) == 3 && r.opcode == 0b1110011 && i.funct3 != 0) {
+            state_out = {};
             state_out.rd = i.rd;
             state_out.funct3 = i.funct3;
             state_out.csr_addr = i.imm11_0;
             state_out.csr_imm = i.rs1;
+            state_out.imm = raw;
 
             switch (i.funct3) {
                 case 0b001:
@@ -63,6 +94,10 @@ struct Zicsr: public PREV_SPEC
                     break;
                 default:
                     state_out = {};
+                    state_out.sys_op = Sys::TRAP;
+                    state_out.trap_op = Trap::ILLEGAL_INST;
+                    state_out.imm = raw;
+                    state_out.br_op = Br::JR;
                     break;
             }
         }
@@ -72,7 +107,10 @@ struct Zicsr: public PREV_SPEC
     {
         if ((raw & 3) == 3 && r.opcode == 0b1110011) {
             if (raw == 0x00000073) { return "ecall "; }
+            if (raw == 0x00100073) { return "ebreak"; }
             if (raw == 0x30200073) { return "mret  "; }
+            if (raw == 0x10200073) { return "sret  "; }
+            if (raw == 0x10500073) { return "wfi   "; }
             if (i.funct3 == 0b001) { return "csrrw "; }
             if (i.funct3 == 0b010) { return "csrrs "; }
             if (i.funct3 == 0b011) { return "csrrc "; }

@@ -11,6 +11,7 @@ struct Rv32im: public Rv32ic
         Rv32ic::decode(state_out);
 
         if (r.opcode == 0b0110011 && r.funct7 == 0b0000001) {
+            state_out = {};
             state_out.rd = r.rd;
             state_out.wb_op = Wb::ALU;
             switch (r.funct3) {

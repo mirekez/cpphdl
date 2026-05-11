@@ -183,7 +183,7 @@ def main(argv: list[str]) -> int:
         test.strip()
         for test in os.environ.get(
             "TRIBE_RISCV_DV_TESTS",
-            "tribe_arithmetic_basic_test,tribe_amo_test",
+            "tribe_arithmetic_basic_test,tribe_amo_test,tribe_trap_test",
         ).split(",")
         if test.strip()
     ]
