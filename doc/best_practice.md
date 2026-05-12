@@ -8,6 +8,115 @@ CppHDL is a C++ RTL framework for writing synthesizable hardware models while ke
 * Large parameterized designs can use C++ templates instead of large preprocessor-heavy SystemVerilog code.
 * CppHDL encourages small modules, explicit registers, and clear combinational/sequential separation.
 
+## Mapping of SystemVerilog Expressions to C++
+
+CppHDL code should be written as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections go into the `_assign()` section. This section runs only once, before the work cycle starts, and binds assignments that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in `_assign()`.
+
+SystemVerilog:
+
+```systemverilog
+assign out = a + b;
+child.valid_i = valid;
+child.data_i = data[i];
+child.result_i[i] = result[i] ^ mask;
+```
+
+CppHDL:
+
+```cpp
+_PORT(u<32>) out = _ASSIGN(a_in() + b_in());
+
+void _assign()
+{
+    child.valid_in = _ASSIGN(valid_reg);
+    for (int i = 0; i < LANES; i++) {
+        child.data_in[i] = _ASSIGN_I(data_reg[i]);
+        child.result_in[i] = _ASSIGN_I(result_reg[i] ^ mask_reg);
+    }
+}
+```
+
+Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
+
+All SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
+
+SystemVerilog:
+
+```systemverilog
+always_ff @(posedge clk) begin
+    if (reset) count <= '0;
+    else if (enable) count <= count + 1;
+end
+
+always_ff @(posedge clk) begin
+    if (reset) valid <= 1'b0;
+    else valid <= enable;
+end
+```
+
+CppHDL:
+
+```cpp
+reg<u<8>> count_reg;
+reg<bool> valid_reg;
+
+void _work(bool reset)
+{
+    if (reset) {
+        count_reg.clr();
+        valid_reg.clr();
+        return;
+    }
+
+    if (enable_in()) {
+        count_reg._next = count_reg + u<8>(1);
+    }
+    valid_reg._next = enable_in();
+}
+```
+
+SystemVerilog `always_comb` blocks map to CppHDL combinational functions, usually named `*_comb_func()`. They calculate temporary combinational values from current inputs and current register values. The usual style is to store the result in a member variable and return it by reference, as shown in the root examples.
+
+SystemVerilog:
+
+```systemverilog
+always_comb begin
+    hit = valid && tag == req_tag;
+    read_data = hit ? line[word] : '0;
+end
+```
+
+CppHDL:
+
+```cpp
+bool hit_comb;
+bool& hit_comb_func()
+{
+    hit_comb = valid_reg && tag_reg == req_tag_in();
+    return hit_comb;
+}
+
+u<32> read_data_comb;
+u<32>& read_data_comb_func()
+{
+    read_data_comb = hit_comb_func() ? line_reg[word_in()] : u<32>(0);
+    return read_data_comb;
+}
+
+_PORT(u<32>) read_data_out = _ASSIGN_COMB(read_data_comb_func());
+```
+
+CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
+
+```cpp
+void _strobe()
+{
+    count_reg.strobe();
+    valid_reg.strobe();
+    memory.apply();
+}
+```
+
 ## Think Like RTL
 
 CppHDL is C++, but the model should still be written as RTL. Keep the same mental model as SystemVerilog:
@@ -69,7 +178,7 @@ if (valid_in()) {
 }
 ```
 
-Output ports are usually initialized with `_ASSIGN_REG(...)` or `_ASSIGN(...)`:
+Output ports are usually initialized with `_ASSIGN_REG(...)`, `_ASSIGN_COMB(...)`, or `_ASSIGN(...)`:
 
 ```cpp
 reg<u1> ready_reg;
@@ -77,9 +186,9 @@ _PORT(bool) ready_out = _ASSIGN_REG(ready_reg);
 _PORT(bool) empty_out = _ASSIGN(count == 0);
 ```
 
-## `_ASSIGN_REG`, `_ASSIGN`, And Indexed Expressions
+## `_ASSIGN_REG`, `_ASSIGN`, and Indexed Expressions
 
-`_ASSIGN_REG(x)` connects a port to a persistent variable or a combinational function returning a reference. It is the best choice for registers, member variables, and cached combinational outputs.
+`_ASSIGN_REG(x)` connects a port to a persistent variable. It is the best choice for registers and member variables.
 
 ```cpp
 reg<logic<32>> data_reg;
@@ -118,10 +227,10 @@ logic<32>& result_comb_func()
     return result_comb;
 }
 
-_PORT(logic<32>) result_out = _ASSIGN_REG(result_comb_func());
+_PORT(logic<32>) result_out = _ASSIGN_COMB(result_comb_func());
 ```
 
-Keep combinational functions side-effect free except for assigning their own cached result variable.
+Keep combinational functions side-effect-free except for assigning their own cached result variable.
 
 ## Sequential Logic
 
@@ -162,7 +271,7 @@ void _strobe()
 }
 ```
 
-## CppHDL And SystemVerilog Look Similar
+## CppHDL and SystemVerilog Look Similar
 
 A valid-ready transfer in SystemVerilog:
 
@@ -200,7 +309,7 @@ void _work(bool reset)
 }
 ```
 
-## Use C++ Templates For Parameters
+## Use C++ Templates for Parameters
 
 Prefer templates for structural parameters such as data width, address width, number of ports, or FIFO depth.
 
@@ -243,7 +352,7 @@ void _assign()
 
 `assignIf()` performs the bidirectional assignment order needed when one side drives `valid/data` and the other side drives `ready`.
 
-## Arrays, Logic, And Bit Ranges
+## Arrays, Logic, and Bit Ranges
 
 Use `logic<N>` for arbitrary-width bit vectors and `u<N>` for unsigned integers up to 64 bits. Use `.bits(hi, lo)` and `operator[]` for bit slicing.
 
@@ -325,7 +434,7 @@ dut._strobe();
 
 Without `sys_clock`, inline tests either fail to link or do not update cached combinational expressions correctly. This is why all examples define it in the test section, even when the RTL model itself has no explicit clock port.
 
-## Build And Run Tests
+## Build and Run Tests
 
 The `examples/` and `tests/` folders are built by CMake. Each `.cpp` file becomes one executable target, and the post-build command runs the `cpphdl` tool to generate SystemVerilog.
 
