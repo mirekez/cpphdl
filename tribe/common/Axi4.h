@@ -160,32 +160,28 @@ struct Axi4If : Interface
 };
 
 #define AXI4_DRIVER_FROM(dst, src) \
-    do { \
-        (dst).awvalid_in = (src).awvalid_in; \
-        (dst).awaddr_in = (src).awaddr_in; \
-        (dst).awid_in = (src).awid_in; \
-        (dst).wvalid_in = (src).wvalid_in; \
-        (dst).wdata_in = (src).wdata_in; \
-        (dst).wlast_in = (src).wlast_in; \
-        (dst).bready_in = (src).bready_in; \
-        (dst).arvalid_in = (src).arvalid_in; \
-        (dst).araddr_in = (src).araddr_in; \
-        (dst).arid_in = (src).arid_in; \
-        (dst).rready_in = (src).rready_in; \
-    } while (false)
+    (dst).awvalid_in = (src).awvalid_in; \
+    (dst).awaddr_in = (src).awaddr_in; \
+    (dst).awid_in = (src).awid_in; \
+    (dst).wvalid_in = (src).wvalid_in; \
+    (dst).wdata_in = (src).wdata_in; \
+    (dst).wlast_in = (src).wlast_in; \
+    (dst).bready_in = (src).bready_in; \
+    (dst).arvalid_in = (src).arvalid_in; \
+    (dst).araddr_in = (src).araddr_in; \
+    (dst).arid_in = (src).arid_in; \
+    (dst).rready_in = (src).rready_in
 
 #define AXI4_RESPONDER_FROM(dst, src) \
-    do { \
-        (dst).awready_out = (src).awready_out; \
-        (dst).wready_out = (src).wready_out; \
-        (dst).bvalid_out = (src).bvalid_out; \
-        (dst).bid_out = (src).bid_out; \
-        (dst).arready_out = (src).arready_out; \
-        (dst).rvalid_out = (src).rvalid_out; \
-        (dst).rdata_out = (src).rdata_out; \
-        (dst).rlast_out = (src).rlast_out; \
-        (dst).rid_out = (src).rid_out; \
-    } while (false)
+    (dst).awready_out = (src).awready_out; \
+    (dst).wready_out = (src).wready_out; \
+    (dst).bvalid_out = (src).bvalid_out; \
+    (dst).bid_out = (src).bid_out; \
+    (dst).arready_out = (src).arready_out; \
+    (dst).rvalid_out = (src).rvalid_out; \
+    (dst).rdata_out = (src).rdata_out; \
+    (dst).rlast_out = (src).rlast_out; \
+    (dst).rid_out = (src).rid_out
 
 #define AXI4_DRIVER_FROM_VERILATOR(dst, src, index, addr_type, data_func) \
     do { \

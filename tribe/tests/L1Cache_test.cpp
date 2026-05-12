@@ -72,6 +72,8 @@ class TestL1Cache : public Module
     uint8_t write_mask = 0;
     bool stall = false;
     bool flush = false;
+    bool direct_mode = false;
+    uint32_t direct_mem_data = 0;
     bool error = false;
     uint32_t stall_prbs = 0x13579bdf;
 
@@ -84,12 +86,12 @@ public:
         cache.addr_in = __VAR(addr);
         cache.write_data_in = __VAR(write_data);
         cache.write_mask_in = __VAR(write_mask);
-        cache.mem_read_data_in = ram.read_data_out;
+        cache.mem_read_data_in = __EXPR(direct_mode ? (logic<32>)direct_mem_data : (logic<32>)ram.read_data_out());
         cache.mem_wait_in = __EXPR(false);
         cache.stall_in = __VAR(stall);
         cache.flush_in = __VAR(flush);
         cache.invalidate_in = __EXPR(false);
-        cache.cache_disable_in = __EXPR(false);
+        cache.cache_disable_in = __VAR(direct_mode);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();
@@ -154,11 +156,14 @@ public:
         cache.write_data_in = write_data;
         cache.write_mask_in = write_mask;
         cache.mem_read_data_in = ram.read_data_out();
+        if (direct_mode) {
+            cache.mem_read_data_in = direct_mem_data;
+        }
         cache.mem_wait_in = false;
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.invalidate_in = false;
-        cache.cache_disable_in = false;
+        cache.cache_disable_in = direct_mode;
         cache.debugen_in = false;
         cache.clk = 1;
         cache.reset = reset;
@@ -407,6 +412,55 @@ public:
         cycle(false);
     }
 
+    void focused_uncached_repeated_poll_check()
+    {
+        uint32_t request_addr = 0x700;
+        idle();
+
+        direct_mode = true;
+        direct_mem_data = 0;
+        addr = request_addr;
+        read = true;
+        stall = false;
+        cycle(false);
+
+        bool got_first = false;
+        for (size_t i = 0; i < 32 && !got_first; ++i) {
+            if (valid() && raddr() == request_addr) {
+                got_first = true;
+                if (rdata() != 0) {
+                    std::print("\nuncached repeated poll ERROR first data={:#x}\n", rdata());
+                    error = true;
+                }
+                break;
+            }
+            cycle(false);
+        }
+
+        direct_mem_data = 2;
+        bool saw_second_request = false;
+        bool got_second = false;
+        for (size_t i = 0; i < 64 && !got_second; ++i) {
+            cycle(false);
+            if (PORT_VALUE(cache.mem_read_out) && PORT_VALUE(cache.mem_addr_out) == request_addr) {
+                saw_second_request = true;
+            }
+            if (valid() && raddr() == request_addr && rdata() == 2) {
+                got_second = true;
+            }
+        }
+
+        if (!got_first || !saw_second_request || !got_second) {
+            std::print("\nuncached repeated poll ERROR got_first={} saw_second_request={} got_second={} valid={} raddr={:#x} data={:#x} busy={}\n",
+                got_first, saw_second_request, got_second, valid(), raddr(), rdata(), busy());
+            error = true;
+        }
+
+        read = false;
+        direct_mode = false;
+        cycle(false);
+    }
+
     void focused_checks()
     {
         focused_refill_assembly_check();
@@ -418,6 +472,9 @@ public:
         }
         if (!error) {
             focused_flush_miss_check();
+        }
+        if (!error) {
+            focused_uncached_repeated_poll_check();
         }
     }
 

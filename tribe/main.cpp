@@ -32,6 +32,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "devices/IOUART.h"
 #include "devices/NS16550A.h"
 #include "devices/CLINT.h"
+#include "devices/Accelerator.cpp"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
@@ -99,6 +100,7 @@ public:
     __PORT(bool)      clint_mtip_in;
 #endif
 
+    Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
     __PORT(TribePerf) perf_out = __VAR(perf_comb_func());
@@ -125,7 +127,7 @@ public:
         exe_mem.dcache_read_addr_in = dcache.read_addr_out;
         exe_mem.dcache_read_data_in = dcache.read_data_out;
 #endif
-        exe_mem.mem_stall_in = __EXPR( dcache.busy_out() || l2cache.d_wait_out() );
+        exe_mem.mem_stall_in = dcache.busy_out;
         exe_mem.hold_in = __EXPR( memory_wait_comb_func() );
         exe_mem.__inst_name = __inst_name + "/exe_mem";
         exe_mem._assign();
@@ -252,10 +254,8 @@ public:
         dcache.flush_in = __EXPR(false);
         dcache.invalidate_in = __EXPR(false);
         dcache.cache_disable_in = __EXPR(
-            (exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out()) >=
-                memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
-            (exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out()) <
-                memory_base_in() + memory_size_in());
+            (uint32_t)dcache.addr_in() >= memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
+            (uint32_t)dcache.addr_in() < memory_base_in() + memory_size_in());
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
@@ -312,6 +312,7 @@ public:
         l2cache.mem_region_uncached_in[2] = __EXPR(false);
         l2cache.mem_region_uncached_in[3] = __EXPR(true);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
+            AXI4_DRIVER_FROM(l2cache.axi_in[i], axi_in[i]);
             l2cache.axi_out[i].awready_out = __EXPR_I(axi_out[i].awready_out());
             l2cache.axi_out[i].wready_out = __EXPR_I(axi_out[i].wready_out());
             l2cache.axi_out[i].bvalid_out = __EXPR_I(axi_out[i].bvalid_out());
@@ -325,6 +326,9 @@ public:
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
         l2cache._assign();
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            AXI4_RESPONDER_FROM(axi_in[i], l2cache.axi_in[i]);
+        }
 
         dmem_write_out      = dcache.mem_write_out;
         dmem_write_data_out = dcache.mem_write_data_out;
@@ -420,6 +424,7 @@ private:
 #ifdef ENABLE_RV32IA
             exe_mem.atomic_busy_out() ||
 #endif
+            (dcache.mem_read_out() && l2cache.d_wait_out()) ||
             ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !wb_mem.load_ready_out());
@@ -934,9 +939,10 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<2,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<3,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
+    Accelerator<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> accelerator;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -1057,9 +1063,7 @@ public:
 
     void _assign()
     {
-#ifdef VERILATOR
         size_t i = 0;
-#endif
 	#ifndef VERILATOR
         tribe.debugen_in = debugen_in;
         tribe.reset_pc_in = __EXPR(reset_pc);
@@ -1069,6 +1073,30 @@ public:
         tribe.mem_region_size_in[1] = __EXPR((uint32_t)TRIBE_MEM_REGION1_SIZE);
         tribe.mem_region_size_in[2] = __EXPR((uint32_t)TRIBE_MEM_REGION2_SIZE);
         tribe.mem_region_size_in[3] = __EXPR((uint32_t)TRIBE_IO_REGION_SIZE);
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_in[i].awvalid_in = __EXPR(false);
+            tribe.axi_in[i].awaddr_in = __EXPR((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].awid_in = __EXPR((u<4>)0);
+            tribe.axi_in[i].wvalid_in = __EXPR(false);
+            tribe.axi_in[i].wdata_in = __EXPR((logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in[i].wlast_in = __EXPR(false);
+            tribe.axi_in[i].bready_in = __EXPR(false);
+            tribe.axi_in[i].arvalid_in = __EXPR(false);
+            tribe.axi_in[i].araddr_in = __EXPR((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].arid_in = __EXPR((u<4>)0);
+            tribe.axi_in[i].rready_in = __EXPR(false);
+        }
+        tribe.axi_in[0].awvalid_in = __EXPR(accelerator.dma_out.awvalid_in());
+        tribe.axi_in[0].awaddr_in = __EXPR((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
+        tribe.axi_in[0].awid_in = __EXPR((u<4>)(uint32_t)accelerator.dma_out.awid_in());
+        tribe.axi_in[0].wvalid_in = __EXPR(accelerator.dma_out.wvalid_in());
+        tribe.axi_in[0].wdata_in = __EXPR(accelerator.dma_out.wdata_in());
+        tribe.axi_in[0].wlast_in = __EXPR(accelerator.dma_out.wlast_in());
+        tribe.axi_in[0].bready_in = __EXPR(accelerator.dma_out.bready_in());
+        tribe.axi_in[0].arvalid_in = __EXPR(accelerator.dma_out.arvalid_in());
+        tribe.axi_in[0].araddr_in = __EXPR((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
+        tribe.axi_in[0].arid_in = __EXPR((u<4>)(uint32_t)accelerator.dma_out.arid_in());
+        tribe.axi_in[0].rready_in = __EXPR(accelerator.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -1090,23 +1118,30 @@ public:
         iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
         iospace.region_base_in[1] = __EXPR((uint32_t)0x100);
         iospace.region_size_in[1] = __EXPR((uint32_t)0xC000);
+        iospace.region_base_in[2] = __EXPR((uint32_t)0xC100);
+        iospace.region_size_in[2] = __EXPR((uint32_t)0x1000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
+        AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
+        accelerator.__inst_name = __inst_name + "/accelerator";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
         clint._assign();
+        accelerator._assign();
 
         AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[2], mem2.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
@@ -1116,6 +1151,19 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+        for (size_t i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_in___05Fawvalid_in[i] = false;
+            tribe.axi_in___05Fawaddr_in[i] = 0;
+            tribe.axi_in___05Fawid_in[i] = 0;
+            tribe.axi_in___05Fwvalid_in[i] = false;
+            verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[i], (logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in___05Fwlast_in[i] = false;
+            tribe.axi_in___05Fbready_in[i] = false;
+            tribe.axi_in___05Farvalid_in[i] = false;
+            tribe.axi_in___05Faraddr_in[i] = 0;
+            tribe.axi_in___05Farid_in[i] = 0;
+            tribe.axi_in___05Frready_in[i] = false;
+        }
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
@@ -1134,19 +1182,34 @@ public:
         iospace.region_size_in[0] = __EXPR((uint32_t)0x100);
         iospace.region_base_in[1] = __EXPR((uint32_t)0x100);
         iospace.region_size_in[1] = __EXPR((uint32_t)0xC000);
+        iospace.region_base_in[2] = __EXPR((uint32_t)0xC100);
+        iospace.region_size_in[2] = __EXPR((uint32_t)0x1000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
+        AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        accelerator.dma_out.awready_out = __EXPR((bool)tribe.axi_in___05Fawready_out[0]);
+        accelerator.dma_out.wready_out = __EXPR((bool)tribe.axi_in___05Fwready_out[0]);
+        accelerator.dma_out.bvalid_out = __EXPR((bool)tribe.axi_in___05Fbvalid_out[0]);
+        accelerator.dma_out.bid_out = __EXPR((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[0]);
+        accelerator.dma_out.arready_out = __EXPR((bool)tribe.axi_in___05Farready_out[0]);
+        accelerator.dma_out.rvalid_out = __EXPR((bool)tribe.axi_in___05Frvalid_out[0]);
+        accelerator.dma_out.rdata_out = __EXPR(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
+        accelerator.dma_out.rlast_out = __EXPR((bool)tribe.axi_in___05Frlast_out[0]);
+        accelerator.dma_out.rid_out = __EXPR((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
+        accelerator.__inst_name = __inst_name + "/accelerator";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
         clint._assign();
+        accelerator._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
 #endif
     }
 
@@ -1164,25 +1227,25 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+        tribe.axi_in___05Fawvalid_in[0] = accelerator.dma_out.awvalid_in();
+        tribe.axi_in___05Fawaddr_in[0] = (uint32_t)accelerator.dma_out.awaddr_in();
+        tribe.axi_in___05Fawid_in[0] = (uint32_t)accelerator.dma_out.awid_in();
+        tribe.axi_in___05Fwvalid_in[0] = accelerator.dma_out.wvalid_in();
+        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[0], accelerator.dma_out.wdata_in());
+        tribe.axi_in___05Fwlast_in[0] = accelerator.dma_out.wlast_in();
+        tribe.axi_in___05Fbready_in[0] = accelerator.dma_out.bready_in();
+        tribe.axi_in___05Farvalid_in[0] = accelerator.dma_out.arvalid_in();
+        tribe.axi_in___05Faraddr_in[0] = (uint32_t)accelerator.dma_out.araddr_in();
+        tribe.axi_in___05Farid_in[0] = (uint32_t)accelerator.dma_out.arid_in();
+        tribe.axi_in___05Frready_in[0] = accelerator.dma_out.rready_in();
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
 #endif
 
-//        data_in           = (array<DTYPE,LENGTH>*) &tribe.data_out.m_storage;
-
-        if (reset) {
-            tribe.clk = 0;
-            tribe.reset = reset;
-            tribe.eval();
-        }
-        tribe.clk = 1;
+        tribe.clk = 0;
         tribe.reset = reset;
-        tribe.eval();  // eval of verilator should be in the end
-        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
-        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
-        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem2.axi_in, 2);
-        AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
+        tribe.eval();
 #endif
         mem0._work(reset);
         mem1._work(reset);
@@ -1190,6 +1253,16 @@ public:
         iospace._work(reset);
         uart._work(reset);
         clint._work(reset);
+        accelerator._work(reset);
+#ifdef VERILATOR
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem2.axi_in, 2);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
+        tribe.clk = 1;
+        tribe.reset = reset;
+        tribe.eval();  // eval of verilator should be in the end
+#endif
 
         if (reset) {
             error = false;
@@ -1208,6 +1281,7 @@ public:
         iospace._strobe();
         uart._strobe();
         clint._strobe();
+        accelerator._strobe();
     }
 
     void _work_neg(bool reset)

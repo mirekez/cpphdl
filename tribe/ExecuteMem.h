@@ -244,6 +244,11 @@ private:
         }
 
         if (hold_in()) {
+            mem_addr_reg._next = mem_addr_reg;
+            mem_data_reg._next = mem_data_reg;
+            mem_write_reg._next = mem_write_reg;
+            mem_read_reg._next = mem_read_reg;
+            mem_mask_reg._next = mem_mask_reg;
             split_load_reg._next = split_load_reg;
             split_load_low_addr_reg._next = split_load_low_addr_reg;
             split_load_high_addr_reg._next = split_load_high_addr_reg;

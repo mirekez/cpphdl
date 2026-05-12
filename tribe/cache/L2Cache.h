@@ -75,6 +75,7 @@ public:
     __PORT(uint32_t) mem_region_size_in[MEM_PORTS];
     __PORT(bool) mem_region_uncached_in[MEM_PORTS];
 
+    Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_in[MEM_PORTS];
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_out[MEM_PORTS];
 
     bool debugen_in;
@@ -90,6 +91,9 @@ private:
     reg<u1> req_read_reg;
     reg<u1> req_write_reg;
     reg<u1> req_port_reg;
+    reg<u1> req_from_slave_reg;
+    reg<u<MEM_PORT_BITS>> req_slave_index_reg;
+    reg<u<4>> req_slave_id_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<WAY_BITS>> fill_way_reg;
     reg<u<SET_BITS>> init_set_reg;
@@ -98,35 +102,112 @@ private:
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
     reg<u<LINE_BEAT_BITS>> fill_beat_reg;
     reg<u<LINE_BEAT_BITS>> evict_beat_reg;
+    reg<array<u1, MEM_PORTS>> slave_bvalid_reg;
+    reg<array<u<4>, MEM_PORTS>> slave_bid_reg;
+    reg<array<u1, MEM_PORTS>> slave_rvalid_reg;
+    reg<array<u<4>, MEM_PORTS>> slave_rid_reg;
+    reg<array<logic<PORT_BITWIDTH>, MEM_PORTS>> slave_rdata_reg;
+    reg<array<u1, MEM_PORTS>> slave_aw_pending_reg;
+    reg<array<u<MEM_ADDR_BITS>, MEM_PORTS>> slave_awaddr_reg;
+    reg<array<u<4>, MEM_PORTS>> slave_awid_reg;
 
-    // Port arbitration: data port has priority over instruction port.
+    // True when any external AXI master is offering a one-beat write.
+    __LAZY_COMB(slave_write_pending_comb, bool)
+        size_t i;
+        slave_write_pending_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (((slave_aw_pending_reg[i] && axi_in[i].wvalid_in()) ||
+                 (axi_in[i].awvalid_in() && axi_in[i].wvalid_in())) && !slave_bvalid_reg[i]) {
+                slave_write_pending_comb = true;
+            }
+        }
+        return slave_write_pending_comb;
+    }
+
+    // True when any external AXI master is offering a one-beat read.
+    __LAZY_COMB(slave_read_pending_comb, bool)
+        size_t i;
+        slave_read_pending_comb = false;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (axi_in[i].arvalid_in() && !slave_rvalid_reg[i]) {
+                slave_read_pending_comb = true;
+            }
+        }
+        return slave_read_pending_comb;
+    }
+
+    // Lowest-numbered external AXI slave port with a pending request.
+    __LAZY_COMB(active_slave_index_comb, u<MEM_PORT_BITS>)
+        size_t i;
+        active_slave_index_comb = 0;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (!slave_write_pending_comb_func() && axi_in[i].arvalid_in() && !slave_rvalid_reg[i]) {
+                active_slave_index_comb = (u<MEM_PORT_BITS>)i;
+            }
+            if (((slave_aw_pending_reg[i] && axi_in[i].wvalid_in()) ||
+                 (axi_in[i].awvalid_in() && axi_in[i].wvalid_in())) && !slave_bvalid_reg[i]) {
+                active_slave_index_comb = (u<MEM_PORT_BITS>)i;
+            }
+        }
+        return active_slave_index_comb;
+    }
+
+    // External AXI masters arbitrate between D-cache and I-cache, sharing one coherent L2 tag/data RAM.
+    __LAZY_COMB(active_is_slave_comb, bool)
+        return active_is_slave_comb = slave_write_pending_comb_func() || slave_read_pending_comb_func();
+    }
+
+    // Port arbitration: external AXI masters share the coherent L2 before CPU data/instruction ports.
     __LAZY_COMB(active_is_d_comb, bool)
-        return active_is_d_comb = d_write_in() || d_read_in();
+        return active_is_d_comb = !active_is_slave_comb_func() && (d_write_in() || d_read_in());
     }
 
     // Active request read flag after data/instruction arbitration.
     __LAZY_COMB(active_read_comb, bool)
-        return active_read_comb = d_read_in() || (!d_write_in() && i_read_in());
+        return active_read_comb = (active_is_slave_comb_func() && !slave_write_pending_comb_func()) ||
+            (!active_is_slave_comb_func() && d_read_in()) ||
+            (!d_write_in() && !d_read_in() && !slave_write_pending_comb_func() && !slave_read_pending_comb_func() && i_read_in());
     }
 
     // Active request write flag after data/instruction arbitration.
     __LAZY_COMB(active_write_comb, bool)
-        return active_write_comb = d_write_in() || (!d_read_in() && !d_write_in() && i_write_in());
+        return active_write_comb = (active_is_slave_comb_func() && slave_write_pending_comb_func()) ||
+            (!active_is_slave_comb_func() && d_write_in()) ||
+            (!d_read_in() && !d_write_in() && !slave_write_pending_comb_func() && !slave_read_pending_comb_func() && i_write_in());
     }
 
     // Address of the currently selected input port.
     __LAZY_COMB(active_addr_comb, uint32_t)
-        return active_addr_comb = active_is_d_comb_func() ? d_addr_in() : i_addr_in();
+        size_t i;
+        active_addr_comb = active_is_d_comb_func() ? d_addr_in() : i_addr_in();
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (active_is_slave_comb_func() && active_slave_index_comb_func() == i) {
+                active_addr_comb = slave_write_pending_comb_func() ?
+                    (slave_aw_pending_reg[i] ? (uint32_t)slave_awaddr_reg[i] : (uint32_t)axi_in[i].awaddr_in()) :
+                    (uint32_t)axi_in[i].araddr_in();
+            }
+        }
+        return active_addr_comb;
     }
 
     // Write data of the currently selected input port.
     __LAZY_COMB(active_write_data_comb, uint32_t)
-        return active_write_data_comb = active_is_d_comb_func() ? d_write_data_in() : i_write_data_in();
+        size_t i;
+        uint32_t lane;
+        active_write_data_comb = active_is_d_comb_func() ? d_write_data_in() : i_write_data_in();
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (active_is_slave_comb_func() && slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
+                lane = ((slave_aw_pending_reg[i] ? (uint32_t)slave_awaddr_reg[i] : (uint32_t)axi_in[i].awaddr_in()) % PORT_BYTES) / 4u;
+                active_write_data_comb = (uint32_t)axi_in[i].wdata_in().bits(lane * 32 + 31, lane * 32);
+            }
+        }
+        return active_write_data_comb;
     }
 
     // Write byte mask of the currently selected input port.
     __LAZY_COMB(active_write_mask_comb, uint8_t)
-        return active_write_mask_comb = active_is_d_comb_func() ? d_write_mask_in() : i_write_mask_in();
+        return active_write_mask_comb = active_is_slave_comb_func() ? (uint8_t)0xf :
+            (active_is_d_comb_func() ? d_write_mask_in() : i_write_mask_in());
     }
 
     // Set index of the registered request.
@@ -782,7 +863,12 @@ private:
 
     // Read data mux for held responses, cross-line reads, cache hits, or live AXI fill data.
     __LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
-        if (state_reg == ST_DONE) {
+        if (state_reg != ST_IDLE && req_from_slave_reg) {
+            // External AXI-master completions are returned through axi_in[*];
+            // never expose their live memory beat on the CPU/L1 read-data port.
+            read_data_comb = 0;
+        }
+        else if (state_reg == ST_DONE) {
             read_data_comb = last_data_reg;
         }
         else if (state_reg == ST_CROSS_DONE) {
@@ -791,8 +877,11 @@ private:
         else if (state_reg == ST_LOOKUP && hit_comb_func()) {
             read_data_comb = hit_beat_comb_func();
         }
-        else {
+        else if (state_reg == ST_AXI_R || state_reg == ST_IO_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1) {
             read_data_comb = axi_rdata_selected_comb_func();
+        }
+        else {
+            read_data_comb = 0;
         }
         return read_data_comb;
     }
@@ -802,18 +891,23 @@ private:
         i_wait_comb = false;
         if (i_read_in()) {
             i_wait_comb = true;
-            if (state_reg == ST_LOOKUP && !req_port_reg && req_read_reg && hit_comb_func()) {
+            if (state_reg == ST_LOOKUP && !req_from_slave_reg && !req_port_reg && req_read_reg && hit_comb_func()) {
                 i_wait_comb = false;
             }
-            if (state_reg == ST_DONE && !req_port_reg && req_read_reg) {
+            if (state_reg == ST_DONE && !req_from_slave_reg && !req_port_reg && req_read_reg) {
                 i_wait_comb = false;
             }
         }
-        if (state_reg != ST_IDLE && !(state_reg == ST_LOOKUP && !req_port_reg && req_read_reg && hit_comb_func()) &&
-            !(state_reg == ST_DONE && !req_port_reg && req_read_reg)) {
+        if (state_reg != ST_IDLE &&
+            !(state_reg == ST_LOOKUP && !req_from_slave_reg && !req_port_reg && req_read_reg && hit_comb_func()) &&
+            !(state_reg == ST_DONE && !req_from_slave_reg && !req_port_reg && req_read_reg)) {
             i_wait_comb = true;
         }
         if (d_read_in() || d_write_in()) {
+            i_wait_comb = true;
+        }
+        if (active_is_slave_comb_func() &&
+            !(state_reg == ST_DONE && !req_from_slave_reg && !req_port_reg && req_read_reg)) {
             i_wait_comb = true;
         }
         return i_wait_comb;
@@ -824,21 +918,26 @@ private:
         d_wait_comb = false;
         if (d_write_in()) {
             d_wait_comb = true;
-            if (state_reg == ST_DONE && req_port_reg && req_write_reg) {
+            if (state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && req_write_reg) {
                 d_wait_comb = false;
             }
         }
         if (d_read_in()) {
             d_wait_comb = true;
-            if (state_reg == ST_LOOKUP && req_port_reg && req_read_reg && hit_comb_func()) {
+            if (state_reg == ST_LOOKUP && !req_from_slave_reg && req_port_reg && req_read_reg && hit_comb_func()) {
                 d_wait_comb = false;
             }
-            if (state_reg == ST_DONE && req_port_reg && req_read_reg) {
+            if (state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && req_read_reg) {
                 d_wait_comb = false;
             }
         }
-        if (state_reg != ST_IDLE && !(state_reg == ST_LOOKUP && req_port_reg && req_read_reg && hit_comb_func()) &&
-            !(state_reg == ST_DONE && req_port_reg && (req_read_reg || req_write_reg))) {
+        if (state_reg != ST_IDLE &&
+            !(state_reg == ST_LOOKUP && !req_from_slave_reg && req_port_reg && req_read_reg && hit_comb_func()) &&
+            !(state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && (req_read_reg || req_write_reg))) {
+            d_wait_comb = true;
+        }
+        if (active_is_slave_comb_func() &&
+            !(state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && (req_read_reg || req_write_reg))) {
             d_wait_comb = true;
         }
         return d_wait_comb;
@@ -884,6 +983,19 @@ public:
         }
 
         for (i = 0; i < MEM_PORTS; ++i) {
+            axi_in[i].awready_out = __EXPR_I(state_reg == ST_IDLE && !slave_aw_pending_reg[i] && !slave_bvalid_reg[i] &&
+                axi_in[i].awvalid_in());
+            axi_in[i].wready_out = __EXPR_I(state_reg == ST_IDLE &&
+                slave_write_pending_comb_func() && active_slave_index_comb_func() == i);
+            axi_in[i].bvalid_out = __VAR_I(slave_bvalid_reg[i]);
+            axi_in[i].bid_out = __VAR_I(slave_bid_reg[i]);
+            axi_in[i].arready_out = __EXPR_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
+                !slave_write_pending_comb_func() && slave_read_pending_comb_func() && active_slave_index_comb_func() == i);
+            axi_in[i].rvalid_out = __VAR_I(slave_rvalid_reg[i]);
+            axi_in[i].rdata_out = __VAR_I(slave_rdata_reg[i]);
+            axi_in[i].rlast_out = __VAR_I(slave_rvalid_reg[i]);
+            axi_in[i].rid_out = __VAR_I(slave_rid_reg[i]);
+
             axi_out[i].awvalid_in = __EXPR_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
             axi_out[i].awaddr_in = __VAR(axi_awaddr_local_comb_func());
             axi_out[i].awid_in = __EXPR((u<4>)0);
@@ -909,6 +1021,20 @@ public:
             tag_ram[way]._work(reset);
         }
 
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (slave_bvalid_reg[i] && axi_in[i].bready_in()) {
+                slave_bvalid_reg._next[i] = false;
+            }
+            if (slave_rvalid_reg[i] && axi_in[i].rready_in()) {
+                slave_rvalid_reg._next[i] = false;
+            }
+            if (state_reg == ST_IDLE && axi_in[i].awvalid_in() && axi_in[i].awready_out()) {
+                slave_aw_pending_reg._next[i] = true;
+                slave_awaddr_reg._next[i] = axi_in[i].awaddr_in();
+                slave_awid_reg._next[i] = axi_in[i].awid_in();
+            }
+        }
+
         if (state_reg == ST_INIT) {
             if (init_set_reg == SETS - 1) {
                 state_reg._next = ST_IDLE;
@@ -925,21 +1051,69 @@ public:
                 req_read_reg._next = active_read_comb_func();
                 req_write_reg._next = active_write_comb_func();
                 req_port_reg._next = active_is_d_comb_func();
+                req_from_slave_reg._next = active_is_slave_comb_func();
+                req_slave_index_reg._next = active_slave_index_comb_func();
+                for (i = 0; i < MEM_PORTS; ++i) {
+                    if (active_is_slave_comb_func() && active_slave_index_comb_func() == i) {
+                        req_slave_id_reg._next = slave_write_pending_comb_func() ?
+                            (slave_aw_pending_reg[i] ? slave_awid_reg[i] : axi_in[i].awid_in()) :
+                            axi_in[i].arid_in();
+                        if (slave_write_pending_comb_func()) {
+                            slave_aw_pending_reg._next[i] = false;
+                        }
+                    }
+                }
                 state_reg._next = active_cross_line_read_comb_func() ? ST_CROSS_AR0 : ST_LOOKUP;
             }
         }
         else if (state_reg == ST_LOOKUP) {
             if (!req_addr_in_memory_comb_func()) {
-                if (req_read_reg) {
-                    last_data_reg._next = 0;
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            if (req_read_reg) {
+                                slave_rvalid_reg._next[i] = true;
+                                slave_rid_reg._next[i] = req_slave_id_reg;
+                                slave_rdata_reg._next[i] = 0;
+                            }
+                            if (req_write_reg) {
+                                slave_bvalid_reg._next[i] = true;
+                                slave_bid_reg._next[i] = req_slave_id_reg;
+                            }
+                        }
+                    }
+                    state_reg._next = ST_IDLE;
                 }
-                state_reg._next = ST_DONE;
+                else {
+                    if (req_read_reg) {
+                        last_data_reg._next = 0;
+                    }
+                    state_reg._next = ST_DONE;
+                }
             }
             else if (req_uncached_region_comb_func()) {
                 state_reg._next = req_read_reg ? ST_IO_AR : ST_IO_AW;
             }
             else if (hit_comb_func()) {
-                if (req_read_reg) {
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            if (req_read_reg) {
+                                slave_rvalid_reg._next[i] = true;
+                                slave_rid_reg._next[i] = req_slave_id_reg;
+                                slave_rdata_reg._next[i] = hit_beat_comb_func();
+                            }
+                            if (req_write_reg && !req_cross_line_write_comb_func()) {
+                                slave_bvalid_reg._next[i] = true;
+                                slave_bid_reg._next[i] = req_slave_id_reg;
+                            }
+                        }
+                    }
+                }
+                else if (req_read_reg) {
+                    last_data_reg._next = 0;
+                }
+                if (!req_from_slave_reg && req_read_reg) {
                     last_data_reg._next = hit_beat_comb_func();
                 }
                 if (req_cross_line_write_comb_func()) {
@@ -950,7 +1124,7 @@ public:
                     state_reg._next = ST_CROSS_WRITE_LOOKUP;
                 }
                 else {
-                    state_reg._next = req_write_reg ? ST_DONE : ST_IDLE;
+                    state_reg._next = req_from_slave_reg ? ST_IDLE : (req_write_reg ? ST_DONE : ST_IDLE);
                 }
             }
             else {
@@ -962,10 +1136,32 @@ public:
         }
         else if (state_reg == ST_CROSS_WRITE_LOOKUP) {
             if (!req_addr_in_memory_comb_func()) {
-                state_reg._next = ST_DONE;
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            slave_bvalid_reg._next[i] = true;
+                            slave_bid_reg._next[i] = req_slave_id_reg;
+                        }
+                    }
+                    state_reg._next = ST_IDLE;
+                }
+                else {
+                    state_reg._next = ST_DONE;
+                }
             }
             else if (hit_comb_func()) {
-                state_reg._next = ST_DONE;
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            slave_bvalid_reg._next[i] = true;
+                            slave_bid_reg._next[i] = req_slave_id_reg;
+                        }
+                    }
+                    state_reg._next = ST_IDLE;
+                }
+                else {
+                    state_reg._next = ST_DONE;
+                }
             }
             else {
                 fill_way_reg._next = victim_reg;
@@ -1003,7 +1199,7 @@ public:
         }
         else if (state_reg == ST_AXI_R) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                if (req_read_reg && fill_beat_reg == req_beat_comb_func()) {
+                if (!req_from_slave_reg && req_read_reg && fill_beat_reg == req_beat_comb_func()) {
                     last_data_reg._next = axi_rdata_selected_comb_func();
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
@@ -1016,7 +1212,26 @@ public:
                         state_reg._next = ST_CROSS_WRITE_LOOKUP;
                     }
                     else {
-                        state_reg._next = ST_DONE;
+                        if (req_from_slave_reg) {
+                            for (i = 0; i < MEM_PORTS; ++i) {
+                                if (req_slave_index_reg == i) {
+                                    if (req_read_reg) {
+                                        slave_rvalid_reg._next[i] = true;
+                                        slave_rid_reg._next[i] = req_slave_id_reg;
+                                        slave_rdata_reg._next[i] = (fill_beat_reg == req_beat_comb_func()) ?
+                                            axi_rdata_selected_comb_func() : hit_beat_comb_func();
+                                    }
+                                    if (req_write_reg) {
+                                        slave_bvalid_reg._next[i] = true;
+                                        slave_bid_reg._next[i] = req_slave_id_reg;
+                                    }
+                                }
+                            }
+                            state_reg._next = ST_IDLE;
+                        }
+                        else {
+                            state_reg._next = ST_DONE;
+                        }
                     }
                 }
                 else {
@@ -1051,8 +1266,20 @@ public:
         }
         else if (state_reg == ST_CROSS_DONE) {
             // Hold the assembled cross-line word for one cycle like other completed responses.
-            last_data_reg._next = cross_read_data_comb_func();
-            state_reg._next = ST_DONE;
+            if (req_from_slave_reg) {
+                for (i = 0; i < MEM_PORTS; ++i) {
+                    if (req_slave_index_reg == i) {
+                        slave_rvalid_reg._next[i] = true;
+                        slave_rid_reg._next[i] = req_slave_id_reg;
+                        slave_rdata_reg._next[i] = cross_read_data_comb_func();
+                    }
+                }
+                state_reg._next = ST_IDLE;
+            }
+            else {
+                last_data_reg._next = cross_read_data_comb_func();
+                state_reg._next = ST_DONE;
+            }
         }
         else if (state_reg == ST_IO_AW) {
             if (axi_awvalid_comb_func() && axi_awready_selected_comb_func()) {
@@ -1066,7 +1293,18 @@ public:
         }
         else if (state_reg == ST_IO_B) {
             if (axi_bvalid_selected_comb_func()) {
-                state_reg._next = ST_DONE;
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            slave_bvalid_reg._next[i] = true;
+                            slave_bid_reg._next[i] = req_slave_id_reg;
+                        }
+                    }
+                    state_reg._next = ST_IDLE;
+                }
+                else {
+                    state_reg._next = ST_DONE;
+                }
             }
         }
         else if (state_reg == ST_IO_AR) {
@@ -1076,11 +1314,38 @@ public:
         }
         else if (state_reg == ST_IO_R) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
-                last_data_reg._next = axi_rdata_selected_comb_func();
-                state_reg._next = ST_DONE;
+                if (req_from_slave_reg) {
+                    for (i = 0; i < MEM_PORTS; ++i) {
+                        if (req_slave_index_reg == i) {
+                            slave_rvalid_reg._next[i] = true;
+                            slave_rid_reg._next[i] = req_slave_id_reg;
+                            slave_rdata_reg._next[i] = axi_rdata_selected_comb_func();
+                        }
+                    }
+                    state_reg._next = ST_IDLE;
+                }
+                else {
+                    last_data_reg._next = axi_rdata_selected_comb_func();
+                    state_reg._next = ST_DONE;
+                }
             }
         }
         else if (state_reg == ST_DONE) {
+            if (req_from_slave_reg) {
+                for (i = 0; i < MEM_PORTS; ++i) {
+                    if (req_slave_index_reg == i) {
+                        if (req_read_reg) {
+                            slave_rvalid_reg._next[i] = true;
+                            slave_rid_reg._next[i] = req_slave_id_reg;
+                            slave_rdata_reg._next[i] = last_data_reg;
+                        }
+                        if (req_write_reg) {
+                            slave_bvalid_reg._next[i] = true;
+                            slave_bid_reg._next[i] = req_slave_id_reg;
+                        }
+                    }
+                }
+            }
             state_reg._next = ST_IDLE;
         }
 
@@ -1092,6 +1357,9 @@ public:
             req_read_reg.clr();
             req_write_reg.clr();
             req_port_reg.clr();
+            req_from_slave_reg.clr();
+            req_slave_index_reg.clr();
+            req_slave_id_reg.clr();
             victim_reg.clr();
             fill_way_reg.clr();
             init_set_reg.clr();
@@ -1100,6 +1368,14 @@ public:
             cross_high_reg.clr();
             fill_beat_reg.clr();
             evict_beat_reg.clr();
+            slave_bvalid_reg.clr();
+            slave_bid_reg.clr();
+            slave_rvalid_reg.clr();
+            slave_rid_reg.clr();
+            slave_rdata_reg.clr();
+            slave_aw_pending_reg.clr();
+            slave_awaddr_reg.clr();
+            slave_awid_reg.clr();
             state_reg._next = ST_INIT;
         }
     }
@@ -1121,6 +1397,9 @@ public:
         req_read_reg.strobe();
         req_write_reg.strobe();
         req_port_reg.strobe();
+        req_from_slave_reg.strobe();
+        req_slave_index_reg.strobe();
+        req_slave_id_reg.strobe();
         victim_reg.strobe();
         fill_way_reg.strobe();
         init_set_reg.strobe();
@@ -1129,5 +1408,13 @@ public:
         cross_high_reg.strobe();
         fill_beat_reg.strobe();
         evict_beat_reg.strobe();
+        slave_bvalid_reg.strobe();
+        slave_bid_reg.strobe();
+        slave_rvalid_reg.strobe();
+        slave_rid_reg.strobe();
+        slave_rdata_reg.strobe();
+        slave_aw_pending_reg.strobe();
+        slave_awaddr_reg.strobe();
+        slave_awid_reg.strobe();
     }
 };
