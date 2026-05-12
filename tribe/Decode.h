@@ -16,9 +16,9 @@ public:
     _PORT(uint32_t) instr_in;
     _PORT(uint32_t) regs_data0_in;
     _PORT(uint32_t) regs_data1_in;
-    _PORT(u<5>)     rs1_out      =  _BIND_VAR( rs1_out_comb_func() );
-    _PORT(u<5>)     rs2_out      =  _BIND_VAR( rs2_out_comb_func() );
-    _PORT(State)    state_out    =  _BIND_VAR( state_comb_func() );
+    _PORT(u<5>)     rs1_out      =  _ASSIGN_REG( rs1_out_comb_func() );
+    _PORT(u<5>)     rs2_out      =  _ASSIGN_REG( rs2_out_comb_func() );
+    _PORT(State)    state_out    =  _ASSIGN_REG( state_comb_func() );
 
 private:
 

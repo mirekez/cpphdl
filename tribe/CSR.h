@@ -13,23 +13,23 @@ public:
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
     _PORT(uint32_t) irq_pending_bits_in;
-    _PORT(uint32_t) read_data_out = _BIND_VAR(read_data_comb_func());
-    _PORT(uint32_t) trap_vector_out = _BIND_VAR(trap_vector_comb_func());
-    _PORT(uint32_t) epc_out = _BIND_VAR(epc_comb_func());
-    _PORT(bool) illegal_trap_out = _BIND_VAR(illegal_trap_comb_func());
-    _PORT(uint32_t) mstatus_out = _BIND_VAR(mstatus_reg);
-    _PORT(uint32_t) mie_out = _BIND_VAR(mie_reg);
-    _PORT(uint32_t) mideleg_out = _BIND_VAR(mideleg_reg);
-    _PORT(uint32_t) mip_sw_out = _BIND_VAR(mip_reg);
+    _PORT(uint32_t) read_data_out = _ASSIGN_REG(read_data_comb_func());
+    _PORT(uint32_t) trap_vector_out = _ASSIGN_REG(trap_vector_comb_func());
+    _PORT(uint32_t) epc_out = _ASSIGN_REG(epc_comb_func());
+    _PORT(bool) illegal_trap_out = _ASSIGN_REG(illegal_trap_comb_func());
+    _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
+    _PORT(uint32_t) mie_out = _ASSIGN_REG(mie_reg);
+    _PORT(uint32_t) mideleg_out = _ASSIGN_REG(mideleg_reg);
+    _PORT(uint32_t) mip_sw_out = _ASSIGN_REG(mip_reg);
 #ifdef ENABLE_MMU_TLB
-    _PORT(uint32_t) satp_out = _BIND_VAR(satp_reg);
+    _PORT(uint32_t) satp_out = _ASSIGN_REG(satp_reg);
 #else
-    _PORT(uint32_t) satp_out = _BIND((uint32_t)0);
+    _PORT(uint32_t) satp_out = _ASSIGN((uint32_t)0);
 #endif
 #ifdef ENABLE_TRAPS
-    _PORT(u<2>) priv_out = _BIND_VAR(priv_reg);
+    _PORT(u<2>) priv_out = _ASSIGN_REG(priv_reg);
 #else
-    _PORT(u<2>) priv_out = _BIND((u<2>)3);
+    _PORT(u<2>) priv_out = _ASSIGN((u<2>)3);
 #endif
 
 private:

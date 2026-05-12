@@ -13,7 +13,7 @@ class MemberArrayLeaf : public Module
 public:
     _PORT(u<16>) base_in;
     _PORT(u<16>) add_in;
-    _PORT(u<16>) value_out = _BIND_VAR(value_comb_func());
+    _PORT(u<16>) value_out = _ASSIGN_REG(value_comb_func());
 
 private:
     u<16> value_comb;
@@ -33,7 +33,7 @@ class MemberArray : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) result_out = _BIND_VAR(result_comb_func());
+    _PORT(u<16>) result_out = _ASSIGN_REG(result_comb_func());
 
 private:
     MemberArrayLeaf line[3];
@@ -56,59 +56,59 @@ public:
     void _assign()
     {
         line[0].base_in = seed_in;
-        line[0].add_in = _BIND(u<16>(1));
+        line[0].add_in = _ASSIGN(u<16>(1));
         line[0]._assign();
         line[1].base_in = line[0].value_out;
-        line[1].add_in = _BIND(u<16>(2));
+        line[1].add_in = _ASSIGN(u<16>(2));
         line[1]._assign();
         line[2].base_in = line[1].value_out;
-        line[2].add_in = _BIND(u<16>(3));
+        line[2].add_in = _ASSIGN(u<16>(3));
         line[2]._assign();
 
         grid[0][0].base_in = line[1].value_out;
-        grid[0][0].add_in = _BIND(u<16>(10));
+        grid[0][0].add_in = _ASSIGN(u<16>(10));
         grid[0][0]._assign();
         grid[0][1].base_in = grid[0][0].value_out;
-        grid[0][1].add_in = _BIND(u<16>(11));
+        grid[0][1].add_in = _ASSIGN(u<16>(11));
         grid[0][1]._assign();
         grid[0][2].base_in = grid[0][1].value_out;
-        grid[0][2].add_in = _BIND(u<16>(12));
+        grid[0][2].add_in = _ASSIGN(u<16>(12));
         grid[0][2]._assign();
 
         grid[1][0].base_in = line[2].value_out;
-        grid[1][0].add_in = _BIND(u<16>(20));
+        grid[1][0].add_in = _ASSIGN(u<16>(20));
         grid[1][0]._assign();
         grid[1][1].base_in = grid[1][0].value_out;
-        grid[1][1].add_in = _BIND(u<16>(21));
+        grid[1][1].add_in = _ASSIGN(u<16>(21));
         grid[1][1]._assign();
         grid[1][2].base_in = grid[1][1].value_out;
-        grid[1][2].add_in = _BIND(u<16>(22));
+        grid[1][2].add_in = _ASSIGN(u<16>(22));
         grid[1][2]._assign();
 
         cube[0][0][0].base_in = grid[0][1].value_out;
-        cube[0][0][0].add_in = _BIND(u<16>(100));
+        cube[0][0][0].add_in = _ASSIGN(u<16>(100));
         cube[0][0][0]._assign();
         cube[0][0][1].base_in = cube[0][0][0].value_out;
-        cube[0][0][1].add_in = _BIND(u<16>(101));
+        cube[0][0][1].add_in = _ASSIGN(u<16>(101));
         cube[0][0][1]._assign();
         cube[0][1][0].base_in = grid[0][2].value_out;
-        cube[0][1][0].add_in = _BIND(u<16>(110));
+        cube[0][1][0].add_in = _ASSIGN(u<16>(110));
         cube[0][1][0]._assign();
         cube[0][1][1].base_in = cube[0][1][0].value_out;
-        cube[0][1][1].add_in = _BIND(u<16>(111));
+        cube[0][1][1].add_in = _ASSIGN(u<16>(111));
         cube[0][1][1]._assign();
 
         cube[1][0][0].base_in = grid[1][1].value_out;
-        cube[1][0][0].add_in = _BIND(u<16>(200));
+        cube[1][0][0].add_in = _ASSIGN(u<16>(200));
         cube[1][0][0]._assign();
         cube[1][0][1].base_in = cube[1][0][0].value_out;
-        cube[1][0][1].add_in = _BIND(u<16>(201));
+        cube[1][0][1].add_in = _ASSIGN(u<16>(201));
         cube[1][0][1]._assign();
         cube[1][1][0].base_in = grid[1][2].value_out;
-        cube[1][1][0].add_in = _BIND(u<16>(210));
+        cube[1][1][0].add_in = _ASSIGN(u<16>(210));
         cube[1][1][0]._assign();
         cube[1][1][1].base_in = cube[1][1][0].value_out;
-        cube[1][1][1].add_in = _BIND(u<16>(211));
+        cube[1][1][1].add_in = _ASSIGN(u<16>(211));
         cube[1][1][1]._assign();
     }
 };
@@ -202,7 +202,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = _BIND_VAR(seed);
+        dut.seed_in = _ASSIGN_REG(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

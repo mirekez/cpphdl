@@ -23,11 +23,11 @@ public:
     _PORT(uint8_t)  fill_flags_in;
     _PORT(bool)     sfence_in;
 
-    _PORT(uint32_t) paddr_out = _BIND_VAR(paddr_comb_func());
-    _PORT(bool)     translated_out = _BIND_VAR(translation_enabled_comb_func());
-    _PORT(bool)     hit_out = _BIND_VAR(hit_comb_func());
-    _PORT(bool)     fault_out = _BIND_VAR(fault_comb_func());
-    _PORT(bool)     miss_out = _BIND_VAR(miss_comb_func());
+    _PORT(uint32_t) paddr_out = _ASSIGN_REG(paddr_comb_func());
+    _PORT(bool)     translated_out = _ASSIGN_REG(translation_enabled_comb_func());
+    _PORT(bool)     hit_out = _ASSIGN_REG(hit_comb_func());
+    _PORT(bool)     fault_out = _ASSIGN_REG(fault_comb_func());
+    _PORT(bool)     miss_out = _ASSIGN_REG(miss_comb_func());
 
 private:
     reg<array<u1, ENTRIES>> valid_reg;

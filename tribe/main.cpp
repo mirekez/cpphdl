@@ -103,24 +103,24 @@ public:
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
-    _PORT(TribePerf) perf_out = _BIND_VAR(perf_comb_func());
+    _PORT(TribePerf) perf_out = _ASSIGN_REG(perf_comb_func());
     bool              debugen_in;
 
     void _assign()
     {
         size_t i;
-//        dec.state_in       = _BIND_VAR( state_reg[0] );  // execute stage input is same
-        dec.pc_in          = _BIND_VAR( pc );
-        dec.instr_valid_in = _BIND(fetch_valid_comb_func());
+//        dec.state_in       = _ASSIGN_REG( state_reg[0] );  // execute stage input is same
+        dec.pc_in          = _ASSIGN_REG( pc );
+        dec.instr_valid_in = _ASSIGN(fetch_valid_comb_func());
         dec.instr_in       = icache.read_data_out;
-        dec.regs_data0_in  = _BIND( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
-        dec.regs_data1_in  = _BIND( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
+        dec.regs_data0_in  = _ASSIGN( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
+        dec.regs_data1_in  = _ASSIGN( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
 
-        exe.state_in       = _BIND_VAR( exe_state_comb_func() );
+        exe.state_in       = _ASSIGN_REG( exe_state_comb_func() );
         exe._assign();  // outputs are ready
 
-        exe_mem.state_in = _BIND_VAR(exe_state_comb_func());
+        exe_mem.state_in = _ASSIGN_REG(exe_state_comb_func());
         exe_mem.alu_result_in = exe.alu_result_out;
 #ifdef ENABLE_RV32IA
         exe_mem.dcache_read_valid_in = dcache.read_valid_out;
@@ -128,12 +128,12 @@ public:
         exe_mem.dcache_read_data_in = dcache.read_data_out;
 #endif
         exe_mem.mem_stall_in = dcache.busy_out;
-        exe_mem.hold_in = _BIND( memory_wait_comb_func() );
+        exe_mem.hold_in = _ASSIGN( memory_wait_comb_func() );
         exe_mem.__inst_name = __inst_name + "/exe_mem";
         exe_mem._assign();
 
-        wb_mem.state_in = _BIND_VAR(state_reg[1]);
-        wb_mem.alu_result_in = _BIND_VAR(alu_result_reg);
+        wb_mem.state_in = _ASSIGN_REG(state_reg[1]);
+        wb_mem.alu_result_in = _ASSIGN_REG(alu_result_reg);
         wb_mem.split_load_in = exe_mem.split_load_out;
         wb_mem.split_load_low_addr_in = exe_mem.split_load_low_out;
         wb_mem.split_load_high_addr_in = exe_mem.split_load_high_out;
@@ -144,7 +144,7 @@ public:
         wb_mem.dcache_write_addr_in = dcache.mem_addr_out;
         wb_mem.dcache_write_data_in = dcache.mem_write_data_out;
         wb_mem.dcache_write_mask_in = dcache.mem_write_mask_out;
-        wb_mem.hold_in = _BIND(memory_wait_comb_func());
+        wb_mem.hold_in = _ASSIGN(memory_wait_comb_func());
         wb_mem.__inst_name = __inst_name + "/wb_mem";
         wb_mem._assign();
 
@@ -160,76 +160,76 @@ public:
         irq.__inst_name = __inst_name + "/irq";
         irq._assign();
 #endif
-        csr.state_in       = _BIND_VAR( csr_state_comb_func() );
-        csr.trap_check_state_in = _BIND_VAR(state_reg[0]);
+        csr.state_in       = _ASSIGN_REG( csr_state_comb_func() );
+        csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = irq.interrupt_valid_out;
         csr.interrupt_cause_in = irq.interrupt_cause_out;
         csr.interrupt_to_supervisor_in = irq.interrupt_to_supervisor_out;
         csr.irq_pending_bits_in = irq.mip_out;
 #else
-        csr.interrupt_valid_in = _BIND(false);
-        csr.interrupt_cause_in = _BIND((uint32_t)0);
-        csr.interrupt_to_supervisor_in = _BIND(false);
-        csr.irq_pending_bits_in = _BIND((uint32_t)0);
+        csr.interrupt_valid_in = _ASSIGN(false);
+        csr.interrupt_cause_in = _ASSIGN((uint32_t)0);
+        csr.interrupt_to_supervisor_in = _ASSIGN(false);
+        csr.irq_pending_bits_in = _ASSIGN((uint32_t)0);
 #endif
         csr.__inst_name = __inst_name + "/csr";
         csr._assign();
 #endif
 
 #ifdef ENABLE_MMU_TLB
-        immu.vaddr_in = _BIND(fetch_addr_comb_func());
-        immu.read_in = _BIND(false);
-        immu.write_in = _BIND(false);
-        immu.execute_in = _BIND(true);
+        immu.vaddr_in = _ASSIGN(fetch_addr_comb_func());
+        immu.read_in = _ASSIGN(false);
+        immu.write_in = _ASSIGN(false);
+        immu.execute_in = _ASSIGN(true);
 #ifdef ENABLE_ZICSR
         immu.satp_in = csr.satp_out;
         immu.priv_in = csr.priv_out;
 #else
-        immu.satp_in = _BIND((uint32_t)0);
-        immu.priv_in = _BIND((u<2>)3);
+        immu.satp_in = _ASSIGN((uint32_t)0);
+        immu.priv_in = _ASSIGN((u<2>)3);
 #endif
-        immu.fill_in = _BIND(false);
-        immu.fill_index_in = _BIND((u<3>)0);
-        immu.fill_vpn_in = _BIND((uint32_t)0);
-        immu.fill_ppn_in = _BIND((uint32_t)0);
-        immu.fill_flags_in = _BIND((uint8_t)0);
-        immu.sfence_in = _BIND(sfence_vma_comb_func());
+        immu.fill_in = _ASSIGN(false);
+        immu.fill_index_in = _ASSIGN((u<3>)0);
+        immu.fill_vpn_in = _ASSIGN((uint32_t)0);
+        immu.fill_ppn_in = _ASSIGN((uint32_t)0);
+        immu.fill_flags_in = _ASSIGN((uint8_t)0);
+        immu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         immu.__inst_name = __inst_name + "/immu";
         immu._assign();
 
-        dmmu.vaddr_in = _BIND(exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out());
+        dmmu.vaddr_in = _ASSIGN(exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out());
         dmmu.read_in = exe_mem.mem_read_out;
         dmmu.write_in = exe_mem.mem_write_out;
-        dmmu.execute_in = _BIND(false);
+        dmmu.execute_in = _ASSIGN(false);
 #ifdef ENABLE_ZICSR
         dmmu.satp_in = csr.satp_out;
         dmmu.priv_in = csr.priv_out;
 #else
-        dmmu.satp_in = _BIND((uint32_t)0);
-        dmmu.priv_in = _BIND((u<2>)3);
+        dmmu.satp_in = _ASSIGN((uint32_t)0);
+        dmmu.priv_in = _ASSIGN((u<2>)3);
 #endif
-        dmmu.fill_in = _BIND(false);
-        dmmu.fill_index_in = _BIND((u<3>)0);
-        dmmu.fill_vpn_in = _BIND((uint32_t)0);
-        dmmu.fill_ppn_in = _BIND((uint32_t)0);
-        dmmu.fill_flags_in = _BIND((uint8_t)0);
-        dmmu.sfence_in = _BIND(sfence_vma_comb_func());
+        dmmu.fill_in = _ASSIGN(false);
+        dmmu.fill_index_in = _ASSIGN((u<3>)0);
+        dmmu.fill_vpn_in = _ASSIGN((uint32_t)0);
+        dmmu.fill_ppn_in = _ASSIGN((uint32_t)0);
+        dmmu.fill_flags_in = _ASSIGN((uint8_t)0);
+        dmmu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         dmmu.__inst_name = __inst_name + "/dmmu";
         dmmu._assign();
 #endif
 
-        wb.state_in       = _BIND_VAR( state_reg[1] );
+        wb.state_in       = _ASSIGN_REG( state_reg[1] );
         wb.mem_data_in    = wb_mem.load_raw_out;
-        wb.mem_data_hi_in = _BIND((uint32_t)0);
-        wb.mem_addr_in    = _BIND_VAR(alu_result_reg);
-        wb.mem_split_in   = _BIND(false);
-        wb.alu_result_in  = _BIND_VAR( alu_result_reg );
+        wb.mem_data_hi_in = _ASSIGN((uint32_t)0);
+        wb.mem_addr_in    = _ASSIGN_REG(alu_result_reg);
+        wb.mem_split_in   = _ASSIGN(false);
+        wb.alu_result_in  = _ASSIGN_REG( alu_result_reg );
         wb._assign();  // outputs are ready
 
-        regs.read_addr0_in = _BIND( (uint8_t)dec.rs1_out() );
-        regs.read_addr1_in = _BIND( (uint8_t)dec.rs2_out() );
-        regs.write_in = _BIND(wb.regs_write_out() &&
+        regs.read_addr0_in = _ASSIGN( (uint8_t)dec.rs1_out() );
+        regs.read_addr1_in = _ASSIGN( (uint8_t)dec.rs2_out() );
+        regs.write_in = _ASSIGN(wb.regs_write_out() &&
             !memory_wait_comb_func() &&
             (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
         regs.write_addr_in = wb.regs_wr_id_out;
@@ -238,65 +238,65 @@ public:
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = _BIND( exe_mem.mem_read_out() && !dcache.busy_out() );
-        dcache.write_in = _BIND( exe_mem.mem_write_out() && !dcache.busy_out() );
+        dcache.read_in = _ASSIGN( exe_mem.mem_read_out() && !dcache.busy_out() );
+        dcache.write_in = _ASSIGN( exe_mem.mem_write_out() && !dcache.busy_out() );
         dcache.addr_in =
 #ifdef ENABLE_MMU_TLB
             dmmu.paddr_out;
 #else
-            _BIND( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
+            _ASSIGN( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
 #endif
         dcache.write_data_in = exe_mem.mem_write_data_out;
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
         dcache.mem_read_data_in = l2cache.d_read_data_out;
         dcache.mem_wait_in = l2cache.d_wait_out;
-        dcache.stall_in = _BIND(branch_stall_comb_func());
-        dcache.flush_in = _BIND(false);
-        dcache.invalidate_in = _BIND(false);
-        dcache.cache_disable_in = _BIND(
+        dcache.stall_in = _ASSIGN(branch_stall_comb_func());
+        dcache.flush_in = _ASSIGN(false);
+        dcache.invalidate_in = _ASSIGN(false);
+        dcache.cache_disable_in = _ASSIGN(
             (uint32_t)dcache.addr_in() >= memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
             (uint32_t)dcache.addr_in() < memory_base_in() + memory_size_in());
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
 
-        bp.lookup_valid_in = _BIND(decode_branch_valid_comb_func());
-        bp.lookup_pc_in = _BIND((uint32_t)dec.state_out().pc);
-        bp.lookup_target_in = _BIND(decode_branch_target_comb_func());
-        bp.lookup_fallthrough_in = _BIND(decode_fallthrough_comb_func());
-        bp.lookup_br_op_in = _BIND((u<4>)dec.state_out().br_op);
-        bp.update_valid_in = _BIND(state_reg[0].valid && state_reg[0].br_op != Br::BNONE && !memory_wait_comb_func());
-        bp.update_pc_in = _BIND((uint32_t)state_reg[0].pc);
-        bp.update_taken_in = _BIND(exe.branch_taken_out());
-        bp.update_target_in = _BIND(exe.branch_target_out());
+        bp.lookup_valid_in = _ASSIGN(decode_branch_valid_comb_func());
+        bp.lookup_pc_in = _ASSIGN((uint32_t)dec.state_out().pc);
+        bp.lookup_target_in = _ASSIGN(decode_branch_target_comb_func());
+        bp.lookup_fallthrough_in = _ASSIGN(decode_fallthrough_comb_func());
+        bp.lookup_br_op_in = _ASSIGN((u<4>)dec.state_out().br_op);
+        bp.update_valid_in = _ASSIGN(state_reg[0].valid && state_reg[0].br_op != Br::BNONE && !memory_wait_comb_func());
+        bp.update_pc_in = _ASSIGN((uint32_t)state_reg[0].pc);
+        bp.update_taken_in = _ASSIGN(exe.branch_taken_out());
+        bp.update_target_in = _ASSIGN(exe.branch_target_out());
         bp.__inst_name = __inst_name + "/bp";
         bp._assign();
 
-        icache.read_in = _BIND( true );
+        icache.read_in = _ASSIGN( true );
         icache.addr_in =
 #ifdef ENABLE_MMU_TLB
             immu.paddr_out;
 #else
-            _BIND( fetch_addr_comb_func() );
+            _ASSIGN( fetch_addr_comb_func() );
 #endif
-        icache.write_in = _BIND( false );
-        icache.write_data_in = _BIND( (uint32_t)0 );
-        icache.write_mask_in = _BIND( (uint8_t)0 );
+        icache.write_in = _ASSIGN( false );
+        icache.write_data_in = _ASSIGN( (uint32_t)0 );
+        icache.write_mask_in = _ASSIGN( (uint8_t)0 );
         icache.mem_read_data_in = l2cache.i_read_data_out;
         icache.mem_wait_in = l2cache.i_wait_out;
-        icache.stall_in = _BIND(memory_wait_comb_func() || stall_comb_func());
-        icache.flush_in = _BIND(branch_mispredict_comb_func() && !memory_wait_comb_func());
-        icache.invalidate_in = _BIND_VAR(icache_invalidate_comb_func());
-        icache.cache_disable_in = _BIND(false);
+        icache.stall_in = _ASSIGN(memory_wait_comb_func() || stall_comb_func());
+        icache.flush_in = _ASSIGN(branch_mispredict_comb_func() && !memory_wait_comb_func());
+        icache.invalidate_in = _ASSIGN_REG(icache_invalidate_comb_func());
+        icache.cache_disable_in = _ASSIGN(false);
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
 
         l2cache.i_read_in = icache.mem_read_out;
-        l2cache.i_write_in = _BIND(false);
+        l2cache.i_write_in = _ASSIGN(false);
         l2cache.i_addr_in = icache.mem_addr_out;
-        l2cache.i_write_data_in = _BIND((uint32_t)0);
-        l2cache.i_write_mask_in = _BIND((uint8_t)0);
+        l2cache.i_write_data_in = _ASSIGN((uint32_t)0);
+        l2cache.i_write_mask_in = _ASSIGN((uint8_t)0);
         l2cache.d_read_in = dcache.mem_read_out;
         l2cache.d_write_in = dcache.mem_write_out;
         l2cache.d_addr_in = dcache.mem_addr_out;
@@ -307,21 +307,21 @@ public:
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             l2cache.mem_region_size_in[i] = mem_region_size_in[i];
         }
-        l2cache.mem_region_uncached_in[0] = _BIND(false);
-        l2cache.mem_region_uncached_in[1] = _BIND(false);
-        l2cache.mem_region_uncached_in[2] = _BIND(false);
-        l2cache.mem_region_uncached_in[3] = _BIND(true);
+        l2cache.mem_region_uncached_in[0] = _ASSIGN(false);
+        l2cache.mem_region_uncached_in[1] = _ASSIGN(false);
+        l2cache.mem_region_uncached_in[2] = _ASSIGN(false);
+        l2cache.mem_region_uncached_in[3] = _ASSIGN(true);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM(l2cache.axi_in[i], axi_in[i]);
-            l2cache.axi_out[i].awready_out = _BIND_I(axi_out[i].awready_out());
-            l2cache.axi_out[i].wready_out = _BIND_I(axi_out[i].wready_out());
-            l2cache.axi_out[i].bvalid_out = _BIND_I(axi_out[i].bvalid_out());
-            l2cache.axi_out[i].bid_out = _BIND_I(axi_out[i].bid_out());
-            l2cache.axi_out[i].arready_out = _BIND_I(axi_out[i].arready_out());
-            l2cache.axi_out[i].rvalid_out = _BIND_I(axi_out[i].rvalid_out());
-            l2cache.axi_out[i].rdata_out = _BIND_I(axi_out[i].rdata_out());
-            l2cache.axi_out[i].rlast_out = _BIND_I(axi_out[i].rlast_out());
-            l2cache.axi_out[i].rid_out = _BIND_I(axi_out[i].rid_out());
+            l2cache.axi_out[i].awready_out = _ASSIGN_I(axi_out[i].awready_out());
+            l2cache.axi_out[i].wready_out = _ASSIGN_I(axi_out[i].wready_out());
+            l2cache.axi_out[i].bvalid_out = _ASSIGN_I(axi_out[i].bvalid_out());
+            l2cache.axi_out[i].bid_out = _ASSIGN_I(axi_out[i].bid_out());
+            l2cache.axi_out[i].arready_out = _ASSIGN_I(axi_out[i].arready_out());
+            l2cache.axi_out[i].rvalid_out = _ASSIGN_I(axi_out[i].rvalid_out());
+            l2cache.axi_out[i].rdata_out = _ASSIGN_I(axi_out[i].rdata_out());
+            l2cache.axi_out[i].rlast_out = _ASSIGN_I(axi_out[i].rlast_out());
+            l2cache.axi_out[i].rid_out = _ASSIGN_I(axi_out[i].rid_out());
         }
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
@@ -1066,37 +1066,37 @@ public:
         size_t i = 0;
 	#ifndef VERILATOR
         tribe.debugen_in = debugen_in;
-        tribe.reset_pc_in = _BIND(reset_pc);
-        tribe.memory_base_in = _BIND(start_mem_addr);
-        tribe.memory_size_in = _BIND((uint32_t)MAX_RAM_SIZE);
-        tribe.mem_region_size_in[0] = _BIND((uint32_t)TRIBE_MEM_REGION0_SIZE);
-        tribe.mem_region_size_in[1] = _BIND((uint32_t)TRIBE_MEM_REGION1_SIZE);
-        tribe.mem_region_size_in[2] = _BIND((uint32_t)TRIBE_MEM_REGION2_SIZE);
-        tribe.mem_region_size_in[3] = _BIND((uint32_t)TRIBE_IO_REGION_SIZE);
+        tribe.reset_pc_in = _ASSIGN(reset_pc);
+        tribe.memory_base_in = _ASSIGN(start_mem_addr);
+        tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
+        tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
+        tribe.mem_region_size_in[1] = _ASSIGN((uint32_t)TRIBE_MEM_REGION1_SIZE);
+        tribe.mem_region_size_in[2] = _ASSIGN((uint32_t)TRIBE_MEM_REGION2_SIZE);
+        tribe.mem_region_size_in[3] = _ASSIGN((uint32_t)TRIBE_IO_REGION_SIZE);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            tribe.axi_in[i].awvalid_in = _BIND(false);
-            tribe.axi_in[i].awaddr_in = _BIND((u<clog2(MAX_RAM_SIZE)>)0);
-            tribe.axi_in[i].awid_in = _BIND((u<4>)0);
-            tribe.axi_in[i].wvalid_in = _BIND(false);
-            tribe.axi_in[i].wdata_in = _BIND((logic<TRIBE_L2_AXI_WIDTH>)0);
-            tribe.axi_in[i].wlast_in = _BIND(false);
-            tribe.axi_in[i].bready_in = _BIND(false);
-            tribe.axi_in[i].arvalid_in = _BIND(false);
-            tribe.axi_in[i].araddr_in = _BIND((u<clog2(MAX_RAM_SIZE)>)0);
-            tribe.axi_in[i].arid_in = _BIND((u<4>)0);
-            tribe.axi_in[i].rready_in = _BIND(false);
+            tribe.axi_in[i].awvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
+            tribe.axi_in[i].wvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in[i].wlast_in = _ASSIGN(false);
+            tribe.axi_in[i].bready_in = _ASSIGN(false);
+            tribe.axi_in[i].arvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
+            tribe.axi_in[i].rready_in = _ASSIGN(false);
         }
-        tribe.axi_in[0].awvalid_in = _BIND(accelerator.dma_out.awvalid_in());
-        tribe.axi_in[0].awaddr_in = _BIND((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
-        tribe.axi_in[0].awid_in = _BIND((u<4>)(uint32_t)accelerator.dma_out.awid_in());
-        tribe.axi_in[0].wvalid_in = _BIND(accelerator.dma_out.wvalid_in());
-        tribe.axi_in[0].wdata_in = _BIND(accelerator.dma_out.wdata_in());
-        tribe.axi_in[0].wlast_in = _BIND(accelerator.dma_out.wlast_in());
-        tribe.axi_in[0].bready_in = _BIND(accelerator.dma_out.bready_in());
-        tribe.axi_in[0].arvalid_in = _BIND(accelerator.dma_out.arvalid_in());
-        tribe.axi_in[0].araddr_in = _BIND((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
-        tribe.axi_in[0].arid_in = _BIND((u<4>)(uint32_t)accelerator.dma_out.arid_in());
-        tribe.axi_in[0].rready_in = _BIND(accelerator.dma_out.rready_in());
+        tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
+        tribe.axi_in[0].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
+        tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
+        tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
+        tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
+        tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
+        tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
+        tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
+        tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
+        tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
+        tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -1114,12 +1114,12 @@ public:
         mem0.__inst_name = __inst_name + "/mem0";
         mem1.__inst_name = __inst_name + "/mem1";
         mem2.__inst_name = __inst_name + "/mem2";
-        iospace.region_base_in[0] = _BIND((uint32_t)0);
-        iospace.region_size_in[0] = _BIND((uint32_t)0x100);
-        iospace.region_base_in[1] = _BIND((uint32_t)0x100);
-        iospace.region_size_in[1] = _BIND((uint32_t)0xC000);
-        iospace.region_base_in[2] = _BIND((uint32_t)0xC100);
-        iospace.region_size_in[2] = _BIND((uint32_t)0x1000);
+        iospace.region_base_in[0] = _ASSIGN((uint32_t)0);
+        iospace.region_size_in[0] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[1] = _ASSIGN((uint32_t)0x100);
+        iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
+        iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
+        iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
@@ -1178,26 +1178,26 @@ public:
         mem0.__inst_name = __inst_name + "/mem0";
         mem1.__inst_name = __inst_name + "/mem1";
         mem2.__inst_name = __inst_name + "/mem2";
-        iospace.region_base_in[0] = _BIND((uint32_t)0);
-        iospace.region_size_in[0] = _BIND((uint32_t)0x100);
-        iospace.region_base_in[1] = _BIND((uint32_t)0x100);
-        iospace.region_size_in[1] = _BIND((uint32_t)0xC000);
-        iospace.region_base_in[2] = _BIND((uint32_t)0xC100);
-        iospace.region_size_in[2] = _BIND((uint32_t)0x1000);
+        iospace.region_base_in[0] = _ASSIGN((uint32_t)0);
+        iospace.region_size_in[0] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[1] = _ASSIGN((uint32_t)0x100);
+        iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
+        iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
+        iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
-        accelerator.dma_out.awready_out = _BIND((bool)tribe.axi_in___05Fawready_out[0]);
-        accelerator.dma_out.wready_out = _BIND((bool)tribe.axi_in___05Fwready_out[0]);
-        accelerator.dma_out.bvalid_out = _BIND((bool)tribe.axi_in___05Fbvalid_out[0]);
-        accelerator.dma_out.bid_out = _BIND((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[0]);
-        accelerator.dma_out.arready_out = _BIND((bool)tribe.axi_in___05Farready_out[0]);
-        accelerator.dma_out.rvalid_out = _BIND((bool)tribe.axi_in___05Frvalid_out[0]);
-        accelerator.dma_out.rdata_out = _BIND(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
-        accelerator.dma_out.rlast_out = _BIND((bool)tribe.axi_in___05Frlast_out[0]);
-        accelerator.dma_out.rid_out = _BIND((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
+        accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
+        accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
+        accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
+        accelerator.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[0]);
+        accelerator.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[0]);
+        accelerator.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[0]);
+        accelerator.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
+        accelerator.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[0]);
+        accelerator.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         accelerator.__inst_name = __inst_name + "/accelerator";

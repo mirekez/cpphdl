@@ -155,10 +155,10 @@ public:
     _PORT(bool)                         read_in;
     _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
 
-    _PORT(bool)                         empty_out      = _BIND_VAR( empty_comb_func() );
-    _PORT(bool)                         full_out       = _BIND_VAR( full_comb_func() );
-    _PORT(bool)                         clear_in       = _BIND( false );
-    _PORT(bool)                         afull_out      = _BIND_VAR( afull_reg );
+    _PORT(bool)                         empty_out      = _ASSIGN_REG( empty_comb_func() );
+    _PORT(bool)                         full_out       = _ASSIGN_REG( full_comb_func() );
+    _PORT(bool)                         clear_in       = _ASSIGN( false );
+    _PORT(bool)                         afull_out      = _ASSIGN_REG( afull_reg );
 
     bool                         debugen_in;
 
@@ -175,10 +175,10 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = _BIND( 0xFFFFFFFFFFFFFFFFULL );
-        mem.write_addr_in = _BIND_VAR( wp_reg );
+        mem.write_mask_in = _ASSIGN( 0xFFFFFFFFFFFFFFFFULL );
+        mem.write_addr_in = _ASSIGN_REG( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = _BIND_VAR( rp_reg );
+        mem.read_addr_in  = _ASSIGN_REG( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem._assign();
@@ -499,7 +499,7 @@ public:
 
     _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     _PORT(bool)                      read_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _BIND_VAR( data_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_REG( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -589,8 +589,8 @@ private:
 public:
     void _assign()
     {
-        source_out.valid_in = _BIND_VAR(valid_reg);
-        source_out.data_in = _BIND_VAR(data_reg);
+        source_out.valid_in = _ASSIGN_REG(valid_reg);
+        source_out.data_in = _ASSIGN_REG(data_reg);
     }
 
     void _work(bool reset)
@@ -627,7 +627,7 @@ private:
 public:
     void _assign()
     {
-        sink_in.ready_out = _BIND_VAR(ready_reg);
+        sink_in.ready_out = _ASSIGN_REG(ready_reg);
     }
 
     void _work(bool reset)
@@ -869,7 +869,7 @@ class [[clang::annotate(
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
 
 private:
     u<8> value_comb;

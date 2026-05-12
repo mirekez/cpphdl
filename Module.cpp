@@ -260,7 +260,7 @@ bool Module::print(std::ofstream& out)
             && str_ending(port.name, "_out")  // sometimes in ports are assigned 0 in cpphdl, we dont need it in SV
             && port.initializer.sub.size() >= 1 && /*outdated*/ port.initializer.sub[0].value.find("__ZERO") != 0 /*we need assigning to zero only in C++, it's default in Verilog*/
             /*outdated*/ && port.initializer.sub[0].value != "nullptr") {
-            port.initializer.flags = Expr::FLAG_BIND;
+            port.initializer.flags = Expr::FLAG_ASSIGN;
             std::string s = port.initializer.str();
             if (!s.empty() && s.back() != '\n') {
                 s += ";\n";

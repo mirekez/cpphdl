@@ -9,11 +9,11 @@ class Execute: public Module
 public:
     _PORT(State)  state_in;
 
-    _PORT(uint32_t) alu_result_out      = _BIND( (uint32_t)alu_result_comb_func() );
-    _PORT(uint32_t) debug_alu_a_out     = _BIND_VAR( alu_a_comb_func() );
-    _PORT(uint32_t) debug_alu_b_out     = _BIND_VAR( alu_b_comb_func() );
-    _PORT(bool)     branch_taken_out    = _BIND_VAR( branch_taken_comb_func() );
-    _PORT(uint32_t) branch_target_out   = _BIND_VAR( branch_target_comb_func() );
+    _PORT(uint32_t) alu_result_out      = _ASSIGN( (uint32_t)alu_result_comb_func() );
+    _PORT(uint32_t) debug_alu_a_out     = _ASSIGN_REG( alu_a_comb_func() );
+    _PORT(uint32_t) debug_alu_b_out     = _ASSIGN_REG( alu_b_comb_func() );
+    _PORT(bool)     branch_taken_out    = _ASSIGN_REG( branch_taken_comb_func() );
+    _PORT(uint32_t) branch_target_out   = _ASSIGN_REG( branch_target_comb_func() );
 
 private:
 

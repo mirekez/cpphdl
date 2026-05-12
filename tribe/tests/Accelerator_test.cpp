@@ -107,17 +107,17 @@ class DirectAcceleratorTest : public Module
 public:
     void _assign()
     {
-        dut.axi_in.awvalid_in = _BIND_VAR(awvalid);
-        dut.axi_in.awaddr_in = _BIND_VAR(awaddr);
-        dut.axi_in.awid_in = _BIND_VAR(awid);
-        dut.axi_in.wvalid_in = _BIND_VAR(wvalid);
-        dut.axi_in.wdata_in = _BIND_VAR(wdata);
-        dut.axi_in.wlast_in = _BIND_VAR(wlast);
-        dut.axi_in.bready_in = _BIND_VAR(bready);
-        dut.axi_in.arvalid_in = _BIND_VAR(arvalid);
-        dut.axi_in.araddr_in = _BIND_VAR(araddr);
-        dut.axi_in.arid_in = _BIND_VAR(arid);
-        dut.axi_in.rready_in = _BIND_VAR(rready);
+        dut.axi_in.awvalid_in = _ASSIGN_REG(awvalid);
+        dut.axi_in.awaddr_in = _ASSIGN_REG(awaddr);
+        dut.axi_in.awid_in = _ASSIGN_REG(awid);
+        dut.axi_in.wvalid_in = _ASSIGN_REG(wvalid);
+        dut.axi_in.wdata_in = _ASSIGN_REG(wdata);
+        dut.axi_in.wlast_in = _ASSIGN_REG(wlast);
+        dut.axi_in.bready_in = _ASSIGN_REG(bready);
+        dut.axi_in.arvalid_in = _ASSIGN_REG(arvalid);
+        dut.axi_in.araddr_in = _ASSIGN_REG(araddr);
+        dut.axi_in.arid_in = _ASSIGN_REG(arid);
+        dut.axi_in.rready_in = _ASSIGN_REG(rready);
         dut.__inst_name = "accelerator";
         dut._assign();
         AXI4_DRIVER_FROM(dma_mem.axi_in, dut.dma_out);

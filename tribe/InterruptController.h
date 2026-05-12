@@ -28,10 +28,10 @@ public:
     _PORT(bool) clint_msip_in;
     _PORT(bool) clint_mtip_in;
 
-    _PORT(uint32_t) mip_out = _BIND_VAR(mip_comb_func());
-    _PORT(bool) interrupt_valid_out = _BIND_VAR(interrupt_valid_comb_func());
-    _PORT(uint32_t) interrupt_cause_out = _BIND_VAR(interrupt_cause_comb_func());
-    _PORT(bool) interrupt_to_supervisor_out = _BIND_VAR(interrupt_to_supervisor_comb_func());
+    _PORT(uint32_t) mip_out = _ASSIGN_REG(mip_comb_func());
+    _PORT(bool) interrupt_valid_out = _ASSIGN_REG(interrupt_valid_comb_func());
+    _PORT(uint32_t) interrupt_cause_out = _ASSIGN_REG(interrupt_cause_comb_func());
+    _PORT(bool) interrupt_to_supervisor_out = _ASSIGN_REG(interrupt_to_supervisor_comb_func());
 
 private:
     // Hardware interrupt pending bits merged with writable software MIP bits.

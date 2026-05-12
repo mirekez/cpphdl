@@ -51,23 +51,23 @@ public:
     _PORT(uint8_t)   write_mask_in;
     _PORT(bool)      read_in;
     _PORT(uint32_t)  addr_in;
-    _PORT(uint32_t)  read_data_out = _BIND_VAR(read_data_comb_func());
-    _PORT(uint32_t)  read_addr_out = _BIND_VAR(read_addr_comb_func());
-    _PORT(bool)      read_valid_out = _BIND_VAR(read_valid_comb_func());
-    _PORT(bool)      busy_out = _BIND_VAR(busy_comb_func());
+    _PORT(uint32_t)  read_data_out = _ASSIGN_REG(read_data_comb_func());
+    _PORT(uint32_t)  read_addr_out = _ASSIGN_REG(read_addr_comb_func());
+    _PORT(bool)      read_valid_out = _ASSIGN_REG(read_valid_comb_func());
+    _PORT(bool)      busy_out = _ASSIGN_REG(busy_comb_func());
     _PORT(bool)      stall_in;
     _PORT(bool)      flush_in;
     _PORT(bool)      invalidate_in;
     _PORT(bool)      cache_disable_in;
 
-    _PORT(bool)      mem_write_out = _BIND(write_in());
-    _PORT(uint32_t)  mem_write_data_out = _BIND(write_data_in());
-    _PORT(uint8_t)   mem_write_mask_out = _BIND(write_mask_in());
-    _PORT(bool)      mem_read_out = _BIND_VAR(mem_read_comb_func());
-    _PORT(uint32_t)  mem_addr_out = _BIND_VAR(mem_addr_comb_func());
+    _PORT(bool)      mem_write_out = _ASSIGN(write_in());
+    _PORT(uint32_t)  mem_write_data_out = _ASSIGN(write_data_in());
+    _PORT(uint8_t)   mem_write_mask_out = _ASSIGN(write_mask_in());
+    _PORT(bool)      mem_read_out = _ASSIGN_REG(mem_read_comb_func());
+    _PORT(uint32_t)  mem_addr_out = _ASSIGN_REG(mem_addr_comb_func());
     _PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
     _PORT(bool)      mem_wait_in;
-    _PORT(L1CachePerf) perf_out = _BIND_VAR(perf_comb_func());
+    _PORT(L1CachePerf) perf_out = _ASSIGN_REG(perf_comb_func());
 
     bool debugen_in;
 
@@ -75,26 +75,26 @@ public:
     {
         size_t i;
         for (i = 0; i < WAYS; ++i) {
-            even_ram[i].addr_in = _BIND((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            even_ram[i].data_in = _BIND(refill_even_line_comb_func());
-            even_ram[i].wr_in = _BIND_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
-            even_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
+            even_ram[i].addr_in = _ASSIGN((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            even_ram[i].data_in = _ASSIGN(refill_even_line_comb_func());
+            even_ram[i].wr_in = _ASSIGN_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
+            even_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
             even_ram[i].id_in = ID * 100 + i * 3;
 
-            odd_ram[i].addr_in = _BIND((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            odd_ram[i].data_in = _BIND(refill_odd_line_comb_func());
-            odd_ram[i].wr_in = _BIND_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
-            odd_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
+            odd_ram[i].addr_in = _ASSIGN((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            odd_ram[i].data_in = _ASSIGN(refill_odd_line_comb_func());
+            odd_ram[i].wr_in = _ASSIGN_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
+            odd_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
             odd_ram[i].id_in = ID * 100 + i * 3 + 1;
 
-            tag_ram[i].addr_in = _BIND((state_reg == ST_INIT) ? init_set_reg :
+            tag_ram[i].addr_in = _ASSIGN((state_reg == ST_INIT) ? init_set_reg :
                                         (write_in() ? input_set_comb_func() :
                                          ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
-            tag_ram[i].data_in = _BIND((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
-            tag_ram[i].wr_in = _BIND_I((state_reg == ST_INIT) ||
+            tag_ram[i].data_in = _ASSIGN((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
+            tag_ram[i].wr_in = _ASSIGN_I((state_reg == ST_INIT) ||
                                         ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i) ||
                                         write_in());
-            tag_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
+            tag_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
             tag_ram[i].id_in = ID * 100 + i * 3 + 2;
         }
     }

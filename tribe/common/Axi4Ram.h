@@ -28,27 +28,27 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
-        axi_in.bid_out = _BIND_VAR(write_id_reg);
-        axi_in.arready_out = _BIND(!read_valid_reg);
-        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
+        axi_in.awready_out = _ASSIGN(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _ASSIGN_REG(write_resp_valid_reg);
+        axi_in.bid_out = _ASSIGN_REG(write_id_reg);
+        axi_in.arready_out = _ASSIGN(!read_valid_reg);
+        axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
         axi_in.rdata_out = ram.read0_data_out;
-        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
-        axi_in.rid_out = _BIND_VAR(read_id_reg);
+        axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
+        axi_in.rid_out = _ASSIGN_REG(read_id_reg);
 
-        ram.addr0_in = _BIND((u<clog2(DEPTH)>)(read_valid_reg ? (uint32_t)read_addr_reg / (DATA_WIDTH / 8) : axi_in.araddr_in() / (DATA_WIDTH / 8)));
-        ram.read0_in = _BIND(axi_in.arvalid_in() && axi_in.arready_out());
-        ram.write0_in = _BIND(false);
-        ram.write0_data_in = _BIND(logic<DATA_WIDTH>(0));
-        ram.write0_mask_in = _BIND(logic<DATA_WIDTH / 8>(0));
+        ram.addr0_in = _ASSIGN((u<clog2(DEPTH)>)(read_valid_reg ? (uint32_t)read_addr_reg / (DATA_WIDTH / 8) : axi_in.araddr_in() / (DATA_WIDTH / 8)));
+        ram.read0_in = _ASSIGN(axi_in.arvalid_in() && axi_in.arready_out());
+        ram.write0_in = _ASSIGN(false);
+        ram.write0_data_in = _ASSIGN(logic<DATA_WIDTH>(0));
+        ram.write0_mask_in = _ASSIGN(logic<DATA_WIDTH / 8>(0));
 
-        ram.addr1_in = _BIND((u<clog2(DEPTH)>)((uint32_t)write_addr_reg / (DATA_WIDTH / 8)));
-        ram.read1_in = _BIND(false);
-        ram.write1_in = _BIND(axi_in.wvalid_in() && axi_in.wready_out());
+        ram.addr1_in = _ASSIGN((u<clog2(DEPTH)>)((uint32_t)write_addr_reg / (DATA_WIDTH / 8)));
+        ram.read1_in = _ASSIGN(false);
+        ram.write1_in = _ASSIGN(axi_in.wvalid_in() && axi_in.wready_out());
         ram.write1_data_in = axi_in.wdata_in;
-        ram.write1_mask_in = _BIND((logic<DATA_WIDTH / 8>)FULL_MASK);
+        ram.write1_mask_in = _ASSIGN((logic<DATA_WIDTH / 8>)FULL_MASK);
         ram.debugen_in = debugen_in;
         ram.__inst_name = __inst_name + "/ram";
         ram._assign();

@@ -21,7 +21,7 @@ public:
 
     _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     _PORT(bool)                      read_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _BIND_VAR( data_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_REG( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -136,12 +136,12 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        mem.write_addr_in = _BIND_VAR( write_addr_reg );
-        mem.write_in =      _BIND_VAR( write_reg );
-        mem.write_data_in = _BIND_VAR( data_reg );
-        mem.write_mask_in = _BIND( logic<MEM_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
-        mem.read_addr_in =  _BIND_VAR( read_addr_reg );
-        mem.read_in =       _BIND_VAR( read_reg );
+        mem.write_addr_in = _ASSIGN_REG( write_addr_reg );
+        mem.write_in =      _ASSIGN_REG( write_reg );
+        mem.write_data_in = _ASSIGN_REG( data_reg );
+        mem.write_mask_in = _ASSIGN( logic<MEM_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.read_addr_in =  _ASSIGN_REG( read_addr_reg );
+        mem.read_in =       _ASSIGN_REG( read_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem._assign();

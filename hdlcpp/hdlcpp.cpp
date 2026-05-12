@@ -396,7 +396,7 @@ struct Converter : SyntaxVisitor<Converter> {
     std::string assignWrapper(const std::string& rhs, const std::string& index)
     {
         auto suffix = index.empty() ? "" : "_I";
-        return std::string(mod->varNames.count(rhs) || rhs.find("_func()") != std::string::npos ? "_BIND_VAR" : "_BIND") + suffix + "( " + rhs + " )";
+        return std::string(mod->varNames.count(rhs) || rhs.find("_func()") != std::string::npos ? "_ASSIGN_REG" : "_ASSIGN") + suffix + "( " + rhs + " )";
     }
 
     std::string translateExpr(std::string s)
@@ -1056,7 +1056,7 @@ struct Converter : SyntaxVisitor<Converter> {
                             rhs = f.name + "()";
                         }
                     }
-                    p.init = std::string(" = ") + (m.varNames.count(a.second) ? "_BIND_VAR( " : "_BIND( ") + rhs + " )";
+                    p.init = std::string(" = ") + (m.varNames.count(a.second) ? "_ASSIGN_REG( " : "_ASSIGN( ") + rhs + " )";
                 }
             }
         }

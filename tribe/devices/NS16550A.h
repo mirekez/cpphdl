@@ -20,8 +20,8 @@ public:
 
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
-    _PORT(bool) uart_valid_out = _BIND_VAR(uart_valid_reg);
-    _PORT(uint8_t) uart_data_out = _BIND_VAR(uart_data_reg);
+    _PORT(bool) uart_valid_out = _ASSIGN_REG(uart_valid_reg);
+    _PORT(uint8_t) uart_data_out = _ASSIGN_REG(uart_data_reg);
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -85,15 +85,15 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
-        axi_in.bid_out = _BIND_VAR(write_id_reg);
-        axi_in.arready_out = _BIND(!read_valid_reg);
-        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
-        axi_in.rdata_out = _BIND_VAR(read_data_comb_func());
-        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
-        axi_in.rid_out = _BIND_VAR(read_id_reg);
+        axi_in.awready_out = _ASSIGN(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _ASSIGN_REG(write_resp_valid_reg);
+        axi_in.bid_out = _ASSIGN_REG(write_id_reg);
+        axi_in.arready_out = _ASSIGN(!read_valid_reg);
+        axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
+        axi_in.rdata_out = _ASSIGN_REG(read_data_comb_func());
+        axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
+        axi_in.rid_out = _ASSIGN_REG(read_id_reg);
     }
 
     void _work(bool reset)

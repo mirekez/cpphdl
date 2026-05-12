@@ -184,27 +184,27 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
-        axi_in.bid_out = _BIND_VAR(write_id_reg);
-        axi_in.arready_out = _BIND(!read_valid_reg);
-        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
-        axi_in.rdata_out = _BIND_VAR(read_data_reg);
-        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
-        axi_in.rid_out = _BIND_VAR(read_id_reg);
+        axi_in.awready_out = _ASSIGN(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _ASSIGN_REG(write_resp_valid_reg);
+        axi_in.bid_out = _ASSIGN_REG(write_id_reg);
+        axi_in.arready_out = _ASSIGN(!read_valid_reg);
+        axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
+        axi_in.rdata_out = _ASSIGN_REG(read_data_reg);
+        axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
+        axi_in.rid_out = _ASSIGN_REG(read_id_reg);
 
-        dma_out.awvalid_in = _BIND(state_reg == ST_DMA_AW);
-        dma_out.awaddr_in = _BIND((u<ADDR_WIDTH>)dma_addr_comb_func());
-        dma_out.awid_in = _BIND((u<ID_WIDTH>)0);
-        dma_out.wvalid_in = _BIND(state_reg == ST_DMA_W);
-        dma_out.wdata_in = _BIND(dma_wbeat_comb_func());
-        dma_out.wlast_in = _BIND(state_reg == ST_DMA_W);
-        dma_out.bready_in = _BIND(state_reg == ST_DMA_B && dma_out.bvalid_out());
-        dma_out.arvalid_in = _BIND(state_reg == ST_DMA_AR);
-        dma_out.araddr_in = _BIND((u<ADDR_WIDTH>)dma_addr_comb_func());
-        dma_out.arid_in = _BIND((u<ID_WIDTH>)0);
-        dma_out.rready_in = _BIND(state_reg == ST_DMA_R && dma_out.rvalid_out());
+        dma_out.awvalid_in = _ASSIGN(state_reg == ST_DMA_AW);
+        dma_out.awaddr_in = _ASSIGN((u<ADDR_WIDTH>)dma_addr_comb_func());
+        dma_out.awid_in = _ASSIGN((u<ID_WIDTH>)0);
+        dma_out.wvalid_in = _ASSIGN(state_reg == ST_DMA_W);
+        dma_out.wdata_in = _ASSIGN(dma_wbeat_comb_func());
+        dma_out.wlast_in = _ASSIGN(state_reg == ST_DMA_W);
+        dma_out.bready_in = _ASSIGN(state_reg == ST_DMA_B && dma_out.bvalid_out());
+        dma_out.arvalid_in = _ASSIGN(state_reg == ST_DMA_AR);
+        dma_out.araddr_in = _ASSIGN((u<ADDR_WIDTH>)dma_addr_comb_func());
+        dma_out.arid_in = _ASSIGN((u<ID_WIDTH>)0);
+        dma_out.rready_in = _ASSIGN(state_reg == ST_DMA_R && dma_out.rvalid_out());
     }
 
     void _work(bool reset)

@@ -16,14 +16,14 @@ public:
     _PORT(logic<MEM_WIDTH_BYTES*8>)  write0_data_in;
     _PORT(logic<MEM_WIDTH_BYTES>)    write0_mask_in;
     _PORT(bool)                      read0_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read0_data_out = _BIND_VAR( read_data0_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read0_data_out = _ASSIGN_REG( read_data0_out_comb_func() );
 
     _PORT(u<clog2(MEM_DEPTH)>)       addr1_in;
     _PORT(bool)                      write1_in;
     _PORT(logic<MEM_WIDTH_BYTES*8>)  write1_data_in;
     _PORT(logic<MEM_WIDTH_BYTES>)    write1_mask_in;
     _PORT(bool)                      read1_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read1_data_out = _BIND_VAR( read_data1_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read1_data_out = _ASSIGN_REG( read_data1_out_comb_func() );
 
     bool                debugen_in;
 

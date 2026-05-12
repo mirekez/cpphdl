@@ -25,7 +25,7 @@ struct PipelineStage : public cpphdl::Module
     using STATE = OWN_STATE;
 
     _PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
-    _PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = _BIND_VAR( state_reg );
+    _PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = _ASSIGN_REG( state_reg );
 
     cpphdl::reg<cpphdl::array<STATE,LENGTH-ID>> state_reg;
 
@@ -127,7 +127,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = _BIND_VAR( states_comb_func() );
+                        stage.state_in = _ASSIGN_REG( states_comb_func() );
                         stage._assign();
                     }()
                 ),

@@ -37,7 +37,7 @@ static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
 #else
 #define PORT_VALUE(val) val()
 #endif
-#define PORT_EXPR(val) _BIND(PORT_VALUE(val))
+#define PORT_EXPR(val) _ASSIGN(PORT_VALUE(val))
 
 static uint32_t prbs32(uint32_t x)
 {
@@ -81,17 +81,17 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        cache.read_in = _BIND_VAR(read);
-        cache.write_in = _BIND_VAR(write);
-        cache.addr_in = _BIND_VAR(addr);
-        cache.write_data_in = _BIND_VAR(write_data);
-        cache.write_mask_in = _BIND_VAR(write_mask);
-        cache.mem_read_data_in = _BIND(direct_mode ? (logic<32>)direct_mem_data : (logic<32>)ram.read_data_out());
-        cache.mem_wait_in = _BIND(false);
-        cache.stall_in = _BIND_VAR(stall);
-        cache.flush_in = _BIND_VAR(flush);
-        cache.invalidate_in = _BIND(false);
-        cache.cache_disable_in = _BIND_VAR(direct_mode);
+        cache.read_in = _ASSIGN_REG(read);
+        cache.write_in = _ASSIGN_REG(write);
+        cache.addr_in = _ASSIGN_REG(addr);
+        cache.write_data_in = _ASSIGN_REG(write_data);
+        cache.write_mask_in = _ASSIGN_REG(write_mask);
+        cache.mem_read_data_in = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : (logic<32>)ram.read_data_out());
+        cache.mem_wait_in = _ASSIGN(false);
+        cache.stall_in = _ASSIGN_REG(stall);
+        cache.flush_in = _ASSIGN_REG(flush);
+        cache.invalidate_in = _ASSIGN(false);
+        cache.cache_disable_in = _ASSIGN_REG(direct_mode);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();
@@ -542,17 +542,17 @@ class TestL1CacheWideRefill : public Module
 public:
     void _assign()
     {
-        cache.read_in = _BIND_VAR(read);
-        cache.write_in = _BIND(false);
-        cache.addr_in = _BIND_VAR(addr);
-        cache.write_data_in = _BIND(0);
-        cache.write_mask_in = _BIND(0);
-        cache.mem_read_data_in = _BIND(mem_read_data_comb_func());
-        cache.mem_wait_in = _BIND(false);
-        cache.stall_in = _BIND(false);
-        cache.flush_in = _BIND(false);
-        cache.invalidate_in = _BIND(false);
-        cache.cache_disable_in = _BIND(false);
+        cache.read_in = _ASSIGN_REG(read);
+        cache.write_in = _ASSIGN(false);
+        cache.addr_in = _ASSIGN_REG(addr);
+        cache.write_data_in = _ASSIGN(0);
+        cache.write_mask_in = _ASSIGN(0);
+        cache.mem_read_data_in = _ASSIGN(mem_read_data_comb_func());
+        cache.mem_wait_in = _ASSIGN(false);
+        cache.stall_in = _ASSIGN(false);
+        cache.flush_in = _ASSIGN(false);
+        cache.invalidate_in = _ASSIGN(false);
+        cache.cache_disable_in = _ASSIGN(false);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
         cache._assign();

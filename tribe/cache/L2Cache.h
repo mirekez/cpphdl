@@ -59,16 +59,16 @@ public:
     _PORT(uint32_t) i_addr_in;
     _PORT(uint32_t) i_write_data_in;
     _PORT(uint8_t) i_write_mask_in;
-    _PORT(logic<PORT_BITWIDTH>) i_read_data_out = _BIND_VAR(read_data_comb_func());
-    _PORT(bool) i_wait_out = _BIND_VAR(i_wait_comb_func());
+    _PORT(logic<PORT_BITWIDTH>) i_read_data_out = _ASSIGN_REG(read_data_comb_func());
+    _PORT(bool) i_wait_out = _ASSIGN_REG(i_wait_comb_func());
 
     _PORT(bool) d_read_in;
     _PORT(bool) d_write_in;
     _PORT(uint32_t) d_addr_in;
     _PORT(uint32_t) d_write_data_in;
     _PORT(uint8_t) d_write_mask_in;
-    _PORT(logic<PORT_BITWIDTH>) d_read_data_out = _BIND_VAR(read_data_comb_func());
-    _PORT(bool) d_wait_out = _BIND_VAR(d_wait_comb_func());
+    _PORT(logic<PORT_BITWIDTH>) d_read_data_out = _ASSIGN_REG(read_data_comb_func());
+    _PORT(bool) d_wait_out = _ASSIGN_REG(d_wait_comb_func());
 
     _PORT(uint32_t) memory_base_in;
     _PORT(uint32_t) memory_size_in;
@@ -948,10 +948,10 @@ public:
     {
         size_t i;
         for (i = 0; i < DATA_BANKS; ++i) {
-            data_ram[i].addr_in = _BIND((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func());
-            data_ram[i].rd_in = _BIND((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
+            data_ram[i].addr_in = _ASSIGN((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func());
+            data_ram[i].rd_in = _ASSIGN((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
-            data_ram[i].wr_in = _BIND_I(
+            data_ram[i].wr_in = _ASSIGN_I(
                 // Fill writes only the words carried by the current AXI beat; stores update one or two word banks.
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
@@ -960,7 +960,7 @@ public:
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (req_word_comb_func() == (i % LINE_WORDS) ||
                      (((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)))));
-            data_ram[i].data_in = _BIND_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
+            data_ram[i].data_in = _ASSIGN_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 // Store hit path merges CPU bytes with old cached words; fill path selects/merges words from AXI data.
                 ((((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
                     write_next_word_comb_func() : write_word_comb_func()) :
@@ -971,42 +971,42 @@ public:
         }
 
         for (i = 0; i < WAYS; ++i) {
-            tag_ram[i].addr_in = _BIND((state_reg == ST_INIT) ? init_set_reg :
+            tag_ram[i].addr_in = _ASSIGN((state_reg == ST_INIT) ? init_set_reg :
                 ((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func()));
-            tag_ram[i].rd_in = _BIND((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
+            tag_ram[i].rd_in = _ASSIGN((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
-            tag_ram[i].wr_in = _BIND_I((state_reg == ST_INIT) ||
+            tag_ram[i].wr_in = _ASSIGN_I((state_reg == ST_INIT) ||
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == i) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() && hit_way_comb_func() == i));
-            tag_ram[i].data_in = _BIND_VAR(tag_write_data_comb_func());
+            tag_ram[i].data_in = _ASSIGN_REG(tag_write_data_comb_func());
             tag_ram[i].id_in = 2100 + i;
         }
 
         for (i = 0; i < MEM_PORTS; ++i) {
-            axi_in[i].awready_out = _BIND_I(state_reg == ST_IDLE && !slave_aw_pending_reg[i] && !slave_bvalid_reg[i] &&
+            axi_in[i].awready_out = _ASSIGN_I(state_reg == ST_IDLE && !slave_aw_pending_reg[i] && !slave_bvalid_reg[i] &&
                 axi_in[i].awvalid_in());
-            axi_in[i].wready_out = _BIND_I(state_reg == ST_IDLE &&
+            axi_in[i].wready_out = _ASSIGN_I(state_reg == ST_IDLE &&
                 slave_write_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].bvalid_out = _BIND_VAR_I(slave_bvalid_reg[i]);
-            axi_in[i].bid_out = _BIND_VAR_I(slave_bid_reg[i]);
-            axi_in[i].arready_out = _BIND_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
+            axi_in[i].bvalid_out = _ASSIGN_REG_I(slave_bvalid_reg[i]);
+            axi_in[i].bid_out = _ASSIGN_REG_I(slave_bid_reg[i]);
+            axi_in[i].arready_out = _ASSIGN_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
                 !slave_write_pending_comb_func() && slave_read_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].rvalid_out = _BIND_VAR_I(slave_rvalid_reg[i]);
-            axi_in[i].rdata_out = _BIND_VAR_I(slave_rdata_reg[i]);
-            axi_in[i].rlast_out = _BIND_VAR_I(slave_rvalid_reg[i]);
-            axi_in[i].rid_out = _BIND_VAR_I(slave_rid_reg[i]);
+            axi_in[i].rvalid_out = _ASSIGN_REG_I(slave_rvalid_reg[i]);
+            axi_in[i].rdata_out = _ASSIGN_REG_I(slave_rdata_reg[i]);
+            axi_in[i].rlast_out = _ASSIGN_REG_I(slave_rvalid_reg[i]);
+            axi_in[i].rid_out = _ASSIGN_REG_I(slave_rid_reg[i]);
 
-            axi_out[i].awvalid_in = _BIND_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].awaddr_in = _BIND_VAR(axi_awaddr_local_comb_func());
-            axi_out[i].awid_in = _BIND((u<4>)0);
-            axi_out[i].wvalid_in = _BIND_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].wdata_in = _BIND_VAR(axi_wdata_comb_func());
-            axi_out[i].wlast_in = _BIND_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].bready_in = _BIND_I(axi_aw_sel_comb_func() == i);
-            axi_out[i].arvalid_in = _BIND_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
-            axi_out[i].araddr_in = _BIND_VAR(axi_araddr_local_comb_func());
-            axi_out[i].arid_in = _BIND((u<4>)0);
-            axi_out[i].rready_in = _BIND_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
+            axi_out[i].awvalid_in = _ASSIGN_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].awaddr_in = _ASSIGN_REG(axi_awaddr_local_comb_func());
+            axi_out[i].awid_in = _ASSIGN((u<4>)0);
+            axi_out[i].wvalid_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].wdata_in = _ASSIGN_REG(axi_wdata_comb_func());
+            axi_out[i].wlast_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].bready_in = _ASSIGN_I(axi_aw_sel_comb_func() == i);
+            axi_out[i].arvalid_in = _ASSIGN_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
+            axi_out[i].araddr_in = _ASSIGN_REG(axi_araddr_local_comb_func());
+            axi_out[i].arid_in = _ASSIGN((u<4>)0);
+            axi_out[i].rready_in = _ASSIGN_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
         }
     }
 

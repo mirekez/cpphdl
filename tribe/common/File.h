@@ -19,9 +19,9 @@ public:
 
     _PORT(uint8_t)      read_addr0_in;
     _PORT(uint8_t)      read_addr1_in;
-    _PORT(bool)         read_in          = _BIND( false );
-    _PORT(DTYPE)        read_data0_out   = _BIND_VAR( data0_out_comb_func() );
-    _PORT(DTYPE)        read_data1_out   = _BIND_VAR( data1_out_comb_func() );
+    _PORT(bool)         read_in          = _ASSIGN( false );
+    _PORT(DTYPE)        read_data0_out   = _ASSIGN_REG( data0_out_comb_func() );
+    _PORT(DTYPE)        read_data1_out   = _ASSIGN_REG( data1_out_comb_func() );
 
     bool    debugen_in;
 

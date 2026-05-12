@@ -52,7 +52,7 @@ struct Expr
         FLAG_NONE = 0,
         FLAG_WIRE = 1,
         FLAG_REG = 2,
-        FLAG_BIND = 4,  // translating _assign() function into generate assign block
+        FLAG_ASSIGN = 4,  // translating _assign() function into generate assign block
         FLAG_COMB = 8,  // it's comb block and return should be skipped
         FLAG_SPECVAL = 16,  // show number values from specialization if possible
 //        FLAG_CALL = 32,  // member inside call

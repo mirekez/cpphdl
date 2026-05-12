@@ -18,9 +18,9 @@ class VarArray : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) comb_out = _BIND_VAR(comb_comb_func());
-    _PORT(logic<16>) logic_out = _BIND_VAR(logic_comb_func());
-    _PORT(u<16>) reg_out = _BIND_VAR(reg_comb_func());
+    _PORT(u<16>) comb_out = _ASSIGN_REG(comb_comb_func());
+    _PORT(logic<16>) logic_out = _ASSIGN_REG(logic_comb_func());
+    _PORT(u<16>) reg_out = _ASSIGN_REG(reg_comb_func());
 
 private:
     u<16> c_1d[3];
@@ -464,7 +464,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = _BIND_VAR(seed);
+        dut.seed_in = _ASSIGN_REG(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

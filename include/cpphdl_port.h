@@ -81,7 +81,7 @@ public:
 //        func1_ = other.func1_;
 //        return *this;
 //    }
-
+\
     template<typename T> using remove_cvref_t = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
     template<typename F> using invoke_result_t = typename std::invoke_result_t<F&>;
 

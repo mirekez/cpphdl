@@ -56,12 +56,12 @@ private:
     }
 
 public:
-    _PORT(bool) done_out = _BIND_VAR(done_comb_func());
+    _PORT(bool) done_out = _ASSIGN_REG(done_comb_func());
 
     void _assign()
     {
-        source_out.valid_in = _BIND_VAR(valid_reg);
-        source_out.data_in = _BIND_VAR(data_reg);
+        source_out.valid_in = _ASSIGN_REG(valid_reg);
+        source_out.data_in = _ASSIGN_REG(data_reg);
     }
 
     void _work(bool reset)
@@ -133,12 +133,12 @@ private:
     }
 
 public:
-    _PORT(bool) done_out = _BIND_VAR(done_comb_func());
-    _PORT(bool) error_out = _BIND_VAR(error_comb_func());
+    _PORT(bool) done_out = _ASSIGN_REG(done_comb_func());
+    _PORT(bool) error_out = _ASSIGN_REG(error_comb_func());
 
     void _assign()
     {
-        sink_in.ready_out = _BIND_VAR(ready_reg);
+        sink_in.ready_out = _ASSIGN_REG(ready_reg);
     }
 
     void _work(bool reset)
@@ -267,7 +267,7 @@ public:
 #ifdef VERILATOR
 #ifdef VERILATOR_DRIVER
 #else
-        driver.source_out.ready_out = _BIND_VAR(bus.ready);
+        driver.source_out.ready_out = _ASSIGN_REG(bus.ready);
         driver._assign();
 #endif
         verilated.clk = 0;

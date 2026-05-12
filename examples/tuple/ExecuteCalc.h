@@ -12,16 +12,16 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
-    _PORT(bool)      mem_write_out      = _BIND_VAR( mem_write_reg );
-    _PORT(uint32_t)  mem_write_addr_out = _BIND_VAR( mem_addr_reg );
-    _PORT(uint32_t)  mem_write_data_out = _BIND_VAR( mem_data_reg );
-    _PORT(uint8_t)   mem_write_mask_out = _BIND_VAR( mem_mask_reg );
-    _PORT(bool)      mem_read_out       = _BIND_VAR( mem_read_reg );
-    _PORT(uint32_t)  mem_read_addr_out  = _BIND_VAR( mem_addr_reg );
+    _PORT(bool)      mem_write_out      = _ASSIGN_REG( mem_write_reg );
+    _PORT(uint32_t)  mem_write_addr_out = _ASSIGN_REG( mem_addr_reg );
+    _PORT(uint32_t)  mem_write_data_out = _ASSIGN_REG( mem_data_reg );
+    _PORT(uint8_t)   mem_write_mask_out = _ASSIGN_REG( mem_mask_reg );
+    _PORT(bool)      mem_read_out       = _ASSIGN_REG( mem_read_reg );
+    _PORT(uint32_t)  mem_read_addr_out  = _ASSIGN_REG( mem_addr_reg );
 
-    _PORT(uint32_t)  alu_result_out    = _BIND( (uint32_t)alu_result_comb_func() );
-    _PORT(bool)      branch_taken_out  = _BIND_VAR( branch_taken_comb_func() );
-    _PORT(uint32_t)  branch_target_out = _BIND_VAR( branch_target_comb_func() );
+    _PORT(uint32_t)  alu_result_out    = _ASSIGN( (uint32_t)alu_result_comb_func() );
+    _PORT(bool)      branch_taken_out  = _ASSIGN_REG( branch_taken_comb_func() );
+    _PORT(uint32_t)  branch_target_out = _ASSIGN_REG( branch_target_comb_func() );
 
     struct State
     {

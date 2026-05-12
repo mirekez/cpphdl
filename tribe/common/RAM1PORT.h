@@ -16,7 +16,7 @@ public:
     _PORT(logic<WIDTH>)    data_in;
     _PORT(bool)            wr_in;
     _PORT(bool)            rd_in;
-    _PORT(logic<WIDTH>)    q_out = _BIND_VAR( q_out_reg );
+    _PORT(logic<WIDTH>)    q_out = _ASSIGN_REG( q_out_reg );
     int id_in;
 
 private:

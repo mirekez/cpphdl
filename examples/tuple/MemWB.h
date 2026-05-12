@@ -13,9 +13,9 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
     _PORT(uint32_t)   mem_data_in;
-    _PORT(uint32_t)   regs_data_out = _BIND_VAR( regs_out_comb_func() );
-    _PORT(uint8_t)    regs_wr_id_out = _BIND( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
-    _PORT(bool)       regs_write_out = _BIND_VAR( regs_write_comb_func() );
+    _PORT(uint32_t)   regs_data_out = _ASSIGN_REG( regs_out_comb_func() );
+    _PORT(uint8_t)    regs_wr_id_out = _ASSIGN( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
+    _PORT(bool)       regs_write_out = _ASSIGN_REG( regs_write_comb_func() );
 
     struct State
     {

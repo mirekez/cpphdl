@@ -71,44 +71,44 @@ public:
     {
         u8 i;
 
-        master_out.awvalid_in = _BIND( !aw_active && slaves_in[aw_next_comb_func()].awvalid_in() );
-        master_out.awaddr_in  = _BIND( slaves_in[aw_next_comb_func()].awaddr_in() );
-        master_out.awid_in    = _BIND( slaves_in[aw_next_comb_func()].awid_in() );
+        master_out.awvalid_in = _ASSIGN( !aw_active && slaves_in[aw_next_comb_func()].awvalid_in() );
+        master_out.awaddr_in  = _ASSIGN( slaves_in[aw_next_comb_func()].awaddr_in() );
+        master_out.awid_in    = _ASSIGN( slaves_in[aw_next_comb_func()].awid_in() );
 
         for (i = 0; i < N; i++) {
-            slaves_in[i].awready_out = _BIND_I( (!aw_active && aw_next_comb_func() == i) ? master_out.awready_out() : 0 );
+            slaves_in[i].awready_out = _ASSIGN_I( (!aw_active && aw_next_comb_func() == i) ? master_out.awready_out() : 0 );
         }
 
         // W channel (follows AW)
-        master_out.wvalid_in = _BIND( aw_active ? slaves_in[aw_sel].wvalid_in() : 0 );
-        master_out.wdata_in  = _BIND( slaves_in[aw_sel].wdata_in() );
-        master_out.wlast_in  = _BIND( slaves_in[aw_sel].wlast_in() );
+        master_out.wvalid_in = _ASSIGN( aw_active ? slaves_in[aw_sel].wvalid_in() : 0 );
+        master_out.wdata_in  = _ASSIGN( slaves_in[aw_sel].wdata_in() );
+        master_out.wlast_in  = _ASSIGN( slaves_in[aw_sel].wlast_in() );
 
         for (i = 0; i < N; i++) {
-            slaves_in[i].wready_out = _BIND_I( (aw_active && aw_sel == i) ? master_out.wready_out() : 0 );
+            slaves_in[i].wready_out = _ASSIGN_I( (aw_active && aw_sel == i) ? master_out.wready_out() : 0 );
         }
 
         // B response routing
-        master_out.bready_in = _BIND( slaves_in[aw_sel].bready_in() );
+        master_out.bready_in = _ASSIGN( slaves_in[aw_sel].bready_in() );
 
         for (i = 0; i < N; i++) {
-            slaves_in[i].bvalid_out = _BIND_I( (aw_sel == i) ? master_out.bvalid_out() : 0 );
+            slaves_in[i].bvalid_out = _ASSIGN_I( (aw_sel == i) ? master_out.bvalid_out() : 0 );
             slaves_in[i].bid_out    = master_out.bid_out;
         }
 
-        master_out.arvalid_in = _BIND( !ar_active && slaves_in[ar_next_comb_func()].arvalid_in() );
-        master_out.araddr_in  = _BIND( slaves_in[ar_next_comb_func()].araddr_in() );
-        master_out.arid_in    = _BIND( slaves_in[ar_next_comb_func()].arid_in() );
+        master_out.arvalid_in = _ASSIGN( !ar_active && slaves_in[ar_next_comb_func()].arvalid_in() );
+        master_out.araddr_in  = _ASSIGN( slaves_in[ar_next_comb_func()].araddr_in() );
+        master_out.arid_in    = _ASSIGN( slaves_in[ar_next_comb_func()].arid_in() );
 
         for (i = 0; i < N; i++) {
-            slaves_in[i].arready_out = _BIND_I( (!ar_active && ar_next_comb_func() == i) ? master_out.arready_out() : 0 );
+            slaves_in[i].arready_out = _ASSIGN_I( (!ar_active && ar_next_comb_func() == i) ? master_out.arready_out() : 0 );
         }
 
         // R response routing
-        master_out.rready_in = _BIND( slaves_in[ar_sel].rready_in() );
+        master_out.rready_in = _ASSIGN( slaves_in[ar_sel].rready_in() );
 
         for (i = 0; i < N; i++) {
-            slaves_in[i].rvalid_out = _BIND_I( (ar_sel == i) ? master_out.rvalid_out() : 0 );
+            slaves_in[i].rvalid_out = _ASSIGN_I( (ar_sel == i) ? master_out.rvalid_out() : 0 );
             slaves_in[i].rdata_out  = master_out.rdata_out;
             slaves_in[i].rlast_out  = master_out.rlast_out;
             slaves_in[i].rid_out    = master_out.rid_out;

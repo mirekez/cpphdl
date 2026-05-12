@@ -175,17 +175,17 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.awvalid_in = _BIND_VAR(awvalid);
-        dut.awaddr_in = _BIND_VAR(awaddr);
-        dut.awid_in = _BIND_VAR(awid);
-        dut.wvalid_in = _BIND_VAR(wvalid);
-        dut.wdata_in = _BIND_VAR(wdata);
-        dut.wlast_in = _BIND_VAR(wlast);
-        dut.bready_in = _BIND_VAR(bready);
-        dut.arvalid_in = _BIND_VAR(arvalid);
-        dut.araddr_in = _BIND_VAR(araddr);
-        dut.arid_in = _BIND_VAR(arid);
-        dut.rready_in = _BIND_VAR(rready);
+        dut.awvalid_in = _ASSIGN_REG(awvalid);
+        dut.awaddr_in = _ASSIGN_REG(awaddr);
+        dut.awid_in = _ASSIGN_REG(awid);
+        dut.wvalid_in = _ASSIGN_REG(wvalid);
+        dut.wdata_in = _ASSIGN_REG(wdata);
+        dut.wlast_in = _ASSIGN_REG(wlast);
+        dut.bready_in = _ASSIGN_REG(bready);
+        dut.arvalid_in = _ASSIGN_REG(arvalid);
+        dut.araddr_in = _ASSIGN_REG(araddr);
+        dut.arid_in = _ASSIGN_REG(arid);
+        dut.rready_in = _ASSIGN_REG(rready);
         dut.__inst_name = "iouart_smoke";
         dut._assign();
 #endif

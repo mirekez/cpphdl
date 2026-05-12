@@ -52,41 +52,26 @@ struct cpphdl_exception
 #include "cpphdl_module.h"
 #include "cpphdl_port.h"
 
-#ifdef CPPHDL_STATIC  // for non static version we capture this in comb functions
-
-#define _PORT(A...) inline static cpphdl::function_ref<A>
-#define _BIND_VAR(a...)  +[]() { return &a; }  // variable
-#define _BIND(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
-//#define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
-
-#define _LAZY_COMB(name, type...) \
-    type name; \
-    inline static long __prev_sys_clock_##name = -1; \
-    static type& name##_func() { \
-        if (__prev_sys_clock_##name == sys_clock) { \
-            return name; \
-        } \
-        __prev_sys_clock_##name = sys_clock;
-
-#define STATIC inline static
-
-#else  // CPPHDL_STATIC
+#ifndef CPPHDL_STATIC  // static version is faster but not used now
 
 #define _PORT(A...) cpphdl::function_ref<A>
-#define _BIND_VAR(a...)  [&]() { return &a; } // variable
-#define _BIND(a...) [&]() { return a; }  // expression
-#define CPPHDL_UNPAREN(a...) a
-#define _BIND_VAR_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; } // variable
-#define _BIND_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
-#define _BIND_VAR_I(a...)  [&,i]() { return &a; } // variable
-#define _BIND_I(a...) [&,i]() { return a; }  // expression
-#define _BIND_VAR_J(a...)  [&,j]() { return &a; } // variable
-#define _BIND_J(a...) [&,j]() { return a; }  // expression
-#define _BIND_VAR_IJ(a...)  [&,i,j]() { return &a; } // variable
-#define _BIND_IJ(a...) [&,i,j]() { return a; }  // expression
-#define _BIND_VAR_IJK(a...)  [&,i,j,k]() { return &a; } // variable
-#define _BIND_IJK(a...) [&,i,j,k]() { return a; }  // expression
+#define _ASSIGN(a...) [&]() { return a; }  // any expression (uses std::function, captures all object's pointers in a call chain, using heap)
+#define _ASSIGN_REG(a...)  [&]() { return &a; }  // (faster) register or comb() returning ref to lvalue (uses function_ref, captures only one ref, dont use heap)
 
+#define _ASSIGN_I(a...) [&,i]() { return a; }  // any expression
+#define _ASSIGN_J(a...) [&,j]() { return a; }  // any expression
+#define _ASSIGN_IJ(a...) [&,i,j]() { return a; }  // any expression
+#define _ASSIGN_IJK(a...) [&,i,j,k]() { return a; }  // any expression
+#define _ASSIGN_REG_I(a...)  [&,i]() { return &a; }  // (faster) register or comb() returning ref to lvalue
+#define _ASSIGN_REG_J(a...)  [&,j]() { return &a; }  // (faster) register or comb() returning ref to lvalue
+#define _ASSIGN_REG_IJ(a...)  [&,i,j]() { return &a; }  // (faster) register or comb() returning ref to lvalue
+#define _ASSIGN_REG_IJK(a...)  [&,i,j,k]() { return &a; }  // (faster) register or comb() returning ref to lvalue
+
+#define CPPHDL_UNPAREN(a...) a
+#define _ASSIGN_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
+#define _ASSIGN_REG_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; }  // (faster) register or comb returning &
+
+// _LAZY_COMB saves some time when calling comb() 
 #define _LAZY_COMB(name, type...) \
     type name; \
     long __prev_sys_clock_##name = -1; \
@@ -96,6 +81,20 @@ struct cpphdl_exception
         } \
         __prev_sys_clock_##name = sys_clock;
 
-#define STATIC
+#else  // legacy CPPHDL_STATIC - requires all methods to be static - 2 times faster but does not support arrays of modules -> not supported now
+
+#define _PORT(A...) inline static cpphdl::function_ref<A>
+#define _ASSIGN(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
+#define _ASSIGN_REG(a...)  +[]() { return &a; }  // variable
+
+// _LAZY_COMB saves some time when calling comb() 
+#define _LAZY_COMB(name, type...) \
+    type name; \
+    inline static long __prev_sys_clock_##name = -1; \
+    static type& name##_func() { \
+        if (__prev_sys_clock_##name == sys_clock) { \
+            return name; \
+        } \
+        __prev_sys_clock_##name = sys_clock;
 
 #endif

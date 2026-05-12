@@ -20,7 +20,7 @@ public:
 
     _PORT(DTYPE)        read_addr_in;
     _PORT(bool)         read_in;
-    _PORT(DTYPE)        read_data_out   = _BIND( ((DTYPE)ram.read0_data_out() >> (read_addr_in()%4*8)) |
+    _PORT(DTYPE)        read_data_out   = _ASSIGN( ((DTYPE)ram.read0_data_out() >> (read_addr_in()%4*8)) |
                      ( read_addr_in()%4 == 0 ? 0 : ((DTYPE)ram.read1_data_out() << (32-read_addr_in()%4*8)) ) );  // combine 2 words on read
 
     bool    debugen_in;
@@ -40,16 +40,16 @@ public:
 
     void _assign()
     {
-        ram.addr0_in = _BIND((u<clog2(MEM_DEPTH)>) (write_in() ? write_addr_in()/4 : read_addr_in()/4) );
-        ram.addr1_in = _BIND((u<clog2(MEM_DEPTH)>) (write_in() ? ( write_addr_in()%4 ? write_addr_in()/4+1 : 0 ) : ( read_addr_in()%4 ? read_addr_in()/4+1 : 0 )) );
+        ram.addr0_in = _ASSIGN((u<clog2(MEM_DEPTH)>) (write_in() ? write_addr_in()/4 : read_addr_in()/4) );
+        ram.addr1_in = _ASSIGN((u<clog2(MEM_DEPTH)>) (write_in() ? ( write_addr_in()%4 ? write_addr_in()/4+1 : 0 ) : ( read_addr_in()%4 ? read_addr_in()/4+1 : 0 )) );
         ram.write0_in = write_in;
-        ram.write1_in = _BIND( write_addr_in()%4*8 == 0 ? false : write_in() );
-        ram.write0_data_in = _BIND( cpphdl::logic<MEM_WIDTH>(write_data_in() << (write_addr_in()%4*8)) );  // combine word from two
-        ram.write1_data_in = _BIND( cpphdl::logic<MEM_WIDTH>(write_addr_in()%4 == 0 ? 0 : write_data_in() >> (32-write_addr_in()%4*8)) );
-        ram.write0_mask_in = _BIND( logic<MEM_WIDTH/8>(write_mask_in() << (write_addr_in()%4)) );  // combine mask from two
-        ram.write1_mask_in = _BIND( logic<MEM_WIDTH/8>(write_mask_in() >> (4-write_addr_in()%4)) );
+        ram.write1_in = _ASSIGN( write_addr_in()%4*8 == 0 ? false : write_in() );
+        ram.write0_data_in = _ASSIGN( cpphdl::logic<MEM_WIDTH>(write_data_in() << (write_addr_in()%4*8)) );  // combine word from two
+        ram.write1_data_in = _ASSIGN( cpphdl::logic<MEM_WIDTH>(write_addr_in()%4 == 0 ? 0 : write_data_in() >> (32-write_addr_in()%4*8)) );
+        ram.write0_mask_in = _ASSIGN( logic<MEM_WIDTH/8>(write_mask_in() << (write_addr_in()%4)) );  // combine mask from two
+        ram.write1_mask_in = _ASSIGN( logic<MEM_WIDTH/8>(write_mask_in() >> (4-write_addr_in()%4)) );
         ram.read0_in = read_in;
-        ram.read1_in = _BIND( read_addr_in()%4 == 0 ? false : read_in() );  // when we need to read 2 words
+        ram.read1_in = _ASSIGN( read_addr_in()%4 == 0 ? false : read_in() );  // when we need to read 2 words
         ram.__inst_name = __inst_name + "/ram";
         ram.debugen_in  = debugen_in;
         ram._assign();

@@ -12,7 +12,7 @@ class AssignPortsLeaf : public Module
 {
 public:
     _PORT(u<16>) value_in;
-    _PORT(u<16>) value_out = _BIND_VAR(value_comb_func());
+    _PORT(u<16>) value_out = _ASSIGN_REG(value_comb_func());
 
 private:
     u<16> value_comb;
@@ -32,7 +32,7 @@ class AssignPorts : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) result_out = _BIND_VAR(result_comb_func());
+    _PORT(u<16>) result_out = _ASSIGN_REG(result_comb_func());
 
 private:
     AssignPortsLeaf expr_leaf;
@@ -127,30 +127,30 @@ public:
 
     void _assign()
     {
-        expr_leaf.value_in = _BIND(seed_in() + u<16>(1));
+        expr_leaf.value_in = _ASSIGN(seed_in() + u<16>(1));
         expr_leaf._assign();
-        var_leaf.value_in = _BIND_VAR(scalar_source);
+        var_leaf.value_in = _ASSIGN_REG(scalar_source);
         var_leaf._assign();
 
         for (size_t i = 0; i < 3; ++i) {
-            expr_i[i].value_in = _BIND_I(seed_in() + u<16>(10 + i));
+            expr_i[i].value_in = _ASSIGN_I(seed_in() + u<16>(10 + i));
             expr_i[i]._assign();
-            var_i[i].value_in = _BIND_VAR_I(i_source[i]);
+            var_i[i].value_in = _ASSIGN_REG_I(i_source[i]);
             var_i[i]._assign();
         }
 
         for (size_t j = 0; j < 3; ++j) {
-            expr_j[j].value_in = _BIND_J(seed_in() + u<16>(20 + j));
+            expr_j[j].value_in = _ASSIGN_J(seed_in() + u<16>(20 + j));
             expr_j[j]._assign();
-            var_j[j].value_in = _BIND_VAR_J(j_source[j]);
+            var_j[j].value_in = _ASSIGN_REG_J(j_source[j]);
             var_j[j]._assign();
         }
 
         for (size_t i = 0; i < 2; ++i) {
             for (size_t j = 0; j < 3; ++j) {
-                expr_ij[i][j].value_in = _BIND_IJ(seed_in() + u<16>(30 + i * 5 + j));
+                expr_ij[i][j].value_in = _ASSIGN_IJ(seed_in() + u<16>(30 + i * 5 + j));
                 expr_ij[i][j]._assign();
-                var_ij[i][j].value_in = _BIND_VAR_IJ(ij_source[i][j]);
+                var_ij[i][j].value_in = _ASSIGN_REG_IJ(ij_source[i][j]);
                 var_ij[i][j]._assign();
             }
         }
@@ -158,9 +158,9 @@ public:
         for (size_t i = 0; i < 2; ++i) {
             for (size_t j = 0; j < 2; ++j) {
                 for (size_t k = 0; k < 2; ++k) {
-                    expr_ijk[i][j][k].value_in = _BIND_IJK(seed_in() + u<16>(60 + i * 10 + j * 3 + k));
+                    expr_ijk[i][j][k].value_in = _ASSIGN_IJK(seed_in() + u<16>(60 + i * 10 + j * 3 + k));
                     expr_ijk[i][j][k]._assign();
-                    var_ijk[i][j][k].value_in = _BIND_VAR_IJK(ijk_source[i][j][k]);
+                    var_ijk[i][j][k].value_in = _ASSIGN_REG_IJK(ijk_source[i][j][k]);
                     var_ijk[i][j][k]._assign();
                 }
             }
@@ -169,9 +169,9 @@ public:
         for (size_t x = 0; x < 2; ++x) {
             for (size_t y = 0; y < 2; ++y) {
                 for (size_t z = 0; z < 2; ++z) {
-                    expr_cap[x][y][z].value_in = _BIND_CAP((x, y, z), seed_in() + u<16>(90 + x * 10 + y * 3 + z));
+                    expr_cap[x][y][z].value_in = _ASSIGN_CAP((x, y, z), seed_in() + u<16>(90 + x * 10 + y * 3 + z));
                     expr_cap[x][y][z]._assign();
-                    var_cap[x][y][z].value_in = _BIND_VAR_CAP((x, y, z), cap_source[x][y][z]);
+                    var_cap[x][y][z].value_in = _ASSIGN_REG_CAP((x, y, z), cap_source[x][y][z]);
                     var_cap[x][y][z]._assign();
                 }
             }
@@ -290,7 +290,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = _BIND_VAR(seed);
+        dut.seed_in = _ASSIGN_REG(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

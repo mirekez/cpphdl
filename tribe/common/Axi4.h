@@ -185,17 +185,17 @@ struct Axi4If : Interface
 
 #define AXI4_DRIVER_FROM_VERILATOR(dst, src, index, addr_type, data_func) \
     do { \
-        (dst).awvalid_in = _BIND_I((bool)(src).axi_out___05Fawvalid_out[index]); \
-        (dst).awaddr_in = _BIND_I((addr_type)(uint32_t)(src).axi_out___05Fawaddr_out[index]); \
-        (dst).awid_in = _BIND_I((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
-        (dst).wvalid_in = _BIND_I((bool)(src).axi_out___05Fwvalid_out[index]); \
-        (dst).wdata_in = _BIND_I(data_func((src).axi_out___05Fwdata_out[index])); \
-        (dst).wlast_in = _BIND_I((bool)(src).axi_out___05Fwlast_out[index]); \
-        (dst).bready_in = _BIND_I((bool)(src).axi_out___05Fbready_out[index]); \
-        (dst).arvalid_in = _BIND_I((bool)(src).axi_out___05Farvalid_out[index]); \
-        (dst).araddr_in = _BIND_I((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
-        (dst).arid_in = _BIND_I((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
-        (dst).rready_in = _BIND_I((bool)(src).axi_out___05Frready_out[index]); \
+        (dst).awvalid_in = _ASSIGN_I((bool)(src).axi_out___05Fawvalid_out[index]); \
+        (dst).awaddr_in = _ASSIGN_I((addr_type)(uint32_t)(src).axi_out___05Fawaddr_out[index]); \
+        (dst).awid_in = _ASSIGN_I((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
+        (dst).wvalid_in = _ASSIGN_I((bool)(src).axi_out___05Fwvalid_out[index]); \
+        (dst).wdata_in = _ASSIGN_I(data_func((src).axi_out___05Fwdata_out[index])); \
+        (dst).wlast_in = _ASSIGN_I((bool)(src).axi_out___05Fwlast_out[index]); \
+        (dst).bready_in = _ASSIGN_I((bool)(src).axi_out___05Fbready_out[index]); \
+        (dst).arvalid_in = _ASSIGN_I((bool)(src).axi_out___05Farvalid_out[index]); \
+        (dst).araddr_in = _ASSIGN_I((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
+        (dst).arid_in = _ASSIGN_I((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
+        (dst).rready_in = _ASSIGN_I((bool)(src).axi_out___05Frready_out[index]); \
     } while (false)
 
 #define AXI4_RESPONDER_FROM_VERILATOR(dst, src, index) \
