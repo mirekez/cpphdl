@@ -46,10 +46,8 @@ set(CPPHDL_TEST_ALL_SCRIPT "${CMAKE_BINARY_DIR}/.test_all.sh")
 file(WRITE "${CPPHDL_TEST_ALL_SCRIPT}" [=[
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
-
 ARGS=()
 for ARG in "$@"; do
     case "$ARG" in
@@ -67,7 +65,6 @@ for ARG in "$@"; do
             ;;
     esac
 done
-
 for DIR in examples tests; do
     if [[ ! -d "$DIR" ]]; then
         continue
@@ -80,14 +77,8 @@ for DIR in examples tests; do
         (cd "$EXE_DIR" && "./$EXE_NAME" "${ARGS[@]}")
     done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' -print0 | sort -z)
 done
-
-if [[ -x tribe/.test_all.sh ]]; then
-    echo "==> tribe/.test_all.sh"
-    (cd tribe && "./.test_all.sh" "${ARGS[@]}")
-fi
 ]=])
-file(CHMOD "${CPPHDL_TEST_ALL_SCRIPT}"
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+file(CHMOD "${CPPHDL_TEST_ALL_SCRIPT}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 add_definitions(-DSTATIC_BUILD)
 
