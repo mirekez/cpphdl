@@ -13,10 +13,10 @@ public:
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
     _PORT(uint32_t) irq_pending_bits_in;
-    _PORT(uint32_t) read_data_out = _ASSIGN_REG(read_data_comb_func());
-    _PORT(uint32_t) trap_vector_out = _ASSIGN_REG(trap_vector_comb_func());
-    _PORT(uint32_t) epc_out = _ASSIGN_REG(epc_comb_func());
-    _PORT(bool) illegal_trap_out = _ASSIGN_REG(illegal_trap_comb_func());
+    _PORT(uint32_t) read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    _PORT(uint32_t) trap_vector_out = _ASSIGN_COMB(trap_vector_comb_func());
+    _PORT(uint32_t) epc_out = _ASSIGN_COMB(epc_comb_func());
+    _PORT(bool) illegal_trap_out = _ASSIGN_COMB(illegal_trap_comb_func());
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
     _PORT(uint32_t) mie_out = _ASSIGN_REG(mie_reg);
     _PORT(uint32_t) mideleg_out = _ASSIGN_REG(mideleg_reg);

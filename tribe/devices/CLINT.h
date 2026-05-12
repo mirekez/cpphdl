@@ -18,8 +18,8 @@ class CLINT : public Module
 public:
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
-    _PORT(bool) msip_out = _ASSIGN_REG(msip_comb_func());
-    _PORT(bool) mtip_out = _ASSIGN_REG(mtip_comb_func());
+    _PORT(bool) msip_out = _ASSIGN_COMB(msip_comb_func());
+    _PORT(bool) mtip_out = _ASSIGN_COMB(mtip_comb_func());
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -101,7 +101,7 @@ public:
         axi_in.bid_out = _ASSIGN_REG(write_id_reg);
         axi_in.arready_out = _ASSIGN(!read_valid_reg);
         axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
-        axi_in.rdata_out = _ASSIGN_REG(read_data_comb_func());
+        axi_in.rdata_out = _ASSIGN_COMB(read_data_comb_func());
         axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
         axi_in.rid_out = _ASSIGN_REG(read_id_reg);
     }

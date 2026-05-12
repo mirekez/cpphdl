@@ -15,10 +15,10 @@ class LogicBitsIndexing : public Module
 public:
     _PORT(u<3>)       word_in;
     _PORT(u<32>)      seed_in;
-    _PORT(logic<16>)  direct_out = _ASSIGN_REG(direct_comb_func());
-    _PORT(logic<16>)  next_out = _ASSIGN_REG(next_comb_func());
-    _PORT(logic<8>)   byte_out = _ASSIGN_REG(byte_comb_func());
-    _PORT(logic<128>) edited_out = _ASSIGN_REG(edited_comb_func());
+    _PORT(logic<16>)  direct_out = _ASSIGN_COMB(direct_comb_func());
+    _PORT(logic<16>)  next_out = _ASSIGN_COMB(next_comb_func());
+    _PORT(logic<8>)   byte_out = _ASSIGN_COMB(byte_comb_func());
+    _PORT(logic<128>) edited_out = _ASSIGN_COMB(edited_comb_func());
 
 private:
     logic<128> source_comb;

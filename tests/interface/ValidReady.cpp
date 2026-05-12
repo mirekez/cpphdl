@@ -56,7 +56,7 @@ private:
     }
 
 public:
-    _PORT(bool) done_out = _ASSIGN_REG(done_comb_func());
+    _PORT(bool) done_out = _ASSIGN_COMB(done_comb_func());
 
     void _assign()
     {
@@ -133,8 +133,8 @@ private:
     }
 
 public:
-    _PORT(bool) done_out = _ASSIGN_REG(done_comb_func());
-    _PORT(bool) error_out = _ASSIGN_REG(error_comb_func());
+    _PORT(bool) done_out = _ASSIGN_COMB(done_comb_func());
+    _PORT(bool) error_out = _ASSIGN_COMB(error_comb_func());
 
     void _assign()
     {

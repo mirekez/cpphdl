@@ -24,11 +24,11 @@ public:
 
     _PORT(bool)     hold_in;
 
-    _PORT(bool)     load_ready_out    = _ASSIGN_REG(load_ready_comb_func());
-    _PORT(uint32_t) load_raw_out      = _ASSIGN_REG(load_raw_comb_func());
-    _PORT(uint32_t) load_result_out   = _ASSIGN_REG(load_result_comb_func());
-    _PORT(uint32_t) wb_mem_data_out   = _ASSIGN_REG(wb_mem_data_comb_func());
-    _PORT(uint32_t) wb_mem_data_hi_out = _ASSIGN_REG(wb_mem_data_hi_comb_func());
+    _PORT(bool)     load_ready_out    = _ASSIGN_COMB(load_ready_comb_func());
+    _PORT(uint32_t) load_raw_out      = _ASSIGN_COMB(load_raw_comb_func());
+    _PORT(uint32_t) load_result_out   = _ASSIGN_COMB(load_result_comb_func());
+    _PORT(uint32_t) wb_mem_data_out   = _ASSIGN_COMB(wb_mem_data_comb_func());
+    _PORT(uint32_t) wb_mem_data_hi_out = _ASSIGN_COMB(wb_mem_data_hi_comb_func());
 
 private:
     reg<u32> load_data_reg;

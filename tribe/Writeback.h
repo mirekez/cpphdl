@@ -14,9 +14,9 @@ public:
     _PORT(uint32_t) mem_data_hi_in;
     _PORT(uint32_t) mem_addr_in;
     _PORT(bool)     mem_split_in;
-    _PORT(uint32_t) regs_data_out = _ASSIGN_REG( regs_out_comb_func() );
+    _PORT(uint32_t) regs_data_out = _ASSIGN_COMB( regs_out_comb_func() );
     _PORT(uint8_t ) regs_wr_id_out = _ASSIGN( state_in().rd );  // NOTE! reg0 is ZERO, never write it
-    _PORT(bool    ) regs_write_out = _ASSIGN_REG( regs_write_comb_func() );
+    _PORT(bool    ) regs_write_out = _ASSIGN_COMB( regs_write_comb_func() );
 
 private:
 

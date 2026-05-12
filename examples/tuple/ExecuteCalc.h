@@ -20,8 +20,8 @@ public:
     _PORT(uint32_t)  mem_read_addr_out  = _ASSIGN_REG( mem_addr_reg );
 
     _PORT(uint32_t)  alu_result_out    = _ASSIGN( (uint32_t)alu_result_comb_func() );
-    _PORT(bool)      branch_taken_out  = _ASSIGN_REG( branch_taken_comb_func() );
-    _PORT(uint32_t)  branch_target_out = _ASSIGN_REG( branch_target_comb_func() );
+    _PORT(bool)      branch_taken_out  = _ASSIGN_COMB( branch_taken_comb_func() );
+    _PORT(uint32_t)  branch_target_out = _ASSIGN_COMB( branch_target_comb_func() );
 
     struct State
     {

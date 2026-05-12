@@ -15,7 +15,7 @@ class BlockingOptimize : public Module
 public:
     _PORT(bool)  enable_in;
     _PORT(u<32>) data_in;
-    _PORT(u<32>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<32>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     reg<u<32>> once_accessed_reg;

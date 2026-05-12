@@ -51,10 +51,10 @@ public:
     _PORT(uint8_t)   write_mask_in;
     _PORT(bool)      read_in;
     _PORT(uint32_t)  addr_in;
-    _PORT(uint32_t)  read_data_out = _ASSIGN_REG(read_data_comb_func());
-    _PORT(uint32_t)  read_addr_out = _ASSIGN_REG(read_addr_comb_func());
-    _PORT(bool)      read_valid_out = _ASSIGN_REG(read_valid_comb_func());
-    _PORT(bool)      busy_out = _ASSIGN_REG(busy_comb_func());
+    _PORT(uint32_t)  read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    _PORT(uint32_t)  read_addr_out = _ASSIGN_COMB(read_addr_comb_func());
+    _PORT(bool)      read_valid_out = _ASSIGN_COMB(read_valid_comb_func());
+    _PORT(bool)      busy_out = _ASSIGN_COMB(busy_comb_func());
     _PORT(bool)      stall_in;
     _PORT(bool)      flush_in;
     _PORT(bool)      invalidate_in;
@@ -63,11 +63,11 @@ public:
     _PORT(bool)      mem_write_out = _ASSIGN(write_in());
     _PORT(uint32_t)  mem_write_data_out = _ASSIGN(write_data_in());
     _PORT(uint8_t)   mem_write_mask_out = _ASSIGN(write_mask_in());
-    _PORT(bool)      mem_read_out = _ASSIGN_REG(mem_read_comb_func());
-    _PORT(uint32_t)  mem_addr_out = _ASSIGN_REG(mem_addr_comb_func());
+    _PORT(bool)      mem_read_out = _ASSIGN_COMB(mem_read_comb_func());
+    _PORT(uint32_t)  mem_addr_out = _ASSIGN_COMB(mem_addr_comb_func());
     _PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
     _PORT(bool)      mem_wait_in;
-    _PORT(L1CachePerf) perf_out = _ASSIGN_REG(perf_comb_func());
+    _PORT(L1CachePerf) perf_out = _ASSIGN_COMB(perf_comb_func());
 
     bool debugen_in;
 

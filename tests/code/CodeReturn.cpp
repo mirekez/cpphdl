@@ -16,9 +16,9 @@ public:
     _PORT(bool)  early_in;
     _PORT(u<32>) first_in;
     _PORT(u<32>) second_in;
-    _PORT(u<32>) value_out = _ASSIGN_REG(value_comb_func());
-    _PORT(u<32>) task_value_out = _ASSIGN_REG(task_value_comb_func());
-    _PORT(u<32>) function_value_out = _ASSIGN_REG(function_value_comb_func());
+    _PORT(u<32>) value_out = _ASSIGN_COMB(value_comb_func());
+    _PORT(u<32>) task_value_out = _ASSIGN_COMB(task_value_comb_func());
+    _PORT(u<32>) function_value_out = _ASSIGN_COMB(function_value_comb_func());
 
 private:
     u<32> value_comb;

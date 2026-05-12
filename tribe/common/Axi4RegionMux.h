@@ -116,7 +116,7 @@ public:
         size_t i;
         for (i = 0; i < N; ++i) {
             masters_out[i].awvalid_in = _ASSIGN_I(!aw_active_reg && aw_next_comb_func() == i && slave_in.awvalid_in());
-            masters_out[i].awaddr_in = _ASSIGN_REG(aw_local_addr_comb_func());
+            masters_out[i].awaddr_in = _ASSIGN_COMB(aw_local_addr_comb_func());
             masters_out[i].awid_in = slave_in.awid_in;
 
             masters_out[i].wvalid_in = _ASSIGN_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.wvalid_in());
@@ -125,7 +125,7 @@ public:
             masters_out[i].bready_in = _ASSIGN_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.bready_in());
 
             masters_out[i].arvalid_in = _ASSIGN_I(!ar_active_reg && ar_next_comb_func() == i && slave_in.arvalid_in());
-            masters_out[i].araddr_in = _ASSIGN_REG(ar_local_addr_comb_func());
+            masters_out[i].araddr_in = _ASSIGN_COMB(ar_local_addr_comb_func());
             masters_out[i].arid_in = slave_in.arid_in;
             masters_out[i].rready_in = _ASSIGN_I(ar_active_reg && ar_sel_safe_comb_func() == i && slave_in.rready_in());
         }

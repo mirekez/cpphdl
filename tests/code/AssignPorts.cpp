@@ -12,7 +12,7 @@ class AssignPortsLeaf : public Module
 {
 public:
     _PORT(u<16>) value_in;
-    _PORT(u<16>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<16>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<16> value_comb;
@@ -32,7 +32,7 @@ class AssignPorts : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) result_out = _ASSIGN_REG(result_comb_func());
+    _PORT(u<16>) result_out = _ASSIGN_COMB(result_comb_func());
 
 private:
     AssignPortsLeaf expr_leaf;
@@ -158,9 +158,9 @@ public:
         for (size_t i = 0; i < 2; ++i) {
             for (size_t j = 0; j < 2; ++j) {
                 for (size_t k = 0; k < 2; ++k) {
-                    expr_ijk[i][j][k].value_in = _ASSIGN_IJK(seed_in() + u<16>(60 + i * 10 + j * 3 + k));
+                    expr_ijk[i][j][k].value_in = _ASSIGN_INDEXED((i,j,k), seed_in() + u<16>(60 + i * 10 + j * 3 + k));
                     expr_ijk[i][j][k]._assign();
-                    var_ijk[i][j][k].value_in = _ASSIGN_REG_IJK(ijk_source[i][j][k]);
+                    var_ijk[i][j][k].value_in = _ASSIGN_REG_INDEXED((i,j,k), ijk_source[i][j][k]);
                     var_ijk[i][j][k]._assign();
                 }
             }
@@ -169,9 +169,9 @@ public:
         for (size_t x = 0; x < 2; ++x) {
             for (size_t y = 0; y < 2; ++y) {
                 for (size_t z = 0; z < 2; ++z) {
-                    expr_cap[x][y][z].value_in = _ASSIGN_CAP((x, y, z), seed_in() + u<16>(90 + x * 10 + y * 3 + z));
+                    expr_cap[x][y][z].value_in = _ASSIGN_INDEXED((x, y, z), seed_in() + u<16>(90 + x * 10 + y * 3 + z));
                     expr_cap[x][y][z]._assign();
-                    var_cap[x][y][z].value_in = _ASSIGN_REG_CAP((x, y, z), cap_source[x][y][z]);
+                    var_cap[x][y][z].value_in = _ASSIGN_REG_INDEXED((x, y, z), cap_source[x][y][z]);
                     var_cap[x][y][z]._assign();
                 }
             }

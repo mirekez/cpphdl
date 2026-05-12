@@ -56,7 +56,7 @@ class [[clang::annotate(
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -83,7 +83,7 @@ AnnotateReplacementScript : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -106,7 +106,7 @@ AnnotateReplacementFile : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -128,7 +128,7 @@ class AnnotateReplacementNested : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacement child;
@@ -164,7 +164,7 @@ class AnnotateReplacementParent : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacementNested nested;
@@ -200,7 +200,7 @@ class AnnotateReplacementScriptNested : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacementScript child;
@@ -236,7 +236,7 @@ class AnnotateReplacementScriptParent : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacementScriptNested nested;
@@ -272,7 +272,7 @@ class AnnotateReplacementFileNested : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacementFile child;
@@ -308,7 +308,7 @@ class AnnotateReplacementFileParent : public Module
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     AnnotateReplacementFileNested nested;

@@ -55,8 +55,8 @@ public:
     _PORT(u<8>)       seed_in;
     _PORT(u<8>)       addr_in;
     _PORT(bool)       write_in;
-    _PORT(logic<512>) digest_out = _ASSIGN_REG( digest_comb_func() );
-    _PORT(logic<512>) memory_out = _ASSIGN_REG( memory_comb_func() );
+    _PORT(logic<512>) digest_out = _ASSIGN_COMB( digest_comb_func() );
+    _PORT(logic<512>) memory_out = _ASSIGN_COMB( memory_comb_func() );
 
 private:
 #define DECL_U(W) reg<u<W>> u##W##_reg;

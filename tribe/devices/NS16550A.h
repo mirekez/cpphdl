@@ -91,7 +91,7 @@ public:
         axi_in.bid_out = _ASSIGN_REG(write_id_reg);
         axi_in.arready_out = _ASSIGN(!read_valid_reg);
         axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
-        axi_in.rdata_out = _ASSIGN_REG(read_data_comb_func());
+        axi_in.rdata_out = _ASSIGN_COMB(read_data_comb_func());
         axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
         axi_in.rid_out = _ASSIGN_REG(read_id_reg);
     }

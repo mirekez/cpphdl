@@ -19,11 +19,11 @@ public:
     _PORT(uint32_t)    instr_in;
     _PORT(uint32_t)    regs_data0_in;
     _PORT(uint32_t)    regs_data1_in;
-    _PORT(byte)        rs1_out        = _ASSIGN_REG( rs1_out_comb_func() );
-    _PORT(byte)        rs2_out        = _ASSIGN_REG( rs2_out_comb_func() );
+    _PORT(byte)        rs1_out        = _ASSIGN_COMB( rs1_out_comb_func() );
+    _PORT(byte)        rs2_out        = _ASSIGN_COMB( rs2_out_comb_func() );
     _PORT(uint32_t)    alu_result_in;  // forwarding from Ex
     _PORT(uint32_t)    mem_data_in;    // forwarding from Mem
-    _PORT(bool)        stall_out      = _ASSIGN_REG( stall_comb_func() );
+    _PORT(bool)        stall_out      = _ASSIGN_COMB( stall_comb_func() );
 
     struct State
     {

@@ -18,9 +18,9 @@ class VarArray : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) comb_out = _ASSIGN_REG(comb_comb_func());
-    _PORT(logic<16>) logic_out = _ASSIGN_REG(logic_comb_func());
-    _PORT(u<16>) reg_out = _ASSIGN_REG(reg_comb_func());
+    _PORT(u<16>) comb_out = _ASSIGN_COMB(comb_comb_func());
+    _PORT(logic<16>) logic_out = _ASSIGN_COMB(logic_comb_func());
+    _PORT(u<16>) reg_out = _ASSIGN_COMB(reg_comb_func());
 
 private:
     u<16> c_1d[3];

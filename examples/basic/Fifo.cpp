@@ -21,8 +21,8 @@ public:
     _PORT(bool)                         read_in;
     _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = _ASSIGN( mem.read_data_out() );
 
-    _PORT(bool)                         empty_out      = _ASSIGN_REG( empty_comb_func() );
-    _PORT(bool)                         full_out       = _ASSIGN_REG( full_comb_func() );
+    _PORT(bool)                         empty_out      = _ASSIGN_COMB( empty_comb_func() );
+    _PORT(bool)                         full_out       = _ASSIGN_COMB( full_comb_func() );
     _PORT(bool)                         clear_in       = _ASSIGN( false );
     _PORT(bool)                         afull_out      = _ASSIGN_REG( afull_reg );
 

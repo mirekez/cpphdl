@@ -21,7 +21,7 @@ public:
 
     _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     _PORT(bool)                      read_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_REG( data_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_COMB( data_out_comb_func() );
 
     bool                      debugen_in;
 

@@ -54,22 +54,26 @@ struct cpphdl_exception
 
 #ifndef CPPHDL_STATIC  // static version is faster but not used now
 
-#define _PORT(A...) cpphdl::function_ref<A>
-#define _ASSIGN(a...) [&]() { return a; }  // any expression (uses std::function, captures all object's pointers in a call chain, using heap)
+#define _PORT(A...)  cpphdl::function_ref<A>
+#define _ASSIGN(a...)  [&]() { return a; }  // any expression (uses std::function, captures all object's pointers in a call chain, using heap)
 #define _ASSIGN_REG(a...)  [&]() { return &a; }  // (faster) register or comb() returning ref to lvalue (uses function_ref, captures only one ref, dont use heap)
+#define _ASSIGN_COMB(a...)  _ASSIGN_REG(a)  // all comb functions return reference to lvalue in cpphdl, but keep called when being accessed
 
-#define _ASSIGN_I(a...) [&,i]() { return a; }  // any expression
-#define _ASSIGN_J(a...) [&,j]() { return a; }  // any expression
-#define _ASSIGN_IJ(a...) [&,i,j]() { return a; }  // any expression
-#define _ASSIGN_IJK(a...) [&,i,j,k]() { return a; }  // any expression
+#define _ASSIGN_I(a...)  [&,i]() { return a; }  // any expression
+#define _ASSIGN_J(a...)  [&,j]() { return a; }
+#define _ASSIGN_IJ(a...)  [&,i,j]() { return a; }
 #define _ASSIGN_REG_I(a...)  [&,i]() { return &a; }  // (faster) register or comb() returning ref to lvalue
-#define _ASSIGN_REG_J(a...)  [&,j]() { return &a; }  // (faster) register or comb() returning ref to lvalue
-#define _ASSIGN_REG_IJ(a...)  [&,i,j]() { return &a; }  // (faster) register or comb() returning ref to lvalue
-#define _ASSIGN_REG_IJK(a...)  [&,i,j,k]() { return &a; }  // (faster) register or comb() returning ref to lvalue
+#define _ASSIGN_REG_J(a...)  [&,j]() { return &a; }
+#define _ASSIGN_REG_IJ(a...)  [&,i,j]() { return &a; }
+#define _ASSIGN_COMB_I(a...)  _ASSIGN_REG_I(a)  // all comb functions return reference to lvalue
+#define _ASSIGN_COMB_J(a...)  _ASSIGN_REG_J(a)
+#define _ASSIGN_COMB_IJ(a...)  _ASSIGN_REG_IJ(a)
 
+// captures any indexes: _ASSIGN_INDEXED((i,j,k), out_reg[i+j+k])
 #define CPPHDL_UNPAREN(a...) a
-#define _ASSIGN_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
-#define _ASSIGN_REG_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; }  // (faster) register or comb returning &
+#define _ASSIGN_INDEXED(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
+#define _ASSIGN_REG_INDEXED(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; }  // (faster) register or comb returning &
+#define _ASSIGN_COMB_INDEXED(a...)  _ASSIGN_REG_INDEXED(a)
 
 // _LAZY_COMB saves some time when calling comb() 
 #define _LAZY_COMB(name, type...) \

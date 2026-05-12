@@ -30,14 +30,14 @@ public:
     _PORT(uint32_t) mem_read_addr_out  = _ASSIGN_REG(mem_addr_reg);
 
     // Split transaction status used by hazard control and writeback assembly.
-    _PORT(bool)     mem_split_out      = _ASSIGN_REG(mem_split_comb_func());
+    _PORT(bool)     mem_split_out      = _ASSIGN_COMB(mem_split_comb_func());
     _PORT(bool)     mem_split_busy_out = _ASSIGN_REG(mem_split_pending_reg);
     _PORT(bool)     split_load_out      = _ASSIGN_REG(split_load_reg);
     _PORT(uint32_t) split_load_low_out  = _ASSIGN_REG(split_load_low_addr_reg);
     _PORT(uint32_t) split_load_high_out = _ASSIGN_REG(split_load_high_addr_reg);
 #ifdef ENABLE_RV32IA
-    _PORT(bool)     atomic_busy_out     = _ASSIGN_REG(atomic_busy_comb_func());
-    _PORT(uint32_t) atomic_sc_result_out = _ASSIGN_REG(atomic_sc_result_comb_func());
+    _PORT(bool)     atomic_busy_out     = _ASSIGN_COMB(atomic_busy_comb_func());
+    _PORT(uint32_t) atomic_sc_result_out = _ASSIGN_COMB(atomic_sc_result_comb_func());
 #endif
 
 private:

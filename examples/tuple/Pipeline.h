@@ -127,7 +127,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = _ASSIGN_REG( states_comb_func() );
+                        stage.state_in = _ASSIGN_COMB( states_comb_func() );
                         stage._assign();
                     }()
                 ),

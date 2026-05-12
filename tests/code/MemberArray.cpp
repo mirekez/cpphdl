@@ -13,7 +13,7 @@ class MemberArrayLeaf : public Module
 public:
     _PORT(u<16>) base_in;
     _PORT(u<16>) add_in;
-    _PORT(u<16>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<16>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<16> value_comb;
@@ -33,7 +33,7 @@ class MemberArray : public Module
 {
 public:
     _PORT(u<16>) seed_in;
-    _PORT(u<16>) result_out = _ASSIGN_REG(result_comb_func());
+    _PORT(u<16>) result_out = _ASSIGN_COMB(result_comb_func());
 
 private:
     MemberArrayLeaf line[3];

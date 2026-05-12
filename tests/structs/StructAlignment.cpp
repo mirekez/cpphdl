@@ -118,10 +118,10 @@ class StructAlignment : public Module
 {
 public:
     _PORT(u<8>) seed_in;
-    _PORT(OuterBits) sample_out = _ASSIGN_REG(sample_comb_func());
-    _PORT(UnionContainingStructContainingUnion) union_struct_out = _ASSIGN_REG(union_struct_comb_func());
-    _PORT(StructContainingUnionContainingStruct) struct_union_out = _ASSIGN_REG(struct_union_comb_func());
-    _PORT(StructWithEnum) enum_struct_out = _ASSIGN_REG(enum_struct_comb_func());
+    _PORT(OuterBits) sample_out = _ASSIGN_COMB(sample_comb_func());
+    _PORT(UnionContainingStructContainingUnion) union_struct_out = _ASSIGN_COMB(union_struct_comb_func());
+    _PORT(StructContainingUnionContainingStruct) struct_union_out = _ASSIGN_COMB(struct_union_comb_func());
+    _PORT(StructWithEnum) enum_struct_out = _ASSIGN_COMB(enum_struct_comb_func());
 
 private:
     OuterBits sample_comb;

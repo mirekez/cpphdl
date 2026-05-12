@@ -12,7 +12,7 @@ class MemberAssignGenvarsLeaf : public Module
 {
 public:
     _PORT(u<32>) value_in;
-    _PORT(u<32>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<32>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<32> value_comb;
@@ -32,7 +32,7 @@ class MemberAssignGenvars : public Module
 {
 public:
     _PORT(u<32>) seed_in;
-    _PORT(u<32>) result_out = _ASSIGN_REG(result_comb_func());
+    _PORT(u<32>) result_out = _ASSIGN_COMB(result_comb_func());
 
 private:
     MemberAssignGenvarsLeaf expr4[2][2][2][2];
@@ -91,12 +91,12 @@ public:
                     for (size_t d = 0; d < 2; ++d) {
                         for (size_t e = 0; e < 2; ++e) {
                             if (e == 0) {
-                                expr4[a][b][c][d].value_in = _ASSIGN_CAP((a, b, c, d, e),
+                                expr4[a][b][c][d].value_in = _ASSIGN_INDEXED((a, b, c, d, e),
                                     seed_in() + u<32>(1000 + a * 100 + b * 10 + c * 2 + d + e));
                                 expr4[a][b][c][d]._assign();
                             }
                             if (e == 1) {
-                                var4[a][b][c][d].value_in = _ASSIGN_REG_CAP((a, b, c, d, e),
+                                var4[a][b][c][d].value_in = _ASSIGN_REG_INDEXED((a, b, c, d, e),
                                     source5[a][b][c][d][e]);
                                 var4[a][b][c][d]._assign();
                             }

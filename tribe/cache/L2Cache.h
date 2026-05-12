@@ -59,16 +59,16 @@ public:
     _PORT(uint32_t) i_addr_in;
     _PORT(uint32_t) i_write_data_in;
     _PORT(uint8_t) i_write_mask_in;
-    _PORT(logic<PORT_BITWIDTH>) i_read_data_out = _ASSIGN_REG(read_data_comb_func());
-    _PORT(bool) i_wait_out = _ASSIGN_REG(i_wait_comb_func());
+    _PORT(logic<PORT_BITWIDTH>) i_read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    _PORT(bool) i_wait_out = _ASSIGN_COMB(i_wait_comb_func());
 
     _PORT(bool) d_read_in;
     _PORT(bool) d_write_in;
     _PORT(uint32_t) d_addr_in;
     _PORT(uint32_t) d_write_data_in;
     _PORT(uint8_t) d_write_mask_in;
-    _PORT(logic<PORT_BITWIDTH>) d_read_data_out = _ASSIGN_REG(read_data_comb_func());
-    _PORT(bool) d_wait_out = _ASSIGN_REG(d_wait_comb_func());
+    _PORT(logic<PORT_BITWIDTH>) d_read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    _PORT(bool) d_wait_out = _ASSIGN_COMB(d_wait_comb_func());
 
     _PORT(uint32_t) memory_base_in;
     _PORT(uint32_t) memory_size_in;
@@ -978,7 +978,7 @@ public:
             tag_ram[i].wr_in = _ASSIGN_I((state_reg == ST_INIT) ||
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == i) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() && hit_way_comb_func() == i));
-            tag_ram[i].data_in = _ASSIGN_REG(tag_write_data_comb_func());
+            tag_ram[i].data_in = _ASSIGN_COMB(tag_write_data_comb_func());
             tag_ram[i].id_in = 2100 + i;
         }
 
@@ -997,14 +997,14 @@ public:
             axi_in[i].rid_out = _ASSIGN_REG_I(slave_rid_reg[i]);
 
             axi_out[i].awvalid_in = _ASSIGN_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].awaddr_in = _ASSIGN_REG(axi_awaddr_local_comb_func());
+            axi_out[i].awaddr_in = _ASSIGN_COMB(axi_awaddr_local_comb_func());
             axi_out[i].awid_in = _ASSIGN((u<4>)0);
             axi_out[i].wvalid_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].wdata_in = _ASSIGN_REG(axi_wdata_comb_func());
+            axi_out[i].wdata_in = _ASSIGN_COMB(axi_wdata_comb_func());
             axi_out[i].wlast_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
             axi_out[i].bready_in = _ASSIGN_I(axi_aw_sel_comb_func() == i);
             axi_out[i].arvalid_in = _ASSIGN_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
-            axi_out[i].araddr_in = _ASSIGN_REG(axi_araddr_local_comb_func());
+            axi_out[i].araddr_in = _ASSIGN_COMB(axi_araddr_local_comb_func());
             axi_out[i].arid_in = _ASSIGN((u<4>)0);
             axi_out[i].rready_in = _ASSIGN_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
         }

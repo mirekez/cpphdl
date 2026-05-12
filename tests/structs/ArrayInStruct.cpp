@@ -54,7 +54,7 @@ class ArrayInStruct : public Module
 public:
     _PORT(u<8>) seed_in;
     _PORT(ArrayPayload) payload_in;
-    _PORT(ArrayPayload) direct_out = _ASSIGN_REG(direct_comb_func());
+    _PORT(ArrayPayload) direct_out = _ASSIGN_COMB(direct_comb_func());
     _PORT(ArrayPayload) state_out = _ASSIGN_REG(state_reg);
 
 private:

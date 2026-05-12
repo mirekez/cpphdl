@@ -103,7 +103,7 @@ public:
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
-    _PORT(TribePerf) perf_out = _ASSIGN_REG(perf_comb_func());
+    _PORT(TribePerf) perf_out = _ASSIGN_COMB(perf_comb_func());
     bool              debugen_in;
 
     void _assign()
@@ -117,10 +117,10 @@ public:
         dec.regs_data1_in  = _ASSIGN( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
 
-        exe.state_in       = _ASSIGN_REG( exe_state_comb_func() );
+        exe.state_in       = _ASSIGN_COMB( exe_state_comb_func() );
         exe._assign();  // outputs are ready
 
-        exe_mem.state_in = _ASSIGN_REG(exe_state_comb_func());
+        exe_mem.state_in = _ASSIGN_COMB(exe_state_comb_func());
         exe_mem.alu_result_in = exe.alu_result_out;
 #ifdef ENABLE_RV32IA
         exe_mem.dcache_read_valid_in = dcache.read_valid_out;
@@ -160,7 +160,7 @@ public:
         irq.__inst_name = __inst_name + "/irq";
         irq._assign();
 #endif
-        csr.state_in       = _ASSIGN_REG( csr_state_comb_func() );
+        csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = irq.interrupt_valid_out;
@@ -286,7 +286,7 @@ public:
         icache.mem_wait_in = l2cache.i_wait_out;
         icache.stall_in = _ASSIGN(memory_wait_comb_func() || stall_comb_func());
         icache.flush_in = _ASSIGN(branch_mispredict_comb_func() && !memory_wait_comb_func());
-        icache.invalidate_in = _ASSIGN_REG(icache_invalidate_comb_func());
+        icache.invalidate_in = _ASSIGN_COMB(icache_invalidate_comb_func());
         icache.cache_disable_in = _ASSIGN(false);
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
@@ -1545,18 +1545,18 @@ public:
     }
 };
 
-static std::filesystem::path absolute_from(const std::filesystem::path& base, const std::string& path)
+[[maybe_unused]] static std::filesystem::path absolute_from(const std::filesystem::path& base, const std::string& path)
 {
     std::filesystem::path p(path);
     return p.is_absolute() ? p : std::filesystem::absolute(base / p);
 }
 
-static std::filesystem::path tribe_source_root_dir()
+[[maybe_unused]] static std::filesystem::path tribe_source_root_dir()
 {
     return std::filesystem::path(__FILE__).parent_path().parent_path();
 }
 
-static void use_executable_workdir_if_needed(const char* argv0)
+[[maybe_unused]] static void use_executable_workdir_if_needed(const char* argv0)
 {
     namespace fs = std::filesystem;
 

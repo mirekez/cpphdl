@@ -22,8 +22,8 @@ public:
     _PORT(uint32_t)  lookup_fallthrough_in;
     _PORT(u<4>)      lookup_br_op_in;
 
-    _PORT(bool)      predict_taken_out = _ASSIGN_REG(predict_taken_comb_func());
-    _PORT(uint32_t)  predict_next_out = _ASSIGN_REG(predict_next_comb_func());
+    _PORT(bool)      predict_taken_out = _ASSIGN_COMB(predict_taken_comb_func());
+    _PORT(uint32_t)  predict_next_out = _ASSIGN_COMB(predict_next_comb_func());
 
     _PORT(bool)      update_valid_in;
     _PORT(uint32_t)  update_pc_in;
