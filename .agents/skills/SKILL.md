@@ -1,0 +1,118 @@
+---
+name: cpphdl-verilator-rtl
+description: Use when writing or debugging CppHDL tests that mix C++ testbench models with Verilated RTL, especially reset ordering, register inputs, AXI4 responder wiring, eval sequencing, _assign/_strobe discipline, and avoiding C++/SystemVerilog simulation mismatches.
+---
+
+# CppHDL Verilator RTL Tests
+
+Use this skill when editing CppHDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
+
+## Hard Rules
+
+- Put `__EXPR(...)`, `__VAR(...)`, `__EXPR_I(...)`, `__VAR_I(...)`, `__EXPR_CAP(...)`, and `__VAR_CAP(...)` assignments only in `_assign()`.
+- Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
+- `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle.
+- In Verilator mode, write all Verilated input ports before `eval()`.
+- For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ CppHDL update order accidentally matching Verilator.
+- In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
+
+## Verilator Cycle Pattern
+
+For a Verilated DUT connected to C++ responder models, use this shape unless the local test has a proven reason to differ:
+
+```cpp
+void eval_dut(bool reset)
+{
+    dut.reset = reset;
+    dut.input_a = input_a;
+    dut.input_b = input_b;
+    AXI4_RESPONDER_FROM_VERILATOR(dut, ram.axi_in, 0);
+    dut.eval();
+}
+
+void cycle(bool reset = false)
+{
+    dut.clk = 0;
+    eval_dut(reset);
+
+    ram._work(reset);
+
+    AXI4_RESPONDER_FROM_VERILATOR(dut, ram.axi_in, 0);
+    dut.clk = 1;
+    eval_dut(reset);
+
+    ram._strobe();
+
+    dut.clk = 0;
+    eval_dut(reset);
+    ++sys_clock;
+}
+```
+
+The important point is not the exact helper names. The important point is that responder outputs are presented to the Verilated DUT before the clock edge that samples them, and C++ model state is strobed after that edge.
+
+## Reset
+
+- Drive `reset` through the same `eval_dut(reset)` path as normal cycles so all inputs and AXI responder signals are valid during reset.
+- Hold reset for multiple cycles when the DUT contains RAM init FSMs or caches.
+- Keep C++ model `_work(reset)` and `_strobe()` in the same parent cycle order used after reset.
+- Do not special-case reset by calling only `dut.eval()` and skipping connected C++ models unless the test explicitly needs disconnected reset behavior.
+
+## AXI4 Responder Wiring
+
+Use `AXI4_RESPONDER_FROM_VERILATOR(dut, responder.axi_in, index)` whenever a Verilated DUT master port reads a C++ AXI responder.
+
+Typical use:
+
+```cpp
+AXI4_DRIVER_FROM_VERILATOR(ram.axi_in, dut, 0, u<32>, copy_to_logic<PORT_BITS>);
+ram._assign();
+
+// Each eval path, before dut.eval():
+AXI4_RESPONDER_FROM_VERILATOR(dut, ram.axi_in, 0);
+```
+
+Pitfalls:
+
+- If `AXI4_RESPONDER_FROM_VERILATOR` is called only after `dut.eval()` at the rising edge, registered RTL can miss a one-cycle `rvalid`/`bvalid`.
+- If responder signals are forced too early without first evaluating the DUT's current master outputs, instruction or data refill can hang from reset.
+- Keep `rready`/`bready` behavior legal and stable. A testbench may hold ready high, but the DUT still must observe valid/ready on a clock edge.
+- For wide AXI data, use the established conversion helper, for example `verilator_logic_to_wide(...)` or `copy_to_logic<PORT_BITS>(...)`; do not hand-copy only one word of a beat.
+
+## Register Inputs
+
+Set Verilated register-like inputs directly before `eval()`:
+
+```cpp
+dut.reset_pc_in = reset_pc;
+dut.memory_base_in = memory_base;
+dut.mem_region_size_in[0] = region0_size;
+```
+
+Do not assign these through `__EXPR` in Verilator-only code. `__EXPR` is for CppHDL structural assignment inside `_assign()`.
+
+## C++ Model Order
+
+For C++ CppHDL models connected around a Verilated DUT:
+
+- `_assign()` wires ports once.
+- `_work(reset)` computes next values for C++ models.
+- Verilated `eval()` computes and samples RTL depending on `clk`.
+- `_strobe()` commits C++ model registers and memory buffers.
+
+Keep memory buffer `.apply()` inside the memory module `_strobe()` path only. If a parent calls `.apply()` manually, C++ and Verilator tests can diverge.
+
+## Debugging Handshake Hangs
+
+When a Verilator-only hang appears:
+
+1. Trace valid/ready on both sides of the boundary: DUT master output, C++ responder input, C++ responder output, DUT responder input.
+2. Check whether the valid pulse exists only between two `eval()` calls.
+3. Compare the harness cycle order with a known passing test such as an L2 cache Verilator test.
+4. Remove temporary debug prints before finishing.
+
+Common signatures:
+
+- C++ passes, Verilator hangs on first read: responder `rvalid` is generated by the C++ model, but is not presented before the Verilated clock edge.
+- Verilator hangs during instruction refill immediately after reset: responder feedback was presented before the Verilated master outputs were evaluated for the current low-clock phase.
+- Direct C++ device test passes, CPU `.elf` Verilator test hangs: the device logic may be fine; inspect the mixed C++/Verilator boundary first.
