@@ -50,15 +50,15 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        predictor.lookup_valid_in = __VAR(lookup_valid);
-        predictor.lookup_pc_in = __VAR(lookup_pc);
-        predictor.lookup_target_in = __VAR(lookup_target);
-        predictor.lookup_fallthrough_in = __VAR(lookup_fallthrough);
-        predictor.lookup_br_op_in = __VAR(lookup_br_op);
-        predictor.update_valid_in = __VAR(update_valid);
-        predictor.update_pc_in = __VAR(update_pc);
-        predictor.update_taken_in = __VAR(update_taken);
-        predictor.update_target_in = __VAR(update_target);
+        predictor.lookup_valid_in = _BIND_VAR(lookup_valid);
+        predictor.lookup_pc_in = _BIND_VAR(lookup_pc);
+        predictor.lookup_target_in = _BIND_VAR(lookup_target);
+        predictor.lookup_fallthrough_in = _BIND_VAR(lookup_fallthrough);
+        predictor.lookup_br_op_in = _BIND_VAR(lookup_br_op);
+        predictor.update_valid_in = _BIND_VAR(update_valid);
+        predictor.update_pc_in = _BIND_VAR(update_pc);
+        predictor.update_taken_in = _BIND_VAR(update_taken);
+        predictor.update_target_in = _BIND_VAR(update_target);
         predictor.__inst_name = "branch_predictor_test/predictor";
         predictor._assign();
 #endif

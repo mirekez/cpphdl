@@ -133,8 +133,8 @@ template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
 {
 public:
-    __PORT(array<STYPE,LENGTH>)    data_in;
-    __PORT(array<DTYPE,LENGTH>)    data_out = __EXPR( USE_REG ? out_reg : conv_comb_func() );
+    _PORT(array<STYPE,LENGTH>)    data_in;
+    _PORT(array<DTYPE,LENGTH>)    data_out = _BIND( USE_REG ? out_reg : conv_comb_func() );
 
 private:
     reg<array<DTYPE,LENGTH>> out_reg;
@@ -235,7 +235,7 @@ public:
 #ifndef VERILATOR
         converter.__inst_name = __inst_name + "/converter";
 
-        converter.data_in      = __VAR( out_reg );
+        converter.data_in      = _BIND_VAR( out_reg );
         converter.debugen_in   = debugen_in;
         converter._assign();
 #endif

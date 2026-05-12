@@ -9,7 +9,7 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 
 ## Hard Rules
 
-- Put `__EXPR(...)`, `__VAR(...)`, `__EXPR_I(...)`, `__VAR_I(...)`, `__EXPR_CAP(...)`, and `__VAR_CAP(...)` assignments only in `_assign()`.
+- Put `_BIND(...)`, `_BIND_VAR(...)`, `_BIND_I(...)`, `_BIND_VAR_I(...)`, `_BIND_CAP(...)`, and `_BIND_VAR_CAP(...)` assignments only in `_assign()`.
 - Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
 - `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle.
 - In Verilator mode, write all Verilated input ports before `eval()`.
@@ -89,7 +89,7 @@ dut.memory_base_in = memory_base;
 dut.mem_region_size_in[0] = region0_size;
 ```
 
-Do not assign these through `__EXPR` in Verilator-only code. `__EXPR` is for CppHDL structural assignment inside `_assign()`.
+Do not assign these through `_BIND` in Verilator-only code. `_BIND` is for CppHDL structural assignment inside `_assign()`.
 
 ## C++ Model Order
 

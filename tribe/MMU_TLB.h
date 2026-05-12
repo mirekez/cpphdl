@@ -9,25 +9,25 @@ class MMU_TLB : public Module
 {
     static_assert(ENTRIES > 0, "MMU_TLB needs at least one entry");
 public:
-    __PORT(uint32_t) vaddr_in;
-    __PORT(bool)     read_in;
-    __PORT(bool)     write_in;
-    __PORT(bool)     execute_in;
-    __PORT(uint32_t) satp_in;
-    __PORT(u<2>)     priv_in;
+    _PORT(uint32_t) vaddr_in;
+    _PORT(bool)     read_in;
+    _PORT(bool)     write_in;
+    _PORT(bool)     execute_in;
+    _PORT(uint32_t) satp_in;
+    _PORT(u<2>)     priv_in;
 
-    __PORT(bool)     fill_in;
-    __PORT(u<clog2(ENTRIES)>) fill_index_in;
-    __PORT(uint32_t) fill_vpn_in;
-    __PORT(uint32_t) fill_ppn_in;
-    __PORT(uint8_t)  fill_flags_in;
-    __PORT(bool)     sfence_in;
+    _PORT(bool)     fill_in;
+    _PORT(u<clog2(ENTRIES)>) fill_index_in;
+    _PORT(uint32_t) fill_vpn_in;
+    _PORT(uint32_t) fill_ppn_in;
+    _PORT(uint8_t)  fill_flags_in;
+    _PORT(bool)     sfence_in;
 
-    __PORT(uint32_t) paddr_out = __VAR(paddr_comb_func());
-    __PORT(bool)     translated_out = __VAR(translation_enabled_comb_func());
-    __PORT(bool)     hit_out = __VAR(hit_comb_func());
-    __PORT(bool)     fault_out = __VAR(fault_comb_func());
-    __PORT(bool)     miss_out = __VAR(miss_comb_func());
+    _PORT(uint32_t) paddr_out = _BIND_VAR(paddr_comb_func());
+    _PORT(bool)     translated_out = _BIND_VAR(translation_enabled_comb_func());
+    _PORT(bool)     hit_out = _BIND_VAR(hit_comb_func());
+    _PORT(bool)     fault_out = _BIND_VAR(fault_comb_func());
+    _PORT(bool)     miss_out = _BIND_VAR(miss_comb_func());
 
 private:
     reg<array<u1, ENTRIES>> valid_reg;
@@ -35,22 +35,22 @@ private:
     reg<array<u32, ENTRIES>> ppn_reg;
     reg<array<u8, ENTRIES>> flags_reg;
 
-    __LAZY_COMB(translation_enabled_comb, bool)
+    _LAZY_COMB(translation_enabled_comb, bool)
         uint32_t mode;
         mode = satp_in() >> 31;
         translation_enabled_comb = mode == 1 && priv_in() != 3;
         return translation_enabled_comb;
     }
 
-    __LAZY_COMB(vpn_comb, uint32_t)
+    _LAZY_COMB(vpn_comb, uint32_t)
         return vpn_comb = vaddr_in() >> 12;
     }
 
-    __LAZY_COMB(page_offset_comb, uint32_t)
+    _LAZY_COMB(page_offset_comb, uint32_t)
         return page_offset_comb = vaddr_in() & 0xfffu;
     }
 
-    __LAZY_COMB(hit_index_comb, u<clog2(ENTRIES)>)
+    _LAZY_COMB(hit_index_comb, u<clog2(ENTRIES)>)
         size_t i;
         hit_index_comb = 0;
         for (i = 0; i < ENTRIES; ++i) {
@@ -61,7 +61,7 @@ private:
         return hit_index_comb;
     }
 
-    __LAZY_COMB(hit_comb, bool)
+    _LAZY_COMB(hit_comb, bool)
         size_t i;
         hit_comb = false;
         if (!translation_enabled_comb_func()) {
@@ -77,12 +77,12 @@ private:
         return hit_comb;
     }
 
-    __LAZY_COMB(entry_flags_comb, uint32_t)
+    _LAZY_COMB(entry_flags_comb, uint32_t)
         entry_flags_comb = hit_comb_func() ? (uint8_t)flags_reg[hit_index_comb_func()] : 0;
         return entry_flags_comb;
     }
 
-    __LAZY_COMB(permission_fault_comb, bool)
+    _LAZY_COMB(permission_fault_comb, bool)
         uint32_t flags;
         bool user_page;
         flags = entry_flags_comb_func();
@@ -117,17 +117,17 @@ private:
         return permission_fault_comb;
     }
 
-    __LAZY_COMB(miss_comb, bool)
+    _LAZY_COMB(miss_comb, bool)
         miss_comb = translation_enabled_comb_func() && (read_in() || write_in() || execute_in()) && !hit_comb_func();
         return miss_comb;
     }
 
-    __LAZY_COMB(fault_comb, bool)
+    _LAZY_COMB(fault_comb, bool)
         fault_comb = miss_comb_func() || permission_fault_comb_func();
         return fault_comb;
     }
 
-    __LAZY_COMB(paddr_comb, uint32_t)
+    _LAZY_COMB(paddr_comb, uint32_t)
         if (!translation_enabled_comb_func()) {
             paddr_comb = vaddr_in();
         }

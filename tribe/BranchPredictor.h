@@ -16,19 +16,19 @@ class BranchPredictor : public Module
     static constexpr uint32_t COUNTER_MAX = (1u << COUNTER_BITS) - 1;
     static constexpr uint32_t COUNTER_INIT = COUNTER_MAX >> 1;
 public:
-    __PORT(bool)      lookup_valid_in;
-    __PORT(uint32_t)  lookup_pc_in;
-    __PORT(uint32_t)  lookup_target_in;
-    __PORT(uint32_t)  lookup_fallthrough_in;
-    __PORT(u<4>)      lookup_br_op_in;
+    _PORT(bool)      lookup_valid_in;
+    _PORT(uint32_t)  lookup_pc_in;
+    _PORT(uint32_t)  lookup_target_in;
+    _PORT(uint32_t)  lookup_fallthrough_in;
+    _PORT(u<4>)      lookup_br_op_in;
 
-    __PORT(bool)      predict_taken_out = __VAR(predict_taken_comb_func());
-    __PORT(uint32_t)  predict_next_out = __VAR(predict_next_comb_func());
+    _PORT(bool)      predict_taken_out = _BIND_VAR(predict_taken_comb_func());
+    _PORT(uint32_t)  predict_next_out = _BIND_VAR(predict_next_comb_func());
 
-    __PORT(bool)      update_valid_in;
-    __PORT(uint32_t)  update_pc_in;
-    __PORT(bool)      update_taken_in;
-    __PORT(uint32_t)  update_target_in;
+    _PORT(bool)      update_valid_in;
+    _PORT(uint32_t)  update_pc_in;
+    _PORT(bool)      update_taken_in;
+    _PORT(uint32_t)  update_target_in;
 
 private:
     reg<array<u<COUNTER_BITS>, ENTRIES>> counter_reg;
@@ -36,22 +36,22 @@ private:
     reg<array<u32, ENTRIES>> tag_reg;
     reg<array<u1, ENTRIES>> valid_reg;
 
-    __LAZY_COMB(lookup_index_comb, u<INDEX_BITS>)
+    _LAZY_COMB(lookup_index_comb, u<INDEX_BITS>)
         return lookup_index_comb = (u<INDEX_BITS>)(lookup_pc_in() >> 1);
     }
 
-    __LAZY_COMB(lookup_hit_comb, bool)
+    _LAZY_COMB(lookup_hit_comb, bool)
         uint32_t index;
         index = (uint32_t)lookup_index_comb_func();
         return lookup_hit_comb = valid_reg[index] && tag_reg[index] == lookup_pc_in();
     }
 
-    __LAZY_COMB(lookup_unconditional_comb, bool)
+    _LAZY_COMB(lookup_unconditional_comb, bool)
         return lookup_unconditional_comb =
             lookup_br_op_in() == Br::JAL || lookup_br_op_in() == Br::JALR || lookup_br_op_in() == Br::JR;
     }
 
-    __LAZY_COMB(predict_taken_comb, bool)
+    _LAZY_COMB(predict_taken_comb, bool)
         uint32_t index;
         index = (uint32_t)lookup_index_comb_func();
         predict_taken_comb = false;
@@ -66,7 +66,7 @@ private:
         return predict_taken_comb;
     }
 
-    __LAZY_COMB(predict_next_comb, uint32_t)
+    _LAZY_COMB(predict_next_comb, uint32_t)
         uint32_t index;
         index = (uint32_t)lookup_index_comb_func();
         predict_next_comb = lookup_fallthrough_in();

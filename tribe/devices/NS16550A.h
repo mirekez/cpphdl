@@ -20,8 +20,8 @@ public:
 
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
-    __PORT(bool) uart_valid_out = __VAR(uart_valid_reg);
-    __PORT(uint8_t) uart_data_out = __VAR(uart_data_reg);
+    _PORT(bool) uart_valid_out = _BIND_VAR(uart_valid_reg);
+    _PORT(uint8_t) uart_data_out = _BIND_VAR(uart_data_reg);
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -41,12 +41,12 @@ private:
     reg<u1> uart_valid_reg;
     reg<u8> uart_data_reg;
 
-    __LAZY_COMB(dlab_comb, bool)
+    _LAZY_COMB(dlab_comb, bool)
         return dlab_comb = (lcr_reg & u<8>(0x80)) != 0;
     }
 
     // NS16550A read map. TX is modeled as always empty/ready: LSR.THRE and LSR.TEMT are set.
-    __LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
+    _LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
         uint32_t addr;
         uint32_t lane;
         uint8_t data;
@@ -85,15 +85,15 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = __EXPR(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = __EXPR(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = __VAR(write_resp_valid_reg);
-        axi_in.bid_out = __VAR(write_id_reg);
-        axi_in.arready_out = __EXPR(!read_valid_reg);
-        axi_in.rvalid_out = __VAR(read_valid_reg);
-        axi_in.rdata_out = __VAR(read_data_comb_func());
-        axi_in.rlast_out = __VAR(read_valid_reg);
-        axi_in.rid_out = __VAR(read_id_reg);
+        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
+        axi_in.bid_out = _BIND_VAR(write_id_reg);
+        axi_in.arready_out = _BIND(!read_valid_reg);
+        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
+        axi_in.rdata_out = _BIND_VAR(read_data_comb_func());
+        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
+        axi_in.rid_out = _BIND_VAR(read_id_reg);
     }
 
     void _work(bool reset)

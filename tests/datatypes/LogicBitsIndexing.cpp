@@ -13,12 +13,12 @@ using namespace cpphdl;
 class LogicBitsIndexing : public Module
 {
 public:
-    __PORT(u<3>)       word_in;
-    __PORT(u<32>)      seed_in;
-    __PORT(logic<16>)  direct_out = __VAR(direct_comb_func());
-    __PORT(logic<16>)  next_out = __VAR(next_comb_func());
-    __PORT(logic<8>)   byte_out = __VAR(byte_comb_func());
-    __PORT(logic<128>) edited_out = __VAR(edited_comb_func());
+    _PORT(u<3>)       word_in;
+    _PORT(u<32>)      seed_in;
+    _PORT(logic<16>)  direct_out = _BIND_VAR(direct_comb_func());
+    _PORT(logic<16>)  next_out = _BIND_VAR(next_comb_func());
+    _PORT(logic<8>)   byte_out = _BIND_VAR(byte_comb_func());
+    _PORT(logic<128>) edited_out = _BIND_VAR(edited_comb_func());
 
 private:
     logic<128> source_comb;
@@ -154,8 +154,8 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.word_in = __VAR(word);
-        dut.seed_in = __VAR(seed);
+        dut.word_in = _BIND_VAR(word);
+        dut.seed_in = _BIND_VAR(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

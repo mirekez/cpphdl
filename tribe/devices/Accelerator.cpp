@@ -55,7 +55,7 @@ private:
     reg<u<3>> state_reg;
     reg<array<u32, MEM_WORDS>> accel_mem_reg;
 
-    __LAZY_COMB(read_word_comb, uint32_t)
+    _LAZY_COMB(read_word_comb, uint32_t)
         uint32_t addr;
         uint32_t mem_index;
         addr = (uint32_t)read_addr_reg;
@@ -88,7 +88,7 @@ private:
         return read_word_comb;
     }
 
-    __LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
+    _LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
         size_t lane;
         uint32_t addr;
         uint32_t beat_base;
@@ -129,14 +129,14 @@ private:
         return read_data_comb;
     }
 
-    __LAZY_COMB(write_word_comb, uint32_t)
+    _LAZY_COMB(write_word_comb, uint32_t)
         uint32_t lane;
         lane = ((uint32_t)write_addr_reg % DATA_BYTES) / 4u;
         write_word_comb = (uint32_t)axi_in.wdata_in().bits(lane * 32 + 31, lane * 32);
         return write_word_comb;
     }
 
-    __LAZY_COMB(dma_addr_comb, uint32_t)
+    _LAZY_COMB(dma_addr_comb, uint32_t)
         if (dma_write_reg) {
             dma_addr_comb = dst_addr_reg + (uint32_t)index_reg * 4u;
         }
@@ -146,7 +146,7 @@ private:
         return dma_addr_comb;
     }
 
-    __LAZY_COMB(dma_wdata_comb, uint32_t)
+    _LAZY_COMB(dma_wdata_comb, uint32_t)
         uint32_t mem_index;
         mem_index = (uint32_t)src_addr_reg + (uint32_t)index_reg;
         if (mem_index < MEM_WORDS) {
@@ -158,7 +158,7 @@ private:
         return dma_wdata_comb;
     }
 
-    __LAZY_COMB(dma_wbeat_comb, logic<DATA_WIDTH>)
+    _LAZY_COMB(dma_wbeat_comb, logic<DATA_WIDTH>)
         uint32_t lane;
         dma_wbeat_comb = 0;
         lane = (dma_addr_comb_func() % DATA_BYTES) / 4u;
@@ -166,13 +166,13 @@ private:
         return dma_wbeat_comb;
     }
 
-    __LAZY_COMB(dma_rword_comb, uint32_t)
+    _LAZY_COMB(dma_rword_comb, uint32_t)
         uint32_t lane;
         lane = (dma_addr_comb_func() % DATA_BYTES) / 4u;
         return dma_rword_comb = (uint32_t)dma_out.rdata_out().bits(lane * 32 + 31, lane * 32);
     }
 
-    __LAZY_COMB(prbs_next_comb, uint32_t)
+    _LAZY_COMB(prbs_next_comb, uint32_t)
         uint32_t x;
         x = prbs_reg;
         x ^= x << 13;
@@ -184,27 +184,27 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = __EXPR(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = __EXPR(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = __VAR(write_resp_valid_reg);
-        axi_in.bid_out = __VAR(write_id_reg);
-        axi_in.arready_out = __EXPR(!read_valid_reg);
-        axi_in.rvalid_out = __VAR(read_valid_reg);
-        axi_in.rdata_out = __VAR(read_data_reg);
-        axi_in.rlast_out = __VAR(read_valid_reg);
-        axi_in.rid_out = __VAR(read_id_reg);
+        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
+        axi_in.bid_out = _BIND_VAR(write_id_reg);
+        axi_in.arready_out = _BIND(!read_valid_reg);
+        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
+        axi_in.rdata_out = _BIND_VAR(read_data_reg);
+        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
+        axi_in.rid_out = _BIND_VAR(read_id_reg);
 
-        dma_out.awvalid_in = __EXPR(state_reg == ST_DMA_AW);
-        dma_out.awaddr_in = __EXPR((u<ADDR_WIDTH>)dma_addr_comb_func());
-        dma_out.awid_in = __EXPR((u<ID_WIDTH>)0);
-        dma_out.wvalid_in = __EXPR(state_reg == ST_DMA_W);
-        dma_out.wdata_in = __EXPR(dma_wbeat_comb_func());
-        dma_out.wlast_in = __EXPR(state_reg == ST_DMA_W);
-        dma_out.bready_in = __EXPR(state_reg == ST_DMA_B && dma_out.bvalid_out());
-        dma_out.arvalid_in = __EXPR(state_reg == ST_DMA_AR);
-        dma_out.araddr_in = __EXPR((u<ADDR_WIDTH>)dma_addr_comb_func());
-        dma_out.arid_in = __EXPR((u<ID_WIDTH>)0);
-        dma_out.rready_in = __EXPR(state_reg == ST_DMA_R && dma_out.rvalid_out());
+        dma_out.awvalid_in = _BIND(state_reg == ST_DMA_AW);
+        dma_out.awaddr_in = _BIND((u<ADDR_WIDTH>)dma_addr_comb_func());
+        dma_out.awid_in = _BIND((u<ID_WIDTH>)0);
+        dma_out.wvalid_in = _BIND(state_reg == ST_DMA_W);
+        dma_out.wdata_in = _BIND(dma_wbeat_comb_func());
+        dma_out.wlast_in = _BIND(state_reg == ST_DMA_W);
+        dma_out.bready_in = _BIND(state_reg == ST_DMA_B && dma_out.bvalid_out());
+        dma_out.arvalid_in = _BIND(state_reg == ST_DMA_AR);
+        dma_out.araddr_in = _BIND((u<ADDR_WIDTH>)dma_addr_comb_func());
+        dma_out.arid_in = _BIND((u<ID_WIDTH>)0);
+        dma_out.rready_in = _BIND(state_reg == ST_DMA_R && dma_out.rvalid_out());
     }
 
     void _work(bool reset)

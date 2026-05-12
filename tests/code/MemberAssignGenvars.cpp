@@ -11,8 +11,8 @@ using namespace cpphdl;
 class MemberAssignGenvarsLeaf : public Module
 {
 public:
-    __PORT(u<32>) value_in;
-    __PORT(u<32>) value_out = __VAR(value_comb_func());
+    _PORT(u<32>) value_in;
+    _PORT(u<32>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     u<32> value_comb;
@@ -31,8 +31,8 @@ public:
 class MemberAssignGenvars : public Module
 {
 public:
-    __PORT(u<32>) seed_in;
-    __PORT(u<32>) result_out = __VAR(result_comb_func());
+    _PORT(u<32>) seed_in;
+    _PORT(u<32>) result_out = _BIND_VAR(result_comb_func());
 
 private:
     MemberAssignGenvarsLeaf expr4[2][2][2][2];
@@ -91,12 +91,12 @@ public:
                     for (size_t d = 0; d < 2; ++d) {
                         for (size_t e = 0; e < 2; ++e) {
                             if (e == 0) {
-                                expr4[a][b][c][d].value_in = __EXPR_CAP((a, b, c, d, e),
+                                expr4[a][b][c][d].value_in = _BIND_CAP((a, b, c, d, e),
                                     seed_in() + u<32>(1000 + a * 100 + b * 10 + c * 2 + d + e));
                                 expr4[a][b][c][d]._assign();
                             }
                             if (e == 1) {
-                                var4[a][b][c][d].value_in = __VAR_CAP((a, b, c, d, e),
+                                var4[a][b][c][d].value_in = _BIND_VAR_CAP((a, b, c, d, e),
                                     source5[a][b][c][d][e]);
                                 var4[a][b][c][d]._assign();
                             }
@@ -198,7 +198,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = __VAR(seed);
+        dut.seed_in = _BIND_VAR(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

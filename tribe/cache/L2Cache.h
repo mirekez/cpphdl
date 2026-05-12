@@ -54,26 +54,26 @@ class L2Cache : public Module
     static constexpr uint64_t ST_IO_R = 19;
 
 public:
-    __PORT(bool) i_read_in;
-    __PORT(bool) i_write_in;
-    __PORT(uint32_t) i_addr_in;
-    __PORT(uint32_t) i_write_data_in;
-    __PORT(uint8_t) i_write_mask_in;
-    __PORT(logic<PORT_BITWIDTH>) i_read_data_out = __VAR(read_data_comb_func());
-    __PORT(bool) i_wait_out = __VAR(i_wait_comb_func());
+    _PORT(bool) i_read_in;
+    _PORT(bool) i_write_in;
+    _PORT(uint32_t) i_addr_in;
+    _PORT(uint32_t) i_write_data_in;
+    _PORT(uint8_t) i_write_mask_in;
+    _PORT(logic<PORT_BITWIDTH>) i_read_data_out = _BIND_VAR(read_data_comb_func());
+    _PORT(bool) i_wait_out = _BIND_VAR(i_wait_comb_func());
 
-    __PORT(bool) d_read_in;
-    __PORT(bool) d_write_in;
-    __PORT(uint32_t) d_addr_in;
-    __PORT(uint32_t) d_write_data_in;
-    __PORT(uint8_t) d_write_mask_in;
-    __PORT(logic<PORT_BITWIDTH>) d_read_data_out = __VAR(read_data_comb_func());
-    __PORT(bool) d_wait_out = __VAR(d_wait_comb_func());
+    _PORT(bool) d_read_in;
+    _PORT(bool) d_write_in;
+    _PORT(uint32_t) d_addr_in;
+    _PORT(uint32_t) d_write_data_in;
+    _PORT(uint8_t) d_write_mask_in;
+    _PORT(logic<PORT_BITWIDTH>) d_read_data_out = _BIND_VAR(read_data_comb_func());
+    _PORT(bool) d_wait_out = _BIND_VAR(d_wait_comb_func());
 
-    __PORT(uint32_t) memory_base_in;
-    __PORT(uint32_t) memory_size_in;
-    __PORT(uint32_t) mem_region_size_in[MEM_PORTS];
-    __PORT(bool) mem_region_uncached_in[MEM_PORTS];
+    _PORT(uint32_t) memory_base_in;
+    _PORT(uint32_t) memory_size_in;
+    _PORT(uint32_t) mem_region_size_in[MEM_PORTS];
+    _PORT(bool) mem_region_uncached_in[MEM_PORTS];
 
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_in[MEM_PORTS];
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_out[MEM_PORTS];
@@ -112,7 +112,7 @@ private:
     reg<array<u<4>, MEM_PORTS>> slave_awid_reg;
 
     // True when any external AXI master is offering a one-beat write.
-    __LAZY_COMB(slave_write_pending_comb, bool)
+    _LAZY_COMB(slave_write_pending_comb, bool)
         size_t i;
         slave_write_pending_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -125,7 +125,7 @@ private:
     }
 
     // True when any external AXI master is offering a one-beat read.
-    __LAZY_COMB(slave_read_pending_comb, bool)
+    _LAZY_COMB(slave_read_pending_comb, bool)
         size_t i;
         slave_read_pending_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -137,7 +137,7 @@ private:
     }
 
     // Lowest-numbered external AXI slave port with a pending request.
-    __LAZY_COMB(active_slave_index_comb, u<MEM_PORT_BITS>)
+    _LAZY_COMB(active_slave_index_comb, u<MEM_PORT_BITS>)
         size_t i;
         active_slave_index_comb = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -153,31 +153,31 @@ private:
     }
 
     // External AXI masters arbitrate between D-cache and I-cache, sharing one coherent L2 tag/data RAM.
-    __LAZY_COMB(active_is_slave_comb, bool)
+    _LAZY_COMB(active_is_slave_comb, bool)
         return active_is_slave_comb = slave_write_pending_comb_func() || slave_read_pending_comb_func();
     }
 
     // Port arbitration: external AXI masters share the coherent L2 before CPU data/instruction ports.
-    __LAZY_COMB(active_is_d_comb, bool)
+    _LAZY_COMB(active_is_d_comb, bool)
         return active_is_d_comb = !active_is_slave_comb_func() && (d_write_in() || d_read_in());
     }
 
     // Active request read flag after data/instruction arbitration.
-    __LAZY_COMB(active_read_comb, bool)
+    _LAZY_COMB(active_read_comb, bool)
         return active_read_comb = (active_is_slave_comb_func() && !slave_write_pending_comb_func()) ||
             (!active_is_slave_comb_func() && d_read_in()) ||
             (!d_write_in() && !d_read_in() && !slave_write_pending_comb_func() && !slave_read_pending_comb_func() && i_read_in());
     }
 
     // Active request write flag after data/instruction arbitration.
-    __LAZY_COMB(active_write_comb, bool)
+    _LAZY_COMB(active_write_comb, bool)
         return active_write_comb = (active_is_slave_comb_func() && slave_write_pending_comb_func()) ||
             (!active_is_slave_comb_func() && d_write_in()) ||
             (!d_read_in() && !d_write_in() && !slave_write_pending_comb_func() && !slave_read_pending_comb_func() && i_write_in());
     }
 
     // Address of the currently selected input port.
-    __LAZY_COMB(active_addr_comb, uint32_t)
+    _LAZY_COMB(active_addr_comb, uint32_t)
         size_t i;
         active_addr_comb = active_is_d_comb_func() ? d_addr_in() : i_addr_in();
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -191,7 +191,7 @@ private:
     }
 
     // Write data of the currently selected input port.
-    __LAZY_COMB(active_write_data_comb, uint32_t)
+    _LAZY_COMB(active_write_data_comb, uint32_t)
         size_t i;
         uint32_t lane;
         active_write_data_comb = active_is_d_comb_func() ? d_write_data_in() : i_write_data_in();
@@ -205,38 +205,38 @@ private:
     }
 
     // Write byte mask of the currently selected input port.
-    __LAZY_COMB(active_write_mask_comb, uint8_t)
+    _LAZY_COMB(active_write_mask_comb, uint8_t)
         return active_write_mask_comb = active_is_slave_comb_func() ? (uint8_t)0xf :
             (active_is_d_comb_func() ? d_write_mask_in() : i_write_mask_in());
     }
 
     // Set index of the registered request.
-    __LAZY_COMB(req_set_comb, u<SET_BITS>)
+    _LAZY_COMB(req_set_comb, u<SET_BITS>)
         return req_set_comb = (u<SET_BITS>)((uint32_t)req_addr_reg >> LINE_BITS);
     }
 
     // Set index of the currently selected input request.
-    __LAZY_COMB(active_set_comb, u<SET_BITS>)
+    _LAZY_COMB(active_set_comb, u<SET_BITS>)
         return active_set_comb = (u<SET_BITS>)(active_addr_comb_func() >> LINE_BITS);
     }
 
     // 32-bit word index inside the registered cache line.
-    __LAZY_COMB(req_word_comb, u<WORD_BITS>)
+    _LAZY_COMB(req_word_comb, u<WORD_BITS>)
         return req_word_comb = (u<WORD_BITS>)(((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1));
     }
 
     // PORT_BITWIDTH beat index inside the registered cache line.
-    __LAZY_COMB(req_beat_comb, u<LINE_BEAT_BITS>)
+    _LAZY_COMB(req_beat_comb, u<LINE_BEAT_BITS>)
         return req_beat_comb = (u<LINE_BEAT_BITS>)(((uint32_t)req_addr_reg & (CACHE_LINE_SIZE - 1)) / PORT_BYTES);
     }
 
     // Tag bits of the registered request.
-    __LAZY_COMB(req_tag_comb, u<TAG_BITS>)
+    _LAZY_COMB(req_tag_comb, u<TAG_BITS>)
         return req_tag_comb = (u<TAG_BITS>)((uint32_t)req_addr_reg >> (LINE_BITS + SET_BITS));
     }
 
     // True for an unaligned read whose 32-bit result crosses the cache-line boundary.
-    __LAZY_COMB(active_cross_line_read_comb, bool)
+    _LAZY_COMB(active_cross_line_read_comb, bool)
         active_cross_line_read_comb = active_read_comb_func() &&
             ((active_addr_comb_func() & 3u) != 0) &&
             (((active_addr_comb_func() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1);
@@ -244,7 +244,7 @@ private:
     }
 
     // True for a write with bytes that spill from the final line word into the next line.
-    __LAZY_COMB(req_cross_line_write_comb, bool)
+    _LAZY_COMB(req_cross_line_write_comb, bool)
         uint32_t byte;
         uint32_t word;
         uint32_t i;
@@ -262,14 +262,14 @@ private:
     }
 
     // Write data shifted down for the second word/line of a cross-line write.
-    __LAZY_COMB(cross_write_data_comb, uint32_t)
+    _LAZY_COMB(cross_write_data_comb, uint32_t)
         uint32_t byte;
         byte = (uint32_t)req_addr_reg & 3u;
         return cross_write_data_comb = byte == 0 ? (uint32_t)0 : (uint32_t)req_write_data_reg >> (32 - byte * 8);
     }
 
     // Byte mask remapped for bytes landing in the second word/line of a cross-line write.
-    __LAZY_COMB(cross_write_mask_comb, uint8_t)
+    _LAZY_COMB(cross_write_mask_comb, uint8_t)
         uint32_t byte;
         uint32_t i;
         byte = (uint32_t)req_addr_reg & 3u;
@@ -283,7 +283,7 @@ private:
     }
 
     // Bounds check for the currently selected input address against the exposed memory window.
-    __LAZY_COMB(addr_in_memory_comb, bool)
+    _LAZY_COMB(addr_in_memory_comb, bool)
         uint32_t addr;
         uint32_t local;
         uint32_t size;
@@ -295,7 +295,7 @@ private:
     }
 
     // Bounds check for the registered request address against the exposed memory window.
-    __LAZY_COMB(req_addr_in_memory_comb, bool)
+    _LAZY_COMB(req_addr_in_memory_comb, bool)
         uint32_t addr;
         uint32_t local;
         uint32_t size;
@@ -307,7 +307,7 @@ private:
     }
 
     // Full AXI read address for normal fills, MMIO reads, or the two halves of a cross-line read.
-    __LAZY_COMB(axi_araddr_full_comb, uint32_t)
+    _LAZY_COMB(axi_araddr_full_comb, uint32_t)
         uint32_t line_addr;
         line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)fill_beat_reg * PORT_BYTES);
         if (state_reg == ST_IO_AR || state_reg == ST_IO_R) {
@@ -323,12 +323,12 @@ private:
     }
 
     // AXI read address relative to memory_base_in before memory-port selection.
-    __LAZY_COMB(axi_araddr_total_local_comb, uint32_t)
+    _LAZY_COMB(axi_araddr_total_local_comb, uint32_t)
         return axi_araddr_total_local_comb = axi_araddr_full_comb_func() - memory_base_in();
     }
 
     // Memory/device port selected by cumulative region sizes for AXI reads.
-    __LAZY_COMB(axi_ar_sel_comb, uint32_t)
+    _LAZY_COMB(axi_ar_sel_comb, uint32_t)
         size_t i;
         uint64_t base;
         uint64_t local;
@@ -345,7 +345,7 @@ private:
     }
 
     // Region base offset inside the full memory window for the selected read port.
-    __LAZY_COMB(axi_ar_region_base_comb, uint32_t)
+    _LAZY_COMB(axi_ar_region_base_comb, uint32_t)
         size_t i;
         uint64_t base;
         base = 0;
@@ -358,25 +358,25 @@ private:
     }
 
     // Local AXI read address presented to the selected memory/device port.
-    __LAZY_COMB(axi_araddr_local_comb, u<MEM_ADDR_BITS>)
+    _LAZY_COMB(axi_araddr_local_comb, u<MEM_ADDR_BITS>)
         // Ports are now disjoint cumulative regions, not interleaved banks, so
         // keep the full byte address inside the selected region.
         return axi_araddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)(axi_araddr_total_local_comb_func() - axi_ar_region_base_comb_func()) & MEM_ADDR_MASK64);
     }
 
     // AXI read address valid for normal fills and cross-line read beats.
-    __LAZY_COMB(axi_arvalid_comb, bool)
+    _LAZY_COMB(axi_arvalid_comb, bool)
         return axi_arvalid_comb = req_addr_in_memory_comb_func() &&
             (state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1 || state_reg == ST_IO_AR);
     }
 
     // AXI read data ready while waiting for a normal fill, cross-line beat, or uncached IO read.
-    __LAZY_COMB(axi_rready_comb, bool)
+    _LAZY_COMB(axi_rready_comb, bool)
         return axi_rready_comb = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1 || state_reg == ST_IO_R;
     }
 
     // Ready from the currently selected AXI read-address port.
-    __LAZY_COMB(axi_arready_selected_comb, bool)
+    _LAZY_COMB(axi_arready_selected_comb, bool)
         size_t i;
         axi_arready_selected_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -388,7 +388,7 @@ private:
     }
 
     // Valid from the currently selected AXI read-data port.
-    __LAZY_COMB(axi_rvalid_selected_comb, bool)
+    _LAZY_COMB(axi_rvalid_selected_comb, bool)
         size_t i;
         axi_rvalid_selected_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -400,7 +400,7 @@ private:
     }
 
     // Read data from the currently selected AXI memory port.
-    __LAZY_COMB(axi_rdata_selected_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(axi_rdata_selected_comb, logic<PORT_BITWIDTH>)
         size_t i;
         axi_rdata_selected_comb = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -412,12 +412,12 @@ private:
     }
 
     // Way to evict or refill, depending on whether lookup has already chosen fill_way_reg.
-    __LAZY_COMB(evict_way_comb, u<WAY_BITS>)
+    _LAZY_COMB(evict_way_comb, u<WAY_BITS>)
         return evict_way_comb = (state_reg == ST_LOOKUP) ? victim_reg : fill_way_reg;
     }
 
     // Valid bit of the candidate eviction way.
-    __LAZY_COMB(evict_valid_comb, bool)
+    _LAZY_COMB(evict_valid_comb, bool)
         bool valid;
         size_t i;
         valid = false;
@@ -430,7 +430,7 @@ private:
     }
 
     // Dirty bit of the candidate eviction way.
-    __LAZY_COMB(evict_dirty_comb, bool)
+    _LAZY_COMB(evict_dirty_comb, bool)
         bool dirty;
         size_t i;
         dirty = false;
@@ -443,7 +443,7 @@ private:
     }
 
     // Tag of the candidate eviction way, used to reconstruct the writeback address.
-    __LAZY_COMB(evict_tag_comb, u<TAG_BITS>)
+    _LAZY_COMB(evict_tag_comb, u<TAG_BITS>)
         size_t i;
         evict_tag_comb = 0;
         for (i = 0; i < WAYS; ++i) {
@@ -455,7 +455,7 @@ private:
     }
 
     // Full AXI writeback address for the current evicted PORT_BITWIDTH beat or MMIO store.
-    __LAZY_COMB(axi_awaddr_full_comb, uint32_t)
+    _LAZY_COMB(axi_awaddr_full_comb, uint32_t)
         uint32_t addr;
         addr = (((uint32_t)evict_tag_comb_func() << (SET_BITS + LINE_BITS)) |
             ((uint32_t)req_set_comb_func() << LINE_BITS)) + ((uint32_t)evict_beat_reg * PORT_BYTES);
@@ -466,12 +466,12 @@ private:
     }
 
     // AXI writeback address relative to memory_base_in before memory-port selection.
-    __LAZY_COMB(axi_awaddr_total_local_comb, uint32_t)
+    _LAZY_COMB(axi_awaddr_total_local_comb, uint32_t)
         return axi_awaddr_total_local_comb = axi_awaddr_full_comb_func() - memory_base_in();
     }
 
     // Memory/device port selected by cumulative region sizes for AXI writes.
-    __LAZY_COMB(axi_aw_sel_comb, uint32_t)
+    _LAZY_COMB(axi_aw_sel_comb, uint32_t)
         size_t i;
         uint64_t base;
         uint64_t local;
@@ -488,7 +488,7 @@ private:
     }
 
     // Region base offset inside the full memory window for the selected write port.
-    __LAZY_COMB(axi_aw_region_base_comb, uint32_t)
+    _LAZY_COMB(axi_aw_region_base_comb, uint32_t)
         size_t i;
         uint64_t base;
         base = 0;
@@ -501,24 +501,24 @@ private:
     }
 
     // Local AXI write address presented to the selected memory/device port.
-    __LAZY_COMB(axi_awaddr_local_comb, u<MEM_ADDR_BITS>)
+    _LAZY_COMB(axi_awaddr_local_comb, u<MEM_ADDR_BITS>)
         // Ports are now disjoint cumulative regions, not interleaved banks, so
         // keep the full byte address inside the selected region.
         return axi_awaddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)(axi_awaddr_total_local_comb_func() - axi_aw_region_base_comb_func()) & MEM_ADDR_MASK64);
     }
 
     // AXI write address valid during dirty-line eviction.
-    __LAZY_COMB(axi_awvalid_comb, bool)
+    _LAZY_COMB(axi_awvalid_comb, bool)
         return axi_awvalid_comb = req_addr_in_memory_comb_func() && (state_reg == ST_EVICT_AW || state_reg == ST_IO_AW);
     }
 
     // AXI write data valid during dirty-line eviction.
-    __LAZY_COMB(axi_wvalid_comb, bool)
+    _LAZY_COMB(axi_wvalid_comb, bool)
         return axi_wvalid_comb = req_addr_in_memory_comb_func() && (state_reg == ST_EVICT_W || state_reg == ST_IO_W);
     }
 
     // Ready from the currently selected AXI write-address port.
-    __LAZY_COMB(axi_awready_selected_comb, bool)
+    _LAZY_COMB(axi_awready_selected_comb, bool)
         size_t i;
         axi_awready_selected_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -530,7 +530,7 @@ private:
     }
 
     // Ready from the currently selected AXI write-data port.
-    __LAZY_COMB(axi_wready_selected_comb, bool)
+    _LAZY_COMB(axi_wready_selected_comb, bool)
         size_t i;
         axi_wready_selected_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -542,7 +542,7 @@ private:
     }
 
     // Write response valid from the currently selected AXI port.
-    __LAZY_COMB(axi_bvalid_selected_comb, bool)
+    _LAZY_COMB(axi_bvalid_selected_comb, bool)
         size_t i;
         axi_bvalid_selected_comb = false;
         for (i = 0; i < MEM_PORTS; ++i) {
@@ -554,7 +554,7 @@ private:
     }
 
     // Pack the evicted cache way into the current PORT_BITWIDTH AXI write beat.
-    __LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
         size_t i;
         size_t way;
         size_t word;
@@ -578,7 +578,7 @@ private:
     }
 
     // Configured uncached flag for the region containing the registered request.
-    __LAZY_COMB(req_uncached_region_comb, bool)
+    _LAZY_COMB(req_uncached_region_comb, bool)
         uint32_t local;
         uint64_t base;
         size_t i;
@@ -595,7 +595,7 @@ private:
     }
 
     // Write beat for uncached MMIO stores, placing the 32-bit CPU word at its byte lane.
-    __LAZY_COMB(io_write_beat_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(io_write_beat_comb, logic<PORT_BITWIDTH>)
         uint32_t word;
         io_write_beat_comb = 0;
         word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
@@ -604,12 +604,12 @@ private:
     }
 
     // Select cache-line eviction data or the single MMIO write beat for AXI W.
-    __LAZY_COMB(axi_wdata_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(axi_wdata_comb, logic<PORT_BITWIDTH>)
         return axi_wdata_comb = state_reg == ST_IO_W ? io_write_beat_comb_func() : evict_line_comb_func();
     }
 
     // Associative tag compare for the registered request.
-    __LAZY_COMB(hit_comb, bool)
+    _LAZY_COMB(hit_comb, bool)
         size_t i;
         hit_comb = false;
         for (i = 0; i < WAYS; ++i) {
@@ -622,7 +622,7 @@ private:
     }
 
     // Way index selected by the associative tag compare.
-    __LAZY_COMB(hit_way_comb, u<WAY_BITS>)
+    _LAZY_COMB(hit_way_comb, u<WAY_BITS>)
         size_t i;
         hit_way_comb = 0;
         for (i = 0; i < WAYS; ++i) {
@@ -635,7 +635,7 @@ private:
     }
 
     // Aligned 32-bit word from the hit way at req_word_comb.
-    __LAZY_COMB(hit_aligned_word_comb, uint32_t)
+    _LAZY_COMB(hit_aligned_word_comb, uint32_t)
         size_t i;
         size_t way;
         size_t word;
@@ -654,7 +654,7 @@ private:
     }
 
     // Aligned next 32-bit word from the hit way for unaligned write merging.
-    __LAZY_COMB(hit_aligned_next_word_comb, uint32_t)
+    _LAZY_COMB(hit_aligned_next_word_comb, uint32_t)
         size_t i;
         size_t way;
         size_t word;
@@ -673,7 +673,7 @@ private:
     }
 
     // Assemble an unaligned 32-bit read from one or two cached words in the hit way.
-    __LAZY_COMB(hit_word_comb, uint32_t)
+    _LAZY_COMB(hit_word_comb, uint32_t)
         size_t i;
         size_t way;
         size_t word_index;
@@ -702,7 +702,7 @@ private:
     }
 
     // Merge write bytes into the addressed cached word, preserving unmasked bytes.
-    __LAZY_COMB(write_word_comb, uint32_t)
+    _LAZY_COMB(write_word_comb, uint32_t)
         size_t i;
         uint32_t old_data;
         uint32_t new_data;
@@ -722,7 +722,7 @@ private:
     }
 
     // Merge spillover write bytes into the following cached word.
-    __LAZY_COMB(write_next_word_comb, uint32_t)
+    _LAZY_COMB(write_next_word_comb, uint32_t)
         size_t i;
         uint32_t old_data;
         uint32_t new_data;
@@ -742,14 +742,14 @@ private:
     }
 
     // Aligned 32-bit request word extracted from the current AXI read beat.
-    __LAZY_COMB(axi_aligned_word_comb, uint32_t)
+    _LAZY_COMB(axi_aligned_word_comb, uint32_t)
         uint32_t word;
         word = (uint32_t)req_word_comb_func() % PORT_WORDS;
         return axi_aligned_word_comb = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
     }
 
     // Merge a pending write into the addressed word while filling a cache line from AXI.
-    __LAZY_COMB(fill_write_word_comb, uint32_t)
+    _LAZY_COMB(fill_write_word_comb, uint32_t)
         size_t i;
         uint32_t old_data;
         uint32_t new_data;
@@ -775,7 +775,7 @@ private:
     }
 
     // Merge spillover write bytes into the following word while filling from AXI.
-    __LAZY_COMB(fill_write_next_word_comb, uint32_t)
+    _LAZY_COMB(fill_write_next_word_comb, uint32_t)
         size_t i;
         uint32_t old_data;
         uint32_t new_data;
@@ -806,7 +806,7 @@ private:
     }
 
     // Pack the hit way words for the requested PORT_BITWIDTH beat returned to L1.
-    __LAZY_COMB(hit_beat_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(hit_beat_comb, logic<PORT_BITWIDTH>)
         size_t i;
         size_t way;
         size_t word_index;
@@ -830,7 +830,7 @@ private:
     }
 
     // Assemble a cross-line unaligned read from the saved low and high AXI beats.
-    __LAZY_COMB(cross_read_data_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(cross_read_data_comb, logic<PORT_BITWIDTH>)
         uint32_t low_word;
         uint32_t byte;
         uint32_t low;
@@ -850,7 +850,7 @@ private:
     }
 
     // Tag RAM payload: valid, dirty, and tag bits for init/fill/write updates.
-    __LAZY_COMB(tag_write_data_comb, logic<TAG_BITS + 2>)
+    _LAZY_COMB(tag_write_data_comb, logic<TAG_BITS + 2>)
         if (state_reg == ST_INIT) {
             tag_write_data_comb = 0;
         }
@@ -862,7 +862,7 @@ private:
     }
 
     // Read data mux for held responses, cross-line reads, cache hits, or live AXI fill data.
-    __LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
+    _LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
         if (state_reg != ST_IDLE && req_from_slave_reg) {
             // External AXI-master completions are returned through axi_in[*];
             // never expose their live memory beat on the CPU/L1 read-data port.
@@ -887,7 +887,7 @@ private:
     }
 
     // Instruction-side wait/ready generation with data-side priority.
-    __LAZY_COMB(i_wait_comb, bool)
+    _LAZY_COMB(i_wait_comb, bool)
         i_wait_comb = false;
         if (i_read_in()) {
             i_wait_comb = true;
@@ -914,7 +914,7 @@ private:
     }
 
     // Data-side wait/ready generation for reads and writes.
-    __LAZY_COMB(d_wait_comb, bool)
+    _LAZY_COMB(d_wait_comb, bool)
         d_wait_comb = false;
         if (d_write_in()) {
             d_wait_comb = true;
@@ -948,10 +948,10 @@ public:
     {
         size_t i;
         for (i = 0; i < DATA_BANKS; ++i) {
-            data_ram[i].addr_in = __EXPR((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func());
-            data_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
+            data_ram[i].addr_in = _BIND((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func());
+            data_ram[i].rd_in = _BIND((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
-            data_ram[i].wr_in = __EXPR_I(
+            data_ram[i].wr_in = _BIND_I(
                 // Fill writes only the words carried by the current AXI beat; stores update one or two word banks.
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
@@ -960,7 +960,7 @@ public:
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (req_word_comb_func() == (i % LINE_WORDS) ||
                      (((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)))));
-            data_ram[i].data_in = __EXPR_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
+            data_ram[i].data_in = _BIND_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 // Store hit path merges CPU bytes with old cached words; fill path selects/merges words from AXI data.
                 ((((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
                     write_next_word_comb_func() : write_word_comb_func()) :
@@ -971,42 +971,42 @@ public:
         }
 
         for (i = 0; i < WAYS; ++i) {
-            tag_ram[i].addr_in = __EXPR((state_reg == ST_INIT) ? init_set_reg :
+            tag_ram[i].addr_in = _BIND((state_reg == ST_INIT) ? init_set_reg :
                 ((state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func()));
-            tag_ram[i].rd_in = __EXPR((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
+            tag_ram[i].rd_in = _BIND((state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
                 state_reg == ST_CROSS_WRITE_LOOKUP);
-            tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
+            tag_ram[i].wr_in = _BIND_I((state_reg == ST_INIT) ||
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == i) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() && hit_way_comb_func() == i));
-            tag_ram[i].data_in = __VAR(tag_write_data_comb_func());
+            tag_ram[i].data_in = _BIND_VAR(tag_write_data_comb_func());
             tag_ram[i].id_in = 2100 + i;
         }
 
         for (i = 0; i < MEM_PORTS; ++i) {
-            axi_in[i].awready_out = __EXPR_I(state_reg == ST_IDLE && !slave_aw_pending_reg[i] && !slave_bvalid_reg[i] &&
+            axi_in[i].awready_out = _BIND_I(state_reg == ST_IDLE && !slave_aw_pending_reg[i] && !slave_bvalid_reg[i] &&
                 axi_in[i].awvalid_in());
-            axi_in[i].wready_out = __EXPR_I(state_reg == ST_IDLE &&
+            axi_in[i].wready_out = _BIND_I(state_reg == ST_IDLE &&
                 slave_write_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].bvalid_out = __VAR_I(slave_bvalid_reg[i]);
-            axi_in[i].bid_out = __VAR_I(slave_bid_reg[i]);
-            axi_in[i].arready_out = __EXPR_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
+            axi_in[i].bvalid_out = _BIND_VAR_I(slave_bvalid_reg[i]);
+            axi_in[i].bid_out = _BIND_VAR_I(slave_bid_reg[i]);
+            axi_in[i].arready_out = _BIND_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
                 !slave_write_pending_comb_func() && slave_read_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].rvalid_out = __VAR_I(slave_rvalid_reg[i]);
-            axi_in[i].rdata_out = __VAR_I(slave_rdata_reg[i]);
-            axi_in[i].rlast_out = __VAR_I(slave_rvalid_reg[i]);
-            axi_in[i].rid_out = __VAR_I(slave_rid_reg[i]);
+            axi_in[i].rvalid_out = _BIND_VAR_I(slave_rvalid_reg[i]);
+            axi_in[i].rdata_out = _BIND_VAR_I(slave_rdata_reg[i]);
+            axi_in[i].rlast_out = _BIND_VAR_I(slave_rvalid_reg[i]);
+            axi_in[i].rid_out = _BIND_VAR_I(slave_rid_reg[i]);
 
-            axi_out[i].awvalid_in = __EXPR_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].awaddr_in = __VAR(axi_awaddr_local_comb_func());
-            axi_out[i].awid_in = __EXPR((u<4>)0);
-            axi_out[i].wvalid_in = __EXPR_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].wdata_in = __VAR(axi_wdata_comb_func());
-            axi_out[i].wlast_in = __EXPR_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].bready_in = __EXPR_I(axi_aw_sel_comb_func() == i);
-            axi_out[i].arvalid_in = __EXPR_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
-            axi_out[i].araddr_in = __VAR(axi_araddr_local_comb_func());
-            axi_out[i].arid_in = __EXPR((u<4>)0);
-            axi_out[i].rready_in = __EXPR_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
+            axi_out[i].awvalid_in = _BIND_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].awaddr_in = _BIND_VAR(axi_awaddr_local_comb_func());
+            axi_out[i].awid_in = _BIND((u<4>)0);
+            axi_out[i].wvalid_in = _BIND_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].wdata_in = _BIND_VAR(axi_wdata_comb_func());
+            axi_out[i].wlast_in = _BIND_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
+            axi_out[i].bready_in = _BIND_I(axi_aw_sel_comb_func() == i);
+            axi_out[i].arvalid_in = _BIND_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
+            axi_out[i].araddr_in = _BIND_VAR(axi_araddr_local_comb_func());
+            axi_out[i].arid_in = _BIND((u<4>)0);
+            axi_out[i].rready_in = _BIND_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
         }
     }
 

@@ -8,36 +8,36 @@ class ExecuteMem: public Module
 {
 public:
     // Execute-stage state after forwarding and trap-return adjustments.
-    __PORT(State)    state_in;
+    _PORT(State)    state_in;
     // ALU-computed effective address for load/store instructions.
-    __PORT(uint32_t) alu_result_in;
+    _PORT(uint32_t) alu_result_in;
 #ifdef ENABLE_RV32IA
-    __PORT(bool)     dcache_read_valid_in;
-    __PORT(uint32_t) dcache_read_addr_in;
-    __PORT(uint32_t) dcache_read_data_in;
+    _PORT(bool)     dcache_read_valid_in;
+    _PORT(uint32_t) dcache_read_addr_in;
+    _PORT(uint32_t) dcache_read_data_in;
 #endif
     // Holds the current memory request stable while dcache/L2 cannot accept it.
-    __PORT(bool)     mem_stall_in;
+    _PORT(bool)     mem_stall_in;
     // Preserves issued-request metadata while the pipeline waits for writeback.
-    __PORT(bool)     hold_in;
+    _PORT(bool)     hold_in;
 
     // Registered request driven to dcache in the memory stage.
-    __PORT(bool)     mem_write_out      = __VAR(mem_write_reg);
-    __PORT(uint32_t) mem_write_addr_out = __VAR(mem_addr_reg);
-    __PORT(uint32_t) mem_write_data_out = __VAR(mem_data_reg);
-    __PORT(uint8_t)  mem_write_mask_out = __VAR(mem_mask_reg);
-    __PORT(bool)     mem_read_out       = __VAR(mem_read_reg);
-    __PORT(uint32_t) mem_read_addr_out  = __VAR(mem_addr_reg);
+    _PORT(bool)     mem_write_out      = _BIND_VAR(mem_write_reg);
+    _PORT(uint32_t) mem_write_addr_out = _BIND_VAR(mem_addr_reg);
+    _PORT(uint32_t) mem_write_data_out = _BIND_VAR(mem_data_reg);
+    _PORT(uint8_t)  mem_write_mask_out = _BIND_VAR(mem_mask_reg);
+    _PORT(bool)     mem_read_out       = _BIND_VAR(mem_read_reg);
+    _PORT(uint32_t) mem_read_addr_out  = _BIND_VAR(mem_addr_reg);
 
     // Split transaction status used by hazard control and writeback assembly.
-    __PORT(bool)     mem_split_out      = __VAR(mem_split_comb_func());
-    __PORT(bool)     mem_split_busy_out = __VAR(mem_split_pending_reg);
-    __PORT(bool)     split_load_out      = __VAR(split_load_reg);
-    __PORT(uint32_t) split_load_low_out  = __VAR(split_load_low_addr_reg);
-    __PORT(uint32_t) split_load_high_out = __VAR(split_load_high_addr_reg);
+    _PORT(bool)     mem_split_out      = _BIND_VAR(mem_split_comb_func());
+    _PORT(bool)     mem_split_busy_out = _BIND_VAR(mem_split_pending_reg);
+    _PORT(bool)     split_load_out      = _BIND_VAR(split_load_reg);
+    _PORT(uint32_t) split_load_low_out  = _BIND_VAR(split_load_low_addr_reg);
+    _PORT(uint32_t) split_load_high_out = _BIND_VAR(split_load_high_addr_reg);
 #ifdef ENABLE_RV32IA
-    __PORT(bool)     atomic_busy_out     = __VAR(atomic_busy_comb_func());
-    __PORT(uint32_t) atomic_sc_result_out = __VAR(atomic_sc_result_comb_func());
+    _PORT(bool)     atomic_busy_out     = _BIND_VAR(atomic_busy_comb_func());
+    _PORT(uint32_t) atomic_sc_result_out = _BIND_VAR(atomic_sc_result_comb_func());
 #endif
 
 private:
@@ -66,7 +66,7 @@ private:
 #endif
 
     // Decode funct3 into byte count for integer loads and stores.
-    __LAZY_COMB(mem_size_comb, uint32_t)
+    _LAZY_COMB(mem_size_comb, uint32_t)
         if (state_in().amo_op != Amo::AMONONE) {
             mem_size_comb = 4;
         }
@@ -85,7 +85,7 @@ private:
     }
 
     // Detect memory accesses that cross a 32-byte L1 cache line.
-    __LAZY_COMB(mem_split_comb, bool)
+    _LAZY_COMB(mem_split_comb, bool)
         uint32_t addr;
         uint32_t size;
         addr = alu_result_in();
@@ -99,13 +99,13 @@ private:
     }
 
 #ifdef ENABLE_RV32IA
-    __LAZY_COMB(atomic_read_ready_comb, bool)
+    _LAZY_COMB(atomic_read_ready_comb, bool)
         atomic_read_ready_comb = dcache_read_valid_in() &&
             dcache_read_addr_in() == (uint32_t)atomic_addr_reg;
         return atomic_read_ready_comb;
     }
 
-    __LAZY_COMB(atomic_write_data_comb, uint32_t)
+    _LAZY_COMB(atomic_write_data_comb, uint32_t)
         uint32_t old_value;
         uint32_t operand;
         old_value = dcache_read_data_in();
@@ -126,23 +126,23 @@ private:
         return atomic_write_data_comb;
     }
 
-    __LAZY_COMB(atomic_sc_success_comb, bool)
+    _LAZY_COMB(atomic_sc_success_comb, bool)
         atomic_sc_success_comb = reservation_valid_reg &&
             ((uint32_t)reservation_addr_reg == (alu_result_in() & ~3u));
         return atomic_sc_success_comb;
     }
 
-    __LAZY_COMB(atomic_sc_result_comb, uint32_t)
+    _LAZY_COMB(atomic_sc_result_comb, uint32_t)
         return atomic_sc_result_comb = atomic_sc_success_comb_func() ? 0u : 1u;
     }
 
-    __LAZY_COMB(atomic_busy_comb, bool)
+    _LAZY_COMB(atomic_busy_comb, bool)
         return atomic_busy_comb = atomic_pending_reg;
     }
 #endif
 
     // Mask for the first beat of a split access; stores write the low bytes.
-    __LAZY_COMB(first_split_mask_comb, uint8_t)
+    _LAZY_COMB(first_split_mask_comb, uint8_t)
         uint32_t size;
         uint32_t offset;
         uint32_t low_size;
@@ -159,7 +159,7 @@ private:
     }
 
     // Mask for the delayed second beat of a split access.
-    __LAZY_COMB(second_split_mask_comb, uint8_t)
+    _LAZY_COMB(second_split_mask_comb, uint8_t)
         uint32_t overflow;
         overflow = (uint32_t)mem_split_offset_reg + (uint32_t)mem_split_size_reg - 4u;
         second_split_mask_comb = (uint8_t)((1u << overflow) - 1u);
@@ -167,12 +167,12 @@ private:
     }
 
     // Low aligned word address used later to match the first split-load response.
-    __LAZY_COMB(split_load_low_addr_comb, uint32_t)
+    _LAZY_COMB(split_load_low_addr_comb, uint32_t)
         return split_load_low_addr_comb = alu_result_in() & ~3u;
     }
 
     // High aligned word address used later to match the second split-load response.
-    __LAZY_COMB(split_load_high_addr_comb, uint32_t)
+    _LAZY_COMB(split_load_high_addr_comb, uint32_t)
         return split_load_high_addr_comb = split_load_low_addr_comb_func() + 4;
     }
 

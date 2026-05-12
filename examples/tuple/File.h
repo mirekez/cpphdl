@@ -13,15 +13,15 @@ class File : public Module
     using DTYPE = std::conditional_t<(MEM_WIDTH <= 32),uint32_t,uint64_t>;
 public:
 
-    __PORT(uint8_t)      write_addr_in;
-    __PORT(bool)         write_in;
-    __PORT(DTYPE)        write_data_in;
+    _PORT(uint8_t)      write_addr_in;
+    _PORT(bool)         write_in;
+    _PORT(DTYPE)        write_data_in;
 
-    __PORT(uint8_t)      read_addr0_in;
-    __PORT(uint8_t)      read_addr1_in;
-    __PORT(bool)         read_in          = __EXPR( false );
-    __PORT(DTYPE)        read_data0_out   = __VAR( data0_out_comb_func() );
-    __PORT(DTYPE)        read_data1_out   = __VAR( data1_out_comb_func() );
+    _PORT(uint8_t)      read_addr0_in;
+    _PORT(uint8_t)      read_addr1_in;
+    _PORT(bool)         read_in          = _BIND( false );
+    _PORT(DTYPE)        read_data0_out   = _BIND_VAR( data0_out_comb_func() );
+    _PORT(DTYPE)        read_data1_out   = _BIND_VAR( data1_out_comb_func() );
 
     bool    debugen_in;
 
@@ -29,11 +29,11 @@ private:
 
     memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
 
-    __LAZY_COMB(data0_out_comb, DTYPE)
+    _LAZY_COMB(data0_out_comb, DTYPE)
         return data0_out_comb = (DTYPE) buffer[read_addr0_in()];
     }
 
-    __LAZY_COMB(data1_out_comb, DTYPE)
+    _LAZY_COMB(data1_out_comb, DTYPE)
         return data1_out_comb = (DTYPE) buffer[read_addr1_in()];
     }
 

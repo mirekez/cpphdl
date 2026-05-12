@@ -12,10 +12,10 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
-    __PORT(uint32_t)   mem_data_in;
-    __PORT(uint32_t)   regs_data_out = __VAR( regs_out_comb_func() );
-    __PORT(uint8_t)    regs_wr_id_out = __EXPR( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
-    __PORT(bool)       regs_write_out = __VAR( regs_write_comb_func() );
+    _PORT(uint32_t)   mem_data_in;
+    _PORT(uint32_t)   regs_data_out = _BIND_VAR( regs_out_comb_func() );
+    _PORT(uint8_t)    regs_wr_id_out = _BIND( state_in()[ID-1].rd );  // NOTE! reg0 is ZERO, never write it
+    _PORT(bool)       regs_write_out = _BIND_VAR( regs_write_comb_func() );
 
     struct State
     {
@@ -23,7 +23,7 @@ public:
 
 private:
 
-    __LAZY_COMB(regs_out_comb, uint32_t)
+    _LAZY_COMB(regs_out_comb, uint32_t)
 
         regs_out_comb = 0;
         if (state_in()[ID-1].wb_op == Wb::PC2) {
@@ -47,7 +47,7 @@ private:
         return regs_out_comb;
     }
 
-    __LAZY_COMB(regs_write_comb, bool)
+    _LAZY_COMB(regs_write_comb, bool)
 
         regs_write_comb = 0;
         if (state_in()[ID-1].wb_op != Wb::WNONE) {

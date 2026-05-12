@@ -117,11 +117,11 @@ struct StructContainingUnionContainingStruct
 class StructAlignment : public Module
 {
 public:
-    __PORT(u<8>) seed_in;
-    __PORT(OuterBits) sample_out = __VAR(sample_comb_func());
-    __PORT(UnionContainingStructContainingUnion) union_struct_out = __VAR(union_struct_comb_func());
-    __PORT(StructContainingUnionContainingStruct) struct_union_out = __VAR(struct_union_comb_func());
-    __PORT(StructWithEnum) enum_struct_out = __VAR(enum_struct_comb_func());
+    _PORT(u<8>) seed_in;
+    _PORT(OuterBits) sample_out = _BIND_VAR(sample_comb_func());
+    _PORT(UnionContainingStructContainingUnion) union_struct_out = _BIND_VAR(union_struct_comb_func());
+    _PORT(StructContainingUnionContainingStruct) struct_union_out = _BIND_VAR(struct_union_comb_func());
+    _PORT(StructWithEnum) enum_struct_out = _BIND_VAR(enum_struct_comb_func());
 
 private:
     OuterBits sample_comb;
@@ -358,7 +358,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = __VAR(seed);
+        dut.seed_in = _BIND_VAR(seed);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

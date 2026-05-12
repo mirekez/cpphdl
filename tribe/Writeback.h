@@ -7,20 +7,20 @@ using namespace cpphdl;
 class Writeback: public Module
 {
 public:
-    __PORT(State) state_in;
+    _PORT(State) state_in;
 
-    __PORT(uint32_t) alu_result_in;
-    __PORT(uint32_t) mem_data_in;
-    __PORT(uint32_t) mem_data_hi_in;
-    __PORT(uint32_t) mem_addr_in;
-    __PORT(bool)     mem_split_in;
-    __PORT(uint32_t) regs_data_out = __VAR( regs_out_comb_func() );
-    __PORT(uint8_t ) regs_wr_id_out = __EXPR( state_in().rd );  // NOTE! reg0 is ZERO, never write it
-    __PORT(bool    ) regs_write_out = __VAR( regs_write_comb_func() );
+    _PORT(uint32_t) alu_result_in;
+    _PORT(uint32_t) mem_data_in;
+    _PORT(uint32_t) mem_data_hi_in;
+    _PORT(uint32_t) mem_addr_in;
+    _PORT(bool)     mem_split_in;
+    _PORT(uint32_t) regs_data_out = _BIND_VAR( regs_out_comb_func() );
+    _PORT(uint8_t ) regs_wr_id_out = _BIND( state_in().rd );  // NOTE! reg0 is ZERO, never write it
+    _PORT(bool    ) regs_write_out = _BIND_VAR( regs_write_comb_func() );
 
 private:
 
-    __LAZY_COMB(mem_word_comb, uint32_t)
+    _LAZY_COMB(mem_word_comb, uint32_t)
         uint32_t shift;
         shift = mem_addr_in() & 3u;
         if (mem_split_in()) {
@@ -33,7 +33,7 @@ private:
         return mem_word_comb;
     }
 
-    __LAZY_COMB(regs_out_comb, uint32_t)
+    _LAZY_COMB(regs_out_comb, uint32_t)
         const auto& state_tmp = state_in();
         uint32_t mem_word;
 
@@ -60,7 +60,7 @@ private:
         return regs_out_comb;
     }
 
-    __LAZY_COMB(regs_write_comb, bool)
+    _LAZY_COMB(regs_write_comb, bool)
 
         regs_write_comb = 0;
         if (state_in().wb_op != Wb::WNONE) {

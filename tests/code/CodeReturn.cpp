@@ -13,12 +13,12 @@ using namespace cpphdl;
 class CodeReturn : public Module
 {
 public:
-    __PORT(bool)  early_in;
-    __PORT(u<32>) first_in;
-    __PORT(u<32>) second_in;
-    __PORT(u<32>) value_out = __VAR(value_comb_func());
-    __PORT(u<32>) task_value_out = __VAR(task_value_comb_func());
-    __PORT(u<32>) function_value_out = __VAR(function_value_comb_func());
+    _PORT(bool)  early_in;
+    _PORT(u<32>) first_in;
+    _PORT(u<32>) second_in;
+    _PORT(u<32>) value_out = _BIND_VAR(value_comb_func());
+    _PORT(u<32>) task_value_out = _BIND_VAR(task_value_comb_func());
+    _PORT(u<32>) function_value_out = _BIND_VAR(function_value_comb_func());
 
 private:
     u<32> value_comb;
@@ -164,9 +164,9 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.early_in = __VAR(early);
-        dut.first_in = __VAR(first);
-        dut.second_in = __VAR(second);
+        dut.early_in = _BIND_VAR(early);
+        dut.first_in = _BIND_VAR(first);
+        dut.second_in = _BIND_VAR(second);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

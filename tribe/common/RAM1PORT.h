@@ -12,11 +12,11 @@ template<size_t WIDTH, size_t DEPTH>
 class RAM1PORT : public Module
 {
 public:
-    __PORT(u<clog2(DEPTH)>) addr_in;
-    __PORT(logic<WIDTH>)    data_in;
-    __PORT(bool)            wr_in;
-    __PORT(bool)            rd_in;
-    __PORT(logic<WIDTH>)    q_out = __VAR( q_out_reg );
+    _PORT(u<clog2(DEPTH)>) addr_in;
+    _PORT(logic<WIDTH>)    data_in;
+    _PORT(bool)            wr_in;
+    _PORT(bool)            rd_in;
+    _PORT(logic<WIDTH>)    q_out = _BIND_VAR( q_out_reg );
     int id_in;
 
 private:

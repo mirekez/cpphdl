@@ -149,16 +149,16 @@ class Fifo : public Module
     Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
 
 public:
-    __PORT(bool)                         write_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
+    _PORT(bool)                         write_in;
+    _PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
 
-    __PORT(bool)                         read_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
+    _PORT(bool)                         read_in;
+    _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
 
-    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
-    __PORT(bool)                         clear_in       = __EXPR( false );
-    __PORT(bool)                         afull_out      = __VAR( afull_reg );
+    _PORT(bool)                         empty_out      = _BIND_VAR( empty_comb_func() );
+    _PORT(bool)                         full_out       = _BIND_VAR( full_comb_func() );
+    _PORT(bool)                         clear_in       = _BIND( false );
+    _PORT(bool)                         afull_out      = _BIND_VAR( afull_reg );
 
     bool                         debugen_in;
 
@@ -175,10 +175,10 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = __EXPR( 0xFFFFFFFFFFFFFFFFULL );
-        mem.write_addr_in = __VAR( wp_reg );
+        mem.write_mask_in = _BIND( 0xFFFFFFFFFFFFFFFFULL );
+        mem.write_addr_in = _BIND_VAR( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = __VAR( rp_reg );
+        mem.read_addr_in  = _BIND_VAR( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem._assign();
@@ -492,14 +492,14 @@ class Memory : public Module
     size_t i;
 
 public:
-    __PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
-    __PORT(bool)                      write_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
-    __PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
+    _PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
+    _PORT(bool)                      write_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
+    _PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
 
-    __PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
-    __PORT(bool)                      read_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = __VAR( data_out_comb_func() );
+    _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
+    _PORT(bool)                      read_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _BIND_VAR( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -571,9 +571,9 @@ struct DataValidReady
 template<size_t DATAWIDTH>
 struct DataValidReadyIf : public Interface
 {
-    __PORT(bool) valid_in;
-    __PORT(bool) ready_out;
-    __PORT(logic<DATAWIDTH>) data_in;
+    _PORT(bool) valid_in;
+    _PORT(bool) ready_out;
+    _PORT(logic<DATAWIDTH>) data_in;
 };
 
 template<size_t DATAWIDTH>
@@ -589,8 +589,8 @@ private:
 public:
     void _assign()
     {
-        source_out.valid_in = __VAR(valid_reg);
-        source_out.data_in = __VAR(data_reg);
+        source_out.valid_in = _BIND_VAR(valid_reg);
+        source_out.data_in = _BIND_VAR(data_reg);
     }
 
     void _work(bool reset)
@@ -627,7 +627,7 @@ private:
 public:
     void _assign()
     {
-        sink_in.ready_out = __VAR(ready_reg);
+        sink_in.ready_out = _BIND_VAR(ready_reg);
     }
 
     void _work(bool reset)
@@ -868,8 +868,8 @@ class [[clang::annotate(
 )]] AnnotateReplacement : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     u<8> value_comb;

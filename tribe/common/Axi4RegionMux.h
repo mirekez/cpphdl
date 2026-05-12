@@ -15,8 +15,8 @@ public:
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> slave_in;
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> masters_out[N];
 
-    __PORT(uint32_t) region_base_in[N];
-    __PORT(uint32_t) region_size_in[N];
+    _PORT(uint32_t) region_base_in[N];
+    _PORT(uint32_t) region_size_in[N];
 
 private:
     reg<u<SEL_BITS>> aw_sel_reg;
@@ -25,7 +25,7 @@ private:
     reg<u1> ar_active_reg;
 
     // Registered write target, clamped so reset-time/uninitialized values never index past masters_out.
-    __LAZY_COMB(aw_sel_safe_comb, uint32_t)
+    _LAZY_COMB(aw_sel_safe_comb, uint32_t)
         uint32_t sel;
         sel = (uint32_t)aw_sel_reg;
         if (sel >= N) {
@@ -35,7 +35,7 @@ private:
     }
 
     // Registered read target, clamped so reset-time/uninitialized values never index past masters_out.
-    __LAZY_COMB(ar_sel_safe_comb, uint32_t)
+    _LAZY_COMB(ar_sel_safe_comb, uint32_t)
         uint32_t sel;
         sel = (uint32_t)ar_sel_reg;
         if (sel >= N) {
@@ -45,7 +45,7 @@ private:
     }
 
     // Device selected by the write address against configured base/size windows.
-    __LAZY_COMB(aw_next_comb, uint32_t)
+    _LAZY_COMB(aw_next_comb, uint32_t)
         size_t i;
         uint32_t addr;
         aw_next_comb = 0;
@@ -59,7 +59,7 @@ private:
     }
 
     // Device selected by the read address against configured base/size windows.
-    __LAZY_COMB(ar_next_comb, uint32_t)
+    _LAZY_COMB(ar_next_comb, uint32_t)
         size_t i;
         uint32_t addr;
         ar_next_comb = 0;
@@ -73,21 +73,21 @@ private:
     }
 
     // Local write address after subtracting the selected device base.
-    __LAZY_COMB(aw_local_addr_comb, u<ADDR_WIDTH>)
+    _LAZY_COMB(aw_local_addr_comb, u<ADDR_WIDTH>)
         uint32_t sel;
         sel = aw_active_reg ? aw_sel_safe_comb_func() : aw_next_comb_func();
         return aw_local_addr_comb = (u<ADDR_WIDTH>)(slave_in.awaddr_in() - region_base_in[sel]());
     }
 
     // Local read address after subtracting the selected device base.
-    __LAZY_COMB(ar_local_addr_comb, u<ADDR_WIDTH>)
+    _LAZY_COMB(ar_local_addr_comb, u<ADDR_WIDTH>)
         uint32_t sel;
         sel = ar_active_reg ? ar_sel_safe_comb_func() : ar_next_comb_func();
         return ar_local_addr_comb = (u<ADDR_WIDTH>)(slave_in.araddr_in() - region_base_in[sel]());
     }
 
     // Write-address ready from the currently selected target.
-    __LAZY_COMB(awready_comb, bool)
+    _LAZY_COMB(awready_comb, bool)
         size_t i;
         awready_comb = false;
         for (i = 0; i < N; ++i) {
@@ -99,7 +99,7 @@ private:
     }
 
     // Read-address ready from the currently selected target.
-    __LAZY_COMB(arready_comb, bool)
+    _LAZY_COMB(arready_comb, bool)
         size_t i;
         arready_comb = false;
         for (i = 0; i < N; ++i) {
@@ -115,31 +115,31 @@ public:
     {
         size_t i;
         for (i = 0; i < N; ++i) {
-            masters_out[i].awvalid_in = __EXPR_I(!aw_active_reg && aw_next_comb_func() == i && slave_in.awvalid_in());
-            masters_out[i].awaddr_in = __VAR(aw_local_addr_comb_func());
+            masters_out[i].awvalid_in = _BIND_I(!aw_active_reg && aw_next_comb_func() == i && slave_in.awvalid_in());
+            masters_out[i].awaddr_in = _BIND_VAR(aw_local_addr_comb_func());
             masters_out[i].awid_in = slave_in.awid_in;
 
-            masters_out[i].wvalid_in = __EXPR_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.wvalid_in());
+            masters_out[i].wvalid_in = _BIND_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.wvalid_in());
             masters_out[i].wdata_in = slave_in.wdata_in;
             masters_out[i].wlast_in = slave_in.wlast_in;
-            masters_out[i].bready_in = __EXPR_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.bready_in());
+            masters_out[i].bready_in = _BIND_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.bready_in());
 
-            masters_out[i].arvalid_in = __EXPR_I(!ar_active_reg && ar_next_comb_func() == i && slave_in.arvalid_in());
-            masters_out[i].araddr_in = __VAR(ar_local_addr_comb_func());
+            masters_out[i].arvalid_in = _BIND_I(!ar_active_reg && ar_next_comb_func() == i && slave_in.arvalid_in());
+            masters_out[i].araddr_in = _BIND_VAR(ar_local_addr_comb_func());
             masters_out[i].arid_in = slave_in.arid_in;
-            masters_out[i].rready_in = __EXPR_I(ar_active_reg && ar_sel_safe_comb_func() == i && slave_in.rready_in());
+            masters_out[i].rready_in = _BIND_I(ar_active_reg && ar_sel_safe_comb_func() == i && slave_in.rready_in());
         }
 
-        slave_in.awready_out = __EXPR(!aw_active_reg && awready_comb_func());
-        slave_in.wready_out = __EXPR(aw_active_reg ? masters_out[aw_sel_safe_comb_func()].wready_out() : false);
-        slave_in.bvalid_out = __EXPR(aw_active_reg ? masters_out[aw_sel_safe_comb_func()].bvalid_out() : false);
-        slave_in.bid_out = __EXPR(masters_out[aw_sel_safe_comb_func()].bid_out());
+        slave_in.awready_out = _BIND(!aw_active_reg && awready_comb_func());
+        slave_in.wready_out = _BIND(aw_active_reg ? masters_out[aw_sel_safe_comb_func()].wready_out() : false);
+        slave_in.bvalid_out = _BIND(aw_active_reg ? masters_out[aw_sel_safe_comb_func()].bvalid_out() : false);
+        slave_in.bid_out = _BIND(masters_out[aw_sel_safe_comb_func()].bid_out());
 
-        slave_in.arready_out = __EXPR(!ar_active_reg && arready_comb_func());
-        slave_in.rvalid_out = __EXPR(ar_active_reg ? masters_out[ar_sel_safe_comb_func()].rvalid_out() : false);
-        slave_in.rdata_out = __EXPR(masters_out[ar_sel_safe_comb_func()].rdata_out());
-        slave_in.rlast_out = __EXPR(ar_active_reg ? masters_out[ar_sel_safe_comb_func()].rlast_out() : false);
-        slave_in.rid_out = __EXPR(masters_out[ar_sel_safe_comb_func()].rid_out());
+        slave_in.arready_out = _BIND(!ar_active_reg && arready_comb_func());
+        slave_in.rvalid_out = _BIND(ar_active_reg ? masters_out[ar_sel_safe_comb_func()].rvalid_out() : false);
+        slave_in.rdata_out = _BIND(masters_out[ar_sel_safe_comb_func()].rdata_out());
+        slave_in.rlast_out = _BIND(ar_active_reg ? masters_out[ar_sel_safe_comb_func()].rlast_out() : false);
+        slave_in.rid_out = _BIND(masters_out[ar_sel_safe_comb_func()].rid_out());
     }
 
     void _work(bool reset)

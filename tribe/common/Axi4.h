@@ -94,30 +94,30 @@ struct Axi4Responder
 template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 struct Axi4If : Interface
 {
-    __PORT(bool)               awvalid_in;
-    __PORT(bool)               awready_out;
-    __PORT(u<ADDR_WIDTH>)      awaddr_in;
-    __PORT(u<ID_WIDTH>)        awid_in;
+    _PORT(bool)               awvalid_in;
+    _PORT(bool)               awready_out;
+    _PORT(u<ADDR_WIDTH>)      awaddr_in;
+    _PORT(u<ID_WIDTH>)        awid_in;
 
-    __PORT(bool)               wvalid_in;
-    __PORT(bool)               wready_out;
-    __PORT(logic<DATA_WIDTH>)  wdata_in;
-    __PORT(bool)               wlast_in;
+    _PORT(bool)               wvalid_in;
+    _PORT(bool)               wready_out;
+    _PORT(logic<DATA_WIDTH>)  wdata_in;
+    _PORT(bool)               wlast_in;
 
-    __PORT(bool)               bvalid_out;
-    __PORT(bool)               bready_in;
-    __PORT(u<ID_WIDTH>)        bid_out;
+    _PORT(bool)               bvalid_out;
+    _PORT(bool)               bready_in;
+    _PORT(u<ID_WIDTH>)        bid_out;
 
-    __PORT(bool)               arvalid_in;
-    __PORT(bool)               arready_out;
-    __PORT(u<ADDR_WIDTH>)      araddr_in;
-    __PORT(u<ID_WIDTH>)        arid_in;
+    _PORT(bool)               arvalid_in;
+    _PORT(bool)               arready_out;
+    _PORT(u<ADDR_WIDTH>)      araddr_in;
+    _PORT(u<ID_WIDTH>)        arid_in;
 
-    __PORT(bool)               rvalid_out;
-    __PORT(bool)               rready_in;
-    __PORT(logic<DATA_WIDTH>)  rdata_out;
-    __PORT(bool)               rlast_out;
-    __PORT(u<ID_WIDTH>)        rid_out;
+    _PORT(bool)               rvalid_out;
+    _PORT(bool)               rready_in;
+    _PORT(logic<DATA_WIDTH>)  rdata_out;
+    _PORT(bool)               rlast_out;
+    _PORT(u<ID_WIDTH>)        rid_out;
 
     Axi4If& operator=(Axi4Driver<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>& other)
     {
@@ -185,17 +185,17 @@ struct Axi4If : Interface
 
 #define AXI4_DRIVER_FROM_VERILATOR(dst, src, index, addr_type, data_func) \
     do { \
-        (dst).awvalid_in = __EXPR_I((bool)(src).axi_out___05Fawvalid_out[index]); \
-        (dst).awaddr_in = __EXPR_I((addr_type)(uint32_t)(src).axi_out___05Fawaddr_out[index]); \
-        (dst).awid_in = __EXPR_I((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
-        (dst).wvalid_in = __EXPR_I((bool)(src).axi_out___05Fwvalid_out[index]); \
-        (dst).wdata_in = __EXPR_I(data_func((src).axi_out___05Fwdata_out[index])); \
-        (dst).wlast_in = __EXPR_I((bool)(src).axi_out___05Fwlast_out[index]); \
-        (dst).bready_in = __EXPR_I((bool)(src).axi_out___05Fbready_out[index]); \
-        (dst).arvalid_in = __EXPR_I((bool)(src).axi_out___05Farvalid_out[index]); \
-        (dst).araddr_in = __EXPR_I((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
-        (dst).arid_in = __EXPR_I((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
-        (dst).rready_in = __EXPR_I((bool)(src).axi_out___05Frready_out[index]); \
+        (dst).awvalid_in = _BIND_I((bool)(src).axi_out___05Fawvalid_out[index]); \
+        (dst).awaddr_in = _BIND_I((addr_type)(uint32_t)(src).axi_out___05Fawaddr_out[index]); \
+        (dst).awid_in = _BIND_I((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
+        (dst).wvalid_in = _BIND_I((bool)(src).axi_out___05Fwvalid_out[index]); \
+        (dst).wdata_in = _BIND_I(data_func((src).axi_out___05Fwdata_out[index])); \
+        (dst).wlast_in = _BIND_I((bool)(src).axi_out___05Fwlast_out[index]); \
+        (dst).bready_in = _BIND_I((bool)(src).axi_out___05Fbready_out[index]); \
+        (dst).arvalid_in = _BIND_I((bool)(src).axi_out___05Farvalid_out[index]); \
+        (dst).araddr_in = _BIND_I((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
+        (dst).arid_in = _BIND_I((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
+        (dst).rready_in = _BIND_I((bool)(src).axi_out___05Frready_out[index]); \
     } while (false)
 
 #define AXI4_RESPONDER_FROM_VERILATOR(dst, src, index) \

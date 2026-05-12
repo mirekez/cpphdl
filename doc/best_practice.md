@@ -36,8 +36,8 @@ CppHDL:
 
 ```cpp
 reg<u<8>> count;
-__PORT(bool) enable_in;
-__PORT(bool) done_out = __EXPR(count == LIMIT);
+_PORT(bool) enable_in;
+_PORT(bool) done_out = _BIND(count == LIMIT);
 
 void _work(bool reset)
 {
@@ -58,45 +58,45 @@ void _strobe()
 
 ## Ports
 
-Use `__PORT(type)` for module and interface ports. A port is called like a function to read its value:
+Use `_PORT(type)` for module and interface ports. A port is called like a function to read its value:
 
 ```cpp
-__PORT(bool) valid_in;
-__PORT(logic<32>) data_in;
+_PORT(bool) valid_in;
+_PORT(logic<32>) data_in;
 
 if (valid_in()) {
     word._next = data_in();
 }
 ```
 
-Output ports are usually initialized with `__VAR(...)` or `__EXPR(...)`:
+Output ports are usually initialized with `_BIND_VAR(...)` or `_BIND(...)`:
 
 ```cpp
 reg<u1> ready_reg;
-__PORT(bool) ready_out = __VAR(ready_reg);
-__PORT(bool) empty_out = __EXPR(count == 0);
+_PORT(bool) ready_out = _BIND_VAR(ready_reg);
+_PORT(bool) empty_out = _BIND(count == 0);
 ```
 
-## `__VAR`, `__EXPR`, And Indexed Expressions
+## `_BIND_VAR`, `_BIND`, And Indexed Expressions
 
-`__VAR(x)` connects a port to a persistent variable or a combinational function returning a reference. It is the best choice for registers, member variables, and cached combinational outputs.
+`_BIND_VAR(x)` connects a port to a persistent variable or a combinational function returning a reference. It is the best choice for registers, member variables, and cached combinational outputs.
 
 ```cpp
 reg<logic<32>> data_reg;
-__PORT(logic<32>) data_out = __VAR(data_reg);
+_PORT(logic<32>) data_out = _BIND_VAR(data_reg);
 ```
 
-`__EXPR(expr)` connects a port to an expression. Use it for simple computed outputs:
+`_BIND(expr)` connects a port to an expression. Use it for simple computed outputs:
 
 ```cpp
-__PORT(bool) fire_out = __EXPR(valid_in() && ready_in());
+_PORT(bool) fire_out = _BIND(valid_in() && ready_in());
 ```
 
-`__EXPR_I(expr)` and `__VAR_I(expr)` are used in loops where the loop index must be captured for each generated connection:
+`_BIND_I(expr)` and `_BIND_VAR_I(expr)` are used in loops where the loop index must be captured for each generated connection:
 
 ```cpp
 for (i = 0; i < N; ++i) {
-    out[i].valid_in = __EXPR_I(sel == i ? input.valid_in() : 0);
+    out[i].valid_in = _BIND_I(sel == i ? input.valid_in() : 0);
 }
 ```
 
@@ -104,7 +104,7 @@ There are also `_J` and `_IJ` forms for nested loops.
 
 ## Combinational Logic
 
-For simple outputs, `__EXPR(...)` is enough. For larger combinational logic, write a member function that stores the result in a member variable and returns it by reference.
+For simple outputs, `_BIND(...)` is enough. For larger combinational logic, write a member function that stores the result in a member variable and returns it by reference.
 
 ```cpp
 logic<32> result_comb;
@@ -118,7 +118,7 @@ logic<32>& result_comb_func()
     return result_comb;
 }
 
-__PORT(logic<32>) result_out = __VAR(result_comb_func());
+_PORT(logic<32>) result_out = _BIND_VAR(result_comb_func());
 ```
 
 Keep combinational functions side-effect free except for assigning their own cached result variable.
@@ -183,9 +183,9 @@ end
 The same idea in CppHDL:
 
 ```cpp
-__PORT(bool) valid_out = __VAR(valid_reg);
-__PORT(logic<32>) data_out = __VAR(data_reg);
-__PORT(bool) ready_in;
+_PORT(bool) valid_out = _BIND_VAR(valid_reg);
+_PORT(logic<32>) data_out = _BIND_VAR(data_reg);
+_PORT(bool) ready_in;
 
 void _work(bool reset)
 {
@@ -208,7 +208,7 @@ Prefer templates for structural parameters such as data width, address width, nu
 template<size_t DATA_WIDTH, size_t DEPTH>
 class Fifo : public Module
 {
-    __PORT(logic<DATA_WIDTH>) write_data_in;
+    _PORT(logic<DATA_WIDTH>) write_data_in;
     reg<u<clog2(DEPTH)>> write_ptr;
 };
 ```
@@ -223,9 +223,9 @@ Use `Interface` for bundles containing signals of different directions. You do n
 template<size_t DATAWIDTH>
 struct ValidReadyIf : public Interface
 {
-    __PORT(bool) valid_in;
-    __PORT(bool) ready_out;
-    __PORT(logic<DATAWIDTH>) data_in;
+    _PORT(bool) valid_in;
+    _PORT(bool) ready_out;
+    _PORT(logic<DATAWIDTH>) data_in;
 };
 ```
 

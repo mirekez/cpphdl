@@ -7,28 +7,28 @@ using namespace cpphdl;
 class WritebackMem: public Module
 {
 public:
-    __PORT(State)    state_in;
-    __PORT(uint32_t) alu_result_in;
-    __PORT(bool)     split_load_in;
-    __PORT(uint32_t) split_load_low_addr_in;
-    __PORT(uint32_t) split_load_high_addr_in;
+    _PORT(State)    state_in;
+    _PORT(uint32_t) alu_result_in;
+    _PORT(bool)     split_load_in;
+    _PORT(uint32_t) split_load_low_addr_in;
+    _PORT(uint32_t) split_load_high_addr_in;
 
-    __PORT(bool)     dcache_read_valid_in;
-    __PORT(uint32_t) dcache_read_addr_in;
-    __PORT(uint32_t) dcache_read_data_in;
+    _PORT(bool)     dcache_read_valid_in;
+    _PORT(uint32_t) dcache_read_addr_in;
+    _PORT(uint32_t) dcache_read_data_in;
 
-    __PORT(bool)     dcache_write_valid_in;
-    __PORT(uint32_t) dcache_write_addr_in;
-    __PORT(uint32_t) dcache_write_data_in;
-    __PORT(uint8_t)  dcache_write_mask_in;
+    _PORT(bool)     dcache_write_valid_in;
+    _PORT(uint32_t) dcache_write_addr_in;
+    _PORT(uint32_t) dcache_write_data_in;
+    _PORT(uint8_t)  dcache_write_mask_in;
 
-    __PORT(bool)     hold_in;
+    _PORT(bool)     hold_in;
 
-    __PORT(bool)     load_ready_out    = __VAR(load_ready_comb_func());
-    __PORT(uint32_t) load_raw_out      = __VAR(load_raw_comb_func());
-    __PORT(uint32_t) load_result_out   = __VAR(load_result_comb_func());
-    __PORT(uint32_t) wb_mem_data_out   = __VAR(wb_mem_data_comb_func());
-    __PORT(uint32_t) wb_mem_data_hi_out = __VAR(wb_mem_data_hi_comb_func());
+    _PORT(bool)     load_ready_out    = _BIND_VAR(load_ready_comb_func());
+    _PORT(uint32_t) load_raw_out      = _BIND_VAR(load_raw_comb_func());
+    _PORT(uint32_t) load_result_out   = _BIND_VAR(load_result_comb_func());
+    _PORT(uint32_t) wb_mem_data_out   = _BIND_VAR(wb_mem_data_comb_func());
+    _PORT(uint32_t) wb_mem_data_hi_out = _BIND_VAR(wb_mem_data_hi_comb_func());
 
 private:
     reg<u32> load_data_reg;
@@ -42,41 +42,41 @@ private:
     reg<array<u8,2>>  store_forward_mask_reg;
     reg<array<u1,2>>  store_forward_valid_reg;
 
-    __LAZY_COMB(split_load_current_low_valid_comb, bool)
+    _LAZY_COMB(split_load_current_low_valid_comb, bool)
         split_load_current_low_valid_comb = dcache_read_valid_in() &&
             dcache_read_addr_in() == split_load_low_addr_in();
         return split_load_current_low_valid_comb;
     }
 
-    __LAZY_COMB(split_load_current_high_valid_comb, bool)
+    _LAZY_COMB(split_load_current_high_valid_comb, bool)
         split_load_current_high_valid_comb = dcache_read_valid_in() &&
             dcache_read_addr_in() == split_load_high_addr_in();
         return split_load_current_high_valid_comb;
     }
 
-    __LAZY_COMB(split_load_low_ready_comb, bool)
+    _LAZY_COMB(split_load_low_ready_comb, bool)
         split_load_low_ready_comb = split_load_low_valid_reg || split_load_current_low_valid_comb_func();
         return split_load_low_ready_comb;
     }
 
-    __LAZY_COMB(split_load_high_ready_comb, bool)
+    _LAZY_COMB(split_load_high_ready_comb, bool)
         split_load_high_ready_comb = split_load_high_valid_reg || split_load_current_high_valid_comb_func();
         return split_load_high_ready_comb;
     }
 
-    __LAZY_COMB(split_load_low_data_comb, uint32_t)
+    _LAZY_COMB(split_load_low_data_comb, uint32_t)
         split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg :
             (split_load_current_low_valid_comb_func() ? dcache_read_data_in() : (uint32_t)0);
         return split_load_low_data_comb;
     }
 
-    __LAZY_COMB(split_load_high_data_comb, uint32_t)
+    _LAZY_COMB(split_load_high_data_comb, uint32_t)
         split_load_high_data_comb = split_load_high_valid_reg ? (uint32_t)split_load_high_reg :
             (split_load_current_high_valid_comb_func() ? dcache_read_data_in() : (uint32_t)0);
         return split_load_high_data_comb;
     }
 
-    __LAZY_COMB(load_ready_comb, bool)
+    _LAZY_COMB(load_ready_comb, bool)
         if (split_load_in()) {
             load_ready_comb = split_load_low_ready_comb_func() && split_load_high_ready_comb_func();
         }
@@ -87,7 +87,7 @@ private:
         return load_ready_comb;
     }
 
-    __LAZY_COMB(load_raw_comb, uint32_t)
+    _LAZY_COMB(load_raw_comb, uint32_t)
         uint32_t raw;
         uint32_t result;
         uint32_t load_addr;
@@ -179,7 +179,7 @@ private:
         return load_raw_comb;
     }
 
-    __LAZY_COMB(wb_mem_data_comb, uint32_t)
+    _LAZY_COMB(wb_mem_data_comb, uint32_t)
         if (split_load_in()) {
             wb_mem_data_comb = split_load_low_data_comb_func();
         }
@@ -192,12 +192,12 @@ private:
         return wb_mem_data_comb;
     }
 
-    __LAZY_COMB(wb_mem_data_hi_comb, uint32_t)
+    _LAZY_COMB(wb_mem_data_hi_comb, uint32_t)
         wb_mem_data_hi_comb = split_load_in() ? split_load_high_data_comb_func() : (uint32_t)0;
         return wb_mem_data_hi_comb;
     }
 
-    __LAZY_COMB(load_result_comb, uint32_t)
+    _LAZY_COMB(load_result_comb, uint32_t)
         uint32_t raw;
         raw = load_raw_comb_func();
         load_result_comb = 0;

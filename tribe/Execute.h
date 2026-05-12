@@ -7,21 +7,21 @@ using namespace cpphdl;
 class Execute: public Module
 {
 public:
-    __PORT(State)  state_in;
+    _PORT(State)  state_in;
 
-    __PORT(uint32_t) alu_result_out      = __EXPR( (uint32_t)alu_result_comb_func() );
-    __PORT(uint32_t) debug_alu_a_out     = __VAR( alu_a_comb_func() );
-    __PORT(uint32_t) debug_alu_b_out     = __VAR( alu_b_comb_func() );
-    __PORT(bool)     branch_taken_out    = __VAR( branch_taken_comb_func() );
-    __PORT(uint32_t) branch_target_out   = __VAR( branch_target_comb_func() );
+    _PORT(uint32_t) alu_result_out      = _BIND( (uint32_t)alu_result_comb_func() );
+    _PORT(uint32_t) debug_alu_a_out     = _BIND_VAR( alu_a_comb_func() );
+    _PORT(uint32_t) debug_alu_b_out     = _BIND_VAR( alu_b_comb_func() );
+    _PORT(bool)     branch_taken_out    = _BIND_VAR( branch_taken_comb_func() );
+    _PORT(uint32_t) branch_target_out   = _BIND_VAR( branch_target_comb_func() );
 
 private:
 
-    __LAZY_COMB(alu_a_comb, uint32_t)
+    _LAZY_COMB(alu_a_comb, uint32_t)
         return alu_a_comb = state_in().rs1_val;
     }
 
-    __LAZY_COMB(alu_b_comb, uint32_t)
+    _LAZY_COMB(alu_b_comb, uint32_t)
 
         return alu_b_comb = (state_in().alu_op == Alu::ADD && state_in().mem_op != Mem::MNONE) ?
                                                uint32_t(state_in().imm) :      // load/store address calc uses imm
@@ -29,7 +29,7 @@ private:
                                 state_in().rs2_val : uint32_t(state_in().imm);
     }
 
-    __LAZY_COMB(alu_result_comb, uint64_t)
+    _LAZY_COMB(alu_result_comb, uint64_t)
 
         uint32_t a;
         uint32_t b;
@@ -67,7 +67,7 @@ private:
         return alu_result_comb;
     }
 
-    __LAZY_COMB(branch_taken_comb, bool)
+    _LAZY_COMB(branch_taken_comb, bool)
 
         uint64_t alu_result;
         alu_result = alu_result_comb_func();
@@ -89,7 +89,7 @@ private:
         return branch_taken_comb = branch_taken_comb && state_in().valid;
     }
 
-    __LAZY_COMB(branch_target_comb, uint32_t)
+    _LAZY_COMB(branch_target_comb, uint32_t)
 
         branch_target_comb = 0;
         if (state_in().br_op != Br::BNONE)

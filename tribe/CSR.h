@@ -7,29 +7,29 @@ using namespace cpphdl;
 class CSR: public Module
 {
 public:
-    __PORT(State) state_in;
-    __PORT(State) trap_check_state_in;
-    __PORT(bool) interrupt_valid_in;
-    __PORT(uint32_t) interrupt_cause_in;
-    __PORT(bool) interrupt_to_supervisor_in;
-    __PORT(uint32_t) irq_pending_bits_in;
-    __PORT(uint32_t) read_data_out = __VAR(read_data_comb_func());
-    __PORT(uint32_t) trap_vector_out = __VAR(trap_vector_comb_func());
-    __PORT(uint32_t) epc_out = __VAR(epc_comb_func());
-    __PORT(bool) illegal_trap_out = __VAR(illegal_trap_comb_func());
-    __PORT(uint32_t) mstatus_out = __VAR(mstatus_reg);
-    __PORT(uint32_t) mie_out = __VAR(mie_reg);
-    __PORT(uint32_t) mideleg_out = __VAR(mideleg_reg);
-    __PORT(uint32_t) mip_sw_out = __VAR(mip_reg);
+    _PORT(State) state_in;
+    _PORT(State) trap_check_state_in;
+    _PORT(bool) interrupt_valid_in;
+    _PORT(uint32_t) interrupt_cause_in;
+    _PORT(bool) interrupt_to_supervisor_in;
+    _PORT(uint32_t) irq_pending_bits_in;
+    _PORT(uint32_t) read_data_out = _BIND_VAR(read_data_comb_func());
+    _PORT(uint32_t) trap_vector_out = _BIND_VAR(trap_vector_comb_func());
+    _PORT(uint32_t) epc_out = _BIND_VAR(epc_comb_func());
+    _PORT(bool) illegal_trap_out = _BIND_VAR(illegal_trap_comb_func());
+    _PORT(uint32_t) mstatus_out = _BIND_VAR(mstatus_reg);
+    _PORT(uint32_t) mie_out = _BIND_VAR(mie_reg);
+    _PORT(uint32_t) mideleg_out = _BIND_VAR(mideleg_reg);
+    _PORT(uint32_t) mip_sw_out = _BIND_VAR(mip_reg);
 #ifdef ENABLE_MMU_TLB
-    __PORT(uint32_t) satp_out = __VAR(satp_reg);
+    _PORT(uint32_t) satp_out = _BIND_VAR(satp_reg);
 #else
-    __PORT(uint32_t) satp_out = __EXPR((uint32_t)0);
+    _PORT(uint32_t) satp_out = _BIND((uint32_t)0);
 #endif
 #ifdef ENABLE_TRAPS
-    __PORT(u<2>) priv_out = __VAR(priv_reg);
+    _PORT(u<2>) priv_out = _BIND_VAR(priv_reg);
 #else
-    __PORT(u<2>) priv_out = __EXPR((u<2>)3);
+    _PORT(u<2>) priv_out = _BIND((u<2>)3);
 #endif
 
 private:
@@ -154,7 +154,7 @@ private:
 #endif
     }
 
-    __LAZY_COMB(trap_vector_comb, uint32_t)
+    _LAZY_COMB(trap_vector_comb, uint32_t)
         uint32_t cause;
         uint32_t tvec;
         cause = trap_cause_code();
@@ -168,7 +168,7 @@ private:
         return trap_vector_comb;
     }
 
-    __LAZY_COMB(epc_comb, uint32_t)
+    _LAZY_COMB(epc_comb, uint32_t)
         epc_comb = mepc_reg;
 #ifdef ENABLE_TRAPS
         if (state_in().sys_op == Sys::SRET) {
@@ -178,7 +178,7 @@ private:
         return epc_comb;
     }
 
-    __LAZY_COMB(illegal_trap_comb, bool)
+    _LAZY_COMB(illegal_trap_comb, bool)
         illegal_trap_comb = state_causes_illegal_trap(trap_check_state_in());
         return illegal_trap_comb;
     }
@@ -443,7 +443,7 @@ private:
         }
     }
 
-    __LAZY_COMB(read_data_comb, uint32_t)
+    _LAZY_COMB(read_data_comb, uint32_t)
         return read_data_comb = csr_read(state_in().csr_addr);
     }
 

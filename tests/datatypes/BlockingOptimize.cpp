@@ -13,9 +13,9 @@ using namespace cpphdl;
 class BlockingOptimize : public Module
 {
 public:
-    __PORT(bool)  enable_in;
-    __PORT(u<32>) data_in;
-    __PORT(u<32>) value_out = __VAR(value_comb_func());
+    _PORT(bool)  enable_in;
+    _PORT(u<32>) data_in;
+    _PORT(u<32>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     reg<u<32>> once_accessed_reg;
@@ -123,8 +123,8 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.enable_in = __VAR(enable);
-        dut.data_in = __VAR(data);
+        dut.enable_in = _BIND_VAR(enable);
+        dut.data_in = _BIND_VAR(data);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

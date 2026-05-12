@@ -211,7 +211,7 @@ bool Method::printAssigns(std::ofstream& out)
                 } );
 
         stmt.indent = 2;
-        stmt.flags = Expr::FLAG_ASSIGN;
+        stmt.flags = Expr::FLAG_BIND;
 //        out << stmt.debug() << "\n";
         auto s = stmt.str("assign ");
         if (!s.empty() && s.back() != '\n') {

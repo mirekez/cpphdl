@@ -44,30 +44,30 @@ struct Axi4Responder
 template<size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 struct Axi4If : Interface
 {
-    __PORT(bool)               awvalid_in;
-    __PORT(bool)               awready_out;
-    __PORT(u<ADDR_WIDTH>)      awaddr_in;
-    __PORT(u<ID_WIDTH>)        awid_in;
+    _PORT(bool)               awvalid_in;
+    _PORT(bool)               awready_out;
+    _PORT(u<ADDR_WIDTH>)      awaddr_in;
+    _PORT(u<ID_WIDTH>)        awid_in;
 
-    __PORT(bool)               wvalid_in;
-    __PORT(bool)               wready_out;
-    __PORT(logic<DATA_WIDTH>)  wdata_in;
-    __PORT(bool)               wlast_in;
+    _PORT(bool)               wvalid_in;
+    _PORT(bool)               wready_out;
+    _PORT(logic<DATA_WIDTH>)  wdata_in;
+    _PORT(bool)               wlast_in;
 
-    __PORT(bool)               bvalid_out;
-    __PORT(bool)               bready_in;
-    __PORT(u<ID_WIDTH>)        bid_out;
+    _PORT(bool)               bvalid_out;
+    _PORT(bool)               bready_in;
+    _PORT(u<ID_WIDTH>)        bid_out;
 
-    __PORT(bool)               arvalid_in;
-    __PORT(bool)               arready_out;
-    __PORT(u<ADDR_WIDTH>)      araddr_in;
-    __PORT(u<ID_WIDTH>)        arid_in;
+    _PORT(bool)               arvalid_in;
+    _PORT(bool)               arready_out;
+    _PORT(u<ADDR_WIDTH>)      araddr_in;
+    _PORT(u<ID_WIDTH>)        arid_in;
 
-    __PORT(bool)               rvalid_out;
-    __PORT(bool)               rready_in;
-    __PORT(logic<DATA_WIDTH>)  rdata_out;
-    __PORT(bool)               rlast_out;
-    __PORT(u<ID_WIDTH>)        rid_out;
+    _PORT(bool)               rvalid_out;
+    _PORT(bool)               rready_in;
+    _PORT(logic<DATA_WIDTH>)  rdata_out;
+    _PORT(bool)               rlast_out;
+    _PORT(u<ID_WIDTH>)        rid_out;
 
     Axi4If& operator=(Axi4Driver<ADDR_WIDTH,ID_WIDTH,DATA_WIDTH>& other)
     {

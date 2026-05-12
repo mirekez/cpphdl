@@ -69,7 +69,7 @@ static constexpr size_t WAIT_LIMIT = 128;
 #define PORT_VALUE(val) val()
 #define L2_VALUE(val) val()
 #endif
-#define PORT_EXPR(val) __EXPR(PORT_VALUE(val))
+#define PORT_EXPR(val) _BIND(PORT_VALUE(val))
 
 class TestL2Cache : public Module
 {
@@ -104,33 +104,33 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        l2.i_read_in = __VAR(read);
-        l2.i_write_in = __EXPR(false);
-        l2.i_addr_in = __VAR(addr);
-        l2.i_write_data_in = __EXPR((uint32_t)0);
-        l2.i_write_mask_in = __EXPR((uint8_t)0);
+        l2.i_read_in = _BIND_VAR(read);
+        l2.i_write_in = _BIND(false);
+        l2.i_addr_in = _BIND_VAR(addr);
+        l2.i_write_data_in = _BIND((uint32_t)0);
+        l2.i_write_mask_in = _BIND((uint8_t)0);
 
-        l2.d_read_in = __VAR(d_read);
-        l2.d_write_in = __VAR(write);
-        l2.d_addr_in = __VAR(addr);
-        l2.d_write_data_in = __VAR(wdata);
-        l2.d_write_mask_in = __VAR(wmask);
-        l2.memory_base_in = __EXPR((uint32_t)0);
-        l2.memory_size_in = __EXPR((uint32_t)0xffffffffu);
+        l2.d_read_in = _BIND_VAR(d_read);
+        l2.d_write_in = _BIND_VAR(write);
+        l2.d_addr_in = _BIND_VAR(addr);
+        l2.d_write_data_in = _BIND_VAR(wdata);
+        l2.d_write_mask_in = _BIND_VAR(wmask);
+        l2.memory_base_in = _BIND((uint32_t)0);
+        l2.memory_size_in = _BIND((uint32_t)0xffffffffu);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.mem_region_size_in[i] = __EXPR((uint32_t)0x40000000u);
-            l2.mem_region_uncached_in[i] = __EXPR_CAP((i), region_uncached[i]);
-            l2.axi_in[i].awvalid_in = __EXPR_CAP((i), slave_awvalid[i]);
-            l2.axi_in[i].awaddr_in = __EXPR_CAP((i), (u<32>)slave_awaddr[i]);
-            l2.axi_in[i].awid_in = __EXPR_CAP((i), (u<4>)slave_awid[i]);
-            l2.axi_in[i].wvalid_in = __EXPR_CAP((i), slave_wvalid[i]);
-            l2.axi_in[i].wdata_in = __EXPR_CAP((i), slave_wdata[i]);
-            l2.axi_in[i].wlast_in = __EXPR_CAP((i), slave_wlast[i]);
-            l2.axi_in[i].bready_in = __EXPR_CAP((i), slave_bready[i]);
-            l2.axi_in[i].arvalid_in = __EXPR_CAP((i), slave_arvalid[i]);
-            l2.axi_in[i].araddr_in = __EXPR_CAP((i), (u<32>)slave_araddr[i]);
-            l2.axi_in[i].arid_in = __EXPR_CAP((i), (u<4>)slave_arid[i]);
-            l2.axi_in[i].rready_in = __EXPR_CAP((i), slave_rready[i]);
+            l2.mem_region_size_in[i] = _BIND((uint32_t)0x40000000u);
+            l2.mem_region_uncached_in[i] = _BIND_CAP((i), region_uncached[i]);
+            l2.axi_in[i].awvalid_in = _BIND_CAP((i), slave_awvalid[i]);
+            l2.axi_in[i].awaddr_in = _BIND_CAP((i), (u<32>)slave_awaddr[i]);
+            l2.axi_in[i].awid_in = _BIND_CAP((i), (u<4>)slave_awid[i]);
+            l2.axi_in[i].wvalid_in = _BIND_CAP((i), slave_wvalid[i]);
+            l2.axi_in[i].wdata_in = _BIND_CAP((i), slave_wdata[i]);
+            l2.axi_in[i].wlast_in = _BIND_CAP((i), slave_wlast[i]);
+            l2.axi_in[i].bready_in = _BIND_CAP((i), slave_bready[i]);
+            l2.axi_in[i].arvalid_in = _BIND_CAP((i), slave_arvalid[i]);
+            l2.axi_in[i].araddr_in = _BIND_CAP((i), (u<32>)slave_araddr[i]);
+            l2.axi_in[i].arid_in = _BIND_CAP((i), (u<4>)slave_arid[i]);
+            l2.axi_in[i].rready_in = _BIND_CAP((i), slave_rready[i]);
         }
         l2.debugen_in = false;
         l2.__inst_name = "l2";

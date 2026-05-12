@@ -156,30 +156,30 @@ static bool run_clint_elf_verilator(bool debug)
 class CLINTTest : public Module
 {
 public:
-    __PORT(bool) awvalid_in;
-    __PORT(u<16>) awaddr_in;
-    __PORT(u<4>) awid_in;
-    __PORT(bool) awready_out;
+    _PORT(bool) awvalid_in;
+    _PORT(u<16>) awaddr_in;
+    _PORT(u<4>) awid_in;
+    _PORT(bool) awready_out;
 
-    __PORT(bool) wvalid_in;
-    __PORT(logic<32>) wdata_in;
-    __PORT(bool) wlast_in;
-    __PORT(bool) wready_out;
+    _PORT(bool) wvalid_in;
+    _PORT(logic<32>) wdata_in;
+    _PORT(bool) wlast_in;
+    _PORT(bool) wready_out;
 
-    __PORT(bool) bready_in;
-    __PORT(bool) bvalid_out;
-    __PORT(u<4>) bid_out;
+    _PORT(bool) bready_in;
+    _PORT(bool) bvalid_out;
+    _PORT(u<4>) bid_out;
 
-    __PORT(bool) arvalid_in;
-    __PORT(u<16>) araddr_in;
-    __PORT(u<4>) arid_in;
-    __PORT(bool) arready_out;
+    _PORT(bool) arvalid_in;
+    _PORT(u<16>) araddr_in;
+    _PORT(u<4>) arid_in;
+    _PORT(bool) arready_out;
 
-    __PORT(bool) rready_in;
-    __PORT(bool) rvalid_out;
-    __PORT(logic<32>) rdata_out;
-    __PORT(bool) rlast_out;
-    __PORT(u<4>) rid_out;
+    _PORT(bool) rready_in;
+    _PORT(bool) rvalid_out;
+    _PORT(logic<32>) rdata_out;
+    _PORT(bool) rlast_out;
+    _PORT(u<4>) rid_out;
 
 private:
     CLINT<16, 4, 32> clint;
@@ -261,17 +261,17 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.awvalid_in = __VAR(awvalid);
-        dut.awaddr_in = __VAR(awaddr);
-        dut.awid_in = __VAR(awid);
-        dut.wvalid_in = __VAR(wvalid);
-        dut.wdata_in = __VAR(wdata);
-        dut.wlast_in = __VAR(wlast);
-        dut.bready_in = __VAR(bready);
-        dut.arvalid_in = __VAR(arvalid);
-        dut.araddr_in = __VAR(araddr);
-        dut.arid_in = __VAR(arid);
-        dut.rready_in = __VAR(rready);
+        dut.awvalid_in = _BIND_VAR(awvalid);
+        dut.awaddr_in = _BIND_VAR(awaddr);
+        dut.awid_in = _BIND_VAR(awid);
+        dut.wvalid_in = _BIND_VAR(wvalid);
+        dut.wdata_in = _BIND_VAR(wdata);
+        dut.wlast_in = _BIND_VAR(wlast);
+        dut.bready_in = _BIND_VAR(bready);
+        dut.arvalid_in = _BIND_VAR(arvalid);
+        dut.araddr_in = _BIND_VAR(araddr);
+        dut.arid_in = _BIND_VAR(arid);
+        dut.rready_in = _BIND_VAR(rready);
         dut.__inst_name = "clint";
         dut._assign();
 #endif

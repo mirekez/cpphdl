@@ -21,9 +21,9 @@ struct DataValidReady
 template<size_t DATAWIDTH>
 struct DataValidReadyIf : public Interface
 {
-    __PORT(bool) valid_in;
-    __PORT(bool) ready_out;
-    __PORT(logic<DATAWIDTH>) data_in;
+    _PORT(bool) valid_in;
+    _PORT(bool) ready_out;
+    _PORT(logic<DATAWIDTH>) data_in;
 //
 //    DataValidReadyIf& operator=(DataValidReady<DATAWIDTH>& other)
 //    {
@@ -56,12 +56,12 @@ private:
     }
 
 public:
-    __PORT(bool) done_out = __VAR(done_comb_func());
+    _PORT(bool) done_out = _BIND_VAR(done_comb_func());
 
     void _assign()
     {
-        source_out.valid_in = __VAR(valid_reg);
-        source_out.data_in = __VAR(data_reg);
+        source_out.valid_in = _BIND_VAR(valid_reg);
+        source_out.data_in = _BIND_VAR(data_reg);
     }
 
     void _work(bool reset)
@@ -133,12 +133,12 @@ private:
     }
 
 public:
-    __PORT(bool) done_out = __VAR(done_comb_func());
-    __PORT(bool) error_out = __VAR(error_comb_func());
+    _PORT(bool) done_out = _BIND_VAR(done_comb_func());
+    _PORT(bool) error_out = _BIND_VAR(error_comb_func());
 
     void _assign()
     {
-        sink_in.ready_out = __VAR(ready_reg);
+        sink_in.ready_out = _BIND_VAR(ready_reg);
     }
 
     void _work(bool reset)
@@ -267,7 +267,7 @@ public:
 #ifdef VERILATOR
 #ifdef VERILATOR_DRIVER
 #else
-        driver.source_out.ready_out = __VAR(bus.ready);
+        driver.source_out.ready_out = _BIND_VAR(bus.ready);
         driver._assign();
 #endif
         verilated.clk = 0;

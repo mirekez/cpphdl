@@ -18,8 +18,8 @@ class CLINT : public Module
 public:
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
-    __PORT(bool) msip_out = __VAR(msip_comb_func());
-    __PORT(bool) mtip_out = __VAR(mtip_comb_func());
+    _PORT(bool) msip_out = _BIND_VAR(msip_comb_func());
+    _PORT(bool) mtip_out = _BIND_VAR(mtip_comb_func());
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -34,12 +34,12 @@ private:
     reg<u64> mtimecmp_reg;
 
     // AXI data beat lane corresponding to the saved local register address.
-    __LAZY_COMB(read_word_lane_comb, uint32_t)
+    _LAZY_COMB(read_word_lane_comb, uint32_t)
         return read_word_lane_comb = ((uint32_t)read_addr_reg % DATA_BYTES) / 4u;
     }
 
     // Value of the addressed CLINT register before it is inserted into its AXI lane.
-    __LAZY_COMB(read_word_comb, uint32_t)
+    _LAZY_COMB(read_word_comb, uint32_t)
         uint32_t addr;
         addr = (uint32_t)read_addr_reg;
         read_word_comb = 0;
@@ -64,7 +64,7 @@ private:
     // Broadcast 32-bit CLINT registers on every lane. The current simple AXI
     // subset has no byte strobes, and this keeps MMIO reads independent of the
     // upstream bus width/lane placement.
-    __LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
+    _LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
         size_t lane;
         read_data_comb = 0;
         for (lane = 0; lane < DATA_BYTES / 4; ++lane) {
@@ -75,7 +75,7 @@ private:
 
     // Accept the 32-bit MMIO write word from any lane. L2 emits only one active
     // word for uncached stores; OR-reducing lanes also preserves all-zero writes.
-    __LAZY_COMB(write_word_comb, uint32_t)
+    _LAZY_COMB(write_word_comb, uint32_t)
         size_t lane;
         write_word_comb = 0;
         for (lane = 0; lane < DATA_BYTES / 4; ++lane) {
@@ -84,26 +84,26 @@ private:
         return write_word_comb;
     }
 
-    __LAZY_COMB(msip_comb, bool)
+    _LAZY_COMB(msip_comb, bool)
         return msip_comb = (msip_reg & 1u) != 0;
     }
 
-    __LAZY_COMB(mtip_comb, bool)
+    _LAZY_COMB(mtip_comb, bool)
         return mtip_comb = mtime_reg >= mtimecmp_reg;
     }
 
 public:
     void _assign()
     {
-        axi_in.awready_out = __EXPR(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = __EXPR(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = __VAR(write_resp_valid_reg);
-        axi_in.bid_out = __VAR(write_id_reg);
-        axi_in.arready_out = __EXPR(!read_valid_reg);
-        axi_in.rvalid_out = __VAR(read_valid_reg);
-        axi_in.rdata_out = __VAR(read_data_comb_func());
-        axi_in.rlast_out = __VAR(read_valid_reg);
-        axi_in.rid_out = __VAR(read_id_reg);
+        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
+        axi_in.bid_out = _BIND_VAR(write_id_reg);
+        axi_in.arready_out = _BIND(!read_valid_reg);
+        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
+        axi_in.rdata_out = _BIND_VAR(read_data_comb_func());
+        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
+        axi_in.rid_out = _BIND_VAR(read_id_reg);
     }
 
     void _work(bool reset)

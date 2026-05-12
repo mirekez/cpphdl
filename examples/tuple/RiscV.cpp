@@ -13,15 +13,15 @@
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
 public:
-    __PORT(bool)      dmem_write_out;
-    __PORT(uint32_t)  dmem_write_addr_out;
-    __PORT(uint32_t)  dmem_write_data_out;
-    __PORT(uint8_t)   dmem_write_mask_out;
-    __PORT(bool)      dmem_read_out;
-    __PORT(uint32_t)  dmem_read_addr_out;
-    __PORT(uint32_t)  dmem_read_data_in;
-    __PORT(uint32_t)  imem_read_addr_out = __VAR( pc );
-    __PORT(uint32_t)  imem_read_data_in;
+    _PORT(bool)      dmem_write_out;
+    _PORT(uint32_t)  dmem_write_addr_out;
+    _PORT(uint32_t)  dmem_write_data_out;
+    _PORT(uint8_t)   dmem_write_mask_out;
+    _PORT(bool)      dmem_read_out;
+    _PORT(uint32_t)  dmem_read_addr_out;
+    _PORT(uint32_t)  dmem_read_data_in;
+    _PORT(uint32_t)  imem_read_addr_out = _BIND_VAR( pc );
+    _PORT(uint32_t)  imem_read_data_in;
     bool              debugen_in;
 
 private:
@@ -136,11 +136,11 @@ public:
         ex.__inst_name = Pipeline::__inst_name + "/execute_calc";
         wb.__inst_name = Pipeline::__inst_name + "/write_back";
 
-        df.pc_in          = __VAR( pc );
-        df.instr_valid_in = __VAR( valid );
+        df.pc_in          = _BIND_VAR( pc );
+        df.instr_valid_in = _BIND_VAR( valid );
         df.instr_in       = imem_read_data_in;
-        df.regs_data0_in  = __EXPR( df.rs1_out() == 0 ? 0 : regs.read_data0_out() );
-        df.regs_data1_in  = __EXPR( df.rs2_out() == 0 ? 0 : regs.read_data1_out() );
+        df.regs_data0_in  = _BIND( df.rs1_out() == 0 ? 0 : regs.read_data0_out() );
+        df.regs_data1_in  = _BIND( df.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         df.alu_result_in  = ex.alu_result_out;
         df.mem_data_in    = dmem_read_data_in;
         df._assign();  // outputs are ready
@@ -249,32 +249,32 @@ public:
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._assign();
 
-        imem.read_in = __EXPR( !imem_write );
+        imem.read_in = _BIND( !imem_write );
         imem.read_addr_in = riscv.imem_read_addr_out;
-        imem.write_in = __VAR( imem_write );
-        imem.write_addr_in = __VAR( imem_write_addr );
-        imem.write_data_in = __VAR( imem_write_data );
-        imem.write_mask_in = __EXPR( (uint8_t)0xF );
+        imem.write_in = _BIND_VAR( imem_write );
+        imem.write_addr_in = _BIND_VAR( imem_write_addr );
+        imem.write_data_in = _BIND_VAR( imem_write_data );
+        imem.write_mask_in = _BIND( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._assign();
 #else  // connecting Verilator to CppHDL
-        dmem.read_in = __EXPR( (bool)riscv.dmem_read_out );
-        dmem.read_addr_in = __EXPR( (uint32_t)riscv.dmem_read_addr_out );
-        dmem.write_in = __EXPR( (bool)riscv.dmem_write_out );
-        dmem.write_addr_in = __EXPR( (uint32_t)riscv.dmem_write_addr_out );
-        dmem.write_data_in = __VAR( riscv.dmem_write_data_out );
-        dmem.write_mask_in = __EXPR( (uint8_t)riscv.dmem_write_mask_out );
+        dmem.read_in = _BIND( (bool)riscv.dmem_read_out );
+        dmem.read_addr_in = _BIND( (uint32_t)riscv.dmem_read_addr_out );
+        dmem.write_in = _BIND( (bool)riscv.dmem_write_out );
+        dmem.write_addr_in = _BIND( (uint32_t)riscv.dmem_write_addr_out );
+        dmem.write_data_in = _BIND_VAR( riscv.dmem_write_data_out );
+        dmem.write_mask_in = _BIND( (uint8_t)riscv.dmem_write_mask_out );
         dmem.debugen_in = debugen_in;
         dmem.__inst_name = __inst_name + "/dmem";
         dmem._assign();
 
-        imem.read_in = __EXPR( !imem_write );
-        imem.read_addr_in = __EXPR( (uint32_t)riscv.imem_read_addr_out );
-        imem.write_in = __VAR( imem_write );
-        imem.write_addr_in = __EXPR( (uint32_t)imem_write_addr );
-        imem.write_data_in = __EXPR( (uint32_t)imem_write_data );
-        imem.write_mask_in = __EXPR( (uint8_t)0xF );
+        imem.read_in = _BIND( !imem_write );
+        imem.read_addr_in = _BIND( (uint32_t)riscv.imem_read_addr_out );
+        imem.write_in = _BIND_VAR( imem_write );
+        imem.write_addr_in = _BIND( (uint32_t)imem_write_addr );
+        imem.write_data_in = _BIND( (uint32_t)imem_write_data );
+        imem.write_mask_in = _BIND( (uint8_t)0xF );
         imem.debugen_in = debugen_in;
         imem.__inst_name = __inst_name + "/imem";
         imem._assign();

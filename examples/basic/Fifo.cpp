@@ -15,16 +15,16 @@ template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
 class Fifo : public Module
 {
 public:
-    __PORT(bool)                         write_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
+    _PORT(bool)                         write_in;
+    _PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
 
-    __PORT(bool)                         read_in;
-    __PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = __EXPR( mem.read_data_out() );
+    _PORT(bool)                         read_in;
+    _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = _BIND( mem.read_data_out() );
 
-    __PORT(bool)                         empty_out      = __VAR( empty_comb_func() );
-    __PORT(bool)                         full_out       = __VAR( full_comb_func() );
-    __PORT(bool)                         clear_in       = __EXPR( false );
-    __PORT(bool)                         afull_out      = __VAR( afull_reg );
+    _PORT(bool)                         empty_out      = _BIND_VAR( empty_comb_func() );
+    _PORT(bool)                         full_out       = _BIND_VAR( full_comb_func() );
+    _PORT(bool)                         clear_in       = _BIND( false );
+    _PORT(bool)                         afull_out      = _BIND_VAR( afull_reg );
 
     bool                         debugen_in;
 
@@ -121,10 +121,10 @@ public:
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
-        mem.write_mask_in = __EXPR( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
-        mem.write_addr_in = __VAR( wp_reg );
+        mem.write_mask_in = _BIND( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.write_addr_in = _BIND_VAR( wp_reg );
         mem.read_in       = read_in;
-        mem.read_addr_in  = __VAR( rp_reg );
+        mem.read_addr_in  = _BIND_VAR( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
         mem._assign();
@@ -194,10 +194,10 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        fifo.write_in        = __VAR( write_reg );
-        fifo.write_data_in   = __VAR( data_reg );
-        fifo.read_in         = __VAR( read_reg );
-        fifo.clear_in        = __VAR( clear_reg );
+        fifo.write_in        = _BIND_VAR( write_reg );
+        fifo.write_data_in   = _BIND_VAR( data_reg );
+        fifo.read_in         = _BIND_VAR( read_reg );
+        fifo.clear_in        = _BIND_VAR( clear_reg );
 
         fifo.__inst_name = __inst_name + "/fifo";
         fifo.debugen_in  = debugen_in;

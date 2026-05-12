@@ -52,11 +52,11 @@ using namespace cpphdl;
 class Datatypes : public Module
 {
 public:
-    __PORT(u<8>)       seed_in;
-    __PORT(u<8>)       addr_in;
-    __PORT(bool)       write_in;
-    __PORT(logic<512>) digest_out = __VAR( digest_comb_func() );
-    __PORT(logic<512>) memory_out = __VAR( memory_comb_func() );
+    _PORT(u<8>)       seed_in;
+    _PORT(u<8>)       addr_in;
+    _PORT(bool)       write_in;
+    _PORT(logic<512>) digest_out = _BIND_VAR( digest_comb_func() );
+    _PORT(logic<512>) memory_out = _BIND_VAR( memory_comb_func() );
 
 private:
 #define DECL_U(W) reg<u<W>> u##W##_reg;
@@ -352,9 +352,9 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = __VAR( seed );
-        dut.addr_in = __VAR( addr );
-        dut.write_in = __VAR( write );
+        dut.seed_in = _BIND_VAR( seed );
+        dut.addr_in = _BIND_VAR( addr );
+        dut.write_in = _BIND_VAR( write );
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

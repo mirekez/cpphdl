@@ -20,22 +20,22 @@ class InterruptController : public Module
     static constexpr uint32_t IRQ_MEIP = 11;
 
 public:
-    __PORT(uint32_t) mstatus_in;
-    __PORT(uint32_t) mie_in;
-    __PORT(uint32_t) mideleg_in;
-    __PORT(uint32_t) mip_sw_in;
-    __PORT(u<2>) priv_in;
-    __PORT(bool) clint_msip_in;
-    __PORT(bool) clint_mtip_in;
+    _PORT(uint32_t) mstatus_in;
+    _PORT(uint32_t) mie_in;
+    _PORT(uint32_t) mideleg_in;
+    _PORT(uint32_t) mip_sw_in;
+    _PORT(u<2>) priv_in;
+    _PORT(bool) clint_msip_in;
+    _PORT(bool) clint_mtip_in;
 
-    __PORT(uint32_t) mip_out = __VAR(mip_comb_func());
-    __PORT(bool) interrupt_valid_out = __VAR(interrupt_valid_comb_func());
-    __PORT(uint32_t) interrupt_cause_out = __VAR(interrupt_cause_comb_func());
-    __PORT(bool) interrupt_to_supervisor_out = __VAR(interrupt_to_supervisor_comb_func());
+    _PORT(uint32_t) mip_out = _BIND_VAR(mip_comb_func());
+    _PORT(bool) interrupt_valid_out = _BIND_VAR(interrupt_valid_comb_func());
+    _PORT(uint32_t) interrupt_cause_out = _BIND_VAR(interrupt_cause_comb_func());
+    _PORT(bool) interrupt_to_supervisor_out = _BIND_VAR(interrupt_to_supervisor_comb_func());
 
 private:
     // Hardware interrupt pending bits merged with writable software MIP bits.
-    __LAZY_COMB(mip_comb, uint32_t)
+    _LAZY_COMB(mip_comb, uint32_t)
         mip_comb = mip_sw_in();
 #ifdef ENABLE_ISR
         if (clint_msip_in()) {
@@ -49,13 +49,13 @@ private:
     }
 
     // Interrupts currently pending and enabled at the CSR level.
-    __LAZY_COMB(enabled_pending_comb, uint32_t)
+    _LAZY_COMB(enabled_pending_comb, uint32_t)
         return enabled_pending_comb = mip_comb_func() & mie_in();
     }
 
     // Pick one pending interrupt cause. Machine timer/software are enough for CLINT;
     // supervisor and external bits are routed if tests set them through MIP.
-    __LAZY_COMB(interrupt_cause_comb, uint32_t)
+    _LAZY_COMB(interrupt_cause_comb, uint32_t)
         uint32_t pending;
         pending = enabled_pending_comb_func();
         interrupt_cause_comb = 0;
@@ -81,7 +81,7 @@ private:
     }
 
     // Delegated interrupt causes are taken in S-mode when the current privilege allows it.
-    __LAZY_COMB(interrupt_to_supervisor_comb, bool)
+    _LAZY_COMB(interrupt_to_supervisor_comb, bool)
         uint32_t cause;
         cause = interrupt_cause_comb_func();
         interrupt_to_supervisor_comb = false;
@@ -94,7 +94,7 @@ private:
     }
 
     // Global enable is privilege-aware: higher-privilege interrupts can preempt lower modes.
-    __LAZY_COMB(interrupt_valid_comb, bool)
+    _LAZY_COMB(interrupt_valid_comb, bool)
         uint32_t cause;
         bool to_s;
         bool global_enable;

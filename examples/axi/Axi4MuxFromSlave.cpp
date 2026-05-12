@@ -61,42 +61,42 @@ public:
         u8 i;
 
         for (i = 0; i < N; i++) {
-            masters_out[i].awvalid_in = __EXPR_I( (!aw_active && (slave_in.awaddr_in() % N) == i) ? slave_in.awvalid_in() : 0 );
+            masters_out[i].awvalid_in = _BIND_I( (!aw_active && (slave_in.awaddr_in() % N) == i) ? slave_in.awvalid_in() : 0 );
             masters_out[i].awaddr_in  = slave_in.awaddr_in;
             masters_out[i].awid_in    = slave_in.awid_in;
         }
-        slave_in.awready_out = __EXPR( !aw_active ? awready_comb_func() : 0 );
+        slave_in.awready_out = _BIND( !aw_active ? awready_comb_func() : 0 );
 
         // W channel (follows AW)
         for (i = 0; i < N; i++) {
-            masters_out[i].wvalid_in = __EXPR_I( (aw_active && aw_sel == i) ? slave_in.wvalid_in() : 0 );
+            masters_out[i].wvalid_in = _BIND_I( (aw_active && aw_sel == i) ? slave_in.wvalid_in() : 0 );
             masters_out[i].wdata_in  = slave_in.wdata_in;
             masters_out[i].wlast_in  = slave_in.wlast_in;
         }
-        slave_in.wready_out = __EXPR( aw_active ? masters_out[aw_sel].wready_out() : 0 );
+        slave_in.wready_out = _BIND( aw_active ? masters_out[aw_sel].wready_out() : 0 );
 
         // B response routing
         for (i = 0; i < N; i++) {
-            masters_out[i].bready_in = __EXPR_I( (aw_sel == i) ? slave_in.bready_in() : 0 );
+            masters_out[i].bready_in = _BIND_I( (aw_sel == i) ? slave_in.bready_in() : 0 );
         }
-        slave_in.bvalid_out = __EXPR( aw_active ? masters_out[aw_sel].bvalid_out() : 0 );
-        slave_in.bid_out    = __EXPR( masters_out[aw_sel].bid_out() );
+        slave_in.bvalid_out = _BIND( aw_active ? masters_out[aw_sel].bvalid_out() : 0 );
+        slave_in.bid_out    = _BIND( masters_out[aw_sel].bid_out() );
 
         for (i = 0; i < N; i++) {
-            masters_out[i].arvalid_in = __EXPR_I( (!ar_active && (slave_in.araddr_in() % N) == i) ? slave_in.arvalid_in() : 0 );
+            masters_out[i].arvalid_in = _BIND_I( (!ar_active && (slave_in.araddr_in() % N) == i) ? slave_in.arvalid_in() : 0 );
             masters_out[i].araddr_in  = slave_in.araddr_in;
             masters_out[i].arid_in    = slave_in.arid_in;
         }
-        slave_in.arready_out = __EXPR( !ar_active ? arready_comb_func() : 0 );
+        slave_in.arready_out = _BIND( !ar_active ? arready_comb_func() : 0 );
 
         // R response routing
         for (i = 0; i < N; i++) {
-            masters_out[i].rready_in = __EXPR_I( (ar_sel == i) ? slave_in.rready_in() : 0 );
+            masters_out[i].rready_in = _BIND_I( (ar_sel == i) ? slave_in.rready_in() : 0 );
         }
-        slave_in.rvalid_out = __EXPR( ar_active ? masters_out[ar_sel].rvalid_out() : 0 );
-        slave_in.rdata_out  = __EXPR( masters_out[ar_sel].rdata_out() );
-        slave_in.rlast_out  = __EXPR( masters_out[ar_sel].rlast_out() );
-        slave_in.rid_out    = __EXPR( masters_out[ar_sel].rid_out() );
+        slave_in.rvalid_out = _BIND( ar_active ? masters_out[ar_sel].rvalid_out() : 0 );
+        slave_in.rdata_out  = _BIND( masters_out[ar_sel].rdata_out() );
+        slave_in.rlast_out  = _BIND( masters_out[ar_sel].rlast_out() );
+        slave_in.rid_out    = _BIND( masters_out[ar_sel].rid_out() );
     }
 
     void _work(bool reset)

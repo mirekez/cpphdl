@@ -75,7 +75,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_DECL:
         {
             ASSERT(sub.size() >= 1);
-            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
+            if ((flags&FLAG_BIND)) {  // no calls in assigns
                 return "";
             }
             if (value.find("__") == 0 || value.find("_____") != (size_t)-1) {  // hidden var
@@ -245,7 +245,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
             }
             std::string func = value;
-            if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
+            if ((flags&FLAG_BIND) && func != "clog2") {  // no calls in assigns, and how about clog2
                 return "";
             }
             if (func == "clog2") {
@@ -448,7 +448,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + prefix + memberRef;
                 }
             }
-            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
+            if ((flags&FLAG_BIND)) {  // no calls in assigns
                 return "";
             }
 
@@ -624,7 +624,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + value + "(" + sub[0].str() + ")";
         case EXPR_RETURN:
             if (sub.size() >= 1) {
-                if (flags&FLAG_ASSIGN) {
+                if (flags&FLAG_BIND) {
                     return indent_str + sub[0].str();
                 }
                 if (flags&FLAG_COMB) {
@@ -662,7 +662,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return "";
             }
             std::string init = sub[0].str();
-            if ((flags&FLAG_ASSIGN) && init.empty()
+            if ((flags&FLAG_BIND) && init.empty()
                 && sub[0].type == EXPR_BODY && sub[0].sub.size() == 1
                 && sub[0].sub[0].type == EXPR_DECL && sub[0].sub[0].sub.size() > 1) {
                 init = sub[0].sub[0].value + " = " + sub[0].sub[0].sub[1].str();

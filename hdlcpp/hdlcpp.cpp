@@ -396,7 +396,7 @@ struct Converter : SyntaxVisitor<Converter> {
     std::string assignWrapper(const std::string& rhs, const std::string& index)
     {
         auto suffix = index.empty() ? "" : "_I";
-        return std::string(mod->varNames.count(rhs) || rhs.find("_func()") != std::string::npos ? "__VAR" : "__EXPR") + suffix + "( " + rhs + " )";
+        return std::string(mod->varNames.count(rhs) || rhs.find("_func()") != std::string::npos ? "_BIND_VAR" : "_BIND") + suffix + "( " + rhs + " )";
     }
 
     std::string translateExpr(std::string s)
@@ -990,7 +990,7 @@ struct Converter : SyntaxVisitor<Converter> {
             }
             h << "class " << m.name << " : public Module\n{\npublic:\n";
             for (auto& p : m.ports) {
-                h << "    __PORT(" << p.type << ") " << p.name << p.array << p.init << ";\n";
+                h << "    _PORT(" << p.type << ") " << p.name << p.array << p.init << ";\n";
             }
             h << "\nprivate:\n";
             for (auto& member : m.members) {
@@ -1056,7 +1056,7 @@ struct Converter : SyntaxVisitor<Converter> {
                             rhs = f.name + "()";
                         }
                     }
-                    p.init = std::string(" = ") + (m.varNames.count(a.second) ? "__VAR( " : "__EXPR( ") + rhs + " )";
+                    p.init = std::string(" = ") + (m.varNames.count(a.second) ? "_BIND_VAR( " : "_BIND( ") + rhs + " )";
                 }
             }
         }

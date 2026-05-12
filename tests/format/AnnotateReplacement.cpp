@@ -55,8 +55,8 @@ class [[clang::annotate(
 )]] AnnotateReplacement : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -82,8 +82,8 @@ class [[clang::annotate(
 AnnotateReplacementScript : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -105,8 +105,8 @@ class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=AnnotateReplacementFile.sv;")]]
 AnnotateReplacementFile : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     u<8> value_comb;
@@ -127,8 +127,8 @@ public:
 class AnnotateReplacementNested : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacement child;
@@ -163,8 +163,8 @@ public:
 class AnnotateReplacementParent : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacementNested nested;
@@ -199,8 +199,8 @@ public:
 class AnnotateReplacementScriptNested : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacementScript child;
@@ -235,8 +235,8 @@ public:
 class AnnotateReplacementScriptParent : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacementScriptNested nested;
@@ -271,8 +271,8 @@ public:
 class AnnotateReplacementFileNested : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacementFile child;
@@ -307,8 +307,8 @@ public:
 class AnnotateReplacementFileParent : public Module
 {
 public:
-    __PORT(u<8>) value_in;
-    __PORT(u<8>) value_out = __VAR(value_comb_func());
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _BIND_VAR(value_comb_func());
 
 private:
     AnnotateReplacementFileNested nested;
@@ -443,7 +443,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.value_in = __VAR(value);
+        dut.value_in = _BIND_VAR(value);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

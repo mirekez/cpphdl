@@ -52,10 +52,10 @@ struct ArrayPayload
 class ArrayInStruct : public Module
 {
 public:
-    __PORT(u<8>) seed_in;
-    __PORT(ArrayPayload) payload_in;
-    __PORT(ArrayPayload) direct_out = __VAR(direct_comb_func());
-    __PORT(ArrayPayload) state_out = __VAR(state_reg);
+    _PORT(u<8>) seed_in;
+    _PORT(ArrayPayload) payload_in;
+    _PORT(ArrayPayload) direct_out = _BIND_VAR(direct_comb_func());
+    _PORT(ArrayPayload) state_out = _BIND_VAR(state_reg);
 
 private:
     ArrayPayload direct_comb;
@@ -417,8 +417,8 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.seed_in = __VAR(seed);
-        dut.payload_in = __VAR(payload);
+        dut.seed_in = _BIND_VAR(seed);
+        dut.payload_in = _BIND_VAR(payload);
         dut.__inst_name = __inst_name + "/dut";
         dut._assign();
 #endif

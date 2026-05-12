@@ -46,28 +46,28 @@ class L1Cache : public Module
     static constexpr uint64_t ST_INIT = 4;    // Startup clear of tag valid bits, one set per clock.
 
 public:
-    __PORT(bool)      write_in;
-    __PORT(uint32_t)  write_data_in;
-    __PORT(uint8_t)   write_mask_in;
-    __PORT(bool)      read_in;
-    __PORT(uint32_t)  addr_in;
-    __PORT(uint32_t)  read_data_out = __VAR(read_data_comb_func());
-    __PORT(uint32_t)  read_addr_out = __VAR(read_addr_comb_func());
-    __PORT(bool)      read_valid_out = __VAR(read_valid_comb_func());
-    __PORT(bool)      busy_out = __VAR(busy_comb_func());
-    __PORT(bool)      stall_in;
-    __PORT(bool)      flush_in;
-    __PORT(bool)      invalidate_in;
-    __PORT(bool)      cache_disable_in;
+    _PORT(bool)      write_in;
+    _PORT(uint32_t)  write_data_in;
+    _PORT(uint8_t)   write_mask_in;
+    _PORT(bool)      read_in;
+    _PORT(uint32_t)  addr_in;
+    _PORT(uint32_t)  read_data_out = _BIND_VAR(read_data_comb_func());
+    _PORT(uint32_t)  read_addr_out = _BIND_VAR(read_addr_comb_func());
+    _PORT(bool)      read_valid_out = _BIND_VAR(read_valid_comb_func());
+    _PORT(bool)      busy_out = _BIND_VAR(busy_comb_func());
+    _PORT(bool)      stall_in;
+    _PORT(bool)      flush_in;
+    _PORT(bool)      invalidate_in;
+    _PORT(bool)      cache_disable_in;
 
-    __PORT(bool)      mem_write_out = __EXPR(write_in());
-    __PORT(uint32_t)  mem_write_data_out = __EXPR(write_data_in());
-    __PORT(uint8_t)   mem_write_mask_out = __EXPR(write_mask_in());
-    __PORT(bool)      mem_read_out = __VAR(mem_read_comb_func());
-    __PORT(uint32_t)  mem_addr_out = __VAR(mem_addr_comb_func());
-    __PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
-    __PORT(bool)      mem_wait_in;
-    __PORT(L1CachePerf) perf_out = __VAR(perf_comb_func());
+    _PORT(bool)      mem_write_out = _BIND(write_in());
+    _PORT(uint32_t)  mem_write_data_out = _BIND(write_data_in());
+    _PORT(uint8_t)   mem_write_mask_out = _BIND(write_mask_in());
+    _PORT(bool)      mem_read_out = _BIND_VAR(mem_read_comb_func());
+    _PORT(uint32_t)  mem_addr_out = _BIND_VAR(mem_addr_comb_func());
+    _PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
+    _PORT(bool)      mem_wait_in;
+    _PORT(L1CachePerf) perf_out = _BIND_VAR(perf_comb_func());
 
     bool debugen_in;
 
@@ -75,26 +75,26 @@ public:
     {
         size_t i;
         for (i = 0; i < WAYS; ++i) {
-            even_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            even_ram[i].data_in = __EXPR(refill_even_line_comb_func());
-            even_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
-            even_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            even_ram[i].addr_in = _BIND((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            even_ram[i].data_in = _BIND(refill_even_line_comb_func());
+            even_ram[i].wr_in = _BIND_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
+            even_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
             even_ram[i].id_in = ID * 100 + i * 3;
 
-            odd_ram[i].addr_in = __EXPR((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
-            odd_ram[i].data_in = __EXPR(refill_odd_line_comb_func());
-            odd_ram[i].wr_in = __EXPR_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
-            odd_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            odd_ram[i].addr_in = _BIND((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
+            odd_ram[i].data_in = _BIND(refill_odd_line_comb_func());
+            odd_ram[i].wr_in = _BIND_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
+            odd_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
             odd_ram[i].id_in = ID * 100 + i * 3 + 1;
 
-            tag_ram[i].addr_in = __EXPR((state_reg == ST_INIT) ? init_set_reg :
+            tag_ram[i].addr_in = _BIND((state_reg == ST_INIT) ? init_set_reg :
                                         (write_in() ? input_set_comb_func() :
                                          ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
-            tag_ram[i].data_in = __EXPR((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
-            tag_ram[i].wr_in = __EXPR_I((state_reg == ST_INIT) ||
+            tag_ram[i].data_in = _BIND((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
+            tag_ram[i].wr_in = _BIND_I((state_reg == ST_INIT) ||
                                         ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i) ||
                                         write_in());
-            tag_ram[i].rd_in = __EXPR(issue_read_comb_func() && input_cacheable_comb_func());
+            tag_ram[i].rd_in = _BIND(issue_read_comb_func() && input_cacheable_comb_func());
             tag_ram[i].id_in = ID * 100 + i * 3 + 2;
         }
     }
@@ -118,27 +118,27 @@ private:
     reg<logic<HALF_LINE_BITS>> refill_odd_line_reg;
 
     // Set index of the registered request address.
-    __LAZY_COMB(req_set_comb, u<SET_BITS>)
+    _LAZY_COMB(req_set_comb, u<SET_BITS>)
         return req_set_comb = (u<SET_BITS>)((uint32_t)req_addr_reg >> LINE_BITS);
     }
 
     // Tag bits of the registered request address.
-    __LAZY_COMB(req_tag_comb, u<TAG_BITS>)
+    _LAZY_COMB(req_tag_comb, u<TAG_BITS>)
         return req_tag_comb = (u<TAG_BITS>)((uint32_t)req_addr_reg >> (LINE_BITS + SET_BITS));
     }
 
     // 32-bit word index inside the registered cache line.
-    __LAZY_COMB(req_word_comb, u<WORD_BITS>)
+    _LAZY_COMB(req_word_comb, u<WORD_BITS>)
         return req_word_comb = (u<WORD_BITS>)(((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1));
     }
 
     // Set index of the incoming CPU address.
-    __LAZY_COMB(input_set_comb, u<SET_BITS>)
+    _LAZY_COMB(input_set_comb, u<SET_BITS>)
         return input_set_comb = (u<SET_BITS>)(addr_in() >> LINE_BITS);
     }
 
     // Whether the incoming address can be served from this cache line format.
-    __LAZY_COMB(input_cacheable_comb, bool)
+    _LAZY_COMB(input_cacheable_comb, bool)
         input_cacheable_comb = !cache_disable_in() && !(addr_in() & 0x1);
         if ((addr_in() & 0x3u) != 0 &&
             (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
@@ -150,7 +150,7 @@ private:
     }
 
     // True when a new CPU read should be issued into tag/data RAMs.
-    __LAZY_COMB(start_read_comb, bool)
+    _LAZY_COMB(start_read_comb, bool)
         start_read_comb = false;
         if (read_in() && !stall_in()) {
             if (state_reg == ST_IDLE) {
@@ -167,17 +167,17 @@ private:
     }
 
     // Redirects must issue a RAM read even while the old branch instruction is stalling fetch.
-    __LAZY_COMB(issue_read_comb, bool)
+    _LAZY_COMB(issue_read_comb, bool)
         return issue_read_comb = (flush_in() && read_in()) || start_read_comb_func();
     }
 
     // Tag RAM payload written at the end of a refill: valid bit plus tag.
-    __LAZY_COMB(refill_tag_comb, logic<TAG_BITS + 1>)
+    _LAZY_COMB(refill_tag_comb, logic<TAG_BITS + 1>)
         return refill_tag_comb = (logic<TAG_BITS + 1>)(((uint64_t)1 << TAG_BITS) | (uint64_t)req_tag_comb_func());
     }
 
     // Next even-half line image while streaming refill words from memory.
-    __LAZY_COMB(refill_even_line_comb, logic<HALF_LINE_BITS>)
+    _LAZY_COMB(refill_even_line_comb, logic<HALF_LINE_BITS>)
         size_t i;
         uint32_t word;
         refill_even_line_comb = refill_even_line_reg;
@@ -191,7 +191,7 @@ private:
     }
 
     // Next odd-half line image while streaming refill words from memory.
-    __LAZY_COMB(refill_odd_line_comb, logic<HALF_LINE_BITS>)
+    _LAZY_COMB(refill_odd_line_comb, logic<HALF_LINE_BITS>)
         size_t i;
         uint32_t word;
         refill_odd_line_comb = refill_odd_line_reg;
@@ -205,7 +205,7 @@ private:
     }
 
     // Requested word assembled from the completed refill line image.
-    __LAZY_COMB(refill_data_comb, uint32_t)
+    _LAZY_COMB(refill_data_comb, uint32_t)
         uint32_t word;
         uint32_t even_half;
         uint32_t odd_half;
@@ -227,7 +227,7 @@ private:
     }
 
     // Direct memory bypass data, including unaligned words inside or across a memory beat.
-    __LAZY_COMB(direct_data_comb, uint32_t)
+    _LAZY_COMB(direct_data_comb, uint32_t)
         uint32_t byte;
         uint32_t word;
         if (((uint32_t)req_addr_reg & 3u) != 0 &&
@@ -253,7 +253,7 @@ private:
     }
 
     // Associative tag compare for the registered request.
-    __LAZY_COMB(hit_comb, bool)
+    _LAZY_COMB(hit_comb, bool)
         size_t i;
         hit_comb = false;
         if (state_reg == ST_LOOKUP && req_read_reg && req_cacheable_reg) {
@@ -268,7 +268,7 @@ private:
     }
 
     // Select and assemble the 32-bit read word from even/odd 16-bit line RAMs.
-    __LAZY_COMB(cache_data_comb, uint32_t)
+    _LAZY_COMB(cache_data_comb, uint32_t)
         size_t i;
         uint32_t word;
         uint32_t even_half;
@@ -299,7 +299,7 @@ private:
     }
 
     // CPU read data mux: cached hit, held refill result, or direct memory bypass.
-    __LAZY_COMB(read_data_comb, uint32_t)
+    _LAZY_COMB(read_data_comb, uint32_t)
         if (state_reg == ST_LOOKUP && req_read_reg && hit_comb_func()) {
             read_data_comb = cache_data_comb_func();
         }
@@ -313,17 +313,17 @@ private:
     }
 
     // Address associated with the current CPU read data.
-    __LAZY_COMB(read_addr_comb, uint32_t)
+    _LAZY_COMB(read_addr_comb, uint32_t)
         return read_addr_comb = last_valid_reg ? (uint32_t)last_addr_reg : (uint32_t)req_addr_reg;
     }
 
     // CPU read response valid pulse/hold.
-    __LAZY_COMB(read_valid_comb, bool)
+    _LAZY_COMB(read_valid_comb, bool)
         return read_valid_comb = last_valid_reg || (state_reg == ST_LOOKUP && req_read_reg && hit_comb_func());
     }
 
     // CPU stall request while the cache cannot return/accept data.
-    __LAZY_COMB(busy_comb, bool)
+    _LAZY_COMB(busy_comb, bool)
         if (state_reg == ST_INIT || state_reg == ST_REFILL) {
             busy_comb = true;
         }
@@ -337,7 +337,7 @@ private:
     }
 
     // Performance/debug snapshot for the current L1 state.
-    __LAZY_COMB(perf_comb, L1CachePerf)
+    _LAZY_COMB(perf_comb, L1CachePerf)
         perf_comb.state = state_reg;
         perf_comb.hit = hit_comb_func();
         perf_comb.lookup_wait = busy_comb_func() && state_reg == ST_LOOKUP;
@@ -348,12 +348,12 @@ private:
     }
 
     // Backing memory read request.
-    __LAZY_COMB(mem_read_comb, bool)
+    _LAZY_COMB(mem_read_comb, bool)
         return mem_read_comb = state_reg == ST_REFILL && req_read_reg;
     }
 
     // Backing memory address: refill word address or direct request address.
-    __LAZY_COMB(mem_addr_comb, uint32_t)
+    _LAZY_COMB(mem_addr_comb, uint32_t)
         if (state_reg == ST_REFILL && req_read_reg && req_cacheable_reg) {
             mem_addr_comb = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)refill_beat_reg * PORT_BYTES);
         }

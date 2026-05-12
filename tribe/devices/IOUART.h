@@ -14,8 +14,8 @@ public:
 
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
-    __PORT(bool) uart_valid_out = __VAR(uart_valid_reg);
-    __PORT(uint8_t) uart_data_out = __VAR(uart_data_reg);
+    _PORT(bool) uart_valid_out = _BIND_VAR(uart_valid_reg);
+    _PORT(uint8_t) uart_data_out = _BIND_VAR(uart_data_reg);
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -29,7 +29,7 @@ private:
     reg<u8> uart_data_reg;
 
     // Read data register map: STATUS bit0 is always tx-ready.
-    __LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
+    _LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
         read_data_comb = 0;
         if ((uint32_t)read_addr_reg == REG_STATUS) {
             read_data_comb.bits(31, 0) = 1;
@@ -40,15 +40,15 @@ private:
 public:
     void _assign()
     {
-        axi_in.awready_out = __EXPR(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = __EXPR(write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.bvalid_out = __VAR(write_resp_valid_reg);
-        axi_in.bid_out = __VAR(write_id_reg);
-        axi_in.arready_out = __EXPR(!read_valid_reg);
-        axi_in.rvalid_out = __VAR(read_valid_reg);
-        axi_in.rdata_out = __VAR(read_data_comb_func());
-        axi_in.rlast_out = __VAR(read_valid_reg);
-        axi_in.rid_out = __VAR(read_id_reg);
+        axi_in.awready_out = _BIND(!write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.wready_out = _BIND(write_addr_valid_reg && !write_resp_valid_reg);
+        axi_in.bvalid_out = _BIND_VAR(write_resp_valid_reg);
+        axi_in.bid_out = _BIND_VAR(write_id_reg);
+        axi_in.arready_out = _BIND(!read_valid_reg);
+        axi_in.rvalid_out = _BIND_VAR(read_valid_reg);
+        axi_in.rdata_out = _BIND_VAR(read_data_comb_func());
+        axi_in.rlast_out = _BIND_VAR(read_valid_reg);
+        axi_in.rid_out = _BIND_VAR(read_id_reg);
     }
 
     void _work(bool reset)

@@ -54,12 +54,12 @@ struct cpphdl_exception
 
 #ifdef CPPHDL_STATIC  // for non static version we capture this in comb functions
 
-#define __PORT(A...) inline static cpphdl::function_ref<A>
-#define __VAR(a...)  +[]() { return &a; }  // variable
-#define __EXPR(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
+#define _PORT(A...) inline static cpphdl::function_ref<A>
+#define _BIND_VAR(a...)  +[]() { return &a; }  // variable
+#define _BIND(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
 //#define __VAL(a...)  +[]() { static auto tmp = a; return &tmp; }  // const
 
-#define __LAZY_COMB(name, type...) \
+#define _LAZY_COMB(name, type...) \
     type name; \
     inline static long __prev_sys_clock_##name = -1; \
     static type& name##_func() { \
@@ -72,22 +72,22 @@ struct cpphdl_exception
 
 #else  // CPPHDL_STATIC
 
-#define __PORT(A...) cpphdl::function_ref<A>
-#define __VAR(a...)  [&]() { return &a; } // variable
-#define __EXPR(a...) [&]() { return a; }  // expression
+#define _PORT(A...) cpphdl::function_ref<A>
+#define _BIND_VAR(a...)  [&]() { return &a; } // variable
+#define _BIND(a...) [&]() { return a; }  // expression
 #define CPPHDL_UNPAREN(a...) a
-#define __VAR_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; } // variable
-#define __EXPR_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
-#define __VAR_I(a...)  [&,i]() { return &a; } // variable
-#define __EXPR_I(a...) [&,i]() { return a; }  // expression
-#define __VAR_J(a...)  [&,j]() { return &a; } // variable
-#define __EXPR_J(a...) [&,j]() { return a; }  // expression
-#define __VAR_IJ(a...)  [&,i,j]() { return &a; } // variable
-#define __EXPR_IJ(a...) [&,i,j]() { return a; }  // expression
-#define __VAR_IJK(a...)  [&,i,j,k]() { return &a; } // variable
-#define __EXPR_IJK(a...) [&,i,j,k]() { return a; }  // expression
+#define _BIND_VAR_CAP(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; } // variable
+#define _BIND_CAP(caps, a...) [&, CPPHDL_UNPAREN caps]() { return a; }  // expression
+#define _BIND_VAR_I(a...)  [&,i]() { return &a; } // variable
+#define _BIND_I(a...) [&,i]() { return a; }  // expression
+#define _BIND_VAR_J(a...)  [&,j]() { return &a; } // variable
+#define _BIND_J(a...) [&,j]() { return a; }  // expression
+#define _BIND_VAR_IJ(a...)  [&,i,j]() { return &a; } // variable
+#define _BIND_IJ(a...) [&,i,j]() { return a; }  // expression
+#define _BIND_VAR_IJK(a...)  [&,i,j,k]() { return &a; } // variable
+#define _BIND_IJK(a...) [&,i,j,k]() { return a; }  // expression
 
-#define __LAZY_COMB(name, type...) \
+#define _LAZY_COMB(name, type...) \
     type name; \
     long __prev_sys_clock_##name = -1; \
     type& name##_func() { \

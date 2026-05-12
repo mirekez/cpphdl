@@ -11,18 +11,18 @@ using namespace cpphdl;
 class Decode: public Module
 {
 public:
-    __PORT(uint32_t) pc_in;
-    __PORT(bool)     instr_valid_in;
-    __PORT(uint32_t) instr_in;
-    __PORT(uint32_t) regs_data0_in;
-    __PORT(uint32_t) regs_data1_in;
-    __PORT(u<5>)     rs1_out      =  __VAR( rs1_out_comb_func() );
-    __PORT(u<5>)     rs2_out      =  __VAR( rs2_out_comb_func() );
-    __PORT(State)    state_out    =  __VAR( state_comb_func() );
+    _PORT(uint32_t) pc_in;
+    _PORT(bool)     instr_valid_in;
+    _PORT(uint32_t) instr_in;
+    _PORT(uint32_t) regs_data0_in;
+    _PORT(uint32_t) regs_data1_in;
+    _PORT(u<5>)     rs1_out      =  _BIND_VAR( rs1_out_comb_func() );
+    _PORT(u<5>)     rs2_out      =  _BIND_VAR( rs2_out_comb_func() );
+    _PORT(State)    state_out    =  _BIND_VAR( state_comb_func() );
 
 private:
 
-    __LAZY_COMB(state_comb, State)
+    _LAZY_COMB(state_comb, State)
 
 #ifdef ENABLE_RV32IA
 #ifdef ENABLE_ZICSR
@@ -55,12 +55,12 @@ private:
         return state_comb;
     }
 
-    __LAZY_COMB(rs1_out_comb, u<5>)
+    _LAZY_COMB(rs1_out_comb, u<5>)
         rs1_out_comb = state_comb_func().rs1;
         return rs1_out_comb;
     }
 
-    __LAZY_COMB(rs2_out_comb, u<5>)
+    _LAZY_COMB(rs2_out_comb, u<5>)
         rs2_out_comb = state_comb_func().rs2;
         return rs2_out_comb;
     }

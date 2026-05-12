@@ -14,16 +14,16 @@ public:
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_in;
     using PipelineStage<STATE,BIG_STATE,ID,LENGTH>::state_out;
 
-    __PORT(uint32_t)    pc_in;
-    __PORT(bool)        instr_valid_in;
-    __PORT(uint32_t)    instr_in;
-    __PORT(uint32_t)    regs_data0_in;
-    __PORT(uint32_t)    regs_data1_in;
-    __PORT(byte)        rs1_out        = __VAR( rs1_out_comb_func() );
-    __PORT(byte)        rs2_out        = __VAR( rs2_out_comb_func() );
-    __PORT(uint32_t)    alu_result_in;  // forwarding from Ex
-    __PORT(uint32_t)    mem_data_in;    // forwarding from Mem
-    __PORT(bool)        stall_out      = __VAR( stall_comb_func() );
+    _PORT(uint32_t)    pc_in;
+    _PORT(bool)        instr_valid_in;
+    _PORT(uint32_t)    instr_in;
+    _PORT(uint32_t)    regs_data0_in;
+    _PORT(uint32_t)    regs_data1_in;
+    _PORT(byte)        rs1_out        = _BIND_VAR( rs1_out_comb_func() );
+    _PORT(byte)        rs2_out        = _BIND_VAR( rs2_out_comb_func() );
+    _PORT(uint32_t)    alu_result_in;  // forwarding from Ex
+    _PORT(uint32_t)    mem_data_in;    // forwarding from Mem
+    _PORT(bool)        stall_out      = _BIND_VAR( stall_comb_func() );
 
     struct State
     {
@@ -46,7 +46,7 @@ public:
 
 private:
 
-    __LAZY_COMB(state_comb, STATE)
+    _LAZY_COMB(state_comb, STATE)
 
         Instr instr = {instr_in()};
         if ((instr.raw&3) == 3) {
@@ -63,19 +63,19 @@ private:
         return state_comb;
     }
 
-    __LAZY_COMB(rs1_out_comb, byte)
+    _LAZY_COMB(rs1_out_comb, byte)
         auto& state_tmp = state_comb_func();
         rs1_out_comb = state_tmp.rs1;
         return rs1_out_comb;
     }
 
-    __LAZY_COMB(rs2_out_comb, byte)
+    _LAZY_COMB(rs2_out_comb, byte)
         auto& state_tmp = state_comb_func();
         rs2_out_comb = state_tmp.rs2;
         return rs2_out_comb;
     }
 
-    __LAZY_COMB(stall_comb, bool)
+    _LAZY_COMB(stall_comb, bool)
 
         // hazard
         auto& state_comb_tmp = state_comb_func();

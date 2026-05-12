@@ -13,19 +13,19 @@ template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true, int ID
 class Memory : public Module
 {
 public:
-    __PORT(u<clog2(MEM_DEPTH)>)       addr0_in;
-    __PORT(bool)                      write0_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  write0_data_in;
-    __PORT(logic<MEM_WIDTH_BYTES>)    write0_mask_in;
-    __PORT(bool)                      read0_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read0_data_out = __VAR( read_data0_out_comb_func() );
+    _PORT(u<clog2(MEM_DEPTH)>)       addr0_in;
+    _PORT(bool)                      write0_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  write0_data_in;
+    _PORT(logic<MEM_WIDTH_BYTES>)    write0_mask_in;
+    _PORT(bool)                      read0_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read0_data_out = _BIND_VAR( read_data0_out_comb_func() );
 
-    __PORT(u<clog2(MEM_DEPTH)>)       addr1_in;
-    __PORT(bool)                      write1_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  write1_data_in;
-    __PORT(logic<MEM_WIDTH_BYTES>)    write1_mask_in;
-    __PORT(bool)                      read1_in;
-    __PORT(logic<MEM_WIDTH_BYTES*8>)  read1_data_out = __VAR( read_data1_out_comb_func() );
+    _PORT(u<clog2(MEM_DEPTH)>)       addr1_in;
+    _PORT(bool)                      write1_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  write1_data_in;
+    _PORT(logic<MEM_WIDTH_BYTES>)    write1_mask_in;
+    _PORT(bool)                      read1_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read1_data_out = _BIND_VAR( read_data1_out_comb_func() );
 
     bool                debugen_in;
 
@@ -37,7 +37,7 @@ private:
     reg<logic<MEM_WIDTH_BYTES*8>> data0_out_reg;
     reg<logic<MEM_WIDTH_BYTES*8>> data1_out_reg;
 
-    __LAZY_COMB(read_data0_out_comb, logic<MEM_WIDTH_BYTES*8>)
+    _LAZY_COMB(read_data0_out_comb, logic<MEM_WIDTH_BYTES*8>)
 
         if (SHOWAHEAD) {
             read_data0_out_comb = buffer[addr0_in()];
@@ -48,7 +48,7 @@ private:
         return read_data0_out_comb;
     }
 
-    __LAZY_COMB(read_data1_out_comb, logic<MEM_WIDTH_BYTES*8>)
+    _LAZY_COMB(read_data1_out_comb, logic<MEM_WIDTH_BYTES*8>)
 
         if (SHOWAHEAD) {
             read_data1_out_comb = buffer[addr1_in()];

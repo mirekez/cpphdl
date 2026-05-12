@@ -24,8 +24,8 @@ struct PipelineStage : public cpphdl::Module
 {
     using STATE = OWN_STATE;
 
-    __PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
-    __PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = __VAR( state_reg );
+    _PORT(cpphdl::array<BIG_STATE,LENGTH>)  state_in;
+    _PORT(cpphdl::array<STATE,LENGTH-ID>)   state_out   = _BIND_VAR( state_reg );
 
     cpphdl::reg<cpphdl::array<STATE,LENGTH-ID>> state_reg;
 
@@ -92,7 +92,7 @@ struct Pipeline<PipelineStages<Ts...>> : public Module
     static constexpr std::size_t LENGTH = sizeof...(Ts);
     STAGES members;
 
-    __LAZY_COMB(states_comb, array<BIG_STATE,LENGTH>)
+    _LAZY_COMB(states_comb, array<BIG_STATE,LENGTH>)
 
         byte y;
         byte x;
@@ -127,7 +127,7 @@ public:
             (
                 (
                     [&]{
-                        stage.state_in = __VAR( states_comb_func() );
+                        stage.state_in = _BIND_VAR( states_comb_func() );
                         stage._assign();
                     }()
                 ),

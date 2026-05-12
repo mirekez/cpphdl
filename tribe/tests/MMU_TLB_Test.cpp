@@ -133,18 +133,18 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        mmu.vaddr_in = __VAR(vaddr);
-        mmu.read_in = __VAR(read);
-        mmu.write_in = __VAR(write);
-        mmu.execute_in = __VAR(execute);
-        mmu.satp_in = __VAR(satp);
-        mmu.priv_in = __VAR(priv);
-        mmu.fill_in = __VAR(fill);
-        mmu.fill_index_in = __VAR(fill_index);
-        mmu.fill_vpn_in = __VAR(fill_vpn);
-        mmu.fill_ppn_in = __VAR(fill_ppn);
-        mmu.fill_flags_in = __VAR(fill_flags);
-        mmu.sfence_in = __VAR(sfence);
+        mmu.vaddr_in = _BIND_VAR(vaddr);
+        mmu.read_in = _BIND_VAR(read);
+        mmu.write_in = _BIND_VAR(write);
+        mmu.execute_in = _BIND_VAR(execute);
+        mmu.satp_in = _BIND_VAR(satp);
+        mmu.priv_in = _BIND_VAR(priv);
+        mmu.fill_in = _BIND_VAR(fill);
+        mmu.fill_index_in = _BIND_VAR(fill_index);
+        mmu.fill_vpn_in = _BIND_VAR(fill_vpn);
+        mmu.fill_ppn_in = _BIND_VAR(fill_ppn);
+        mmu.fill_flags_in = _BIND_VAR(fill_flags);
+        mmu.sfence_in = _BIND_VAR(sfence);
         mmu.__inst_name = "mmu";
         mmu._assign();
 #endif
