@@ -29,7 +29,7 @@ The test and SoC wrapper code in `tribe/main.cpp` also instantiates RAM regions,
 
 ## Main (Core)
 
-`Tribe` is a three-stage in-order CPU core plus a fetch path. The pipeline state array tracks Decode-to-Execute and Execute-to-Writeback state; instruction fetch is driven directly from `pc`, I-cache output, branch prediction, and MMU translation. The `State` structure carries decoded instruction control fields through the core.
+`Tribe` is a four-stage (including i-fetch) in-order CPU core plus a fetch path. The pipeline state array tracks Decode-to-Execute and Execute-to-Writeback state; instruction fetch is driven directly from `pc`, I-cache output, branch prediction, and MMU translation. The `State` structure carries decoded instruction control fields through the core.
 
 Top-level `Tribe` ports:
 
