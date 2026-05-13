@@ -159,6 +159,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 ## Who is CppHDL for
 
+* IC development AI Agent's shepherds (agent does 100 times more iterations per day and understands C++ language better)
 * Digital IC development teams (ASIC, IP, libraries, FPGA) - for faster development and testing of complex digital designs, free of charge
 * Digital IC developers - to use modern C++ environments and smart IDEs, powerful C++ debug tools, static analysis, and linting
 * Software developers who want to deliver hardware and use a powerful modern language with OOP, templates, abstraction, recursion, etc.
@@ -488,14 +489,14 @@ logic<MEM_WIDTH_BYTES*8> data_out_comb;
 &nbsp;&nbsp;&nbsp;&nbsp;Example usage as a port:
 
 ```cpp
-logic<MEM_WIDTH_BYTES*8> *data_in = nullptr;
+_PORT(logic<MEM_WIDTH_BYTES*8>) data_in = nullptr;
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The logic`<>` type provides read/write access to individual bits using *operator[]* and to partial bitmaps using the *.bits(hi,lo)* method:
 
 ```cpp
 buffer1_byteenable._next[addr_sub+i] = 1;
-host_addr.bits(39,32) = *s_writedata_in >> 32;
+host_addr.bits(39,32) = s_writedata_in() >> 32;
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The *.bits(hi,lo)* arguments can be expressions, so indexed slices such as
@@ -577,7 +578,7 @@ mask._next.bits((i+1)*32-1,i*32) = 0;
 &nbsp;&nbsp;&nbsp;&nbsp;The array`<>` type is used for storing a vector of similar types. It can be used with the reg`<>` template.
 
 ```cpp
-array<u8,WIDTH/8>* avmm_writedata_out = &buffer1;
+_PORT(array<u8,WIDTH/8>) avmm_writedata_out = _ASSIGN_REG( buffer1 );
 ```
 
 ### memory`<TYPE,SIZE>`
