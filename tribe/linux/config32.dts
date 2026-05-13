@@ -1,0 +1,66 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "cpphdl,tribe";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		bootargs = "earlycon console=ttyS0,1000000n8 ignore_loglevel debug";
+		stdout-path = "/soc/serial@82000000:1000000n8";
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <50000000>;
+
+		cpu@0 {
+			device_type = "cpu";
+			reg = <0>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv32ima";
+			mmu-type = "riscv,sv32";
+			clock-frequency = <50000000>;
+
+			cpu_intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+			};
+		};
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x02000000>;
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		uart0: serial@82000000 {
+			compatible = "ns16550a";
+			reg = <0x82000000 0x100>;
+			clock-frequency = <50000000>;
+			current-speed = <1000000>;
+			reg-shift = <0>;
+			reg-io-width = <1>;
+			status = "okay";
+		};
+
+		clint0: clint@82000100 {
+			compatible = "sifive,clint0", "riscv,clint0";
+			reg = <0x82000100 0x0000c000>;
+			interrupts-extended = <&cpu_intc 3 &cpu_intc 7>;
+		};
+	};
+};
