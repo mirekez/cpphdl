@@ -32,6 +32,7 @@ public:
 
 private:
     reg<u32> load_data_reg;
+    reg<u32> load_addr_reg;
     reg<u1>  load_data_valid_reg;
     reg<u32> split_load_low_reg;
     reg<u32> split_load_high_reg;
@@ -82,7 +83,8 @@ private:
         }
         else {
             load_ready_comb = state_in().valid && state_in().wb_op == Wb::MEM &&
-                (load_data_valid_reg || (dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()));
+                (load_data_valid_reg ||
+                 (dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()));
         }
         return load_ready_comb;
     }
@@ -110,7 +112,7 @@ private:
         }
 
         result = raw;
-        load_addr = alu_result_in();
+        load_addr = load_data_valid_reg ? (uint32_t)load_addr_reg : dcache_read_addr_in();
         allow_store_forward = state_in().amo_op == Amo::AMONONE;
 
         if (allow_store_forward && store_forward_valid_reg[1]) {
@@ -185,8 +187,7 @@ private:
         }
         else {
             wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
-                ((state_in().valid && state_in().wb_op == Wb::MEM &&
-                  dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()) ?
+                ((state_in().valid && state_in().wb_op == Wb::MEM && dcache_read_valid_in()) ?
                     dcache_read_data_in() : (uint32_t)0);
         }
         return wb_mem_data_comb;
@@ -243,8 +244,9 @@ public:
                 }
             }
             else if (state_in().valid && state_in().wb_op == Wb::MEM &&
-                     dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()) {
+                     dcache_read_valid_in()) {
                 load_data_reg._next = dcache_read_data_in();
+                load_addr_reg._next = dcache_read_addr_in();
                 load_data_valid_reg._next = true;
             }
         }
@@ -256,6 +258,7 @@ public:
 
         if (reset) {
             load_data_reg.clr();
+            load_addr_reg.clr();
             load_data_valid_reg.clr();
             split_load_low_reg.clr();
             split_load_high_reg.clr();
@@ -271,6 +274,7 @@ public:
     void _strobe()
     {
         load_data_reg.strobe();
+        load_addr_reg.strobe();
         load_data_valid_reg.strobe();
         split_load_low_reg.strobe();
         split_load_high_reg.strobe();

@@ -108,6 +108,7 @@ private:
     reg<u32> req_addr_reg;
     reg<u1> req_read_reg;
     reg<u1> req_cacheable_reg;
+    reg<u1> req_cache_disable_reg;
     reg<u<REFILL_BEAT_BITS>> refill_beat_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<SET_BITS>> init_set_reg;
@@ -230,7 +231,9 @@ private:
     _LAZY_COMB(direct_data_comb, uint32_t)
         uint32_t byte;
         uint32_t word;
-        if (((uint32_t)req_addr_reg & 3u) != 0 &&
+        byte = 0;
+        word = 0;
+        if (req_cache_disable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
             // L2 returns an assembled cross-line direct read in the low 32 bits of the beat.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
@@ -358,7 +361,15 @@ private:
             mem_addr_comb = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)refill_beat_reg * PORT_BYTES);
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
-            mem_addr_comb = req_addr_reg;
+            if (ID != 0 && !req_cache_disable_reg) {
+                // Odd byte/half data loads are served as a direct beat read because
+                // this L1 stores cached data in 16-bit banks. Keep the backing L2
+                // request inside the containing beat so dirty L2 lines are still hit.
+                mem_addr_comb = (uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1);
+            }
+            else {
+                mem_addr_comb = req_addr_reg;
+            }
         }
         else {
             mem_addr_comb = addr_in();
@@ -381,6 +392,7 @@ public:
             req_addr_reg._next = addr_in();
             req_read_reg._next = read_in();
             req_cacheable_reg._next = input_cacheable_comb_func();
+            req_cache_disable_reg._next = cache_disable_in();
             last_valid_reg._next = false;
             state_reg._next = read_in() ? ST_LOOKUP : ST_IDLE;
         }
@@ -400,6 +412,7 @@ public:
                 req_addr_reg._next = addr_in();
                 req_read_reg._next = true;
                 req_cacheable_reg._next = input_cacheable_comb_func();
+                req_cache_disable_reg._next = cache_disable_in();
                 state_reg._next = ST_LOOKUP;
             }
         }
@@ -415,6 +428,7 @@ public:
                 else if (start_read_comb_func()) {
                     req_addr_reg._next = addr_in();
                     req_cacheable_reg._next = input_cacheable_comb_func();
+                    req_cache_disable_reg._next = cache_disable_in();
                     last_valid_reg._next = false;
                     state_reg._next = ST_LOOKUP;
                 }
@@ -466,6 +480,7 @@ public:
                 req_addr_reg._next = addr_in();
                 req_read_reg._next = true;
                 req_cacheable_reg._next = input_cacheable_comb_func();
+                req_cache_disable_reg._next = cache_disable_in();
                 state_reg._next = ST_LOOKUP;
             }
             else {
@@ -490,6 +505,7 @@ public:
             req_addr_reg.clr();
             req_read_reg.clr();
             req_cacheable_reg.clr();
+            req_cache_disable_reg.clr();
             refill_beat_reg.clr();
             victim_reg.clr();
             init_set_reg.clr();
@@ -508,6 +524,7 @@ public:
         req_addr_reg.strobe();
         req_read_reg.strobe();
         req_cacheable_reg.strobe();
+        req_cache_disable_reg.strobe();
         refill_beat_reg.strobe();
         victim_reg.strobe();
         init_set_reg.strobe();

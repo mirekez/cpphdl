@@ -747,6 +747,9 @@ public:
         for (uint32_t half = 0; half < LINE_SIZE && !error; half += 2) {
             read_check("wide refill", base + half, half != 0);
         }
+        if (!error) {
+            read_check("wide direct odd byte", base + 1, false);
+        }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(
@@ -791,6 +794,7 @@ int main(int argc, char** argv)
 #else
     ok = ok && TestL1Cache<0>().run();
     ok = ok && TestL1Cache<1>().run();
+    ok = ok && TestL1CacheWideRefill<64>().run();
     ok = ok && TestL1CacheWideRefill<256>().run();
 #endif
     return !ok;

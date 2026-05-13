@@ -609,6 +609,11 @@ public:
         write_only(0xfffffe56u, 0x00000000u, 0x1);
         write_only(0xfffffe57u, 0x00000000u, 0x1);
         read_check(0xfffffe54u, 0x00000002u);
+
+        write_only(0x0000017cu, 0x0000004du, 0x1);
+        write_only(0x0000017du, 0x00000045u, 0x1);
+        read_check(0x0000017cu, 0x0000454du);
+        d_read_check(0x0000017du, 0x0000454du);
     }
 
     void dirty_eviction_check()
@@ -690,7 +695,9 @@ int main(int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L2Cache/obj_dir/VL2Cache") == 0;
+        std::string verilator_dir = std::format("L2Cache_{}_{}_{}_{}_{}_{}_{}",
+            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS);
+        ok = ok && std::system((verilator_dir + "/obj_dir/VL2Cache").c_str()) == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

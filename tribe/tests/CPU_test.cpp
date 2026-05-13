@@ -71,10 +71,41 @@ static bool build_cpu_fence_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_bytecopy_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_bytecopy.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "cpu_bytecopy.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU byte-copy bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
         0, (tribe_code_dir() / "cpu_fence.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
+}
+
+static bool run_cpu_bytecopy_cpp(bool debug)
+{
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_bytecopy.elf").string(),
+        0, (tribe_code_dir() / "cpu_bytecopy.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
 }
 
 static bool check_system_decode_has_no_decode_branch()
@@ -122,6 +153,8 @@ int main(int argc, char** argv)
     bool ok = check_system_decode_has_no_decode_branch();
     ok = ok && build_cpu_fence_elf();
     ok = ok && run_cpu_fence_cpp(debug);
+    ok = ok && build_cpu_bytecopy_elf();
+    ok = ok && run_cpu_bytecopy_cpp(debug);
 
 #ifndef VERILATOR
     if (ok && !noveril) {

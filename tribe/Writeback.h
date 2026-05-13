@@ -21,15 +21,9 @@ public:
 private:
 
     _LAZY_COMB(mem_word_comb, uint32_t)
-        uint32_t shift;
-        shift = mem_addr_in() & 3u;
-        if (mem_split_in()) {
-            mem_word_comb = (mem_data_in() >> (shift * 8u)) |
-                (mem_data_hi_in() << ((4u - shift) * 8u));
-        }
-        else {
-            mem_word_comb = mem_data_in();
-        }
+        // L1/WritebackMem already align load data so the addressed byte or
+        // halfword starts at bit 0. Architectural writeback only extends it.
+        mem_word_comb = mem_data_in();
         return mem_word_comb;
     }
 

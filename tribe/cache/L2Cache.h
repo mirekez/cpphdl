@@ -194,6 +194,7 @@ private:
     _LAZY_COMB(active_write_data_comb, uint32_t)
         size_t i;
         uint32_t lane;
+        lane = 0;
         active_write_data_comb = active_is_d_comb_func() ? d_write_data_in() : i_write_data_in();
         for (i = 0; i < MEM_PORTS; ++i) {
             if (active_is_slave_comb_func() && slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
@@ -237,9 +238,10 @@ private:
 
     // True for an unaligned read whose 32-bit result crosses the cache-line boundary.
     _LAZY_COMB(active_cross_line_read_comb, bool)
-        active_cross_line_read_comb = active_read_comb_func() &&
-            ((active_addr_comb_func() & 3u) != 0) &&
-            (((active_addr_comb_func() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1);
+        // CPU data accesses that really cross a line are split before L2.
+        // Keeping unaligned reads on the normal lookup path preserves dirty
+        // cached data instead of bypassing to stale backing RAM.
+        active_cross_line_read_comb = false;
         return active_cross_line_read_comb;
     }
 
