@@ -216,10 +216,13 @@ int main(int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR
     if (!noveril) {
+        const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "BranchPredictor", {"Predef_pkg", "Br_pkg"},
-            {"../../../../../include", "../../../../../tribe", "../../../../../tribe/spec"},
+            {(source_root / "include").string(),
+             (source_root / "tribe").string(),
+             (source_root / "tribe" / "spec").string()},
             ENTRIES, COUNTER_BITS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

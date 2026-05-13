@@ -7,6 +7,9 @@ file(GLOB_RECURSE EXAMPLE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
 
+list(FILTER EXAMPLE_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
+list(FILTER EXAMPLE_SOURCES EXCLUDE REGEX "~$")
+
 foreach(src ${EXAMPLE_SOURCES})
     get_filename_component(name ${src} NAME_WE)
     # prefix with relative path for uniqueness

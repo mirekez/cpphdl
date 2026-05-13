@@ -313,15 +313,7 @@ public:
         l2cache.mem_region_uncached_in[3] = _ASSIGN(true);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM(l2cache.axi_in[i], axi_in[i]);
-            l2cache.axi_out[i].awready_out = _ASSIGN_I(axi_out[i].awready_out());
-            l2cache.axi_out[i].wready_out = _ASSIGN_I(axi_out[i].wready_out());
-            l2cache.axi_out[i].bvalid_out = _ASSIGN_I(axi_out[i].bvalid_out());
-            l2cache.axi_out[i].bid_out = _ASSIGN_I(axi_out[i].bid_out());
-            l2cache.axi_out[i].arready_out = _ASSIGN_I(axi_out[i].arready_out());
-            l2cache.axi_out[i].rvalid_out = _ASSIGN_I(axi_out[i].rvalid_out());
-            l2cache.axi_out[i].rdata_out = _ASSIGN_I(axi_out[i].rdata_out());
-            l2cache.axi_out[i].rlast_out = _ASSIGN_I(axi_out[i].rlast_out());
-            l2cache.axi_out[i].rid_out = _ASSIGN_I(axi_out[i].rid_out());
+            AXI4_RESPONDER_FROM_I(l2cache.axi_out[i], axi_out[i]);
         }
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
@@ -337,17 +329,7 @@ public:
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
-            axi_out[i].awvalid_in = l2cache.axi_out[i].awvalid_in;
-            axi_out[i].awaddr_in = l2cache.axi_out[i].awaddr_in;
-            axi_out[i].awid_in = l2cache.axi_out[i].awid_in;
-            axi_out[i].wvalid_in = l2cache.axi_out[i].wvalid_in;
-            axi_out[i].wdata_in = l2cache.axi_out[i].wdata_in;
-            axi_out[i].wlast_in = l2cache.axi_out[i].wlast_in;
-            axi_out[i].bready_in = l2cache.axi_out[i].bready_in;
-            axi_out[i].arvalid_in = l2cache.axi_out[i].arvalid_in;
-            axi_out[i].araddr_in = l2cache.axi_out[i].araddr_in;
-            axi_out[i].arid_in = l2cache.axi_out[i].arid_in;
-            axi_out[i].rready_in = l2cache.axi_out[i].rready_in;
+            AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
         }
     }
 

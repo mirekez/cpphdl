@@ -88,44 +88,8 @@ int main(int argc, char** argv)
         std::print("Building NS16550A Tribe Verilator ELF simulation...\n");
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
-        ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
-                  "Amo_pkg",
-                  "Trap_pkg",
-                  "State_pkg",
-                  "Rv32i_pkg",
-                  "Rv32ic_pkg",
-                  "Rv32ic_rv16_pkg",
-                  "Rv32im_pkg",
-                  "Rv32ia_pkg",
-                  "Zicsr_pkg",
-                  "Alu_pkg",
-                  "Br_pkg",
-                  "Sys_pkg",
-                  "Csr_pkg",
-                  "Mem_pkg",
-                  "Wb_pkg",
-                  "L1CachePerf_pkg",
-                  "TribePerf_pkg",
-                  "File",
-                  "RAM1PORT",
-                  "L1Cache",
-                  "L2Cache",
-                  "BranchPredictor",
-                  "InterruptController",
-                  "Decode",
-                  "Execute",
-                  "ExecuteMem",
-                  "CSR",
-                  "MMU_TLB",
-                  "Writeback",
-                  "WritebackMem"}, {
-                      (source_root / "include").string(),
-                      (source_root / "tribe").string(),
-                      (source_root / "tribe" / "common").string(),
-                      (source_root / "tribe" / "spec").string(),
-                      (source_root / "tribe" / "cache").string(),
-                      (source_root / "tribe" / "devices").string()});
-        ok &= std::system((std::string("Tribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= VerilatorCompileTribeInFolder(__FILE__, "NS16550A", source_root);
+        ok &= std::system((std::string("NS16550ATribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else
     Verilated::commandArgs(argc, argv);

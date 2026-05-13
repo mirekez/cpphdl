@@ -65,80 +65,6 @@ static std::string shell_quote(const std::filesystem::path& path)
     return quoted;
 }
 
-class IOUARTSmoke : public Module
-{
-public:
-    _PORT(bool) awvalid_in;
-    _PORT(u<16>) awaddr_in;
-    _PORT(u<4>) awid_in;
-    _PORT(bool) awready_out;
-
-    _PORT(bool) wvalid_in;
-    _PORT(logic<32>) wdata_in;
-    _PORT(bool) wlast_in;
-    _PORT(bool) wready_out;
-
-    _PORT(bool) bready_in;
-    _PORT(bool) bvalid_out;
-    _PORT(u<4>) bid_out;
-
-    _PORT(bool) arvalid_in;
-    _PORT(u<16>) araddr_in;
-    _PORT(u<4>) arid_in;
-    _PORT(bool) arready_out;
-
-    _PORT(bool) rready_in;
-    _PORT(bool) rvalid_out;
-    _PORT(logic<32>) rdata_out;
-    _PORT(bool) rlast_out;
-    _PORT(u<4>) rid_out;
-
-    _PORT(bool) uart_valid_out;
-    _PORT(uint8_t) uart_data_out;
-
-private:
-    IOUART<16, 4, 32> uart;
-
-public:
-    void _assign()
-    {
-        uart.axi_in.awvalid_in = awvalid_in;
-        uart.axi_in.awaddr_in = awaddr_in;
-        uart.axi_in.awid_in = awid_in;
-        uart.axi_in.wvalid_in = wvalid_in;
-        uart.axi_in.wdata_in = wdata_in;
-        uart.axi_in.wlast_in = wlast_in;
-        uart.axi_in.bready_in = bready_in;
-        uart.axi_in.arvalid_in = arvalid_in;
-        uart.axi_in.araddr_in = araddr_in;
-        uart.axi_in.arid_in = arid_in;
-        uart.axi_in.rready_in = rready_in;
-        uart._assign();
-
-        awready_out = uart.axi_in.awready_out;
-        wready_out = uart.axi_in.wready_out;
-        bvalid_out = uart.axi_in.bvalid_out;
-        bid_out = uart.axi_in.bid_out;
-        arready_out = uart.axi_in.arready_out;
-        rvalid_out = uart.axi_in.rvalid_out;
-        rdata_out = uart.axi_in.rdata_out;
-        rlast_out = uart.axi_in.rlast_out;
-        rid_out = uart.axi_in.rid_out;
-        uart_valid_out = uart.uart_valid_out;
-        uart_data_out = uart.uart_data_out;
-    }
-
-    void _work(bool reset)
-    {
-        uart._work(reset);
-    }
-
-    void _strobe()
-    {
-        uart._strobe();
-    }
-};
-
 #if !defined(VERILATOR) || defined(IOUART_DIRECT_VERILATOR)
 class TestIOUARTDirect : public Module
 {
@@ -148,20 +74,10 @@ class TestIOUARTDirect : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
-    IOUARTSmoke dut;
+    IOUART<16, 4, 32> dut;
 #endif
 
-    bool awvalid = false;
-    u<16> awaddr = 0;
-    u<4> awid = 0;
-    bool wvalid = false;
-    logic<32> wdata = 0;
-    bool wlast = false;
-    bool bready = false;
-    bool arvalid = false;
-    u<16> araddr = 0;
-    u<4> arid = 0;
-    bool rready = false;
+    Axi4Driver<16, 4, 32> axi = {};
     bool error = false;
     std::string captured;
 
@@ -175,17 +91,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.awvalid_in = _ASSIGN_REG(awvalid);
-        dut.awaddr_in = _ASSIGN_REG(awaddr);
-        dut.awid_in = _ASSIGN_REG(awid);
-        dut.wvalid_in = _ASSIGN_REG(wvalid);
-        dut.wdata_in = _ASSIGN_REG(wdata);
-        dut.wlast_in = _ASSIGN_REG(wlast);
-        dut.bready_in = _ASSIGN_REG(bready);
-        dut.arvalid_in = _ASSIGN_REG(arvalid);
-        dut.araddr_in = _ASSIGN_REG(araddr);
-        dut.arid_in = _ASSIGN_REG(arid);
-        dut.rready_in = _ASSIGN_REG(rready);
+        AXI4_DRIVER_FROM_DRIVER(dut.axi_in, axi);
         dut.__inst_name = "iouart_smoke";
         dut._assign();
 #endif
@@ -194,31 +100,7 @@ public:
 #ifdef VERILATOR
     void eval(bool reset)
     {
-#ifdef IOUART_TOP_VERILATOR
-        dut.axi_in___05Fawvalid_in = awvalid;
-        dut.axi_in___05Fawaddr_in = (uint16_t)awaddr;
-        dut.axi_in___05Fawid_in = (uint8_t)awid;
-        dut.axi_in___05Fwvalid_in = wvalid;
-        dut.axi_in___05Fwdata_in = (uint32_t)wdata;
-        dut.axi_in___05Fwlast_in = wlast;
-        dut.axi_in___05Fbready_in = bready;
-        dut.axi_in___05Farvalid_in = arvalid;
-        dut.axi_in___05Faraddr_in = (uint16_t)araddr;
-        dut.axi_in___05Farid_in = (uint8_t)arid;
-        dut.axi_in___05Frready_in = rready;
-#else
-        dut.awvalid_in = awvalid;
-        dut.awaddr_in = (uint16_t)awaddr;
-        dut.awid_in = (uint8_t)awid;
-        dut.wvalid_in = wvalid;
-        dut.wdata_in = (uint32_t)wdata;
-        dut.wlast_in = wlast;
-        dut.bready_in = bready;
-        dut.arvalid_in = arvalid;
-        dut.araddr_in = (uint16_t)araddr;
-        dut.arid_in = (uint8_t)arid;
-        dut.rready_in = rready;
-#endif
+        AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER(dut, axi_in, axi);
         dut.reset = reset;
         dut.eval();
     }
@@ -247,13 +129,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Fawready_out;
 #else
-        return dut.awready_out;
-#endif
-#else
-        return dut.awready_out();
+        return dut.axi_in.awready_out();
 #endif
     }
 
@@ -261,13 +139,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Fwready_out;
 #else
-        return dut.wready_out;
-#endif
-#else
-        return dut.wready_out();
+        return dut.axi_in.wready_out();
 #endif
     }
 
@@ -275,13 +149,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Fbvalid_out;
 #else
-        return dut.bvalid_out;
-#endif
-#else
-        return dut.bvalid_out();
+        return dut.axi_in.bvalid_out();
 #endif
     }
 
@@ -289,13 +159,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Farready_out;
 #else
-        return dut.arready_out;
-#endif
-#else
-        return dut.arready_out();
+        return dut.axi_in.arready_out();
 #endif
     }
 
@@ -303,13 +169,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Frvalid_out;
 #else
-        return dut.rvalid_out;
-#endif
-#else
-        return dut.rvalid_out();
+        return dut.axi_in.rvalid_out();
 #endif
     }
 
@@ -317,13 +179,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-#ifdef IOUART_TOP_VERILATOR
         return dut.axi_in___05Frdata_out;
 #else
-        return dut.rdata_out;
-#endif
-#else
-        return (uint32_t)dut.rdata_out();
+        return (uint32_t)dut.axi_in.rdata_out();
 #endif
     }
 
@@ -357,58 +215,58 @@ public:
 
     void write32(uint32_t addr, uint32_t data)
     {
-        awvalid = true;
-        awaddr = u<16>(addr);
-        awid = 1;
-        wvalid = false;
-        bready = true;
+        axi.aw.valid = true;
+        axi.aw.addr = u<16>(addr);
+        axi.aw.id = 1;
+        axi.w.valid = false;
+        axi.b.ready = true;
         if (!awready()) {
             fail("IOUART write address channel was not ready");
             return;
         }
         cycle();
 
-        awvalid = false;
-        wvalid = true;
-        wdata = data;
-        wlast = true;
+        axi.aw.valid = false;
+        axi.w.valid = true;
+        axi.w.data = data;
+        axi.w.last = true;
         if (!wready()) {
             fail("IOUART write data channel was not ready");
             return;
         }
         cycle();
 
-        wvalid = false;
+        axi.w.valid = false;
         if (!bvalid()) {
             fail("IOUART write response was not valid");
             return;
         }
         cycle();
-        bready = false;
+        axi.b.ready = false;
     }
 
     uint32_t read32(uint32_t addr)
     {
-        arvalid = true;
-        araddr = u<16>(addr);
-        arid = 2;
-        rready = false;
+        axi.ar.valid = true;
+        axi.ar.addr = u<16>(addr);
+        axi.ar.id = 2;
+        axi.r.ready = false;
         if (!arready()) {
             fail("IOUART read address channel was not ready");
             return 0;
         }
         cycle();
 
-        arvalid = false;
+        axi.ar.valid = false;
         cycle();
         if (!rvalid()) {
             fail("IOUART read data channel was not valid");
             return 0;
         }
         uint32_t data = rdata();
-        rready = true;
+        axi.r.ready = true;
         cycle();
-        rready = false;
+        axi.r.ready = false;
         return data;
     }
 
@@ -507,7 +365,7 @@ int main(int argc, char** argv)
         const auto source_root = source_root_dir();
         std::cout << "Building IOUART direct Verilator smoke simulation...\n";
         ok &= generate_iouart_direct_sv();
-        setenv("CPPHDL_VERILATOR_CFLAGS", "-DIOUART_DIRECT_VERILATOR -DIOUART_TOP_VERILATOR", 1);
+        setenv("CPPHDL_VERILATOR_CFLAGS", "-DIOUART_DIRECT_VERILATOR", 1);
         if (ok) {
             ok &= VerilatorCompileInFolder(__FILE__, "IOUARTDevice", "IOUART",
                 {"Predef_pkg"},
@@ -521,43 +379,7 @@ int main(int argc, char** argv)
         std::cout << "Building IOUART Tribe Verilator ELF simulation...\n";
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
-        ok &= VerilatorCompileInFolder(__FILE__, "IOUART", "Tribe", {"Predef_pkg",
-                  "Amo_pkg",
-                  "Trap_pkg",
-                  "State_pkg",
-                  "Rv32i_pkg",
-                  "Rv32ic_pkg",
-                  "Rv32ic_rv16_pkg",
-                  "Rv32im_pkg",
-                  "Rv32ia_pkg",
-                  "Zicsr_pkg",
-                  "Alu_pkg",
-                  "Br_pkg",
-                  "Sys_pkg",
-                  "Csr_pkg",
-                  "Mem_pkg",
-                  "Wb_pkg",
-                  "L1CachePerf_pkg",
-                  "TribePerf_pkg",
-                  "File",
-                  "RAM1PORT",
-                  "L1Cache",
-                  "L2Cache",
-                  "BranchPredictor",
-                  "InterruptController",
-                  "Decode",
-                  "Execute",
-                  "ExecuteMem",
-                  "CSR",
-                  "MMU_TLB",
-                  "Writeback",
-                  "WritebackMem"}, {
-                      (source_root / "include").string(),
-                      (source_root / "tribe").string(),
-                      (source_root / "tribe" / "common").string(),
-                      (source_root / "tribe" / "spec").string(),
-                      (source_root / "tribe" / "cache").string(),
-                      (source_root / "tribe" / "devices").string()});
+        ok &= VerilatorCompileTribeInFolder(__FILE__, "IOUART", source_root);
         ok &= std::system((std::string("IOUART/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else

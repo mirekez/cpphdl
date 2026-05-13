@@ -47,6 +47,8 @@ file(GLOB TRIBE_TEST_SOURCES CONFIGURE_DEPENDS
 )
 
 list(FILTER TRIBE_TEST_SOURCES EXCLUDE REGEX "/spec_decode_tests\\.cpp$")
+list(FILTER TRIBE_TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
+list(FILTER TRIBE_TEST_SOURCES EXCLUDE REGEX "~$")
 
 foreach(src ${TRIBE_TEST_SOURCES})
     get_filename_component(target_name ${src} NAME_WE)

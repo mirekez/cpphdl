@@ -7,6 +7,9 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
 
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
+
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
     file(RELATIVE_PATH rel_path ${CMAKE_CURRENT_SOURCE_DIR} ${src})

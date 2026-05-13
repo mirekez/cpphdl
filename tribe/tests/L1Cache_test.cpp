@@ -693,10 +693,13 @@ int main(int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR
     if (!noveril) {
+        const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
-            {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
+            {(source_root / "include").string(),
+             (source_root / "tribe" / "common").string(),
+             (source_root / "tribe" / "cache").string()},
             CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS, 32);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

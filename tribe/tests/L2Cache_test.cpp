@@ -86,17 +86,7 @@ class TestL2Cache : public Module
     uint32_t addr = 0;
     uint32_t wdata = 0;
     uint8_t wmask = 0;
-    bool slave_awvalid[MEM_PORTS] = {};
-    u<32> slave_awaddr[MEM_PORTS] = {};
-    u<4> slave_awid[MEM_PORTS] = {};
-    bool slave_wvalid[MEM_PORTS] = {};
-    logic<PORT_BITS> slave_wdata[MEM_PORTS] = {};
-    bool slave_wlast[MEM_PORTS] = {};
-    bool slave_bready[MEM_PORTS] = {};
-    bool slave_arvalid[MEM_PORTS] = {};
-    u<32> slave_araddr[MEM_PORTS] = {};
-    u<4> slave_arid[MEM_PORTS] = {};
-    bool slave_rready[MEM_PORTS] = {};
+    Axi4Driver<32, 4, PORT_BITS> slave_axi[MEM_PORTS] = {};
     bool region_uncached[MEM_PORTS] = {};
     bool error = false;
 
@@ -120,17 +110,7 @@ public:
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = _ASSIGN((uint32_t)0x40000000u);
             l2.mem_region_uncached_in[i] = _ASSIGN_REG_I(region_uncached[i]);
-            l2.axi_in[i].awvalid_in = _ASSIGN_REG_I(slave_awvalid[i]);
-            l2.axi_in[i].awaddr_in = _ASSIGN_REG_I(slave_awaddr[i]);
-            l2.axi_in[i].awid_in = _ASSIGN_REG_I(slave_awid[i]);
-            l2.axi_in[i].wvalid_in = _ASSIGN_REG_I(slave_wvalid[i]);
-            l2.axi_in[i].wdata_in = _ASSIGN_REG_I(slave_wdata[i]);
-            l2.axi_in[i].wlast_in = _ASSIGN_REG_I(slave_wlast[i]);
-            l2.axi_in[i].bready_in = _ASSIGN_REG_I(slave_bready[i]);
-            l2.axi_in[i].arvalid_in = _ASSIGN_REG_I(slave_arvalid[i]);
-            l2.axi_in[i].araddr_in = _ASSIGN_REG_I(slave_araddr[i]);
-            l2.axi_in[i].arid_in = _ASSIGN_REG_I(slave_arid[i]);
-            l2.axi_in[i].rready_in = _ASSIGN_REG_I(slave_rready[i]);
+            AXI4_DRIVER_FROM_DRIVER_I(l2.axi_in[i], slave_axi[i]);
         }
         l2.debugen_in = false;
         l2.__inst_name = "l2";
@@ -174,17 +154,7 @@ public:
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = 0x40000000u;
             l2.mem_region_uncached_in[i] = region_uncached[i];
-            l2.axi_in___05Fawvalid_in[i] = slave_awvalid[i];
-            l2.axi_in___05Fawaddr_in[i] = slave_awaddr[i];
-            l2.axi_in___05Fawid_in[i] = slave_awid[i];
-            l2.axi_in___05Fwvalid_in[i] = slave_wvalid[i];
-            verilator_logic_to_wide(l2.axi_in___05Fwdata_in[i], slave_wdata[i]);
-            l2.axi_in___05Fwlast_in[i] = slave_wlast[i];
-            l2.axi_in___05Fbready_in[i] = slave_bready[i];
-            l2.axi_in___05Farvalid_in[i] = slave_arvalid[i];
-            l2.axi_in___05Faraddr_in[i] = slave_araddr[i];
-            l2.axi_in___05Farid_in[i] = slave_arid[i];
-            l2.axi_in___05Frready_in[i] = slave_rready[i];
+            AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER_I(l2, axi_in, i, slave_axi[i]);
         }
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM_VERILATOR(l2, ram[i].axi_in, i);
@@ -379,13 +349,13 @@ public:
         logic<PORT_BITS> beat = 0;
         size_t lane = (request_addr % (PORT_BITS / 8)) / 4;
         beat.bits(lane * 32 + 31, lane * 32) = data;
-        slave_awvalid[port] = true;
-        slave_awaddr[port] = request_addr;
-        slave_awid[port] = 3;
-        slave_wvalid[port] = false;
-        slave_wdata[port] = beat;
-        slave_wlast[port] = true;
-        slave_bready[port] = false;
+        slave_axi[port].aw.valid = true;
+        slave_axi[port].aw.addr = request_addr;
+        slave_axi[port].aw.id = 3;
+        slave_axi[port].w.valid = false;
+        slave_axi[port].w.data = beat;
+        slave_axi[port].w.last = true;
+        slave_axi[port].b.ready = false;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_awready(port); ++i) {
             cycle(false);
         }
@@ -394,8 +364,8 @@ public:
             error = true;
         }
         cycle(false);
-        slave_awvalid[port] = false;
-        slave_wvalid[port] = true;
+        slave_axi[port].aw.valid = false;
+        slave_axi[port].w.valid = true;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_wready(port); ++i) {
             cycle(false);
         }
@@ -404,7 +374,7 @@ public:
             error = true;
         }
         cycle(false);
-        slave_wvalid[port] = false;
+        slave_axi[port].w.valid = false;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_bvalid(port); ++i) {
             cycle(false);
         }
@@ -412,18 +382,18 @@ public:
             std::print("\naxi write response ERROR port={} addr={:#x}\n", port, request_addr);
             error = true;
         }
-        slave_bready[port] = true;
+        slave_axi[port].b.ready = true;
         cycle(false);
-        slave_bready[port] = false;
+        slave_axi[port].b.ready = false;
         cycle(false);
     }
 
     uint32_t axi_read_word(size_t port, uint32_t request_addr)
     {
-        slave_arvalid[port] = true;
-        slave_araddr[port] = request_addr;
-        slave_arid[port] = 5;
-        slave_rready[port] = false;
+        slave_axi[port].ar.valid = true;
+        slave_axi[port].ar.addr = request_addr;
+        slave_axi[port].ar.id = 5;
+        slave_axi[port].r.ready = false;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(port); ++i) {
             cycle(false);
         }
@@ -432,7 +402,7 @@ public:
             error = true;
         }
         cycle(false);
-        slave_arvalid[port] = false;
+        slave_axi[port].ar.valid = false;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(port); ++i) {
             cycle(false);
         }
@@ -443,9 +413,9 @@ public:
             std::print("\naxi read response ERROR port={} addr={:#x}\n", port, request_addr);
             error = true;
         }
-        slave_rready[port] = true;
+        slave_axi[port].r.ready = true;
         cycle(false);
-        slave_rready[port] = false;
+        slave_axi[port].r.ready = false;
         cycle(false);
         return data;
     }
@@ -462,18 +432,18 @@ public:
         axi_write_word(1, 0x00000108u, 0x55667788u);
         read_check(0x00000108u, 0x55667788u);
 
-        slave_arvalid[0] = true;
-        slave_araddr[0] = 0x00000104u;
-        slave_arid[0] = 1;
-        slave_rready[0] = false;
-        slave_awvalid[1] = true;
-        slave_awaddr[1] = 0x0000010cu;
-        slave_awid[1] = 2;
-        slave_wvalid[1] = true;
-        slave_wlast[1] = true;
-        slave_bready[1] = false;
-        slave_wdata[1] = 0;
-        slave_wdata[1].bits(3 * 32 + 31, 3 * 32) = 0x99aabbccu;
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = 0x00000104u;
+        slave_axi[0].ar.id = 1;
+        slave_axi[0].r.ready = false;
+        slave_axi[1].aw.valid = true;
+        slave_axi[1].aw.addr = 0x0000010cu;
+        slave_axi[1].aw.id = 2;
+        slave_axi[1].w.valid = true;
+        slave_axi[1].w.last = true;
+        slave_axi[1].b.ready = false;
+        slave_axi[1].w.data = 0;
+        slave_axi[1].w.data.bits(3 * 32 + 31, 3 * 32) = 0x99aabbccu;
         for (size_t i = 0; i < WAIT_LIMIT && (!slave_rvalid(0) || !slave_bvalid(1)); ++i) {
             cycle(false);
         }
@@ -481,14 +451,14 @@ public:
             std::print("\nsimultaneous AXI masters ERROR rvalid={} bvalid={}\n", slave_rvalid(0), slave_bvalid(1));
             error = true;
         }
-        slave_arvalid[0] = false;
-        slave_awvalid[1] = false;
-        slave_wvalid[1] = false;
-        slave_rready[0] = true;
-        slave_bready[1] = true;
+        slave_axi[0].ar.valid = false;
+        slave_axi[1].aw.valid = false;
+        slave_axi[1].w.valid = false;
+        slave_axi[0].r.ready = true;
+        slave_axi[1].b.ready = true;
         cycle(false);
-        slave_rready[0] = false;
-        slave_bready[1] = false;
+        slave_axi[0].r.ready = false;
+        slave_axi[1].b.ready = false;
         cycle(false);
         read_check(0x0000010cu, 0x99aabbccu);
     }
@@ -509,10 +479,10 @@ public:
 
     void slave_completion_does_not_release_cpu_iport_check()
     {
-        slave_arvalid[0] = true;
-        slave_araddr[0] = 0x00000000u;
-        slave_arid[0] = 6;
-        slave_rready[0] = false;
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = 0x00000000u;
+        slave_axi[0].ar.id = 6;
+        slave_axi[0].r.ready = false;
         read = true;
         addr = 0x00000008u;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
@@ -526,10 +496,10 @@ public:
             std::print("\nAXI read while CPU iport waits ERROR: slave completion released iport\n");
             error = true;
         }
-        slave_arvalid[0] = false;
-        slave_rready[0] = true;
+        slave_axi[0].ar.valid = false;
+        slave_axi[0].r.ready = true;
         cycle(false);
-        slave_rready[0] = false;
+        slave_axi[0].r.ready = false;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.i_wait_out); ++i) {
             cycle(false);
         }
@@ -554,10 +524,10 @@ public:
         wdata = 0x1234abcdu;
         wmask = 0xf;
         cycle(false);
-        slave_arvalid[0] = true;
-        slave_araddr[0] = 0x00000000u;
-        slave_arid[0] = 7;
-        slave_rready[0] = false;
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = 0x00000000u;
+        slave_axi[0].ar.id = 7;
+        slave_axi[0].r.ready = false;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
             cycle(false);
         }
@@ -574,10 +544,10 @@ public:
             std::print("\nAXI request after CPU write ERROR: no slave response\n");
             error = true;
         }
-        slave_arvalid[0] = false;
-        slave_rready[0] = true;
+        slave_axi[0].ar.valid = false;
+        slave_axi[0].r.ready = true;
         cycle(false);
-        slave_rready[0] = false;
+        slave_axi[0].r.ready = false;
         cycle(false);
         read_check(device_addr, 0x1234abcdu);
     }
@@ -588,10 +558,10 @@ public:
         region_uncached[3] = true;
         axi_write_word(3, device_addr, 0x0badc0deu);
 
-        slave_arvalid[0] = true;
-        slave_araddr[0] = 0x00000000u;
-        slave_arid[0] = 8;
-        slave_rready[0] = false;
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = 0x00000000u;
+        slave_axi[0].ar.id = 8;
+        slave_axi[0].r.ready = false;
         read = false;
         d_read = true;
         write = false;
@@ -604,10 +574,10 @@ public:
             std::print("\nAXI request while CPU dport read waits ERROR: no slave response\n");
             error = true;
         }
-        slave_arvalid[0] = false;
-        slave_rready[0] = true;
+        slave_axi[0].ar.valid = false;
+        slave_axi[0].r.ready = true;
         cycle(false);
-        slave_rready[0] = false;
+        slave_axi[0].r.ready = false;
 
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
             cycle(false);
@@ -709,10 +679,13 @@ int main(int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR
     if (!noveril) {
+        const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
-            {"../../../../../include", "../../../../../tribe/common", "../../../../../tribe/cache"},
+            {(source_root / "include").string(),
+             (source_root / "tribe" / "common").string(),
+             (source_root / "tribe" / "cache").string()},
             L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

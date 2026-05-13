@@ -16,91 +16,16 @@ for arg in "$@"; do
 done
 
 RISCV_DV_PYTHON_DEPS=(
-    Jinja2
-    Markdown
-    MarkupSafe
-    Pallets-Sphinx-Themes
-    PyYAML
-    Pygments
-    Sphinx
-    alabaster
-    annotated-types
-    anyio
-    attrs
-    babel
     bitarray
     bitstring
-    certifi
-    cffi
-    charset-normalizer
-    click
-    cryptography
-    docutils
-    exceptiongroup
-    flake8
-    h11
-    httpcore
-    httpx
-    httpx-sse
-    idna
-    imagesize
-    inflection
-    jsonschema
-    jsonschema-specifications
-    lxml
-    markdown-it-py
-    mccabe
-    mcp
-    mdurl
     numpy
-    packaging
     pandas
-    pillow
     pyboolector
-    pycodestyle
-    pycparser
-    pydantic
-    pydantic-core
-    pydantic-settings
-    pyflakes
-    pyjwt
-    python-dateutil
-    python-dotenv
-    python-jsonschema-objects
-    python-multipart
-    pytz
     pyucis
     pyvsc
-    referencing
-    reportlab
-    requests
-    rich
-    rpds-py
-    rst2pdf
-    six
-    snowballstemmer
-    sphinx-issues
-    sphinx-notfound-page
-    sphinx-rtd-theme
-    sphinxcontrib-applehelp
-    sphinxcontrib-devhelp
-    sphinxcontrib-htmlhelp
-    sphinxcontrib-jquery
-    sphinxcontrib-jsmath
-    sphinxcontrib-log-cabinet
-    sphinxcontrib-qthelp
-    sphinxcontrib-serializinghtml
-    sse-starlette
-    starlette
+    PyYAML
     tabulate
-    tibs
-    tomli
     toposort
-    typing-extensions
-    typing-inspection
-    tzdata
-    urllib3
-    uvicorn
 )
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

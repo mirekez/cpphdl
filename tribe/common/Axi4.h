@@ -183,6 +183,171 @@ struct Axi4If : Interface
     (dst).rlast_out = (src).rlast_out; \
     (dst).rid_out = (src).rid_out
 
+#define AXI4_DRIVER_FROM_PORTS(dst) \
+    (dst).awvalid_in = awvalid_in; \
+    (dst).awaddr_in = awaddr_in; \
+    (dst).awid_in = awid_in; \
+    (dst).wvalid_in = wvalid_in; \
+    (dst).wdata_in = wdata_in; \
+    (dst).wlast_in = wlast_in; \
+    (dst).bready_in = bready_in; \
+    (dst).arvalid_in = arvalid_in; \
+    (dst).araddr_in = araddr_in; \
+    (dst).arid_in = arid_in; \
+    (dst).rready_in = rready_in
+
+#define AXI4_RESPONDER_TO_PORTS(src) \
+    awready_out = (src).awready_out; \
+    wready_out = (src).wready_out; \
+    bvalid_out = (src).bvalid_out; \
+    bid_out = (src).bid_out; \
+    arready_out = (src).arready_out; \
+    rvalid_out = (src).rvalid_out; \
+    rdata_out = (src).rdata_out; \
+    rlast_out = (src).rlast_out; \
+    rid_out = (src).rid_out
+
+#define AXI4_DRIVER_FROM_I(dst, src) \
+    (dst).awvalid_in = _ASSIGN_I((src).awvalid_in()); \
+    (dst).awaddr_in = _ASSIGN_I((src).awaddr_in()); \
+    (dst).awid_in = _ASSIGN_I((src).awid_in()); \
+    (dst).wvalid_in = _ASSIGN_I((src).wvalid_in()); \
+    (dst).wdata_in = _ASSIGN_I((src).wdata_in()); \
+    (dst).wlast_in = _ASSIGN_I((src).wlast_in()); \
+    (dst).bready_in = _ASSIGN_I((src).bready_in()); \
+    (dst).arvalid_in = _ASSIGN_I((src).arvalid_in()); \
+    (dst).araddr_in = _ASSIGN_I((src).araddr_in()); \
+    (dst).arid_in = _ASSIGN_I((src).arid_in()); \
+    (dst).rready_in = _ASSIGN_I((src).rready_in())
+
+#define AXI4_RESPONDER_FROM_I(dst, src) \
+    (dst).awready_out = _ASSIGN_I((src).awready_out()); \
+    (dst).wready_out = _ASSIGN_I((src).wready_out()); \
+    (dst).bvalid_out = _ASSIGN_I((src).bvalid_out()); \
+    (dst).bid_out = _ASSIGN_I((src).bid_out()); \
+    (dst).arready_out = _ASSIGN_I((src).arready_out()); \
+    (dst).rvalid_out = _ASSIGN_I((src).rvalid_out()); \
+    (dst).rdata_out = _ASSIGN_I((src).rdata_out()); \
+    (dst).rlast_out = _ASSIGN_I((src).rlast_out()); \
+    (dst).rid_out = _ASSIGN_I((src).rid_out())
+
+#define AXI4_DRIVER_FROM_REGS(dst, awvalid, awaddr, awid, wvalid, wdata, wlast, bready, arvalid, araddr, arid, rready) \
+    (dst).awvalid_in = _ASSIGN_REG(awvalid); \
+    (dst).awaddr_in = _ASSIGN_REG(awaddr); \
+    (dst).awid_in = _ASSIGN_REG(awid); \
+    (dst).wvalid_in = _ASSIGN_REG(wvalid); \
+    (dst).wdata_in = _ASSIGN_REG(wdata); \
+    (dst).wlast_in = _ASSIGN_REG(wlast); \
+    (dst).bready_in = _ASSIGN_REG(bready); \
+    (dst).arvalid_in = _ASSIGN_REG(arvalid); \
+    (dst).araddr_in = _ASSIGN_REG(araddr); \
+    (dst).arid_in = _ASSIGN_REG(arid); \
+    (dst).rready_in = _ASSIGN_REG(rready)
+
+#define AXI4_DRIVER_FROM_REGS_I(dst, awvalid, awaddr, awid, wvalid, wdata, wlast, bready, arvalid, araddr, arid, rready) \
+    (dst).awvalid_in = _ASSIGN_REG_I(awvalid); \
+    (dst).awaddr_in = _ASSIGN_REG_I(awaddr); \
+    (dst).awid_in = _ASSIGN_REG_I(awid); \
+    (dst).wvalid_in = _ASSIGN_REG_I(wvalid); \
+    (dst).wdata_in = _ASSIGN_REG_I(wdata); \
+    (dst).wlast_in = _ASSIGN_REG_I(wlast); \
+    (dst).bready_in = _ASSIGN_REG_I(bready); \
+    (dst).arvalid_in = _ASSIGN_REG_I(arvalid); \
+    (dst).araddr_in = _ASSIGN_REG_I(araddr); \
+    (dst).arid_in = _ASSIGN_REG_I(arid); \
+    (dst).rready_in = _ASSIGN_REG_I(rready)
+
+#define AXI4_DRIVER_FROM_DRIVER(dst, src) \
+    (dst).awvalid_in = _ASSIGN_REG((src).aw.valid); \
+    (dst).awaddr_in = _ASSIGN_REG((src).aw.addr); \
+    (dst).awid_in = _ASSIGN_REG((src).aw.id); \
+    (dst).wvalid_in = _ASSIGN_REG((src).w.valid); \
+    (dst).wdata_in = _ASSIGN_REG((src).w.data); \
+    (dst).wlast_in = _ASSIGN_REG((src).w.last); \
+    (dst).bready_in = _ASSIGN_REG((src).b.ready); \
+    (dst).arvalid_in = _ASSIGN_REG((src).ar.valid); \
+    (dst).araddr_in = _ASSIGN_REG((src).ar.addr); \
+    (dst).arid_in = _ASSIGN_REG((src).ar.id); \
+    (dst).rready_in = _ASSIGN_REG((src).r.ready)
+
+#define AXI4_DRIVER_FROM_DRIVER_I(dst, src) \
+    (dst).awvalid_in = _ASSIGN_REG_I((src).aw.valid); \
+    (dst).awaddr_in = _ASSIGN_REG_I((src).aw.addr); \
+    (dst).awid_in = _ASSIGN_REG_I((src).aw.id); \
+    (dst).wvalid_in = _ASSIGN_REG_I((src).w.valid); \
+    (dst).wdata_in = _ASSIGN_REG_I((src).w.data); \
+    (dst).wlast_in = _ASSIGN_REG_I((src).w.last); \
+    (dst).bready_in = _ASSIGN_REG_I((src).b.ready); \
+    (dst).arvalid_in = _ASSIGN_REG_I((src).ar.valid); \
+    (dst).araddr_in = _ASSIGN_REG_I((src).ar.addr); \
+    (dst).arid_in = _ASSIGN_REG_I((src).ar.id); \
+    (dst).rready_in = _ASSIGN_REG_I((src).r.ready)
+
+#define AXI4_DRIVER_POKE_FROM_REGS(dst, awvalid, awaddr, awid, wvalid, wdata, wlast, bready, arvalid, araddr, arid, rready) \
+    (dst).awvalid_in = awvalid; \
+    (dst).awaddr_in = awaddr; \
+    (dst).awid_in = awid; \
+    (dst).wvalid_in = wvalid; \
+    (dst).wdata_in = wdata; \
+    (dst).wlast_in = wlast; \
+    (dst).bready_in = bready; \
+    (dst).arvalid_in = arvalid; \
+    (dst).araddr_in = araddr; \
+    (dst).arid_in = arid; \
+    (dst).rready_in = rready
+
+#define AXI4_DRIVER_POKE_VERILATOR_IF_FROM_REGS(dst, if_name, awvalid, awaddr, awid, wvalid, wdata, wlast, bready, arvalid, araddr, arid, rready) \
+    (dst).if_name##___05Fawvalid_in = awvalid; \
+    (dst).if_name##___05Fawaddr_in = awaddr; \
+    (dst).if_name##___05Fawid_in = awid; \
+    (dst).if_name##___05Fwvalid_in = wvalid; \
+    (dst).if_name##___05Fwdata_in = wdata; \
+    (dst).if_name##___05Fwlast_in = wlast; \
+    (dst).if_name##___05Fbready_in = bready; \
+    (dst).if_name##___05Farvalid_in = arvalid; \
+    (dst).if_name##___05Faraddr_in = araddr; \
+    (dst).if_name##___05Farid_in = arid; \
+    (dst).if_name##___05Frready_in = rready
+
+#define AXI4_DRIVER_POKE_FROM_DRIVER(dst, src) \
+    (dst).awvalid_in = (src).aw.valid; \
+    (dst).awaddr_in = (uint32_t)(src).aw.addr; \
+    (dst).awid_in = (uint32_t)(src).aw.id; \
+    (dst).wvalid_in = (src).w.valid; \
+    (dst).wdata_in = (uint32_t)(src).w.data; \
+    (dst).wlast_in = (src).w.last; \
+    (dst).bready_in = (src).b.ready; \
+    (dst).arvalid_in = (src).ar.valid; \
+    (dst).araddr_in = (uint32_t)(src).ar.addr; \
+    (dst).arid_in = (uint32_t)(src).ar.id; \
+    (dst).rready_in = (src).r.ready
+
+#define AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER(dst, if_name, src) \
+    (dst).if_name##___05Fawvalid_in = (src).aw.valid; \
+    (dst).if_name##___05Fawaddr_in = (uint32_t)(src).aw.addr; \
+    (dst).if_name##___05Fawid_in = (uint32_t)(src).aw.id; \
+    (dst).if_name##___05Fwvalid_in = (src).w.valid; \
+    (dst).if_name##___05Fwdata_in = (uint32_t)(src).w.data; \
+    (dst).if_name##___05Fwlast_in = (src).w.last; \
+    (dst).if_name##___05Fbready_in = (src).b.ready; \
+    (dst).if_name##___05Farvalid_in = (src).ar.valid; \
+    (dst).if_name##___05Faraddr_in = (uint32_t)(src).ar.addr; \
+    (dst).if_name##___05Farid_in = (uint32_t)(src).ar.id; \
+    (dst).if_name##___05Frready_in = (src).r.ready
+
+#define AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER_I(dst, if_name, index, src) \
+    (dst).if_name##___05Fawvalid_in[index] = (src).aw.valid; \
+    (dst).if_name##___05Fawaddr_in[index] = (src).aw.addr; \
+    (dst).if_name##___05Fawid_in[index] = (src).aw.id; \
+    (dst).if_name##___05Fwvalid_in[index] = (src).w.valid; \
+    verilator_logic_to_wide((dst).if_name##___05Fwdata_in[index], (src).w.data); \
+    (dst).if_name##___05Fwlast_in[index] = (src).w.last; \
+    (dst).if_name##___05Fbready_in[index] = (src).b.ready; \
+    (dst).if_name##___05Farvalid_in[index] = (src).ar.valid; \
+    (dst).if_name##___05Faraddr_in[index] = (src).ar.addr; \
+    (dst).if_name##___05Farid_in[index] = (src).ar.id; \
+    (dst).if_name##___05Frready_in[index] = (src).r.ready
+
 #define AXI4_DRIVER_FROM_VERILATOR(dst, src, index, addr_type, data_func) \
     do { \
         (dst).awvalid_in = _ASSIGN_I((bool)(src).axi_out___05Fawvalid_out[index]); \

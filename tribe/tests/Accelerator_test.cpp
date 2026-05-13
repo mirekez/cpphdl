@@ -85,17 +85,7 @@ class DirectAcceleratorTest : public Module
 
     Accelerator<16, 4, 32, 64> dut;
     Axi4Ram<16, 4, 32, 128> dma_mem;
-    bool awvalid = false;
-    u<16> awaddr = 0;
-    u<4> awid = 0;
-    bool wvalid = false;
-    logic<32> wdata = 0;
-    bool wlast = false;
-    bool bready = false;
-    bool arvalid = false;
-    u<16> araddr = 0;
-    u<4> arid = 0;
-    bool rready = false;
+    Axi4Driver<16, 4, 32> axi = {};
     bool error = false;
 
     void fail(const char* message)
@@ -107,17 +97,7 @@ class DirectAcceleratorTest : public Module
 public:
     void _assign()
     {
-        dut.axi_in.awvalid_in = _ASSIGN_REG(awvalid);
-        dut.axi_in.awaddr_in = _ASSIGN_REG(awaddr);
-        dut.axi_in.awid_in = _ASSIGN_REG(awid);
-        dut.axi_in.wvalid_in = _ASSIGN_REG(wvalid);
-        dut.axi_in.wdata_in = _ASSIGN_REG(wdata);
-        dut.axi_in.wlast_in = _ASSIGN_REG(wlast);
-        dut.axi_in.bready_in = _ASSIGN_REG(bready);
-        dut.axi_in.arvalid_in = _ASSIGN_REG(arvalid);
-        dut.axi_in.araddr_in = _ASSIGN_REG(araddr);
-        dut.axi_in.arid_in = _ASSIGN_REG(arid);
-        dut.axi_in.rready_in = _ASSIGN_REG(rready);
+        AXI4_DRIVER_FROM_DRIVER(dut.axi_in, axi);
         dut.__inst_name = "accelerator";
         dut._assign();
         AXI4_DRIVER_FROM(dma_mem.axi_in, dut.dma_out);
@@ -138,57 +118,57 @@ public:
 
     void write32(uint32_t addr, uint32_t data)
     {
-        awvalid = true;
-        awaddr = u<16>(addr);
-        awid = 1;
-        wvalid = false;
-        bready = true;
+        axi.aw.valid = true;
+        axi.aw.addr = u<16>(addr);
+        axi.aw.id = 1;
+        axi.w.valid = false;
+        axi.b.ready = true;
         if (!dut.axi_in.awready_out()) {
             fail("accelerator write address not ready");
             return;
         }
         cycle();
 
-        awvalid = false;
-        wvalid = true;
-        wdata = data;
-        wlast = true;
+        axi.aw.valid = false;
+        axi.w.valid = true;
+        axi.w.data = data;
+        axi.w.last = true;
         if (!dut.axi_in.wready_out()) {
             fail("accelerator write data not ready");
             return;
         }
         cycle();
 
-        wvalid = false;
+        axi.w.valid = false;
         if (!dut.axi_in.bvalid_out()) {
             fail("accelerator write response not valid");
             return;
         }
         cycle();
-        bready = false;
+        axi.b.ready = false;
     }
 
     uint32_t read32(uint32_t addr)
     {
-        arvalid = true;
-        araddr = u<16>(addr);
-        arid = 2;
-        rready = false;
+        axi.ar.valid = true;
+        axi.ar.addr = u<16>(addr);
+        axi.ar.id = 2;
+        axi.r.ready = false;
         if (!dut.axi_in.arready_out()) {
             fail("accelerator read address not ready");
             return 0;
         }
         cycle();
 
-        arvalid = false;
+        axi.ar.valid = false;
         if (!dut.axi_in.rvalid_out()) {
             fail("accelerator read data not valid");
             return 0;
         }
         uint32_t data = (uint32_t)dut.axi_in.rdata_out();
-        rready = true;
+        axi.r.ready = true;
         cycle();
-        rready = false;
+        axi.r.ready = false;
         return data;
     }
 
@@ -289,44 +269,8 @@ int main(int argc, char** argv)
         std::print("Building Accelerator Tribe Verilator ELF simulation...\n");
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
-        ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
-                  "Amo_pkg",
-                  "Trap_pkg",
-                  "State_pkg",
-                  "Rv32i_pkg",
-                  "Rv32ic_pkg",
-                  "Rv32ic_rv16_pkg",
-                  "Rv32im_pkg",
-                  "Rv32ia_pkg",
-                  "Zicsr_pkg",
-                  "Alu_pkg",
-                  "Br_pkg",
-                  "Sys_pkg",
-                  "Csr_pkg",
-                  "Mem_pkg",
-                  "Wb_pkg",
-                  "L1CachePerf_pkg",
-                  "TribePerf_pkg",
-                  "File",
-                  "RAM1PORT",
-                  "L1Cache",
-                  "L2Cache",
-                  "BranchPredictor",
-                  "InterruptController",
-                  "Decode",
-                  "Execute",
-                  "ExecuteMem",
-                  "CSR",
-                  "MMU_TLB",
-                  "Writeback",
-                  "WritebackMem"}, {
-                      (source_root / "include").string(),
-                      (source_root / "tribe").string(),
-                      (source_root / "tribe" / "common").string(),
-                      (source_root / "tribe" / "spec").string(),
-                      (source_root / "tribe" / "cache").string(),
-                      (source_root / "tribe" / "devices").string()});
-        ok &= std::system((std::string("Tribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= VerilatorCompileTribeInFolder(__FILE__, "AcceleratorTribe", source_root);
+        ok &= std::system((std::string("AcceleratorTribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else
     Verilated::commandArgs(argc, argv);

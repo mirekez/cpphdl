@@ -63,13 +63,39 @@ static std::string shell_quote(const std::filesystem::path& path)
 static std::filesystem::path build_root_dir()
 {
     std::filesystem::path cwd = std::filesystem::current_path();
-    if (std::filesystem::exists(cwd.parent_path().parent_path() / "tribe64" / "tribe64")) {
-        return cwd.parent_path().parent_path();
-    }
     if (std::filesystem::exists(cwd / "tribe64" / "tribe64")) {
         return cwd;
     }
-    return cwd.parent_path().parent_path();
+    if (std::filesystem::exists(cwd / "build" / "tribe64" / "tribe64")) {
+        return cwd / "build";
+    }
+    if (std::filesystem::exists(cwd.parent_path() / "tribe64" / "tribe64")) {
+        return cwd.parent_path();
+    }
+    if (std::filesystem::exists(cwd.parent_path().parent_path() / "tribe64" / "tribe64")) {
+        return cwd.parent_path().parent_path();
+    }
+
+    const auto source_build = source_root_dir() / "build";
+    if (std::filesystem::exists(source_build / "tribe64" / "tribe64")) {
+        return source_build;
+    }
+
+    return cwd;
+}
+
+static void use_executable_workdir_if_needed(const char* argv0)
+{
+    namespace fs = std::filesystem;
+
+    if (fs::exists("generated/CLINTTest.sv")) {
+        return;
+    }
+
+    fs::path exe_dir = fs::absolute(argv0).parent_path();
+    if (!exe_dir.empty() && fs::exists(exe_dir / "generated" / "CLINTTest.sv")) {
+        fs::current_path(exe_dir);
+    }
 }
 
 static bool build_clint_elf()
@@ -153,62 +179,21 @@ static bool run_clint_elf_verilator(bool debug)
     return std::system(cmd.c_str()) == 0;
 }
 
+template<size_t ADDR_WIDTH = 16, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 32>
 class CLINTTest : public Module
 {
 public:
-    _PORT(bool) awvalid_in;
-    _PORT(u<16>) awaddr_in;
-    _PORT(u<4>) awid_in;
-    _PORT(bool) awready_out;
-
-    _PORT(bool) wvalid_in;
-    _PORT(logic<32>) wdata_in;
-    _PORT(bool) wlast_in;
-    _PORT(bool) wready_out;
-
-    _PORT(bool) bready_in;
-    _PORT(bool) bvalid_out;
-    _PORT(u<4>) bid_out;
-
-    _PORT(bool) arvalid_in;
-    _PORT(u<16>) araddr_in;
-    _PORT(u<4>) arid_in;
-    _PORT(bool) arready_out;
-
-    _PORT(bool) rready_in;
-    _PORT(bool) rvalid_out;
-    _PORT(logic<32>) rdata_out;
-    _PORT(bool) rlast_out;
-    _PORT(u<4>) rid_out;
+    Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
 private:
-    CLINT<16, 4, 32> clint;
+    CLINT<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> clint;
 
 public:
     void _assign()
     {
-        clint.axi_in.awvalid_in = awvalid_in;
-        clint.axi_in.awaddr_in = awaddr_in;
-        clint.axi_in.awid_in = awid_in;
-        clint.axi_in.wvalid_in = wvalid_in;
-        clint.axi_in.wdata_in = wdata_in;
-        clint.axi_in.wlast_in = wlast_in;
-        clint.axi_in.bready_in = bready_in;
-        clint.axi_in.arvalid_in = arvalid_in;
-        clint.axi_in.araddr_in = araddr_in;
-        clint.axi_in.arid_in = arid_in;
-        clint.axi_in.rready_in = rready_in;
+        AXI4_DRIVER_FROM(clint.axi_in, axi_in);
         clint._assign();
-
-        awready_out = clint.axi_in.awready_out;
-        wready_out = clint.axi_in.wready_out;
-        bvalid_out = clint.axi_in.bvalid_out;
-        bid_out = clint.axi_in.bid_out;
-        arready_out = clint.axi_in.arready_out;
-        rvalid_out = clint.axi_in.rvalid_out;
-        rdata_out = clint.axi_in.rdata_out;
-        rlast_out = clint.axi_in.rlast_out;
-        rid_out = clint.axi_in.rid_out;
+        AXI4_RESPONDER_FROM(axi_in, clint.axi_in);
     }
 
     void _work(bool reset)
@@ -221,6 +206,8 @@ public:
         clint._strobe();
     }
 };
+
+template class CLINTTest<16, 4, 32>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -235,20 +222,10 @@ class TestCLINT : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
-    CLINTTest dut;
+    CLINTTest<16, 4, 32> dut;
 #endif
 
-    bool awvalid = false;
-    u<16> awaddr = 0;
-    u<4> awid = 0;
-    bool wvalid = false;
-    logic<32> wdata = 0;
-    bool wlast = false;
-    bool bready = false;
-    bool arvalid = false;
-    u<16> araddr = 0;
-    u<4> arid = 0;
-    bool rready = false;
+    Axi4Driver<16, 4, 32> axi = {};
     bool error = false;
 
     void fail(const std::string& message)
@@ -261,17 +238,7 @@ public:
     void _assign()
     {
 #ifndef VERILATOR
-        dut.awvalid_in = _ASSIGN_REG(awvalid);
-        dut.awaddr_in = _ASSIGN_REG(awaddr);
-        dut.awid_in = _ASSIGN_REG(awid);
-        dut.wvalid_in = _ASSIGN_REG(wvalid);
-        dut.wdata_in = _ASSIGN_REG(wdata);
-        dut.wlast_in = _ASSIGN_REG(wlast);
-        dut.bready_in = _ASSIGN_REG(bready);
-        dut.arvalid_in = _ASSIGN_REG(arvalid);
-        dut.araddr_in = _ASSIGN_REG(araddr);
-        dut.arid_in = _ASSIGN_REG(arid);
-        dut.rready_in = _ASSIGN_REG(rready);
+        AXI4_DRIVER_FROM_DRIVER(dut.axi_in, axi);
         dut.__inst_name = "clint";
         dut._assign();
 #endif
@@ -280,17 +247,7 @@ public:
 #ifdef VERILATOR
     void eval(bool reset)
     {
-        dut.awvalid_in = awvalid;
-        dut.awaddr_in = (uint16_t)awaddr;
-        dut.awid_in = (uint8_t)awid;
-        dut.wvalid_in = wvalid;
-        dut.wdata_in = (uint32_t)wdata;
-        dut.wlast_in = wlast;
-        dut.bready_in = bready;
-        dut.arvalid_in = arvalid;
-        dut.araddr_in = (uint16_t)araddr;
-        dut.arid_in = (uint8_t)arid;
-        dut.rready_in = rready;
+        AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER(dut, axi_in, axi);
         dut.reset = reset;
         dut.eval();
     }
@@ -316,9 +273,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.awready_out;
+        return dut.axi_in___05Fawready_out;
 #else
-        return dut.awready_out();
+        return dut.axi_in.awready_out();
 #endif
     }
 
@@ -326,9 +283,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.wready_out;
+        return dut.axi_in___05Fwready_out;
 #else
-        return dut.wready_out();
+        return dut.axi_in.wready_out();
 #endif
     }
 
@@ -336,9 +293,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.bvalid_out;
+        return dut.axi_in___05Fbvalid_out;
 #else
-        return dut.bvalid_out();
+        return dut.axi_in.bvalid_out();
 #endif
     }
 
@@ -346,9 +303,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.arready_out;
+        return dut.axi_in___05Farready_out;
 #else
-        return dut.arready_out();
+        return dut.axi_in.arready_out();
 #endif
     }
 
@@ -356,9 +313,9 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.rvalid_out;
+        return dut.axi_in___05Frvalid_out;
 #else
-        return dut.rvalid_out();
+        return dut.axi_in.rvalid_out();
 #endif
     }
 
@@ -366,65 +323,65 @@ public:
     {
 #ifdef VERILATOR
         eval(false);
-        return dut.rdata_out;
+        return dut.axi_in___05Frdata_out;
 #else
-        return (uint32_t)dut.rdata_out();
+        return (uint32_t)dut.axi_in.rdata_out();
 #endif
     }
 
     void write32(uint32_t addr, uint32_t data)
     {
-        awvalid = true;
-        awaddr = u<16>(addr);
-        awid = 3;
-        wvalid = false;
-        bready = true;
+        axi.aw.valid = true;
+        axi.aw.addr = u<16>(addr);
+        axi.aw.id = 3;
+        axi.w.valid = false;
+        axi.b.ready = true;
         if (!awready()) {
             fail("CLINT write address channel was not ready");
             return;
         }
         cycle();
 
-        awvalid = false;
-        wvalid = true;
-        wdata = data;
-        wlast = true;
+        axi.aw.valid = false;
+        axi.w.valid = true;
+        axi.w.data = data;
+        axi.w.last = true;
         if (!wready()) {
             fail("CLINT write data channel was not ready");
             return;
         }
         cycle();
 
-        wvalid = false;
+        axi.w.valid = false;
         if (!bvalid()) {
             fail("CLINT write response was not valid");
             return;
         }
         cycle();
-        bready = false;
+        axi.b.ready = false;
     }
 
     uint32_t read32(uint32_t addr)
     {
-        arvalid = true;
-        araddr = u<16>(addr);
-        arid = 5;
-        rready = false;
+        axi.ar.valid = true;
+        axi.ar.addr = u<16>(addr);
+        axi.ar.id = 5;
+        axi.r.ready = false;
         if (!arready()) {
             fail("CLINT read address channel was not ready");
             return 0;
         }
         cycle();
 
-        arvalid = false;
+        axi.ar.valid = false;
         if (!rvalid()) {
             fail("CLINT read data channel was not valid");
             return 0;
         }
         uint32_t data = rdata();
-        rready = true;
+        axi.r.ready = true;
         cycle();
-        rready = false;
+        axi.r.ready = false;
         return data;
     }
 
@@ -485,6 +442,8 @@ public:
 
 int main(int argc, char** argv)
 {
+    use_executable_workdir_if_needed(argv[0]);
+
     bool noveril = false;
     bool debug = false;
     for (int i = 1; i < argc; ++i) {
@@ -508,12 +467,13 @@ int main(int argc, char** argv)
         std::cout << "Building CLINT Verilator simulation...\n";
         const auto source_root = source_root_dir();
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DCLINT_DIRECT_VERILATOR", 1);
-        ok &= VerilatorCompileInFolder(__FILE__, "CLINT", "CLINT",
+        ok &= VerilatorCompileInFolder(__FILE__, "CLINT", "CLINTTest",
             {"Predef_pkg", "CLINT"},
             {(source_root / "include").string(),
              (source_root / "tribe" / "common").string(),
-             (source_root / "tribe" / "devices").string()});
-        ok &= std::system("CLINT/obj_dir/VCLINT") == 0;
+             (source_root / "tribe" / "devices").string()},
+            16, 4, 32);
+        ok &= std::system("CLINT_16_4_32/obj_dir/VCLINTTest") == 0;
         ok &= run_clint_elf_verilator(debug);
     }
 #else
