@@ -16,6 +16,8 @@ for arg in "$@"; do
 done
 
 RISCV_ARCH_TEST_PYTHON_DEPS=(
+    wheel
+    "setuptools>=65"
     uv
     uv-build
     pydantic
@@ -42,17 +44,33 @@ export MISE_DATA_DIR="${MISE_DATA_DIR:-${BUILD_DIR}/mise-data}"
 export MISE_CACHE_DIR="${MISE_CACHE_DIR:-${BUILD_DIR}/mise-cache}"
 export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-${BUILD_DIR}/mise-config}"
 export MISE_STATE_DIR="${MISE_STATE_DIR:-${BUILD_DIR}/mise-state}"
+export MISE_RUBY_COMPILE="${MISE_RUBY_COMPILE:-false}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-${BUILD_DIR}/xdg-data}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${BUILD_DIR}/xdg-cache}"
+
+configure_mise() {
+    if ! command -v mise >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p "${MISE_DATA_DIR}" "${MISE_CACHE_DIR}" "${MISE_CONFIG_DIR}" "${MISE_STATE_DIR}"
+    # riscv-arch-test uses Ruby through mise. Prefer mise's prebuilt Ruby so
+    # hosts without Ruby psych/libyaml build dependencies do not compile Ruby.
+    mise settings set ruby.compile false >/dev/null 2>&1 || \
+        mise settings ruby.compile=false >/dev/null 2>&1 || true
+}
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "Installing uv into ${BUILD_DIR}/pydeps"
     "${Python3_EXECUTABLE:-/usr/bin/python3}" -m pip install \
         --target "${BUILD_DIR}/pydeps" \
+        --upgrade \
+        --no-warn-conflicts \
         "${RISCV_ARCH_TEST_PYTHON_DEPS[@]}"
 fi
 
 if command -v mise >/dev/null 2>&1 && [[ -f "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml" ]]; then
+    configure_mise
     mise trust "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml"
     mise install --cd "${ROOT_DIR}/tribe/tests/riscv-arch-test"
 fi

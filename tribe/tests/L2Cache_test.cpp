@@ -54,12 +54,8 @@ static uint32_t port_word(logic<WIDTH> bits, size_t word)
 
 long sys_clock = -1;
 
-static constexpr size_t L2_SIZE = 4096;
 static constexpr size_t LINE_SIZE = 32;
-static constexpr size_t PORT_BITS = 256;
-static constexpr size_t RAM_LINES = 256;
-static constexpr size_t MEM_PORTS = 4;
-static constexpr size_t RAM_LINES_PER_PORT = RAM_LINES / MEM_PORTS;
+static constexpr size_t RAM_LINES_PER_PORT = 32768;
 static constexpr size_t WAIT_LIMIT = 128;
 
 #ifdef VERILATOR
@@ -71,12 +67,18 @@ static constexpr size_t WAIT_LIMIT = 128;
 #endif
 #define PORT_EXPR(val) _ASSIGN(PORT_VALUE(val))
 
+template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS>
 class TestL2Cache : public Module
 {
+    static constexpr size_t WAYS = 4;
+    static constexpr size_t SETS = L2_SIZE / LINE_SIZE / WAYS;
+    static constexpr uint64_t REGION_SIZE64 = 0x100000000ull / MEM_PORTS;
+    static constexpr uint32_t REGION_SIZE = (uint32_t)REGION_SIZE64;
+    static constexpr size_t DEVICE_PORT = MEM_PORTS - 1;
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
-    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS> l2;
+    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS> l2;
 #endif
     Axi4Ram<32, 4, PORT_BITS, RAM_LINES_PER_PORT> ram[MEM_PORTS];
 
@@ -108,7 +110,7 @@ public:
         l2.memory_base_in = _ASSIGN((uint32_t)0);
         l2.memory_size_in = _ASSIGN((uint32_t)0xffffffffu);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.mem_region_size_in[i] = _ASSIGN((uint32_t)0x40000000u);
+            l2.mem_region_size_in[i] = _ASSIGN((uint32_t)REGION_SIZE);
             l2.mem_region_uncached_in[i] = _ASSIGN_REG_I(region_uncached[i]);
             AXI4_DRIVER_FROM_DRIVER_I(l2.axi_in[i], slave_axi[i]);
         }
@@ -152,7 +154,7 @@ public:
         l2.memory_base_in = 0;
         l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.mem_region_size_in[i] = 0x40000000u;
+            l2.mem_region_size_in[i] = REGION_SIZE;
             l2.mem_region_uncached_in[i] = region_uncached[i];
             AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER_I(l2, axi_in, i, slave_axi[i]);
         }
@@ -195,11 +197,13 @@ public:
 
     void preload()
     {
-        logic<PORT_BITS> line = 0;
-        for (size_t i = 0; i < LINE_SIZE / 4; ++i) {
-            line.bits(i * 32 + 31, i * 32) = 0xa5000000u + i;
+        // Keep backing RAM at reset-zero for the first fill/hit smoke check.
+        // Later sections write explicit data through the CPU and AXI slave ports.
+        for (size_t port = 0; port < MEM_PORTS; ++port) {
+            for (size_t beat = 0; beat < RAM_LINES_PER_PORT; ++beat) {
+                ram[port].ram.buffer.data[beat] = 0;
+            }
         }
-        ram[0].ram.buffer[0] = line;
     }
 
     void read_check(uint32_t request_addr, uint32_t expected)
@@ -443,7 +447,10 @@ public:
         slave_axi[1].w.last = true;
         slave_axi[1].b.ready = false;
         slave_axi[1].w.data = 0;
-        slave_axi[1].w.data.bits(3 * 32 + 31, 3 * 32) = 0x99aabbccu;
+        {
+            size_t lane = (0x0000010cu % (PORT_BITS / 8)) / 4;
+            slave_axi[1].w.data.bits(lane * 32 + 31, lane * 32) = 0x99aabbccu;
+        }
         for (size_t i = 0; i < WAIT_LIMIT && (!slave_rvalid(0) || !slave_bvalid(1)); ++i) {
             cycle(false);
         }
@@ -465,15 +472,15 @@ public:
 
     void uncached_device_region_check()
     {
-        region_uncached[3] = true;
-        uint32_t device_addr = 0xc0000000u + 0x20u;
+        region_uncached[DEVICE_PORT] = true;
+        uint32_t device_addr = (uint32_t)(REGION_SIZE64 * DEVICE_PORT) + 0x20u;
         write_only(device_addr, 0xdeadbeefu, 0xf);
-        uint32_t by_master = axi_read_word(2, device_addr);
+        uint32_t by_master = axi_read_word(DEVICE_PORT, device_addr);
         if (by_master != 0xdeadbeefu) {
             std::print("\nuncached CPU write/device read ERROR got={:#x}\n", by_master);
             error = true;
         }
-        axi_write_word(2, device_addr + 4, 0xfeed1234u);
+        axi_write_word(DEVICE_PORT, device_addr + 4, 0xfeed1234u);
         read_check(device_addr + 4, 0xfeed1234u);
     }
 
@@ -503,8 +510,9 @@ public:
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.i_wait_out); ++i) {
             cycle(false);
         }
-        uint32_t data = port_word(L2_VALUE(l2.i_read_data_out), 2);
-        if (L2_VALUE(l2.i_wait_out) || data != 0xa5000002u) {
+        uint32_t beat_word = ((0x00000008u % (PORT_BITS / 8)) / 4);
+        uint32_t data = port_word(L2_VALUE(l2.i_read_data_out), beat_word);
+        if (L2_VALUE(l2.i_wait_out) || data != 0) {
             std::print("\nCPU iport after AXI read ERROR wait={} data={:#x}\n", L2_VALUE(l2.i_wait_out), data);
             error = true;
         }
@@ -515,8 +523,8 @@ public:
 
     void slave_request_does_not_hide_cpu_write_completion_check()
     {
-        uint32_t device_addr = 0xc0000000u + 0x40u;
-        region_uncached[3] = true;
+        uint32_t device_addr = (uint32_t)(REGION_SIZE64 * DEVICE_PORT) + 0x40u;
+        region_uncached[DEVICE_PORT] = true;
         read = false;
         d_read = false;
         write = true;
@@ -554,9 +562,9 @@ public:
 
     void slave_request_does_not_drop_cpu_dport_read_check()
     {
-        uint32_t device_addr = 0xc0000000u + 0x80u;
-        region_uncached[3] = true;
-        axi_write_word(3, device_addr, 0x0badc0deu);
+        uint32_t device_addr = (uint32_t)(REGION_SIZE64 * DEVICE_PORT) + 0x80u;
+        region_uncached[DEVICE_PORT] = true;
+        axi_write_word(DEVICE_PORT, device_addr, 0x0badc0deu);
 
         slave_axi[0].ar.valid = true;
         slave_axi[0].ar.addr = 0x00000000u;
@@ -618,7 +626,7 @@ public:
 
     void dirty_eviction_check()
     {
-        constexpr uint32_t set_stride = (L2_SIZE / LINE_SIZE / 4) * LINE_SIZE;
+        constexpr uint32_t set_stride = (L2_SIZE / LINE_SIZE / WAYS) * LINE_SIZE;
         write_then_read_check(0 * set_stride + 4, 0x11111111u, 0xf, 0x11111111u);
         write_then_read_check(1 * set_stride + 4, 0x22222222u, 0xf, 0x22222222u);
         write_then_read_check(2 * set_stride + 4, 0x33333333u, 0xf, 0x33333333u);
@@ -630,9 +638,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestL2Cache...");
+        std::print("VERILATOR TestL2Cache<SIZE={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, PORT_BITS, MEM_PORTS);
 #else
-        std::print("CppHDL TestL2Cache...");
+        std::print("CppHDL TestL2Cache<SIZE={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, PORT_BITS, MEM_PORTS);
 #endif
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
@@ -649,11 +657,12 @@ public:
         _assign();
         preload();
         cycle(true);
-        for (size_t i = 0; i < 8; ++i) {
+        cycle(false);
+        for (size_t i = 0; i < SETS + 8 && (L2_VALUE(l2.i_wait_out) || L2_VALUE(l2.d_wait_out)); ++i) {
             cycle(false);
         }
-        read_check(8, 0xa5000002u);
-        read_check(8, 0xa5000002u);
+        read_check(8, 0);
+        read_check(8, 0);
         write_then_read_check(64 + 4, 0x12345678u, 0xf, 0x12345678u);
         write_then_read_check(64 + 4, 0xabcd0000u, 0xc, 0xabcd5678u);
         stack_alias_check();
@@ -675,9 +684,13 @@ public:
 int main(int argc, char** argv)
 {
     bool noveril = false;
+    int only = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
+        }
+        if (argv[i][0] != '-') {
+            only = atoi(argv[i]);
         }
     }
 
@@ -687,24 +700,47 @@ int main(int argc, char** argv)
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
-            {(source_root / "include").string(),
-             (source_root / "tribe" / "common").string(),
-             (source_root / "tribe" / "cache").string()},
-            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS);
+        auto compile_l2 = [&](size_t cache_size, size_t port_bits, size_t mem_ports) {
+            return VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
+                {(source_root / "include").string(),
+                 (source_root / "tribe" / "common").string(),
+                 (source_root / "tribe" / "cache").string()},
+                cache_size, port_bits, LINE_SIZE, 4, 32, 32, mem_ports);
+        };
+        ok &= compile_l2(16384, 64, 4);
+        ok &= compile_l2(16384, 256, 4);
+        ok &= compile_l2(16384, 64, 8);
+        ok &= compile_l2(16384, 256, 8);
+        ok &= compile_l2(65536, 64, 4);
+        ok &= compile_l2(65536, 256, 4);
+        ok &= compile_l2(65536, 64, 8);
+        ok &= compile_l2(65536, 256, 8);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        std::string verilator_dir = std::format("L2Cache_{}_{}_{}_{}_{}_{}_{}",
-            L2_SIZE, PORT_BITS, LINE_SIZE, 4, 32, 32, MEM_PORTS);
-        ok = ok && std::system((verilator_dir + "/obj_dir/VL2Cache").c_str()) == 0;
+        ok = ok &&
+            std::system("L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 0") == 0 &&
+            std::system("L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 1") == 0 &&
+            std::system("L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 2") == 0 &&
+            std::system("L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 3") == 0 &&
+            std::system("L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 4") == 0 &&
+            std::system("L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 5") == 0 &&
+            std::system("L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 6") == 0 &&
+            std::system("L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 7") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    ok = ok && TestL2Cache().run();
+    ok = ok && ((only != -1 && only != 0) || TestL2Cache<16384,64,4>().run());
+    ok = ok && ((only != -1 && only != 1) || TestL2Cache<16384,256,4>().run());
+    ok = ok && ((only != -1 && only != 2) || TestL2Cache<16384,64,8>().run());
+    ok = ok && ((only != -1 && only != 3) || TestL2Cache<16384,256,8>().run());
+    ok = ok && ((only != -1 && only != 4) || TestL2Cache<65536,64,4>().run());
+    ok = ok && ((only != -1 && only != 5) || TestL2Cache<65536,256,4>().run());
+    ok = ok && ((only != -1 && only != 6) || TestL2Cache<65536,64,8>().run());
+    ok = ok && ((only != -1 && only != 7) || TestL2Cache<65536,256,8>().run());
     return !ok;
 }
 

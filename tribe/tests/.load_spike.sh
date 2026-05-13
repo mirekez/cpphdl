@@ -18,10 +18,13 @@ PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 
 RISCV_DV_PYTHON_DEPS=(
+  wheel
+  "setuptools>=65"
   Jinja2
   Markdown
   MarkupSafe
-  PyYAML
+  "PyYAML>=6.0"
+  "requests>=2.31"
   bitarray
   bitstring
   google-api-python-client
@@ -32,7 +35,6 @@ RISCV_DV_PYTHON_DEPS=(
   pygen
   pyucis
   pyvsc
-  PyYAML
   riscv-config
   riscv-isac
   tabulate
@@ -98,6 +100,16 @@ clone_or_update "${RISCV_DV_REPO_URL}" "${RISCV_DV_DIR}"
 git -C "${RISCV_DV_DIR}" submodule update --init --recursive
 
 mkdir -p "${PYDEPS_DIR}"
-if ! PYTHONPATH="${PYDEPS_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" -c 'import vsc' >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" "${RISCV_DV_PYTHON_DEPS[@]}"
+if ! PYTHONPATH="${PYDEPS_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1; then
+import requests
+import vsc
+import yaml
+
+def version_tuple(text):
+  return tuple(int(part) for part in text.split(".")[:2] if part.isdigit())
+
+assert version_tuple(yaml.__version__) >= (6, 0), yaml.__version__
+assert version_tuple(requests.__version__) >= (2, 31), requests.__version__
+PY
+  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" --upgrade --no-warn-conflicts "${RISCV_DV_PYTHON_DEPS[@]}"
 fi

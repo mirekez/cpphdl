@@ -72,10 +72,14 @@ public:
 
     _PORT(uint32_t) memory_base_in;
     _PORT(uint32_t) memory_size_in;
+    // Cumulative memory/device regions; each L2 master port owns one contiguous slice.
     _PORT(uint32_t) mem_region_size_in[MEM_PORTS];
+    // Uncached regions bypass tag/data RAM and are used for MMIO/device ports.
     _PORT(bool) mem_region_uncached_in[MEM_PORTS];
 
+    // External AXI masters enter here as coherent L2 slave ports.
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_in[MEM_PORTS];
+    // L2 master ports leave here toward RAM and device regions.
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_out[MEM_PORTS];
 
     bool debugen_in;

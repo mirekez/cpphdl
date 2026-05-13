@@ -16,8 +16,11 @@ MISE_PREFIX="${MISE_PREFIX:-${HOME}/.local}"
 MISE_INSTALL_URL="${MISE_INSTALL_URL:-https://mise.jdx.dev/install.sh}"
 PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+BUILD_DIR="${ROOT_DIR}/build"
 
 RISCV_ARCH_TEST_PYTHON_DEPS=(
+  wheel
+  "setuptools>=65"
   uv
   uv-build
   pydantic
@@ -57,6 +60,13 @@ clone_or_update() {
 mkdir -p "${PREFIX}/bin"
 mkdir -p "${MISE_PREFIX}/bin"
 export PATH="${MISE_PREFIX}/bin:${PREFIX}/bin:${PATH}"
+export MISE_DATA_DIR="${MISE_DATA_DIR:-${BUILD_DIR}/mise-data}"
+export MISE_CACHE_DIR="${MISE_CACHE_DIR:-${BUILD_DIR}/mise-cache}"
+export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-${BUILD_DIR}/mise-config}"
+export MISE_STATE_DIR="${MISE_STATE_DIR:-${BUILD_DIR}/mise-state}"
+export MISE_RUBY_COMPILE="${MISE_RUBY_COMPILE:-false}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${BUILD_DIR}/xdg-data}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${BUILD_DIR}/xdg-cache}"
 
 install_mise() {
   if [[ "${SAIL_RISCV_INSTALL_MISE:-1}" == "0" ]]; then
@@ -71,6 +81,12 @@ install_mise() {
 if ! command -v mise >/dev/null 2>&1; then
   install_mise
 fi
+
+mkdir -p "${MISE_DATA_DIR}" "${MISE_CACHE_DIR}" "${MISE_CONFIG_DIR}" "${MISE_STATE_DIR}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
+# riscv-arch-test uses Ruby through mise. Prefer mise's prebuilt Ruby so hosts
+# without Ruby psych/libyaml build dependencies do not compile Ruby.
+mise settings set ruby.compile false >/dev/null 2>&1 || \
+  mise settings ruby.compile=false >/dev/null 2>&1 || true
 
 mise --version
 
@@ -147,5 +163,5 @@ git -C "${RISCV_ARCH_TEST_DIR}" submodule update --init --recursive
 
 mkdir -p "${PYDEPS_DIR}"
 if ! PATH="${PYDEPS_DIR}/bin:${PATH}" command -v uv >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" "${RISCV_ARCH_TEST_PYTHON_DEPS[@]}"
+  "${PYTHON_BIN}" -m pip install --target "${PYDEPS_DIR}" --upgrade --no-warn-conflicts "${RISCV_ARCH_TEST_PYTHON_DEPS[@]}"
 fi

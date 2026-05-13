@@ -15,7 +15,7 @@ struct L1CachePerf
     u<3> state;
 } __PACKED;
 
-template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int ID = 0, size_t ADDR_BITS = 32, size_t PORT_BITWIDTH = 32>
+template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int DCACHE = 0, size_t ADDR_BITS = 32, size_t PORT_BITWIDTH = 32>
 class L1Cache : public Module
 {
     static_assert(CACHE_LINE_SIZE == 32, "L1Cache uses 32-byte cache lines");
@@ -79,13 +79,13 @@ public:
             even_ram[i].data_in = _ASSIGN(refill_even_line_comb_func());
             even_ram[i].wr_in = _ASSIGN_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
             even_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
-            even_ram[i].id_in = ID * 100 + i * 3;
+            even_ram[i].id_in = DCACHE * 100 + i * 3;
 
             odd_ram[i].addr_in = _ASSIGN((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
             odd_ram[i].data_in = _ASSIGN(refill_odd_line_comb_func());
             odd_ram[i].wr_in = _ASSIGN_I((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i);
             odd_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
-            odd_ram[i].id_in = ID * 100 + i * 3 + 1;
+            odd_ram[i].id_in = DCACHE * 100 + i * 3 + 1;
 
             tag_ram[i].addr_in = _ASSIGN((state_reg == ST_INIT) ? init_set_reg :
                                         (write_in() ? input_set_comb_func() :
@@ -95,7 +95,7 @@ public:
                                         ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i) ||
                                         write_in());
             tag_ram[i].rd_in = _ASSIGN(issue_read_comb_func() && input_cacheable_comb_func());
-            tag_ram[i].id_in = ID * 100 + i * 3 + 2;
+            tag_ram[i].id_in = DCACHE * 100 + i * 3 + 2;
         }
     }
 
@@ -139,12 +139,13 @@ private:
     }
 
     // Whether the incoming address can be served from this cache line format.
+    // Odd-byte data reads at the final line word use a direct L2 beat so L1 never fills a partial line.
     _LAZY_COMB(input_cacheable_comb, bool)
         input_cacheable_comb = !cache_disable_in() && !(addr_in() & 0x1);
-        if (ID != 0 && (addr_in() & 0x3u) != 0 &&
+        if (DCACHE != 0 && (addr_in() & 0x3u) != 0 &&
             (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
             // A 32-bit read starting at the final line word needs bytes from the next line.
-            // Let L2's cross-line path assemble it instead of filling an incomplete L1 line.
+            // CPU split logic handles real line-crossing accesses before L2 sees a cacheable line fill.
             input_cacheable_comb = false;
         }
         return input_cacheable_comb;
@@ -228,6 +229,7 @@ private:
     }
 
     // Direct memory bypass data, including unaligned words inside or across a memory beat.
+    // Cached RAM direct reads stay beat-aligned so dirty L2 data is used instead of stale backing RAM.
     _LAZY_COMB(direct_data_comb, uint32_t)
         uint32_t byte;
         uint32_t word;
@@ -235,7 +237,7 @@ private:
         word = 0;
         if (req_cache_disable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
-            // L2 returns an assembled cross-line direct read in the low 32 bits of the beat.
+            // Cache-disabled MMIO may return an assembled cross-line direct read in the low 32 bits.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
         else {
@@ -361,7 +363,7 @@ private:
             mem_addr_comb = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)refill_beat_reg * PORT_BYTES);
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
-            if (ID != 0 && !req_cache_disable_reg) {
+            if (DCACHE != 0 && !req_cache_disable_reg) {
                 // Odd byte/half data loads are served as a direct beat read because
                 // this L1 stores cached data in 16-bit banks. Keep the backing L2
                 // request inside the containing beat so dirty L2 lines are still hit.

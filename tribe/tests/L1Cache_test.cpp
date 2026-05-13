@@ -25,12 +25,9 @@ using namespace cpphdl;
 
 long sys_clock = -1;
 
-static constexpr size_t CACHE_SIZE = 1024;
 static constexpr size_t LINE_SIZE = 32;
-static constexpr size_t WAYS = 2;
-static constexpr size_t ADDR_BITS = 13;
-static constexpr size_t RAM_WORDS = 2048;
-static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
+static constexpr size_t ADDR_BITS = 17;
+static constexpr size_t RAM_WORDS = 32768;
 
 #ifdef VERILATOR
 #define PORT_VALUE(val) val
@@ -55,13 +52,14 @@ static uint32_t mem_word(uint32_t word)
     return x;
 }
 
-template<int CACHE_ID>
+template<size_t CACHE_SIZE, size_t WAYS, int CACHE_ID, size_t PORT_BITS = 32>
 class TestL1Cache : public Module
 {
+    static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
 #ifdef VERILATOR
     VERILATOR_MODEL cache;
 #else
-    L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS> cache;
+    L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS, PORT_BITS> cache;
 #endif
     Ram<32, RAM_WORDS, 7> ram;
 
@@ -215,6 +213,7 @@ public:
         stall = false;
         flush = false;
         cycle(true);
+        cycle(false);
         for (size_t i = 0; i < SETS + 8 && busy(); ++i) {
             cycle(false);
         }
@@ -565,9 +564,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestL1Cache...");
+        std::print("VERILATOR TestL1Cache<SIZE={},WAYS={},ID={},PORT_BITS={}>...", CACHE_SIZE, WAYS, CACHE_ID, PORT_BITS);
 #else
-        std::print("CppHDL TestL1Cache<ID={}>...", CACHE_ID);
+        std::print("CppHDL TestL1Cache<SIZE={},WAYS={},ID={},PORT_BITS={}>...", CACHE_SIZE, WAYS, CACHE_ID, PORT_BITS);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "l1cache_test";
@@ -604,9 +603,10 @@ public:
 };
 
 #ifndef VERILATOR
-template<size_t PORT_BITS>
+template<size_t CACHE_SIZE, size_t WAYS, size_t PORT_BITS>
 class TestL1CacheWideRefill : public Module
 {
+    static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
     static constexpr int CACHE_ID = 0;
     L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS, PORT_BITS> cache;
 
@@ -681,6 +681,7 @@ public:
         read = false;
         addr = 0;
         cycle(true);
+        cycle(false);
         for (size_t i = 0; i < SETS + 8 && cache.busy_out(); ++i) {
             cycle(false);
         }
@@ -737,7 +738,7 @@ public:
 
     bool run()
     {
-        std::print("CppHDL TestL1CacheWideRefill<{}>...", PORT_BITS);
+        std::print("CppHDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "l1cache_wide_refill_test";
         _assign();
@@ -762,9 +763,13 @@ public:
 int main(int argc, char** argv)
 {
     bool noveril = false;
+    int only = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
+        }
+        if (argv[i][0] != '-') {
+            only = atoi(argv[i]);
         }
     }
 
@@ -774,28 +779,44 @@ int main(int argc, char** argv)
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
-            {(source_root / "include").string(),
-             (source_root / "tribe" / "common").string(),
-             (source_root / "tribe" / "cache").string()},
-            CACHE_SIZE, LINE_SIZE, WAYS, 0, ADDR_BITS, 32);
+        auto compile_l1 = [&](size_t cache_size, size_t ways, int id, size_t port_bits) {
+            return VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
+                {(source_root / "include").string(),
+                 (source_root / "tribe" / "common").string(),
+                 (source_root / "tribe" / "cache").string()},
+                cache_size, LINE_SIZE, ways, id, ADDR_BITS, port_bits);
+        };
+        ok &= compile_l1(1024, 2, 0, 32);
+        ok &= compile_l1(1024, 4, 0, 32);
+        ok &= compile_l1(8192, 2, 0, 32);
+        ok &= compile_l1(8192, 4, 0, 32);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L1Cache_1024_32_2_0_13_32/obj_dir/VL1Cache") == 0;
+        ok = ok &&
+            std::system("L1Cache_1024_32_2_0_17_32/obj_dir/VL1Cache 0") == 0 &&
+            std::system("L1Cache_1024_32_4_0_17_32/obj_dir/VL1Cache 1") == 0 &&
+            std::system("L1Cache_8192_32_2_0_17_32/obj_dir/VL1Cache 2") == 0 &&
+            std::system("L1Cache_8192_32_4_0_17_32/obj_dir/VL1Cache 3") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-#ifdef VERILATOR
-    ok = ok && TestL1Cache<0>().run();
-#else
-    ok = ok && TestL1Cache<0>().run();
-    ok = ok && TestL1Cache<1>().run();
-    ok = ok && TestL1CacheWideRefill<64>().run();
-    ok = ok && TestL1CacheWideRefill<256>().run();
+    ok = ok && ((only != -1 && only != 0) || TestL1Cache<1024,2,0>().run());
+    ok = ok && ((only != -1 && only != 1) || TestL1Cache<1024,4,0>().run());
+    ok = ok && ((only != -1 && only != 2) || TestL1Cache<8192,2,0>().run());
+    ok = ok && ((only != -1 && only != 3) || TestL1Cache<8192,4,0>().run());
+#ifndef VERILATOR
+    ok = ok && TestL1Cache<1024,2,1>().run();
+    ok = ok && TestL1Cache<1024,4,1>().run();
+    ok = ok && TestL1Cache<8192,2,1>().run();
+    ok = ok && TestL1Cache<8192,4,1>().run();
+    ok = ok && TestL1CacheWideRefill<1024,2,64>().run();
+    ok = ok && TestL1CacheWideRefill<1024,4,64>().run();
+    ok = ok && TestL1CacheWideRefill<8192,2,256>().run();
+    ok = ok && TestL1CacheWideRefill<8192,4,256>().run();
 #endif
     return !ok;
 }

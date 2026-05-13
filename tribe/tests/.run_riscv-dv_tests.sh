@@ -16,6 +16,8 @@ for arg in "$@"; do
 done
 
 RISCV_DV_PYTHON_DEPS=(
+    wheel
+    "setuptools>=65"
     bitarray
     bitstring
     numpy
@@ -23,7 +25,8 @@ RISCV_DV_PYTHON_DEPS=(
     pyboolector
     pyucis
     pyvsc
-    PyYAML
+    "PyYAML>=6.0"
+    "requests>=2.31"
     tabulate
     toposort
 )
@@ -39,10 +42,22 @@ export PYTHONPATH="${BUILD_DIR}/pydeps:${PYTHONPATH:-}"
 
 make -C "${BUILD_DIR}" tribe256 tribe128 tribe64
 
-if ! "${TRIBE_RISCV_DV_PYTHON}" -c 'import vsc' >/dev/null 2>&1; then
+if ! "${TRIBE_RISCV_DV_PYTHON}" - <<'PY' >/dev/null 2>&1; then
+import requests
+import vsc
+import yaml
+
+def version_tuple(text):
+    return tuple(int(part) for part in text.split(".")[:2] if part.isdigit())
+
+assert version_tuple(yaml.__version__) >= (6, 0), yaml.__version__
+assert version_tuple(requests.__version__) >= (2, 31), requests.__version__
+PY
     echo "Installing riscv-dv Python dependencies into ${BUILD_DIR}/pydeps"
     "${TRIBE_RISCV_DV_PYTHON}" -m pip install \
         --target "${BUILD_DIR}/pydeps" \
+        --upgrade \
+        --no-warn-conflicts \
         "${RISCV_DV_PYTHON_DEPS[@]}"
 fi
 

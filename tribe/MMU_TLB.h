@@ -73,6 +73,7 @@ private:
     reg<u32> debug_last_pte_reg;
     reg<u32> debug_last_addr_reg;
 
+    // Sv32 translation is active outside M-mode unless the access is in the direct MMIO window.
     _LAZY_COMB(translation_enabled_comb, bool)
         uint32_t mode;
         mode = satp_in() >> 31;
@@ -80,6 +81,7 @@ private:
         return translation_enabled_comb;
     }
 
+    // Direct window keeps MMIO and boot-mapped regions out of the page-table walker.
     _LAZY_COMB(direct_mapping_comb, bool)
         uint32_t addr;
         uint32_t base;
@@ -93,26 +95,32 @@ private:
         return direct_mapping_comb;
     }
 
+    // Full Sv32 virtual page number used by leaf level-0 TLB entries.
     _LAZY_COMB(vpn_comb, uint32_t)
         return vpn_comb = vaddr_in() >> 12;
     }
 
+    // Top-level Sv32 VPN field used for superpage TLB matches.
     _LAZY_COMB(vpn1_comb, uint32_t)
         return vpn1_comb = (vaddr_in() >> 22) & 0x3ffu;
     }
 
+    // Page offset is carried unchanged through translation.
     _LAZY_COMB(page_offset_comb, uint32_t)
         return page_offset_comb = vaddr_in() & 0xfffu;
     }
 
+    // Registered top-level VPN field for the active page-table walk.
     _LAZY_COMB(req_vpn1_comb, uint32_t)
         return req_vpn1_comb = ((uint32_t)req_vaddr_reg >> 22) & 0x3ffu;
     }
 
+    // Registered second-level VPN field for the active page-table walk.
     _LAZY_COMB(req_vpn0_comb, uint32_t)
         return req_vpn0_comb = ((uint32_t)req_vaddr_reg >> 12) & 0x3ffu;
     }
 
+    // TLB match index, accepting either exact level-0 entries or level-1 superpages.
     _LAZY_COMB(hit_index_comb, u<clog2(ENTRIES)>)
         size_t i;
         hit_index_comb = 0;
@@ -126,6 +134,7 @@ private:
         return hit_index_comb;
     }
 
+    // Translation hit is trivially true when translation is disabled.
     _LAZY_COMB(hit_comb, bool)
         size_t i;
         hit_comb = false;
@@ -144,6 +153,7 @@ private:
         return hit_comb;
     }
 
+    // Permission bits of the selected cached PTE.
     _LAZY_COMB(entry_flags_comb, uint32_t)
         entry_flags_comb = hit_comb_func() ? (uint8_t)flags_reg[hit_index_comb_func()] : 0;
         return entry_flags_comb;
@@ -173,6 +183,7 @@ private:
         return false;
     }
 
+    // Check cached PTE access permissions for load, store, or instruction fetch.
     _LAZY_COMB(permission_fault_comb, bool)
         uint32_t flags;
         permission_fault_comb = false;
@@ -183,17 +194,20 @@ private:
         return permission_fault_comb;
     }
 
+    // New translation request that needs the hardware page-table walker.
     _LAZY_COMB(miss_comb, bool)
         miss_comb = translation_enabled_comb_func() && (read_in() || write_in() || execute_in()) &&
             !hit_comb_func() && !fault_reg;
         return miss_comb;
     }
 
+    // Visible page fault from either a walker failure or cached PTE permission failure.
     _LAZY_COMB(fault_comb, bool)
         fault_comb = translation_enabled_comb_func() && (fault_reg || permission_fault_comb_func());
         return fault_comb;
     }
 
+    // Physical address from bypass, level-0 page, or level-1 superpage translation.
     _LAZY_COMB(paddr_comb, uint32_t)
         if (!translation_enabled_comb_func()) {
             paddr_comb = vaddr_in();
@@ -213,10 +227,12 @@ private:
         return paddr_comb;
     }
 
+    // Page-table walker read request for the active PTE level.
     _LAZY_COMB(mem_read_comb, bool)
         return mem_read_comb = state_reg == ST_READ_L1 || state_reg == ST_READ_L0;
     }
 
+    // PTE address generated from satp root for level 1, then from the level-1 PPN for level 0.
     _LAZY_COMB(mem_addr_comb, uint32_t)
         mem_addr_comb = (((uint32_t)req_satp_reg & 0x3fffffu) << 12) + req_vpn1_comb_func() * 4u;
         if (state_reg == ST_READ_L0) {
@@ -225,6 +241,7 @@ private:
         return mem_addr_comb;
     }
 
+    // Stall the requester while a TLB miss is being walked through memory.
     _LAZY_COMB(busy_comb, bool)
         busy_comb = false;
         if (translation_enabled_comb_func() && (read_in() || write_in() || execute_in()) &&

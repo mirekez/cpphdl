@@ -13,6 +13,8 @@ import sys
 SKIP = 77
 REPO = "https://github.com/google/riscv-dv.git"
 PYTHON_DEPS = [
+    "wheel",
+    "setuptools>=65",
     "bitarray",
     "bitstring",
     "numpy",
@@ -20,7 +22,8 @@ PYTHON_DEPS = [
     "pyboolector",
     "pyucis",
     "pyvsc",
-    "PyYAML",
+    "PyYAML>=6.0",
+    "requests>=2.31",
     "tabulate",
     "toposort",
 ]
@@ -158,9 +161,19 @@ def main(argv: list[str]) -> int:
     pydeps.mkdir(parents=True, exist_ok=True)
     env["PYTHONPATH"] = str(pydeps) + os.pathsep + env.get("PYTHONPATH", "")
 
-    if subprocess.run([python, "-c", "import vsc"], env=env).returncode != 0:
+    dep_check = (
+        "import requests, vsc, yaml\n"
+        "def vt(s): return tuple(int(p) for p in s.split('.')[:2] if p.isdigit())\n"
+        "assert vt(yaml.__version__) >= (6, 0), yaml.__version__\n"
+        "assert vt(requests.__version__) >= (2, 31), requests.__version__\n"
+    )
+    if subprocess.run([python, "-c", dep_check], env=env).returncode != 0:
         print(f"Installing riscv-dv Python dependencies into {pydeps}")
-        if subprocess.run([python, "-m", "pip", "install", "--target", str(pydeps), *PYTHON_DEPS], env=env).returncode != 0:
+        if subprocess.run([python, "-m", "pip", "install",
+                           "--target", str(pydeps),
+                           "--upgrade",
+                           "--no-warn-conflicts",
+                           *PYTHON_DEPS], env=env).returncode != 0:
             return 1
 
     missing = [

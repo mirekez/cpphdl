@@ -133,6 +133,17 @@ def trust_mise_config(checkout: pathlib.Path, env: dict[str, str]) -> int:
     return run([mise, "trust", str(config)], checkout, env)
 
 
+def configure_mise(checkout: pathlib.Path, env: dict[str, str]) -> None:
+    mise = shutil.which("mise", path=env["PATH"])
+    if mise is None:
+        return
+    # riscv-arch-test uses Ruby through mise. Prefer mise's prebuilt Ruby so
+    # hosts without Ruby psych/libyaml build dependencies do not compile Ruby.
+    for cmd in ([mise, "settings", "set", "ruby.compile", "false"], [mise, "settings", "ruby.compile=false"]):
+        if run(cmd, checkout, env) == 0:
+            return
+
+
 def install_mise_tools(checkout: pathlib.Path, env: dict[str, str]) -> int:
     mise = shutil.which("mise", path=env["PATH"])
     config = checkout / ".mise.toml"
@@ -165,6 +176,7 @@ def main(argv: list[str]) -> int:
     env.setdefault("MISE_CACHE_DIR", str(work / "mise-cache"))
     env.setdefault("MISE_CONFIG_DIR", str(work / "mise-config"))
     env.setdefault("MISE_STATE_DIR", str(work / "mise-state"))
+    env.setdefault("MISE_RUBY_COMPILE", "false")
     pathlib.Path(env["XDG_DATA_HOME"]).mkdir(parents=True, exist_ok=True)
     pathlib.Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     for key in ("MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_CONFIG_DIR", "MISE_STATE_DIR"):
@@ -221,6 +233,7 @@ def main(argv: list[str]) -> int:
     if shutil.which("mise", path=env["PATH"]) is None and shutil.which("bundle", path=env["PATH"]) is None:
         print("ERROR: riscv-arch-test requires bundle when mise is not available")
         return 1
+    configure_mise(checkout, env)
     if trust_mise_config(checkout, env) != 0:
         print("ERROR: failed to trust riscv-arch-test mise config")
         return 1

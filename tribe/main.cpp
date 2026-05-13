@@ -238,6 +238,7 @@ public:
         immu.satp_in = _ASSIGN((uint32_t)0);
         immu.priv_in = _ASSIGN((u<2>)3);
 #endif
+        // Instruction fetches are fully translated; only data/MMIO uses the direct window.
         immu.direct_base_in = _ASSIGN((uint32_t)0);
         immu.direct_size_in = _ASSIGN((uint32_t)0);
         immu.fill_in = _ASSIGN(false);
@@ -262,6 +263,7 @@ public:
         dmmu.satp_in = _ASSIGN((uint32_t)0);
         dmmu.priv_in = _ASSIGN((u<2>)3);
 #endif
+        // Data MMU bypasses translation for the IO region so MMIO stays physical under Linux.
         dmmu.direct_base_in = _ASSIGN(memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
         dmmu.direct_size_in = mem_region_size_in[3];
         dmmu.fill_in = _ASSIGN(false);
@@ -325,6 +327,7 @@ public:
         dcache.stall_in = _ASSIGN(branch_stall_comb_func());
         dcache.flush_in = _ASSIGN(false);
         dcache.invalidate_in = _ASSIGN(false);
+        // MMIO region bypasses L1 caching; RAM stays cacheable and coherent through L2.
         dcache.cache_disable_in = _ASSIGN(
             (uint32_t)dcache.addr_in() >= memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
             (uint32_t)dcache.addr_in() < memory_base_in() + memory_size_in());
@@ -373,6 +376,7 @@ public:
         l2cache.i_addr_in = icache.mem_addr_out;
         l2cache.i_write_data_in = _ASSIGN((uint32_t)0);
         l2cache.i_write_mask_in = _ASSIGN((uint8_t)0);
+        // CPU data misses and MMU page-table walks share the L2 data-side request path.
         l2cache.d_read_in = _ASSIGN(dcache.mem_read_out()
 #ifdef ENABLE_MMU_TLB
             || dmmu_ptw_selected_comb_func() || immu_ptw_selected_comb_func()
@@ -393,6 +397,7 @@ public:
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             l2cache.mem_region_size_in[i] = mem_region_size_in[i];
         }
+        // The last L2 region is IO/MMIO and is statically uncached.
         l2cache.mem_region_uncached_in[0] = _ASSIGN(false);
         l2cache.mem_region_uncached_in[1] = _ASSIGN(false);
         l2cache.mem_region_uncached_in[2] = _ASSIGN(false);
@@ -452,6 +457,7 @@ private:
     reg<u1>         debug_branch_taken_reg;
     reg<u1>         output_write_active_reg;
 
+    // Hold decode/execute when a pending load, split access, or atomic op would be observed too early.
     _LAZY_COMB(hazard_stall_comb, bool)
         hazard_stall_comb = false;
         if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
@@ -475,21 +481,25 @@ private:
         return hazard_stall_comb;
     }
 
+    // A mispredict freezes the front end for one correction cycle.
     _LAZY_COMB(branch_stall_comb, bool)
         branch_stall_comb = branch_mispredict_comb_func();
         return branch_stall_comb;
     }
 
+    // Flush decode/fetch state when execute resolves a different next PC.
     _LAZY_COMB(branch_flush_comb, bool)
         branch_flush_comb = branch_mispredict_comb_func();
         return branch_flush_comb;
     }
 
+    // Combined front-end stall used by fetch and decode.
     _LAZY_COMB(stall_comb, bool)
         stall_comb = hazard_stall_comb_func() || branch_stall_comb_func();
         return stall_comb;
     }
 
+    // Pack per-cycle stall and cache wait indicators for the test harness.
     _LAZY_COMB(perf_comb, TribePerf)
         perf_comb.hazard_stall = hazard_stall_comb_func();
         perf_comb.branch_stall = branch_stall_comb_func();
@@ -501,17 +511,20 @@ private:
     }
 
 #ifdef ENABLE_MMU_TLB
+    // DMMU page-table walks share the L2 data port after normal CPU data requests.
     _LAZY_COMB(dmmu_ptw_selected_comb, bool)
         dmmu_ptw_selected_comb = dmmu.mem_read_out() && !dcache.mem_read_out() && !dcache.mem_write_out();
         return dmmu_ptw_selected_comb;
     }
 
+    // IMMU page-table walks use the shared L2 data port only when DMMU and D-cache are idle.
     _LAZY_COMB(immu_ptw_selected_comb, bool)
         immu_ptw_selected_comb = immu.mem_read_out() && !dmmu.mem_read_out() &&
             !dcache.mem_read_out() && !dcache.mem_write_out();
         return immu_ptw_selected_comb;
     }
 
+    // Extract the 32-bit PTE lane from the current L2 AXI-width read beat.
     _LAZY_COMB(mmu_l2_read_word_comb, uint32_t)
         uint32_t addr;
         uint32_t lane;
@@ -528,6 +541,7 @@ private:
     }
 #endif
 
+    // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
     _LAZY_COMB(memory_wait_comb, bool)
         memory_wait_comb = dcache.busy_out() ||
             exe_mem.mem_split_busy_out() ||
@@ -545,6 +559,7 @@ private:
         return memory_wait_comb;
     }
 
+    // Fetched instruction is valid only when it matches the current PC or translated physical PC.
     _LAZY_COMB(fetch_valid_comb, bool)
         return fetch_valid_comb = valid && icache.read_valid_out() &&
 #ifdef ENABLE_MMU_TLB
@@ -555,15 +570,18 @@ private:
 #endif
     }
 
+    // Sequential next PC respects 16-bit compressed and 32-bit instructions.
     _LAZY_COMB(decode_fallthrough_comb, uint32_t)
         return decode_fallthrough_comb = pc + ((dec.instr_in()&3)==3?4:2);
     }
 
+    // Predictor sees only a valid, unstalled decoded branch.
     _LAZY_COMB(decode_branch_valid_comb, bool)
         decode_branch_valid_comb = fetch_valid_comb_func() && dec.state_out().valid && dec.state_out().br_op != Br::BNONE && !stall_comb_func();
         return decode_branch_valid_comb;
     }
 
+    // Predicted branch target from decode operands and immediate.
     _LAZY_COMB(decode_branch_target_comb, uint32_t)
         const auto& dec_state_tmp = dec.state_out();
         decode_branch_target_comb = 0;
@@ -579,16 +597,19 @@ private:
         return decode_branch_target_comb;
     }
 
+    // Execute-stage resolved next PC for mispredict comparison.
     _LAZY_COMB(branch_actual_next_comb, uint32_t)
         return branch_actual_next_comb = exe.branch_taken_out() ? exe.branch_target_out() : (uint32_t)fallthrough_reg[0];
     }
 
+    // Detect when the decoded prediction does not match execute resolution.
     _LAZY_COMB(branch_mispredict_comb, bool)
         branch_mispredict_comb = state_reg[0].valid && exe_state_comb_func().br_op != Br::BNONE &&
             branch_actual_next_comb_func() != (uint32_t)predicted_next_reg[0];
         return branch_mispredict_comb;
     }
 
+    // Fetch address, with execute redirect taking priority over sequential PC.
     _LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
         if (branch_mispredict_comb_func()) {
@@ -597,6 +618,7 @@ private:
         return fetch_addr_comb;
     }
 
+    // Legacy SBI set_timer ECALL is handled locally by programming CLINT mtimecmp.
     _LAZY_COMB(sbi_set_timer_comb, bool)
         return sbi_set_timer_comb = state_reg[0].valid &&
             state_reg[0].sys_op == Sys::ECALL &&
@@ -605,14 +627,17 @@ private:
             !memory_wait_comb_func();
     }
 
+    // Low word of the SBI timer value is passed in a0 on RV32.
     _LAZY_COMB(sbi_timer_lo_comb, uint32_t)
         return sbi_timer_lo_comb = regs.x10_out();
     }
 
+    // High word of the SBI timer value is passed in a1 on RV32.
     _LAZY_COMB(sbi_timer_hi_comb, uint32_t)
         return sbi_timer_hi_comb = regs.x11_out();
     }
 
+    // Execute input state after trap/xret/fence redirection and late load forwarding.
     _LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
@@ -653,11 +678,13 @@ private:
 
 #ifdef ENABLE_ZICSR
 #ifdef ENABLE_MMU_TLB
+    // DMMU faults matter only while the memory stage is actively reading or writing.
     _LAZY_COMB(dmmu_active_fault_comb, bool)
         return dmmu_active_fault_comb = dmmu.fault_out() && (exe_mem.mem_read_out() || exe_mem.mem_write_out());
     }
 #endif
 
+    // CSR/trap stage input, including synthesized page faults and locally emulated SBI timer calls.
     _LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
         if (sbi_set_timer_comb_func()) {
@@ -725,12 +752,14 @@ private:
     }
 #endif
 
+    // FENCE.I and SFENCE.VMA both discard I-cache contents before fetching translated code again.
     _LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb = state_reg[0].valid &&
             (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
             !memory_wait_comb_func();
     }
 
+    // SFENCE.VMA invalidates cached translations once the instruction can retire.
     _LAZY_COMB(sfence_vma_comb, bool)
         return sfence_vma_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func();
     }
