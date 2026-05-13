@@ -461,6 +461,78 @@ public:
         cycle(false);
     }
 
+    void focused_instruction_end_halfword_check()
+    {
+        if constexpr (CACHE_ID != 0) {
+            return;
+        }
+
+        uint32_t request_addr = 11 * SETS * LINE_SIZE + 9 * LINE_SIZE + LINE_SIZE - 2;
+        uint32_t line_base = request_addr & ~(uint32_t)(LINE_SIZE - 1);
+        uint32_t expected_half = (mem_word(request_addr >> 2) >> 16) & 0xffffu;
+        bool got = false;
+        bool saw_busy = false;
+        bool saw_line_refill = false;
+        bool saw_direct_cross_line = false;
+
+        idle();
+        addr = request_addr;
+        read = true;
+        stall = false;
+        direct_mode = false;
+        cycle(false);
+
+        for (size_t i = 0; i < 80 && !got; ++i) {
+            saw_busy |= busy();
+            if (PORT_VALUE(cache.mem_read_out)) {
+                uint32_t mem_addr = PORT_VALUE(cache.mem_addr_out);
+                saw_line_refill |= mem_addr == line_base;
+                saw_direct_cross_line |= mem_addr == request_addr;
+            }
+            if (valid() && raddr() == request_addr) {
+                got = true;
+                break;
+            }
+            cycle(false);
+        }
+
+        if (!got || !saw_busy || !saw_line_refill || saw_direct_cross_line ||
+            ((rdata() & 0xffffu) != expected_half)) {
+            std::print("\ninstruction end-halfword refill ERROR addr={:#x}: got={} saw_busy={} saw_line_refill={} saw_direct_cross_line={} data={:#x} expected_half={:#x} valid={} raddr={:#x} busy={}\n",
+                request_addr, got, saw_busy, saw_line_refill, saw_direct_cross_line,
+                rdata(), expected_half, valid(), raddr(), busy());
+            error = true;
+        }
+
+        read = false;
+        cycle(false);
+        idle();
+
+        addr = request_addr;
+        read = true;
+        stall = false;
+        bool saw_mem_on_hit = false;
+        got = false;
+        cycle(false);
+        for (size_t i = 0; i < 8 && !got; ++i) {
+            saw_mem_on_hit |= PORT_VALUE(cache.mem_read_out);
+            if (valid() && raddr() == request_addr) {
+                got = true;
+                break;
+            }
+            cycle(false);
+        }
+
+        if (!got || saw_mem_on_hit || ((rdata() & 0xffffu) != expected_half)) {
+            std::print("\ninstruction end-halfword hit ERROR addr={:#x}: got={} saw_mem_on_hit={} data={:#x} expected_half={:#x} valid={} raddr={:#x} busy={}\n",
+                request_addr, got, saw_mem_on_hit, rdata(), expected_half, valid(), raddr(), busy());
+            error = true;
+        }
+
+        read = false;
+        cycle(false);
+    }
+
     void focused_checks()
     {
         focused_refill_assembly_check();
@@ -475,6 +547,9 @@ public:
         }
         if (!error) {
             focused_uncached_repeated_poll_check();
+        }
+        if (!error) {
+            focused_instruction_end_halfword_check();
         }
     }
 
@@ -704,7 +779,7 @@ int main(int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L1Cache/obj_dir/VL1Cache") == 0;
+        ok = ok && std::system("L1Cache_1024_32_2_0_13_32/obj_dir/VL1Cache") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

@@ -175,7 +175,7 @@ struct Rv32i
         if (r.opcode == 0b0001111) {  // FENCE/FENCE.I
             if (i.funct3 == 0b001) {
                 state_out.sys_op = Sys::FENCEI;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
             else if (i.funct3 == 0b000) {
                 state_out.sys_op = Sys::SNONE;
@@ -184,13 +184,13 @@ struct Rv32i
                 state_out.sys_op = Sys::TRAP;
                 state_out.trap_op = Trap::ILLEGAL_INST;
                 state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
         } else {
             state_out.sys_op = Sys::TRAP;
             state_out.trap_op = Trap::ILLEGAL_INST;
             state_out.imm = raw;
-            state_out.br_op = Br::JR;
+            state_out.br_op = Br::BNONE;
         }
 //      else if (r.opcode == 0b1110011) {  // CSR
 //            switch (i.funct3) {

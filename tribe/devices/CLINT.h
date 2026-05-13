@@ -18,6 +18,9 @@ class CLINT : public Module
 public:
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
 
+    _PORT(bool) set_mtimecmp_in = _ASSIGN(false);
+    _PORT(uint32_t) set_mtimecmp_lo_in = _ASSIGN((uint32_t)0);
+    _PORT(uint32_t) set_mtimecmp_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool) msip_out = _ASSIGN_COMB(msip_comb_func());
     _PORT(bool) mtip_out = _ASSIGN_COMB(mtip_comb_func());
 
@@ -111,6 +114,10 @@ public:
         uint32_t addr;
         uint32_t word;
         mtime_reg._next = (uint64_t)mtime_reg + 1u;
+
+        if (set_mtimecmp_in()) {
+            mtimecmp_reg._next = ((uint64_t)set_mtimecmp_hi_in() << 32) | (uint64_t)set_mtimecmp_lo_in();
+        }
 
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
             read_addr_reg._next = axi_in.araddr_in();

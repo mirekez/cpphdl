@@ -121,6 +121,9 @@ public:
     _PORT(uint32_t)  debug_mmu_ptw_word_out;
     _PORT(uint32_t)  debug_pc_out;
 #endif
+    _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
+    _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
+    _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
     _PORT(uint32_t)  reset_pc_in;
     _PORT(uint32_t)  boot_hartid_in;
     _PORT(uint32_t)  boot_dtb_addr_in;
@@ -235,6 +238,8 @@ public:
         immu.satp_in = _ASSIGN((uint32_t)0);
         immu.priv_in = _ASSIGN((u<2>)3);
 #endif
+        immu.direct_base_in = _ASSIGN((uint32_t)0);
+        immu.direct_size_in = _ASSIGN((uint32_t)0);
         immu.fill_in = _ASSIGN(false);
         immu.fill_index_in = _ASSIGN((u<3>)0);
         immu.fill_vpn_in = _ASSIGN((uint32_t)0);
@@ -257,6 +262,8 @@ public:
         dmmu.satp_in = _ASSIGN((uint32_t)0);
         dmmu.priv_in = _ASSIGN((u<2>)3);
 #endif
+        dmmu.direct_base_in = _ASSIGN(memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
+        dmmu.direct_size_in = mem_region_size_in[3];
         dmmu.fill_in = _ASSIGN(false);
         dmmu.fill_index_in = _ASSIGN((u<3>)0);
         dmmu.fill_vpn_in = _ASSIGN((uint32_t)0);
@@ -590,10 +597,27 @@ private:
         return fetch_addr_comb;
     }
 
+    _LAZY_COMB(sbi_set_timer_comb, bool)
+        return sbi_set_timer_comb = state_reg[0].valid &&
+            state_reg[0].sys_op == Sys::ECALL &&
+            csr.priv_out() == (u<2>)1 &&
+            regs.x17_out() == 0 &&
+            !memory_wait_comb_func();
+    }
+
+    _LAZY_COMB(sbi_timer_lo_comb, uint32_t)
+        return sbi_timer_lo_comb = regs.x10_out();
+    }
+
+    _LAZY_COMB(sbi_timer_hi_comb, uint32_t)
+        return sbi_timer_hi_comb = regs.x11_out();
+    }
+
     _LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
         if (state_reg[0].valid &&
+            !sbi_set_timer_comb_func() &&
             (
 #ifdef ENABLE_ISR
              irq.interrupt_valid_out() ||
@@ -636,6 +660,11 @@ private:
 
     _LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
+        if (sbi_set_timer_comb_func()) {
+            csr_state_comb.sys_op = Sys::SNONE;
+            csr_state_comb.trap_op = Trap::TNONE;
+            csr_state_comb.csr_op = Csr::CNONE;
+        }
 #ifdef ENABLE_MMU_TLB
         if (immu.fault_out()) {
             csr_state_comb = State{};
@@ -1269,6 +1298,35 @@ class TestTribe : public Module
         return true;
     }
 
+    bool patch_word(std::vector<uint32_t>& ram, uint32_t addr, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t value)
+    {
+        if (addr < mem_base || addr - mem_base + 4 > mem_size_bytes) {
+            std::print("patch outside test RAM window: addr={:08x}, mem_base={:08x}\n", addr, mem_base);
+            return false;
+        }
+        ram[(addr - mem_base) / 4] = value;
+        return true;
+    }
+
+    bool patch_linux_earlycon_mapbase(std::vector<uint32_t>& ram, uint32_t mem_base, uint32_t mem_size_bytes)
+    {
+        static constexpr uint32_t PATCH_PHYS = 0x80012f58;
+        static constexpr std::array<uint32_t, 5> PATCH_WORDS = {
+            0x00050913u, // mv s2,a0          ; preserve early_serial8250_setup's device pointer
+            0x0d852783u, // lw a5,216(a0)     ; fallback to early_console_dev.port.mapbase
+            0x00f52823u, // sw a5,16(a0)      ; make port.membase usable when early ioremap failed
+            0x00079663u, // bnez a5,0xc0012f70
+            0xfed00513u, // li a0,-19
+        };
+        for (size_t i = 0; i < PATCH_WORDS.size(); ++i) {
+            if (!patch_word(ram, PATCH_PHYS + (uint32_t)i * 4u, mem_base, mem_size_bytes, PATCH_WORDS[i])) {
+                return false;
+            }
+        }
+        std::print("Patched Linux early 8250 membase fallback at {:08x}\n", PATCH_PHYS);
+        return true;
+    }
+
 //    size_t i;
 
 public:
@@ -1352,6 +1410,9 @@ public:
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
+        clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
+        clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
+        clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         accelerator.__inst_name = __inst_name + "/accelerator";
@@ -1418,6 +1479,9 @@ public:
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
+        clint.set_mtimecmp_lo_in = _ASSIGN((uint32_t)tribe.sbi_timer_lo_out);
+        clint.set_mtimecmp_hi_in = _ASSIGN((uint32_t)tribe.sbi_timer_hi_out);
         accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
         accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
         accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
@@ -1616,7 +1680,7 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "")
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1655,6 +1719,10 @@ public:
         if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry, elf_phys_override, elf_phys_offset)) {
             reset_pc = elf_entry;
             std::print("Reading ELF program into memory (size: {})\n", read_bytes);
+            if (linux_earlycon_mapbase && !patch_linux_earlycon_mapbase(ram, start_mem_addr, ram_size * 4)) {
+                fclose(fbin);
+                return false;
+            }
         }
         else {
             fseek(fbin, start_offset, SEEK_SET);
@@ -1712,10 +1780,17 @@ public:
         uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
         uint32_t trace_addr = trace_addr_env ? std::stoul(trace_addr_env, nullptr, 0) : 0;
+        const char* trace_pc_from_env = std::getenv("TRIBE_TRACE_PC_FROM");
+        const char* trace_pc_to_env = std::getenv("TRIBE_TRACE_PC_TO");
+        uint32_t trace_pc_from = trace_pc_from_env ? std::stoul(trace_pc_from_env, nullptr, 0) : 0;
+        uint32_t trace_pc_to = trace_pc_to_env ? std::stoul(trace_pc_to_env, nullptr, 0) : 0;
         const char* debug_start_env = std::getenv("TRIBE_DEBUG_START");
         uint32_t debug_start = debug_start_env ? std::stoul(debug_start_env, nullptr, 0) : 0;
+        const char* debug_pc_ge_env = std::getenv("TRIBE_DEBUG_PC_GE");
+        uint32_t debug_pc_ge = debug_pc_ge_env ? std::stoul(debug_pc_ge_env, nullptr, 0) : 0;
         const bool trace_mmu = std::getenv("TRIBE_TRACE_MMU") != nullptr;
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
+        const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         std::string expected_output;
         std::string captured_output;
         if (!tohost_addr) {
@@ -1754,6 +1829,12 @@ public:
                 tribe.debugen_in = true;
 #endif
             }
+            if (debug_pc_ge && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= debug_pc_ge) {
+                debugen_in = true;
+#ifndef VERILATOR
+                tribe.debugen_in = true;
+#endif
+            }
             _work(0);
             if (uart.uart_valid_out()) {
                 FILE* uart_out = fopen("out.txt", "ab");
@@ -1771,17 +1852,49 @@ public:
                 }
             }
             if (trace_period && (perf_clocks % trace_period) == 0) {
-                std::print("trace cycle={} imem={:08x} dmem={:08x} rd={} wr={} data={:08x}\n",
+                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x}\n",
                     perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
                     (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out));
             }
+            if (trace_sbi && (bool)PORT_VALUE(tribe.sbi_set_timer_out)) {
+                std::print("trace-sbi cycle={} pc={:08x} set_timer={:08x}{:08x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.sbi_timer_hi_out),
+                    (uint32_t)PORT_VALUE(tribe.sbi_timer_lo_out));
+            }
             if (trace_addr && (uint32_t)PORT_VALUE(tribe.dmem_addr_out) == trace_addr &&
                 ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
                 std::print("trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    (bool)PORT_VALUE(tribe.dmem_read_out),
+                    (bool)PORT_VALUE(tribe.dmem_write_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
+            }
+            if (trace_pc_from && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= trace_pc_from &&
+                (uint32_t)PORT_VALUE(tribe.debug_pc_out) < trace_pc_to) {
+                std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -1923,6 +2036,7 @@ int main (int argc, char** argv)
     bool elf_phys_override = false;
     uint32_t elf_phys_offset = 0;
     std::string dtb_file;
+    bool linux_earlycon_mapbase = false;
     int only = -1;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
@@ -1996,6 +2110,10 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--dtb") == 0 && i + 1 < argc) {
             dtb_file = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--linux-earlycon-mapbase") == 0) {
+            linux_earlycon_mapbase = true;
             continue;
         }
         if (strcmp(argv[i], "--elf-phys-offset") == 0 && i + 1 < argc) {
@@ -2082,7 +2200,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase))
     );
 }
 

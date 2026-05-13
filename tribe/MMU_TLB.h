@@ -29,6 +29,8 @@ public:
     _PORT(bool)     execute_in;
     _PORT(uint32_t) satp_in;
     _PORT(u<2>)     priv_in;
+    _PORT(uint32_t) direct_base_in = _ASSIGN((uint32_t)0);
+    _PORT(uint32_t) direct_size_in = _ASSIGN((uint32_t)0);
 
     _PORT(bool)     fill_in;
     _PORT(u<clog2(ENTRIES)>) fill_index_in;
@@ -74,8 +76,21 @@ private:
     _LAZY_COMB(translation_enabled_comb, bool)
         uint32_t mode;
         mode = satp_in() >> 31;
-        translation_enabled_comb = mode == 1 && priv_in() != 3;
+        translation_enabled_comb = mode == 1 && priv_in() != 3 && !direct_mapping_comb_func();
         return translation_enabled_comb;
+    }
+
+    _LAZY_COMB(direct_mapping_comb, bool)
+        uint32_t addr;
+        uint32_t base;
+        uint32_t size;
+        uint32_t offset;
+        addr = vaddr_in();
+        base = direct_base_in();
+        size = direct_size_in();
+        offset = addr - base;
+        direct_mapping_comb = size != 0 && addr >= base && offset < size;
+        return direct_mapping_comb;
     }
 
     _LAZY_COMB(vpn_comb, uint32_t)

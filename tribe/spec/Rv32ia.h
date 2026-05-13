@@ -109,14 +109,14 @@ struct Rv32ia: public Rv32im
                     state_out.sys_op = Sys::TRAP;
                     state_out.trap_op = Trap::ILLEGAL_INST;
                     state_out.imm = raw;
-                    state_out.br_op = Br::JR;
+                    state_out.br_op = Br::BNONE;
                     break;
             }
             if (state_out.amo_op == Amo::AMONONE) {
                 state_out.sys_op = Sys::TRAP;
                 state_out.trap_op = Trap::ILLEGAL_INST;
                 state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
         }
     }

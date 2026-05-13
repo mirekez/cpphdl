@@ -77,6 +77,35 @@ static bool run_cpu_fence_cpp(bool debug)
         0, (tribe_code_dir() / "cpu_fence.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
 }
 
+static bool check_system_decode_has_no_decode_branch()
+{
+    struct Case
+    {
+        uint32_t raw;
+        uint8_t sys;
+        const char* name;
+    };
+    const Case cases[] = {
+        {0x00000073, Sys::ECALL, "ecall"},
+        {0x00100073, Sys::EBREAK, "ebreak"},
+        {0x10500073, Sys::WFI, "wfi"},
+        {0x0000100f, Sys::FENCEI, "fence.i"},
+        {0xffffffff, Sys::TRAP, "illegal"},
+    };
+
+    for (const auto& tc : cases) {
+        Zicsr instr = {{{tc.raw}}};
+        State state;
+        instr.decode(state);
+        if (state.sys_op != tc.sys || state.br_op != Br::BNONE) {
+            std::print("bad system decode for {}: sys={} br={}\n",
+                tc.name, (uint32_t)state.sys_op, (uint32_t)state.br_op);
+            return false;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char** argv)
 {
     bool noveril = false;
@@ -90,7 +119,8 @@ int main(int argc, char** argv)
         }
     }
 
-    bool ok = build_cpu_fence_elf();
+    bool ok = check_system_decode_has_no_decode_branch();
+    ok = ok && build_cpu_fence_elf();
     ok = ok && run_cpu_fence_cpp(debug);
 
 #ifndef VERILATOR

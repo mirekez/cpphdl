@@ -140,7 +140,7 @@ private:
     // Whether the incoming address can be served from this cache line format.
     _LAZY_COMB(input_cacheable_comb, bool)
         input_cacheable_comb = !cache_disable_in() && !(addr_in() & 0x1);
-        if ((addr_in() & 0x3u) != 0 &&
+        if (ID != 0 && (addr_in() & 0x3u) != 0 &&
             (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
             // A 32-bit read starting at the final line word needs bytes from the next line.
             // Let L2's cross-line path assemble it instead of filling an incomplete L1 line.

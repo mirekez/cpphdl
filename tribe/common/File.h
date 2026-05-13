@@ -24,6 +24,9 @@ public:
     _PORT(DTYPE)        read_data1_out   = _ASSIGN_COMB( data1_out_comb_func() );
     _PORT(DTYPE)        reset_x10_in     = _ASSIGN( (DTYPE)0 );
     _PORT(DTYPE)        reset_x11_in     = _ASSIGN( (DTYPE)0 );
+    _PORT(DTYPE)        x10_out          = _ASSIGN_COMB( x10_comb_func() );
+    _PORT(DTYPE)        x11_out          = _ASSIGN_COMB( x11_comb_func() );
+    _PORT(DTYPE)        x17_out          = _ASSIGN_COMB( x17_comb_func() );
 
     bool    debugen_in;
 
@@ -37,6 +40,18 @@ private:
 
     _LAZY_COMB(data1_out_comb, DTYPE)
         return data1_out_comb = (DTYPE) buffer[read_addr1_in()];
+    }
+
+    _LAZY_COMB(x10_comb, DTYPE)
+        return x10_comb = (DTYPE)buffer[10];
+    }
+
+    _LAZY_COMB(x11_comb, DTYPE)
+        return x11_comb = (DTYPE)buffer[11];
+    }
+
+    _LAZY_COMB(x17_comb, DTYPE)
+        return x17_comb = (DTYPE)buffer[17];
     }
 
 public:

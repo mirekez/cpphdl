@@ -21,14 +21,14 @@ struct Zicsr: public PREV_SPEC
                 state_out = {};
                 state_out.sys_op = Sys::ECALL;
                 state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
             else if (raw == 0x00100073) {
                 state_out = {};
                 state_out.sys_op = Sys::EBREAK;
                 state_out.trap_op = Trap::BREAKPOINT;
                 state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
             else if (raw == 0x30200073) {
                 state_out = {};
@@ -61,7 +61,7 @@ struct Zicsr: public PREV_SPEC
                 state_out.sys_op = Sys::TRAP;
                 state_out.trap_op = Trap::ILLEGAL_INST;
                 state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.br_op = Br::BNONE;
             }
         }
 
@@ -106,7 +106,7 @@ struct Zicsr: public PREV_SPEC
                     state_out.sys_op = Sys::TRAP;
                     state_out.trap_op = Trap::ILLEGAL_INST;
                     state_out.imm = raw;
-                    state_out.br_op = Br::JR;
+                    state_out.br_op = Br::BNONE;
                     break;
             }
         }
