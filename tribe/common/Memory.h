@@ -93,11 +93,11 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        buffer.apply();
-        data0_out_reg.strobe();
-        data1_out_reg.strobe();
+        buffer.apply(checkpoint_fd);
+        data0_out_reg.strobe(checkpoint_fd);
+        data1_out_reg.strobe(checkpoint_fd);
     }
 
     void _assign() {}

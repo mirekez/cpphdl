@@ -36,9 +36,9 @@ public:
         ram._work(reset);
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        ram._strobe();
+        ram._strobe(checkpoint_fd);
     }
 
     void _assign()

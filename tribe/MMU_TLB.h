@@ -370,24 +370,24 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        valid_reg.strobe();
-        vpn_reg.strobe();
-        ppn_reg.strobe();
-        flags_reg.strobe();
-        level_reg.strobe();
-        victim_reg.strobe();
-        state_reg.strobe();
-        req_vaddr_reg.strobe();
-        req_read_reg.strobe();
-        req_write_reg.strobe();
-        req_execute_reg.strobe();
-        req_satp_reg.strobe();
-        req_priv_reg.strobe();
-        l1_pte_reg.strobe();
-        fault_reg.strobe();
-        debug_last_pte_reg.strobe();
-        debug_last_addr_reg.strobe();
+        valid_reg.strobe(checkpoint_fd);
+        vpn_reg.strobe(checkpoint_fd);
+        ppn_reg.strobe(checkpoint_fd);
+        flags_reg.strobe(checkpoint_fd);
+        level_reg.strobe(checkpoint_fd);
+        victim_reg.strobe(checkpoint_fd);
+        state_reg.strobe(checkpoint_fd);
+        req_vaddr_reg.strobe(checkpoint_fd);
+        req_read_reg.strobe(checkpoint_fd);
+        req_write_reg.strobe(checkpoint_fd);
+        req_execute_reg.strobe(checkpoint_fd);
+        req_satp_reg.strobe(checkpoint_fd);
+        req_priv_reg.strobe(checkpoint_fd);
+        l1_pte_reg.strobe(checkpoint_fd);
+        fault_reg.strobe(checkpoint_fd);
+        debug_last_pte_reg.strobe(checkpoint_fd);
+        debug_last_addr_reg.strobe(checkpoint_fd);
     }
 };

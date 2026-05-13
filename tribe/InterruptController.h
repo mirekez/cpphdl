@@ -116,5 +116,5 @@ private:
 
 public:
     void _work(bool reset) {}
-    void _strobe() {}
+    void _strobe(FILE* checkpoint_fd = nullptr) {}
 };

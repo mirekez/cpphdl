@@ -12,6 +12,8 @@
 	chosen {
 		bootargs = "console=ttyS0,1000000n8 earlycon=uart8250,mmio,0x82000000,1000000n8 loglevel=8 ignore_loglevel initcall_debug debug";
 		stdout-path = "/soc/serial@82000000:1000000n8";
+		linux,initrd-start = <0x81c00000>;
+		linux,initrd-end = <0x81e4d200>;
 	};
 
 	cpus {

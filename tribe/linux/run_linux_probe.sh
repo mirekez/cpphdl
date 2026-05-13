@@ -9,6 +9,12 @@ KERNEL_ELF="${KERNEL_ELF:-${LINUX_DIR}/vmlinux}"
 VMLINUX_ARCHIVE="${VMLINUX_ARCHIVE:-${LINUX_DIR}/vmlinux.tgz}"
 DTB="${DTB:-${LINUX_DIR}/config32.dtb}"
 DTS="${DTS:-${LINUX_DIR}/config32.dts}"
+INITRAMFS_SOURCE="${INITRAMFS_SOURCE:-/home/me/3/riscv32_linux_from_scratch/build/initramfs.cpio.gz}"
+INITRAMFS_GZ="${INITRAMFS_GZ:-${LINUX_DIR}/initramfs.cpio.gz}"
+INITRAMFS="${INITRAMFS:-${LINUX_DIR}/initramfs.cpio}"
+INITRAMFS_ADDR="${INITRAMFS_ADDR:-0x81c00000}"
+DTB_WITH_INITRD="${DTB_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dtb}"
+DTS_WITH_INITRD="${DTS_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dts}"
 TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
 TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-1048576}"
 
@@ -59,6 +65,7 @@ prepare_linux_inputs()
 {
     local objcopy_bin
     local dtc_bin
+    local initramfs_end
 
     if [[ ! -f "${KERNEL_ELF}" || "${VMLINUX_ARCHIVE}" -nt "${KERNEL_ELF}" ]]; then
         if [[ ! -f "${VMLINUX_ARCHIVE}" ]]; then
@@ -82,14 +89,73 @@ prepare_linux_inputs()
         dtc_bin="$(find_dtc)"
         "${dtc_bin}" -I dts -O dtb -o "${DTB}" "${DTS}"
     fi
+
+    if [[ ! -f "${INITRAMFS_GZ}" || "${INITRAMFS_SOURCE}" -nt "${INITRAMFS_GZ}" ]]; then
+        if [[ ! -f "${INITRAMFS_SOURCE}" ]]; then
+            echo "missing initramfs: ${INITRAMFS_SOURCE}" >&2
+            exit 1
+        fi
+        cp "${INITRAMFS_SOURCE}" "${INITRAMFS_GZ}"
+    fi
+
+    if [[ ! -f "${INITRAMFS}" || "${INITRAMFS_GZ}" -nt "${INITRAMFS}" ]]; then
+        gzip -dc "${INITRAMFS_GZ}" > "${INITRAMFS}"
+    fi
+
+    initramfs_end="$(python3 - "${INITRAMFS_ADDR}" "${INITRAMFS}" <<'PY'
+import os
+import sys
+
+start = int(sys.argv[1], 0)
+size = os.path.getsize(sys.argv[2])
+print(hex(start + size))
+PY
+)"
+
+    if true; then
+        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" <<'PY'
+import pathlib
+import sys
+
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2])
+start = int(sys.argv[3], 0)
+end = int(sys.argv[4], 0)
+text = src.read_text(encoding="utf-8")
+insert = (
+    f"\t\tlinux,initrd-start = <0x{start:08x}>;\n"
+    f"\t\tlinux,initrd-end = <0x{end:08x}>;\n"
+)
+lines = text.splitlines(keepends=True)
+out = []
+in_chosen = False
+inserted = False
+for line in lines:
+    stripped = line.strip()
+    if stripped == "chosen {":
+        in_chosen = True
+    elif in_chosen and stripped == "};" and not inserted:
+        out.append(insert)
+        inserted = True
+        in_chosen = False
+    elif in_chosen and stripped.startswith("linux,initrd-"):
+        continue
+    out.append(line)
+if not inserted:
+    raise SystemExit("failed to find /chosen in DTS")
+dst.write_text("".join(out), encoding="utf-8")
+PY
+        dtc_bin="$(find_dtc)"
+        "${dtc_bin}" -I dts -O dtb -o "${DTB_WITH_INITRD}" "${DTS_WITH_INITRD}"
+    fi
 }
 
 prepare_linux_inputs
 
-if [[ ! -x "${TRIBE_BIN}" ]]; then
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || "${BASH_SOURCE[0]}" -nt "${TRIBE_BIN}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     clang++ "${ROOT_DIR}/tribe/main.cpp" \
-        -std=c++26 -O2 -g -mavx2 -fno-strict-aliasing \
+        -std=c++26 -O3 -g -mavx2 -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
         -I"${ROOT_DIR}/include" \
         -I"${ROOT_DIR}/tribe" \
@@ -105,6 +171,20 @@ if [[ ! -x "${TRIBE_BIN}" ]]; then
         -lstdc++exp
 fi
 
+TRIBE_CHECKPOINT_ARGS=()
+if [[ -n "${TRIBE_CHECKPOINT_LOAD:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-load "${TRIBE_CHECKPOINT_LOAD}")
+fi
+if [[ -n "${TRIBE_CHECKPOINT_SAVE:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save "${TRIBE_CHECKPOINT_SAVE}")
+fi
+if [[ -n "${TRIBE_CHECKPOINT_SAVE_CYCLE:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-cycle "${TRIBE_CHECKPOINT_SAVE_CYCLE}")
+fi
+if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--append-output)
+fi
+
 cd "${ROOT_DIR}"
 "${TRIBE_BIN}" \
     --noveril \
@@ -112,10 +192,13 @@ cd "${ROOT_DIR}"
     --elf-phys-base 0x80000000 \
     --start-mem-addr 0x80000000 \
     --ram-size $((TRIBE_RAM_BYTES / 4)) \
-    --dtb "${DTB}" \
+    --dtb "${DTB_WITH_INITRD}" \
     --boot-hartid 0 \
     --boot-dtb-addr 0x81f00000 \
     --boot-priv s \
+    --initramfs "${INITRAMFS}" \
+    --initramfs-addr "${INITRAMFS_ADDR}" \
     --linux-earlycon-mapbase \
     --tohost 1 \
-    --cycles "${TRIBE_LINUX_CYCLES:-20000}"
+    --cycles "${TRIBE_LINUX_CYCLES:-20000}" \
+    "${TRIBE_CHECKPOINT_ARGS[@]}"

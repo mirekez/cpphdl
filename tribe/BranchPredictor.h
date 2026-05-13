@@ -111,12 +111,12 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        counter_reg.strobe();
-        target_reg.strobe();
-        tag_reg.strobe();
-        valid_reg.strobe();
+        counter_reg.strobe(checkpoint_fd);
+        target_reg.strobe(checkpoint_fd);
+        tag_reg.strobe(checkpoint_fd);
+        valid_reg.strobe(checkpoint_fd);
     }
 
     void _assign()

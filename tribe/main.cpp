@@ -120,6 +120,17 @@ public:
     _PORT(bool)      debug_dmmu_fault_out;
     _PORT(uint32_t)  debug_mmu_ptw_word_out;
     _PORT(uint32_t)  debug_pc_out;
+    _PORT(uint32_t)  debug_satp_out;
+    _PORT(uint32_t)  debug_mstatus_out;
+    _PORT(uint32_t)  debug_mtvec_out;
+    _PORT(uint32_t)  debug_mepc_out;
+    _PORT(uint32_t)  debug_mcause_out;
+    _PORT(uint32_t)  debug_mtval_out;
+    _PORT(uint32_t)  debug_sepc_out;
+    _PORT(uint32_t)  debug_stvec_out;
+    _PORT(uint32_t)  debug_scause_out;
+    _PORT(uint32_t)  debug_stval_out;
+    _PORT(u<2>)      debug_priv_out;
 #endif
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
@@ -432,6 +443,17 @@ public:
         debug_dmmu_fault_out = dmmu.fault_out;
         debug_mmu_ptw_word_out = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
         debug_pc_out = _ASSIGN_REG(pc);
+        debug_satp_out = csr.satp_out;
+        debug_mstatus_out = csr.mstatus_out;
+        debug_mtvec_out = csr.mtvec_out;
+        debug_mepc_out = csr.mepc_out;
+        debug_mcause_out = csr.mcause_out;
+        debug_mtval_out = csr.mtval_out;
+        debug_sepc_out = csr.sepc_out;
+        debug_stvec_out = csr.stvec_out;
+        debug_scause_out = csr.scause_out;
+        debug_stval_out = csr.stval_out;
+        debug_priv_out = csr.priv_out;
 #endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
@@ -619,12 +641,29 @@ private:
     }
 
     // Legacy SBI set_timer ECALL is handled locally by programming CLINT mtimecmp.
-    _LAZY_COMB(sbi_set_timer_comb, bool)
-        return sbi_set_timer_comb = state_reg[0].valid &&
+    _LAZY_COMB(sbi_legacy_ecall_comb, bool)
+        return sbi_legacy_ecall_comb = state_reg[0].valid &&
             state_reg[0].sys_op == Sys::ECALL &&
             csr.priv_out() == (u<2>)1 &&
+            !memory_wait_comb_func();
+    }
+
+    // Single-hart Linux still emits legacy remote fence SBI calls during VM changes; they are no-ops here.
+    _LAZY_COMB(sbi_noop_comb, bool)
+        uint32_t ext;
+        ext = regs.x17_out();
+        return sbi_noop_comb = sbi_legacy_ecall_comb_func() && (ext == 5 || ext == 6 || ext == 7);
+    }
+
+    _LAZY_COMB(sbi_set_timer_comb, bool)
+        return sbi_set_timer_comb = sbi_legacy_ecall_comb_func() &&
             regs.x17_out() == 0 &&
             !memory_wait_comb_func();
+    }
+
+    // All locally handled legacy SBI calls retire as successful calls with a0=0.
+    _LAZY_COMB(sbi_handled_comb, bool)
+        return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func();
     }
 
     // Low word of the SBI timer value is passed in a0 on RV32.
@@ -641,8 +680,21 @@ private:
     _LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
+        if (sbi_handled_comb_func()) {
+            exe_state_comb.sys_op = Sys::SNONE;
+            exe_state_comb.trap_op = Trap::TNONE;
+            exe_state_comb.csr_op = Csr::CNONE;
+            exe_state_comb.mem_op = Mem::MNONE;
+            exe_state_comb.br_op = Br::BNONE;
+            exe_state_comb.alu_op = Alu::ADD;
+            exe_state_comb.rs1_val = 0;
+            exe_state_comb.rs2_val = 0;
+            exe_state_comb.imm = 0;
+            exe_state_comb.rd = 10;
+            exe_state_comb.wb_op = Wb::ALU;
+        }
         if (state_reg[0].valid &&
-            !sbi_set_timer_comb_func() &&
+            !sbi_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
              irq.interrupt_valid_out() ||
@@ -687,7 +739,7 @@ private:
     // CSR/trap stage input, including synthesized page faults and locally emulated SBI timer calls.
     _LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
-        if (sbi_set_timer_comb_func()) {
+        if (sbi_handled_comb_func()) {
             csr_state_comb.sys_op = Sys::SNONE;
             csr_state_comb.trap_op = Trap::TNONE;
             csr_state_comb.csr_op = Csr::CNONE;
@@ -1073,38 +1125,37 @@ public:
 #endif
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        pc.strobe();
-        valid.strobe();
-        state_reg.strobe();
-        predicted_next_reg.strobe();
-        fallthrough_reg.strobe();
-        predicted_taken_reg.strobe();
-        alu_result_reg.strobe();
-        debug_alu_a_reg.strobe();
-        debug_alu_b_reg.strobe();
-        debug_branch_target_reg.strobe();
-        debug_branch_taken_reg.strobe();
-        output_write_active_reg.strobe();
+        pc.strobe(checkpoint_fd);
+        valid.strobe(checkpoint_fd);
+        state_reg.strobe(checkpoint_fd);
+        predicted_next_reg.strobe(checkpoint_fd);
+        fallthrough_reg.strobe(checkpoint_fd);
+        predicted_taken_reg.strobe(checkpoint_fd);
+        alu_result_reg.strobe(checkpoint_fd);
+        debug_alu_a_reg.strobe(checkpoint_fd);
+        debug_alu_b_reg.strobe(checkpoint_fd);
+        debug_branch_target_reg.strobe(checkpoint_fd);
+        debug_branch_taken_reg.strobe(checkpoint_fd);
+        output_write_active_reg.strobe(checkpoint_fd);
 
-        regs._strobe();
-        dec._strobe();
-        exe._strobe();
-        exe_mem._strobe();
-        wb._strobe();
-        wb_mem._strobe();
+        regs._strobe(checkpoint_fd);
+        exe._strobe(checkpoint_fd);
+        exe_mem._strobe(checkpoint_fd);
+        wb._strobe(checkpoint_fd);
+        wb_mem._strobe(checkpoint_fd);
 #ifdef ENABLE_ZICSR
-        csr._strobe();
+        csr._strobe(checkpoint_fd);
 #endif
 #ifdef ENABLE_MMU_TLB
-        immu._strobe();
-        dmmu._strobe();
+        immu._strobe(checkpoint_fd);
+        dmmu._strobe(checkpoint_fd);
 #endif
-        icache._strobe();
-        dcache._strobe();
-        bp._strobe();
-        l2cache._strobe();
+        icache._strobe(checkpoint_fd);
+        dcache._strobe(checkpoint_fd);
+        bp._strobe(checkpoint_fd);
+        l2cache._strobe(checkpoint_fd);
     }
 
 
@@ -1595,18 +1646,39 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
+        checkpoint_value(checkpoint_fd, perf_clocks);
+        checkpoint_value(checkpoint_fd, perf_stall);
+        checkpoint_value(checkpoint_fd, perf_hazard);
+        checkpoint_value(checkpoint_fd, perf_dcache_wait);
+        checkpoint_value(checkpoint_fd, perf_icache_wait);
+        checkpoint_value(checkpoint_fd, perf_branch);
+        checkpoint_value(checkpoint_fd, perf_icache_issue_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_lookup_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_refill_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_init_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_hit_lookup_cycles);
+        checkpoint_value(checkpoint_fd, tohost_addr);
+        checkpoint_value(checkpoint_fd, tohost_value);
+        checkpoint_value(checkpoint_fd, reset_pc);
+        checkpoint_value(checkpoint_fd, boot_hartid);
+        checkpoint_value(checkpoint_fd, boot_dtb_addr);
+        checkpoint_value(checkpoint_fd, boot_priv);
+        checkpoint_value(checkpoint_fd, start_mem_addr);
+        checkpoint_value(checkpoint_fd, ram_size);
+        checkpoint_value(checkpoint_fd, tohost_done);
+        checkpoint_value(checkpoint_fd, sys_clock);
 #ifndef VERILATOR
-        tribe._strobe();
+        tribe._strobe(checkpoint_fd);
 #endif
-        mem0._strobe();  // we use these modules in Verilator test
-        mem1._strobe();
-        mem2._strobe();
-        iospace._strobe();
-        uart._strobe();
-        clint._strobe();
-        accelerator._strobe();
+        mem0._strobe(checkpoint_fd);  // we use these modules in Verilator test
+        mem1._strobe(checkpoint_fd);
+        mem2._strobe(checkpoint_fd);
+        iospace._strobe(checkpoint_fd);
+        uart._strobe(checkpoint_fd);
+        clint._strobe(checkpoint_fd);
+        accelerator._strobe(checkpoint_fd);
     }
 
     void _work_neg(bool reset)
@@ -1709,7 +1781,7 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1720,7 +1792,7 @@ public:
             std::print("\n");
         }
 
-        FILE* out = fopen("out.txt", "w");
+        FILE* out = fopen("out.txt", append_output ? "ab" : "wb");
         fclose(out);
         tohost_addr = tohost;
         tohost_value = 0;
@@ -1771,6 +1843,19 @@ public:
             }
             std::print("Reading DTB into memory (size: {}, addr: {:08x})\n", dtb_bytes, boot_dtb_addr);
         }
+        if (!initramfs_file.empty()) {
+            if (!initramfs_addr) {
+                std::print("--initramfs requires --initramfs-addr\n");
+                fclose(fbin);
+                return false;
+            }
+            size_t initramfs_bytes = 0;
+            if (!load_blob(initramfs_file, ram, initramfs_addr, start_mem_addr, ram_size * 4, initramfs_bytes)) {
+                fclose(fbin);
+                return false;
+            }
+            std::print("Reading initramfs into memory (size: {}, addr: {:08x})\n", initramfs_bytes, initramfs_addr);
+        }
 
         const size_t active_lines = (ram_size * 4 + (TRIBE_L2_AXI_WIDTH/8) - 1) / (TRIBE_L2_AXI_WIDTH/8);
         for (size_t line_idx = 0; line_idx < active_lines; ++line_idx) {
@@ -1805,6 +1890,18 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        bool checkpoint_loaded_pending_work = false;
+        if (!checkpoint_load_file.empty()) {
+            FILE* checkpoint_in = fopen(checkpoint_load_file.c_str(), "rb");
+            if (!checkpoint_in) {
+                std::print("can't open checkpoint input '{}'\n", checkpoint_load_file);
+                return false;
+            }
+            _strobe(checkpoint_read_fd(checkpoint_in));
+            fclose(checkpoint_in);
+            checkpoint_loaded_pending_work = true;
+            std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
+        }
         const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
         uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
@@ -1818,6 +1915,7 @@ public:
         const char* debug_pc_ge_env = std::getenv("TRIBE_DEBUG_PC_GE");
         uint32_t debug_pc_ge = debug_pc_ge_env ? std::stoul(debug_pc_ge_env, nullptr, 0) : 0;
         const bool trace_mmu = std::getenv("TRIBE_TRACE_MMU") != nullptr;
+        const bool trace_csr = std::getenv("TRIBE_TRACE_CSR") != nullptr;
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         std::string expected_output;
@@ -1848,8 +1946,28 @@ public:
             return true;
         };
         int cycles = max_cycles;
+        bool checkpoint_saved = false;
         while (--cycles && !error && !tohost_done) {
-            _strobe();
+            if (checkpoint_loaded_pending_work) {
+                checkpoint_loaded_pending_work = false;
+            }
+            else {
+                FILE* checkpoint_out = nullptr;
+                if (!checkpoint_saved && !checkpoint_save_file.empty() && checkpoint_save_cycle && perf_clocks + 1 == checkpoint_save_cycle) {
+                    checkpoint_out = fopen(checkpoint_save_file.c_str(), "wb");
+                    if (!checkpoint_out) {
+                        std::print("can't open checkpoint output '{}'\n", checkpoint_save_file);
+                        error = true;
+                        break;
+                    }
+                }
+                _strobe(checkpoint_out);
+                if (checkpoint_out) {
+                    fclose(checkpoint_out);
+                    checkpoint_saved = true;
+                    std::print("Saved checkpoint '{}' at cycle {}\n", checkpoint_save_file, perf_clocks + 1);
+                }
+            }
             ++sys_clock;
             perf_sample();
             if (debug_start && perf_clocks >= debug_start) {
@@ -1893,6 +2011,26 @@ public:
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out));
+            }
+            if (trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
+                std::print("trace-csr cycle={} priv={} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_satp_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mstatus_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mtvec_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mepc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mcause_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mtval_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_stvec_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sepc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_scause_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_stval_out)
+#else
+                    3u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u
+#endif
+                    );
             }
             if (trace_sbi && (bool)PORT_VALUE(tribe.sbi_set_timer_out)) {
                 std::print("trace-sbi cycle={} pc={:08x} set_timer={:08x}{:08x}\n",
@@ -2065,6 +2203,12 @@ int main (int argc, char** argv)
     bool elf_phys_override = false;
     uint32_t elf_phys_offset = 0;
     std::string dtb_file;
+    std::string initramfs_file;
+    uint32_t initramfs_addr = 0;
+    std::string checkpoint_load_file;
+    std::string checkpoint_save_file;
+    uint64_t checkpoint_save_cycle = 0;
+    bool append_output = false;
     bool linux_earlycon_mapbase = false;
     int only = -1;
     for (int i=1; i < argc; ++i) {
@@ -2141,6 +2285,30 @@ int main (int argc, char** argv)
             dtb_file = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--initramfs") == 0 && i + 1 < argc) {
+            initramfs_file = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--initramfs-addr") == 0 && i + 1 < argc) {
+            initramfs_addr = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--checkpoint-load") == 0 && i + 1 < argc) {
+            checkpoint_load_file = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--checkpoint-save") == 0 && i + 1 < argc) {
+            checkpoint_save_file = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--checkpoint-save-cycle") == 0 && i + 1 < argc) {
+            checkpoint_save_cycle = std::stoull(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--append-output") == 0) {
+            append_output = true;
+            continue;
+        }
         if (strcmp(argv[i], "--linux-earlycon-mapbase") == 0) {
             linux_earlycon_mapbase = true;
             continue;
@@ -2169,6 +2337,15 @@ int main (int argc, char** argv)
     }
     if (!dtb_file.empty()) {
         dtb_file = absolute_from(original_cwd, dtb_file).string();
+    }
+    if (!initramfs_file.empty()) {
+        initramfs_file = absolute_from(original_cwd, initramfs_file).string();
+    }
+    if (!checkpoint_load_file.empty()) {
+        checkpoint_load_file = absolute_from(original_cwd, checkpoint_load_file).string();
+    }
+    if (!checkpoint_save_file.empty()) {
+        checkpoint_save_file = absolute_from(original_cwd, checkpoint_save_file).string();
     }
     use_executable_workdir_if_needed(argv[0]);
 
@@ -2229,7 +2406,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output))
     );
 }
 

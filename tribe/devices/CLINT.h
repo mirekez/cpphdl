@@ -172,17 +172,17 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        read_addr_reg.strobe();
-        read_id_reg.strobe();
-        read_valid_reg.strobe();
-        write_addr_reg.strobe();
-        write_id_reg.strobe();
-        write_addr_valid_reg.strobe();
-        write_resp_valid_reg.strobe();
-        msip_reg.strobe();
-        mtime_reg.strobe();
-        mtimecmp_reg.strobe();
+        read_addr_reg.strobe(checkpoint_fd);
+        read_id_reg.strobe(checkpoint_fd);
+        read_valid_reg.strobe(checkpoint_fd);
+        write_addr_reg.strobe(checkpoint_fd);
+        write_id_reg.strobe(checkpoint_fd);
+        write_addr_valid_reg.strobe(checkpoint_fd);
+        write_resp_valid_reg.strobe(checkpoint_fd);
+        msip_reg.strobe(checkpoint_fd);
+        mtime_reg.strobe(checkpoint_fd);
+        mtimecmp_reg.strobe(checkpoint_fd);
     }
 };

@@ -167,11 +167,11 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        aw_sel_reg.strobe();
-        ar_sel_reg.strobe();
-        aw_active_reg.strobe();
-        ar_active_reg.strobe();
+        aw_sel_reg.strobe(checkpoint_fd);
+        ar_sel_reg.strobe(checkpoint_fd);
+        aw_active_reg.strobe(checkpoint_fd);
+        ar_active_reg.strobe(checkpoint_fd);
     }
 };

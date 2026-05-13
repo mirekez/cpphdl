@@ -18,7 +18,13 @@ public:
     _PORT(uint32_t) trap_vector_out = _ASSIGN_COMB(trap_vector_comb_func());
     _PORT(uint32_t) epc_out = _ASSIGN_COMB(epc_comb_func());
     _PORT(uint32_t) mepc_out = _ASSIGN_REG(mepc_reg);
+    _PORT(uint32_t) mtvec_out = _ASSIGN_REG(mtvec_reg);
+    _PORT(uint32_t) mcause_out = _ASSIGN_REG(mcause_reg);
+    _PORT(uint32_t) mtval_out = _ASSIGN_REG(mtval_reg);
     _PORT(uint32_t) sepc_out = _ASSIGN_REG(sepc_reg);
+    _PORT(uint32_t) stvec_out = _ASSIGN_REG(stvec_reg);
+    _PORT(uint32_t) scause_out = _ASSIGN_REG(scause_reg);
+    _PORT(uint32_t) stval_out = _ASSIGN_REG(stval_reg);
     _PORT(bool) illegal_trap_out = _ASSIGN_COMB(illegal_trap_comb_func());
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
     _PORT(uint32_t) mie_out = _ASSIGN_REG(mie_reg);
@@ -581,42 +587,42 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        mstatus_reg.strobe();
-        mtvec_reg.strobe();
-        medeleg_reg.strobe();
-        mideleg_reg.strobe();
-        mie_reg.strobe();
-        mscratch_reg.strobe();
-        mepc_reg.strobe();
-        mcause_reg.strobe();
-        mtval_reg.strobe();
-        mip_reg.strobe();
-        mcounteren_reg.strobe();
-        mcountinhibit_reg.strobe();
-        mscratchcsw_reg.strobe();
-        mscratchcswl_reg.strobe();
-        sstatus_reg.strobe();
-        stvec_reg.strobe();
-        sie_reg.strobe();
-        sscratch_reg.strobe();
-        sepc_reg.strobe();
-        scause_reg.strobe();
-        stval_reg.strobe();
-        sip_reg.strobe();
-        scounteren_reg.strobe();
+        mstatus_reg.strobe(checkpoint_fd);
+        mtvec_reg.strobe(checkpoint_fd);
+        medeleg_reg.strobe(checkpoint_fd);
+        mideleg_reg.strobe(checkpoint_fd);
+        mie_reg.strobe(checkpoint_fd);
+        mscratch_reg.strobe(checkpoint_fd);
+        mepc_reg.strobe(checkpoint_fd);
+        mcause_reg.strobe(checkpoint_fd);
+        mtval_reg.strobe(checkpoint_fd);
+        mip_reg.strobe(checkpoint_fd);
+        mcounteren_reg.strobe(checkpoint_fd);
+        mcountinhibit_reg.strobe(checkpoint_fd);
+        mscratchcsw_reg.strobe(checkpoint_fd);
+        mscratchcswl_reg.strobe(checkpoint_fd);
+        sstatus_reg.strobe(checkpoint_fd);
+        stvec_reg.strobe(checkpoint_fd);
+        sie_reg.strobe(checkpoint_fd);
+        sscratch_reg.strobe(checkpoint_fd);
+        sepc_reg.strobe(checkpoint_fd);
+        scause_reg.strobe(checkpoint_fd);
+        stval_reg.strobe(checkpoint_fd);
+        sip_reg.strobe(checkpoint_fd);
+        scounteren_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_MMU_TLB
-        satp_reg.strobe();
+        satp_reg.strobe(checkpoint_fd);
 #endif
-        dcsr_reg.strobe();
-        dpc_reg.strobe();
-        dscratch0_reg.strobe();
-        dscratch1_reg.strobe();
-        cycle_reg.strobe();
-        instret_reg.strobe();
+        dcsr_reg.strobe(checkpoint_fd);
+        dpc_reg.strobe(checkpoint_fd);
+        dscratch0_reg.strobe(checkpoint_fd);
+        dscratch1_reg.strobe(checkpoint_fd);
+        cycle_reg.strobe(checkpoint_fd);
+        instret_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_TRAPS
-        priv_reg.strobe();
+        priv_reg.strobe(checkpoint_fd);
 #endif
     }
 

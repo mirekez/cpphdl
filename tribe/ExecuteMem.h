@@ -342,30 +342,30 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        mem_addr_reg.strobe();
-        mem_data_reg.strobe();
-        mem_mask_reg.strobe();
-        mem_write_reg.strobe();
-        mem_read_reg.strobe();
-        mem_split_pending_reg.strobe();
-        mem_split_addr_reg.strobe();
-        mem_split_data_reg.strobe();
-        mem_split_offset_reg.strobe();
-        mem_split_size_reg.strobe();
-        mem_split_write_reg.strobe();
-        mem_split_read_reg.strobe();
-        split_load_reg.strobe();
-        split_load_low_addr_reg.strobe();
-        split_load_high_addr_reg.strobe();
+        mem_addr_reg.strobe(checkpoint_fd);
+        mem_data_reg.strobe(checkpoint_fd);
+        mem_mask_reg.strobe(checkpoint_fd);
+        mem_write_reg.strobe(checkpoint_fd);
+        mem_read_reg.strobe(checkpoint_fd);
+        mem_split_pending_reg.strobe(checkpoint_fd);
+        mem_split_addr_reg.strobe(checkpoint_fd);
+        mem_split_data_reg.strobe(checkpoint_fd);
+        mem_split_offset_reg.strobe(checkpoint_fd);
+        mem_split_size_reg.strobe(checkpoint_fd);
+        mem_split_write_reg.strobe(checkpoint_fd);
+        mem_split_read_reg.strobe(checkpoint_fd);
+        split_load_reg.strobe(checkpoint_fd);
+        split_load_low_addr_reg.strobe(checkpoint_fd);
+        split_load_high_addr_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_RV32IA
-        reservation_valid_reg.strobe();
-        reservation_addr_reg.strobe();
-        atomic_pending_reg.strobe();
-        atomic_addr_reg.strobe();
-        atomic_operand_reg.strobe();
-        atomic_op_reg.strobe();
+        reservation_valid_reg.strobe(checkpoint_fd);
+        reservation_addr_reg.strobe(checkpoint_fd);
+        atomic_pending_reg.strobe(checkpoint_fd);
+        atomic_addr_reg.strobe(checkpoint_fd);
+        atomic_operand_reg.strobe(checkpoint_fd);
+        atomic_op_reg.strobe(checkpoint_fd);
 #endif
     }
 

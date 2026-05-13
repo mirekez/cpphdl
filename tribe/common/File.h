@@ -80,9 +80,9 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        buffer.apply();
+        buffer.apply(checkpoint_fd);
     }
 
     void _assign() {}

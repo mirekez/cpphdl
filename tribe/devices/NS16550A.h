@@ -172,22 +172,22 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        read_addr_reg.strobe();
-        read_id_reg.strobe();
-        read_valid_reg.strobe();
-        write_addr_reg.strobe();
-        write_id_reg.strobe();
-        write_addr_valid_reg.strobe();
-        write_resp_valid_reg.strobe();
-        ier_reg.strobe();
-        lcr_reg.strobe();
-        mcr_reg.strobe();
-        scr_reg.strobe();
-        dll_reg.strobe();
-        dlm_reg.strobe();
-        uart_valid_reg.strobe();
-        uart_data_reg.strobe();
+        read_addr_reg.strobe(checkpoint_fd);
+        read_id_reg.strobe(checkpoint_fd);
+        read_valid_reg.strobe(checkpoint_fd);
+        write_addr_reg.strobe(checkpoint_fd);
+        write_id_reg.strobe(checkpoint_fd);
+        write_addr_valid_reg.strobe(checkpoint_fd);
+        write_resp_valid_reg.strobe(checkpoint_fd);
+        ier_reg.strobe(checkpoint_fd);
+        lcr_reg.strobe(checkpoint_fd);
+        mcr_reg.strobe(checkpoint_fd);
+        scr_reg.strobe(checkpoint_fd);
+        dll_reg.strobe(checkpoint_fd);
+        dlm_reg.strobe(checkpoint_fd);
+        uart_valid_reg.strobe(checkpoint_fd);
+        uart_data_reg.strobe(checkpoint_fd);
     }
 };

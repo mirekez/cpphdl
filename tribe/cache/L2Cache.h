@@ -1386,41 +1386,41 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
         size_t i;
         size_t way;
         for (i = 0; i < DATA_BANKS; ++i) {
-            data_ram[i]._strobe();
+            data_ram[i]._strobe(checkpoint_fd);
         }
         for (way = 0; way < WAYS; ++way) {
-            tag_ram[way]._strobe();
+            tag_ram[way]._strobe(checkpoint_fd);
         }
-        state_reg.strobe();
-        req_addr_reg.strobe();
-        req_write_data_reg.strobe();
-        req_write_mask_reg.strobe();
-        req_read_reg.strobe();
-        req_write_reg.strobe();
-        req_port_reg.strobe();
-        req_from_slave_reg.strobe();
-        req_slave_index_reg.strobe();
-        req_slave_id_reg.strobe();
-        victim_reg.strobe();
-        fill_way_reg.strobe();
-        init_set_reg.strobe();
-        last_data_reg.strobe();
-        cross_low_reg.strobe();
-        cross_high_reg.strobe();
-        fill_beat_reg.strobe();
-        evict_beat_reg.strobe();
-        slave_bvalid_reg.strobe();
-        slave_bid_reg.strobe();
-        slave_rvalid_reg.strobe();
-        slave_rid_reg.strobe();
-        slave_rdata_reg.strobe();
-        slave_aw_pending_reg.strobe();
-        slave_awaddr_reg.strobe();
-        slave_awid_reg.strobe();
+        state_reg.strobe(checkpoint_fd);
+        req_addr_reg.strobe(checkpoint_fd);
+        req_write_data_reg.strobe(checkpoint_fd);
+        req_write_mask_reg.strobe(checkpoint_fd);
+        req_read_reg.strobe(checkpoint_fd);
+        req_write_reg.strobe(checkpoint_fd);
+        req_port_reg.strobe(checkpoint_fd);
+        req_from_slave_reg.strobe(checkpoint_fd);
+        req_slave_index_reg.strobe(checkpoint_fd);
+        req_slave_id_reg.strobe(checkpoint_fd);
+        victim_reg.strobe(checkpoint_fd);
+        fill_way_reg.strobe(checkpoint_fd);
+        init_set_reg.strobe(checkpoint_fd);
+        last_data_reg.strobe(checkpoint_fd);
+        cross_low_reg.strobe(checkpoint_fd);
+        cross_high_reg.strobe(checkpoint_fd);
+        fill_beat_reg.strobe(checkpoint_fd);
+        evict_beat_reg.strobe(checkpoint_fd);
+        slave_bvalid_reg.strobe(checkpoint_fd);
+        slave_bid_reg.strobe(checkpoint_fd);
+        slave_rvalid_reg.strobe(checkpoint_fd);
+        slave_rid_reg.strobe(checkpoint_fd);
+        slave_rdata_reg.strobe(checkpoint_fd);
+        slave_aw_pending_reg.strobe(checkpoint_fd);
+        slave_awaddr_reg.strobe(checkpoint_fd);
+        slave_awid_reg.strobe(checkpoint_fd);
     }
 };

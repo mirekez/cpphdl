@@ -3,6 +3,7 @@
 #include <string.h>
 #include <vector>
 
+#include "cpphdl_checkpoint.h"
 #include "cpphdl_logic.h"
 
 namespace cpphdl
@@ -145,6 +146,22 @@ struct memory
             data[entry.pos] = entry.data;
         }
         changes.clear();
+    }
+
+    void apply(FILE* checkpoint_fd)
+    {
+        if (!checkpoint_fd) {
+            apply();
+            return;
+        }
+        if (checkpoint_reading(checkpoint_fd)) {
+            checkpoint_read_exact(checkpoint_fd, data, sizeof(array<T,SIZE>[DEPTH]));
+            changes.clear();
+        }
+        else {
+            apply();
+            checkpoint_write_exact(checkpoint_fd, data, sizeof(array<T,SIZE>[DEPTH]));
+        }
     }
 
     memory& operator=(memory<T,SIZE,DEPTH>& other)

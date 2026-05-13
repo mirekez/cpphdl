@@ -108,6 +108,32 @@ static bool run_cpu_bytecopy_cpp(bool debug)
         0, (tribe_code_dir() / "cpu_bytecopy.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
 }
 
+static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
+{
+    const auto elf = std::filesystem::current_path() / "cpu_bytecopy.elf";
+    const auto log = tribe_code_dir() / "cpu_bytecopy.log";
+    const auto checkpoint = std::filesystem::current_path() / "cpu_bytecopy.checkpoint";
+
+    std::filesystem::remove(checkpoint);
+    bool partial_ok = TestTribe(debug).run(elf.string(),
+        0, log.string(), 301, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0,
+        "", checkpoint.string(), 300, false);
+    if (partial_ok) {
+        std::print("checkpoint partial run unexpectedly completed\n");
+        return false;
+    }
+    if (!std::filesystem::exists(checkpoint)) {
+        std::print("checkpoint file was not created: {}\n", checkpoint.string());
+        return false;
+    }
+
+    return TestTribe(debug).run(elf.string(),
+        0, log.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0,
+        checkpoint.string(), "", 0, true);
+}
+
 static bool check_system_decode_has_no_decode_branch()
 {
     struct Case
@@ -155,6 +181,7 @@ int main(int argc, char** argv)
     ok = ok && run_cpu_fence_cpp(debug);
     ok = ok && build_cpu_bytecopy_elf();
     ok = ok && run_cpu_bytecopy_cpp(debug);
+    ok = ok && run_cpu_bytecopy_checkpoint_cpp(debug);
 
 #ifndef VERILATOR
     if (ok && !noveril) {

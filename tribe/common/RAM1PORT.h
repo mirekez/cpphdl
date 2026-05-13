@@ -40,9 +40,9 @@ public:
         DEBUG_RAM("RAM {}, ({:d}){} @{} ({:d}){}, WIDTH: {}, DEPTH: {}\n", id_in, (bool)wr_in(), data_in(), addr_in(), (bool)rd_in(), q_out(), WIDTH, DEPTH);
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        buffer.apply();
-        q_out_reg.strobe();
+        buffer.apply(checkpoint_fd);
+        q_out_reg.strobe(checkpoint_fd);
     }
 };

@@ -271,19 +271,19 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        load_data_reg.strobe();
-        load_addr_reg.strobe();
-        load_data_valid_reg.strobe();
-        split_load_low_reg.strobe();
-        split_load_high_reg.strobe();
-        split_load_low_valid_reg.strobe();
-        split_load_high_valid_reg.strobe();
-        store_forward_addr_reg.strobe();
-        store_forward_data_reg.strobe();
-        store_forward_mask_reg.strobe();
-        store_forward_valid_reg.strobe();
+        load_data_reg.strobe(checkpoint_fd);
+        load_addr_reg.strobe(checkpoint_fd);
+        load_data_valid_reg.strobe(checkpoint_fd);
+        split_load_low_reg.strobe(checkpoint_fd);
+        split_load_high_reg.strobe(checkpoint_fd);
+        split_load_low_valid_reg.strobe(checkpoint_fd);
+        split_load_high_valid_reg.strobe(checkpoint_fd);
+        store_forward_addr_reg.strobe(checkpoint_fd);
+        store_forward_data_reg.strobe(checkpoint_fd);
+        store_forward_mask_reg.strobe(checkpoint_fd);
+        store_forward_valid_reg.strobe(checkpoint_fd);
     }
 
     void _assign()

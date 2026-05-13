@@ -520,26 +520,26 @@ public:
         }
     }
 
-    void _strobe()
+    void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        state_reg.strobe();
-        req_addr_reg.strobe();
-        req_read_reg.strobe();
-        req_cacheable_reg.strobe();
-        req_cache_disable_reg.strobe();
-        refill_beat_reg.strobe();
-        victim_reg.strobe();
-        init_set_reg.strobe();
-        last_addr_reg.strobe();
-        last_data_reg.strobe();
-        last_valid_reg.strobe();
-        refill_even_line_reg.strobe();
-        refill_odd_line_reg.strobe();
+        state_reg.strobe(checkpoint_fd);
+        req_addr_reg.strobe(checkpoint_fd);
+        req_read_reg.strobe(checkpoint_fd);
+        req_cacheable_reg.strobe(checkpoint_fd);
+        req_cache_disable_reg.strobe(checkpoint_fd);
+        refill_beat_reg.strobe(checkpoint_fd);
+        victim_reg.strobe(checkpoint_fd);
+        init_set_reg.strobe(checkpoint_fd);
+        last_addr_reg.strobe(checkpoint_fd);
+        last_data_reg.strobe(checkpoint_fd);
+        last_valid_reg.strobe(checkpoint_fd);
+        refill_even_line_reg.strobe(checkpoint_fd);
+        refill_odd_line_reg.strobe(checkpoint_fd);
         size_t i;
         for (i = 0; i < WAYS; ++i) {
-            even_ram[i]._strobe();
-            odd_ram[i]._strobe();
-            tag_ram[i]._strobe();
+            even_ram[i]._strobe(checkpoint_fd);
+            odd_ram[i]._strobe(checkpoint_fd);
+            tag_ram[i]._strobe(checkpoint_fd);
         }
     }
 };
