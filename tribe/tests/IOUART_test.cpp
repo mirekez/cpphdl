@@ -92,7 +92,7 @@ public:
     {
 #ifndef VERILATOR
         AXI4_DRIVER_FROM_DRIVER(dut.axi_in, axi);
-        dut.__inst_name = "iouart_smoke";
+        dut.__inst_name = "iouart";
         dut._assign();
 #endif
     }
@@ -363,17 +363,17 @@ int main(int argc, char** argv)
 #ifndef VERILATOR
     if (ok && !noveril) {
         const auto source_root = source_root_dir();
-        std::cout << "Building IOUART direct Verilator smoke simulation...\n";
+        std::cout << "Building IOUART direct Verilator simulation...\n";
         ok &= generate_iouart_direct_sv();
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DIOUART_DIRECT_VERILATOR", 1);
         if (ok) {
-            ok &= VerilatorCompileInFolder(__FILE__, "IOUARTDevice", "IOUART",
+            ok &= VerilatorCompileInFolder(__FILE__, "IOUART", "IOUART",
                 {"Predef_pkg"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "devices").string()},
                 16, 4, 32);
-            ok &= std::system("IOUARTDevice_16_4_32/obj_dir/VIOUART") == 0;
+            ok &= std::system("IOUART/obj_dir/VIOUART") == 0;
         }
 
         std::cout << "Building IOUART Tribe Verilator ELF simulation...\n";
