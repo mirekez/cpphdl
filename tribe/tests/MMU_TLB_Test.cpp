@@ -357,8 +357,8 @@ int main(int argc, char** argv)
             std::print("Building MMU_TLB Tribe Verilator ELF simulation...\n");
             std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
             setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
-            ok &= VerilatorCompileTribeInFolder(__FILE__, "MMU_TLBTribe", source_root);
-            ok &= std::system((std::string("MMU_TLBTribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+            ok &= VerilatorCompileTribeInFolder(__FILE__, "MMU_TLB", source_root);
+            ok &= std::system((std::string("MMU_TLB/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
         }
     }
 #else

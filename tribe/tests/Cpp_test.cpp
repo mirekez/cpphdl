@@ -136,7 +136,7 @@ int main(int argc, char** argv)
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         ok &= VerilatorCompileTribeInFolder(__FILE__, "Cpp", source_root);
-        ok &= std::system((std::string("CppTribe/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= std::system((std::string("Cpp/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else
     Verilated::commandArgs(argc, argv);

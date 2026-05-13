@@ -690,7 +690,7 @@ int main(int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("L2Cache_4096_256_32_4_32_32_4/obj_dir/VL2Cache") == 0;
+        ok = ok && std::system("L2Cache/obj_dir/VL2Cache") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

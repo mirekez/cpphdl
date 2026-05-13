@@ -473,7 +473,7 @@ int main(int argc, char** argv)
              (source_root / "tribe" / "common").string(),
              (source_root / "tribe" / "devices").string()},
             16, 4, 32);
-        ok &= std::system("CLINT_16_4_32/obj_dir/VCLINTTest") == 0;
+        ok &= std::system("CLINT/obj_dir/VCLINTTest") == 0;
         ok &= run_clint_elf_verilator(debug);
     }
 #else
