@@ -304,7 +304,6 @@ static bool generate_iouart_direct_sv()
 {
     const auto source_root = source_root_dir();
     const auto build_root = build_root_dir();
-    std::filesystem::create_directory("generated");
 
     std::string cmd;
     cmd += shell_quote(build_root / "cpphdl");

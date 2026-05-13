@@ -13,7 +13,10 @@ public:
     _PORT(uint32_t) alu_result_in;
 #ifdef ENABLE_RV32IA
     _PORT(bool)     dcache_read_valid_in;
+    // Address tag returned by D-cache with read data.
     _PORT(uint32_t) dcache_read_addr_in;
+    // Address expected for the active atomic read; physical when MMU is enabled.
+    _PORT(uint32_t) dcache_read_expected_addr_in;
     _PORT(uint32_t) dcache_read_data_in;
 #endif
     // Holds the current memory request stable while dcache/L2 cannot accept it.
@@ -101,7 +104,7 @@ private:
 #ifdef ENABLE_RV32IA
     _LAZY_COMB(atomic_read_ready_comb, bool)
         atomic_read_ready_comb = dcache_read_valid_in() &&
-            dcache_read_addr_in() == (uint32_t)atomic_addr_reg;
+            dcache_read_addr_in() == dcache_read_expected_addr_in();
         return atomic_read_ready_comb;
     }
 

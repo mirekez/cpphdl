@@ -5,10 +5,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 include(CTest)
 
+set(TRIBE_RAM_BYTES_CONFIG "458752" CACHE STRING "Tribe RAM size in bytes")
+set(TRIBE_IO_REGION_SIZE_CONFIG "65536" CACHE STRING "Tribe IO region size in bytes")
+
 function(add_tribe_target target_name l2_axi_width output_subdir)
     add_executable(${target_name} main.cpp)
 
-    target_compile_definitions(${target_name} PRIVATE L2_AXI_WIDTH=${l2_axi_width})
+    target_compile_definitions(${target_name} PRIVATE
+        L2_AXI_WIDTH=${l2_axi_width}
+        TRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG}
+        TRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG}
+    )
 
     target_include_directories(${target_name} PRIVATE
         "../include"
@@ -29,7 +36,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.elf ${CMAKE_BINARY_DIR}/${output_subdir}/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.bin ${CMAKE_BINARY_DIR}/${output_subdir}/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.c ${CMAKE_BINARY_DIR}/${output_subdir}/"

@@ -22,6 +22,8 @@ public:
     _PORT(bool)         read_in          = _ASSIGN( false );
     _PORT(DTYPE)        read_data0_out   = _ASSIGN_COMB( data0_out_comb_func() );
     _PORT(DTYPE)        read_data1_out   = _ASSIGN_COMB( data1_out_comb_func() );
+    _PORT(DTYPE)        reset_x10_in     = _ASSIGN( (DTYPE)0 );
+    _PORT(DTYPE)        reset_x11_in     = _ASSIGN( (DTYPE)0 );
 
     bool    debugen_in;
 
@@ -47,6 +49,8 @@ public:
             for (i=0; i < MEM_DEPTH; ++i) {
                 buffer[i] = 0;
             }
+            buffer[10] = reset_x10_in();
+            buffer[11] = reset_x11_in();
         }
 
         if (debugen_in) {

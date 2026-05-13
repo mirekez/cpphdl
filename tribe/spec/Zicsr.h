@@ -33,14 +33,14 @@ struct Zicsr: public PREV_SPEC
             else if (raw == 0x30200073) {
                 state_out = {};
                 state_out.sys_op = Sys::MRET;
-                state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.imm = 0;
+                state_out.br_op = Br::BNONE;
             }
             else if (raw == 0x10200073) {
                 state_out = {};
                 state_out.sys_op = Sys::SRET;
-                state_out.imm = raw;
-                state_out.br_op = Br::JR;
+                state_out.imm = 0;
+                state_out.br_op = Br::BNONE;
             }
             else if (raw == 0x10500073) {
                 state_out = {};

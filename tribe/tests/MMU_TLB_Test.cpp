@@ -82,7 +82,7 @@ static bool build_mmu_tlb_elf()
 
     std::string cmd;
     cmd += shell_quote(gcc);
-    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -march=rv32im_zicsr_zaamo -mabi=ilp32";
     cmd += " -O2 -g -ffreestanding -fno-builtin";
     cmd += " -nostdlib -nostartfiles -Wl,-Ttext=0";
     cmd += " -I " + shell_quote(code_dir);
@@ -119,7 +119,13 @@ class TestMMUTLBDirect : public Module
     uint32_t fill_ppn = 0;
     uint8_t fill_flags = 0;
     bool sfence = false;
+    uint32_t mem_read_data = 0;
+    bool mem_wait = false;
     bool error = false;
+
+    uint32_t root_ppn = 0x100u;
+    uint32_t l0_ppn = 0x101u;
+    uint32_t last_mem_addr = 0;
 
     void check(bool condition, const char* message)
     {
@@ -145,6 +151,8 @@ public:
         mmu.fill_ppn_in = _ASSIGN_REG(fill_ppn);
         mmu.fill_flags_in = _ASSIGN_REG(fill_flags);
         mmu.sfence_in = _ASSIGN_REG(sfence);
+        mmu.mem_read_data_in = _ASSIGN_REG(mem_read_data);
+        mmu.mem_wait_in = _ASSIGN_REG(mem_wait);
         mmu.__inst_name = "mmu";
         mmu._assign();
 #endif
@@ -173,8 +181,11 @@ public:
 
     void cycle(bool reset = false)
     {
+        update_memory_response();
 #ifdef VERILATOR
         mmu.clk = 0;
+        eval(reset);
+        update_memory_response();
         eval(reset);
         mmu.clk = 1;
         eval(reset);
@@ -202,10 +213,92 @@ public:
         mmu.fill_ppn_in = fill_ppn;
         mmu.fill_flags_in = fill_flags;
         mmu.sfence_in = sfence;
+        mmu.mem_read_data_in = mem_read_data;
+        mmu.mem_wait_in = mem_wait;
         mmu.reset = reset;
         mmu.eval();
     }
 #endif
+
+    static uint32_t make_pte(uint32_t ppn, uint32_t flags)
+    {
+        return (ppn << 10) | flags;
+    }
+
+    uint32_t read_mem_addr()
+    {
+#ifdef VERILATOR
+        eval(false);
+        return mmu.mem_addr_out;
+#else
+        return mmu.mem_addr_out();
+#endif
+    }
+
+    bool read_mem_valid()
+    {
+#ifdef VERILATOR
+        eval(false);
+        return mmu.mem_read_out;
+#else
+        return mmu.mem_read_out();
+#endif
+    }
+
+    bool busy()
+    {
+#ifdef VERILATOR
+        eval(false);
+        return mmu.busy_out;
+#else
+        return mmu.busy_out();
+#endif
+    }
+
+    void update_memory_response()
+    {
+        uint32_t addr;
+        uint32_t l1_addr;
+        uint32_t l0_addr;
+        mem_wait = false;
+        mem_read_data = 0;
+        if (!read_mem_valid()) {
+            return;
+        }
+        addr = read_mem_addr();
+        last_mem_addr = addr;
+        l1_addr = (root_ppn << 12) + 0x48u * 4u; // VPN1 for 0x12345678.
+        l0_addr = (l0_ppn << 12) + 0x345u * 4u;  // VPN0 for 0x12345678.
+        if (addr == l1_addr) {
+            mem_read_data = make_pte(l0_ppn, PTE_V);
+        }
+        if (addr == l0_addr) {
+            mem_read_data = make_pte(0x23456u, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+        }
+        if (addr == (root_ppn << 12) + 0x1u * 4u) { // VPN1 for 0x00403004.
+            mem_read_data = make_pte(0x30000u, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+        }
+        if (addr == (root_ppn << 12) + 0x2u * 4u) { // Misaligned superpage.
+            mem_read_data = make_pte(0x30001u, PTE_V | PTE_R | PTE_X | PTE_A);
+        }
+        if (addr == (root_ppn << 12) + 0x3u * 4u) { // Invalid PTE.
+            mem_read_data = 0;
+        }
+        if (addr == (root_ppn << 12) + 0x4u * 4u) { // Read-only page.
+            mem_read_data = make_pte(0x102u, PTE_V);
+        }
+        if (addr == (0x102u << 12) + 0x0u * 4u) {
+            mem_read_data = make_pte(0x34567u, PTE_V | PTE_R | PTE_A);
+        }
+    }
+
+    void wait_idle(int max_cycles, const char* message)
+    {
+        for (int i = 0; i < max_cycles && busy(); ++i) {
+            cycle();
+        }
+        check(!busy(), message);
+    }
 
     bool translated()
     {
@@ -288,6 +381,7 @@ public:
         fill = false;
 
         satp = 0x80000000u;
+        satp |= root_ppn;
         vaddr = 0x12345678u;
         read = true;
         write = false;
@@ -307,8 +401,55 @@ public:
         sfence = false;
         write = false;
         cycle();
-        check(miss(), "sfence.vma should invalidate TLB entries");
-        check(fault(), "TLB miss should fault until a walker refills the entry");
+        check(busy(), "sfence.vma should invalidate TLB entries and start a page-table walk");
+        wait_idle(8, "two-level page-table walk should complete");
+        check(!fault(), "valid walked PTE should not fault");
+        check(hit(), "walked PTE should fill TLB");
+        check(paddr() == 0x23456678u, "walked PTE should translate VPN to PPN");
+
+        vaddr = 0x00403004u;
+        read = true;
+        execute = false;
+        sfence = true;
+        cycle();
+        sfence = false;
+        cycle();
+        wait_idle(8, "superpage page-table walk should complete");
+        check(!fault(), "valid superpage should not fault");
+        check(paddr() == 0x30003004u, "superpage should use VPN0 as physical megapage offset");
+
+        vaddr = 0x00800000u;
+        read = true;
+        sfence = true;
+        cycle();
+        sfence = false;
+        cycle();
+        wait_idle(8, "misaligned superpage walk should complete as fault");
+        check(fault(), "misaligned superpage PPN should fault");
+
+        read = false;
+        cycle();
+        vaddr = 0x00c00000u;
+        read = true;
+        sfence = true;
+        cycle();
+        sfence = false;
+        cycle();
+        wait_idle(8, "invalid PTE walk should complete as fault");
+        check(fault(), "invalid PTE should fault");
+
+        read = false;
+        cycle();
+        vaddr = 0x01000000u;
+        read = false;
+        write = true;
+        sfence = true;
+        cycle();
+        sfence = false;
+        cycle();
+        wait_idle(8, "permission-fault walk should complete");
+        check(fault(), "store to read-only PTE should fault");
+
         std::print(" {}\n", !error ? "PASSED" : "FAILED");
         return !error;
     }
@@ -335,12 +476,12 @@ int main(int argc, char** argv)
 #elif defined(VERILATOR)
     Verilated::commandArgs(argc, argv);
     return TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
-        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false) ? 0 : 1;
+        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false, 0, 0, 1) ? 0 : 1;
 #else
     bool ok = TestMMUTLBDirect().run();
     ok = ok && build_mmu_tlb_elf();
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
-        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false);
+        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false, 0, 0, 1);
 
 #ifndef VERILATOR
     if (ok && !noveril) {

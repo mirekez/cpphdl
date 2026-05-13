@@ -9,6 +9,7 @@ class CSR: public Module
 public:
     _PORT(State) state_in;
     _PORT(State) trap_check_state_in;
+    _PORT(u<2>) reset_priv_in = _ASSIGN((u<2>)3);
     _PORT(bool) interrupt_valid_in;
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
@@ -16,6 +17,8 @@ public:
     _PORT(uint32_t) read_data_out = _ASSIGN_COMB(read_data_comb_func());
     _PORT(uint32_t) trap_vector_out = _ASSIGN_COMB(trap_vector_comb_func());
     _PORT(uint32_t) epc_out = _ASSIGN_COMB(epc_comb_func());
+    _PORT(uint32_t) mepc_out = _ASSIGN_REG(mepc_reg);
+    _PORT(uint32_t) sepc_out = _ASSIGN_REG(sepc_reg);
     _PORT(bool) illegal_trap_out = _ASSIGN_COMB(illegal_trap_comb_func());
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
     _PORT(uint32_t) mie_out = _ASSIGN_REG(mie_reg);
@@ -473,7 +476,7 @@ public:
 #ifdef ENABLE_ISR
             is_interrupt = interrupt_valid_in();
 #endif
-            tval = (!is_interrupt && cause == 2) ? state_in().imm : 0;
+            tval = (!is_interrupt && (cause == 2 || cause == 12 || cause == 13 || cause == 15)) ? state_in().imm : 0;
             to_s = trap_to_supervisor(cause);
 
             if (to_s) {
@@ -524,15 +527,33 @@ public:
         if (reset) {
             mstatus_reg.clr();
             mtvec_reg.clr();
-            medeleg_reg.clr();
-            mideleg_reg.clr();
+            if (reset_priv_in() == PRIV_S) {
+                medeleg_reg._next =
+                    (1u << 0) |  // instruction address misaligned
+                    (1u << 1) |  // instruction access fault
+                    (1u << 3) |  // breakpoint
+                    (1u << 4) |  // load address misaligned
+                    (1u << 5) |  // load access fault
+                    (1u << 6) |  // store address misaligned
+                    (1u << 7) |  // store access fault
+                    (1u << 8) |  // ecall from U-mode
+                    (1u << 12) | // instruction page fault
+                    (1u << 13) | // load page fault
+                    (1u << 15);  // store page fault
+                mideleg_reg._next = (1u << 1) | (1u << 5) | (1u << 9);
+                mcounteren_reg._next = 0xffffffffu;
+            }
+            else {
+                medeleg_reg.clr();
+                mideleg_reg.clr();
+                mcounteren_reg.clr();
+            }
             mie_reg.clr();
             mscratch_reg.clr();
             mepc_reg.clr();
             mcause_reg.clr();
             mtval_reg.clr();
             mip_reg.clr();
-            mcounteren_reg.clr();
             mcountinhibit_reg.clr();
             mscratchcsw_reg.clr();
             mscratchcswl_reg.clr();
@@ -555,7 +576,7 @@ public:
             cycle_reg.clr();
             instret_reg.clr();
 #ifdef ENABLE_TRAPS
-            priv_reg._next = PRIV_M;
+            priv_reg._next = reset_priv_in();
 #endif
         }
     }

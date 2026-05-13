@@ -13,9 +13,17 @@ static constexpr size_t ADDR_BITS = 32;
 
 #ifdef L2_AXI_WIDTH
 static constexpr size_t TRIBE_L2_AXI_WIDTH = L2_AXI_WIDTH;  // 64, 128, 256 has special targets in Makefile
+#if L2_AXI_WIDTH == 64
+#define TRIBE_L2_AXI_WIDTH_IS_64
+#elif L2_AXI_WIDTH == 128
+#define TRIBE_L2_AXI_WIDTH_IS_128
+#else
+#define TRIBE_L2_AXI_WIDTH_IS_256
+#endif
 #undef L2_AXI_WIDTH
 #else
 static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
+#define TRIBE_L2_AXI_WIDTH_IS_256
 #endif
 
 #include "Decode.h"
@@ -36,14 +44,22 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
+#include <vector>
+
 // system configuration for cpp
 static constexpr size_t DEFAULT_RAM_SIZE = 32768;
-static constexpr size_t MAX_RAM_SIZE = 524288;
-static constexpr size_t TRIBE_MEM_REGION0_SIZE = 256 * 1024;
-static constexpr size_t TRIBE_MEM_REGION1_SIZE = 128 * 1024;
-static constexpr size_t TRIBE_MEM_REGION2_SIZE = 64 * 1024;
-static constexpr size_t TRIBE_IO_REGION_SIZE = MAX_RAM_SIZE - TRIBE_MEM_REGION0_SIZE - TRIBE_MEM_REGION1_SIZE - TRIBE_MEM_REGION2_SIZE;
-static constexpr size_t TRIBE_RAM_BYTES = TRIBE_MEM_REGION0_SIZE + TRIBE_MEM_REGION1_SIZE + TRIBE_MEM_REGION2_SIZE;
+#ifndef TRIBE_RAM_BYTES_CONFIG
+#define TRIBE_RAM_BYTES_CONFIG (448 * 1024)
+#endif
+#ifndef TRIBE_IO_REGION_SIZE_CONFIG
+#define TRIBE_IO_REGION_SIZE_CONFIG (64 * 1024)
+#endif
+static constexpr size_t TRIBE_RAM_BYTES = TRIBE_RAM_BYTES_CONFIG;
+static constexpr size_t TRIBE_IO_REGION_SIZE = TRIBE_IO_REGION_SIZE_CONFIG;
+static constexpr size_t MAX_RAM_SIZE = TRIBE_RAM_BYTES + TRIBE_IO_REGION_SIZE;
+static constexpr size_t TRIBE_MEM_REGION0_SIZE = TRIBE_RAM_BYTES / 2;
+static constexpr size_t TRIBE_MEM_REGION1_SIZE = TRIBE_RAM_BYTES / 4;
+static constexpr size_t TRIBE_MEM_REGION2_SIZE = TRIBE_RAM_BYTES - TRIBE_MEM_REGION0_SIZE - TRIBE_MEM_REGION1_SIZE;
 #define L2_MEM_PORTS 4
 
 #define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
@@ -91,7 +107,24 @@ public:
     _PORT(bool)      dmem_read_out;
     _PORT(uint32_t)  dmem_addr_out;
     _PORT(uint32_t)  imem_read_addr_out;
+#ifdef ENABLE_MMU_TLB
+    _PORT(bool)      debug_immu_ptw_read_out;
+    _PORT(uint32_t)  debug_immu_ptw_addr_out;
+    _PORT(bool)      debug_immu_busy_out;
+    _PORT(bool)      debug_immu_fault_out;
+    _PORT(uint32_t)  debug_immu_last_addr_out;
+    _PORT(uint32_t)  debug_immu_last_pte_out;
+    _PORT(bool)      debug_dmmu_ptw_read_out;
+    _PORT(uint32_t)  debug_dmmu_ptw_addr_out;
+    _PORT(bool)      debug_dmmu_busy_out;
+    _PORT(bool)      debug_dmmu_fault_out;
+    _PORT(uint32_t)  debug_mmu_ptw_word_out;
+    _PORT(uint32_t)  debug_pc_out;
+#endif
     _PORT(uint32_t)  reset_pc_in;
+    _PORT(uint32_t)  boot_hartid_in;
+    _PORT(uint32_t)  boot_dtb_addr_in;
+    _PORT(u<2>)      boot_priv_in;
     _PORT(uint32_t)  memory_base_in;
     _PORT(uint32_t)  memory_size_in;
     _PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
@@ -125,6 +158,13 @@ public:
 #ifdef ENABLE_RV32IA
         exe_mem.dcache_read_valid_in = dcache.read_valid_out;
         exe_mem.dcache_read_addr_in = dcache.read_addr_out;
+#ifdef ENABLE_MMU_TLB
+        // AMO read responses are tagged by the physical D-cache address; match
+        // them against the translated MMU address, not the architectural VA.
+        exe_mem.dcache_read_expected_addr_in = dmmu.paddr_out;
+#else
+        exe_mem.dcache_read_expected_addr_in = exe_mem.mem_read_addr_out;
+#endif
         exe_mem.dcache_read_data_in = dcache.read_data_out;
 #endif
         exe_mem.mem_stall_in = dcache.busy_out;
@@ -133,7 +173,12 @@ public:
         exe_mem._assign();
 
         wb_mem.state_in = _ASSIGN_REG(state_reg[1]);
-        wb_mem.alu_result_in = _ASSIGN_REG(alu_result_reg);
+        wb_mem.alu_result_in =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg);
+#else
+            _ASSIGN_REG(alu_result_reg);
+#endif
         wb_mem.split_load_in = exe_mem.split_load_out;
         wb_mem.split_load_low_addr_in = exe_mem.split_load_low_out;
         wb_mem.split_load_high_addr_in = exe_mem.split_load_high_out;
@@ -162,6 +207,7 @@ public:
 #endif
         csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
+        csr.reset_priv_in = boot_priv_in;
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = irq.interrupt_valid_out;
         csr.interrupt_cause_in = irq.interrupt_cause_out;
@@ -195,6 +241,8 @@ public:
         immu.fill_ppn_in = _ASSIGN((uint32_t)0);
         immu.fill_flags_in = _ASSIGN((uint8_t)0);
         immu.sfence_in = _ASSIGN(sfence_vma_comb_func());
+        immu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
+        immu.mem_wait_in = _ASSIGN(!immu_ptw_selected_comb_func() || l2cache.d_wait_out());
         immu.__inst_name = __inst_name + "/immu";
         immu._assign();
 
@@ -215,6 +263,8 @@ public:
         dmmu.fill_ppn_in = _ASSIGN((uint32_t)0);
         dmmu.fill_flags_in = _ASSIGN((uint8_t)0);
         dmmu.sfence_in = _ASSIGN(sfence_vma_comb_func());
+        dmmu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
+        dmmu.mem_wait_in = _ASSIGN(!dmmu_ptw_selected_comb_func() || l2cache.d_wait_out());
         dmmu.__inst_name = __inst_name + "/dmmu";
         dmmu._assign();
 #endif
@@ -222,7 +272,12 @@ public:
         wb.state_in       = _ASSIGN_REG( state_reg[1] );
         wb.mem_data_in    = wb_mem.load_raw_out;
         wb.mem_data_hi_in = _ASSIGN((uint32_t)0);
-        wb.mem_addr_in    = _ASSIGN_REG(alu_result_reg);
+        wb.mem_addr_in    =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg);
+#else
+            _ASSIGN_REG(alu_result_reg);
+#endif
         wb.mem_split_in   = _ASSIGN(false);
         wb.alu_result_in  = _ASSIGN_REG( alu_result_reg );
         wb._assign();  // outputs are ready
@@ -234,12 +289,22 @@ public:
             (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
+        regs.reset_x10_in = boot_hartid_in;
+        regs.reset_x11_in = boot_dtb_addr_in;
         regs.debugen_in = debugen_in;
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = _ASSIGN( exe_mem.mem_read_out() && !dcache.busy_out() );
-        dcache.write_in = _ASSIGN( exe_mem.mem_write_out() && !dcache.busy_out() );
+        dcache.read_in = _ASSIGN( exe_mem.mem_read_out() && !dcache.busy_out()
+#ifdef ENABLE_MMU_TLB
+            && !dmmu.busy_out() && !dmmu.fault_out()
+#endif
+            );
+        dcache.write_in = _ASSIGN( exe_mem.mem_write_out() && !dcache.busy_out()
+#ifdef ENABLE_MMU_TLB
+            && !dmmu.busy_out() && !dmmu.fault_out()
+#endif
+            );
         dcache.addr_in =
 #ifdef ENABLE_MMU_TLB
             dmmu.paddr_out;
@@ -272,7 +337,11 @@ public:
         bp.__inst_name = __inst_name + "/bp";
         bp._assign();
 
-        icache.read_in = _ASSIGN( true );
+        icache.read_in = _ASSIGN( true
+#ifdef ENABLE_MMU_TLB
+            && !immu.busy_out() && !immu.fault_out()
+#endif
+            );
         icache.addr_in =
 #ifdef ENABLE_MMU_TLB
             immu.paddr_out;
@@ -297,9 +366,19 @@ public:
         l2cache.i_addr_in = icache.mem_addr_out;
         l2cache.i_write_data_in = _ASSIGN((uint32_t)0);
         l2cache.i_write_mask_in = _ASSIGN((uint8_t)0);
-        l2cache.d_read_in = dcache.mem_read_out;
+        l2cache.d_read_in = _ASSIGN(dcache.mem_read_out()
+#ifdef ENABLE_MMU_TLB
+            || dmmu_ptw_selected_comb_func() || immu_ptw_selected_comb_func()
+#endif
+            );
         l2cache.d_write_in = dcache.mem_write_out;
-        l2cache.d_addr_in = dcache.mem_addr_out;
+        l2cache.d_addr_in =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN(dcache.mem_read_out() || dcache.mem_write_out() ? (uint32_t)dcache.mem_addr_out() :
+                (dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() : (uint32_t)immu.mem_addr_out()));
+#else
+            dcache.mem_addr_out;
+#endif
         l2cache.d_write_data_in = dcache.mem_write_data_out;
         l2cache.d_write_mask_in = dcache.mem_write_mask_out;
         l2cache.memory_base_in = memory_base_in;
@@ -328,6 +407,20 @@ public:
         dmem_read_out       = dcache.mem_read_out;
         dmem_addr_out       = dcache.mem_addr_out;
         imem_read_addr_out  = icache.mem_addr_out;
+#ifdef ENABLE_MMU_TLB
+        debug_immu_ptw_read_out = immu.mem_read_out;
+        debug_immu_ptw_addr_out = immu.mem_addr_out;
+        debug_immu_busy_out = immu.busy_out;
+        debug_immu_fault_out = immu.fault_out;
+        debug_immu_last_addr_out = immu.debug_last_addr_out;
+        debug_immu_last_pte_out = immu.debug_last_pte_out;
+        debug_dmmu_ptw_read_out = dmmu.mem_read_out;
+        debug_dmmu_ptw_addr_out = dmmu.mem_addr_out;
+        debug_dmmu_busy_out = dmmu.busy_out;
+        debug_dmmu_fault_out = dmmu.fault_out;
+        debug_mmu_ptw_word_out = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
+        debug_pc_out = _ASSIGN_REG(pc);
+#endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
         }
@@ -400,11 +493,43 @@ private:
         return perf_comb;
     }
 
+#ifdef ENABLE_MMU_TLB
+    _LAZY_COMB(dmmu_ptw_selected_comb, bool)
+        dmmu_ptw_selected_comb = dmmu.mem_read_out() && !dcache.mem_read_out() && !dcache.mem_write_out();
+        return dmmu_ptw_selected_comb;
+    }
+
+    _LAZY_COMB(immu_ptw_selected_comb, bool)
+        immu_ptw_selected_comb = immu.mem_read_out() && !dmmu.mem_read_out() &&
+            !dcache.mem_read_out() && !dcache.mem_write_out();
+        return immu_ptw_selected_comb;
+    }
+
+    _LAZY_COMB(mmu_l2_read_word_comb, uint32_t)
+        uint32_t addr;
+        uint32_t lane;
+        addr = dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() : (uint32_t)immu.mem_addr_out();
+#ifdef TRIBE_L2_AXI_WIDTH_IS_64
+        lane = (addr % 8u) / 4u;
+#elif defined(TRIBE_L2_AXI_WIDTH_IS_128)
+        lane = (addr % 16u) / 4u;
+#else
+        lane = (addr % 32u) / 4u;
+#endif
+        mmu_l2_read_word_comb = (uint32_t)l2cache.d_read_data_out().bits(lane * 32 + 31, lane * 32);
+        return mmu_l2_read_word_comb;
+    }
+#endif
+
     _LAZY_COMB(memory_wait_comb, bool)
         memory_wait_comb = dcache.busy_out() ||
             exe_mem.mem_split_busy_out() ||
 #ifdef ENABLE_RV32IA
             exe_mem.atomic_busy_out() ||
+#endif
+#ifdef ENABLE_MMU_TLB
+            immu.busy_out() ||
+            dmmu.busy_out() ||
 #endif
             (dcache.mem_read_out() && l2cache.d_wait_out()) ||
             ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
@@ -414,7 +539,13 @@ private:
     }
 
     _LAZY_COMB(fetch_valid_comb, bool)
-        return fetch_valid_comb = valid && icache.read_valid_out() && icache.read_addr_out() == (uint32_t)pc;
+        return fetch_valid_comb = valid && icache.read_valid_out() &&
+#ifdef ENABLE_MMU_TLB
+            // I-cache stores physical refill addresses; the architectural PC can be virtual.
+            icache.read_addr_out() == (uint32_t)immu.paddr_out();
+#else
+            icache.read_addr_out() == (uint32_t)pc;
+#endif
     }
 
     _LAZY_COMB(decode_fallthrough_comb, uint32_t)
@@ -497,8 +628,41 @@ private:
     }
 
 #ifdef ENABLE_ZICSR
+#ifdef ENABLE_MMU_TLB
+    _LAZY_COMB(dmmu_active_fault_comb, bool)
+        return dmmu_active_fault_comb = dmmu.fault_out() && (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+    }
+#endif
+
     _LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
+#ifdef ENABLE_MMU_TLB
+        if (immu.fault_out()) {
+            csr_state_comb = State{};
+            csr_state_comb.valid = true;
+            csr_state_comb.pc = fetch_addr_comb_func();
+            csr_state_comb.imm = fetch_addr_comb_func();
+            csr_state_comb.sys_op = Sys::TRAP;
+            csr_state_comb.trap_op = Trap::INST_PAGE_FAULT;
+            csr_state_comb.csr_op = Csr::CNONE;
+            csr_state_comb.mem_op = Mem::MNONE;
+            csr_state_comb.wb_op = Wb::WNONE;
+            csr_state_comb.br_op = Br::JR;
+        }
+        if (dmmu_active_fault_comb_func()) {
+            csr_state_comb = State{};
+            csr_state_comb.valid = true;
+            csr_state_comb.pc = state_reg[1].pc;
+            csr_state_comb.imm = exe_mem.mem_read_out() ?
+                (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out();
+            csr_state_comb.sys_op = Sys::TRAP;
+            csr_state_comb.trap_op = exe_mem.mem_write_out() ? Trap::STORE_PAGE_FAULT : Trap::LOAD_PAGE_FAULT;
+            csr_state_comb.csr_op = Csr::CNONE;
+            csr_state_comb.mem_op = Mem::MNONE;
+            csr_state_comb.wb_op = Wb::WNONE;
+            csr_state_comb.br_op = Br::JR;
+        }
+#endif
         if (
 #ifdef ENABLE_ISR
             irq.interrupt_valid_out() ||
@@ -521,7 +685,11 @@ private:
             csr_state_comb.wb_op = Wb::WNONE;
             csr_state_comb.br_op = Br::JR;
         }
-        if (memory_wait_comb_func()) {
+        if (memory_wait_comb_func()
+#ifdef ENABLE_MMU_TLB
+            && !immu.fault_out() && !dmmu_active_fault_comb_func()
+#endif
+            ) {
             csr_state_comb.valid = false;
         }
         return csr_state_comb;
@@ -654,6 +822,41 @@ public:
         }
         output_write_active_reg._next = dmem_addr_out() == 0x11223344 && dmem_write_out();
 
+#if defined(ENABLE_ZICSR) && defined(ENABLE_MMU_TLB)
+        if (!reset && (immu.fault_out() || dmmu_active_fault_comb_func())) {
+            pc._next = csr.trap_vector_out();
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = State{};
+            state_reg._next[1].valid = false;
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            alu_result_reg._next = alu_result_reg;
+            debug_branch_target_reg._next = csr.trap_vector_out();
+            debug_branch_taken_reg._next = true;
+        }
+        else
+#endif
+#ifdef ENABLE_ZICSR
+        if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
+            uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
+            pc._next = epc;
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = State{};
+            state_reg._next[1].valid = false;
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            alu_result_reg._next = alu_result_reg;
+            debug_branch_target_reg._next = epc;
+            debug_branch_taken_reg._next = true;
+        }
+        else
+#endif
         if (memory_wait_comb_func()) {
             pc._next = pc;
             valid._next = valid;
@@ -767,7 +970,7 @@ public:
         Zicsr instr = {{{icache.read_data_out()}}};
         instr.decode(tmp);
 
-        std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
+        std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} sys{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
             (bool)valid, (bool)stall_comb_func(), pc,
             (bool)hazard_stall_comb_func(), (bool)branch_stall_comb_func(),
             (bool)dcache.busy_out(), (bool)icache.busy_out(),
@@ -775,7 +978,7 @@ public:
             (bool)icache.perf_out().hit,
             instr.mnemonic(), (instr.raw&3)==3?instr.raw:(instr.raw|0xFFFF0000),
             (int)tmp.rs1, (int)tmp.rs2, tmp.imm, (int)tmp.rd,
-            (bool)state_reg[0].valid, (uint8_t)state_reg[0].alu_op, (uint8_t)state_reg[0].mem_op, (uint8_t)state_reg[0].br_op, (uint8_t)state_reg[0].wb_op,
+            (bool)state_reg[0].valid, (uint8_t)state_reg[0].alu_op, (uint8_t)state_reg[0].mem_op, (uint8_t)state_reg[0].br_op, (uint8_t)state_reg[0].wb_op, (uint8_t)state_reg[0].sys_op,
             (int)state_reg[0].rs1, (int)state_reg[0].rs2, state_reg[0].rs1_val, state_reg[0].rs2_val, state_reg[0].imm, exe.alu_result_out(), (int)state_reg[0].rd,
             (bool)exe.branch_taken_out(), exe.branch_target_out(),
             (bool)exe_mem.mem_write_out(), (bool)exe_mem.mem_read_out(), exe_mem.mem_write_addr_out(), exe_mem.mem_write_data_out(), exe_mem.mem_write_mask_out(),
@@ -948,6 +1151,9 @@ class TestTribe : public Module
     uint32_t tohost_addr = 0;
     uint32_t tohost_value = 0;
     uint32_t reset_pc = 0;
+    uint32_t boot_hartid = 0;
+    uint32_t boot_dtb_addr = 0;
+    uint32_t boot_priv = 3;
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
     bool tohost_done = false;
@@ -982,7 +1188,7 @@ class TestTribe : public Module
         uint32_t align;
     } __PACKED;
 
-    bool load_elf(FILE* fbin, std::array<uint32_t, MAX_RAM_SIZE/4>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry)
+    bool load_elf(FILE* fbin, std::vector<uint32_t>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry, bool elf_phys_override, uint32_t elf_phys_offset)
     {
         static constexpr uint32_t PT_LOAD = 1;
         Elf32Header ehdr = {};
@@ -994,7 +1200,7 @@ class TestTribe : public Module
             ehdr.ident[4] != 1 || ehdr.ident[5] != 1 || ehdr.phentsize != sizeof(Elf32ProgramHeader)) {
             return false;
         }
-        entry = ehdr.entry;
+        entry = elf_phys_override ? ehdr.entry + elf_phys_offset : ehdr.entry;
 
         for (uint16_t i = 0; i < ehdr.phnum; ++i) {
             Elf32ProgramHeader phdr = {};
@@ -1006,7 +1212,7 @@ class TestTribe : public Module
                 continue;
             }
 
-            const uint32_t phys = phdr.paddr ? phdr.paddr : phdr.vaddr;
+            const uint32_t phys = elf_phys_override ? (phdr.vaddr + elf_phys_offset) : (phdr.paddr ? phdr.paddr : phdr.vaddr);
             if (phys < mem_base || phys - mem_base + phdr.filesz > mem_size_bytes) {
                 std::print("ELF segment outside test RAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, phdr.filesz);
                 return false;
@@ -1026,6 +1232,41 @@ class TestTribe : public Module
             read_bytes += phdr.filesz;
         }
         return read_bytes != 0;
+    }
+
+    bool load_blob(const std::string& filename, std::vector<uint32_t>& ram, uint32_t addr, uint32_t mem_base, uint32_t mem_size_bytes, size_t& read_bytes)
+    {
+        FILE* f = fopen(filename.c_str(), "rb");
+        if (!f) {
+            std::print("can't open blob '{}'\n", filename);
+            return false;
+        }
+        if (addr < mem_base) {
+            std::print("blob outside test RAM window: addr={:08x}, mem_base={:08x}\n", addr, mem_base);
+            fclose(f);
+            return false;
+        }
+        uint32_t offset = addr - mem_base;
+        if (offset >= mem_size_bytes) {
+            std::print("blob outside test RAM window: addr={:08x}, mem_base={:08x}, mem_size={}\n", addr, mem_base, mem_size_bytes);
+            fclose(f);
+            return false;
+        }
+        uint32_t byte = offset;
+        int c;
+        while ((c = fgetc(f)) != EOF) {
+            if (byte >= mem_size_bytes) {
+                std::print("blob '{}' does not fit RAM window\n", filename);
+                fclose(f);
+                return false;
+            }
+            const uint32_t shift = (byte & 3u) * 8u;
+            ram[byte / 4] = (ram[byte / 4] & ~(0xffu << shift)) | (uint32_t(uint8_t(c)) << shift);
+            ++byte;
+            ++read_bytes;
+        }
+        fclose(f);
+        return true;
     }
 
 //    size_t i;
@@ -1049,6 +1290,9 @@ public:
 	#ifndef VERILATOR
         tribe.debugen_in = debugen_in;
         tribe.reset_pc_in = _ASSIGN(reset_pc);
+        tribe.boot_hartid_in = _ASSIGN(boot_hartid);
+        tribe.boot_dtb_addr_in = _ASSIGN(boot_dtb_addr);
+        tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
         tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
@@ -1127,6 +1371,9 @@ public:
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
+        tribe.boot_hartid_in = boot_hartid;
+        tribe.boot_dtb_addr_in = boot_dtb_addr;
+        tribe.boot_priv_in = boot_priv;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
@@ -1203,6 +1450,9 @@ public:
 //        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
         tribe.debugen_in    = debugen_in;
         tribe.reset_pc_in = reset_pc;
+        tribe.boot_hartid_in = boot_hartid;
+        tribe.boot_dtb_addr_in = boot_dtb_addr;
+        tribe.boot_priv_in = boot_priv;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
@@ -1366,7 +1616,7 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "")
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1384,6 +1634,9 @@ public:
         tohost_done = false;
         start_mem_addr = mem_base;
         reset_pc = mem_base;
+        boot_hartid = boot_hartid_arg;
+        boot_dtb_addr = boot_dtb_addr_arg;
+        boot_priv = boot_priv_arg;
         ram_size = ram_words;
         if (ram_size == 0 || ram_size > TRIBE_RAM_BYTES/4) {
             std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, TRIBE_RAM_BYTES/4);
@@ -1391,7 +1644,7 @@ public:
         }
 
         /////////////// read program to memory
-        std::array<uint32_t, MAX_RAM_SIZE/4> ram = {};
+        std::vector<uint32_t> ram(MAX_RAM_SIZE / 4);
         FILE* fbin = fopen(filename.c_str(), "r");
         if (!fbin) {
             std::print("can't open file '{}'\n", filename);
@@ -1399,7 +1652,7 @@ public:
         }
         size_t read_bytes = 0;
         uint32_t elf_entry = 0;
-        if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry)) {
+        if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry, elf_phys_override, elf_phys_offset)) {
             reset_pc = elf_entry;
             std::print("Reading ELF program into memory (size: {})\n", read_bytes);
         }
@@ -1407,6 +1660,19 @@ public:
             fseek(fbin, start_offset, SEEK_SET);
             read_bytes = fread(ram.data(), 1, 4 * ram_size, fbin);
             std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
+        }
+        if (!dtb_file.empty()) {
+            if (!boot_dtb_addr) {
+                std::print("--dtb requires --boot-dtb-addr\n");
+                fclose(fbin);
+                return false;
+            }
+            size_t dtb_bytes = 0;
+            if (!load_blob(dtb_file, ram, boot_dtb_addr, start_mem_addr, ram_size * 4, dtb_bytes)) {
+                fclose(fbin);
+                return false;
+            }
+            std::print("Reading DTB into memory (size: {}, addr: {:08x})\n", dtb_bytes, boot_dtb_addr);
         }
 
         const size_t active_lines = (ram_size * 4 + (TRIBE_L2_AXI_WIDTH/8) - 1) / (TRIBE_L2_AXI_WIDTH/8);
@@ -1442,6 +1708,14 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
+        uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
+        const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
+        uint32_t trace_addr = trace_addr_env ? std::stoul(trace_addr_env, nullptr, 0) : 0;
+        const char* debug_start_env = std::getenv("TRIBE_DEBUG_START");
+        uint32_t debug_start = debug_start_env ? std::stoul(debug_start_env, nullptr, 0) : 0;
+        const bool trace_mmu = std::getenv("TRIBE_TRACE_MMU") != nullptr;
+        const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
         std::string expected_output;
         std::string captured_output;
         if (!tohost_addr) {
@@ -1474,6 +1748,12 @@ public:
             _strobe();
             ++sys_clock;
             perf_sample();
+            if (debug_start && perf_clocks >= debug_start) {
+                debugen_in = true;
+#ifndef VERILATOR
+                tribe.debugen_in = true;
+#endif
+            }
             _work(0);
             if (uart.uart_valid_out()) {
                 FILE* uart_out = fopen("out.txt", "ab");
@@ -1490,6 +1770,73 @@ public:
                     }
                 }
             }
+            if (trace_period && (perf_clocks % trace_period) == 0) {
+                std::print("trace cycle={} imem={:08x} dmem={:08x} rd={} wr={} data={:08x}\n",
+                    perf_clocks,
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    (bool)PORT_VALUE(tribe.dmem_read_out),
+                    (bool)PORT_VALUE(tribe.dmem_write_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out));
+            }
+            if (trace_addr && (uint32_t)PORT_VALUE(tribe.dmem_addr_out) == trace_addr &&
+                ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
+                std::print("trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    (bool)PORT_VALUE(tribe.dmem_read_out),
+                    (bool)PORT_VALUE(tribe.dmem_write_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
+            }
+            if (trace_io &&
+                (uint32_t)PORT_VALUE(tribe.dmem_addr_out) >= start_mem_addr + TRIBE_RAM_BYTES &&
+                (uint32_t)PORT_VALUE(tribe.dmem_addr_out) < start_mem_addr + MAX_RAM_SIZE &&
+                ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
+                std::print("trace-io cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    (bool)PORT_VALUE(tribe.dmem_read_out),
+                    (bool)PORT_VALUE(tribe.dmem_write_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
+            }
+#ifdef ENABLE_MMU_TLB
+            if (trace_mmu && (PORT_VALUE(tribe.debug_immu_ptw_read_out) || PORT_VALUE(tribe.debug_dmmu_ptw_read_out) ||
+                              PORT_VALUE(tribe.debug_immu_busy_out) || PORT_VALUE(tribe.debug_immu_fault_out) ||
+                              PORT_VALUE(tribe.debug_dmmu_busy_out) || PORT_VALUE(tribe.debug_dmmu_fault_out))) {
+                std::print("mmu cycle={} pc={:08x} imem={:08x} dmem={:08x} d_rd={} d_wr={} i_ptw={} i_addr={:08x} i_busy={} i_fault={} i_last_addr={:08x} i_last_pte={:08x} d_ptw={} d_addr={:08x} word={:08x} d_busy={} d_fault={}\n",
+                    perf_clocks,
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    (bool)PORT_VALUE(tribe.dmem_read_out),
+                    (bool)PORT_VALUE(tribe.dmem_write_out),
+                    (bool)PORT_VALUE(tribe.debug_immu_ptw_read_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_immu_ptw_addr_out),
+                    (bool)PORT_VALUE(tribe.debug_immu_busy_out),
+                    (bool)PORT_VALUE(tribe.debug_immu_fault_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_immu_last_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_immu_last_pte_out),
+                    (bool)PORT_VALUE(tribe.debug_dmmu_ptw_read_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dmmu_ptw_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_mmu_ptw_word_out),
+                    (bool)PORT_VALUE(tribe.debug_dmmu_busy_out),
+                    (bool)PORT_VALUE(tribe.debug_dmmu_fault_out));
+            }
+#endif
             if (!tohost_addr && (perf_clocks & 0xffu) == 0 && output_file_reached_expected()) {
                 break;
             }
@@ -1570,6 +1917,12 @@ int main (int argc, char** argv)
     uint32_t tohost = 0;
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
+    uint32_t boot_hartid = 0;
+    uint32_t boot_dtb_addr = 0;
+    uint32_t boot_priv = 3;
+    bool elf_phys_override = false;
+    uint32_t elf_phys_offset = 0;
+    std::string dtb_file;
     int only = -1;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
@@ -1617,6 +1970,45 @@ int main (int argc, char** argv)
             ram_size = std::stoul(argv[++i], nullptr, 0);
             continue;
         }
+        if (strcmp(argv[i], "--boot-hartid") == 0 && i + 1 < argc) {
+            boot_hartid = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--boot-dtb-addr") == 0 && i + 1 < argc) {
+            boot_dtb_addr = std::stoul(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--boot-priv") == 0 && i + 1 < argc) {
+            std::string value = argv[++i];
+            if (value == "m" || value == "M") {
+                boot_priv = 3;
+            }
+            else if (value == "s" || value == "S") {
+                boot_priv = 1;
+            }
+            else if (value == "u" || value == "U") {
+                boot_priv = 0;
+            }
+            else {
+                boot_priv = std::stoul(value, nullptr, 0);
+            }
+            continue;
+        }
+        if (strcmp(argv[i], "--dtb") == 0 && i + 1 < argc) {
+            dtb_file = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--elf-phys-offset") == 0 && i + 1 < argc) {
+            elf_phys_offset = std::stoul(argv[++i], nullptr, 0);
+            elf_phys_override = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--elf-phys-base") == 0 && i + 1 < argc) {
+            uint32_t phys_base = std::stoul(argv[++i], nullptr, 0);
+            elf_phys_offset = phys_base - 0xc0000000u;
+            elf_phys_override = true;
+            continue;
+        }
         if (argv[i][0] != '-') {
             only = atoi(argv[argc-1]);
         }
@@ -1627,6 +2019,9 @@ int main (int argc, char** argv)
     }
     if (log_arg) {
         expected_log = absolute_from(original_cwd, expected_log).string();
+    }
+    if (!dtb_file.empty()) {
+        dtb_file = absolute_from(original_cwd, dtb_file).string();
     }
     use_executable_workdir_if_needed(argv[0]);
 
@@ -1687,7 +2082,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file))
     );
 }
 
