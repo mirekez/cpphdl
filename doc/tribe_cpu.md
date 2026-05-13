@@ -62,11 +62,11 @@ Top-level `Tribe` ports:
 | `boot_priv_in` | `u<2>` | Initial privilege mode when CSR support is enabled. |
 | `memory_base_in` | `uint32_t` | Physical base address of the attached memory map. |
 | `memory_size_in` | `uint32_t` | Total byte size of RAM plus IO region visible to L2. |
-| `mem_region_size_in[4]` | `uint32_t[L2_MEM_PORTS]` | Cumulative sizes of the four L2 memory/device regions. |
+| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Cumulative sizes of the four L2 memory/device regions. |
 | `clint_msip_in` | `bool` | CLINT machine software interrupt pending input, when interrupts are enabled. |
 | `clint_mtip_in` | `bool` | CLINT machine timer interrupt pending input, when interrupts are enabled. |
-| `axi_in[4]` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | External coherent AXI master access into L2. Used by DMA-style devices. |
-| `axi_out[4]` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | L2 master ports toward RAM and device regions. |
+| `axi_in` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | External coherent AXI master access into L2. Used by DMA-style devices. |
+| `axi_out` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | L2 master ports toward RAM and device regions. |
 | `perf_out` | `TribePerf` | Per-cycle performance/stall/cache debug snapshot. |
 | `debugen_in` | `bool` | C++ simulation debug print enable flag. |
 
@@ -235,10 +235,10 @@ Ports:
 | `d_wait_out` | `bool` | Data-side wait. |
 | `memory_base_in` | `uint32_t` | Base physical address of the memory map. |
 | `memory_size_in` | `uint32_t` | Total visible bytes across all regions. |
-| `mem_region_size_in[MEM_PORTS]` | `uint32_t[MEM_PORTS]` | Per-region byte sizes. Regions are contiguous, not interleaved. |
-| `mem_region_uncached_in[MEM_PORTS]` | `bool[MEM_PORTS]` | Per-region bypass flag; device/MMIO regions are uncached. |
-| `axi_in[MEM_PORTS]` | `Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH>[MEM_PORTS]` | Coherent slave ports for external AXI masters such as DMA. |
-| `axi_out[MEM_PORTS]` | `Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH>[MEM_PORTS]` | Master ports to RAM/device regions. |
+| `mem_region_size_in` | `uint32_t[MEM_PORTS]` | Per-region byte sizes. Regions are contiguous, not interleaved. |
+| `mem_region_uncached_in` | `bool[MEM_PORTS]` | Per-region bypass flag; device/MMIO regions are uncached. |
+| `axi_in` | `Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH>[MEM_PORTS]` | Coherent slave ports for external AXI masters such as DMA. |
+| `axi_out` | `Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH>[MEM_PORTS]` | Master ports to RAM/device regions. |
 
 `L2Cache` is a 4-way set-associative shared cache with 32-byte lines and a configurable memory beat width. It arbitrates coherent external AXI slave requests, data-cache requests, and instruction-cache requests onto one L2 tag/data RAM. External AXI masters can read cached data written by the CPU, and the CPU can read data written through an external AXI slave port.
 
