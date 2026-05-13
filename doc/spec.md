@@ -159,6 +159,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 ## Who is CppHDL for
 
+* IC development AI Agent's shepherds (agent does 100 times more iterations per day and understands C++ language better)
 * Digital IC development teams (ASIC, IP, libraries, FPGA) - for faster development and testing of complex digital designs, free of charge
 * Digital IC developers - to use modern C++ environments and smart IDEs, powerful C++ debug tools, static analysis, and linting
 * Software developers who want to deliver hardware and use a powerful modern language with OOP, templates, abstraction, recursion, etc.
