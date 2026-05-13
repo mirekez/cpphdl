@@ -29,6 +29,8 @@ public:
     _PORT(bool)     execute_in;
     _PORT(uint32_t) satp_in;
     _PORT(u<2>)     priv_in;
+    _PORT(bool)     sum_in = _ASSIGN(false);
+    _PORT(bool)     mxr_in = _ASSIGN(false);
     _PORT(uint32_t) direct_base_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t) direct_size_in = _ASSIGN((uint32_t)0);
 
@@ -66,6 +68,8 @@ private:
     reg<u1> req_read_reg;
     reg<u1> req_write_reg;
     reg<u1> req_execute_reg;
+    reg<u1> req_sum_reg;
+    reg<u1> req_mxr_reg;
     reg<u32> req_satp_reg;
     reg<u<2>> req_priv_reg;
     reg<u32> l1_pte_reg;
@@ -169,17 +173,17 @@ private:
         return (pte & (PTE_R | PTE_X)) != 0;
     }
 
-    bool pte_permission_fault(uint32_t pte, bool read, bool write, bool execute, uint32_t priv)
+    bool pte_permission_fault(uint32_t pte, bool read, bool write, bool execute, uint32_t priv, bool sum, bool mxr)
     {
         bool user_page;
         user_page = (pte & PTE_U) != 0;
         if ((pte & PTE_A) == 0) { return true; }
         if (write && (pte & PTE_D) == 0) { return true; }
-        if (read && (pte & PTE_R) == 0) { return true; }
+        if (read && (pte & PTE_R) == 0 && !(mxr && (pte & PTE_X) != 0)) { return true; }
         if (write && (pte & PTE_W) == 0) { return true; }
         if (execute && (pte & PTE_X) == 0) { return true; }
         if (priv == 0 && !user_page) { return true; }
-        if (priv == 1 && user_page) { return true; }
+        if (priv == 1 && user_page && (execute || !sum)) { return true; }
         return false;
     }
 
@@ -189,7 +193,7 @@ private:
         permission_fault_comb = false;
         flags = entry_flags_comb_func();
         if (translation_enabled_comb_func() && hit_comb_func()) {
-            permission_fault_comb = pte_permission_fault(flags, read_in(), write_in(), execute_in(), priv_in());
+            permission_fault_comb = pte_permission_fault(flags, read_in(), write_in(), execute_in(), priv_in(), sum_in(), mxr_in());
         }
         return permission_fault_comb;
     }
@@ -275,7 +279,7 @@ private:
         }
         if (pte_leaf(pte)) {
             if ((level1 && ((pte >> 10) & 0x3ffu) != 0) ||
-                pte_permission_fault(pte, req_read_reg, req_write_reg, req_execute_reg, req_priv_reg)) {
+                pte_permission_fault(pte, req_read_reg, req_write_reg, req_execute_reg, req_priv_reg, req_sum_reg, req_mxr_reg)) {
                 fault_reg._next = true;
                 state_reg._next = ST_FAULT;
                 return;
@@ -322,6 +326,8 @@ public:
                 req_read_reg._next = read_in();
                 req_write_reg._next = write_in();
                 req_execute_reg._next = execute_in();
+                req_sum_reg._next = sum_in();
+                req_mxr_reg._next = mxr_in();
                 req_satp_reg._next = satp_in();
                 req_priv_reg._next = priv_in();
                 fault_reg.clr();
@@ -361,6 +367,8 @@ public:
             req_read_reg.clr();
             req_write_reg.clr();
             req_execute_reg.clr();
+            req_sum_reg.clr();
+            req_mxr_reg.clr();
             req_satp_reg.clr();
             req_priv_reg.clr();
             l1_pte_reg.clr();
@@ -383,6 +391,8 @@ public:
         req_read_reg.strobe(checkpoint_fd);
         req_write_reg.strobe(checkpoint_fd);
         req_execute_reg.strobe(checkpoint_fd);
+        req_sum_reg.strobe(checkpoint_fd);
+        req_mxr_reg.strobe(checkpoint_fd);
         req_satp_reg.strobe(checkpoint_fd);
         req_priv_reg.strobe(checkpoint_fd);
         l1_pte_reg.strobe(checkpoint_fd);

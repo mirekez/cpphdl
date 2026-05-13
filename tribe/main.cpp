@@ -245,9 +245,13 @@ public:
 #ifdef ENABLE_ZICSR
         immu.satp_in = csr.satp_out;
         immu.priv_in = csr.priv_out;
+        immu.sum_in = _ASSIGN(false);
+        immu.mxr_in = _ASSIGN(false);
 #else
         immu.satp_in = _ASSIGN((uint32_t)0);
         immu.priv_in = _ASSIGN((u<2>)3);
+        immu.sum_in = _ASSIGN(false);
+        immu.mxr_in = _ASSIGN(false);
 #endif
         // Instruction fetches are fully translated; only data/MMIO uses the direct window.
         immu.direct_base_in = _ASSIGN((uint32_t)0);
@@ -270,9 +274,13 @@ public:
 #ifdef ENABLE_ZICSR
         dmmu.satp_in = csr.satp_out;
         dmmu.priv_in = csr.priv_out;
+        dmmu.sum_in = _ASSIGN(((uint32_t)csr.mstatus_out() & (1u << 18)) != 0);
+        dmmu.mxr_in = _ASSIGN(((uint32_t)csr.mstatus_out() & (1u << 19)) != 0);
 #else
         dmmu.satp_in = _ASSIGN((uint32_t)0);
         dmmu.priv_in = _ASSIGN((u<2>)3);
+        dmmu.sum_in = _ASSIGN(false);
+        dmmu.mxr_in = _ASSIGN(false);
 #endif
         // Data MMU bypasses translation for the IO region so MMIO stays physical under Linux.
         dmmu.direct_base_in = _ASSIGN(memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
