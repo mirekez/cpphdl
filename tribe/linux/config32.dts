@@ -10,7 +10,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,1000000n8 earlycon=uart8250,mmio,0x82000000,1000000n8 loglevel=8 ignore_loglevel initcall_debug debug";
+		bootargs = "console=ttyS0,1000000 earlycon debug loglevel=8 ignore_loglevel initcall_debug";
 		stdout-path = "/soc/serial@82000000:1000000n8";
 	};
 

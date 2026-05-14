@@ -17,6 +17,7 @@ DTB_WITH_INITRD="${DTB_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dtb}"
 DTS_WITH_INITRD="${DTS_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dts}"
 TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
 TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-1048576}"
+TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-0}"
 
 find_objcopy()
 {
@@ -188,6 +189,9 @@ fi
 if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--append-output)
 fi
+if [[ "${TRIBE_LINUX_EARLYCON_MAPBASE}" == "1" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--linux-earlycon-mapbase)
+fi
 
 cd "${ROOT_DIR}"
 "${TRIBE_BIN}" \
@@ -202,7 +206,6 @@ cd "${ROOT_DIR}"
     --boot-priv s \
     --initramfs "${INITRAMFS}" \
     --initramfs-addr "${INITRAMFS_ADDR}" \
-    --linux-earlycon-mapbase \
     --tohost 1 \
     --cycles "${TRIBE_LINUX_CYCLES:-20000}" \
     "${TRIBE_CHECKPOINT_ARGS[@]}"
