@@ -61,6 +61,7 @@ private:
     reg<array<u32, ENTRIES>> ppn_reg;
     reg<array<u8, ENTRIES>> flags_reg;
     reg<array<u1, ENTRIES>> level_reg;
+    reg<array<u32, ENTRIES>> satp_tag_reg;
     reg<u<clog2(ENTRIES)>> victim_reg;
 
     reg<u<2>> state_reg;
@@ -125,11 +126,12 @@ private:
     }
 
     // TLB match index, accepting either exact level-0 entries or level-1 superpages.
+    // Sv32 entries are tagged by satp so address-space switches cannot reuse stale translations.
     _LAZY_COMB(hit_index_comb, u<clog2(ENTRIES)>)
         size_t i;
         hit_index_comb = 0;
         for (i = 0; i < ENTRIES; ++i) {
-            if (valid_reg[i] &&
+            if (valid_reg[i] && (uint32_t)satp_tag_reg[i] == satp_in() &&
                 (((bool)level_reg[i] && ((uint32_t)vpn_reg[i] >> 10) == vpn1_comb_func()) ||
                  (!(bool)level_reg[i] && (uint32_t)vpn_reg[i] == vpn_comb_func()))) {
                 hit_index_comb = (u<clog2(ENTRIES)>)i;
@@ -147,7 +149,7 @@ private:
         }
         else {
             for (i = 0; i < ENTRIES; ++i) {
-                if (valid_reg[i] &&
+                if (valid_reg[i] && (uint32_t)satp_tag_reg[i] == satp_in() &&
                     (((bool)level_reg[i] && ((uint32_t)vpn_reg[i] >> 10) == vpn1_comb_func()) ||
                      (!(bool)level_reg[i] && (uint32_t)vpn_reg[i] == vpn_comb_func()))) {
                     hit_comb = true;
@@ -206,8 +208,11 @@ private:
     }
 
     // Visible page fault from either a walker failure or cached PTE permission failure.
+    // A latched walker fault belongs only to the original request; after a trap redirect
+    // the stale fault must not be re-reported for the trap-vector fetch.
     _LAZY_COMB(fault_comb, bool)
-        fault_comb = translation_enabled_comb_func() && (fault_reg || permission_fault_comb_func());
+        fault_comb = translation_enabled_comb_func() &&
+            ((fault_reg && (uint32_t)req_vaddr_reg == vaddr_in()) || permission_fault_comb_func());
         return fault_comb;
     }
 
@@ -260,11 +265,16 @@ private:
 
     void fill_entry(uint32_t vpn, uint32_t ppn, uint32_t flags, bool level)
     {
+        if (std::getenv("TRIBE_TRACE_MMU_FILL") != nullptr) {
+            std::print("trace-mmu-fill {} vpn={:05x} ppn={:05x} flags={:02x} satp={:08x}\n",
+                level ? "l1" : "l0", vpn, ppn, flags & 0xffu, (uint32_t)req_satp_reg);
+        }
         valid_reg._next[victim_reg] = true;
         vpn_reg._next[victim_reg] = vpn;
         ppn_reg._next[victim_reg] = ppn;
         flags_reg._next[victim_reg] = flags;
         level_reg._next[victim_reg] = level;
+        satp_tag_reg._next[victim_reg] = req_satp_reg;
         victim_reg._next = victim_reg + 1;
     }
 
@@ -316,6 +326,7 @@ public:
             ppn_reg._next[fill_index_in()] = fill_ppn_in();
             flags_reg._next[fill_index_in()] = fill_flags_in();
             level_reg._next[fill_index_in()] = false;
+            satp_tag_reg._next[fill_index_in()] = satp_in();
         }
         if (state_reg == ST_IDLE) {
             if (!miss_comb_func()) {
@@ -361,6 +372,7 @@ public:
             ppn_reg.clr();
             flags_reg.clr();
             level_reg.clr();
+            satp_tag_reg.clr();
             victim_reg.clr();
             state_reg.clr();
             req_vaddr_reg.clr();
@@ -385,6 +397,7 @@ public:
         ppn_reg.strobe(checkpoint_fd);
         flags_reg.strobe(checkpoint_fd);
         level_reg.strobe(checkpoint_fd);
+        satp_tag_reg.strobe(checkpoint_fd);
         victim_reg.strobe(checkpoint_fd);
         state_reg.strobe(checkpoint_fd);
         req_vaddr_reg.strobe(checkpoint_fd);

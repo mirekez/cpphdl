@@ -35,11 +35,26 @@ private:
     memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
 
     _LAZY_COMB(data0_out_comb, DTYPE)
-        return data0_out_comb = (DTYPE) buffer[read_addr0_in()];
+        // Register files are normally write-first for same-cycle WB/decode.
+        // Without this bypass a dependent instruction decoded while WB commits
+        // can see the previous architectural value and lose high address bits.
+        if (write_in() && write_addr_in() == read_addr0_in()) {
+            data0_out_comb = write_data_in();
+        }
+        else {
+            data0_out_comb = (DTYPE) buffer[read_addr0_in()];
+        }
+        return data0_out_comb;
     }
 
     _LAZY_COMB(data1_out_comb, DTYPE)
-        return data1_out_comb = (DTYPE) buffer[read_addr1_in()];
+        if (write_in() && write_addr_in() == read_addr1_in()) {
+            data1_out_comb = write_data_in();
+        }
+        else {
+            data1_out_comb = (DTYPE) buffer[read_addr1_in()];
+        }
+        return data1_out_comb;
     }
 
     _LAZY_COMB(x10_comb, DTYPE)

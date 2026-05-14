@@ -83,7 +83,7 @@ static bool build_mmu_tlb_elf()
     std::string cmd;
     cmd += shell_quote(gcc);
     cmd += " -march=rv32im_zicsr_zaamo -mabi=ilp32";
-    cmd += " -O2 -g -ffreestanding -fno-builtin";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
     cmd += " -nostdlib -nostartfiles -Wl,-Ttext=0";
     cmd += " -I " + shell_quote(code_dir);
     cmd += " " + shell_quote(code_dir / "mmu_tlb.c");
@@ -363,6 +363,8 @@ public:
             cycle(true);
         }
 
+        // Scenario: bare mode must pass addresses through without touching the
+        // TLB walker.
         vaddr = 0x12345678u;
         read = true;
         satp = 0;
@@ -372,6 +374,10 @@ public:
         check(paddr() == vaddr, "bare mode should pass address through");
         check(!fault(), "bare mode should not fault");
 
+        // Scenario: software-filled TLB entries must be tagged by satp and
+        // serve reads/stores until sfence.vma invalidates them.
+        satp = 0x80000000u;
+        satp |= root_ppn;
         fill = true;
         fill_index = 0;
         fill_vpn = 0x12345u;
@@ -380,8 +386,6 @@ public:
         cycle();
         fill = false;
 
-        satp = 0x80000000u;
-        satp |= root_ppn;
         vaddr = 0x12345678u;
         read = true;
         write = false;
@@ -396,6 +400,8 @@ public:
         cycle();
         check(!fault(), "dirty writable TLB entry should allow stores");
 
+        // Scenario: sfence.vma invalidates the TLB so the hardware walker
+        // refills from the two-level page table and preserves the translation.
         sfence = true;
         cycle();
         sfence = false;
@@ -407,6 +413,8 @@ public:
         check(hit(), "walked PTE should fill TLB");
         check(paddr() == 0x23456678u, "walked PTE should translate VPN to PPN");
 
+        // Scenario: a valid level-1 superpage must combine the PPN megapage
+        // with the virtual low-page offset.
         vaddr = 0x00403004u;
         read = true;
         execute = false;
@@ -418,6 +426,7 @@ public:
         check(!fault(), "valid superpage should not fault");
         check(paddr() == 0x30003004u, "superpage should use VPN0 as physical megapage offset");
 
+        // Scenario: a misaligned superpage is a page fault, not a translation.
         vaddr = 0x00800000u;
         read = true;
         sfence = true;
@@ -429,6 +438,7 @@ public:
 
         read = false;
         cycle();
+        // Scenario: invalid PTEs terminate the walk with a fault.
         vaddr = 0x00c00000u;
         read = true;
         sfence = true;
@@ -440,6 +450,8 @@ public:
 
         read = false;
         cycle();
+        // Scenario: permission checks use the final leaf PTE, so stores to a
+        // read-only mapping fault even though the walk itself succeeds.
         vaddr = 0x01000000u;
         read = false;
         write = true;
@@ -480,6 +492,8 @@ int main(int argc, char** argv)
 #else
     bool ok = TestMMUTLBDirect().run();
     ok = ok && build_mmu_tlb_elf();
+    // Scenario: the ELF first exercises direct Sv32 translation, then a lazy
+    // page-fault handler installs a missing PTE and returns to retry the load.
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
         0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false, 0, 0, 1);
 

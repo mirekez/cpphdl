@@ -465,13 +465,21 @@ public:
         uint32_t tval;
         bool is_interrupt;
         bool to_s;
+        bool trace_csr_events;
         inhibit_cycle = mcountinhibit_reg & 1;
         inhibit_instret = (mcountinhibit_reg >> 2) & 1;
+        trace_csr_events = std::getenv("TRIBE_TRACE_CSR_EVENTS") != nullptr;
 
         cycle_reg._next = inhibit_cycle ? cycle_reg : uint64_t(cycle_reg) + 1;
         instret_reg._next = (inhibit_instret || !state_in().valid) ? instret_reg : uint64_t(instret_reg) + 1;
 
         if (csr_writes()) {
+            if (trace_csr_events &&
+                (state_in().csr_addr == 0x100 || state_in().csr_addr == 0x141 || state_in().csr_addr == 0x180)) {
+                std::print("trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
+                    state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
+                    csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
+            }
             csr_write(state_in().csr_addr, csr_write_value(read_data_comb_func()));
         }
 
@@ -486,6 +494,10 @@ public:
             to_s = trap_to_supervisor(cause);
 
             if (to_s) {
+                if (trace_csr_events) {
+                    std::print("trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x}\n",
+                        state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg);
+                }
                 sepc_reg._next = state_in().pc & ~1u;
                 scause_reg._next = is_interrupt ? (cause | 0x80000000u) : cause;
                 stval_reg._next = tval;
@@ -520,6 +532,10 @@ public:
             uint32_t sie_restore;
             spp = (mstatus_reg & MSTATUS_SPP) ? PRIV_S : PRIV_U;
             sie_restore = (mstatus_reg & MSTATUS_SPIE) ? MSTATUS_SIE : 0;
+            if (trace_csr_events) {
+                std::print("trace-sret pc={:08x} sepc={:08x} mstatus={:08x} next_priv={}\n",
+                    state_in().pc, (uint32_t)sepc_reg, (uint32_t)mstatus_reg, spp);
+            }
             priv_reg._next = spp;
             mstatus_reg._next = ((mstatus_reg & ~MSTATUS_SIE) | sie_restore | MSTATUS_SPIE) & ~MSTATUS_SPP;
         }

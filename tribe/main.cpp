@@ -112,8 +112,17 @@ public:
     _PORT(uint32_t)  debug_immu_ptw_addr_out;
     _PORT(bool)      debug_immu_busy_out;
     _PORT(bool)      debug_immu_fault_out;
+    _PORT(uint32_t)  debug_immu_paddr_out;
     _PORT(uint32_t)  debug_immu_last_addr_out;
     _PORT(uint32_t)  debug_immu_last_pte_out;
+    _PORT(bool)      debug_icache_read_valid_out;
+    _PORT(uint32_t)  debug_icache_read_addr_out;
+    _PORT(bool)      debug_fetch_valid_out;
+    _PORT(bool)      debug_memory_wait_out;
+    _PORT(bool)      debug_wb_load_ready_out;
+    _PORT(bool)      debug_wb_mem_wait_out;
+    _PORT(bool)      debug_icache_read_in_out;
+    _PORT(bool)      debug_icache_stall_in_out;
     _PORT(bool)      debug_dmmu_ptw_read_out;
     _PORT(uint32_t)  debug_dmmu_ptw_addr_out;
     _PORT(bool)      debug_dmmu_busy_out;
@@ -268,8 +277,11 @@ public:
         immu._assign();
 
         dmmu.vaddr_in = _ASSIGN(exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out());
-        dmmu.read_in = exe_mem.mem_read_out;
-        dmmu.write_in = exe_mem.mem_write_out;
+        // ExecuteMem registers can still hold a previous request for one cycle
+        // after a trap or SRET flush; only a valid memory-stage instruction may
+        // drive translation.
+        dmmu.read_in = _ASSIGN(state_reg[1].valid && exe_mem.mem_read_out());
+        dmmu.write_in = _ASSIGN(state_reg[1].valid && exe_mem.mem_write_out());
         dmmu.execute_in = _ASSIGN(false);
 #ifdef ENABLE_ZICSR
         dmmu.satp_in = csr.satp_out;
@@ -323,12 +335,12 @@ public:
         regs.__inst_name = __inst_name + "/regs";
         regs._assign();
 
-        dcache.read_in = _ASSIGN( exe_mem.mem_read_out() && !dcache.busy_out()
+        dcache.read_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_read_out() && !dcache.busy_out()
 #ifdef ENABLE_MMU_TLB
             && !dmmu.busy_out() && !dmmu.fault_out()
 #endif
             );
-        dcache.write_in = _ASSIGN( exe_mem.mem_write_out() && !dcache.busy_out()
+        dcache.write_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_write_out() && !dcache.busy_out()
 #ifdef ENABLE_MMU_TLB
             && !dmmu.busy_out() && !dmmu.fault_out()
 #endif
@@ -443,8 +455,17 @@ public:
         debug_immu_ptw_addr_out = immu.mem_addr_out;
         debug_immu_busy_out = immu.busy_out;
         debug_immu_fault_out = immu.fault_out;
+        debug_immu_paddr_out = immu.paddr_out;
         debug_immu_last_addr_out = immu.debug_last_addr_out;
         debug_immu_last_pte_out = immu.debug_last_pte_out;
+        debug_icache_read_valid_out = icache.read_valid_out;
+        debug_icache_read_addr_out = icache.read_addr_out;
+        debug_fetch_valid_out = _ASSIGN_COMB(fetch_valid_comb_func());
+        debug_memory_wait_out = _ASSIGN_COMB(memory_wait_comb_func());
+        debug_wb_load_ready_out = wb_mem.load_ready_out;
+        debug_wb_mem_wait_out = _ASSIGN(state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && !wb_mem.load_ready_out());
+        debug_icache_read_in_out = _ASSIGN_COMB(icache.read_in());
+        debug_icache_stall_in_out = _ASSIGN_COMB(icache.stall_in());
         debug_dmmu_ptw_read_out = dmmu.mem_read_out;
         debug_dmmu_ptw_addr_out = dmmu.mem_addr_out;
         debug_dmmu_busy_out = dmmu.busy_out;
@@ -738,9 +759,12 @@ private:
 
 #ifdef ENABLE_ZICSR
 #ifdef ENABLE_MMU_TLB
-    // DMMU faults matter only while the memory stage is actively reading or writing.
+    // DMMU faults matter only while a valid memory-stage instruction is still
+    // actively reading or writing. After a trap flush the DMMU fault output can
+    // remain asserted for one cycle, but it must not overwrite sepc/stval.
     _LAZY_COMB(dmmu_active_fault_comb, bool)
-        return dmmu_active_fault_comb = dmmu.fault_out() && (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+        return dmmu_active_fault_comb = state_reg[1].valid && dmmu.fault_out() &&
+            (exe_mem.mem_read_out() || exe_mem.mem_write_out());
     }
 #endif
 
@@ -1415,6 +1439,58 @@ class TestTribe : public Module
         return true;
     }
 
+    uint8_t ram_byte(const std::vector<uint32_t>& ram, uint32_t byte_addr)
+    {
+        return (uint8_t)((ram[byte_addr / 4] >> ((byte_addr & 3u) * 8u)) & 0xffu);
+    }
+
+    void set_ram_byte(std::vector<uint32_t>& ram, uint32_t byte_addr, uint8_t value)
+    {
+        const uint32_t shift = (byte_addr & 3u) * 8u;
+        ram[byte_addr / 4] = (ram[byte_addr / 4] & ~(0xffu << shift)) | ((uint32_t)value << shift);
+    }
+
+    bool patch_dtb_bootargs(std::vector<uint32_t>& ram, uint32_t dtb_addr, uint32_t dtb_bytes,
+                            uint32_t mem_base, uint32_t mem_size_bytes, const std::string& bootargs)
+    {
+        if (dtb_addr < mem_base || dtb_addr - mem_base + dtb_bytes > mem_size_bytes) {
+            std::print("DTB bootargs patch outside test RAM window\n");
+            return false;
+        }
+
+        static constexpr std::string_view prefix = "console=";
+        const uint32_t base = dtb_addr - mem_base;
+        for (uint32_t off = 0; off + prefix.size() < dtb_bytes; ++off) {
+            bool match = true;
+            for (uint32_t i = 0; i < prefix.size(); ++i) {
+                if (ram_byte(ram, base + off + i) != (uint8_t)prefix[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) {
+                continue;
+            }
+
+            uint32_t old_len = 0;
+            while (off + old_len < dtb_bytes && ram_byte(ram, base + off + old_len) != 0) {
+                ++old_len;
+            }
+            if (bootargs.size() > old_len) {
+                std::print("new --bootargs is longer than DTB bootargs slot ({} > {})\n", bootargs.size(), old_len);
+                return false;
+            }
+            for (uint32_t i = 0; i < old_len; ++i) {
+                set_ram_byte(ram, base + off + i, i < bootargs.size() ? (uint8_t)bootargs[i] : 0);
+            }
+            std::print("Patched DTB bootargs: {}\n", bootargs);
+            return true;
+        }
+
+        std::print("can't find DTB bootargs string to patch\n");
+        return false;
+    }
+
 //    size_t i;
 
 public:
@@ -1789,7 +1865,7 @@ public:
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "")
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -1846,6 +1922,10 @@ public:
             }
             size_t dtb_bytes = 0;
             if (!load_blob(dtb_file, ram, boot_dtb_addr, start_mem_addr, ram_size * 4, dtb_bytes)) {
+                fclose(fbin);
+                return false;
+            }
+            if (!bootargs.empty() && !patch_dtb_bootargs(ram, boot_dtb_addr, (uint32_t)dtb_bytes, start_mem_addr, ram_size * 4, bootargs)) {
                 fclose(fbin);
                 return false;
             }
@@ -1926,6 +2006,8 @@ public:
         const bool trace_csr = std::getenv("TRIBE_TRACE_CSR") != nullptr;
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
+        const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
+        bool last_immu_fault = false;
         std::string expected_output;
         std::string captured_output;
         if (!tohost_addr) {
@@ -2007,7 +2089,8 @@ public:
                 }
             }
             if (trace_period && (perf_clocks % trace_period) == 0) {
-                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x}\n",
+                auto perf_now = PERF_VALUE(tribe.perf_out);
+                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -2018,7 +2101,29 @@ public:
                     (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
-                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out));
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
+                    (bool)perf_now.hazard_stall,
+                    (bool)perf_now.branch_stall,
+                    (bool)perf_now.dcache_wait,
+                    (bool)perf_now.icache_wait,
+                    (uint32_t)perf_now.icache.state,
+                    (bool)perf_now.icache.hit,
+#ifdef ENABLE_MMU_TLB
+                    (bool)PORT_VALUE(tribe.debug_fetch_valid_out),
+                    (bool)PORT_VALUE(tribe.debug_icache_read_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_icache_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_immu_paddr_out),
+                    (bool)PORT_VALUE(tribe.debug_immu_busy_out),
+                    (bool)PORT_VALUE(tribe.debug_immu_fault_out),
+                    (bool)PORT_VALUE(tribe.debug_memory_wait_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_load_ready_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_mem_wait_out),
+                    (bool)PORT_VALUE(tribe.debug_icache_read_in_out),
+                    (bool)PORT_VALUE(tribe.debug_icache_stall_in_out)
+#else
+                    false, false, 0u, 0u, false, false, false, false, false, false, false
+#endif
+                    );
             }
             if (trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
                 std::print("trace-csr cycle={} priv={} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}\n",
@@ -2040,6 +2145,22 @@ public:
 #endif
                     );
             }
+#ifdef ENABLE_MMU_TLB
+            if (trace_mmu_fault) {
+                bool immu_fault_now = (bool)PORT_VALUE(tribe.debug_immu_fault_out);
+                if (immu_fault_now && !last_immu_fault) {
+                    std::print("trace-immu-fault cycle={} pc={:08x} imem={:08x} satp={:08x} priv={} last_pte_addr={:08x} last_pte={:08x}\n",
+                        perf_clocks,
+                        (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                        (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_satp_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_immu_last_addr_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_immu_last_pte_out));
+                }
+                last_immu_fault = immu_fault_now;
+            }
+#endif
             if (trace_sbi && (bool)PORT_VALUE(tribe.sbi_set_timer_out)) {
                 std::print("trace-sbi cycle={} pc={:08x} set_timer={:08x}{:08x}\n",
                     perf_clocks,
@@ -2217,6 +2338,7 @@ int main (int argc, char** argv)
     std::string checkpoint_save_file;
     uint64_t checkpoint_save_cycle = 0;
     bool append_output = false;
+    std::string bootargs;
     bool linux_earlycon_mapbase = false;
     int only = -1;
     for (int i=1; i < argc; ++i) {
@@ -2321,6 +2443,10 @@ int main (int argc, char** argv)
             linux_earlycon_mapbase = true;
             continue;
         }
+        if (strcmp(argv[i], "--bootargs") == 0 && i + 1 < argc) {
+            bootargs = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--elf-phys-offset") == 0 && i + 1 < argc) {
             elf_phys_offset = std::stoul(argv[++i], nullptr, 0);
             elf_phys_override = true;
@@ -2414,7 +2540,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs))
     );
 }
 

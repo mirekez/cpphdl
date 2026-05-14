@@ -244,7 +244,10 @@ public:
                 }
             }
             else if (state_in().valid && state_in().wb_op == Wb::MEM &&
-                     dcache_read_valid_in()) {
+                     dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()) {
+                // L1/L2 refills can expose intermediate valid data from neighboring
+                // beats; only the word tagged with the architectural load address
+                // may release the stalled writeback stage.
                 load_data_reg._next = dcache_read_data_in();
                 load_addr_reg._next = dcache_read_addr_in();
                 load_data_valid_reg._next = true;

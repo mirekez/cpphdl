@@ -96,10 +96,40 @@ static bool build_cpu_bytecopy_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_trap_ra_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_trap_ra.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " " + shell_quote(code_dir / "cpu_trap_ra.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU trap-frame ra bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
         0, (tribe_code_dir() / "cpu_fence.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
+}
+
+static bool run_cpu_trap_ra_cpp(bool debug)
+{
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_trap_ra.elf").string(),
+        0, (tribe_code_dir() / "cpu_trap_ra.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 1);
 }
 
 static bool run_cpu_bytecopy_cpp(bool debug)
@@ -150,6 +180,9 @@ static bool check_system_decode_has_no_decode_branch()
         {0xffffffff, Sys::TRAP, "illegal"},
     };
 
+    // Scenario: decode of system instructions must not accidentally request a
+    // branch operation. Trap and fence handling later in the pipe relies on the
+    // system opcode path being independent from normal branch redirect logic.
     for (const auto& tc : cases) {
         Zicsr instr = {{{tc.raw}}};
         State state;
@@ -177,11 +210,23 @@ int main(int argc, char** argv)
     }
 
     bool ok = check_system_decode_has_no_decode_branch();
+    // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
+    // access. The fence must drain/serialize memory traffic without wedging the
+    // current pipeline when the next instruction immediately returns to MMIO.
     ok = ok && build_cpu_fence_elf();
     ok = ok && run_cpu_fence_cpp(debug);
+    // Scenario: byte loads and stores around unaligned offsets must observe
+    // dirty cached data instead of bypassing to stale RAM contents.
     ok = ok && build_cpu_bytecopy_elf();
     ok = ok && run_cpu_bytecopy_cpp(debug);
+    // Scenario: checkpoint save/restore must preserve enough architectural,
+    // cache, device, and memory state that execution can resume mid-program and
+    // produce the same UART log as an uninterrupted run.
     ok = ok && run_cpu_bytecopy_checkpoint_cpp(debug);
+    // Scenario: trap entry saves ra, trap return restores it, and the next ret
+    // must reach the original sentinel target instead of looping at the trap PC.
+    ok = ok && build_cpu_trap_ra_elf();
+    ok = ok && run_cpu_trap_ra_cpp(debug);
 
 #ifndef VERILATOR
     if (ok && !noveril) {
