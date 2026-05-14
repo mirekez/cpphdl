@@ -206,6 +206,17 @@ public:
         }
     }
 
+    void set_backing_word(uint32_t request_addr, uint32_t data)
+    {
+        size_t port = (REGION_SIZE64 == 0) ? 0 : (size_t)(request_addr / REGION_SIZE64);
+        uint32_t local_addr = request_addr - (uint32_t)(REGION_SIZE64 * port);
+        size_t beat = local_addr / (PORT_BITS / 8);
+        size_t lane = (local_addr % (PORT_BITS / 8)) / 4;
+        logic<PORT_BITS> value = ram[port].ram.buffer.data[beat];
+        value.bits(lane * 32 + 31, lane * 32) = data;
+        ram[port].ram.buffer.data[beat] = value;
+    }
+
     void read_check(uint32_t request_addr, uint32_t expected)
     {
         read = true;
@@ -627,12 +638,37 @@ public:
     void dirty_eviction_check()
     {
         constexpr uint32_t set_stride = (L2_SIZE / LINE_SIZE / WAYS) * LINE_SIZE;
+        // Linux stack frames save ra/s0/s1 in adjacent words near the end of a line.
+        // Dirty eviction must preserve every word lane, including offset +12.
         write_then_read_check(0 * set_stride + 4, 0x11111111u, 0xf, 0x11111111u);
+        write_then_read_check(0 * set_stride + 12, 0x1a2b3c4du, 0xf, 0x1a2b3c4du);
         write_then_read_check(1 * set_stride + 4, 0x22222222u, 0xf, 0x22222222u);
         write_then_read_check(2 * set_stride + 4, 0x33333333u, 0xf, 0x33333333u);
         write_then_read_check(3 * set_stride + 4, 0x44444444u, 0xf, 0x44444444u);
         write_then_read_check(4 * set_stride + 4, 0x55555555u, 0xf, 0x55555555u);
         read_check(0 * set_stride + 4, 0x11111111u);
+        read_check(0 * set_stride + 12, 0x1a2b3c4du);
+    }
+
+    void immediate_hit_after_fill_check()
+    {
+        // Linux D-cache refill asks L2 for several PORT_BITS beats from one line.
+        // A hit immediately after an AXI fill must wait until the selected beat is
+        // registered, otherwise L1 can capture stale zero instead of the stack word.
+        uint32_t base = 0x00000600u;
+        set_backing_word(base + 0,  0x11112222u);
+        set_backing_word(base + 4,  0x33334444u);
+        set_backing_word(base + 8,  0x55556666u);
+        set_backing_word(base + 12, 0x77778888u);
+        set_backing_word(base + 16, 0x9999aaaau);
+        set_backing_word(base + 20, 0xbbbbccccu);
+        set_backing_word(base + 24, 0xddddeeeeu);
+        set_backing_word(base + 28, 0xffff0001u);
+
+        d_read_check(base + 0,  0x11112222u);
+        d_read_check(base + 12, 0x77778888u);
+        d_read_check(base + 20, 0xbbbbccccu);
+        d_read_check(base + 28, 0xffff0001u);
     }
 
     bool run()
@@ -644,6 +680,7 @@ public:
 #endif
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
+                   "\n    - immediate CPU hit from a line that was just filled"
                    "\n    - cached CPU partial writes"
                    "\n    - dirty eviction"
                    "\n    - external AXI master read of CPU-written cache line"
@@ -663,6 +700,7 @@ public:
         }
         read_check(8, 0);
         read_check(8, 0);
+        immediate_hit_after_fill_check();
         write_then_read_check(64 + 4, 0x12345678u, 0xf, 0x12345678u);
         write_then_read_check(64 + 4, 0xabcd0000u, 0xc, 0xabcd5678u);
         stack_alias_check();

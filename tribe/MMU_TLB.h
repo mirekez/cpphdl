@@ -192,9 +192,11 @@ private:
     // Check cached PTE access permissions for load, store, or instruction fetch.
     _LAZY_COMB(permission_fault_comb, bool)
         uint32_t flags;
+        bool access;
         permission_fault_comb = false;
+        access = read_in() || write_in() || execute_in();
         flags = entry_flags_comb_func();
-        if (translation_enabled_comb_func() && hit_comb_func()) {
+        if (translation_enabled_comb_func() && access && hit_comb_func()) {
             permission_fault_comb = pte_permission_fault(flags, read_in(), write_in(), execute_in(), priv_in(), sum_in(), mxr_in());
         }
         return permission_fault_comb;
@@ -211,7 +213,10 @@ private:
     // A latched walker fault belongs only to the original request; after a trap redirect
     // the stale fault must not be re-reported for the trap-vector fetch.
     _LAZY_COMB(fault_comb, bool)
+        bool access;
+        access = read_in() || write_in() || execute_in();
         fault_comb = translation_enabled_comb_func() &&
+            access &&
             ((fault_reg && (uint32_t)req_vaddr_reg == vaddr_in()) || permission_fault_comb_func());
         return fault_comb;
     }

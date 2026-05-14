@@ -117,15 +117,22 @@ private:
     reg<u1> last_valid_reg;
     reg<logic<HALF_LINE_BITS>> refill_even_line_reg;
     reg<logic<HALF_LINE_BITS>> refill_odd_line_reg;
+    reg<u32> refill_req_data_reg;
+    reg<u1> refill_req_data_valid_reg;
 
     // Set index of the registered request address.
-    _LAZY_COMB(req_set_comb, u<SET_BITS>)
-        return req_set_comb = (u<SET_BITS>)((uint32_t)req_addr_reg >> LINE_BITS);
+    _LAZY_COMB(req_set_comb, uint32_t)
+        return req_set_comb = ((uint32_t)req_addr_reg / CACHE_LINE_SIZE) % SETS;
     }
 
     // Tag bits of the registered request address.
-    _LAZY_COMB(req_tag_comb, u<TAG_BITS>)
-        return req_tag_comb = (u<TAG_BITS>)((uint32_t)req_addr_reg >> (LINE_BITS + SET_BITS));
+    _LAZY_COMB(req_tag_comb, uint32_t)
+        return req_tag_comb = (uint32_t)req_addr_reg / (CACHE_LINE_SIZE * SETS);
+    }
+
+    // PORT_BITWIDTH beat number that contains the requested word in a line refill.
+    _LAZY_COMB(req_refill_beat_comb, u<REFILL_BEAT_BITS>)
+        return req_refill_beat_comb = (u<REFILL_BEAT_BITS>)(((uint32_t)req_addr_reg & (CACHE_LINE_SIZE - 1)) / PORT_BYTES);
     }
 
     // 32-bit word index inside the registered cache line.
@@ -134,8 +141,8 @@ private:
     }
 
     // Set index of the incoming CPU address.
-    _LAZY_COMB(input_set_comb, u<SET_BITS>)
-        return input_set_comb = (u<SET_BITS>)(addr_in() >> LINE_BITS);
+    _LAZY_COMB(input_set_comb, uint32_t)
+        return input_set_comb = (addr_in() / CACHE_LINE_SIZE) % SETS;
     }
 
     // Whether the incoming address can be served from this cache line format.
@@ -387,6 +394,7 @@ public:
         if (invalidate_in()) {
             req_read_reg._next = false;
             last_valid_reg._next = false;
+            refill_req_data_valid_reg._next = false;
             init_set_reg._next = 0;
             state_reg._next = ST_INIT;
         }
@@ -396,11 +404,13 @@ public:
             req_cacheable_reg._next = input_cacheable_comb_func();
             req_cache_disable_reg._next = cache_disable_in();
             last_valid_reg._next = false;
+            refill_req_data_valid_reg._next = false;
             state_reg._next = read_in() ? ST_LOOKUP : ST_IDLE;
         }
         else if (state_reg == ST_INIT) {
             req_read_reg._next = false;
             last_valid_reg._next = false;
+            refill_req_data_valid_reg._next = false;
             if (init_set_reg == SETS - 1) {
                 state_reg._next = ST_IDLE;
             }
@@ -446,19 +456,28 @@ public:
                 refill_beat_reg._next = 0;
                 refill_even_line_reg._next = 0;
                 refill_odd_line_reg._next = 0;
+                refill_req_data_valid_reg._next = false;
                 state_reg._next = ST_REFILL;
             }
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
             if (req_cacheable_reg) {
                 if (!mem_wait_in()) {
-                    // Each accepted beat updates the partial line image; the final beat commits tag/data RAMs.
+                    // Each accepted beat updates the partial line image. The CPU-requested
+                    // beat is latched separately because later refill beats carry different words.
                     refill_even_line_reg._next = refill_even_line_comb_func();
                     refill_odd_line_reg._next = refill_odd_line_comb_func();
+                    if (refill_beat_reg == req_refill_beat_comb_func() && (((uint32_t)req_addr_reg & 0x3u) == 0)) {
+                        refill_req_data_reg._next = direct_data_comb_func();
+                        refill_req_data_valid_reg._next = true;
+                    }
                     if (refill_beat_reg == REFILL_BEATS - 1) {
                         last_addr_reg._next = req_addr_reg;
-                        last_data_reg._next = refill_data_comb_func();
+                        last_data_reg._next = (refill_beat_reg == req_refill_beat_comb_func()) ?
+                            direct_data_comb_func() :
+                            (refill_req_data_valid_reg ? (uint32_t)refill_req_data_reg : refill_data_comb_func());
                         last_valid_reg._next = true;
+                        refill_req_data_valid_reg._next = false;
                         victim_reg._next = victim_reg + 1;
                         state_reg._next = ST_DONE;
                     }
@@ -516,6 +535,8 @@ public:
             last_valid_reg.clr();
             refill_even_line_reg.clr();
             refill_odd_line_reg.clr();
+            refill_req_data_reg.clr();
+            refill_req_data_valid_reg.clr();
             state_reg._next = ST_INIT;
         }
     }
@@ -535,6 +556,10 @@ public:
         last_valid_reg.strobe(checkpoint_fd);
         refill_even_line_reg.strobe(checkpoint_fd);
         refill_odd_line_reg.strobe(checkpoint_fd);
+        // Transient refill response state is intentionally not checkpointed,
+        // but it still must commit every cycle while a multi-beat line arrives.
+        refill_req_data_reg.strobe();
+        refill_req_data_valid_reg.strobe();
         size_t i;
         for (i = 0; i < WAYS; ++i) {
             even_ram[i]._strobe(checkpoint_fd);

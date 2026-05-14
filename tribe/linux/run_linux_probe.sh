@@ -152,7 +152,11 @@ PY
 
 prepare_linux_inputs
 
-if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || "${BASH_SOURCE[0]}" -nt "${TRIBE_BIN}" ]]; then
+newer_tribe_header=""
+if [[ -x "${TRIBE_BIN}" ]]; then
+    newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 3 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
+fi
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || "${BASH_SOURCE[0]}" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     clang++ "${ROOT_DIR}/tribe/main.cpp" \
         -std=c++26 -O3 -g -mavx2 -fno-strict-aliasing \

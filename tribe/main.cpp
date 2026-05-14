@@ -44,6 +44,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
+#include <cstdlib>
 #include <vector>
 
 // system configuration for cpp
@@ -140,6 +141,13 @@ public:
     _PORT(uint32_t)  debug_scause_out;
     _PORT(uint32_t)  debug_stval_out;
     _PORT(u<2>)      debug_priv_out;
+    _PORT(uint32_t)  debug_ra_out;
+    _PORT(bool)      debug_regs_write_out;
+    _PORT(bool)      debug_regs_write_actual_out;
+    _PORT(uint8_t)   debug_regs_wr_id_out;
+    _PORT(uint32_t)  debug_regs_data_out;
+    _PORT(bool)      debug_branch_taken_now_out;
+    _PORT(uint32_t)  debug_branch_target_now_out;
 #endif
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
@@ -250,7 +258,10 @@ public:
         immu.vaddr_in = _ASSIGN(fetch_addr_comb_func());
         immu.read_in = _ASSIGN(false);
         immu.write_in = _ASSIGN(false);
-        immu.execute_in = _ASSIGN(true);
+        // Only a live front-end fetch may request instruction translation.
+        // During redirects and bubbles fetch_addr_comb can be a placeholder; translating
+        // it would create a spurious instruction page fault.
+        immu.execute_in = _ASSIGN((bool)valid);
 #ifdef ENABLE_ZICSR
         immu.satp_in = csr.satp_out;
         immu.priv_in = csr.priv_out;
@@ -378,7 +389,7 @@ public:
         bp.__inst_name = __inst_name + "/bp";
         bp._assign();
 
-        icache.read_in = _ASSIGN( true
+        icache.read_in = _ASSIGN( (bool)valid
 #ifdef ENABLE_MMU_TLB
             && !immu.busy_out() && !immu.fault_out()
 #endif
@@ -483,6 +494,15 @@ public:
         debug_scause_out = csr.scause_out;
         debug_stval_out = csr.stval_out;
         debug_priv_out = csr.priv_out;
+        debug_ra_out = regs.x1_out;
+        debug_regs_write_out = wb.regs_write_out;
+        debug_regs_write_actual_out = _ASSIGN(wb.regs_write_out() &&
+            !memory_wait_comb_func() &&
+            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
+        debug_regs_wr_id_out = wb.regs_wr_id_out;
+        debug_regs_data_out = wb.regs_data_out;
+        debug_branch_taken_now_out = exe.branch_taken_out;
+        debug_branch_target_now_out = exe.branch_target_out;
 #endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
@@ -626,10 +646,25 @@ private:
         return decode_fallthrough_comb = pc + ((dec.instr_in()&3)==3?4:2);
     }
 
-    // Predictor sees only a valid, unstalled decoded branch.
+    // Predictor sees only direct branches in decode. Register-indirect JALR/JR
+    // targets can depend on a just-loaded register, so they are redirected from
+    // execute where forwarding has already been applied.
     _LAZY_COMB(decode_branch_valid_comb, bool)
-        decode_branch_valid_comb = fetch_valid_comb_func() && dec.state_out().valid && dec.state_out().br_op != Br::BNONE && !stall_comb_func();
+        decode_branch_valid_comb = fetch_valid_comb_func() && dec.state_out().valid &&
+            dec.state_out().br_op != Br::BNONE &&
+            dec.state_out().br_op != Br::JALR &&
+            dec.state_out().br_op != Br::JR &&
+            !stall_comb_func();
         return decode_branch_valid_comb;
+    }
+
+    // Register-indirect branches wait one cycle for execute-stage forwarding,
+    // so the frontend must not speculatively fetch their fallthrough address.
+    _LAZY_COMB(decode_indirect_branch_valid_comb, bool)
+        decode_indirect_branch_valid_comb = fetch_valid_comb_func() && dec.state_out().valid &&
+            (dec.state_out().br_op == Br::JALR || dec.state_out().br_op == Br::JR) &&
+            !stall_comb_func();
+        return decode_indirect_branch_valid_comb;
     }
 
     // Predicted branch target from decode operands and immediate.
@@ -677,16 +712,36 @@ private:
             !memory_wait_comb_func();
     }
 
+    uint32_t sbi_arg_value(uint8_t reg_id)
+    {
+        // SBI arguments are not explicit ECALL source registers in Decode.
+        // Forward the writeback stage so sequences such as "li a7,6; ecall"
+        // observe the freshly produced extension ID before it is committed.
+        if (wb.regs_write_out() && wb.regs_wr_id_out() == reg_id) {
+            return wb.regs_data_out();
+        }
+        if (reg_id == 10) {
+            return regs.x10_out();
+        }
+        if (reg_id == 11) {
+            return regs.x11_out();
+        }
+        if (reg_id == 17) {
+            return regs.x17_out();
+        }
+        return 0;
+    }
+
     // Single-hart Linux still emits legacy remote fence SBI calls during VM changes; they are no-ops here.
     _LAZY_COMB(sbi_noop_comb, bool)
         uint32_t ext;
-        ext = regs.x17_out();
+        ext = sbi_arg_value(17);
         return sbi_noop_comb = sbi_legacy_ecall_comb_func() && (ext == 5 || ext == 6 || ext == 7);
     }
 
     _LAZY_COMB(sbi_set_timer_comb, bool)
         return sbi_set_timer_comb = sbi_legacy_ecall_comb_func() &&
-            regs.x17_out() == 0 &&
+            sbi_arg_value(17) == 0 &&
             !memory_wait_comb_func();
     }
 
@@ -697,12 +752,12 @@ private:
 
     // Low word of the SBI timer value is passed in a0 on RV32.
     _LAZY_COMB(sbi_timer_lo_comb, uint32_t)
-        return sbi_timer_lo_comb = regs.x10_out();
+        return sbi_timer_lo_comb = sbi_arg_value(10);
     }
 
     // High word of the SBI timer value is passed in a1 on RV32.
     _LAZY_COMB(sbi_timer_hi_comb, uint32_t)
-        return sbi_timer_hi_comb = regs.x11_out();
+        return sbi_timer_hi_comb = sbi_arg_value(11);
     }
 
     // Execute input state after trap/xret/fence redirection and late load forwarding.
@@ -777,7 +832,7 @@ private:
             csr_state_comb.csr_op = Csr::CNONE;
         }
 #ifdef ENABLE_MMU_TLB
-        if (immu.fault_out()) {
+        if (immu.fault_out() && !state_reg[0].valid) {
             csr_state_comb = State{};
             csr_state_comb.valid = true;
             csr_state_comb.pc = fetch_addr_comb_func();
@@ -950,6 +1005,61 @@ public:
 
     void _work(bool reset)
     {
+#ifndef SYNTHESIS
+        const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
+        const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
+        auto trace_pc_write = [&](const char* reason, uint32_t next_pc) {
+            if (trace_pc_write_from_env == nullptr) {
+                return;
+            }
+            const long long from_cycle = std::strtoll(trace_pc_write_from_env, nullptr, 0);
+            if (sys_clock < from_cycle) {
+                return;
+            }
+            const uint32_t old_pc = (uint32_t)pc;
+            if (!trace_pc_write_all && old_pc >= 0x10000u && next_pc >= 0x10000u) {
+                return;
+            }
+            std::print("trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x}",
+                sys_clock,
+                reason,
+                old_pc,
+                next_pc,
+                (bool)valid,
+                (bool)fetch_valid_comb_func(),
+                (bool)memory_wait_comb_func(),
+                (bool)stall_comb_func(),
+                (bool)branch_mispredict_comb_func(),
+                (uint32_t)branch_actual_next_comb_func(),
+                (uint32_t)predicted_next_reg[0],
+                (bool)state_reg[0].valid,
+                (uint32_t)state_reg[0].pc,
+                (uint32_t)state_reg[0].sys_op,
+                (uint32_t)state_reg[0].trap_op,
+                (uint32_t)state_reg[0].br_op,
+                (bool)state_reg[1].valid,
+                (uint32_t)state_reg[1].pc);
+#ifdef ENABLE_MMU_TLB
+            std::print(" immu_fault={} immu_busy={} immu_paddr={:08x} dmmu_fault={} dmmu_active={}",
+                (bool)immu.fault_out(),
+                (bool)immu.busy_out(),
+                (uint32_t)immu.paddr_out(),
+                (bool)dmmu.fault_out(),
+                (bool)dmmu_active_fault_comb_func());
+#endif
+#ifdef ENABLE_ZICSR
+            std::print(" priv={} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x} mepc={:08x} mtvec={:08x}",
+                (uint32_t)csr.priv_out(),
+                (uint32_t)csr.stvec_out(),
+                (uint32_t)csr.sepc_out(),
+                (uint32_t)csr.scause_out(),
+                (uint32_t)csr.stval_out(),
+                (uint32_t)csr.mepc_out(),
+                (uint32_t)csr.mtvec_out());
+#endif
+            std::print("\n");
+        };
+#endif
         if (debugen_in && !reset) {
             debug();
         }
@@ -965,8 +1075,40 @@ public:
         output_write_active_reg._next = dmem_addr_out() == 0x11223344 && dmem_write_out();
 
 #if defined(ENABLE_ZICSR) && defined(ENABLE_MMU_TLB)
-        if (!reset && (immu.fault_out() || dmmu_active_fault_comb_func())) {
+        if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
+            uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
+            pc._next = epc;
+#ifndef SYNTHESIS
+            trace_pc_write("xret-mmu", epc);
+#endif
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = State{};
+            state_reg._next[1].valid = false;
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            alu_result_reg._next = alu_result_reg;
+            debug_branch_target_reg._next = epc;
+            debug_branch_taken_reg._next = true;
+        }
+        else
+        if (!reset && state_reg[0].valid &&
+            !sbi_handled_comb_func() &&
+            (
+#ifdef ENABLE_ISR
+             irq.interrupt_valid_out() ||
+#endif
+             state_reg[0].sys_op == Sys::ECALL ||
+             state_reg[0].sys_op == Sys::EBREAK ||
+             state_reg[0].sys_op == Sys::TRAP ||
+             state_reg[0].trap_op != Trap::TNONE ||
+             csr.illegal_trap_out())) {
             pc._next = csr.trap_vector_out();
+#ifndef SYNTHESIS
+            trace_pc_write("trap-exec-mmu", (uint32_t)csr.trap_vector_out());
+#endif
             valid._next = false;
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
@@ -980,11 +1122,60 @@ public:
             debug_branch_taken_reg._next = true;
         }
         else
+        if (!reset && immu.fault_out() && state_reg[0].valid && !dmmu_active_fault_comb_func()) {
+            // Fetch faults are younger than the execute-stage instruction.
+            // Drain that instruction first so JAL/JALR links and xRET privilege
+            // changes retire before any trap caused by the next fetch.
+            pc._next = pc;
+#ifndef SYNTHESIS
+            trace_pc_write("fetch-fault-drain", (uint32_t)pc);
+#endif
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = state_reg[0];
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            alu_result_reg._next =
+#ifdef ENABLE_ZICSR
+                state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() :
+#endif
+#ifdef ENABLE_RV32IA
+                (state_reg[0].amo_op == Amo::SC_W ? exe_mem.atomic_sc_result_out() : exe.alu_result_out());
+#else
+                 exe.alu_result_out();
+#endif
+            debug_branch_target_reg._next = exe.branch_target_out();
+            debug_branch_taken_reg._next = exe.branch_taken_out();
+        }
+        else
+        if (!reset && (immu.fault_out() || dmmu_active_fault_comb_func())) {
+            pc._next = csr.trap_vector_out();
+#ifndef SYNTHESIS
+            trace_pc_write("mmu-fault-trap", (uint32_t)csr.trap_vector_out());
+#endif
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = State{};
+            state_reg._next[1].valid = false;
+            alu_result_reg._next = alu_result_reg;
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            debug_branch_target_reg._next = csr.trap_vector_out();
+            debug_branch_taken_reg._next = true;
+        }
+        else
 #endif
 #ifdef ENABLE_ZICSR
         if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
             pc._next = epc;
+#ifndef SYNTHESIS
+            trace_pc_write("xret", epc);
+#endif
             valid._next = false;
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
@@ -1001,6 +1192,9 @@ public:
 #endif
         if (memory_wait_comb_func()) {
             pc._next = pc;
+#ifndef SYNTHESIS
+            trace_pc_write("memory-wait", (uint32_t)pc);
+#endif
             valid._next = valid;
             state_reg._next = state_reg;
             predicted_next_reg._next = predicted_next_reg;
@@ -1019,17 +1213,47 @@ public:
             debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
         else {
+            // Hold PC by default while the front end is waiting for a valid
+            // translated/cacheable fetch. Redirects below override this.
+            pc._next = pc;
+#ifndef SYNTHESIS
+            trace_pc_write("normal-hold", (uint32_t)pc);
+#endif
             if (fetch_valid_comb_func() && !stall_comb_func()) {
                 pc._next = decode_fallthrough_comb_func();
+#ifndef SYNTHESIS
+                trace_pc_write("fetch-fallthrough", decode_fallthrough_comb_func());
+#endif
             }
             if (decode_branch_valid_comb_func()) {
                 pc._next = bp.predict_next_out();
+#ifndef SYNTHESIS
+                trace_pc_write("decode-predict", (uint32_t)bp.predict_next_out());
+#endif
             }
             if (branch_mispredict_comb_func()) {
+                if (std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr) {
+                    uint32_t target = branch_actual_next_comb_func();
+                    if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
+                        std::print("trace-pc-select cycle={} state_pc={:08x} br_op={} rs1={:08x} imm={:08x} fallthrough={:08x} target={:08x} predicted={:08x} valid={}\n",
+                            sys_clock,
+                            (uint32_t)state_reg[0].pc,
+                            (uint32_t)state_reg[0].br_op,
+                            (uint32_t)state_reg[0].rs1_val,
+                            (uint32_t)state_reg[0].imm,
+                            (uint32_t)fallthrough_reg[0],
+                            target,
+                            (uint32_t)predicted_next_reg[0],
+                            (bool)state_reg[0].valid);
+                    }
+                }
                 pc._next = branch_actual_next_comb_func();
+#ifndef SYNTHESIS
+                trace_pc_write("execute-redirect", branch_actual_next_comb_func());
+#endif
             }
 
-            valid._next = true;
+            valid._next = !decode_indirect_branch_valid_comb_func();
 
             if (hazard_stall_comb_func()) {
                 state_reg._next[0] = State{};
@@ -1094,6 +1318,9 @@ public:
             state_reg._next[0].valid = 0;
             state_reg._next[1].valid = 0;
             pc._next = reset_pc_in();
+#ifndef SYNTHESIS
+            trace_pc_write("reset", (uint32_t)reset_pc_in());
+#endif
             valid.clr();
             predicted_next_reg.clr();
             fallthrough_reg.clr();
@@ -2007,6 +2234,8 @@ public:
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
+        const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
+        const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
         bool last_immu_fault = false;
         std::string expected_output;
         std::string captured_output;
@@ -2126,10 +2355,11 @@ public:
                     );
             }
             if (trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
-                std::print("trace-csr cycle={} priv={} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}\n",
+                std::print("trace-csr cycle={} priv={} ra={:08x} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_ra_out),
                     (uint32_t)PORT_VALUE(tribe.debug_satp_out),
                     (uint32_t)PORT_VALUE(tribe.debug_mstatus_out),
                     (uint32_t)PORT_VALUE(tribe.debug_mtvec_out),
@@ -2141,7 +2371,7 @@ public:
                     (uint32_t)PORT_VALUE(tribe.debug_scause_out),
                     (uint32_t)PORT_VALUE(tribe.debug_stval_out)
 #else
-                    3u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u
+                    3u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u
 #endif
                     );
             }
@@ -2149,12 +2379,17 @@ public:
             if (trace_mmu_fault) {
                 bool immu_fault_now = (bool)PORT_VALUE(tribe.debug_immu_fault_out);
                 if (immu_fault_now && !last_immu_fault) {
-                    std::print("trace-immu-fault cycle={} pc={:08x} imem={:08x} satp={:08x} priv={} last_pte_addr={:08x} last_pte={:08x}\n",
+                    std::print("trace-immu-fault cycle={} pc={:08x} ra={:08x} imem={:08x} satp={:08x} priv={} scause={:08x} sepc={:08x} stval={:08x} stvec={:08x} last_pte_addr={:08x} last_pte={:08x}\n",
                         perf_clocks,
                         (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_ra_out),
                         (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
                         (uint32_t)PORT_VALUE(tribe.debug_satp_out),
                         (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_scause_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_sepc_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_stval_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_stvec_out),
                         (uint32_t)PORT_VALUE(tribe.debug_immu_last_addr_out),
                         (uint32_t)PORT_VALUE(tribe.debug_immu_last_pte_out));
                 }
@@ -2171,6 +2406,36 @@ public:
 #endif
                     (uint32_t)PORT_VALUE(tribe.sbi_timer_hi_out),
                     (uint32_t)PORT_VALUE(tribe.sbi_timer_lo_out));
+            }
+            if (trace_ra && (bool)PORT_VALUE(tribe.debug_regs_write_out) && (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out) == 1) {
+                std::print("trace-ra cycle={} pc={:08x} ra={:08x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
+            }
+            if (trace_bad_branch && (bool)PORT_VALUE(tribe.debug_branch_taken_now_out)) {
+                uint32_t target = (uint32_t)PORT_VALUE(tribe.debug_branch_target_now_out);
+                if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
+                    std::print("trace-bad-branch cycle={} pc={:08x} target={:08x} imem={:08x} dmem={:08x} rd={} wr={} wbwr={} wbid={} wbdata={:08x}\n",
+                        perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                        (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                        (uint32_t)0,
+#endif
+                        target,
+                        (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                        (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                        (bool)PORT_VALUE(tribe.dmem_read_out),
+                        (bool)PORT_VALUE(tribe.dmem_write_out),
+                        (bool)PORT_VALUE(tribe.debug_regs_write_actual_out),
+                        (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out),
+                        (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
+                }
             }
             if (trace_addr && (uint32_t)PORT_VALUE(tribe.dmem_addr_out) == trace_addr &&
                 ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
@@ -2190,7 +2455,7 @@ public:
             }
             if (trace_pc_from && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= trace_pc_from &&
                 (uint32_t)PORT_VALUE(tribe.debug_pc_out) < trace_pc_to) {
-                std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+                std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x} wbwr={} wbact={} wbid={} wbdata={:08x} loadready={} memwait={} brtake={} brtarget={:08x}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -2202,7 +2467,15 @@ public:
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
-                    (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
+                    (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out),
+                    (bool)PORT_VALUE(tribe.debug_regs_write_out),
+                    (bool)PORT_VALUE(tribe.debug_regs_write_actual_out),
+                    (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_regs_data_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_load_ready_out),
+                    (bool)PORT_VALUE(tribe.debug_memory_wait_out),
+                    (bool)PORT_VALUE(tribe.debug_branch_taken_now_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_branch_target_now_out));
             }
             if (trace_io &&
                 (uint32_t)PORT_VALUE(tribe.dmem_addr_out) >= start_mem_addr + TRIBE_RAM_BYTES &&

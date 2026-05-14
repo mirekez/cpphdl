@@ -897,15 +897,11 @@ private:
         i_wait_comb = false;
         if (i_read_in()) {
             i_wait_comb = true;
-            if (state_reg == ST_LOOKUP && !req_from_slave_reg && !req_port_reg && req_read_reg && hit_comb_func()) {
-                i_wait_comb = false;
-            }
             if (state_reg == ST_DONE && !req_from_slave_reg && !req_port_reg && req_read_reg) {
                 i_wait_comb = false;
             }
         }
         if (state_reg != ST_IDLE &&
-            !(state_reg == ST_LOOKUP && !req_from_slave_reg && !req_port_reg && req_read_reg && hit_comb_func()) &&
             !(state_reg == ST_DONE && !req_from_slave_reg && !req_port_reg && req_read_reg)) {
             i_wait_comb = true;
         }
@@ -930,15 +926,11 @@ private:
         }
         if (d_read_in()) {
             d_wait_comb = true;
-            if (state_reg == ST_LOOKUP && !req_from_slave_reg && req_port_reg && req_read_reg && hit_comb_func()) {
-                d_wait_comb = false;
-            }
             if (state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && req_read_reg) {
                 d_wait_comb = false;
             }
         }
         if (state_reg != ST_IDLE &&
-            !(state_reg == ST_LOOKUP && !req_from_slave_reg && req_port_reg && req_read_reg && hit_comb_func()) &&
             !(state_reg == ST_DONE && !req_from_slave_reg && req_port_reg && (req_read_reg || req_write_reg))) {
             d_wait_comb = true;
         }
@@ -1020,6 +1012,22 @@ public:
     {
         size_t i;
         size_t way;
+        const char* trace_line_env;
+        uint32_t trace_line;
+        bool trace_req_line;
+        bool trace_active_line;
+        logic<PORT_BITWIDTH> trace_data;
+        uint32_t trace_word0;
+        uint32_t trace_word1;
+
+        trace_line_env = std::getenv("TRIBE_TRACE_L2_LINE");
+        trace_line = trace_line_env ? (uint32_t)std::strtoul(trace_line_env, nullptr, 0) & ~(uint32_t)(CACHE_LINE_SIZE - 1) : 0;
+        trace_req_line = trace_line_env && (((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
+        trace_active_line = trace_line_env && ((active_addr_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
+        trace_data = 0;
+        trace_word0 = 0;
+        trace_word1 = 0;
+
         for (i = 0; i < DATA_BANKS; ++i) {
             data_ram[i]._work(reset);
         }
@@ -1051,6 +1059,12 @@ public:
         }
         else if (state_reg == ST_IDLE) {
             if (active_read_comb_func() || active_write_comb_func()) {
+                if (trace_active_line) {
+                    std::print("trace-l2 cycle={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
+                        sys_clock, active_addr_comb_func(), active_read_comb_func(), active_write_comb_func(),
+                        active_write_data_comb_func(), active_write_mask_comb_func(), active_is_slave_comb_func(),
+                        active_is_d_comb_func(), (uint32_t)victim_reg);
+                }
                 req_addr_reg._next = active_addr_comb_func();
                 req_write_data_reg._next = active_write_data_comb_func();
                 req_write_mask_reg._next = active_write_mask_comb_func();
@@ -1074,6 +1088,10 @@ public:
         }
         else if (state_reg == ST_LOOKUP) {
             if (!req_addr_in_memory_comb_func()) {
+                if (trace_req_line) {
+                    std::print("trace-l2 cycle={} lookup-outside addr={:08x} rd={} wr={}\n",
+                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
+                }
                 if (req_from_slave_reg) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_slave_index_reg == i) {
@@ -1098,9 +1116,22 @@ public:
                 }
             }
             else if (req_uncached_region_comb_func()) {
+                if (trace_req_line) {
+                    std::print("trace-l2 cycle={} lookup-uncached addr={:08x} rd={} wr={}\n",
+                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
+                }
                 state_reg._next = req_read_reg ? ST_IO_AR : ST_IO_AW;
             }
             else if (hit_comb_func()) {
+                if (trace_req_line) {
+                    trace_data = hit_beat_comb_func();
+                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    std::print("trace-l2 cycle={} lookup-hit addr={:08x} rd={} wr={} way={} word={} hit_word={:08x} beat0={:08x} beat1={:08x} wdata={:08x} mask={:02x}\n",
+                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
+                        (uint32_t)hit_way_comb_func(), (uint32_t)req_word_comb_func(), hit_word_comb_func(),
+                        trace_word0, trace_word1, (uint32_t)req_write_data_reg, (uint32_t)req_write_mask_reg);
+                }
                 if (req_from_slave_reg) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_slave_index_reg == i) {
@@ -1130,10 +1161,17 @@ public:
                     state_reg._next = ST_CROSS_WRITE_LOOKUP;
                 }
                 else {
-                    state_reg._next = req_from_slave_reg ? ST_IDLE : (req_write_reg ? ST_DONE : ST_IDLE);
+                    // CPU/L1 hits are completed from ST_DONE so read data comes from
+                    // a registered beat, not a same-cycle RAM lookup that can be stale after fills.
+                    state_reg._next = req_from_slave_reg ? ST_IDLE : ((req_read_reg || req_write_reg) ? ST_DONE : ST_IDLE);
                 }
             }
             else {
+                if (trace_req_line) {
+                    std::print("trace-l2 cycle={} lookup-miss addr={:08x} rd={} wr={} victim={} evict_valid={} evict_dirty={} evict_tag={:08x}\n",
+                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
+                        (uint32_t)victim_reg, evict_valid_comb_func(), evict_dirty_comb_func(), (uint32_t)evict_tag_comb_func());
+                }
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
@@ -1183,6 +1221,14 @@ public:
         }
         else if (state_reg == ST_EVICT_W) {
             if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
+                if (trace_line_env && ((axi_awaddr_full_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
+                    trace_data = evict_line_comb_func();
+                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    std::print("trace-l2 cycle={} evict addr={:08x} beat={} data0={:08x} data1={:08x} way={}\n",
+                        sys_clock, axi_awaddr_full_comb_func(), (uint32_t)evict_beat_reg,
+                        trace_word0, trace_word1, (uint32_t)evict_way_comb_func());
+                }
                 state_reg._next = ST_EVICT_B;
             }
         }
@@ -1205,6 +1251,14 @@ public:
         }
         else if (state_reg == ST_AXI_R) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+                if (trace_req_line) {
+                    trace_data = axi_rdata_selected_comb_func();
+                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
+                        sys_clock, axi_araddr_full_comb_func(), (uint32_t)fill_beat_reg,
+                        trace_word0, trace_word1, (uint32_t)req_word_comb_func(), (uint32_t)req_beat_comb_func());
+                }
                 if (!req_from_slave_reg && req_read_reg && fill_beat_reg == req_beat_comb_func()) {
                     last_data_reg._next = axi_rdata_selected_comb_func();
                 }

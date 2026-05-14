@@ -24,6 +24,7 @@ public:
     _PORT(DTYPE)        read_data1_out   = _ASSIGN_COMB( data1_out_comb_func() );
     _PORT(DTYPE)        reset_x10_in     = _ASSIGN( (DTYPE)0 );
     _PORT(DTYPE)        reset_x11_in     = _ASSIGN( (DTYPE)0 );
+    _PORT(DTYPE)        x1_out           = _ASSIGN_COMB( x1_comb_func() );
     _PORT(DTYPE)        x10_out          = _ASSIGN_COMB( x10_comb_func() );
     _PORT(DTYPE)        x11_out          = _ASSIGN_COMB( x11_comb_func() );
     _PORT(DTYPE)        x17_out          = _ASSIGN_COMB( x17_comb_func() );
@@ -55,6 +56,10 @@ private:
             data1_out_comb = (DTYPE) buffer[read_addr1_in()];
         }
         return data1_out_comb;
+    }
+
+    _LAZY_COMB(x1_comb, DTYPE)
+        return x1_comb = (DTYPE)buffer[1];
     }
 
     _LAZY_COMB(x10_comb, DTYPE)
@@ -91,6 +96,9 @@ public:
         }
 
         if (write_in()) {
+            if (write_addr_in() == 1 && std::getenv("TRIBE_TRACE_REGFILE_RA") != nullptr) {
+                std::print("trace-regfile-ra cycle={} value={:08x}\n", sys_clock, (uint32_t)write_data_in());
+            }
             buffer[write_addr_in()] = write_data_in();
         }
     }

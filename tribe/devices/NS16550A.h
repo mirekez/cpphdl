@@ -99,6 +99,7 @@ public:
     void _work(bool reset)
     {
         uint32_t addr;
+        uint32_t lane;
         uint8_t data;
         uart_valid_reg._next = false;
 
@@ -118,7 +119,10 @@ public:
         }
         if (axi_in.wvalid_in() && axi_in.wready_out()) {
             addr = (uint32_t)write_addr_reg & 7u;
-            data = (uint8_t)(uint32_t)axi_in.wdata_in().bits(7, 0);
+            // AXI stores arrive on the byte lane selected by the local address.
+            // UART registers are byte-wide, so extract the addressed lane.
+            lane = (uint32_t)write_addr_reg % (DATA_WIDTH / 8);
+            data = (uint8_t)(uint32_t)axi_in.wdata_in().bits(lane * 8 + 7, lane * 8);
             write_addr_valid_reg._next = false;
             write_resp_valid_reg._next = true;
 

@@ -43,6 +43,12 @@ private:
     reg<array<u8,2>>  store_forward_mask_reg;
     reg<array<u1,2>>  store_forward_valid_reg;
 
+    // A held load response is usable only for the same architectural load.
+    _LAZY_COMB(held_load_valid_comb, bool)
+        held_load_valid_comb = load_data_valid_reg && (uint32_t)load_addr_reg == alu_result_in();
+        return held_load_valid_comb;
+    }
+
     _LAZY_COMB(split_load_current_low_valid_comb, bool)
         split_load_current_low_valid_comb = dcache_read_valid_in() &&
             dcache_read_addr_in() == split_load_low_addr_in();
@@ -83,7 +89,7 @@ private:
         }
         else {
             load_ready_comb = state_in().valid && state_in().wb_op == Wb::MEM &&
-                (load_data_valid_reg ||
+                (held_load_valid_comb_func() ||
                  (dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()));
         }
         return load_ready_comb;
@@ -108,11 +114,11 @@ private:
                 (split_load_high_data_comb_func() << (32u - shift));
         }
         else {
-            raw = load_data_valid_reg ? (uint32_t)load_data_reg : dcache_read_data_in();
+            raw = held_load_valid_comb_func() ? (uint32_t)load_data_reg : dcache_read_data_in();
         }
 
         result = raw;
-        load_addr = load_data_valid_reg ? (uint32_t)load_addr_reg : dcache_read_addr_in();
+        load_addr = held_load_valid_comb_func() ? (uint32_t)load_addr_reg : dcache_read_addr_in();
         allow_store_forward = state_in().amo_op == Amo::AMONONE;
 
         if (allow_store_forward && store_forward_valid_reg[1]) {
@@ -186,7 +192,7 @@ private:
             wb_mem_data_comb = split_load_low_data_comb_func();
         }
         else {
-            wb_mem_data_comb = load_data_valid_reg ? (uint32_t)load_data_reg :
+            wb_mem_data_comb = held_load_valid_comb_func() ? (uint32_t)load_data_reg :
                 ((state_in().valid && state_in().wb_op == Wb::MEM && dcache_read_valid_in()) ?
                     dcache_read_data_in() : (uint32_t)0);
         }

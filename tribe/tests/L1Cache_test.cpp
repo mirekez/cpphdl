@@ -608,6 +608,8 @@ class TestL1CacheWideRefill : public Module
 {
     static constexpr size_t SETS = CACHE_SIZE / LINE_SIZE / WAYS;
     static constexpr int CACHE_ID = 0;
+    static constexpr size_t PORT_BYTES = PORT_BITS / 8;
+    static constexpr size_t REFILL_BEATS = LINE_SIZE / PORT_BYTES;
     L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS, PORT_BITS> cache;
 
     bool read = false;
@@ -736,6 +738,19 @@ public:
         cycle(false);
     }
 
+    void requested_beat_hold_regression()
+    {
+        if constexpr (REFILL_BEATS > 1) {
+            // Linux restores return addresses from the stack during a multi-beat D-cache refill.
+            // The requested word can arrive before the final refill beat, so L1 must hold that
+            // requested beat and return it when ST_DONE is reached, not the last beat on the port.
+            uint32_t base = 11 * SETS * LINE_SIZE + 7 * LINE_SIZE;
+            uint32_t request_addr = base + PORT_BYTES;
+            read_check("wide requested-beat hold", request_addr, false);
+            read_check("wide requested-beat hold hit", request_addr, true);
+        }
+    }
+
     bool run()
     {
         std::print("CppHDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
@@ -750,6 +765,9 @@ public:
         }
         if (!error) {
             read_check("wide direct odd byte", base + 1, false);
+        }
+        if (!error) {
+            requested_beat_hold_regression();
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
