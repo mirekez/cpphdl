@@ -1240,6 +1240,7 @@ public:
 #endif
             }
             if (branch_mispredict_comb_func()) {
+#ifndef SYNTHESIS
                 if (std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr) {
                     uint32_t target = branch_actual_next_comb_func();
                     if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
@@ -1255,6 +1256,7 @@ public:
                             (bool)state_reg[0].valid);
                     }
                 }
+#endif
                 pc._next = branch_actual_next_comb_func();
 #ifndef SYNTHESIS
                 trace_pc_write("execute-redirect", branch_actual_next_comb_func());

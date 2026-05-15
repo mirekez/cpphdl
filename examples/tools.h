@@ -60,6 +60,9 @@ template<typename... Args>
 inline bool VerilatorCompileInFolder(std::string cpp_name, std::string folder_base, std::string top_name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args);
 
 template<typename... Args>
+inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string folder_name, std::string top_name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args);
+
+template<typename... Args>
 inline bool VerilatorCompile(std::string cpp_name, std::string name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args)
 {
     return VerilatorCompileInFolder(cpp_name, name, name, modules, includes, std::forward<Args>(args)...);
@@ -72,6 +75,12 @@ inline bool VerilatorCompileInFolder(std::string cpp_name, std::string folder_ba
     ((oss << args << "_"), ...);
     std::string folder_name = folder_base + "_" + oss.str();
     folder_name.pop_back();
+    return VerilatorCompileInExactFolder(cpp_name, folder_name, top_name, modules, includes, std::forward<Args>(args)...);
+};
+
+template<typename... Args>
+inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string folder_name, std::string top_name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args)
+{
     const auto generated_dir = VerilatorGeneratedDir(cpp_name, top_name);
     std::filesystem::remove_all(folder_name);
     std::filesystem::create_directory(folder_name);

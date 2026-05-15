@@ -145,7 +145,7 @@ public:
         return (lo >> shift) | (hi << (32 - shift));
     }
 
-    void eval(bool reset)
+    void drive_cache(bool reset, bool clk)
     {
 #ifdef VERILATOR
         cache.read_in = read;
@@ -163,13 +163,25 @@ public:
         cache.invalidate_in = false;
         cache.cache_disable_in = direct_mode;
         cache.debugen_in = false;
-        cache.clk = 1;
+        cache.clk = clk;
         cache.reset = reset;
         cache.eval();
 #else
-        cache._work(reset);
+        (void)reset;
+        (void)clk;
 #endif
+    }
+
+    void eval(bool reset)
+    {
+#ifdef VERILATOR
+        drive_cache(reset, false);
         ram._work(reset);
+        drive_cache(reset, true);
+#else
+        cache._work(reset);
+        ram._work(reset);
+#endif
     }
 
     void strobe()
@@ -183,9 +195,7 @@ public:
     void neg(bool reset)
     {
 #ifdef VERILATOR
-        cache.clk = 0;
-        cache.reset = reset;
-        cache.eval();
+        drive_cache(reset, false);
 #else
         (void)reset;
 #endif

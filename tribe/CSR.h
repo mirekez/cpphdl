@@ -468,7 +468,10 @@ public:
         bool trace_csr_events;
         inhibit_cycle = mcountinhibit_reg & 1;
         inhibit_instret = (mcountinhibit_reg >> 2) & 1;
+        trace_csr_events = false;
+#ifndef SYNTHESIS
         trace_csr_events = std::getenv("TRIBE_TRACE_CSR_EVENTS") != nullptr;
+#endif
 
         cycle_reg._next = inhibit_cycle ? cycle_reg : uint64_t(cycle_reg) + 1;
         instret_reg._next = (inhibit_instret || !state_in().valid) ? instret_reg : uint64_t(instret_reg) + 1;

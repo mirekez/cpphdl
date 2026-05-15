@@ -856,7 +856,7 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
-    if (type == "int8_t" || type == "signedchar") {
+    if (type == "int8_t" || type == "signedchar" || type == "char") {
         str = logic + " signed" + size + "[7:0]";
         declSize = 8;
     } else

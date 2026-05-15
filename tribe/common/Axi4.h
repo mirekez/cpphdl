@@ -365,13 +365,14 @@ struct Axi4If : Interface
 
 #define AXI4_RESPONDER_FROM_VERILATOR(dst, src, index) \
     do { \
+        const bool axi4_responder_rvalid = (src).rvalid_out(); \
         (dst).axi_out___05Fawready_in[index] = (src).awready_out(); \
         (dst).axi_out___05Fwready_in[index] = (src).wready_out(); \
         (dst).axi_out___05Fbvalid_in[index] = (src).bvalid_out(); \
         (dst).axi_out___05Fbid_in[index] = (src).bid_out(); \
         (dst).axi_out___05Farready_in[index] = (src).arready_out(); \
-        (dst).axi_out___05Frvalid_in[index] = (src).rvalid_out(); \
-        verilator_logic_to_wide((dst).axi_out___05Frdata_in[index], (src).rdata_out()); \
+        (dst).axi_out___05Frvalid_in[index] = axi4_responder_rvalid; \
+        verilator_logic_to_wide((dst).axi_out___05Frdata_in[index], axi4_responder_rvalid ? (src).rdata_out() : std::remove_reference_t<decltype((src).rdata_out())>(0)); \
         (dst).axi_out___05Frlast_in[index] = (src).rlast_out(); \
         (dst).axi_out___05Frid_in[index] = (src).rid_out(); \
     } while (false)

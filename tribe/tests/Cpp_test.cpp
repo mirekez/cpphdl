@@ -101,14 +101,20 @@ static bool run_cpp_program(bool debug = false)
     const auto elf = std::filesystem::current_path() / "cpp_test.elf";
     static constexpr int CPP_TEST_MAX_CYCLES = 50000000;
     TestTribe test(debug);
-    return test.run(elf.string(),
-        0,
-        cpp_test_expected_log().string(),
-        CPP_TEST_MAX_CYCLES,
-        0,
-        0,
-        TRIBE_RAM_BYTES / 4,
-        false);
+    try {
+        return test.run(elf.string(),
+            0,
+            cpp_test_expected_log().string(),
+            CPP_TEST_MAX_CYCLES,
+            0,
+            0,
+            TRIBE_RAM_BYTES / 4,
+            false);
+    }
+    catch (const cpphdl_exception& e) {
+        std::print("CppHDL exception while running C++ runtime ELF: {}\n", e.text);
+        return false;
+    }
 }
 
 int main(int argc, char** argv)

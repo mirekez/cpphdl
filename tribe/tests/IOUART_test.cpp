@@ -366,7 +366,7 @@ int main(int argc, char** argv)
         ok &= generate_iouart_direct_sv();
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DIOUART_DIRECT_VERILATOR", 1);
         if (ok) {
-            ok &= VerilatorCompileInFolder(__FILE__, "IOUART", "IOUART",
+            ok &= VerilatorCompileInExactFolder(__FILE__, "IOUART", "IOUART",
                 {"Predef_pkg"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),

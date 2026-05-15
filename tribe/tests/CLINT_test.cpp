@@ -467,7 +467,7 @@ int main(int argc, char** argv)
         std::cout << "Building CLINT Verilator simulation...\n";
         const auto source_root = source_root_dir();
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DCLINT_DIRECT_VERILATOR", 1);
-        ok &= VerilatorCompileInFolder(__FILE__, "CLINT", "CLINTTest",
+        ok &= VerilatorCompileInExactFolder(__FILE__, "CLINT", "CLINTTest",
             {"Predef_pkg", "CLINT"},
             {(source_root / "include").string(),
              (source_root / "tribe" / "common").string(),

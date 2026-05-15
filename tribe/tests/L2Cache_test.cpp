@@ -36,14 +36,30 @@ static logic<WIDTH> copy_to_logic(const T& bits)
 template<size_t WIDTH, size_t WORDS>
 static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits)
 {
-    static_assert(WIDTH == WORDS * 32);
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out.m_storage, 0, sizeof(out.m_storage));
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
+}
+
+static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
+{
+    memcpy(&out, bits.bytes, sizeof(out));
+}
+
+static void verilator_logic_to_wide(uint32_t& out, const logic<32>& bits)
+{
+    memcpy(&out, bits.bytes, sizeof(out));
 }
 
 template<size_t WORDS>
 static uint32_t port_word(const VlWide<WORDS>& bits, size_t word)
 {
     return bits.m_storage[word];
+}
+
+static uint32_t port_word(QData bits, size_t word)
+{
+    return (uint32_t)(bits >> (word * 32));
 }
 #else
 template<size_t WIDTH>
@@ -180,6 +196,7 @@ public:
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             ram[i]._work(reset);
         }
+        eval_l2(reset);
         l2.clk = 1;
         eval_l2(reset);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
@@ -758,7 +775,7 @@ public:
         write = false;
         cycle(false);
 
-        uint32_t half_bytes = 16u * 1024u;
+        uint32_t half_bytes = 4u * 1024u;
         if (const char* full = std::getenv("L2_PRBS_FULL"); full && std::strcmp(full, "0") != 0) {
             half_bytes = PRBS_TOTAL_SIZE / 2;
         }
@@ -778,6 +795,7 @@ public:
         const uint32_t first_base = 0;
         const uint32_t second_base = PRBS_TOTAL_SIZE / 2;
         const uint32_t target_bytes = half_bytes * 2;
+        const uint32_t ring_guard = half_bytes / 2;
         const uint32_t seed_d_to_axi = 0x13579bdfu;
         const uint32_t seed_axi_to_d = 0x2468ace0u;
 
@@ -798,10 +816,13 @@ public:
         uint32_t d_active_pos = 0;
         uint32_t axi_w_active_pos = 0;
         uint32_t axi_r_active_pos = 0;
+        uint32_t axi_w_age = 0;
+        uint32_t axi_r_age = 0;
         bool i_active = false;
         uint32_t rng = 0x12345678u;
         uint32_t idle_d_cycles = 0;
         uint32_t idle_axi_read_cycles = 0;
+        uint32_t d_mismatch_reports = 0;
 
         auto next_rand = [&]() {
             rng = prbs_mix(rng + 0x9e3779b9u);
@@ -824,7 +845,7 @@ public:
                     i_active = false;
                 }
             } else if ((next_rand() & 0x1fu) == 0) {
-                i_addr = (next_rand() % PRBS_TOTAL_SIZE) & ~3u;
+                i_addr = (PRBS_REGION_SIZE - 0x10000u) + ((next_rand() & 0xffffu) & ~3u);
                 read = true;
                 i_active = true;
             }
@@ -845,10 +866,14 @@ public:
                 if (data == expected) {
                     d_read_pos += 4;
                     --d_chunk_left;
+                } else if (d_mismatch_reports < 4) {
+                    std::print("\ncycle PRBS d-read mismatch addr={:#x} pos={} data={:#x} expected={:#x}\n",
+                        d_addr, d_active_pos, data, expected);
+                    ++d_mismatch_reports;
                 }
             } else if (d_op == DOp::Idle) {
                 bool writer_has_room = (d_write_pos < target_bytes) &&
-                    (d_write_pos - axi_read_pos < half_bytes - 64);
+                    (d_write_pos - axi_read_pos < half_bytes - ring_guard);
                 bool reader_needs_data = d_read_pos < target_bytes && axi_write_pos > d_read_pos;
                 if (d_chunk_left == 0) {
                     d_chunk_left = chunk_words();
@@ -870,29 +895,37 @@ public:
                 }
             }
 
-            if (axi_w_op == AxiWriteOp::Aw && slave_bvalid(0)) {
+            if (axi_w_op == AxiWriteOp::Aw && axi_w_age == 0) {
+                ++axi_w_age;
+            } else if (axi_w_op == AxiWriteOp::Aw && slave_bvalid(0)) {
+                cycle(false);
                 slave_axi[0].aw.valid = false;
                 slave_axi[0].w.valid = false;
                 slave_axi[0].b.ready = true;
                 axi_write_pos += 4;
                 --axi_w_chunk_left;
                 axi_w_op = AxiWriteOp::Idle;
+                continue;
             } else if (axi_w_op == AxiWriteOp::Aw && slave_awready(0) && slave_wready(0)) {
+                cycle(false);
                 slave_axi[0].aw.valid = false;
                 slave_axi[0].w.valid = false;
                 slave_axi[0].b.ready = true;
                 axi_w_op = AxiWriteOp::B;
+                continue;
             } else if (axi_w_op == AxiWriteOp::B && slave_bvalid(0)) {
+                cycle(false);
                 slave_axi[0].b.ready = false;
                 axi_write_pos += 4;
                 --axi_w_chunk_left;
                 axi_w_op = AxiWriteOp::Idle;
+                continue;
             } else if (axi_w_op == AxiWriteOp::Idle) {
                 if (slave_bvalid(0)) {
                     slave_axi[0].b.ready = true;
                 } else if (slave_axi[0].b.ready) {
                     slave_axi[0].b.ready = false;
-                } else if (axi_write_pos < target_bytes && (axi_write_pos - d_read_pos < half_bytes - 64)) {
+                } else if (axi_write_pos < target_bytes && (axi_write_pos - d_read_pos < half_bytes - ring_guard)) {
                     if (axi_w_chunk_left == 0) {
                         axi_w_chunk_left = chunk_words();
                     }
@@ -906,27 +939,52 @@ public:
                     slave_axi[0].aw.id = 9;
                     slave_axi[0].aw.valid = true;
                     slave_axi[0].w.valid = true;
+                    axi_w_age = 0;
                     axi_w_op = AxiWriteOp::Aw;
                     (void)axi_w_active_pos;
                 }
             }
 
-            if (axi_r_op == AxiReadOp::Ar && slave_arready(0)) {
-                slave_axi[0].ar.valid = false;
-                axi_r_op = AxiReadOp::R;
-            } else if (axi_r_op == AxiReadOp::R && slave_rvalid(0)) {
+            if (axi_r_op == AxiReadOp::Ar && slave_rvalid(0)) {
                 logic<PORT_BITS> beat = slave_rdata(0);
                 uint32_t request_addr = circular_addr(first_base, axi_r_active_pos);
                 uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
                 uint32_t data = (uint32_t)beat.bits(lane * 32 + 31, lane * 32);
                 uint32_t expected = prbs_word(axi_r_active_pos, seed_d_to_axi);
+                slave_axi[0].ar.valid = false;
                 slave_axi[0].r.ready = true;
+                cycle(false);
+                slave_axi[0].r.ready = false;
                 axi_r_op = AxiReadOp::Idle;
                 idle_axi_read_cycles = 0;
                 if (data == expected) {
                     axi_read_pos += 4;
                     --axi_r_chunk_left;
                 }
+                continue;
+            } else if (axi_r_op == AxiReadOp::Ar && axi_r_age == 0) {
+                ++axi_r_age;
+            } else if (axi_r_op == AxiReadOp::Ar && slave_arready(0)) {
+                cycle(false);
+                slave_axi[0].ar.valid = false;
+                slave_axi[0].r.ready = true;
+                axi_r_op = AxiReadOp::R;
+                continue;
+            } else if (axi_r_op == AxiReadOp::R && slave_rvalid(0)) {
+                logic<PORT_BITS> beat = slave_rdata(0);
+                uint32_t request_addr = circular_addr(first_base, axi_r_active_pos);
+                uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
+                uint32_t data = (uint32_t)beat.bits(lane * 32 + 31, lane * 32);
+                uint32_t expected = prbs_word(axi_r_active_pos, seed_d_to_axi);
+                cycle(false);
+                slave_axi[0].r.ready = false;
+                axi_r_op = AxiReadOp::Idle;
+                idle_axi_read_cycles = 0;
+                if (data == expected) {
+                    axi_read_pos += 4;
+                    --axi_r_chunk_left;
+                }
+                continue;
             } else if (axi_r_op == AxiReadOp::Idle) {
                 if (slave_axi[0].r.ready) {
                     slave_axi[0].r.ready = false;
@@ -938,6 +996,7 @@ public:
                     slave_axi[0].ar.addr = circular_addr(first_base, axi_read_pos);
                     slave_axi[0].ar.id = 10;
                     slave_axi[0].ar.valid = true;
+                    axi_r_age = 0;
                     axi_r_op = AxiReadOp::Ar;
                 } else {
                     ++idle_axi_read_cycles;

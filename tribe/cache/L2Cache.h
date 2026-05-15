@@ -145,12 +145,13 @@ private:
         size_t i;
         active_slave_index_comb = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
+            u<32> port_index = (u<32>)(uint32_t)i;
             if (!slave_write_pending_comb_func() && axi_in[i].arvalid_in() && !slave_rvalid_reg[i]) {
-                active_slave_index_comb = (u<MEM_PORT_BITS>)i;
+                active_slave_index_comb = port_index;
             }
             if (((slave_aw_pending_reg[i] && axi_in[i].wvalid_in()) ||
                  (axi_in[i].awvalid_in() && axi_in[i].wvalid_in())) && !slave_bvalid_reg[i]) {
-                active_slave_index_comb = (u<MEM_PORT_BITS>)i;
+                active_slave_index_comb = port_index;
             }
         }
         return active_slave_index_comb;
@@ -1016,18 +1017,26 @@ public:
     {
         size_t i;
         size_t way;
-        const char* trace_line_env;
         uint32_t trace_line;
+        bool trace_line_enabled;
         bool trace_req_line;
         bool trace_active_line;
         logic<PORT_BITWIDTH> trace_data;
         uint32_t trace_word0;
         uint32_t trace_word1;
 
+        trace_line = 0;
+        trace_line_enabled = false;
+        trace_req_line = false;
+        trace_active_line = false;
+#ifndef SYNTHESIS
+        const char* trace_line_env;
         trace_line_env = std::getenv("TRIBE_TRACE_L2_LINE");
+        trace_line_enabled = trace_line_env != nullptr;
         trace_line = trace_line_env ? (uint32_t)std::strtoul(trace_line_env, nullptr, 0) & ~(uint32_t)(CACHE_LINE_SIZE - 1) : 0;
         trace_req_line = trace_line_env && (((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
         trace_active_line = trace_line_env && ((active_addr_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
+#endif
         trace_data = 0;
         trace_word0 = 0;
         trace_word1 = 0;
@@ -1225,7 +1234,7 @@ public:
         }
         else if (state_reg == ST_EVICT_W) {
             if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
-                if (trace_line_env && ((axi_awaddr_full_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
+                if (trace_line_enabled && ((axi_awaddr_full_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
                     trace_data = evict_line_comb_func();
                     trace_word0 = (uint32_t)trace_data.bits(31, 0);
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;

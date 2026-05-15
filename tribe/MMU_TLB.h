@@ -270,10 +270,12 @@ private:
 
     void fill_entry(uint32_t vpn, uint32_t ppn, uint32_t flags, bool level)
     {
+#ifndef SYNTHESIS
         if (std::getenv("TRIBE_TRACE_MMU_FILL") != nullptr) {
             std::print("trace-mmu-fill {} vpn={:05x} ppn={:05x} flags={:02x} satp={:08x}\n",
                 level ? "l1" : "l0", vpn, ppn, flags & 0xffu, (uint32_t)req_satp_reg);
         }
+#endif
         valid_reg._next[victim_reg] = true;
         vpn_reg._next[victim_reg] = vpn;
         ppn_reg._next[victim_reg] = ppn;
