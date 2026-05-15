@@ -45,7 +45,9 @@ export TRIBE_ARCH_TEST_OBJDUMP="${TRIBE_ARCH_TEST_OBJDUMP:-riscv32-unknown-elf-o
 export TRIBE_ARCH_TEST_EXTENSIONS="${TRIBE_ARCH_TEST_EXTENSIONS:-I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc,ExceptionsS,ExceptionsU,InterruptsSm}"
 export TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS="${TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS:-F,D,Zcf,Zcd,Zabha,Zicntr,Zihpm,Misalign,MisalignZca}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${BUILD_DIR}/tribe/tests/riscv-arch-test-uv-cache}"
-export UV_PYTHON="${UV_PYTHON:-/usr/bin/python3}"
+# riscv-arch-test Python tools require >=3.10. Keep this as a version
+# request so uv can use an installed interpreter or fetch a managed one.
+export UV_PYTHON="${UV_PYTHON:-3.10}"
 export MISE_DATA_DIR="${MISE_DATA_DIR:-${BUILD_DIR}/mise-data}"
 export MISE_CACHE_DIR="${MISE_CACHE_DIR:-${BUILD_DIR}/mise-cache}"
 export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-${BUILD_DIR}/mise-config}"

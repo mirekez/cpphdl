@@ -211,7 +211,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
     )
 
     add_test(
@@ -225,7 +225,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
     )
 
     add_test(
