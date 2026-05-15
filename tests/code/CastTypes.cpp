@@ -20,12 +20,14 @@ public:
     _PORT(u<32>) functional_out = _ASSIGN_COMB(functional_comb_func());
     _PORT(u<32>) direct_cstyle_out = _ASSIGN_COMB(direct_cstyle_comb_func());
     _PORT(u<32>) direct_functional_out = _ASSIGN_COMB(direct_functional_comb_func());
+    _PORT(u<32>) constructor_template_out = _ASSIGN_COMB(constructor_template_comb_func());
 
 private:
     u<32> cstyle_comb;
     u<32> functional_comb;
     u<32> direct_cstyle_comb;
     u<32> direct_functional_comb;
+    u<32> constructor_template_comb;
 
     u<CAST_BITS> cstyle_narrow;
     u<CAST_BITS> functional_narrow;
@@ -56,6 +58,15 @@ private:
     {
         uint32_t v = scaled_value();
         return direct_functional_comb = (uint32_t)(u<clog2(WIDTH_PARAM)>(v));
+    }
+
+    u<32>& constructor_template_comb_func()
+    {
+        u<clog2(WIDTH_PARAM)> narrow;
+        u8 widened;
+        narrow = (u<clog2(WIDTH_PARAM)>)scaled_value();
+        widened = narrow;
+        return constructor_template_comb = (uint32_t)widened;
     }
 
 public:
@@ -119,6 +130,7 @@ static bool check_generated_sv()
     ok &= text.find("unsigned'(1'(") == std::string::npos;
     ok &= text.find("clog2WIDTH") == std::string::npos;
     ok &= text.find("clog2ENTRIES") == std::string::npos;
+    ok &= text.find("W'(") == std::string::npos;
     if (!ok) {
         std::print("\nERROR: dependent-width cast generation check failed in {}\n", sv_path.string());
     }
@@ -205,6 +217,15 @@ public:
 #endif
     }
 
+    uint32_t constructor_template_value()
+    {
+#ifdef VERILATOR
+        return verilator_read<uint32_t>(&dut.constructor_template_out);
+#else
+        return dut.constructor_template_out();
+#endif
+    }
+
     bool check(uint32_t value_in)
     {
         value = value_in;
@@ -215,9 +236,11 @@ public:
         constexpr uint32_t mask = (1u << CastTypes<8>::CAST_BITS) - 1u;
         uint32_t expected = ((value_in & (CastTypes<8>::WIDTH * CastTypes<8>::WIDTH - 1u)) / CastTypes<8>::WIDTH) & mask;
         if (cstyle_value() != expected || functional_value() != expected ||
-            direct_cstyle_value() != expected || direct_functional_value() != expected) {
-            std::print("\ncast ERROR value=0x{:08x}: cstyle=0x{:x} functional=0x{:x} direct_cstyle=0x{:x} direct_functional=0x{:x} expected=0x{:x}\n",
-                value_in, cstyle_value(), functional_value(), direct_cstyle_value(), direct_functional_value(), expected);
+            direct_cstyle_value() != expected || direct_functional_value() != expected ||
+            constructor_template_value() != expected) {
+            std::print("\ncast ERROR value=0x{:08x}: cstyle=0x{:x} functional=0x{:x} direct_cstyle=0x{:x} direct_functional=0x{:x} constructor_template=0x{:x} expected=0x{:x}\n",
+                value_in, cstyle_value(), functional_value(), direct_cstyle_value(), direct_functional_value(),
+                constructor_template_value(), expected);
             return false;
         }
         return true;

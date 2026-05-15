@@ -14,6 +14,8 @@
 #include "Enum.h"
 #include "Field.h"
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 
 unsigned debugIndent = 0;
@@ -36,6 +38,30 @@ std::string Helpers::castTypeName(QualType QT)
                name.find("i<") == 0 ||
                name.find("logic<") == 0;
     };
+    auto widthUsesOnlyModuleNames = [&](const std::string& width) {
+        for (size_t pos = 0; pos < width.size();) {
+            if (!(std::isalpha(static_cast<unsigned char>(width[pos])) || width[pos] == '_')) {
+                ++pos;
+                continue;
+            }
+            size_t begin = pos;
+            while (pos < width.size() && (std::isalnum(static_cast<unsigned char>(width[pos])) || width[pos] == '_')) {
+                ++pos;
+            }
+            if (begin > 0 && width[begin - 1] == '$') {
+                continue;
+            }
+            std::string token = width.substr(begin, pos - begin);
+            auto isKnown = [&](const cpphdl::Field& field) { return field.name == token; };
+            bool known = mod &&
+                         (std::find_if(mod->parameters.begin(), mod->parameters.end(), isKnown) != mod->parameters.end() ||
+                          std::find_if(mod->consts.begin(), mod->consts.end(), isKnown) != mod->consts.end());
+            if (!known) {
+                return false;
+            }
+        }
+        return true;
+    };
 
     // Keep the sugared cpphdl type for dependent widths like u<clog2(ENTRIES)>.
     // The canonical type can flatten that to cpphdl::u<N>, which loses the
@@ -55,7 +81,9 @@ std::string Helpers::castTypeName(QualType QT)
                         if (width_text.size() > 2 && width_text[0] == '\'' && width_text[1] == 'h') {
                             width_text = std::to_string(std::stoul(width_text.substr(2), nullptr, 16));
                         }
-                        return name + width_text;
+                        if (widthUsesOnlyModuleNames(width_text)) {
+                            return name + width_text;
+                        }
                     }
                 }
             }
