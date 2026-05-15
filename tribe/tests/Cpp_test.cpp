@@ -109,7 +109,8 @@ static bool run_cpp_program(bool debug = false)
             0,
             0,
             TRIBE_RAM_BYTES / 4,
-            false);
+            false,
+            0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "C++ runtime ELF");
     }
     catch (const cpphdl_exception& e) {
         std::print("CppHDL exception while running C++ runtime ELF: {}\n", e.text);

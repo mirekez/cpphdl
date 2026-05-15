@@ -80,7 +80,8 @@ int main(int argc, char** argv)
 
     bool ok = build_ns16550a_elf();
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "ns16550a.elf").string(),
-        0, (tribe_code_dir() / "ns16550a.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false);
+        0, (tribe_code_dir() / "ns16550a.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "NS16550A ELF");
 
 #ifndef VERILATOR
     if (ok && !noveril) {

@@ -328,7 +328,8 @@ static bool run_uart_elf(bool debug = false)
         0,
         0,
         DEFAULT_RAM_SIZE,
-        false);
+        false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "IOUART ELF");
 }
 #endif
 

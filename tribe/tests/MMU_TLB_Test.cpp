@@ -488,14 +488,16 @@ int main(int argc, char** argv)
 #elif defined(VERILATOR)
     Verilated::commandArgs(argc, argv);
     return TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
-        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false, 0, 0, 1) ? 0 : 1;
+        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "MMU/TLB ELF") ? 0 : 1;
 #else
     bool ok = TestMMUTLBDirect().run();
     ok = ok && build_mmu_tlb_elf();
     // Scenario: the ELF first exercises direct Sv32 translation, then a lazy
     // page-fault handler installs a missing PTE and returns to retry the load.
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
-        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false, 0, 0, 1);
+        0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "MMU/TLB ELF");
 
 #ifndef VERILATOR
     if (ok && !noveril) {

@@ -261,7 +261,8 @@ int main(int argc, char** argv)
     bool ok = DirectAcceleratorTest().run();
     ok = ok && build_accelerator_elf();
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "accelerator.elf").string(),
-        0, (tribe_code_dir() / "accelerator.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
+        0, (tribe_code_dir() / "accelerator.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "Accelerator ELF");
 
 #ifndef VERILATOR
     if (ok && !noveril) {

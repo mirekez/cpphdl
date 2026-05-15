@@ -2181,12 +2181,16 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "")
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false)
     {
+        std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
+        if (label.empty()) {
+            label = filename;
+        }
 #ifdef VERILATOR
-        std::print("VERILATOR TestTribe...");
+        std::print("VERILATOR TestTribe[{}]...", label);
 #else
-        std::print("CppHDL TestTribe...");
+        std::print("CppHDL TestTribe[{}]...", label);
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -2329,6 +2333,7 @@ public:
         std::string expected_output;
         std::string captured_output;
         bool expected_marker_seen = false;
+        bool mirrored_uart_needs_newline = false;
         if (!tohost_addr && expected_output_contains.empty()) {
             std::ifstream expected_file(expected_log, std::ios::binary);
             if (!expected_file) {
@@ -2367,6 +2372,11 @@ public:
             char ch = (char)uart.uart_data_out();
             fputc(ch, uart_out);
             fclose(uart_out);
+            if (mirror_uart_output) {
+                fputc(ch, stdout);
+                fflush(stdout);
+                mirrored_uart_needs_newline = ch != '\n';
+            }
             if (!tohost_addr) {
                 captured_output.push_back(ch);
                 if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
@@ -2661,6 +2671,10 @@ public:
             _work_neg(0);
             runtime_negedge_ticks += tribe_runtime_tick() - section_time_start;
             runtime_total_ticks += tribe_runtime_tick() - cycle_time_start;
+        }
+
+        if (mirrored_uart_needs_newline) {
+            std::print("\n");
         }
 
         if (checkpoint_save_only_success) {

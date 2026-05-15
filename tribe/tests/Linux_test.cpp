@@ -348,7 +348,7 @@ static bool run_linux(bool debug,
         0, LINUX_DTB_ADDR, 1, true, LINUX_MEM_BASE - 0xc0000000u, dtb.string(), true,
         initramfs.string(), LINUX_INITRAMFS_ADDR,
         checkpoint_load, checkpoint_save, checkpoint_save_cycle, append_output,
-        bootargs, checkpoint_save_only, marker);
+        bootargs, checkpoint_save_only, marker, "Linux BusyBox", true);
 }
 
 int main(int argc, char** argv)

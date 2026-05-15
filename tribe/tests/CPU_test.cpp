@@ -122,20 +122,22 @@ static bool build_cpu_trap_ra_elf()
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
-        0, (tribe_code_dir() / "cpu_fence.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
+        0, (tribe_code_dir() / "cpu_fence.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU fence");
 }
 
 static bool run_cpu_trap_ra_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_trap_ra.elf").string(),
         0, (tribe_code_dir() / "cpu_trap_ra.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
-        0, 0, 1);
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU trap ra");
 }
 
 static bool run_cpu_bytecopy_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_bytecopy.elf").string(),
-        0, (tribe_code_dir() / "cpu_bytecopy.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false);
+        0, (tribe_code_dir() / "cpu_bytecopy.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU bytecopy");
 }
 
 static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
@@ -148,7 +150,7 @@ static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
     bool partial_ok = TestTribe(debug).run(elf.string(),
         0, log.string(), 301, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0,
-        "", checkpoint.string(), 300, false, "", true);
+        "", checkpoint.string(), 300, false, "", true, "", "CPU bytecopy checkpoint-save");
     if (!partial_ok) {
         std::print("checkpoint partial run did not save cleanly\n");
         return false;
@@ -161,7 +163,7 @@ static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
     return TestTribe(debug).run(elf.string(),
         0, log.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0,
-        checkpoint.string(), "", 0, true);
+        checkpoint.string(), "", 0, true, "", false, "", "CPU bytecopy checkpoint-restore");
 }
 
 static bool check_system_decode_has_no_decode_branch()
