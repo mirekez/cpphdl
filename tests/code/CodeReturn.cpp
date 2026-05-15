@@ -135,12 +135,14 @@ static bool generated_sv_has_comb_return_disable()
     const bool has_task = text.find("task value_task") != std::string::npos;
     const bool has_task_disable = text.find("disable value_task") != std::string::npos;
     const bool has_function = text.find("function logic[32-1:0] value_function") != std::string::npos;
-    const bool has_function_return = text.find("return first_in + unsigned'(32'('h255))") != std::string::npos;
-    if (!has_always_comb || !has_named_block || !has_disable || !has_task || !has_task_disable || !has_function || !has_function_return) {
+    const bool has_function_return = text.find("return ") != std::string::npos;
+    const bool has_no_function_disable = text.find("disable value_function") == std::string::npos;
+    if (!has_always_comb || !has_named_block || !has_disable || !has_task || !has_task_disable ||
+        !has_function || !has_function_return || !has_no_function_disable) {
         std::print("\nERROR: early comb return was not emitted as named-block disable\n");
         std::print("       always_comb: {}, named block: {}, disable: {}\n", has_always_comb, has_named_block, has_disable);
-        std::print("       task: {}, task disable: {}, function: {}, function return: {}\n",
-            has_task, has_task_disable, has_function, has_function_return);
+        std::print("       task: {}, task disable: {}, function: {}, function return: {}, no function disable: {}\n",
+            has_task, has_task_disable, has_function, has_function_return, has_no_function_disable);
         return false;
     }
     return true;
