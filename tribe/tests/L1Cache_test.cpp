@@ -145,6 +145,11 @@ public:
         return (lo >> shift) | (hi << (32 - shift));
     }
 
+    uint32_t backing_read_data_from_image(uint32_t request_addr)
+    {
+        return expected_ram_read(request_addr);
+    }
+
     uint32_t backing_read_data_value()
     {
         uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
@@ -153,12 +158,12 @@ public:
         // C++ RAM model exposes a registered read output. Drive the backing
         // word directly from the test memory image so each refill beat matches
         // the current mem_addr_out and cannot reuse an earlier line beat.
-        return expected_ram_read(request_addr);
+        return backing_read_data_from_image(request_addr);
 #else
         if ((request_addr & 3u) != 0 &&
             (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
             // Instruction end-halfword fetches still use L2 direct cross-line behavior.
-            return expected_ram_read(request_addr);
+            return backing_read_data_from_image(request_addr);
         }
         return ram.read_data_out();
 #endif
@@ -179,7 +184,7 @@ public:
         if (direct_mode) {
             cache.mem_read_data_in = direct_mem_data;
         } else {
-            cache.mem_read_data_in = backing_read_data_value();
+            cache.mem_read_data_in = backing_read_data_from_image((uint32_t)cache.mem_addr_out);
         }
         cache.mem_wait_in = false;
         cache.stall_in = stall;
