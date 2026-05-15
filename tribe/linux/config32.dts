@@ -55,6 +55,7 @@
 			reg-shift = <0>;
 			reg-io-width = <1>;
 			fifo-size = <4096>;
+			interrupts-extended = <&cpu_intc 9>;
 			status = "okay";
 		};
 

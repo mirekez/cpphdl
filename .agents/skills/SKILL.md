@@ -3,7 +3,7 @@ name: cpphdl-verilator-rtl
 description: Use when writing or debugging CppHDL tests that mix C++ testbench models with Verilated RTL, especially reset ordering, register inputs, AXI4 responder wiring, eval sequencing, _assign/_strobe discipline, and avoiding C++/SystemVerilog simulation mismatches.
 ---
 
-# CppHDL Verilator RTL Tests
+# CppHDL and Verilator RTL Tests
 
 Use this skill when editing CppHDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
 
@@ -15,6 +15,7 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 - In Verilator mode, write all Verilated input ports before `eval()`.
 - For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ CppHDL update order accidentally matching Verilator.
 - In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
+- sys_clock is mandatory global variable to be incremented once per main loop cycle, it is used to cache combinational variables functions results
 
 ## Verilator Cycle Pattern
 
@@ -130,7 +131,7 @@ Use this skill when editing CppHDL models or tests or harnesses to verilator con
 - If nothing of this works use macroses like AXI4_DRIVER_FROM AXI4_RESPONDER_FROM or similar with _VERILATOR suffix
 - Try to use right types like u<ID_WIDTH>, not uint32_t for variables when you need to use them
 
-# Developing new RTL modules, devices, examples
+# Developing RTL modules, devices, examples
 
 Use this skill when developing and debugging new CppHDL module, device, example or functionality
 

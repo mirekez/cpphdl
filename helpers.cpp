@@ -797,9 +797,29 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" ImplicitCastExpr");
         return /*cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(FCE->getSubExpr())/*}}*/;
     }
+    auto castTypeName = [&](QualType QT) {
+        std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
+        std::string canonical = QT.getCanonicalType().getAsString(ctx->getPrintingPolicy());
+        auto isCpphdlSizedType = [](const std::string& name) {
+            return name.find("cpphdl::u<") != std::string::npos ||
+                   name.find("cpphdl::i<") != std::string::npos ||
+                   name.find("cpphdl::logic<") != std::string::npos ||
+                   name.find("u<") == 0 ||
+                   name.find("i<") == 0 ||
+                   name.find("logic<") == 0;
+        };
+        // Keep the sugared cpphdl type for dependent widths like u<LINE_BEAT_BITS>.
+        // The canonical type may collapse to a placeholder width before module
+        // specialization, producing a too-narrow SystemVerilog size cast.
+        std::string name = isCpphdlSizedType(sugared) ? sugared : canonical;
+        if (name.find("u<") == 0 || name.find("i<") == 0 || name.find("logic<") == 0) {
+            name = "cpphdl::" + name;
+        }
+        return genTypeName(name);
+    };
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
         DEBUG_AST1(" CXXFunctionalCastExpr(" << FCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) << ")");
-        return cpphdl::Expr{genTypeName(FCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
+        return cpphdl::Expr{castTypeName(FCE->getType()), cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};
     }
     if (auto* SCE = dyn_cast<CXXStaticCastExpr>(E)) {
         DEBUG_AST1(" CXXStaticCastExpr");
@@ -823,10 +843,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()).find("__remove_reference_t") == 0) {
             return exprToExpr(SCE->getSubExpr());
         }
-        if (SCE->getType()->isDependentType()) {  // some methods are still abstract (when they are called from lambdas in templates)
-            return cpphdl::Expr{genTypeName(SCE->getType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
-        }
-        return cpphdl::Expr{genTypeName(SCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
+        return cpphdl::Expr{castTypeName(SCE->getType()), cpphdl::Expr::EXPR_CAST, {exprToExpr(SCE->getSubExpr())}};
     }
     if (auto* MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
         DEBUG_AST1(" MaterializeTemporaryExpr");

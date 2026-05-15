@@ -170,6 +170,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
     _PORT(bool)      clint_msip_in;
     _PORT(bool)      clint_mtip_in;
+    _PORT(bool)      external_irq_in = _ASSIGN(false);
 #endif
 
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
@@ -241,6 +242,7 @@ public:
         irq.priv_in = csr.priv_out;
         irq.clint_msip_in = clint_msip_in;
         irq.clint_mtip_in = clint_mtip_in;
+        irq.external_irq_in = external_irq_in;
         irq.__inst_name = __inst_name + "/irq";
         irq._assign();
 #endif
@@ -1878,6 +1880,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
+        tribe.external_irq_in = uart.irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
@@ -1953,6 +1956,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.external_irq_in = uart.irq_out();
 #endif
         AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
@@ -2037,6 +2041,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.external_irq_in = uart.irq_out();
 #endif
 
         tribe.clk = 0;
@@ -2381,6 +2386,12 @@ public:
         std::string captured_output;
         bool expected_marker_seen = false;
         bool mirrored_uart_needs_newline = false;
+        const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
+        const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
+        std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
+        std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
+        size_t scripted_uart_pos = 0;
+        bool scripted_uart_enabled = scripted_uart_after.empty();
         StdinRawMode stdin_raw(interactive_uart_input);
         if (!tohost_addr && expected_output_contains.empty()) {
             std::ifstream expected_file(expected_log, std::ios::binary);
@@ -2425,8 +2436,12 @@ public:
                 fflush(stdout);
                 mirrored_uart_needs_newline = ch != '\n';
             }
+            captured_output.push_back(ch);
+            if (!scripted_uart_enabled && !scripted_uart_input.empty() &&
+                captured_output.find(scripted_uart_after) != std::string::npos) {
+                scripted_uart_enabled = true;
+            }
             if (!tohost_addr) {
-                captured_output.push_back(ch);
                 if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
                     expected_marker_seen = true;
                     return true;
@@ -2474,7 +2489,11 @@ public:
                 break;
             }
             uart_rx_valid = false;
-            if (interactive_uart_input && uart.uart_rx_ready_out()) {
+            if (uart.uart_rx_ready_out() && scripted_uart_enabled && scripted_uart_pos < scripted_uart_input.size()) {
+                uart_rx_data = (uint8_t)scripted_uart_input[scripted_uart_pos++];
+                uart_rx_valid = true;
+            }
+            else if (interactive_uart_input && uart.uart_rx_ready_out()) {
                 unsigned char ch;
                 ssize_t got = read(STDIN_FILENO, &ch, 1);
                 if (got == 1) {

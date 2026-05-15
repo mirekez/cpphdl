@@ -25,6 +25,7 @@ public:
     _PORT(bool) uart_rx_valid_in;
     _PORT(uint8_t) uart_rx_data_in;
     _PORT(bool) uart_rx_ready_out = _ASSIGN(!rx_valid_reg);
+    _PORT(bool) irq_out = _ASSIGN_COMB(irq_comb_func());
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -50,6 +51,12 @@ private:
         return dlab_comb = (lcr_reg & u<8>(0x80)) != 0;
     }
 
+    _LAZY_COMB(irq_comb, bool)
+        // Linux 8250 uses the receive-data interrupt to wake a blocking
+        // console read. Raise it while RX data is buffered and IER.ERBFI is set.
+        return irq_comb = rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0);
+    }
+
     // NS16550A read map. TX is modeled as always empty/ready: LSR.THRE and LSR.TEMT are set.
     _LAZY_COMB(read_data_comb, logic<DATA_WIDTH>)
         uint32_t addr;
@@ -66,7 +73,7 @@ private:
             data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
         }
         if (addr == REG_IIR_FCR) {
-            data = 0x01;
+            data = irq_comb_func() ? 0x04 : 0x01;
         }
         if (addr == REG_LCR) {
             data = (uint8_t)lcr_reg;

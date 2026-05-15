@@ -27,6 +27,7 @@ public:
     _PORT(u<2>) priv_in;
     _PORT(bool) clint_msip_in;
     _PORT(bool) clint_mtip_in;
+    _PORT(bool) external_irq_in = _ASSIGN(false);
 
     _PORT(uint32_t) mip_out = _ASSIGN_COMB(mip_comb_func());
     _PORT(bool) interrupt_valid_out = _ASSIGN_COMB(interrupt_valid_comb_func());
@@ -43,6 +44,9 @@ private:
         }
         if (clint_mtip_in()) {
             mip_comb |= 1u << IRQ_MTIP;
+        }
+        if (external_irq_in()) {
+            mip_comb |= 1u << IRQ_SEIP;
         }
 #endif
         return mip_comb;

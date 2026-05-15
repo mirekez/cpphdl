@@ -5,6 +5,8 @@
 #include "Debug.h"
 #include "Struct.h"
 
+#include <cctype>
+
 using namespace cpphdl;
 
 namespace
@@ -27,6 +29,41 @@ bool collectIndexChain(Expr expr, std::string& root, std::vector<Expr>& indices)
 bool isMemberName(const std::string& name)
 {
     return currModule && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == name; });
+}
+
+std::string sizedCpphdlWidth(const std::string& name, const char* prefix)
+{
+    if (name.find(prefix) != 0) {
+        return "";
+    }
+
+    std::string width = name.substr(strlen(prefix));
+    if (width.empty()) {
+        return "";
+    }
+
+    bool numeric = true;
+    bool has_digit = false;
+    for (char c : width) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            has_digit = true;
+        } else if (c != 'u' && c != 'U' && c != 'l' && c != 'L') {
+            numeric = false;
+            break;
+        }
+    }
+
+    if (numeric && has_digit) {
+        std::string digits;
+        for (char c : width) {
+            if (std::isdigit(static_cast<unsigned char>(c))) {
+                digits += c;
+            }
+        }
+        return digits;
+    }
+
+    return width;
 }
 
 std::string memberArrayPortRef(Expr indexed, std::string member, const std::string& suffix, bool allowInterface)
@@ -578,12 +615,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + "unsigned'(32'(" + sub[0].str(prefix, suffix) + "))";
             } else
             if (value.find("cpphdl_u") == 0) {
-                size_t width = atoi(value.c_str() + strlen("cpphdl_u"));
-                return indent_str + "unsigned'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
+                std::string width = sizedCpphdlWidth(value, "cpphdl_u");
+                if (width.empty()) {
+                    return indent_str + sub[0].str(prefix, suffix);
+                }
+                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
             } else
             if (value.find("cpphdl_i") == 0) {
-                size_t width = atoi(value.c_str() + strlen("cpphdl_i"));
-                return indent_str + "signed'(" + std::to_string(width) + "'(" + sub[0].str(prefix, suffix) + "))";
+                std::string width = sizedCpphdlWidth(value, "cpphdl_i");
+                if (width.empty()) {
+                    return indent_str + sub[0].str(prefix, suffix);
+                }
+                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
             }
             return indent_str + /*typeToSV(value) + "'(" + */sub[0].str(prefix, suffix);// + ")";  // cast only simple types
         case EXPR_PAREN:
@@ -839,13 +882,13 @@ std::string Expr::typeToSV(std::string type, std::string size)
         declSize = 1;
     } else
     if (type.find("cpphdl_u") == 0) {
-        size_t width = atoi(type.c_str() + strlen("cpphdl_u"));
-        str = logic + size + "[" + std::to_string(width) + "-1:0]";
+        std::string width = sizedCpphdlWidth(type, "cpphdl_u");
+        str = logic + size + "[" + width + "-1:0]";
         declSize = 8;
     } else
     if (type.find("cpphdl_i") == 0) {
-        size_t width = atoi(type.c_str() + strlen("cpphdl_i"));
-        str = logic + " signed" + size + "[" + std::to_string(width) + "-1:0]";
+        std::string width = sizedCpphdlWidth(type, "cpphdl_i");
+        str = logic + " signed" + size + "[" + width + "-1:0]";
         declSize = 8;
     } else
     if (type == "bool") {
