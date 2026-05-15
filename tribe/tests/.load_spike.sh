@@ -20,23 +20,15 @@ PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 RISCV_DV_PYTHON_DEPS=(
   wheel
   "setuptools>=65"
-  Jinja2
-  Markdown
-  MarkupSafe
-  "PyYAML>=6.0"
-  "requests>=2.31"
   bitarray
   bitstring
-  google-api-python-client
-  libconf
   numpy
   pandas
   pyboolector
-  pygen
   pyucis
   pyvsc
-  riscv-config
-  riscv-isac
+  "PyYAML>=6.0"
+  "requests>=2.31"
   tabulate
   toposort
 )
