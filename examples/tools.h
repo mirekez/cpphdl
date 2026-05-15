@@ -73,8 +73,12 @@ inline bool VerilatorCompileInFolder(std::string cpp_name, std::string folder_ba
 {
     std::ostringstream oss;
     ((oss << args << "_"), ...);
-    std::string folder_name = folder_base + "_" + oss.str();
-    folder_name.pop_back();
+    std::string suffix = oss.str();
+    std::string folder_name = folder_base;
+    if (!suffix.empty()) {
+        suffix.pop_back();
+        folder_name += "_" + suffix;
+    }
     return VerilatorCompileInExactFolder(cpp_name, folder_name, top_name, modules, includes, std::forward<Args>(args)...);
 };
 

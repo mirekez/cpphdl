@@ -80,6 +80,14 @@ static bool write_file_bytes(const std::filesystem::path& path, const std::vecto
     return true;
 }
 
+static bool has_newc_cpio_magic(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    char magic[6] = {};
+    file.read(magic, sizeof(magic));
+    return file.gcount() == (std::streamsize)sizeof(magic) && std::memcmp(magic, "070701", 6) == 0;
+}
+
 static uint32_t parse_cpio_hex(const std::vector<uint8_t>& data, size_t pos)
 {
     uint32_t value = 0;
@@ -268,11 +276,24 @@ static bool prepare_linux_inputs(std::filesystem::path& vmlinux,
     }
 
     const auto initramfs_gz = src / "initramfs.cpio.gz";
+    const auto raw_initramfs = work / "initramfs.base.raw";
     const auto base_cpio = work / "initramfs.base.cpio";
     initramfs = work / "initramfs.cpio";
-    if (newer_than(initramfs_gz, base_cpio)) {
-        if (!run_command("gzip -dc " + shell_quote(initramfs_gz) + " > " + shell_quote(base_cpio))) {
+    if (newer_than(initramfs_gz, raw_initramfs)) {
+        if (!run_command("gzip -dc " + shell_quote(initramfs_gz) + " > " + shell_quote(raw_initramfs))) {
             return false;
+        }
+    }
+    if (newer_than(raw_initramfs, base_cpio) || !has_newc_cpio_magic(base_cpio)) {
+        if (has_newc_cpio_magic(raw_initramfs)) {
+            std::filesystem::copy_file(raw_initramfs, base_cpio, std::filesystem::copy_options::overwrite_existing);
+        }
+        else {
+            // Some checked-in initramfs artifacts are gzip-compressed tar files
+            // containing initramfs.cpio; extract that member before rewriting /init.
+            if (!run_command("tar -xOf " + shell_quote(raw_initramfs) + " initramfs.cpio > " + shell_quote(base_cpio))) {
+                return false;
+            }
         }
     }
     if (newer_than(base_cpio, initramfs)) {
