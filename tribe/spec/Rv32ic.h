@@ -210,6 +210,7 @@ struct Rv32ic : public Rv32i
                 else if (rs2 == 0 && b12 == 0) {  // C.JR
                     state_out.rs1 = rd_rs1;
                     state_out.br_op = Br::JR;
+                    state_out.wb_op = Wb::PC2;
                 }
                 else if (rs2 == 0 && b12 == 1) {  // C.JALR
                     state_out.rs1 = rd_rs1;
