@@ -148,8 +148,10 @@ public:
     uint32_t backing_read_data_value()
     {
         uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
-        if ((request_addr & 3u) != 0 && ((request_addr & (LINE_SIZE - 1)) == LINE_SIZE - 2)) {
-            // Match L2 behavior for instruction fetches whose 32-bit word spans two cache lines.
+        if ((request_addr & 3u) != 0 &&
+            (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
+            // Match L2 direct cross-line behavior for instruction end-halfword fetches
+            // and data byte/half loads from the final word of a cache line.
             return expected_ram_read(request_addr);
         }
         return PORT_VALUE(ram.read_data_out);
@@ -668,7 +670,8 @@ public:
         size_t i;
         mem_read_data_comb = 0;
         request_addr = (uint32_t)cache.mem_addr_out();
-        if ((request_addr & 3u) != 0 && ((request_addr & (LINE_SIZE - 1)) == LINE_SIZE - 2)) {
+        if ((request_addr & 3u) != 0 &&
+            (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
             // Match L2 direct cross-line behavior: assembled 32-bit data is returned in bits [31:0].
             byte = request_addr & 3u;
             low = mem_word(request_addr >> 2);
@@ -775,6 +778,16 @@ public:
         }
     }
 
+    void final_word_byte_direct_regression()
+    {
+        // Scenario from Cpp_test: an odd byte load from the final 32-bit word of a line
+        // must request the original address so L2 returns the cross-line assembled word
+        // in bits [31:0], rather than word zero of the containing wide beat.
+        uint32_t base = 13 * SETS * LINE_SIZE + 3 * LINE_SIZE;
+        uint32_t request_addr = base + LINE_SIZE - 3;
+        read_check("wide final-word byte direct", request_addr, false);
+    }
+
     bool run()
     {
         std::print("CppHDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
@@ -792,6 +805,9 @@ public:
         }
         if (!error) {
             requested_beat_hold_regression();
+        }
+        if (!error) {
+            final_word_byte_direct_regression();
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

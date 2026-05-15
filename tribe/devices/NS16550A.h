@@ -86,7 +86,9 @@ public:
     void _assign()
     {
         axi_in.awready_out = _ASSIGN(!write_addr_valid_reg && !write_resp_valid_reg);
-        axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg);
+        // Do not accept a new TX byte while the previous one-cycle UART pulse
+        // is still visible to the parent testbench.
+        axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg && !uart_valid_reg);
         axi_in.bvalid_out = _ASSIGN_REG(write_resp_valid_reg);
         axi_in.bid_out = _ASSIGN_REG(write_id_reg);
         axi_in.arready_out = _ASSIGN(!read_valid_reg);

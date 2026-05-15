@@ -247,11 +247,11 @@ private:
         uint32_t word;
         byte = active_addr_comb_func() & 3u;
         word = (active_addr_comb_func() >> 2) & (LINE_WORDS - 1);
-        // CPU data accesses that really cross a line are split before L2.
-        // Instruction fetch can legally ask for the final halfword of a line;
-        // service it as a two-beat direct read and return the assembled word.
+        // CPU word data crossings are normally split before L2, but byte/half
+        // reads at the final word and instruction fetches both need the same
+        // two-beat assembler when the low 32-bit result spans a line.
         active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() &&
-            !active_is_d_comb_func() && byte != 0 && word == LINE_WORDS - 1;
+            byte != 0 && word == LINE_WORDS - 1;
         return active_cross_line_read_comb;
     }
 

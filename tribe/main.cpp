@@ -2354,6 +2354,32 @@ public:
             error = current_output != expected_output;
             return true;
         };
+        auto capture_uart_output = [&]() {
+            if (!uart.uart_valid_out()) {
+                return false;
+            }
+
+            FILE* uart_out = fopen("out.txt", "ab");
+            if (!uart_out) {
+                return false;
+            }
+
+            char ch = (char)uart.uart_data_out();
+            fputc(ch, uart_out);
+            fclose(uart_out);
+            if (!tohost_addr) {
+                captured_output.push_back(ch);
+                if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
+                    expected_marker_seen = true;
+                    return true;
+                }
+                if (!expected_output.empty() && captured_output.size() >= expected_output.size()) {
+                    error = captured_output != expected_output;
+                    return true;
+                }
+            }
+            return false;
+        };
         int cycles = max_cycles;
         bool checkpoint_saved = false;
         while (--cycles && !error && !tohost_done) {
@@ -2386,6 +2412,11 @@ public:
             section_time_start = tribe_runtime_tick();
             ++sys_clock;
             perf_sample();
+            if (capture_uart_output()) {
+                break;
+            }
+            runtime_uart_ticks += tribe_runtime_tick() - section_time_start;
+            section_time_start = tribe_runtime_tick();
             if (debug_start && perf_clocks >= debug_start) {
                 debugen_in = true;
 #ifndef VERILATOR
@@ -2402,27 +2433,6 @@ public:
             section_time_start = tribe_runtime_tick();
             _work(0);
             runtime_work_ticks += tribe_runtime_tick() - section_time_start;
-            section_time_start = tribe_runtime_tick();
-            if (uart.uart_valid_out()) {
-                FILE* uart_out = fopen("out.txt", "ab");
-                if (uart_out) {
-                    char ch = (char)uart.uart_data_out();
-                    fputc(ch, uart_out);
-                    fclose(uart_out);
-                    if (!tohost_addr) {
-                        captured_output.push_back(ch);
-                        if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
-                            expected_marker_seen = true;
-                            break;
-                        }
-                        if (!expected_output.empty() && captured_output.size() >= expected_output.size()) {
-                            error = captured_output != expected_output;
-                            break;
-                        }
-                    }
-                }
-            }
-            runtime_uart_ticks += tribe_runtime_tick() - section_time_start;
             section_time_start = tribe_runtime_tick();
             if (trace_period && (perf_clocks % trace_period) == 0) {
                 auto perf_now = PERF_VALUE(tribe.perf_out);
