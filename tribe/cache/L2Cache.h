@@ -247,10 +247,11 @@ private:
         uint32_t word;
         byte = active_addr_comb_func() & 3u;
         word = (active_addr_comb_func() >> 2) & (LINE_WORDS - 1);
-        // CPU word data crossings are normally split before L2, but byte/half
-        // reads at the final word and instruction fetches both need the same
-        // two-beat assembler when the low 32-bit result spans a line.
-        active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() &&
+        // Instruction fetch can legally ask L2 for a 32-bit instruction whose
+        // low halfword is at the end of a line. Data-side unaligned accesses
+        // are split above L2, so keep them on the cached hit path; otherwise a
+        // byte/half load at the final word can bypass dirty cached data.
+        active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() && !active_is_d_comb_func() &&
             byte != 0 && word == LINE_WORDS - 1;
         return active_cross_line_read_comb;
     }
