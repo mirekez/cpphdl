@@ -1444,12 +1444,25 @@ public:
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#if defined(__i386__) || defined(__x86_64__)
+#include <x86intrin.h>
+#endif
 
 #include "Ram.h"
 #include "Axi4Ram.h"
 
 #include <tuple>
 #include <utility>
+
+static inline uint64_t tribe_runtime_tick()
+{
+#if defined(__i386__) || defined(__x86_64__)
+    unsigned aux;
+    return __rdtscp(&aux);
+#else
+    return (uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#endif
+}
 
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
@@ -1524,6 +1537,16 @@ class TestTribe : public Module
     uint64_t perf_icache_refill_wait_cycles = 0;
     uint64_t perf_icache_init_wait_cycles = 0;
     uint64_t perf_icache_hit_lookup_cycles = 0;
+    uint64_t runtime_strobe_ticks = 0;
+    uint64_t runtime_tribe_strobe_ticks = 0;
+    uint64_t runtime_checkpoint_ticks = 0;
+    uint64_t runtime_perf_ticks = 0;
+    uint64_t runtime_work_ticks = 0;
+    uint64_t runtime_tribe_work_ticks = 0;
+    uint64_t runtime_uart_ticks = 0;
+    uint64_t runtime_trace_ticks = 0;
+    uint64_t runtime_negedge_ticks = 0;
+    uint64_t runtime_total_ticks = 0;
     uint32_t tohost_addr = 0;
     uint32_t tohost_value = 0;
     uint32_t reset_pc = 0;
@@ -1935,7 +1958,9 @@ public:
     void _work(bool reset)
     {
 #ifndef VERILATOR
+        uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe._work(reset);
+        runtime_tribe_work_ticks += tribe_runtime_tick() - tribe_work_time_start;
 #else
 //        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
         tribe.debugen_in    = debugen_in;
@@ -1983,7 +2008,9 @@ public:
         AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
         tribe.clk = 1;
         tribe.reset = reset;
+        uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe.eval();  // eval of verilator should be in the end
+        runtime_tribe_work_ticks += tribe_runtime_tick() - tribe_work_time_start;
 #endif
 
         if (reset) {
@@ -2016,7 +2043,9 @@ public:
         checkpoint_value(checkpoint_fd, tohost_done);
         checkpoint_value(checkpoint_fd, sys_clock);
 #ifndef VERILATOR
+        uint64_t tribe_strobe_time_start = tribe_runtime_tick();
         tribe._strobe(checkpoint_fd);
+        runtime_tribe_strobe_ticks += tribe_runtime_tick() - tribe_strobe_time_start;
 #endif
         mem0._strobe(checkpoint_fd);  // we use these modules in Verilator test
         mem1._strobe(checkpoint_fd);
@@ -2059,6 +2088,16 @@ public:
         perf_icache_refill_wait_cycles = 0;
         perf_icache_init_wait_cycles = 0;
         perf_icache_hit_lookup_cycles = 0;
+        runtime_strobe_ticks = 0;
+        runtime_tribe_strobe_ticks = 0;
+        runtime_checkpoint_ticks = 0;
+        runtime_perf_ticks = 0;
+        runtime_work_ticks = 0;
+        runtime_tribe_work_ticks = 0;
+        runtime_uart_ticks = 0;
+        runtime_trace_ticks = 0;
+        runtime_negedge_ticks = 0;
+        runtime_total_ticks = 0;
     }
 
     void perf_sample()
@@ -2103,6 +2142,9 @@ public:
         auto percent = [&](uint64_t value) {
             return perf_clocks ? (100.0 * (double)value / (double)perf_clocks) : 0.0;
         };
+        auto runtime_part_percent = [&](uint64_t ticks) {
+            return runtime_total_ticks ? (100.0 * (double)ticks / (double)runtime_total_ticks) : 0.0;
+        };
 
         std::print("Performance: clocks={}, stalled={:.2f}% ({})"
                    ", hazards={:.2f}% ({})"
@@ -2125,6 +2167,16 @@ public:
             percent(perf_icache_hit_lookup_cycles), perf_icache_hit_lookup_cycles,
             percent(perf_icache_refill_wait_cycles), perf_icache_refill_wait_cycles,
             percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
+        std::print("Runtime detail: checkpoint={:.2f}% strobe={:.2f}% tribe_strobe={:.2f}% perf={:.2f}% work={:.2f}% tribe_work={:.2f}% uart={:.2f}% trace_probe={:.2f}% negedge={:.2f}%\n",
+            runtime_part_percent(runtime_checkpoint_ticks),
+            runtime_part_percent(runtime_strobe_ticks),
+            runtime_part_percent(runtime_tribe_strobe_ticks),
+            runtime_part_percent(runtime_perf_ticks),
+            runtime_part_percent(runtime_work_ticks),
+            runtime_part_percent(runtime_tribe_work_ticks),
+            runtime_part_percent(runtime_uart_ticks),
+            runtime_part_percent(runtime_trace_ticks),
+            runtime_part_percent(runtime_negedge_ticks));
     }
 
     bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "")
@@ -2302,6 +2354,9 @@ public:
         int cycles = max_cycles;
         bool checkpoint_saved = false;
         while (--cycles && !error && !tohost_done) {
+            uint64_t cycle_time_start = tribe_runtime_tick();
+            uint64_t section_time_start = cycle_time_start;
+            uint64_t strobe_ticks_before = runtime_strobe_ticks;
             if (checkpoint_loaded_pending_work) {
                 checkpoint_loaded_pending_work = false;
             }
@@ -2315,13 +2370,17 @@ public:
                         break;
                     }
                 }
+                uint64_t strobe_time_start = tribe_runtime_tick();
                 _strobe(checkpoint_out);
+                runtime_strobe_ticks += tribe_runtime_tick() - strobe_time_start;
                 if (checkpoint_out) {
                     fclose(checkpoint_out);
                     checkpoint_saved = true;
                     std::print("Saved checkpoint '{}' at cycle {}\n", checkpoint_save_file, perf_clocks + 1);
                 }
             }
+            runtime_checkpoint_ticks += tribe_runtime_tick() - section_time_start - (runtime_strobe_ticks - strobe_ticks_before);
+            section_time_start = tribe_runtime_tick();
             ++sys_clock;
             perf_sample();
             if (debug_start && perf_clocks >= debug_start) {
@@ -2336,7 +2395,11 @@ public:
                 tribe.debugen_in = true;
 #endif
             }
+            runtime_perf_ticks += tribe_runtime_tick() - section_time_start;
+            section_time_start = tribe_runtime_tick();
             _work(0);
+            runtime_work_ticks += tribe_runtime_tick() - section_time_start;
+            section_time_start = tribe_runtime_tick();
             if (uart.uart_valid_out()) {
                 FILE* uart_out = fopen("out.txt", "ab");
                 if (uart_out) {
@@ -2352,6 +2415,8 @@ public:
                     }
                 }
             }
+            runtime_uart_ticks += tribe_runtime_tick() - section_time_start;
+            section_time_start = tribe_runtime_tick();
             if (trace_period && (perf_clocks % trace_period) == 0) {
                 auto perf_now = PERF_VALUE(tribe.perf_out);
                 std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
@@ -2573,8 +2638,12 @@ public:
             if (debugen_in) {
                 debug_perf_counters_print();
             }
+            runtime_trace_ticks += tribe_runtime_tick() - section_time_start;
+            section_time_start = tribe_runtime_tick();
             _strobe_neg();
             _work_neg(0);
+            runtime_negedge_ticks += tribe_runtime_tick() - section_time_start;
+            runtime_total_ticks += tribe_runtime_tick() - cycle_time_start;
         }
 
         if (tohost_addr) {
