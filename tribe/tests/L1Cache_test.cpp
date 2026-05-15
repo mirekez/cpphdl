@@ -856,35 +856,45 @@ int main(int argc, char** argv)
                  (source_root / "tribe" / "cache").string()},
                 cache_size, LINE_SIZE, ways, id, ADDR_BITS, port_bits);
         };
+        ok &= compile_l1(1024, 1, 0, 32);
         ok &= compile_l1(1024, 2, 0, 32);
         ok &= compile_l1(1024, 4, 0, 32);
+        ok &= compile_l1(8192, 1, 0, 32);
         ok &= compile_l1(8192, 2, 0, 32);
         ok &= compile_l1(8192, 4, 0, 32);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok &&
-            std::system("L1Cache_1024_32_2_0_17_32/obj_dir/VL1Cache 0") == 0 &&
-            std::system("L1Cache_1024_32_4_0_17_32/obj_dir/VL1Cache 1") == 0 &&
-            std::system("L1Cache_8192_32_2_0_17_32/obj_dir/VL1Cache 2") == 0 &&
-            std::system("L1Cache_8192_32_4_0_17_32/obj_dir/VL1Cache 3") == 0;
+            std::system("L1Cache_1024_32_1_0_17_32/obj_dir/VL1Cache 0") == 0 &&
+            std::system("L1Cache_1024_32_2_0_17_32/obj_dir/VL1Cache 1") == 0 &&
+            std::system("L1Cache_1024_32_4_0_17_32/obj_dir/VL1Cache 2") == 0 &&
+            std::system("L1Cache_8192_32_1_0_17_32/obj_dir/VL1Cache 3") == 0 &&
+            std::system("L1Cache_8192_32_2_0_17_32/obj_dir/VL1Cache 4") == 0 &&
+            std::system("L1Cache_8192_32_4_0_17_32/obj_dir/VL1Cache 5") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    ok = ok && ((only != -1 && only != 0) || TestL1Cache<1024,2,0>().run());
-    ok = ok && ((only != -1 && only != 1) || TestL1Cache<1024,4,0>().run());
-    ok = ok && ((only != -1 && only != 2) || TestL1Cache<8192,2,0>().run());
-    ok = ok && ((only != -1 && only != 3) || TestL1Cache<8192,4,0>().run());
+    ok = ok && ((only != -1 && only != 0) || TestL1Cache<1024,1,0>().run());
+    ok = ok && ((only != -1 && only != 1) || TestL1Cache<1024,2,0>().run());
+    ok = ok && ((only != -1 && only != 2) || TestL1Cache<1024,4,0>().run());
+    ok = ok && ((only != -1 && only != 3) || TestL1Cache<8192,1,0>().run());
+    ok = ok && ((only != -1 && only != 4) || TestL1Cache<8192,2,0>().run());
+    ok = ok && ((only != -1 && only != 5) || TestL1Cache<8192,4,0>().run());
 #ifndef VERILATOR
+    ok = ok && TestL1Cache<1024,1,1>().run();
     ok = ok && TestL1Cache<1024,2,1>().run();
     ok = ok && TestL1Cache<1024,4,1>().run();
+    ok = ok && TestL1Cache<8192,1,1>().run();
     ok = ok && TestL1Cache<8192,2,1>().run();
     ok = ok && TestL1Cache<8192,4,1>().run();
+    ok = ok && TestL1CacheWideRefill<1024,1,64>().run();
     ok = ok && TestL1CacheWideRefill<1024,2,64>().run();
     ok = ok && TestL1CacheWideRefill<1024,4,64>().run();
+    ok = ok && TestL1CacheWideRefill<8192,1,256>().run();
     ok = ok && TestL1CacheWideRefill<8192,2,256>().run();
     ok = ok && TestL1CacheWideRefill<8192,4,256>().run();
 #endif

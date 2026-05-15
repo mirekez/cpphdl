@@ -23,6 +23,57 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 //const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
+std::string Helpers::castTypeName(QualType QT)
+{
+    std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
+    std::string canonical = QT.getCanonicalType().getAsString(ctx->getPrintingPolicy());
+
+    auto isCpphdlSizedType = [](const std::string& name) {
+        return name.find("cpphdl::u<") != std::string::npos ||
+               name.find("cpphdl::i<") != std::string::npos ||
+               name.find("cpphdl::logic<") != std::string::npos ||
+               name.find("u<") == 0 ||
+               name.find("i<") == 0 ||
+               name.find("logic<") == 0;
+    };
+
+    // Keep the sugared cpphdl type for dependent widths like u<clog2(ENTRIES)>.
+    // The canonical type can flatten that to cpphdl::u<N>, which loses the
+    // SystemVerilog parameter expression and generated an invalid clog2ENTRIES.
+    if (isCpphdlSizedType(sugared)) {
+        if (const auto* TST = QT->getAs<TemplateSpecializationType>()) {
+            if (const TemplateDecl* TD = TST->getTemplateName().getAsTemplateDecl()) {
+                std::string name = genTypeName(TD->getQualifiedNameAsString());
+                if (name == "cpphdl_u" || name == "cpphdl_i" || name == "cpphdl_logic") {
+                    cpphdl::Expr width;
+                    auto args = TST->template_arguments();
+                    if (!args.empty()) {
+                        ArgToExpr(args[0], width, false);
+                    }
+                    if (!width.sub.empty()) {
+                        std::string width_text = width.sub[0].str();
+                        if (width_text.size() > 2 && width_text[0] == '\'' && width_text[1] == 'h') {
+                            width_text = std::to_string(std::stoul(width_text.substr(2), nullptr, 16));
+                        }
+                        return name + width_text;
+                    }
+                }
+            }
+        }
+        QualType cast_qt = QT.getNonReferenceType();
+        cpphdl::Expr type_expr;
+        if (templateToExpr(cast_qt, type_expr) && type_expr.value.find("cpphdl_") == 0 && !type_expr.sub.empty()) {
+            return type_expr.value + type_expr.sub[0].str();
+        }
+    }
+
+    std::string name = isCpphdlSizedType(sugared) ? sugared : canonical;
+    if (name.find("u<") == 0 || name.find("i<") == 0 || name.find("logic<") == 0) {
+        name = "cpphdl::" + name;
+    }
+    return genTypeName(name);
+}
+
 cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 {
     const SourceManager &SM = ctx->getSourceManager();
@@ -744,6 +795,10 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 if (str.find("std::basic_format_string") == 0) {
                     return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};  // we use it to determine std::print
                 }
+                std::string cast_type = castTypeName(CE->getType());
+                if (cast_type.find("cpphdl_u") == 0 || cast_type.find("cpphdl_i") == 0 || cast_type.find("cpphdl_logic") == 0) {
+                    return cpphdl::Expr{cast_type, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
+                }
                 return /*cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CE->getArg(0))/*}}*/;
             }
             else {
@@ -797,26 +852,6 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" ImplicitCastExpr");
         return /*cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(FCE->getSubExpr())/*}}*/;
     }
-    auto castTypeName = [&](QualType QT) {
-        std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
-        std::string canonical = QT.getCanonicalType().getAsString(ctx->getPrintingPolicy());
-        auto isCpphdlSizedType = [](const std::string& name) {
-            return name.find("cpphdl::u<") != std::string::npos ||
-                   name.find("cpphdl::i<") != std::string::npos ||
-                   name.find("cpphdl::logic<") != std::string::npos ||
-                   name.find("u<") == 0 ||
-                   name.find("i<") == 0 ||
-                   name.find("logic<") == 0;
-        };
-        // Keep the sugared cpphdl type for dependent widths like u<LINE_BEAT_BITS>.
-        // The canonical type may collapse to a placeholder width before module
-        // specialization, producing a too-narrow SystemVerilog size cast.
-        std::string name = isCpphdlSizedType(sugared) ? sugared : canonical;
-        if (name.find("u<") == 0 || name.find("i<") == 0 || name.find("logic<") == 0) {
-            name = "cpphdl::" + name;
-        }
-        return genTypeName(name);
-    };
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
         DEBUG_AST1(" CXXFunctionalCastExpr(" << FCE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy()) << ")");
         return cpphdl::Expr{castTypeName(FCE->getType()), cpphdl::Expr::EXPR_CAST, {exprToExpr(FCE->getSubExpr())}};

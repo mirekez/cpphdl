@@ -484,7 +484,7 @@ public:
                             (refill_req_data_valid_reg ? (uint32_t)refill_req_data_reg : refill_data_comb_func());
                         last_valid_reg._next = true;
                         refill_req_data_valid_reg._next = false;
-                        victim_reg._next = victim_reg + 1;
+                        victim_reg._next = (victim_reg == WAYS - 1) ? u<WAY_BITS>(0) : u<WAY_BITS>(victim_reg + 1);
                         state_reg._next = ST_DONE;
                     }
                     else {

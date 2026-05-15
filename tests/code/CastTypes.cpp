@@ -8,23 +8,27 @@
 
 using namespace cpphdl;
 
+template<size_t WIDTH_PARAM = 8>
 class CastTypes : public Module
 {
 public:
-    static constexpr size_t WIDTH = 8;
+    static constexpr size_t WIDTH = WIDTH_PARAM;
     static constexpr size_t CAST_BITS = WIDTH <= 1 ? 1 : clog2(WIDTH);
 
     _PORT(u<32>) value_in;
     _PORT(u<32>) cstyle_out = _ASSIGN_COMB(cstyle_comb_func());
     _PORT(u<32>) functional_out = _ASSIGN_COMB(functional_comb_func());
+    _PORT(u<32>) direct_cstyle_out = _ASSIGN_COMB(direct_cstyle_comb_func());
+    _PORT(u<32>) direct_functional_out = _ASSIGN_COMB(direct_functional_comb_func());
 
 private:
     u<32> cstyle_comb;
     u<32> functional_comb;
+    u<32> direct_cstyle_comb;
+    u<32> direct_functional_comb;
 
     u<CAST_BITS> cstyle_narrow;
     u<CAST_BITS> functional_narrow;
-
     u<32> scaled_value()
     {
         return (((uint32_t)value_in() & (WIDTH * WIDTH - 1)) / WIDTH);
@@ -42,11 +46,25 @@ private:
         return functional_comb = (uint32_t)functional_narrow;
     }
 
+    u<32>& direct_cstyle_comb_func()
+    {
+        uint32_t v = scaled_value();
+        return direct_cstyle_comb = (uint32_t)((u<clog2(WIDTH_PARAM)>)v);
+    }
+
+    u<32>& direct_functional_comb_func()
+    {
+        uint32_t v = scaled_value();
+        return direct_functional_comb = (uint32_t)(u<clog2(WIDTH_PARAM)>(v));
+    }
+
 public:
     void _work(bool reset) {}
     void _strobe() {}
     void _assign() {}
 };
+
+template class CastTypes<8>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -75,10 +93,14 @@ static T verilator_read(const void* ptr)
 
 static bool check_generated_sv()
 {
+    std::filesystem::path sv_path = "generated/CastTypes.sv";
 #ifdef VERILATOR
-    const std::filesystem::path sv_path = "CastTypes/CastTypes.sv";
-#else
-    const std::filesystem::path sv_path = "generated/CastTypes.sv";
+    if (!std::filesystem::exists(sv_path)) {
+        sv_path = "CastTypes_8/CastTypes.sv";
+    }
+    if (!std::filesystem::exists(sv_path)) {
+        sv_path = "CastTypes/CastTypes.sv";
+    }
 #endif
     std::ifstream in(sv_path);
     if (!in) {
@@ -89,7 +111,14 @@ static bool check_generated_sv()
 
     bool ok = true;
     ok &= text.find("unsigned'(CAST_BITS'(") != std::string::npos;
+    const std::string dependent_width_cast = "unsigned'($clog2(WIDTH_PARAM)'(";
+    const size_t first_dependent = text.find(dependent_width_cast);
+    ok &= first_dependent != std::string::npos;
+    ok &= first_dependent != std::string::npos &&
+          text.find(dependent_width_cast, first_dependent + 1) != std::string::npos;
     ok &= text.find("unsigned'(1'(") == std::string::npos;
+    ok &= text.find("clog2WIDTH") == std::string::npos;
+    ok &= text.find("clog2ENTRIES") == std::string::npos;
     if (!ok) {
         std::print("\nERROR: dependent-width cast generation check failed in {}\n", sv_path.string());
     }
@@ -101,7 +130,7 @@ class TestCastTypes : Module
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
-    CastTypes dut;
+    CastTypes<8> dut;
 #endif
 
     u<32> value = 0;
@@ -158,6 +187,24 @@ public:
 #endif
     }
 
+    uint32_t direct_cstyle_value()
+    {
+#ifdef VERILATOR
+        return verilator_read<uint32_t>(&dut.direct_cstyle_out);
+#else
+        return dut.direct_cstyle_out();
+#endif
+    }
+
+    uint32_t direct_functional_value()
+    {
+#ifdef VERILATOR
+        return verilator_read<uint32_t>(&dut.direct_functional_out);
+#else
+        return dut.direct_functional_out();
+#endif
+    }
+
     bool check(uint32_t value_in)
     {
         value = value_in;
@@ -165,11 +212,12 @@ public:
         neg(false);
         ++sys_clock;
 
-        constexpr uint32_t mask = (1u << CastTypes::CAST_BITS) - 1u;
-        uint32_t expected = ((value_in & (CastTypes::WIDTH * CastTypes::WIDTH - 1u)) / CastTypes::WIDTH) & mask;
-        if (cstyle_value() != expected || functional_value() != expected) {
-            std::print("\ncast ERROR value=0x{:08x}: cstyle=0x{:x} functional=0x{:x} expected=0x{:x}\n",
-                value_in, cstyle_value(), functional_value(), expected);
+        constexpr uint32_t mask = (1u << CastTypes<8>::CAST_BITS) - 1u;
+        uint32_t expected = ((value_in & (CastTypes<8>::WIDTH * CastTypes<8>::WIDTH - 1u)) / CastTypes<8>::WIDTH) & mask;
+        if (cstyle_value() != expected || functional_value() != expected ||
+            direct_cstyle_value() != expected || direct_functional_value() != expected) {
+            std::print("\ncast ERROR value=0x{:08x}: cstyle=0x{:x} functional=0x{:x} direct_cstyle=0x{:x} direct_functional=0x{:x} expected=0x{:x}\n",
+                value_in, cstyle_value(), functional_value(), direct_cstyle_value(), direct_functional_value(), expected);
             return false;
         }
         return true;
@@ -214,12 +262,12 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "CastTypes", {"Predef_pkg"}, {"../../../../include"});
+        ok &= VerilatorCompile(__FILE__, "CastTypes", {"Predef_pkg"}, {"../../../../include"}, 8);
         ok &= check_generated_sv();
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("CastTypes/obj_dir/VCastTypes") == 0;
+        ok = ok && std::system("CastTypes_8/obj_dir/VCastTypes") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

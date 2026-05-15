@@ -83,10 +83,9 @@ static constexpr size_t WAIT_LIMIT = 128;
 #endif
 #define PORT_EXPR(val) _ASSIGN(PORT_VALUE(val))
 
-template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS>
+template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS, size_t WAYS>
 class TestL2Cache : public Module
 {
-    static constexpr size_t WAYS = 4;
     static constexpr size_t SETS = L2_SIZE / LINE_SIZE / WAYS;
     static constexpr uint64_t REGION_SIZE64 = 0x100000000ull / MEM_PORTS;
     static constexpr uint32_t REGION_SIZE = (uint32_t)REGION_SIZE64;
@@ -1074,9 +1073,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestL2Cache<SIZE={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, PORT_BITS, MEM_PORTS);
+        std::print("VERILATOR TestL2Cache<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
 #else
-        std::print("CppHDL TestL2Cache<SIZE={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, PORT_BITS, MEM_PORTS);
+        std::print("CppHDL TestL2Cache<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
 #endif
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
@@ -1142,47 +1141,95 @@ int main(int argc, char** argv)
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        auto compile_l2 = [&](size_t cache_size, size_t port_bits, size_t mem_ports) {
+        auto compile_l2 = [&](size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
             return VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "cache").string()},
-                cache_size, port_bits, LINE_SIZE, 4, 32, 32, mem_ports);
+                cache_size, port_bits, LINE_SIZE, ways, 32, 32, mem_ports);
         };
-        ok &= compile_l2(16384, 64, 4);
-        ok &= compile_l2(16384, 256, 4);
-        ok &= compile_l2(16384, 64, 8);
-        ok &= compile_l2(16384, 256, 8);
-        ok &= compile_l2(65536, 64, 4);
-        ok &= compile_l2(65536, 256, 4);
-        ok &= compile_l2(65536, 64, 8);
-        ok &= compile_l2(65536, 256, 8);
+        ok &= compile_l2(16384, 64, 4, 1);
+        ok &= compile_l2(16384, 64, 4, 2);
+        ok &= compile_l2(16384, 64, 4, 4);
+        ok &= compile_l2(16384, 256, 4, 1);
+        ok &= compile_l2(16384, 256, 4, 2);
+        ok &= compile_l2(16384, 256, 4, 4);
+        ok &= compile_l2(16384, 64, 8, 1);
+        ok &= compile_l2(16384, 64, 8, 2);
+        ok &= compile_l2(16384, 64, 8, 4);
+        ok &= compile_l2(16384, 256, 8, 1);
+        ok &= compile_l2(16384, 256, 8, 2);
+        ok &= compile_l2(16384, 256, 8, 4);
+        ok &= compile_l2(65536, 64, 4, 1);
+        ok &= compile_l2(65536, 64, 4, 2);
+        ok &= compile_l2(65536, 64, 4, 4);
+        ok &= compile_l2(65536, 256, 4, 1);
+        ok &= compile_l2(65536, 256, 4, 2);
+        ok &= compile_l2(65536, 256, 4, 4);
+        ok &= compile_l2(65536, 64, 8, 1);
+        ok &= compile_l2(65536, 64, 8, 2);
+        ok &= compile_l2(65536, 64, 8, 4);
+        ok &= compile_l2(65536, 256, 8, 1);
+        ok &= compile_l2(65536, 256, 8, 2);
+        ok &= compile_l2(65536, 256, 8, 4);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok &&
-            std::system("L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 0") == 0 &&
-            std::system("L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 1") == 0 &&
-            std::system("L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 2") == 0 &&
-            std::system("L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 3") == 0 &&
-            std::system("L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 4") == 0 &&
-            std::system("L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 5") == 0 &&
-            std::system("L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 6") == 0 &&
-            std::system("L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 7") == 0;
+            std::system("L2Cache_16384_64_32_1_32_32_4/obj_dir/VL2Cache 0") == 0 &&
+            std::system("L2Cache_16384_64_32_2_32_32_4/obj_dir/VL2Cache 1") == 0 &&
+            std::system("L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 2") == 0 &&
+            std::system("L2Cache_16384_256_32_1_32_32_4/obj_dir/VL2Cache 3") == 0 &&
+            std::system("L2Cache_16384_256_32_2_32_32_4/obj_dir/VL2Cache 4") == 0 &&
+            std::system("L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 5") == 0 &&
+            std::system("L2Cache_16384_64_32_1_32_32_8/obj_dir/VL2Cache 6") == 0 &&
+            std::system("L2Cache_16384_64_32_2_32_32_8/obj_dir/VL2Cache 7") == 0 &&
+            std::system("L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 8") == 0 &&
+            std::system("L2Cache_16384_256_32_1_32_32_8/obj_dir/VL2Cache 9") == 0 &&
+            std::system("L2Cache_16384_256_32_2_32_32_8/obj_dir/VL2Cache 10") == 0 &&
+            std::system("L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 11") == 0 &&
+            std::system("L2Cache_65536_64_32_1_32_32_4/obj_dir/VL2Cache 12") == 0 &&
+            std::system("L2Cache_65536_64_32_2_32_32_4/obj_dir/VL2Cache 13") == 0 &&
+            std::system("L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 14") == 0 &&
+            std::system("L2Cache_65536_256_32_1_32_32_4/obj_dir/VL2Cache 15") == 0 &&
+            std::system("L2Cache_65536_256_32_2_32_32_4/obj_dir/VL2Cache 16") == 0 &&
+            std::system("L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 17") == 0 &&
+            std::system("L2Cache_65536_64_32_1_32_32_8/obj_dir/VL2Cache 18") == 0 &&
+            std::system("L2Cache_65536_64_32_2_32_32_8/obj_dir/VL2Cache 19") == 0 &&
+            std::system("L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 20") == 0 &&
+            std::system("L2Cache_65536_256_32_1_32_32_8/obj_dir/VL2Cache 21") == 0 &&
+            std::system("L2Cache_65536_256_32_2_32_32_8/obj_dir/VL2Cache 22") == 0 &&
+            std::system("L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 23") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    ok = ok && ((only != -1 && only != 0) || TestL2Cache<16384,64,4>().run());
-    ok = ok && ((only != -1 && only != 1) || TestL2Cache<16384,256,4>().run());
-    ok = ok && ((only != -1 && only != 2) || TestL2Cache<16384,64,8>().run());
-    ok = ok && ((only != -1 && only != 3) || TestL2Cache<16384,256,8>().run());
-    ok = ok && ((only != -1 && only != 4) || TestL2Cache<65536,64,4>().run());
-    ok = ok && ((only != -1 && only != 5) || TestL2Cache<65536,256,4>().run());
-    ok = ok && ((only != -1 && only != 6) || TestL2Cache<65536,64,8>().run());
-    ok = ok && ((only != -1 && only != 7) || TestL2Cache<65536,256,8>().run());
+    ok = ok && ((only != -1 && only != 0) || TestL2Cache<16384,64,4,1>().run());
+    ok = ok && ((only != -1 && only != 1) || TestL2Cache<16384,64,4,2>().run());
+    ok = ok && ((only != -1 && only != 2) || TestL2Cache<16384,64,4,4>().run());
+    ok = ok && ((only != -1 && only != 3) || TestL2Cache<16384,256,4,1>().run());
+    ok = ok && ((only != -1 && only != 4) || TestL2Cache<16384,256,4,2>().run());
+    ok = ok && ((only != -1 && only != 5) || TestL2Cache<16384,256,4,4>().run());
+    ok = ok && ((only != -1 && only != 6) || TestL2Cache<16384,64,8,1>().run());
+    ok = ok && ((only != -1 && only != 7) || TestL2Cache<16384,64,8,2>().run());
+    ok = ok && ((only != -1 && only != 8) || TestL2Cache<16384,64,8,4>().run());
+    ok = ok && ((only != -1 && only != 9) || TestL2Cache<16384,256,8,1>().run());
+    ok = ok && ((only != -1 && only != 10) || TestL2Cache<16384,256,8,2>().run());
+    ok = ok && ((only != -1 && only != 11) || TestL2Cache<16384,256,8,4>().run());
+    ok = ok && ((only != -1 && only != 12) || TestL2Cache<65536,64,4,1>().run());
+    ok = ok && ((only != -1 && only != 13) || TestL2Cache<65536,64,4,2>().run());
+    ok = ok && ((only != -1 && only != 14) || TestL2Cache<65536,64,4,4>().run());
+    ok = ok && ((only != -1 && only != 15) || TestL2Cache<65536,256,4,1>().run());
+    ok = ok && ((only != -1 && only != 16) || TestL2Cache<65536,256,4,2>().run());
+    ok = ok && ((only != -1 && only != 17) || TestL2Cache<65536,256,4,4>().run());
+    ok = ok && ((only != -1 && only != 18) || TestL2Cache<65536,64,8,1>().run());
+    ok = ok && ((only != -1 && only != 19) || TestL2Cache<65536,64,8,2>().run());
+    ok = ok && ((only != -1 && only != 20) || TestL2Cache<65536,64,8,4>().run());
+    ok = ok && ((only != -1 && only != 21) || TestL2Cache<65536,256,8,1>().run());
+    ok = ok && ((only != -1 && only != 22) || TestL2Cache<65536,256,8,2>().run());
+    ok = ok && ((only != -1 && only != 23) || TestL2Cache<65536,256,8,4>().run());
     return !ok;
 }
 

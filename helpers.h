@@ -23,6 +23,7 @@ struct Helpers
     unsigned flags = 0;
 
     cpphdl::Expr exprToExpr(const Stmt* E);
+    std::string castTypeName(QualType QT);
     void ArgToExpr(const TemplateArgument& Arg, cpphdl::Expr& expr, bool specialization = true);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);

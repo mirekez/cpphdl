@@ -12,7 +12,7 @@ class L2Cache : public Module
     static_assert(CACHE_LINE_SIZE == 32, "L2Cache uses 32-byte cache lines");
     static_assert(PORT_BITWIDTH >= 32 && PORT_BITWIDTH % 32 == 0, "L2Cache port must be a whole number of 32-bit words");
     static_assert((CACHE_LINE_SIZE * 8) % PORT_BITWIDTH == 0, "L2Cache port must divide a cache line");
-    static_assert(WAYS == 4, "L2Cache is intended to be 4-way set associative");
+    static_assert(WAYS > 0, "L2Cache needs at least one way");
     static_assert(CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L2Cache geometry must divide evenly");
     static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
     static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
@@ -26,7 +26,7 @@ class L2Cache : public Module
     static constexpr size_t SET_BITS = clog2(SETS);
     static constexpr size_t LINE_BITS = clog2(CACHE_LINE_SIZE);
     static constexpr size_t WORD_BITS = clog2(LINE_WORDS);
-    static constexpr size_t WAY_BITS = clog2(WAYS);
+    static constexpr size_t WAY_BITS = WAYS <= 1 ? 1 : clog2(WAYS);
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
@@ -1283,7 +1283,7 @@ public:
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
-                    victim_reg._next = victim_reg + 1;
+                    victim_reg._next = (victim_reg == WAYS - 1) ? u<WAY_BITS>(0) : u<WAY_BITS>(victim_reg + 1);
                     if (req_cross_line_write_comb_func()) {
                         req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
                         req_write_data_reg._next = cross_write_data_comb_func();
