@@ -148,12 +148,20 @@ public:
     uint32_t backing_read_data_value()
     {
         uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
+#ifdef VERILATOR
+        // Verilated L1 samples mem_read_data_in on its clock edge, while the
+        // C++ RAM model exposes a registered read output. Drive the backing
+        // word directly from the test memory image so each refill beat matches
+        // the current mem_addr_out and cannot reuse an earlier line beat.
+        return expected_ram_read(request_addr);
+#else
         if ((request_addr & 3u) != 0 &&
             (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
             // Instruction end-halfword fetches still use L2 direct cross-line behavior.
             return expected_ram_read(request_addr);
         }
         return ram.read_data_out();
+#endif
     }
 
     _LAZY_COMB(backing_read_data_comb, logic<32>)

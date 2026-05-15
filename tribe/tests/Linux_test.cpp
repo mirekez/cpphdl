@@ -128,7 +128,7 @@ static bool build_probe_initramfs(const std::filesystem::path& base_cpio, const 
         "echo\n"
         "echo \"RISC-V initramfs started\"\n"
         "echo \"BusyBox probe follows\"\n"
-        "/bin/busybox\n"
+        "/bin/busybox | /bin/busybox head -n 1\n"
         "echo \"BusyBox shell ready\"\n"
         "\n"
         "exec /bin/sh -i </dev/console >/dev/console 2>&1\n";

@@ -46,6 +46,10 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 
 #include <cstdlib>
 #include <vector>
+#include <cerrno>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
 
 // system configuration for cpp
 static constexpr size_t DEFAULT_RAM_SIZE = 32768;
@@ -1557,7 +1561,46 @@ class TestTribe : public Module
     uint32_t boot_priv = 3;
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
+    bool uart_rx_valid = false;
+    uint8_t uart_rx_data = 0;
     bool tohost_done = false;
+
+    class StdinRawMode
+    {
+        bool active = false;
+        bool flags_active = false;
+        int old_flags = 0;
+        termios old_term = {};
+
+    public:
+        explicit StdinRawMode(bool enable)
+        {
+            if (!enable) {
+                return;
+            }
+            old_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+            if (old_flags >= 0 && fcntl(STDIN_FILENO, F_SETFL, old_flags | O_NONBLOCK) == 0) {
+                flags_active = true;
+            }
+            if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &old_term) == 0) {
+                termios raw = old_term;
+                cfmakeraw(&raw);
+                if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
+                    active = true;
+                }
+            }
+        }
+
+        ~StdinRawMode()
+        {
+            if (active) {
+                tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            }
+            if (flags_active) {
+                fcntl(STDIN_FILENO, F_SETFL, old_flags);
+            }
+        }
+    };
 
     struct Elf32Header
     {
@@ -1861,6 +1904,8 @@ public:
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
+        uart.uart_rx_valid_in = _ASSIGN(uart_rx_valid);
+        uart.uart_rx_data_in = _ASSIGN(uart_rx_data);
         clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
         clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
         clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
@@ -1930,6 +1975,8 @@ public:
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        uart.uart_rx_valid_in = _ASSIGN(uart_rx_valid);
+        uart.uart_rx_data_in = _ASSIGN(uart_rx_data);
         clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
         clint.set_mtimecmp_lo_in = _ASSIGN((uint32_t)tribe.sbi_timer_lo_out);
         clint.set_mtimecmp_hi_in = _ASSIGN((uint32_t)tribe.sbi_timer_hi_out);
@@ -2181,7 +2228,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false)
     {
         std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
         if (label.empty()) {
@@ -2334,6 +2381,7 @@ public:
         std::string captured_output;
         bool expected_marker_seen = false;
         bool mirrored_uart_needs_newline = false;
+        StdinRawMode stdin_raw(interactive_uart_input);
         if (!tohost_addr && expected_output_contains.empty()) {
             std::ifstream expected_file(expected_log, std::ios::binary);
             if (!expected_file) {
@@ -2373,7 +2421,7 @@ public:
             fputc(ch, uart_out);
             fclose(uart_out);
             if (mirror_uart_output) {
-                fputc(ch, stdout);
+                (void)write(STDOUT_FILENO, &ch, 1);
                 fflush(stdout);
                 mirrored_uart_needs_newline = ch != '\n';
             }
@@ -2424,6 +2472,19 @@ public:
             perf_sample();
             if (capture_uart_output()) {
                 break;
+            }
+            uart_rx_valid = false;
+            if (interactive_uart_input && uart.uart_rx_ready_out()) {
+                unsigned char ch;
+                ssize_t got = read(STDIN_FILENO, &ch, 1);
+                if (got == 1) {
+                    uart_rx_data = ch;
+                    uart_rx_valid = true;
+                }
+                else if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    std::print("\nstdin read failed while feeding UART\n");
+                    error = true;
+                }
             }
             runtime_uart_ticks += tribe_runtime_tick() - section_time_start;
             section_time_start = tribe_runtime_tick();
@@ -2808,6 +2869,8 @@ int main (int argc, char** argv)
     std::string checkpoint_save_file;
     uint64_t checkpoint_save_cycle = 0;
     bool append_output = false;
+    bool mirror_uart_output = false;
+    bool interactive_uart_input = false;
     std::string bootargs;
     bool linux_earlycon_mapbase = false;
     int only = -1;
@@ -2907,6 +2970,19 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--append-output") == 0) {
             append_output = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--mirror-uart") == 0) {
+            mirror_uart_output = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--uart-stdin") == 0) {
+            interactive_uart_input = true;
+            mirror_uart_output = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--uart-input") == 0) {
+            interactive_uart_input = true;
             continue;
         }
         if (strcmp(argv[i], "--linux-earlycon-mapbase") == 0) {
@@ -3014,7 +3090,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input))
     );
 }
 

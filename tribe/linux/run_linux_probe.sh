@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -s unlimited 2>/dev/null || true
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe/linux}"
@@ -20,6 +21,8 @@ TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
 TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-1048576}"
 TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-0}"
 TRIBE_LINUX_BUSYBOX_PROBE="${TRIBE_LINUX_BUSYBOX_PROBE:-1}"
+TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
+TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 
 find_objcopy()
 {
@@ -64,6 +67,11 @@ find_dtc()
     return 1
 }
 
+is_newc_cpio()
+{
+    [[ -f "$1" ]] && [[ "$(head -c 6 "$1" 2>/dev/null || true)" == "070701" ]]
+}
+
 prepare_linux_inputs()
 {
     local objcopy_bin
@@ -104,6 +112,14 @@ prepare_linux_inputs()
     if [[ ! -f "${INITRAMFS_BASE}" || "${INITRAMFS_GZ}" -nt "${INITRAMFS_BASE}" ]]; then
         gzip -dc "${INITRAMFS_GZ}" > "${INITRAMFS_BASE}"
     fi
+    if ! is_newc_cpio "${INITRAMFS_BASE}"; then
+        if is_newc_cpio "${INITRAMFS}"; then
+            cp "${INITRAMFS}" "${INITRAMFS_BASE}"
+        else
+            echo "initramfs must be an uncompressed newc cpio archive: ${INITRAMFS_BASE}" >&2
+            exit 1
+        fi
+    fi
 
     if [[ "${TRIBE_LINUX_BUSYBOX_PROBE}" == "1" ]]; then
         local init_probe
@@ -118,7 +134,7 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 echo
 echo "RISC-V initramfs started"
 echo "BusyBox probe follows"
-/bin/busybox
+/bin/busybox | /bin/busybox head -n 1
 echo "BusyBox shell ready"
 
 exec /bin/sh -i </dev/console >/dev/console 2>&1
@@ -224,14 +240,20 @@ PY
     fi
 }
 
-prepare_linux_inputs
+if [[ "${TRIBE_LINUX_INPUTS_PREPARED:-0}" != "1" ]]; then
+    prepare_linux_inputs
+    export TRIBE_LINUX_INPUTS_PREPARED=1
+    exec "${BASH}" "${BASH_SOURCE[0]}"
+fi
 
 newer_tribe_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
     newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 3 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
 fi
-if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || "${BASH_SOURCE[0]}" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" ]]; then
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
+    TRIBE_BIN_TMP="${TRIBE_BIN}.new.$$"
+    rm -f "${TRIBE_BIN_TMP}"
     clang++ "${ROOT_DIR}/tribe/main.cpp" \
         -std=c++26 -O3 -g -mavx2 -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
@@ -245,8 +267,9 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || 
         -DL2_AXI_WIDTH=64 \
         -DTRIBE_RAM_BYTES_CONFIG="${TRIBE_RAM_BYTES}" \
         -DTRIBE_IO_REGION_SIZE_CONFIG="${TRIBE_IO_BYTES}" \
-        -o "${TRIBE_BIN}" \
+        -o "${TRIBE_BIN_TMP}" \
         -lstdc++exp
+    mv -f "${TRIBE_BIN_TMP}" "${TRIBE_BIN}"
 fi
 
 TRIBE_CHECKPOINT_ARGS=()
@@ -265,20 +288,42 @@ fi
 if [[ "${TRIBE_LINUX_EARLYCON_MAPBASE}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--linux-earlycon-mapbase)
 fi
+if [[ "${TRIBE_LINUX_INTERACTIVE}" == "1" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--uart-stdin)
+elif [[ "${TRIBE_LINUX_MIRROR_UART:-0}" == "1" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--mirror-uart)
+fi
 
-cd "${ROOT_DIR}"
-"${TRIBE_BIN}" \
-    --noveril \
-    --program "${KERNEL_ELF}" \
-    --elf-phys-base 0x80000000 \
-    --start-mem-addr 0x80000000 \
-    --ram-size $((TRIBE_RAM_BYTES / 4)) \
-    --dtb "${DTB_WITH_INITRD}" \
-    --boot-hartid 0 \
-    --boot-dtb-addr 0x81f00000 \
-    --boot-priv s \
-    --initramfs "${INITRAMFS}" \
-    --initramfs-addr "${INITRAMFS_ADDR}" \
-    --tohost 1 \
-    --cycles "${TRIBE_LINUX_CYCLES:-20000}" \
+TRIBE_RUN_ARGS=(
+    "${TRIBE_BIN}"
+    --noveril
+    --program "${KERNEL_ELF}"
+    --elf-phys-base 0x80000000
+    --start-mem-addr 0x80000000
+    --ram-size "$((TRIBE_RAM_BYTES / 4))"
+    --dtb "${DTB_WITH_INITRD}"
+    --boot-hartid 0
+    --boot-dtb-addr 0x81f00000
+    --boot-priv s
+    --initramfs "${INITRAMFS}"
+    --initramfs-addr "${INITRAMFS_ADDR}"
+    --tohost 1
+    --cycles "${TRIBE_LINUX_CYCLES:-300000000}"
     "${TRIBE_CHECKPOINT_ARGS[@]}"
+)
+TRIBE_RUN_COMMAND="cd $(printf '%q' "${ROOT_DIR}") &&"
+for arg in "${TRIBE_RUN_ARGS[@]}"; do
+    TRIBE_RUN_COMMAND+=" $(printf '%q' "${arg}")"
+done
+if [[ "${TRIBE_LINUX_TAIL_UART}" == "1" ]]; then
+    (
+        cd "${ROOT_DIR}"
+        : > out.txt
+        tail -n +1 -f out.txt &
+        tail_pid=$!
+        trap 'kill "${tail_pid}" 2>/dev/null || true' EXIT
+        bash -c "${TRIBE_RUN_COMMAND}"
+    )
+else
+    bash -c "${TRIBE_RUN_COMMAND}"
+fi

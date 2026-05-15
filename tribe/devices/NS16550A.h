@@ -22,6 +22,9 @@ public:
 
     _PORT(bool) uart_valid_out = _ASSIGN_REG(uart_valid_reg);
     _PORT(uint8_t) uart_data_out = _ASSIGN_REG(uart_data_reg);
+    _PORT(bool) uart_rx_valid_in;
+    _PORT(uint8_t) uart_rx_data_in;
+    _PORT(bool) uart_rx_ready_out = _ASSIGN(!rx_valid_reg);
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -40,6 +43,8 @@ private:
     reg<u8> dlm_reg;
     reg<u1> uart_valid_reg;
     reg<u8> uart_data_reg;
+    reg<u1> rx_valid_reg;
+    reg<u8> rx_data_reg;
 
     _LAZY_COMB(dlab_comb, bool)
         return dlab_comb = (lcr_reg & u<8>(0x80)) != 0;
@@ -55,7 +60,7 @@ private:
         lane = (uint32_t)read_addr_reg % (DATA_WIDTH / 8);
         data = 0;
         if (addr == REG_RBR_THR_DLL) {
-            data = dlab_comb_func() ? (uint8_t)dll_reg : 0;
+            data = dlab_comb_func() ? (uint8_t)dll_reg : (rx_valid_reg ? (uint8_t)rx_data_reg : 0);
         }
         if (addr == REG_IER_DLM) {
             data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
@@ -70,7 +75,7 @@ private:
             data = (uint8_t)mcr_reg;
         }
         if (addr == REG_LSR) {
-            data = 0x60;
+            data = (uint8_t)(0x60 | (rx_valid_reg ? 0x01 : 0x00));
         }
         if (addr == REG_MSR) {
             data = 0;
@@ -103,12 +108,20 @@ public:
         uint8_t data;
         uart_valid_reg._next = false;
 
+        if (uart_rx_valid_in() && !rx_valid_reg) {
+            rx_data_reg._next = uart_rx_data_in();
+            rx_valid_reg._next = true;
+        }
+
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
             read_addr_reg._next = axi_in.araddr_in();
             read_id_reg._next = axi_in.arid_in();
             read_valid_reg._next = true;
         }
         if (read_valid_reg && axi_in.rready_in()) {
+            if (((uint32_t)read_addr_reg & 7u) == REG_RBR_THR_DLL && !dlab_comb_func()) {
+                rx_valid_reg._next = false;
+            }
             read_valid_reg._next = false;
         }
 
@@ -173,6 +186,8 @@ public:
             dlm_reg.clr();
             uart_valid_reg.clr();
             uart_data_reg.clr();
+            rx_valid_reg.clr();
+            rx_data_reg.clr();
         }
     }
 
@@ -193,5 +208,7 @@ public:
         dlm_reg.strobe(checkpoint_fd);
         uart_valid_reg.strobe(checkpoint_fd);
         uart_data_reg.strobe(checkpoint_fd);
+        rx_valid_reg.strobe(checkpoint_fd);
+        rx_data_reg.strobe(checkpoint_fd);
     }
 };
