@@ -23,7 +23,7 @@ using namespace cpphdl;
 #include "../main.cpp"
 #endif
 
-#if !defined(SYNTHESIS)
+#if !defined(SYNTHESIS) || defined(IOUART_DIRECT_VERILATOR)
 
 long iouart_test_clock = -1;
 
