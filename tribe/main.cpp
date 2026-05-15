@@ -2947,7 +2947,6 @@ int main (int argc, char** argv)
                   "State_pkg",
                   "Rv32i_pkg",
                   "Rv32ic_pkg",
-                  "Rv32ic_rv16_pkg",
                   "Rv32im_pkg",
                   "Rv32ia_pkg",
                   "Zicsr_pkg",

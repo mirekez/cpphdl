@@ -118,7 +118,6 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
               "State_pkg",
               "Rv32i_pkg",
               "Rv32ic_pkg",
-              "Rv32ic_rv16_pkg",
               "Rv32im_pkg",
               "Rv32ia_pkg",
               "Zicsr_pkg",
