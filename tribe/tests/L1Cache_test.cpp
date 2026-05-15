@@ -150,11 +150,10 @@ public:
         uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
         if ((request_addr & 3u) != 0 &&
             (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
-            // Match L2 direct cross-line behavior for instruction end-halfword fetches
-            // and data byte/half loads from the final word of a cache line.
+            // Instruction end-halfword fetches still use L2 direct cross-line behavior.
             return expected_ram_read(request_addr);
         }
-        return PORT_VALUE(ram.read_data_out);
+        return ram.read_data_out();
     }
 
     _LAZY_COMB(backing_read_data_comb, logic<32>)
@@ -728,7 +727,7 @@ public:
         }
     }
 
-    void read_check(const char* phase, uint32_t request_addr, bool expect_hit)
+    void read_check(const char* phase, uint32_t request_addr, bool expect_hit, uint32_t data_mask = 0xffffffffu)
     {
         bool saw_busy = false;
         bool got = false;
@@ -756,7 +755,7 @@ public:
             data &= 0xffffu;
             expected &= 0xffffu;
         }
-        if (data != expected) {
+        if ((data & data_mask) != (expected & data_mask)) {
             std::print("\n{} ERROR addr={:#x}: data={:#x} expected={:#x}\n",
                 phase, request_addr, (uint32_t)cache.read_data_out(), expected_ram_read(request_addr));
             error = true;
@@ -780,12 +779,12 @@ public:
 
     void final_word_byte_direct_regression()
     {
-        // Scenario from Cpp_test: an odd byte load from the final 32-bit word of a line
-        // must request the original address so L2 returns the cross-line assembled word
-        // in bits [31:0], rather than word zero of the containing wide beat.
+        // Scenario from CPU byte-copy: odd byte loads from the final 32-bit word
+        // must stay beat-aligned so L2 can return dirty cached data. The CPU only
+        // consumes the low byte for LBU; full cross-line words are split earlier.
         uint32_t base = 13 * SETS * LINE_SIZE + 3 * LINE_SIZE;
         uint32_t request_addr = base + LINE_SIZE - 3;
-        read_check("wide final-word byte direct", request_addr, false);
+        read_check("wide final-word byte direct", request_addr, false, 0xffu);
     }
 
     bool run()

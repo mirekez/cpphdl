@@ -248,7 +248,7 @@ private:
         uint32_t word;
         byte = 0;
         word = 0;
-        if (!req_cacheable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
+        if (DCACHE == 0 && !req_cacheable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
             // Cross-line direct reads return the assembled 32-bit word in the low bits.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
@@ -377,18 +377,10 @@ private:
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
             if (DCACHE != 0 && !req_cache_disable_reg) {
-                if (((uint32_t)req_addr_reg & 3u) != 0 &&
-                    (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
-                    // Final-word odd data reads need L2's cross-line assembler;
-                    // an aligned beat would return word zero in the low bits.
-                    mem_addr_comb = req_addr_reg;
-                }
-                else {
-                    // Odd byte/half data loads are served as a direct beat read because
-                    // this L1 stores cached data in 16-bit banks. Keep normal direct reads
-                    // inside the containing beat so dirty L2 lines are still hit.
-                    mem_addr_comb = (uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1);
-                }
+                // Odd byte/half data loads are served as a direct beat read because
+                // this L1 stores cached data in 16-bit banks. Keep them inside the
+                // containing beat so dirty L2 cache data is used instead of stale RAM.
+                mem_addr_comb = (uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1);
             }
             else {
                 mem_addr_comb = req_addr_reg;
