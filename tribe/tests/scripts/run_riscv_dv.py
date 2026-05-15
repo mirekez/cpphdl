@@ -142,9 +142,21 @@ def ensure_tribe_atomic_target(checkout: pathlib.Path) -> str:
     return target
 
 
+def git_head_file(checkout: pathlib.Path, relpath: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "show", f"HEAD:{relpath}"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
+    return result.stdout
+
+
 def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
     path = checkout / "pygen" / "pygen_src" / "riscv_amo_instr_lib.py"
-    text = path.read_text(encoding="utf-8")
+    text = git_head_file(checkout, "pygen/pygen_src/riscv_amo_instr_lib.py")
     text = text.replace(
         "        # User can specify a small group of available registers to generate various hazard condition\n"
         "        self.avail_regs = vsc.randsz_list_t(vsc.enum_t(riscv_reg_t))\n",
@@ -157,6 +169,16 @@ def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
     text = text.replace(
         "        self.reserved_rd.append(self.rs1_reg)\n",
         "        self.reserved_rd.append(self.rs1_reg[0])\n",
+    )
+    text = text.replace(
+        "        self.num_mixed_instr in vsc.rangelist(vsc.rng(0, 15))\n",
+        "        self.num_mixed_instr == 0\n",
+    )
+    text = text.replace(
+        "        self.num_amo in vsc.rangelist(vsc.rng(1, 10))\n"
+        "        self.num_mixed_instr in vsc.rangelist(vsc.rng(0, self.num_amo))\n",
+        "        self.num_amo in vsc.rangelist(vsc.rng(1, 4))\n"
+        "        self.num_mixed_instr == 0\n",
     )
     text = text.replace(
         "            self.amo_instr.append(riscv_instr.get_rand_instr(\n"
@@ -191,7 +213,7 @@ def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
     path.write_text(text, encoding="utf-8")
 
     asm_path = checkout / "pygen" / "pygen_src" / "riscv_asm_program_gen.py"
-    text = asm_path.read_text(encoding="utf-8")
+    text = git_head_file(checkout, "pygen/pygen_src/riscv_asm_program_gen.py")
     text = text.replace(
         "            self.callstack_gen.init(num_sub_program + 1)\n",
         "            callstack_gen.init(num_sub_program + 1)\n",
@@ -199,7 +221,7 @@ def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
     asm_path.write_text(text, encoding="utf-8")
 
     callstack_path = checkout / "pygen" / "pygen_src" / "riscv_callstack_gen.py"
-    text = callstack_path.read_text(encoding="utf-8")
+    text = git_head_file(checkout, "pygen/pygen_src/riscv_callstack_gen.py")
     text = text.replace(
         "            self.program_h[i] = riscv_program(\"program_{}\".format(i))\n",
         "            self.program_h[i] = riscv_program()\n",
