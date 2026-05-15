@@ -155,6 +155,12 @@ private:
             // CPU split logic handles real line-crossing accesses before L2 sees a cacheable line fill.
             input_cacheable_comb = false;
         }
+        if (DCACHE == 0 && (addr_in() & 0x2u) != 0 &&
+            (((addr_in() >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1)) {
+            // A 32-bit instruction at the final halfword spans two cache lines.
+            // Bypass the line RAM so L2 can return the assembled instruction word.
+            input_cacheable_comb = false;
+        }
         return input_cacheable_comb;
     }
 
@@ -242,9 +248,9 @@ private:
         uint32_t word;
         byte = 0;
         word = 0;
-        if (req_cache_disable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
+        if (!req_cacheable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
             (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
-            // Cache-disabled MMIO may return an assembled cross-line direct read in the low 32 bits.
+            // Cross-line direct reads return the assembled 32-bit word in the low bits.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
         else {

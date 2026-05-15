@@ -2181,7 +2181,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "")
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -2328,7 +2328,8 @@ public:
         bool last_immu_fault = false;
         std::string expected_output;
         std::string captured_output;
-        if (!tohost_addr) {
+        bool expected_marker_seen = false;
+        if (!tohost_addr && expected_output_contains.empty()) {
             std::ifstream expected_file(expected_log, std::ios::binary);
             if (!expected_file) {
                 std::print("can't open expected output '{}'\n", expected_log);
@@ -2410,7 +2411,11 @@ public:
                     fclose(uart_out);
                     if (!tohost_addr) {
                         captured_output.push_back(ch);
-                        if (captured_output.size() >= expected_output.size()) {
+                        if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
+                            expected_marker_seen = true;
+                            break;
+                        }
+                        if (!expected_output.empty() && captured_output.size() >= expected_output.size()) {
                             error = captured_output != expected_output;
                             break;
                         }
@@ -2654,6 +2659,12 @@ public:
                 error = true;
             }
         }
+        else if (!expected_output_contains.empty()) {
+            if (!expected_marker_seen) {
+                std::print("UART output marker '{}' was not seen before cycle limit\n", expected_output_contains);
+                error = true;
+            }
+        }
         else if (tohost_addr) {
             if (!tohost_done) {
                 std::print("tohost was not written before cycle limit\n");
@@ -2685,6 +2696,48 @@ public:
 [[maybe_unused]] static std::filesystem::path tribe_source_root_dir()
 {
     return std::filesystem::path(__FILE__).parent_path().parent_path();
+}
+
+[[maybe_unused]] static std::string shell_quote_path(const std::filesystem::path& path)
+{
+    std::string text = path.string();
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+[[maybe_unused]] static bool regenerate_tribe_sv(const std::filesystem::path& source_root)
+{
+    namespace fs = std::filesystem;
+
+    fs::path cpphdl = fs::current_path() / ".." / "cpphdl";
+    if (!fs::exists(cpphdl)) {
+        cpphdl = source_root / "build" / "cpphdl";
+    }
+    if (!fs::exists(cpphdl)) {
+        std::print("can't find cpphdl generator near build directory or source root\n");
+        return false;
+    }
+
+    std::string command;
+    command += shell_quote_path(cpphdl);
+    command += " " + shell_quote_path(source_root / "tribe" / "main.cpp");
+    command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
+    command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
+    command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+    command += " -I " + shell_quote_path(source_root / "include");
+    command += " -I " + shell_quote_path(source_root / "tribe" / "common");
+    command += " -I " + shell_quote_path(source_root / "tribe" / "spec");
+    command += " -I " + shell_quote_path(source_root / "tribe" / "devices");
+    return std::system(command.c_str()) == 0;
 }
 
 [[maybe_unused]] static void use_executable_workdir_if_needed(const char* argv0)
@@ -2884,7 +2937,11 @@ int main (int argc, char** argv)
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         const auto source_root = tribe_source_root_dir();
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
+        if (!regenerate_tribe_sv(source_root)) {
+            ok = false;
+        }
+        else {
+            ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
                   "Amo_pkg",
                   "Trap_pkg",
                   "State_pkg",
@@ -2921,6 +2978,7 @@ int main (int argc, char** argv)
                           (source_root / "tribe" / "spec").string(),
                           (source_root / "tribe" / "cache").string(),
                           (source_root / "tribe" / "devices").string()});
+        }
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok

@@ -32,6 +32,12 @@ RISCV_ARCH_TEST_PYTHON_DEPS=(
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 
+clean_verilator_obj_dirs() {
+    for width in 256 128 64; do
+        rm -rf "${BUILD_DIR}/tribe${width}/Tribe/obj_dir"
+    done
+}
+
 export PATH="${BUILD_DIR}/pydeps/bin:${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 export TRIBE_ARCH_TEST_GCC="${TRIBE_ARCH_TEST_GCC:-riscv32-unknown-elf-gcc}"
@@ -81,6 +87,7 @@ echo "Running RISC-V architectural tests on C++ Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_arch_test$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
+    clean_verilator_obj_dirs
     echo "Running RISC-V architectural tests on Verilator Tribe model"
     ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_arch_test_verilator$'
 fi

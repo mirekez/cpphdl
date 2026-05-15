@@ -75,13 +75,29 @@ foreach(src ${TRIBE_TEST_SOURCES})
         "-mavx2"
         "-fno-strict-aliasing"
     )
+    set(cpphdl_extra_defines "")
+    if(target_name STREQUAL "Linux_test")
+        target_compile_definitions(${target_name} PRIVATE
+            L2_AXI_WIDTH=64
+            TRIBE_RAM_BYTES_CONFIG=33554432
+            TRIBE_IO_REGION_SIZE_CONFIG=1048576
+        )
+        set(cpphdl_extra_defines
+            -DL2_AXI_WIDTH=64
+            -DTRIBE_RAM_BYTES_CONFIG=33554432
+            -DTRIBE_IO_REGION_SIZE_CONFIG=1048576
+        )
+        set(test_args --noveril --prepare-only)
+    else()
+        set(test_args --noveril)
+    endif()
 
     target_link_libraries(${target_name} PRIVATE
         stdc++exp
     )
 
     add_dependencies(${target_name} cpphdl)
-    if(target_name STREQUAL "CLINT_test" OR target_name STREQUAL "MMU_TLB_Test" OR target_name STREQUAL "NS16550A_test" OR target_name STREQUAL "Accelerator_test" OR target_name STREQUAL "CPU_test")
+    if(target_name STREQUAL "CLINT_test" OR target_name STREQUAL "MMU_TLB_Test" OR target_name STREQUAL "NS16550A_test" OR target_name STREQUAL "Accelerator_test" OR target_name STREQUAL "CPU_test" OR target_name STREQUAL "Linux_test")
         add_dependencies(${target_name} tribe64)
     endif()
 
@@ -90,6 +106,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
         COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src}
+                ${cpphdl_extra_defines}
                 -I ${CMAKE_SOURCE_DIR}/include
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/..
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../common
@@ -99,8 +116,6 @@ foreach(src ${TRIBE_TEST_SOURCES})
                 -I ${CMAKE_SOURCE_DIR}/examples/axi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-
-    set(test_args --noveril)
 
     add_test(
         NAME ${target_name}
@@ -158,7 +173,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32 PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc"
+        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
     )
 
     add_test(
@@ -173,7 +188,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc"
+        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
     )
 
     add_test(

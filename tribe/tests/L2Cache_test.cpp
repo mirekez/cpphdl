@@ -315,6 +315,39 @@ public:
         cycle(false);
     }
 
+    void instruction_cross_line_direct_check()
+    {
+        // Scenario: compressed code may place a 32-bit instruction at the final
+        // halfword of a cache line. L2 must bypass the cached-line hit path and
+        // return the assembled low 32 bits from the tail of this line plus the
+        // head of the next line for every AXI beat width.
+        constexpr uint32_t line_base = 0x00000400u;
+        constexpr uint32_t low_word = 0x44332211u;
+        constexpr uint32_t high_word = 0x88776655u;
+        constexpr uint32_t expected = 0x66554433u;
+        set_backing_word(line_base + LINE_SIZE - 4, low_word);
+        set_backing_word(line_base + LINE_SIZE, high_word);
+
+        read_check(line_base + LINE_SIZE - 4, low_word);
+
+        read = true;
+        d_read = false;
+        write = false;
+        i_addr = line_base + LINE_SIZE - 2;
+        for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.i_wait_out); ++i) {
+            cycle(false);
+        }
+        uint32_t data = port_word(L2_VALUE(l2.i_read_data_out), 0);
+        if (L2_VALUE(l2.i_wait_out) || data != expected) {
+            std::print("\ninstruction cross-line read ERROR addr={:#x} wait={} data={:#x} expected={:#x}\n",
+                i_addr, L2_VALUE(l2.i_wait_out), data, expected);
+            error = true;
+        }
+        cycle(false);
+        read = false;
+        cycle(false);
+    }
+
     void d_read_check(uint32_t request_addr, uint32_t expected)
     {
         read = false;
@@ -1047,6 +1080,7 @@ public:
 #endif
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
+                   "\n    - instruction-port direct read crossing a cache-line end"
                    "\n    - immediate CPU hit from a line that was just filled"
                    "\n    - cached CPU partial writes"
                    "\n    - dirty eviction"
@@ -1068,6 +1102,7 @@ public:
         }
         read_check(8, 0);
         read_check(8, 0);
+        instruction_cross_line_direct_check();
         immediate_hit_after_fill_check();
         write_then_read_check(64 + 4, 0x12345678u, 0xf, 0x12345678u);
         write_then_read_check(64 + 4, 0xabcd0000u, 0xc, 0xabcd5678u);

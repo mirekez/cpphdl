@@ -84,7 +84,7 @@ public:
         cache.addr_in = _ASSIGN_REG(addr);
         cache.write_data_in = _ASSIGN_REG(write_data);
         cache.write_mask_in = _ASSIGN_REG(write_mask);
-        cache.mem_read_data_in = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : (logic<32>)ram.read_data_out());
+        cache.mem_read_data_in = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : backing_read_data_comb_func());
         cache.mem_wait_in = _ASSIGN(false);
         cache.stall_in = _ASSIGN_REG(stall);
         cache.flush_in = _ASSIGN_REG(flush);
@@ -145,6 +145,20 @@ public:
         return (lo >> shift) | (hi << (32 - shift));
     }
 
+    uint32_t backing_read_data_value()
+    {
+        uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
+        if ((request_addr & 3u) != 0 && ((request_addr & (LINE_SIZE - 1)) == LINE_SIZE - 2)) {
+            // Match L2 behavior for instruction fetches whose 32-bit word spans two cache lines.
+            return expected_ram_read(request_addr);
+        }
+        return PORT_VALUE(ram.read_data_out);
+    }
+
+    _LAZY_COMB(backing_read_data_comb, logic<32>)
+        return backing_read_data_comb = (logic<32>)backing_read_data_value();
+    }
+
     void drive_cache(bool reset, bool clk)
     {
 #ifdef VERILATOR
@@ -153,9 +167,10 @@ public:
         cache.addr_in = addr;
         cache.write_data_in = write_data;
         cache.write_mask_in = write_mask;
-        cache.mem_read_data_in = ram.read_data_out();
         if (direct_mode) {
             cache.mem_read_data_in = direct_mem_data;
+        } else {
+            cache.mem_read_data_in = backing_read_data_value();
         }
         cache.mem_wait_in = false;
         cache.stall_in = stall;
@@ -478,7 +493,7 @@ public:
 
         uint32_t request_addr = 11 * SETS * LINE_SIZE + 9 * LINE_SIZE + LINE_SIZE - 2;
         uint32_t line_base = request_addr & ~(uint32_t)(LINE_SIZE - 1);
-        uint32_t expected_half = (mem_word(request_addr >> 2) >> 16) & 0xffffu;
+        uint32_t expected = expected_ram_read(request_addr);
         bool got = false;
         bool saw_busy = false;
         bool saw_line_refill = false;
@@ -505,11 +520,10 @@ public:
             cycle(false);
         }
 
-        if (!got || !saw_busy || !saw_line_refill || saw_direct_cross_line ||
-            ((rdata() & 0xffffu) != expected_half)) {
-            std::print("\ninstruction end-halfword refill ERROR addr={:#x}: got={} saw_busy={} saw_line_refill={} saw_direct_cross_line={} data={:#x} expected_half={:#x} valid={} raddr={:#x} busy={}\n",
+        if (!got || !saw_busy || saw_line_refill || !saw_direct_cross_line || rdata() != expected) {
+            std::print("\ninstruction end-halfword direct ERROR addr={:#x}: got={} saw_busy={} saw_line_refill={} saw_direct_cross_line={} data={:#x} expected={:#x} valid={} raddr={:#x} busy={}\n",
                 request_addr, got, saw_busy, saw_line_refill, saw_direct_cross_line,
-                rdata(), expected_half, valid(), raddr(), busy());
+                rdata(), expected, valid(), raddr(), busy());
             error = true;
         }
 
@@ -532,9 +546,9 @@ public:
             cycle(false);
         }
 
-        if (!got || saw_mem_on_hit || ((rdata() & 0xffffu) != expected_half)) {
-            std::print("\ninstruction end-halfword hit ERROR addr={:#x}: got={} saw_mem_on_hit={} data={:#x} expected_half={:#x} valid={} raddr={:#x} busy={}\n",
-                request_addr, got, saw_mem_on_hit, rdata(), expected_half, valid(), raddr(), busy());
+        if (!got || !saw_mem_on_hit || rdata() != expected) {
+            std::print("\ninstruction end-halfword repeat-direct ERROR addr={:#x}: got={} saw_mem_on_hit={} data={:#x} expected={:#x} valid={} raddr={:#x} busy={}\n",
+                request_addr, got, saw_mem_on_hit, rdata(), expected, valid(), raddr(), busy());
             error = true;
         }
 

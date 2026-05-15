@@ -88,6 +88,10 @@ def main(argv: list[str]) -> int:
     if pattern:
         patterns = pattern.split()
         tests = [path for path in tests if any(fnmatch.fnmatch(path.name, item) for item in patterns)]
+    exclude_pattern = os.environ.get("TRIBE_RISCV_TESTS_EXCLUDE_PATTERN")
+    if exclude_pattern:
+        exclude_patterns = exclude_pattern.split()
+        tests = [path for path in tests if not any(fnmatch.fnmatch(path.name, item) for item in exclude_patterns)]
     if not tests:
         print(f"SKIP: no RV32 riscv-tests binaries found in {isa_dir}")
         return SKIP

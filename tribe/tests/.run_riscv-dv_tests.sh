@@ -34,6 +34,12 @@ RISCV_DV_PYTHON_DEPS=(
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 
+clean_verilator_obj_dirs() {
+    for width in 256 128 64; do
+        rm -rf "${BUILD_DIR}/tribe${width}/Tribe/obj_dir"
+    done
+}
+
 export PATH="/usr/bin:${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 export TRIBE_RISCV_DV_PYTHON="${TRIBE_RISCV_DV_PYTHON:-/usr/bin/python3}"
@@ -65,6 +71,7 @@ echo "Running riscv-dv generated tests on C++ Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_dv$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
+    clean_verilator_obj_dirs
     echo "Running riscv-dv generated tests on Verilator Tribe model"
     ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_dv_verilator$'
 fi

@@ -18,6 +18,12 @@ done
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 
+clean_verilator_obj_dirs() {
+    for width in 256 128 64; do
+        rm -rf "${BUILD_DIR}/tribe${width}/Tribe/obj_dir"
+    done
+}
+
 export PATH="${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
 
@@ -27,6 +33,7 @@ echo "Running RV32 Spike fragments on C++ Tribe model"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_rv32_spike_fragments$'
 
 if [[ "${NO_VERIL}" -eq 0 ]]; then
+    clean_verilator_obj_dirs
     echo "Running RV32 Spike fragments on Verilator Tribe model"
     ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_rv32_spike_fragments_verilator$'
 fi

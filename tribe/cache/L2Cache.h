@@ -243,10 +243,15 @@ private:
 
     // True for an unaligned read whose 32-bit result crosses the cache-line boundary.
     _LAZY_COMB(active_cross_line_read_comb, bool)
+        uint32_t byte;
+        uint32_t word;
+        byte = active_addr_comb_func() & 3u;
+        word = (active_addr_comb_func() >> 2) & (LINE_WORDS - 1);
         // CPU data accesses that really cross a line are split before L2.
-        // Keeping unaligned reads on the normal lookup path preserves dirty
-        // cached data instead of bypassing to stale backing RAM.
-        active_cross_line_read_comb = false;
+        // Instruction fetch can legally ask for the final halfword of a line;
+        // service it as a two-beat direct read and return the assembled word.
+        active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() &&
+            !active_is_d_comb_func() && byte != 0 && word == LINE_WORDS - 1;
         return active_cross_line_read_comb;
     }
 
