@@ -602,10 +602,14 @@ private:
 
     // Write beat for uncached MMIO stores, placing the 32-bit CPU word at its byte lane.
     _LAZY_COMB(io_write_beat_comb, logic<PORT_BITWIDTH>)
+        uint32_t byte;
         uint32_t word;
         io_write_beat_comb = 0;
+        byte = (uint32_t)req_addr_reg & 3u;
         word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
-        io_write_beat_comb.bits(word * 32 + 31, word * 32) = req_write_data_reg;
+        // CPU stores keep the store value in low bits and carry the byte address separately.
+        // The AXI-like device bus has no write strobe, so align the value to the addressed byte lane.
+        io_write_beat_comb.bits(word * 32 + 31, word * 32) = (uint32_t)req_write_data_reg << (byte * 8u);
         return io_write_beat_comb;
     }
 

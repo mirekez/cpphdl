@@ -148,6 +148,10 @@ public:
     _PORT(uint32_t)  debug_regs_data_out;
     _PORT(bool)      debug_branch_taken_now_out;
     _PORT(uint32_t)  debug_branch_target_now_out;
+    _PORT(uint32_t)  debug_decode_instr_out;
+    _PORT(uint32_t)  debug_decode_pc_out;
+    _PORT(uint8_t)   debug_decode_br_out;
+    _PORT(uint32_t)  debug_decode_imm_out;
 #endif
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
@@ -503,6 +507,10 @@ public:
         debug_regs_data_out = wb.regs_data_out;
         debug_branch_taken_now_out = exe.branch_taken_out;
         debug_branch_target_now_out = exe.branch_target_out;
+        debug_decode_instr_out = icache.read_data_out;
+        debug_decode_pc_out = _ASSIGN((uint32_t)dec.state_out().pc);
+        debug_decode_br_out = _ASSIGN((uint8_t)dec.state_out().br_op);
+        debug_decode_imm_out = _ASSIGN((uint32_t)dec.state_out().imm);
 #endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
@@ -1649,20 +1657,47 @@ class TestTribe : public Module
 
     bool patch_linux_earlycon_mapbase(std::vector<uint32_t>& ram, uint32_t mem_base, uint32_t mem_size_bytes)
     {
-        static constexpr uint32_t PATCH_PHYS = 0x80012f58;
+        static constexpr std::array<uint32_t, 5> SEARCH_WORDS = {
+            0x00050913u, // mv s2,a0
+            0x00079863u, // bnez a5,...
+            0x00c52783u, // lw a5,12(a0)
+            0xfed00513u, // li a0,-19
+            0x12078863u, // beqz a5,...
+        };
         static constexpr std::array<uint32_t, 5> PATCH_WORDS = {
             0x00050913u, // mv s2,a0          ; preserve early_serial8250_setup's device pointer
             0x0d852783u, // lw a5,216(a0)     ; fallback to early_console_dev.port.mapbase
             0x00f52823u, // sw a5,16(a0)      ; make port.membase usable when early ioremap failed
-            0x00079663u, // bnez a5,0xc0012f70
+            0x00079663u, // bnez a5,+12       ; keep using the configured mapbase when present
             0xfed00513u, // li a0,-19
         };
+        uint32_t patch_phys = 0;
+        bool found = false;
+        const size_t words = mem_size_bytes / 4;
+        for (size_t pos = 0; pos + SEARCH_WORDS.size() <= words; ++pos) {
+            bool match = true;
+            for (size_t i = 0; i < SEARCH_WORDS.size(); ++i) {
+                if (ram[pos + i] != SEARCH_WORDS[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                patch_phys = mem_base + (uint32_t)(pos * 4);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std::print("can't find Linux early 8250 membase fallback patch site\n");
+            return false;
+        }
         for (size_t i = 0; i < PATCH_WORDS.size(); ++i) {
-            if (!patch_word(ram, PATCH_PHYS + (uint32_t)i * 4u, mem_base, mem_size_bytes, PATCH_WORDS[i])) {
+            if (!patch_word(ram, patch_phys + (uint32_t)i * 4u, mem_base, mem_size_bytes, PATCH_WORDS[i])) {
                 return false;
             }
         }
-        std::print("Patched Linux early 8250 membase fallback at {:08x}\n", PATCH_PHYS);
+        std::print("Patched Linux early 8250 membase fallback at {:08x}\n", patch_phys);
         return true;
     }
 
@@ -2455,7 +2490,7 @@ public:
             }
             if (trace_pc_from && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= trace_pc_from &&
                 (uint32_t)PORT_VALUE(tribe.debug_pc_out) < trace_pc_to) {
-                std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x} wbwr={} wbact={} wbid={} wbdata={:08x} loadready={} memwait={} brtake={} brtarget={:08x}\n",
+                std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dinstr={:08x} dpc={:08x} dbr={} dimm={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x} wbwr={} wbact={} wbid={} wbdata={:08x} loadready={} memwait={} brtake={} brtarget={:08x}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -2463,6 +2498,14 @@ public:
                     (uint32_t)0,
 #endif
                     (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_decode_instr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_decode_pc_out),
+                    (uint8_t)PORT_VALUE(tribe.debug_decode_br_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_decode_imm_out),
+#else
+                    0u, 0u, 0u, 0u,
+#endif
                     (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),

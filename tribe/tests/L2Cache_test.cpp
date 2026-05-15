@@ -8,6 +8,7 @@
 #include "Axi4Ram.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -55,7 +56,6 @@ static uint32_t port_word(logic<WIDTH> bits, size_t word)
 long sys_clock = -1;
 
 static constexpr size_t LINE_SIZE = 32;
-static constexpr size_t RAM_LINES_PER_PORT = 32768;
 static constexpr size_t WAIT_LIMIT = 128;
 
 #ifdef VERILATOR
@@ -74,22 +74,27 @@ class TestL2Cache : public Module
     static constexpr size_t SETS = L2_SIZE / LINE_SIZE / WAYS;
     static constexpr uint64_t REGION_SIZE64 = 0x100000000ull / MEM_PORTS;
     static constexpr uint32_t REGION_SIZE = (uint32_t)REGION_SIZE64;
+    static constexpr uint32_t PRBS_REGION_SIZE = 2u * 1024u * 1024u;
+    static constexpr uint32_t PRBS_TOTAL_SIZE = 3u * PRBS_REGION_SIZE;
+    static constexpr size_t RAM_DEPTH_PER_PORT = PRBS_REGION_SIZE / (PORT_BITS / 8);
     static constexpr size_t DEVICE_PORT = MEM_PORTS - 1;
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
     L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS> l2;
 #endif
-    Axi4Ram<32, 4, PORT_BITS, RAM_LINES_PER_PORT> ram[MEM_PORTS];
+    Axi4Ram<32, 4, PORT_BITS, RAM_DEPTH_PER_PORT> ram[MEM_PORTS];
 
     bool read = false;
     bool d_read = false;
     bool write = false;
-    uint32_t addr = 0;
+    uint32_t i_addr = 0;
+    uint32_t d_addr = 0;
     uint32_t wdata = 0;
     uint8_t wmask = 0;
     Axi4Driver<32, 4, PORT_BITS> slave_axi[MEM_PORTS] = {};
     bool region_uncached[MEM_PORTS] = {};
+    uint32_t region_size[MEM_PORTS] = {};
     bool error = false;
 
 public:
@@ -98,19 +103,19 @@ public:
 #ifndef VERILATOR
         l2.i_read_in = _ASSIGN_REG(read);
         l2.i_write_in = _ASSIGN(false);
-        l2.i_addr_in = _ASSIGN_REG(addr);
+        l2.i_addr_in = _ASSIGN_REG(i_addr);
         l2.i_write_data_in = _ASSIGN((uint32_t)0);
         l2.i_write_mask_in = _ASSIGN((uint8_t)0);
 
         l2.d_read_in = _ASSIGN_REG(d_read);
         l2.d_write_in = _ASSIGN_REG(write);
-        l2.d_addr_in = _ASSIGN_REG(addr);
+        l2.d_addr_in = _ASSIGN_REG(d_addr);
         l2.d_write_data_in = _ASSIGN_REG(wdata);
         l2.d_write_mask_in = _ASSIGN_REG(wmask);
         l2.memory_base_in = _ASSIGN((uint32_t)0);
         l2.memory_size_in = _ASSIGN((uint32_t)0xffffffffu);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.mem_region_size_in[i] = _ASSIGN((uint32_t)REGION_SIZE);
+            l2.mem_region_size_in[i] = _ASSIGN_REG_I(region_size[i]);
             l2.mem_region_uncached_in[i] = _ASSIGN_REG_I(region_uncached[i]);
             AXI4_DRIVER_FROM_DRIVER_I(l2.axi_in[i], slave_axi[i]);
         }
@@ -143,18 +148,18 @@ public:
     {
         l2.i_read_in = read;
         l2.i_write_in = false;
-        l2.i_addr_in = addr;
+        l2.i_addr_in = i_addr;
         l2.i_write_data_in = 0;
         l2.i_write_mask_in = 0;
         l2.d_read_in = d_read;
         l2.d_write_in = write;
-        l2.d_addr_in = addr;
+        l2.d_addr_in = d_addr;
         l2.d_write_data_in = wdata;
         l2.d_write_mask_in = wmask;
         l2.memory_base_in = 0;
         l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            l2.mem_region_size_in[i] = REGION_SIZE;
+            l2.mem_region_size_in[i] = region_size[i];
             l2.mem_region_uncached_in[i] = region_uncached[i];
             AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER_I(l2, axi_in, i, slave_axi[i]);
         }
@@ -197,24 +202,79 @@ public:
 
     void preload()
     {
+        for (size_t port = 0; port < MEM_PORTS; ++port) {
+            region_size[port] = REGION_SIZE;
+            region_uncached[port] = false;
+            slave_axi[port] = {};
+        }
         // Keep backing RAM at reset-zero for the first fill/hit smoke check.
         // Later sections write explicit data through the CPU and AXI slave ports.
         for (size_t port = 0; port < MEM_PORTS; ++port) {
-            for (size_t beat = 0; beat < RAM_LINES_PER_PORT; ++beat) {
+            for (size_t beat = 0; beat < RAM_DEPTH_PER_PORT; ++beat) {
                 ram[port].ram.buffer.data[beat] = 0;
             }
         }
     }
 
+    bool address_to_region(uint32_t request_addr, size_t& port, uint32_t& local_addr)
+    {
+        uint64_t base = 0;
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            uint64_t size = region_size[i] ? region_size[i] : REGION_SIZE64;
+            if ((uint64_t)request_addr >= base && (uint64_t)request_addr < base + size) {
+                port = i;
+                local_addr = request_addr - (uint32_t)base;
+                return true;
+            }
+            base += size;
+        }
+        port = MEM_PORTS - 1;
+        local_addr = request_addr;
+        return false;
+    }
+
     void set_backing_word(uint32_t request_addr, uint32_t data)
     {
-        size_t port = (REGION_SIZE64 == 0) ? 0 : (size_t)(request_addr / REGION_SIZE64);
-        uint32_t local_addr = request_addr - (uint32_t)(REGION_SIZE64 * port);
+        size_t port;
+        uint32_t local_addr;
+        if (!address_to_region(request_addr, port, local_addr)) {
+            std::print("\nbacking write address outside regions addr={:#x}\n", request_addr);
+            error = true;
+            return;
+        }
         size_t beat = local_addr / (PORT_BITS / 8);
         size_t lane = (local_addr % (PORT_BITS / 8)) / 4;
+        if (beat >= RAM_DEPTH_PER_PORT) {
+            std::print("\nbacking write beyond RAM port={} addr={:#x}\n", port, request_addr);
+            error = true;
+            return;
+        }
         logic<PORT_BITS> value = ram[port].ram.buffer.data[beat];
         value.bits(lane * 32 + 31, lane * 32) = data;
         ram[port].ram.buffer.data[beat] = value;
+    }
+
+    static uint32_t prbs_mix(uint32_t x)
+    {
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        x ^= x >> 16;
+        return x;
+    }
+
+    static uint8_t prbs_byte(uint64_t pos, uint32_t seed)
+    {
+        return (uint8_t)prbs_mix((uint32_t)pos ^ seed ^ (uint32_t)(pos >> 32));
+    }
+
+    static uint32_t prbs_word(uint64_t pos, uint32_t seed)
+    {
+        return (uint32_t)prbs_byte(pos + 0, seed) |
+               ((uint32_t)prbs_byte(pos + 1, seed) << 8) |
+               ((uint32_t)prbs_byte(pos + 2, seed) << 16) |
+               ((uint32_t)prbs_byte(pos + 3, seed) << 24);
     }
 
     void read_check(uint32_t request_addr, uint32_t expected)
@@ -222,7 +282,7 @@ public:
         read = true;
         d_read = false;
         write = false;
-        addr = request_addr;
+        i_addr = request_addr;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.i_wait_out); ++i) {
             cycle(false);
         }
@@ -243,7 +303,7 @@ public:
         read = false;
         d_read = true;
         write = false;
-        addr = request_addr;
+        d_addr = request_addr;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
             cycle(false);
         }
@@ -264,7 +324,7 @@ public:
         read = false;
         d_read = false;
         write = true;
-        addr = request_addr;
+        d_addr = request_addr;
         wdata = data;
         wmask = mask;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
@@ -284,7 +344,7 @@ public:
     {
         read = false;
         write = true;
-        addr = request_addr;
+        d_addr = request_addr;
         wdata = data;
         wmask = mask;
         for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
@@ -502,7 +562,7 @@ public:
         slave_axi[0].ar.id = 6;
         slave_axi[0].r.ready = false;
         read = true;
-        addr = 0x00000008u;
+        i_addr = 0x00000008u;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
             cycle(false);
         }
@@ -539,7 +599,7 @@ public:
         read = false;
         d_read = false;
         write = true;
-        addr = device_addr;
+        d_addr = device_addr;
         wdata = 0x1234abcdu;
         wmask = 0xf;
         cycle(false);
@@ -584,7 +644,7 @@ public:
         read = false;
         d_read = true;
         write = false;
-        addr = device_addr;
+        d_addr = device_addr;
 
         for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
             cycle(false);
@@ -671,6 +731,254 @@ public:
         d_read_check(base + 28, 0xffff0001u);
     }
 
+    void cycle_prbs_test()
+    {
+        if constexpr (MEM_PORTS < 3) {
+            return;
+        }
+
+        // Scenario: three L2 memory regions are treated as one 6 MiB cyclic
+        // address space. The d-cache actor writes a PRBS stream into the first
+        // half while the external AXI actor verifies it; the AXI actor writes a
+        // second PRBS stream into the second half while the d-cache actor verifies
+        // it. The instruction-cache actor injects unrelated fills so arbitration
+        // sees I, D, and external-master traffic in the same long run.
+        uint32_t saved_region_size[MEM_PORTS];
+        bool saved_uncached[MEM_PORTS];
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            saved_region_size[i] = region_size[i];
+            saved_uncached[i] = region_uncached[i];
+            region_size[i] = PRBS_REGION_SIZE;
+            region_uncached[i] = false;
+            slave_axi[i] = {};
+        }
+
+        read = false;
+        d_read = false;
+        write = false;
+        cycle(false);
+
+        uint32_t half_bytes = 16u * 1024u;
+        if (const char* full = std::getenv("L2_PRBS_FULL"); full && std::strcmp(full, "0") != 0) {
+            half_bytes = PRBS_TOTAL_SIZE / 2;
+        }
+        if (const char* override_bytes = std::getenv("L2_PRBS_HALF_BYTES")) {
+            uint32_t requested = (uint32_t)std::strtoul(override_bytes, nullptr, 0);
+            if (requested != 0) {
+                half_bytes = requested;
+            }
+        }
+        half_bytes = (half_bytes / 4) * 4;
+        if (half_bytes == 0) {
+            half_bytes = 4;
+        }
+        if (half_bytes > PRBS_TOTAL_SIZE / 2) {
+            half_bytes = PRBS_TOTAL_SIZE / 2;
+        }
+        const uint32_t first_base = 0;
+        const uint32_t second_base = PRBS_TOTAL_SIZE / 2;
+        const uint32_t target_bytes = half_bytes * 2;
+        const uint32_t seed_d_to_axi = 0x13579bdfu;
+        const uint32_t seed_axi_to_d = 0x2468ace0u;
+
+        enum class DOp { Idle, Write, Read };
+        enum class AxiWriteOp { Idle, Aw, W, B };
+        enum class AxiReadOp { Idle, Ar, R };
+
+        DOp d_op = DOp::Idle;
+        AxiWriteOp axi_w_op = AxiWriteOp::Idle;
+        AxiReadOp axi_r_op = AxiReadOp::Idle;
+        uint32_t d_write_pos = 0;
+        uint32_t d_read_pos = 0;
+        uint32_t axi_write_pos = 0;
+        uint32_t axi_read_pos = 0;
+        uint32_t d_chunk_left = 0;
+        uint32_t axi_w_chunk_left = 0;
+        uint32_t axi_r_chunk_left = 0;
+        uint32_t d_active_pos = 0;
+        uint32_t axi_w_active_pos = 0;
+        uint32_t axi_r_active_pos = 0;
+        bool i_active = false;
+        uint32_t rng = 0x12345678u;
+        uint32_t idle_d_cycles = 0;
+        uint32_t idle_axi_read_cycles = 0;
+
+        auto next_rand = [&]() {
+            rng = prbs_mix(rng + 0x9e3779b9u);
+            return rng;
+        };
+        auto chunk_words = [&]() {
+            return 1u + (next_rand() & 7u);
+        };
+        auto circular_addr = [&](uint32_t base, uint32_t pos) {
+            return base + (pos % half_bytes);
+        };
+
+        // Three actors run every clock: instruction-cache random fills, d-cache
+        // PRBS write/read traffic, and an AXI master doing the mirrored read/write.
+        const uint64_t max_cycles = (uint64_t)target_bytes * 24 + 20000;
+        for (uint64_t n = 0; n < max_cycles; ++n) {
+            if (i_active) {
+                if (!L2_VALUE(l2.i_wait_out)) {
+                    read = false;
+                    i_active = false;
+                }
+            } else if ((next_rand() & 0x1fu) == 0) {
+                i_addr = (next_rand() % PRBS_TOTAL_SIZE) & ~3u;
+                read = true;
+                i_active = true;
+            }
+
+            if (d_op == DOp::Write && !L2_VALUE(l2.d_wait_out)) {
+                d_write_pos += 4;
+                --d_chunk_left;
+                write = false;
+                d_op = DOp::Idle;
+                idle_d_cycles = 0;
+            } else if (d_op == DOp::Read && !L2_VALUE(l2.d_wait_out)) {
+                uint32_t beat_word = ((d_addr % (PORT_BITS / 8)) / 4);
+                uint32_t data = port_word(L2_VALUE(l2.d_read_data_out), beat_word);
+                uint32_t expected = prbs_word(d_active_pos, seed_axi_to_d);
+                d_read = false;
+                d_op = DOp::Idle;
+                idle_d_cycles = 0;
+                if (data == expected) {
+                    d_read_pos += 4;
+                    --d_chunk_left;
+                }
+            } else if (d_op == DOp::Idle) {
+                bool writer_has_room = (d_write_pos < target_bytes) &&
+                    (d_write_pos - axi_read_pos < half_bytes - 64);
+                bool reader_needs_data = d_read_pos < target_bytes && axi_write_pos > d_read_pos;
+                if (d_chunk_left == 0) {
+                    d_chunk_left = chunk_words();
+                }
+                if (reader_needs_data && (!writer_has_room || (next_rand() & 1u))) {
+                    d_active_pos = d_read_pos;
+                    d_addr = circular_addr(second_base, d_read_pos);
+                    d_read = true;
+                    d_op = DOp::Read;
+                } else if (writer_has_room) {
+                    d_active_pos = d_write_pos;
+                    d_addr = circular_addr(first_base, d_write_pos);
+                    wdata = prbs_word(d_write_pos, seed_d_to_axi);
+                    wmask = 0xf;
+                    write = true;
+                    d_op = DOp::Write;
+                } else {
+                    ++idle_d_cycles;
+                }
+            }
+
+            if (axi_w_op == AxiWriteOp::Aw && slave_bvalid(0)) {
+                slave_axi[0].aw.valid = false;
+                slave_axi[0].w.valid = false;
+                slave_axi[0].b.ready = true;
+                axi_write_pos += 4;
+                --axi_w_chunk_left;
+                axi_w_op = AxiWriteOp::Idle;
+            } else if (axi_w_op == AxiWriteOp::Aw && slave_awready(0) && slave_wready(0)) {
+                slave_axi[0].aw.valid = false;
+                slave_axi[0].w.valid = false;
+                slave_axi[0].b.ready = true;
+                axi_w_op = AxiWriteOp::B;
+            } else if (axi_w_op == AxiWriteOp::B && slave_bvalid(0)) {
+                slave_axi[0].b.ready = false;
+                axi_write_pos += 4;
+                --axi_w_chunk_left;
+                axi_w_op = AxiWriteOp::Idle;
+            } else if (axi_w_op == AxiWriteOp::Idle) {
+                if (slave_bvalid(0)) {
+                    slave_axi[0].b.ready = true;
+                } else if (slave_axi[0].b.ready) {
+                    slave_axi[0].b.ready = false;
+                } else if (axi_write_pos < target_bytes && (axi_write_pos - d_read_pos < half_bytes - 64)) {
+                    if (axi_w_chunk_left == 0) {
+                        axi_w_chunk_left = chunk_words();
+                    }
+                    axi_w_active_pos = axi_write_pos;
+                    uint32_t request_addr = circular_addr(second_base, axi_write_pos);
+                    uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
+                    slave_axi[0].w.data = 0;
+                    slave_axi[0].w.data.bits(lane * 32 + 31, lane * 32) = prbs_word(axi_write_pos, seed_axi_to_d);
+                    slave_axi[0].w.last = true;
+                    slave_axi[0].aw.addr = request_addr;
+                    slave_axi[0].aw.id = 9;
+                    slave_axi[0].aw.valid = true;
+                    slave_axi[0].w.valid = true;
+                    axi_w_op = AxiWriteOp::Aw;
+                    (void)axi_w_active_pos;
+                }
+            }
+
+            if (axi_r_op == AxiReadOp::Ar && slave_arready(0)) {
+                slave_axi[0].ar.valid = false;
+                axi_r_op = AxiReadOp::R;
+            } else if (axi_r_op == AxiReadOp::R && slave_rvalid(0)) {
+                logic<PORT_BITS> beat = slave_rdata(0);
+                uint32_t request_addr = circular_addr(first_base, axi_r_active_pos);
+                uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
+                uint32_t data = (uint32_t)beat.bits(lane * 32 + 31, lane * 32);
+                uint32_t expected = prbs_word(axi_r_active_pos, seed_d_to_axi);
+                slave_axi[0].r.ready = true;
+                axi_r_op = AxiReadOp::Idle;
+                idle_axi_read_cycles = 0;
+                if (data == expected) {
+                    axi_read_pos += 4;
+                    --axi_r_chunk_left;
+                }
+            } else if (axi_r_op == AxiReadOp::Idle) {
+                if (slave_axi[0].r.ready) {
+                    slave_axi[0].r.ready = false;
+                } else if (axi_read_pos < target_bytes && d_write_pos > axi_read_pos) {
+                    if (axi_r_chunk_left == 0) {
+                        axi_r_chunk_left = chunk_words();
+                    }
+                    axi_r_active_pos = axi_read_pos;
+                    slave_axi[0].ar.addr = circular_addr(first_base, axi_read_pos);
+                    slave_axi[0].ar.id = 10;
+                    slave_axi[0].ar.valid = true;
+                    axi_r_op = AxiReadOp::Ar;
+                } else {
+                    ++idle_axi_read_cycles;
+                }
+            }
+
+            if (d_write_pos >= target_bytes && d_read_pos >= target_bytes &&
+                axi_write_pos >= target_bytes && axi_read_pos >= target_bytes &&
+                d_op == DOp::Idle && axi_w_op == AxiWriteOp::Idle && axi_r_op == AxiReadOp::Idle) {
+                break;
+            }
+
+            if (idle_d_cycles > WAIT_LIMIT * 32 || idle_axi_read_cycles > WAIT_LIMIT * 32) {
+                break;
+            }
+            cycle(false);
+        }
+
+        if (d_write_pos < target_bytes || d_read_pos < target_bytes ||
+            axi_write_pos < target_bytes || axi_read_pos < target_bytes) {
+            std::print("\ncycle PRBS ERROR d_write={} d_read={} axi_write={} axi_read={} target={} "
+                       "d_op={} axi_w_op={} axi_r_op={} i_active={} i_wait={} d_wait={} "
+                       "awready={} wready={} bvalid={} arready={} rvalid={}\n",
+                d_write_pos, d_read_pos, axi_write_pos, axi_read_pos, target_bytes,
+                (int)d_op, (int)axi_w_op, (int)axi_r_op, i_active,
+                L2_VALUE(l2.i_wait_out), L2_VALUE(l2.d_wait_out),
+                slave_awready(0), slave_wready(0), slave_bvalid(0), slave_arready(0), slave_rvalid(0));
+            error = true;
+        }
+
+        read = false;
+        d_read = false;
+        write = false;
+        slave_axi[0] = {};
+        cycle(false);
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            region_size[i] = saved_region_size[i];
+            region_uncached[i] = saved_uncached[i];
+        }
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -689,7 +997,8 @@ public:
                    "\n    - external AXI completion does not release CPU instruction port"
                    "\n    - external AXI request does not hide CPU write completion"
                    "\n    - external AXI request does not drop CPU data-port MMIO read"
-                   "\n    - uncached/device region CPU and AXI-master accesses\n");
+                   "\n    - uncached/device region CPU and AXI-master accesses"
+                   "\n    - cyclic PRBS traffic from I-cache, D-cache, and external AXI actors\n");
         auto start = std::chrono::high_resolution_clock::now();
         _assign();
         preload();
@@ -711,6 +1020,7 @@ public:
         slave_request_does_not_hide_cpu_write_completion_check();
         slave_request_does_not_drop_cpu_dport_read_check();
         uncached_device_region_check();
+        cycle_prbs_test();
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(

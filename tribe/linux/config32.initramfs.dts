@@ -13,7 +13,7 @@
 		bootargs = "console=ttyS0,1000000 earlycon debug loglevel=8 ignore_loglevel initcall_debug";
 		stdout-path = "/soc/serial@82000000:1000000n8";
 		linux,initrd-start = <0x81c00000>;
-		linux,initrd-end = <0x81e4d200>;
+		linux,initrd-end = <0x81e4d1cc>;
 	};
 
 	cpus {
@@ -56,6 +56,7 @@
 			current-speed = <1000000>;
 			reg-shift = <0>;
 			reg-io-width = <1>;
+			fifo-size = <4096>;
 			status = "okay";
 		};
 

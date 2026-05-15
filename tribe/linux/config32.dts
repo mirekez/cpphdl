@@ -54,6 +54,7 @@
 			current-speed = <1000000>;
 			reg-shift = <0>;
 			reg-io-width = <1>;
+			fifo-size = <4096>;
 			status = "okay";
 		};
 
