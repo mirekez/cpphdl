@@ -125,6 +125,29 @@ def prewarm_udb_z3_cache(env: dict[str, str]) -> None:
     shutil.copytree(source, dest, dirs_exist_ok=True)
 
 
+def python_version_ok(python: str) -> bool:
+    resolved = shutil.which(python) or python
+    try:
+        result = subprocess.run(
+            [
+                resolved,
+                "-c",
+                "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return True
+    return result.returncode == 0
+
+
+def select_uv_python(env: dict[str, str]) -> None:
+    requested = env.get("UV_PYTHON")
+    if not requested or not python_version_ok(requested):
+        env["UV_PYTHON"] = "3.10"
+
+
 def trust_mise_config(checkout: pathlib.Path, env: dict[str, str]) -> int:
     mise = shutil.which("mise", path=env["PATH"])
     config = checkout / ".mise.toml"
@@ -178,6 +201,7 @@ def main(argv: list[str]) -> int:
     env.setdefault("MISE_CONFIG_DIR", str(work / "mise-config"))
     env.setdefault("MISE_STATE_DIR", str(work / "mise-state"))
     env.setdefault("MISE_RUBY_COMPILE", "false")
+    select_uv_python(env)
     pathlib.Path(env["XDG_DATA_HOME"]).mkdir(parents=True, exist_ok=True)
     pathlib.Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     for key in ("MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_CONFIG_DIR", "MISE_STATE_DIR"):
