@@ -571,6 +571,11 @@ def main(argv: list[str]) -> int:
     work = pathlib.Path(argv[2]).resolve()
     work.mkdir(parents=True, exist_ok=True)
 
+    riscv_home = os.environ.get("RISCV_HOME") or os.environ.get("RISCV") or "/home/me/riscv"
+    os.environ["RISCV_HOME"] = riscv_home
+    os.environ.setdefault("RISCV", riscv_home)
+    os.environ["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + os.environ.get("PATH", "")
+
     prefix = os.environ.get("RISCV_PREFIX", "riscv32-unknown-elf-")
     gcc = tool(prefix + "gcc")
     objcopy = tool(prefix + "objcopy")

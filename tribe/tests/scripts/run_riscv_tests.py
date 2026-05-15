@@ -53,8 +53,10 @@ def main(argv: list[str]) -> int:
     subprocess.run(["git", "-C", str(checkout), "submodule", "update", "--init", "--recursive"], check=True)
 
     env = os.environ.copy()
-    env["PATH"] = "/home/me/riscv/bin:" + env.get("PATH", "")
-    env.setdefault("RISCV", "/home/me/riscv")
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    env["RISCV_HOME"] = riscv_home
+    env.setdefault("RISCV", riscv_home)
+    env["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
 
     missing = [tool for tool in ("autoconf", "automake", "make", "riscv32-unknown-elf-gcc", "riscv32-unknown-elf-readelf", "spike") if shutil.which(tool, path=env["PATH"]) is None]
     if missing:

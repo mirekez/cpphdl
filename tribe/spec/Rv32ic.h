@@ -38,6 +38,7 @@ struct Rv32ic : public Rv32i
     void decode(State& state_out)
     {
         int32_t imm_tmp;
+        uint32_t opcode, funct3, rd_p, rs1_p, bits6_5, bits11_10, b12, rd_rs1, rs2;
         state_out = {};
 
         if ((raw&3) == 3) {
@@ -45,15 +46,15 @@ struct Rv32ic : public Rv32i
             return;
         }
 
-        const uint32_t opcode = bits(1, 0);
-        const uint32_t funct3 = bits(15, 13);
-        const uint32_t rd_p = bits(4, 2);
-        const uint32_t rs1_p = bits(9, 7);
-        const uint32_t bits6_5 = bits(6, 5);
-        const uint32_t bits11_10 = bits(11, 10);
-        const uint32_t b12 = bit(12);
-        const uint32_t rd_rs1 = bits(11, 7);
-        const uint32_t rs2 = bits(6, 2);
+        opcode = bits(1, 0);
+        funct3 = bits(15, 13);
+        rd_p = bits(4, 2);
+        rs1_p = bits(9, 7);
+        bits6_5 = bits(6, 5);
+        bits11_10 = bits(11, 10);
+        b12 = bit(12);
+        rd_rs1 = bits(11, 7);
+        rs2 = bits(6, 2);
 
         state_out.funct3 = 0b010;  // LW/SW
         if (opcode == 0b00) {

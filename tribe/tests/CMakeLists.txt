@@ -148,7 +148,6 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_rv32_spike_fragments PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 180
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH}"
     )
 
     add_test(
@@ -162,7 +161,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_rv32_spike_fragments_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};TRIBE_SPIKE_FRAGMENTS_BACKEND=verilator"
+        ENVIRONMENT "TRIBE_SPIKE_FRAGMENTS_BACKEND=verilator"
     )
 
     add_test(
@@ -177,7 +176,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32 PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
+        ENVIRONMENT "TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
     )
 
     add_test(
@@ -192,7 +191,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
-        ENVIRONMENT "PATH=/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
+        ENVIRONMENT "TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
     )
 
     add_test(
@@ -206,7 +205,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
     )
 
     add_test(
@@ -220,7 +219,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=/usr/bin/python3;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
     )
 
     add_test(
@@ -235,7 +234,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
     )
 
     add_test(
@@ -250,7 +249,7 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:/home/me/riscv/bin:$ENV{PATH};RISCV=/home/me/riscv;TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator"
+        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator"
     )
 endfunction()
 

@@ -154,7 +154,8 @@ def main(argv: list[str]) -> int:
         return SKIP
 
     env = os.environ.copy()
-    riscv_home = env.get("RISCV_HOME", "/home/me/riscv")
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    env["RISCV_HOME"] = riscv_home
     env["PATH"] = "/usr/bin:" + str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
     env.setdefault("RISCV", riscv_home)
     pydeps = repo_root / "build" / "pydeps"

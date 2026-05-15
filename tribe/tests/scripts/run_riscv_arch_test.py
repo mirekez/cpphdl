@@ -166,8 +166,9 @@ def main(argv: list[str]) -> int:
     subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "tests"], check=True)
 
     env = os.environ.copy()
-    riscv_home = env.get("RISCV_HOME", "/home/me/riscv")
-    env["PATH"] = f"{riscv_home}/bin:" + env.get("PATH", "")
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    env["RISCV_HOME"] = riscv_home
+    env["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
     env.setdefault("RISCV", riscv_home)
     env.setdefault("UV_CACHE_DIR", str(work / "uv-cache"))
     env.setdefault("XDG_DATA_HOME", str(work / "xdg-data"))
