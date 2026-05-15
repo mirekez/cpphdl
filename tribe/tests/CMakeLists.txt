@@ -32,6 +32,12 @@ if [[ ! -d "$DIR" ]]; then
     exit 1
 fi
 
+BUILD_DIR="$(cd "$ROOT/.." && pwd)"
+while IFS= read -r -d '' EXE; do
+    TARGET_NAME="$(basename "$EXE")"
+    cmake --build "$BUILD_DIR" --target "$TARGET_NAME"
+done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' -print0 | sort -z)
+
 while IFS= read -r -d '' EXE; do
     echo "==> ${EXE}"
     EXE_DIR="$(dirname "$EXE")"
