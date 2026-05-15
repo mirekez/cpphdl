@@ -360,7 +360,7 @@ int main(int argc, char** argv)
     bool prepare_only = false;
     int cycles = []() {
         const char* env = std::getenv("TRIBE_LINUX_CYCLES");
-        return env ? std::stoi(env) : 200000;
+        return env ? std::stoi(env) : 300000000;
     }();
     std::string marker = []() {
         const char* env = std::getenv("TRIBE_LINUX_MARKER");

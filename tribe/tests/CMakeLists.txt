@@ -36,14 +36,14 @@ BUILD_DIR="$(cd "$ROOT/.." && pwd)"
 while IFS= read -r -d '' EXE; do
     TARGET_NAME="$(basename "$EXE")"
     make -C "$BUILD_DIR" "$TARGET_NAME"
-done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' -print0 | sort -z)
+done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' ! -name 'Linux_test' -print0 | sort -z)
 
 while IFS= read -r -d '' EXE; do
     echo "==> ${EXE}"
     EXE_DIR="$(dirname "$EXE")"
     EXE_NAME="$(basename "$EXE")"
     (cd "$EXE_DIR" && "./$EXE_NAME" "${ARGS[@]}")
-done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' -print0 | sort -z)
+done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' ! -name 'Linux_test' -print0 | sort -z)
 ]=])
 file(CHMOD "${TRIBE_TEST_ALL_SCRIPT}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
