@@ -28,10 +28,84 @@ PYTHON_DEPS = [
     "toposort",
 ]
 
+DEFAULT_TESTLIST = """\
+- test: tribe_arithmetic_basic_test
+  description: >
+    Short RV32IMC arithmetic/random corner test for Tribe smoke regression.
+  gen_test: riscv_instr_base_test
+  iterations: 1
+  gen_opts: >
+    +instr_cnt=80
+    +num_of_sub_program=0
+    +directed_instr_0=riscv_int_numeric_corner_stream,4
+    +no_fence=1
+    +no_data_page=1
+    +no_branch_jump=1
+    +boot_mode=m
+    +no_csr_instr=1
+  rtl_test: core_base_test
+
+- test: tribe_amo_test
+  description: >
+    Short RV32A AMO/LR/SC directed test for Tribe.
+  gen_test: riscv_instr_base_test
+  iterations: 1
+  gen_opts: >
+    +instr_cnt=120
+    +directed_instr_0=riscv_lr_sc_instr_stream,4
+    +directed_instr_1=riscv_amo_instr_stream,6
+    +no_fence=1
+    +no_branch_jump=1
+    +num_of_sub_program=0
+    +boot_mode=m
+    +no_csr_instr=1
+  rtl_test: core_base_test
+
+- test: tribe_trap_test
+  description: >
+    Short illegal-instruction trap regression for Tribe privileged trap flow.
+  gen_test: riscv_instr_base_test
+  iterations: 1
+  gen_opts: >
+    +instr_cnt=120
+    +illegal_instr_ratio=8
+    +num_of_sub_program=0
+    +boot_mode=m
+    +no_fence=1
+    +no_data_page=1
+  rtl_test: core_base_test
+
+- test: tribe_interrupt_test
+  description: >
+    Short privileged interrupt-handler generation smoke for Tribe.
+  gen_test: riscv_instr_base_test
+  iterations: 1
+  gen_opts: >
+    +instr_cnt=100
+    +enable_interrupt=1
+    +enable_timer_irq=1
+    +num_of_sub_program=0
+    +boot_mode=m
+    +no_fence=1
+    +no_data_page=1
+  rtl_test: core_base_test
+"""
+
 
 def run(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> int:
     print("+", " ".join(cmd))
     return subprocess.run(cmd, cwd=cwd, env=env).returncode
+
+
+def default_testlist(repo_root: pathlib.Path, work: pathlib.Path) -> pathlib.Path:
+    source_testlist = repo_root / "tribe" / "tests" / "riscv_dv_tribe_testlist.yaml"
+    if source_testlist.exists():
+        return source_testlist
+
+    generated_testlist = work / "riscv_dv_tribe_testlist.yaml"
+    if not generated_testlist.exists():
+        generated_testlist.write_text(DEFAULT_TESTLIST, encoding="utf-8")
+    return generated_testlist
 
 
 def symbol_addr(elf: pathlib.Path, symbol: str, env: dict[str, str]) -> int | None:
@@ -213,7 +287,7 @@ def main(argv: list[str]) -> int:
 
     testlist = pathlib.Path(os.environ.get(
         "TRIBE_RISCV_DV_TESTLIST",
-        repo_root / "tribe" / "tests" / "riscv_dv_tribe_testlist.yaml",
+        default_testlist(repo_root, work),
     )).resolve()
     target = os.environ.get("TRIBE_RISCV_DV_TARGET", ensure_tribe_atomic_target(checkout))
     iterations = os.environ.get("TRIBE_RISCV_DV_ITERATIONS", "1")
