@@ -2181,7 +2181,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "")
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false)
     {
 #ifdef VERILATOR
         std::print("VERILATOR TestTribe...");
@@ -2648,7 +2648,13 @@ public:
             runtime_total_ticks += tribe_runtime_tick() - cycle_time_start;
         }
 
-        if (tohost_addr) {
+        if (checkpoint_save_only_success) {
+            if (!checkpoint_saved) {
+                std::print("checkpoint was not saved before cycle limit\n");
+                error = true;
+            }
+        }
+        else if (tohost_addr) {
             if (!tohost_done) {
                 std::print("tohost was not written before cycle limit\n");
                 error = true;
@@ -2664,7 +2670,7 @@ public:
         }
 
         perf_print();
-        std::print(" {} ({} microseconds)\n", !error?"PASSED":"FAILED",
+        std::print(" {} ({} microseconds)\n", !error ? (checkpoint_save_only_success ? "CHECKPOINT SAVED" : "PASSED") : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }

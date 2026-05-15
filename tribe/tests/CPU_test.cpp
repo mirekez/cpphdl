@@ -148,9 +148,9 @@ static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
     bool partial_ok = TestTribe(debug).run(elf.string(),
         0, log.string(), 301, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0,
-        "", checkpoint.string(), 300, false);
-    if (partial_ok) {
-        std::print("checkpoint partial run unexpectedly completed\n");
+        "", checkpoint.string(), 300, false, "", true);
+    if (!partial_ok) {
+        std::print("checkpoint partial run did not save cleanly\n");
         return false;
     }
     if (!std::filesystem::exists(checkpoint)) {
