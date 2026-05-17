@@ -90,10 +90,11 @@ struct cpphdl_exception
 #define _PORT(A...) inline static cpphdl::function_ref<A>
 #define _ASSIGN(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
 #define _ASSIGN_REG(a...)  +[]() { return &a; }  // variable
+#define _ASSIGN_COMB(a...)  _ASSIGN_REG(a)
 
 // _LAZY_COMB saves some time when calling comb() 
 #define _LAZY_COMB(name, type...) \
-    type name; \
+    inline static type name; \
     inline static long __prev_sys_clock_##name = -1; \
     static type& name##_func() { \
         if (__prev_sys_clock_##name == sys_clock) { \
