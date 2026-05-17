@@ -47,6 +47,55 @@ static std::string shell_quote(const std::filesystem::path& path)
     return quoted;
 }
 
+static std::string shell_quote_text(const std::string& text)
+{
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+class ScopedEnv
+{
+public:
+    ScopedEnv(const char* name, const std::string& value) : name_(name)
+    {
+        const char* old = std::getenv(name);
+        if (old) {
+            had_old_ = true;
+            old_value_ = old;
+        }
+        if (value.empty()) {
+            unsetenv(name);
+        }
+        else {
+            setenv(name, value.c_str(), 1);
+        }
+    }
+
+    ~ScopedEnv()
+    {
+        if (had_old_) {
+            setenv(name_.c_str(), old_value_.c_str(), 1);
+        }
+        else {
+            unsetenv(name_.c_str());
+        }
+    }
+
+private:
+    std::string name_;
+    bool had_old_ = false;
+    std::string old_value_;
+};
+
 static bool run_command(const std::string& command)
 {
     int rc = std::system(command.c_str());
@@ -332,7 +381,9 @@ static bool run_linux(bool debug,
                       const std::string& checkpoint_save,
                       uint64_t checkpoint_save_cycle,
                       bool append_output,
-                      bool checkpoint_save_only)
+                      bool checkpoint_save_only,
+                      const std::string& uart_input,
+                      const std::string& uart_input_after)
 {
     std::filesystem::path vmlinux;
     std::filesystem::path initramfs;
@@ -343,6 +394,8 @@ static bool run_linux(bool debug,
 
     const char* bootargs_env = std::getenv("TRIBE_LINUX_BOOTARGS");
     std::string bootargs = bootargs_env ? bootargs_env : "";
+    ScopedEnv scripted_uart("TRIBE_UART_INPUT", uart_input);
+    ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", uart_input_after);
     return TestTribe(debug).run(vmlinux.string(),
         0, "", cycles, 0, LINUX_MEM_BASE, LINUX_RAM_BYTES / 4, false,
         0, LINUX_DTB_ADDR, 1, true, LINUX_MEM_BASE - 0xc0000000u, dtb.string(), true,
@@ -358,14 +411,31 @@ int main(int argc, char** argv)
     bool append_output = false;
     bool checkpoint_save_only = false;
     bool prepare_only = false;
+    bool verilator_build_only = false;
+    bool uart_command_forced = false;
+    bool uart_command_disabled = false;
     int cycles = []() {
         const char* env = std::getenv("TRIBE_LINUX_CYCLES");
         return env ? std::stoi(env) : 300000000;
     }();
-    std::string marker = []() {
-        const char* env = std::getenv("TRIBE_LINUX_MARKER");
-        return env ? std::string(env) : std::string("BusyBox v");
+    std::string uart_input = []() {
+        const char* env = std::getenv("TRIBE_LINUX_UART_INPUT");
+        return env ? std::string(env) : std::string("echo TRIBE_UART_RX_OK\n");
     }();
+    std::string uart_input_after = []() {
+        const char* env = std::getenv("TRIBE_LINUX_UART_INPUT_AFTER");
+        // The init script prints "BusyBox shell ready" before exec'ing /bin/sh.
+        // Wait for the shell prompt so scripted RX bytes are not written before
+        // BusyBox has opened /dev/console for input.
+        return env ? std::string(env) : std::string("~ #");
+    }();
+    std::string marker;
+    if (const char* env = std::getenv("TRIBE_LINUX_MARKER")) {
+        marker = env;
+    }
+    else {
+        marker = uart_input.empty() ? std::string("BusyBox v") : std::string("TRIBE_UART_RX_OK");
+    }
     std::string checkpoint_load;
     std::string checkpoint_save;
     uint64_t checkpoint_save_cycle = 0;
@@ -379,9 +449,11 @@ int main(int argc, char** argv)
         }
         else if (strcmp(argv[i], "--first-uart") == 0) {
             marker = "Linux version";
+            uart_command_disabled = !uart_command_forced;
         }
         else if (strcmp(argv[i], "--busybox") == 0) {
             marker = "BusyBox v";
+            uart_command_disabled = !uart_command_forced;
         }
         else if (strcmp(argv[i], "--append-output") == 0) {
             append_output = true;
@@ -392,11 +464,26 @@ int main(int argc, char** argv)
         else if (strcmp(argv[i], "--prepare-only") == 0) {
             prepare_only = true;
         }
+        else if (strcmp(argv[i], "--verilator-build-only") == 0) {
+            verilator_build_only = true;
+        }
         else if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc) {
             cycles = std::stoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--marker") == 0 && i + 1 < argc) {
             marker = argv[++i];
+        }
+        else if (strcmp(argv[i], "--uart-command") == 0 && i + 1 < argc) {
+            uart_input = argv[++i];
+            uart_command_forced = true;
+            uart_command_disabled = false;
+        }
+        else if (strcmp(argv[i], "--uart-after") == 0 && i + 1 < argc) {
+            uart_input_after = argv[++i];
+        }
+        else if (strcmp(argv[i], "--no-uart-command") == 0) {
+            uart_input.clear();
+            uart_command_disabled = true;
         }
         else if (strcmp(argv[i], "--checkpoint-load") == 0 && i + 1 < argc) {
             checkpoint_load = argv[++i];
@@ -412,6 +499,9 @@ int main(int argc, char** argv)
             return 2;
         }
     }
+    if (uart_command_disabled && !uart_command_forced) {
+        uart_input.clear();
+    }
 
     bool ok = true;
     if (prepare_only) {
@@ -425,7 +515,8 @@ int main(int argc, char** argv)
     }
     else {
         ok = run_linux(debug, marker, cycles, checkpoint_load, checkpoint_save,
-            checkpoint_save_cycle, append_output, checkpoint_save_only);
+            checkpoint_save_cycle, append_output, checkpoint_save_only,
+            uart_input, uart_input_after);
     }
 
 #ifndef VERILATOR
@@ -437,6 +528,9 @@ int main(int argc, char** argv)
             " -DTRIBE_IO_REGION_SIZE_CONFIG=1048576";
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_defines.c_str(), 1);
         ok &= VerilatorCompileTribeInFolder(__FILE__, "Linux", source_root);
+        if (verilator_build_only) {
+            return ok ? 0 : 1;
+        }
         std::string command = "Linux/obj_dir/VTribe --cycles " + std::to_string(cycles) +
             " --marker " + shell_quote(marker);
         if (debug) {
@@ -456,6 +550,12 @@ int main(int argc, char** argv)
         }
         if (checkpoint_save_cycle) {
             command += " --checkpoint-save-cycle " + std::to_string(checkpoint_save_cycle);
+        }
+        if (!uart_input.empty()) {
+            command = "TRIBE_UART_INPUT=" + shell_quote_text(uart_input) + " " + command;
+            if (!uart_input_after.empty()) {
+                command = "TRIBE_UART_INPUT_AFTER=" + shell_quote_text(uart_input_after) + " " + command;
+            }
         }
         ok &= std::system(command.c_str()) == 0;
     }

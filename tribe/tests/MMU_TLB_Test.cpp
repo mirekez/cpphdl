@@ -473,12 +473,16 @@ int main(int argc, char** argv)
 {
     bool noveril = false;
     bool debug = false;
+    bool direct_verilator_only = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
+        }
+        if (strcmp(argv[i], "--direct-verilator-only") == 0) {
+            direct_verilator_only = true;
         }
     }
 
@@ -489,7 +493,7 @@ int main(int argc, char** argv)
     Verilated::commandArgs(argc, argv);
     return TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
         0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
-        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "MMU/TLB ELF") ? 0 : 1;
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_TLB\n", "MMU/TLB ELF") ? 0 : 1;
 #else
     bool ok = TestMMUTLBDirect().run();
     ok = ok && build_mmu_tlb_elf();
@@ -497,7 +501,7 @@ int main(int argc, char** argv)
     // page-fault handler installs a missing PTE and returns to retry the load.
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
         0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
-        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "MMU/TLB ELF");
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_TLB\n", "MMU/TLB ELF");
 
 #ifndef VERILATOR
     if (ok && !noveril) {
@@ -510,7 +514,7 @@ int main(int argc, char** argv)
              (source_root / "tribe").string()}, 4);
         ok &= std::system("MMU_TLB_4/obj_dir/VMMU_TLB") == 0;
 
-        if (ok) {
+        if (ok && !direct_verilator_only) {
             std::print("Building MMU_TLB Tribe Verilator ELF simulation...\n");
             std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
             setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);

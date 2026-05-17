@@ -85,21 +85,59 @@ foreach(src ${TRIBE_TEST_SOURCES})
         "-mavx2"
         "-fno-strict-aliasing"
     )
-    set(cpphdl_extra_defines "")
+    set(tribe_main_smoke_tests
+        Accelerator_test
+        CLINT_test
+        CPU_test
+        Checkpoint_test
+        Cpp_test
+        IOUART_test
+        MMU_TLB_Test
+        NS16550A_test
+    )
+    set(test_ram_bytes ${TRIBE_RAM_BYTES_CONFIG})
+    set(test_io_region_size ${TRIBE_IO_REGION_SIZE_CONFIG})
+    set(test_l2_axi_width "")
     if(target_name STREQUAL "Linux_test")
-        target_compile_definitions(${target_name} PRIVATE
-            L2_AXI_WIDTH=64
-            TRIBE_RAM_BYTES_CONFIG=33554432
-            TRIBE_IO_REGION_SIZE_CONFIG=1048576
-        )
-        set(cpphdl_extra_defines
-            -DL2_AXI_WIDTH=64
-            -DTRIBE_RAM_BYTES_CONFIG=33554432
-            -DTRIBE_IO_REGION_SIZE_CONFIG=1048576
-        )
+        set(test_ram_bytes 33554432)
+        set(test_io_region_size 1048576)
+        set(test_l2_axi_width 64)
         set(test_args --noveril --prepare-only)
     else()
+        if(target_name STREQUAL "Checkpoint_test")
+            # Checkpoint_test drives UART RX through the PLIC. The UART sits at
+            # the IO base, but the PLIC claim/complete register is over 2 MiB
+            # into IO space, so the default 64 KiB test aperture is too small.
+            set(test_io_region_size 4194304)
+        endif()
+        if(target_name IN_LIST tribe_main_smoke_tests)
+            # Standalone Tribe ELF smoke tests use the 64-bit cache/memory path.
+            # The generated SystemVerilog and the Verilator harness must agree.
+            set(test_l2_axi_width 64)
+        endif()
         set(test_args --noveril)
+    endif()
+
+    if(test_l2_axi_width)
+        target_compile_definitions(${target_name} PRIVATE
+            L2_AXI_WIDTH=${test_l2_axi_width}
+            TRIBE_RAM_BYTES_CONFIG=${test_ram_bytes}
+            TRIBE_IO_REGION_SIZE_CONFIG=${test_io_region_size}
+        )
+        set(cpphdl_extra_defines
+            -DL2_AXI_WIDTH=${test_l2_axi_width}
+            -DTRIBE_RAM_BYTES_CONFIG=${test_ram_bytes}
+            -DTRIBE_IO_REGION_SIZE_CONFIG=${test_io_region_size}
+        )
+    else()
+        target_compile_definitions(${target_name} PRIVATE
+            TRIBE_RAM_BYTES_CONFIG=${test_ram_bytes}
+            TRIBE_IO_REGION_SIZE_CONFIG=${test_io_region_size}
+        )
+        set(cpphdl_extra_defines
+            -DTRIBE_RAM_BYTES_CONFIG=${test_ram_bytes}
+            -DTRIBE_IO_REGION_SIZE_CONFIG=${test_io_region_size}
+        )
     endif()
 
     target_link_libraries(${target_name} PRIVATE
@@ -132,6 +170,45 @@ foreach(src ${TRIBE_TEST_SOURCES})
         COMMAND ${target_name} ${test_args}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
+
+    set(tribe_verilator_ctest_targets
+        Accelerator_test
+        BranchPredictor_test
+        CLINT_test
+        CPU_test
+        Checkpoint_test
+        Cpp_test
+        IOUART_test
+        L1Cache_test
+        L2Cache_test
+        Linux_test
+        MMU_TLB_Test
+        NS16550A_test
+    )
+    if(target_name IN_LIST tribe_verilator_ctest_targets)
+        set(verilator_test_args)
+        set(verilator_test_timeout 600)
+        if(target_name STREQUAL "L2Cache_test")
+            set(verilator_test_timeout 1800)
+        endif()
+        if(target_name STREQUAL "Linux_test")
+            # Keep the default CTest Linux Verilator pass as a build smoke.
+            # Long BusyBox/interactive Linux runs are driven by run_linux_probe.sh.
+            set(verilator_test_args --prepare-only --verilator-build-only)
+            set(verilator_test_timeout 900)
+        endif()
+        if(target_name STREQUAL "MMU_TLB_Test")
+            set(verilator_test_args --direct-verilator-only)
+        endif()
+        add_test(
+            NAME ${target_name}_verilator
+            COMMAND ${target_name} ${verilator_test_args}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        set_tests_properties(${target_name}_verilator PROPERTIES
+            TIMEOUT ${verilator_test_timeout}
+        )
+    endif()
 endforeach()
 
 set(TRIBE_SPIKE_WORK_DIR "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments")
@@ -262,3 +339,128 @@ endfunction()
 add_tribe_width_tests(256 tribe256)
 add_tribe_width_tests(128 tribe128)
 add_tribe_width_tests(64 tribe64)
+
+function(add_soc_width_tests width target_name)
+    set(prefix "SoC${width}")
+    set(work_suffix "soc-w${width}")
+    set(verilator_bin "${CMAKE_BINARY_DIR}/SoC${width}/System/obj_dir/VSystem")
+
+    add_test(
+        NAME ${prefix}_rv32_spike_fragments
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_SPIKE_WORK_DIR}-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_rv32_spike_fragments PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 180
+    )
+
+    add_test(
+        NAME ${prefix}_rv32_spike_fragments_verilator
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments-verilator-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_rv32_spike_fragments_verilator PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "TRIBE_SPIKE_FRAGMENTS_BACKEND=verilator;TRIBE_SPIKE_FRAGMENTS_VERILATOR_BIN=${verilator_bin}"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_tests_rv32
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_TESTS_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_tests_rv32 PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_tests_rv32_verilator_supported
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_TESTS_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work-verilator-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_VERILATOR_BIN=${verilator_bin};TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_arch_test
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_ARCH_TEST_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
+        TIMEOUT 1200
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_arch_test_verilator
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_ARCH_TEST_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-arch-test-work-verilator-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
+        TIMEOUT 1200
+        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator;TRIBE_ARCH_TEST_VERILATOR_BIN=${verilator_bin}"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_dv
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_DV_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-dv-work-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_dv PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+    )
+
+    add_test(
+        NAME ${prefix}_riscv_dv_verilator
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
+                "$<TARGET_FILE:${target_name}>"
+                "${TRIBE_RISCV_DV_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/riscv-dv-work-verilator-${work_suffix}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin}"
+    )
+endfunction()
+
+add_soc_width_tests(256 SoC256)
+add_soc_width_tests(128 SoC128)
+add_soc_width_tests(64 SoC64)

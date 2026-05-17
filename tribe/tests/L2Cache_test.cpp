@@ -41,6 +41,14 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
 }
 
+template<size_t WIDTH, size_t WORDS>
+static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+{
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out, 0, sizeof(out));
+    memcpy(out, bits.bytes, sizeof(bits.bytes));
+}
+
 static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
 {
     memcpy(&out, bits.bytes, sizeof(out));
@@ -55,6 +63,12 @@ template<size_t WORDS>
 static uint32_t port_word(const VlWide<WORDS>& bits, size_t word)
 {
     return bits.m_storage[word];
+}
+
+template<size_t WORDS>
+static uint32_t port_word(const WData (&bits)[WORDS], size_t word)
+{
+    return bits[word];
 }
 
 static uint32_t port_word(QData bits, size_t word)

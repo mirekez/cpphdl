@@ -18,6 +18,7 @@ class InterruptController : public Module
     static constexpr uint32_t IRQ_MTIP = 7;
     static constexpr uint32_t IRQ_SEIP = 9;
     static constexpr uint32_t IRQ_MEIP = 11;
+    static constexpr uint32_t MIP_SOFTWARE_WRITABLE_MASK = 1u << IRQ_SSIP;
 
 public:
     _PORT(uint32_t) mstatus_in;
@@ -37,16 +38,25 @@ public:
 private:
     // Hardware interrupt pending bits merged with writable software MIP bits.
     _LAZY_COMB(mip_comb, uint32_t)
-        mip_comb = mip_sw_in();
+        // Timer and external pending bits are hardware-driven. Keeping only
+        // software-writable SSIP here prevents stale CSR writes from latching
+        // SEIP and making Linux service an external IRQ after PLIC claim is 0.
+        mip_comb = mip_sw_in() & MIP_SOFTWARE_WRITABLE_MASK;
 #ifdef ENABLE_ISR
         if (clint_msip_in()) {
-            mip_comb |= 1u << IRQ_MSIP;
+            mip_comb |= 1u << (priv_in() == PRIV_M ? IRQ_MSIP : IRQ_SSIP);
         }
         if (clint_mtip_in()) {
-            mip_comb |= 1u << IRQ_MTIP;
+            // Tribe runs Linux directly in S-mode without a real M-mode SBI
+            // firmware. The local SBI set_timer emulation therefore exposes
+            // CLINT events as supervisor interrupts outside M-mode.
+            mip_comb |= 1u << (priv_in() == PRIV_M ? IRQ_MTIP : IRQ_STIP);
         }
         if (external_irq_in()) {
-            mip_comb |= 1u << IRQ_SEIP;
+            // A real platform exposes the same PLIC signal through the interrupt
+            // bit for the current privilege target. Linux runs directly in S-mode
+            // on Tribe, while bare-metal checkpoint tests run in M-mode.
+            mip_comb |= 1u << (priv_in() == PRIV_M ? IRQ_MEIP : IRQ_SEIP);
         }
 #endif
         return mip_comb;
@@ -65,6 +75,9 @@ private:
         interrupt_cause_comb = 0;
         if (pending & (1u << IRQ_MEIP)) {
             interrupt_cause_comb = IRQ_MEIP;
+        }
+        else if ((pending & (1u << IRQ_STIP)) && priv_in() != PRIV_M && ((mideleg_in() >> IRQ_STIP) & 1u)) {
+            interrupt_cause_comb = IRQ_STIP;
         }
         else if (pending & (1u << IRQ_MSIP)) {
             interrupt_cause_comb = IRQ_MSIP;

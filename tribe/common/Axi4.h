@@ -183,6 +183,17 @@ struct Axi4If : Interface
     (dst).rlast_out = (src).rlast_out; \
     (dst).rid_out = (src).rid_out
 
+#define AXI4_RESPONDER_FROM_LATE(dst, src) \
+    (dst).awready_out = _ASSIGN((src).awready_out()); \
+    (dst).wready_out = _ASSIGN((src).wready_out()); \
+    (dst).bvalid_out = _ASSIGN((src).bvalid_out()); \
+    (dst).bid_out = _ASSIGN((src).bid_out()); \
+    (dst).arready_out = _ASSIGN((src).arready_out()); \
+    (dst).rvalid_out = _ASSIGN((src).rvalid_out()); \
+    (dst).rdata_out = _ASSIGN((src).rdata_out()); \
+    (dst).rlast_out = _ASSIGN((src).rlast_out()); \
+    (dst).rid_out = _ASSIGN((src).rid_out())
+
 #define AXI4_DRIVER_FROM_PORTS(dst) \
     (dst).awvalid_in = awvalid_in; \
     (dst).awaddr_in = awaddr_in; \
@@ -361,6 +372,21 @@ struct Axi4If : Interface
         (dst).araddr_in = _ASSIGN_I((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
         (dst).arid_in = _ASSIGN_I((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
         (dst).rready_in = _ASSIGN_I((bool)(src).axi_out___05Frready_out[index]); \
+    } while (false)
+
+#define AXI4_DRIVER_FROM_VERILATOR_CONST(dst, src, index, addr_type, data_func) \
+    do { \
+        (dst).awvalid_in = _ASSIGN((bool)(src).axi_out___05Fawvalid_out[index]); \
+        (dst).awaddr_in = _ASSIGN((addr_type)(uint32_t)(src).axi_out___05Fawaddr_out[index]); \
+        (dst).awid_in = _ASSIGN((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
+        (dst).wvalid_in = _ASSIGN((bool)(src).axi_out___05Fwvalid_out[index]); \
+        (dst).wdata_in = _ASSIGN(data_func((src).axi_out___05Fwdata_out[index])); \
+        (dst).wlast_in = _ASSIGN((bool)(src).axi_out___05Fwlast_out[index]); \
+        (dst).bready_in = _ASSIGN((bool)(src).axi_out___05Fbready_out[index]); \
+        (dst).arvalid_in = _ASSIGN((bool)(src).axi_out___05Farvalid_out[index]); \
+        (dst).araddr_in = _ASSIGN((addr_type)(uint32_t)(src).axi_out___05Faraddr_out[index]); \
+        (dst).arid_in = _ASSIGN((u<4>)(uint32_t)(src).axi_out___05Farid_out[index]); \
+        (dst).rready_in = _ASSIGN((bool)(src).axi_out___05Frready_out[index]); \
     } while (false)
 
 #define AXI4_RESPONDER_FROM_VERILATOR(dst, src, index) \

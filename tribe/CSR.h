@@ -27,7 +27,7 @@ public:
     _PORT(uint32_t) stval_out = _ASSIGN_REG(stval_reg);
     _PORT(bool) illegal_trap_out = _ASSIGN_COMB(illegal_trap_comb_func());
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
-    _PORT(uint32_t) mie_out = _ASSIGN_REG(mie_reg);
+    _PORT(uint32_t) mie_out = _ASSIGN_COMB(interrupt_enable_comb_func());
     _PORT(uint32_t) mideleg_out = _ASSIGN_REG(mideleg_reg);
     _PORT(uint32_t) mip_sw_out = _ASSIGN_REG(mip_reg);
 #ifdef ENABLE_MMU_TLB
@@ -71,6 +71,11 @@ private:
     static constexpr uint32_t SSTATUS_MASK =
         MSTATUS_UIE | MSTATUS_SIE | MSTATUS_UPIE | MSTATUS_SPIE |
         MSTATUS_SPP | (3u << 13) | (3u << 15) | (1u << 18);
+    static constexpr uint32_t IRQ_SSIP = 1u << 1;
+    static constexpr uint32_t IRQ_STIP = 1u << 5;
+    static constexpr uint32_t IRQ_SEIP = 1u << 9;
+    static constexpr uint32_t XIP_VISIBLE_MASK = IRQ_SSIP | IRQ_STIP | IRQ_SEIP;
+    static constexpr uint32_t XIP_SOFTWARE_WRITABLE_MASK = IRQ_SSIP;
 
     reg<u32> mstatus_reg;
     reg<u32> mtvec_reg;
@@ -114,6 +119,13 @@ private:
     uint32_t sanitize_mstatus(uint32_t value)
     {
         return value & MSTATUS_WRITABLE;
+    }
+
+    _LAZY_COMB(interrupt_enable_comb, uint32_t)
+        // The interrupt controller decides whether a cause is delegated.
+        // Feed it both M-mode and S-mode enable CSRs so S-mode Linux's sie.SEIE
+        // can enable delegated external interrupts without touching mie.
+        return interrupt_enable_comb = (uint32_t)mie_reg | (uint32_t)sie_reg;
     }
 
     uint32_t trap_cause_code()
@@ -222,7 +234,7 @@ private:
         if (addr == 0x141) { return sepc_reg; }
         if (addr == 0x142) { return scause_reg; }
         if (addr == 0x143) { return stval_reg; }
-        if (addr == 0x144) { return (sip_reg | irq_pending_bits_in()) & ((1u << 1) | (1u << 5) | (1u << 9)); }
+        if (addr == 0x144) { return ((sip_reg & XIP_SOFTWARE_WRITABLE_MASK) | irq_pending_bits_in()) & XIP_VISIBLE_MASK; }
         if (addr == 0x180) {
 #ifdef ENABLE_MMU_TLB
             return satp_reg;
@@ -244,7 +256,7 @@ private:
         if (addr == 0x341) { return mepc_reg; }
         if (addr == 0x342) { return mcause_reg; }
         if (addr == 0x343) { return mtval_reg; }
-        if (addr == 0x344) { return mip_reg | irq_pending_bits_in(); }
+        if (addr == 0x344) { return (mip_reg & XIP_SOFTWARE_WRITABLE_MASK) | irq_pending_bits_in(); }
         if (addr == 0x348) { return mscratchcsw_reg; }
         if (addr == 0x349) { return mscratchcswl_reg; }
         if (addr == 0xF11) { return 0; }                  // mvendorid
@@ -420,7 +432,7 @@ private:
             case 0x141: sepc_reg._next = value & ~1u; break;
             case 0x142: scause_reg._next = value; break;
             case 0x143: stval_reg._next = value; break;
-            case 0x144: sip_reg._next = value; break;
+            case 0x144: sip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; break;
 #ifdef ENABLE_MMU_TLB
             case 0x180: satp_reg._next = value & 0x803fffffu; break;
 #endif
@@ -436,13 +448,13 @@ private:
             case 0x341: mepc_reg._next = value & ~1u; break;
             case 0x342: mcause_reg._next = value; break;
             case 0x343: mtval_reg._next = value; break;
-            case 0x344: mip_reg._next = value; break;
+            case 0x344: mip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; break;
             case 0x348: mscratchcsw_reg._next = value; break;
             case 0x349: mscratchcswl_reg._next = value; break;
 
-            case 0xB00: cycle_reg._next = (uint64_t(cycle_reg) & 0xffffffff00000000ull) | value; break;
+            case 0xB00: cycle_reg._next = (uint64_t(uint32_t(uint64_t(cycle_reg) >> 32)) << 32) | value; break;
             case 0xB80: cycle_reg._next = (uint64_t(value) << 32) | (uint32_t)cycle_reg; break;
-            case 0xB02: instret_reg._next = (uint64_t(instret_reg) & 0xffffffff00000000ull) | value; break;
+            case 0xB02: instret_reg._next = (uint64_t(uint32_t(uint64_t(instret_reg) >> 32)) << 32) | value; break;
             case 0xB82: instret_reg._next = (uint64_t(value) << 32) | (uint32_t)instret_reg; break;
 
             case 0x7B0: dcsr_reg._next = value; break;
@@ -498,8 +510,8 @@ public:
 
             if (to_s) {
                 if (trace_csr_events) {
-                    std::print("trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x}\n",
-                        state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg);
+                    std::print("trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
+                        state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
                 }
                 sepc_reg._next = state_in().pc & ~1u;
                 scause_reg._next = is_interrupt ? (cause | 0x80000000u) : cause;

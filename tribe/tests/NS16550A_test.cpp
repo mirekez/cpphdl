@@ -97,6 +97,7 @@ class TestNS16550ADirect : public Module
     static constexpr uint32_t REG_IER_DLM = 0x01;
     static constexpr uint32_t REG_IIR_FCR = 0x02;
     static constexpr uint32_t REG_LCR = 0x03;
+    static constexpr uint32_t REG_MCR = 0x04;
     static constexpr uint32_t REG_LSR = 0x05;
     static constexpr uint32_t LSR_DR = 0x01;
     static constexpr uint32_t LSR_THRE_TEMT = 0x60;
@@ -359,6 +360,7 @@ public:
             fail("IIR did not report no-interrupt after reset");
         }
 
+        write8(REG_MCR, 0x08);
         write8(REG_IER_DLM, 0x01);
         if (irq()) {
             fail("IRQ asserted before RX data arrived");
@@ -384,6 +386,23 @@ public:
         }
         if (!rx_ready()) {
             fail("RX ready did not return high after RBR read");
+        }
+
+        write8(REG_IER_DLM, 0x02);
+        if (irq()) {
+            fail("TX polling-only mode incorrectly asserted THR-empty IRQ");
+        }
+        if (read8(REG_IIR_FCR) != IIR_NO_INTERRUPT) {
+            fail("IIR reported a THR-empty interrupt in TX polling-only mode");
+        }
+        write8(REG_RBR_THR_DLL, 'Z');
+        if (irq()) {
+            fail("THR write incorrectly armed a THR-empty interrupt");
+        }
+        captured.clear();
+        write8(REG_IER_DLM, 0x00);
+        if (irq()) {
+            fail("THR-empty interrupt stayed high after IER.ETBEI clear");
         }
 
         push_rx('B');

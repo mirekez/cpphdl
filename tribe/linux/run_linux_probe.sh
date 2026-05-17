@@ -10,17 +10,15 @@ KERNEL_ELF="${KERNEL_ELF:-${LINUX_DIR}/vmlinux}"
 VMLINUX_ARCHIVE="${VMLINUX_ARCHIVE:-${LINUX_DIR}/vmlinux.tgz}"
 DTB="${DTB:-${LINUX_DIR}/config32.dtb}"
 DTS="${DTS:-${LINUX_DIR}/config32.dts}"
-INITRAMFS_SOURCE="${INITRAMFS_SOURCE:-/home/me/3/riscv32_linux_from_scratch/build/initramfs.cpio.gz}"
 INITRAMFS_GZ="${INITRAMFS_GZ:-${LINUX_DIR}/initramfs.cpio.gz}"
-INITRAMFS_BASE="${INITRAMFS_BASE:-${LINUX_DIR}/initramfs.base.cpio}"
 INITRAMFS="${INITRAMFS:-${LINUX_DIR}/initramfs.cpio}"
 INITRAMFS_ADDR="${INITRAMFS_ADDR:-0x81c00000}"
 DTB_WITH_INITRD="${DTB_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dtb}"
 DTS_WITH_INITRD="${DTS_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dts}"
 TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
-TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-1048576}"
-TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-0}"
-TRIBE_LINUX_BUSYBOX_PROBE="${TRIBE_LINUX_BUSYBOX_PROBE:-1}"
+TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-4194304}"
+TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-1}"
+TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-16}"
 TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
 TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 
@@ -101,95 +99,16 @@ prepare_linux_inputs()
         "${dtc_bin}" -I dts -O dtb -o "${DTB}" "${DTS}"
     fi
 
-    if [[ ! -f "${INITRAMFS_GZ}" || "${INITRAMFS_SOURCE}" -nt "${INITRAMFS_GZ}" ]]; then
-        if [[ ! -f "${INITRAMFS_SOURCE}" ]]; then
-            echo "missing initramfs: ${INITRAMFS_SOURCE}" >&2
-            exit 1
-        fi
-        cp "${INITRAMFS_SOURCE}" "${INITRAMFS_GZ}"
+    if [[ ! -f "${INITRAMFS_GZ}" ]]; then
+        echo "missing initramfs archive: ${INITRAMFS_GZ}" >&2
+        exit 1
     fi
-
-    if [[ ! -f "${INITRAMFS_BASE}" || "${INITRAMFS_GZ}" -nt "${INITRAMFS_BASE}" ]]; then
-        gzip -dc "${INITRAMFS_GZ}" > "${INITRAMFS_BASE}"
+    if [[ ! -f "${INITRAMFS}" || "${INITRAMFS_GZ}" -nt "${INITRAMFS}" ]]; then
+        gzip -dc "${INITRAMFS_GZ}" > "${INITRAMFS}"
     fi
-    if ! is_newc_cpio "${INITRAMFS_BASE}"; then
-        if is_newc_cpio "${INITRAMFS}"; then
-            cp "${INITRAMFS}" "${INITRAMFS_BASE}"
-        else
-            echo "initramfs must be an uncompressed newc cpio archive: ${INITRAMFS_BASE}" >&2
-            exit 1
-        fi
-    fi
-
-    if [[ "${TRIBE_LINUX_BUSYBOX_PROBE}" == "1" ]]; then
-        local init_probe
-        init_probe="$(mktemp)"
-        cat > "${init_probe}" <<'SH'
-#!/bin/sh
-
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
-
-echo
-echo "RISC-V initramfs started"
-echo "BusyBox probe follows"
-/bin/busybox | /bin/busybox head -n 1
-echo "BusyBox shell ready"
-
-exec /bin/sh -i </dev/console >/dev/console 2>&1
-SH
-        python3 - "${INITRAMFS_BASE}" "${INITRAMFS}" "${init_probe}" <<'PY'
-import pathlib
-import sys
-
-src = pathlib.Path(sys.argv[1])
-dst = pathlib.Path(sys.argv[2])
-init = pathlib.Path(sys.argv[3]).read_bytes()
-data = src.read_bytes()
-pos = 0
-out = bytearray()
-replaced = False
-
-def align4(value):
-    return (value + 3) & ~3
-
-while pos < len(data):
-    header = bytearray(data[pos:pos + 110])
-    if len(header) != 110 or header[:6] != b"070701":
-        raise SystemExit(f"bad newc header at offset {pos}")
-    fields = [int(header[6 + i * 8:14 + i * 8], 16) for i in range(13)]
-    filesize = fields[6]
-    namesize = fields[11]
-    name_start = pos + 110
-    name_end = name_start + namesize
-    name = data[name_start:name_end - 1].decode("utf-8")
-    body_start = align4(name_end)
-    body_end = body_start + filesize
-    next_pos = align4(body_end)
-    body = data[body_start:body_end]
-    if name in ("init", "./init"):
-        fields[6] = len(init)
-        body = init
-        replaced = True
-    out.extend(b"070701")
-    for value in fields:
-        out.extend(f"{value:08x}".encode("ascii"))
-    out.extend(data[name_start:name_end])
-    out.extend(b"\0" * (align4(len(out)) - len(out)))
-    out.extend(body)
-    out.extend(b"\0" * (align4(len(out)) - len(out)))
-    pos = next_pos
-    if name == "TRAILER!!!":
-        break
-
-if not replaced:
-    raise SystemExit("failed to replace init in initramfs")
-dst.write_bytes(out)
-PY
-        rm -f "${init_probe}"
-    elif [[ ! -f "${INITRAMFS}" || "${INITRAMFS_BASE}" -nt "${INITRAMFS}" ]]; then
-        cp "${INITRAMFS_BASE}" "${INITRAMFS}"
+    if ! is_newc_cpio "${INITRAMFS}"; then
+        echo "initramfs must be an uncompressed newc cpio archive: ${INITRAMFS}" >&2
+        exit 1
     fi
 
     initramfs_end="$(python3 - "${INITRAMFS_ADDR}" "${INITRAMFS}" <<'PY'
@@ -250,7 +169,9 @@ newer_tribe_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
     newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 3 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
 fi
-if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" ]]; then
+TRIBE_BIN_CONFIG="${TRIBE_BIN}.config"
+TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=64 TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" || ! -f "${TRIBE_BIN_CONFIG}" || "$(cat "${TRIBE_BIN_CONFIG}")" != "${TRIBE_COMPILE_CONFIG}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     TRIBE_BIN_TMP="${TRIBE_BIN}.new.$$"
     rm -f "${TRIBE_BIN_TMP}"
@@ -267,9 +188,11 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || 
         -DL2_AXI_WIDTH=64 \
         -DTRIBE_RAM_BYTES_CONFIG="${TRIBE_RAM_BYTES}" \
         -DTRIBE_IO_REGION_SIZE_CONFIG="${TRIBE_IO_BYTES}" \
+        -DTRIBE_CLINT_TICK_DIV_CONFIG="${TRIBE_CLINT_TICK_DIV}" \
         -o "${TRIBE_BIN_TMP}" \
         -lstdc++exp
     mv -f "${TRIBE_BIN_TMP}" "${TRIBE_BIN}"
+    printf '%s\n' "${TRIBE_COMPILE_CONFIG}" > "${TRIBE_BIN_CONFIG}"
 fi
 
 TRIBE_CHECKPOINT_ARGS=()
@@ -281,6 +204,9 @@ if [[ -n "${TRIBE_CHECKPOINT_SAVE:-}" ]]; then
 fi
 if [[ -n "${TRIBE_CHECKPOINT_SAVE_CYCLE:-}" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-cycle "${TRIBE_CHECKPOINT_SAVE_CYCLE}")
+fi
+if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-after "${TRIBE_CHECKPOINT_SAVE_AFTER}")
 fi
 if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--append-output)
@@ -311,19 +237,16 @@ TRIBE_RUN_ARGS=(
     --cycles "${TRIBE_LINUX_CYCLES:-300000000}"
     "${TRIBE_CHECKPOINT_ARGS[@]}"
 )
-TRIBE_RUN_COMMAND="cd $(printf '%q' "${ROOT_DIR}") &&"
-for arg in "${TRIBE_RUN_ARGS[@]}"; do
-    TRIBE_RUN_COMMAND+=" $(printf '%q' "${arg}")"
-done
 if [[ "${TRIBE_LINUX_TAIL_UART}" == "1" ]]; then
     (
-        cd "${ROOT_DIR}"
+        cd "${LINUX_DIR}"
         : > out.txt
         tail -n +1 -f out.txt &
         tail_pid=$!
         trap 'kill "${tail_pid}" 2>/dev/null || true' EXIT
-        bash -c "${TRIBE_RUN_COMMAND}"
+        "${TRIBE_RUN_ARGS[@]}"
     )
 else
-    bash -c "${TRIBE_RUN_COMMAND}"
+    cd "${LINUX_DIR}"
+    "${TRIBE_RUN_ARGS[@]}"
 fi

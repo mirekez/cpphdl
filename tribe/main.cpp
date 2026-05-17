@@ -40,6 +40,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "devices/IOUART.h"
 #include "devices/NS16550A.h"
 #include "devices/CLINT.h"
+#include "devices/PLIC.h"
 #include "devices/Accelerator.cpp"
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
@@ -57,7 +58,7 @@ static constexpr size_t DEFAULT_RAM_SIZE = 32768;
 #define TRIBE_RAM_BYTES_CONFIG (448 * 1024)
 #endif
 #ifndef TRIBE_IO_REGION_SIZE_CONFIG
-#define TRIBE_IO_REGION_SIZE_CONFIG (64 * 1024)
+#define TRIBE_IO_REGION_SIZE_CONFIG (4 * 1024 * 1024)
 #endif
 static constexpr size_t TRIBE_RAM_BYTES = TRIBE_RAM_BYTES_CONFIG;
 static constexpr size_t TRIBE_IO_REGION_SIZE = TRIBE_IO_REGION_SIZE_CONFIG;
@@ -144,6 +145,12 @@ public:
     _PORT(uint32_t)  debug_stvec_out;
     _PORT(uint32_t)  debug_scause_out;
     _PORT(uint32_t)  debug_stval_out;
+    _PORT(bool)      debug_irq_valid_out;
+    _PORT(uint32_t)  debug_irq_cause_out;
+    _PORT(bool)      debug_irq_to_supervisor_out;
+    _PORT(uint32_t)  debug_irq_mip_out;
+    _PORT(uint32_t)  debug_irq_mie_out;
+    _PORT(uint32_t)  debug_irq_mideleg_out;
     _PORT(u<2>)      debug_priv_out;
     _PORT(uint32_t)  debug_ra_out;
     _PORT(bool)      debug_regs_write_out;
@@ -250,7 +257,7 @@ public:
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
 #ifdef ENABLE_ISR
-        csr.interrupt_valid_in = irq.interrupt_valid_out;
+        csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
         csr.interrupt_cause_in = irq.interrupt_cause_out;
         csr.interrupt_to_supervisor_in = irq.interrupt_to_supervisor_out;
         csr.irq_pending_bits_in = irq.mip_out;
@@ -503,6 +510,12 @@ public:
         debug_stvec_out = csr.stvec_out;
         debug_scause_out = csr.scause_out;
         debug_stval_out = csr.stval_out;
+        debug_irq_valid_out = irq.interrupt_valid_out;
+        debug_irq_cause_out = irq.interrupt_cause_out;
+        debug_irq_to_supervisor_out = irq.interrupt_to_supervisor_out;
+        debug_irq_mip_out = irq.mip_out;
+        debug_irq_mie_out = csr.mie_out;
+        debug_irq_mideleg_out = csr.mideleg_out;
         debug_priv_out = csr.priv_out;
         debug_ra_out = regs.x1_out;
         debug_regs_write_out = wb.regs_write_out;
@@ -541,6 +554,7 @@ private:
     reg<u32>        debug_branch_target_reg;
     reg<u1>         debug_branch_taken_reg;
     reg<u1>         output_write_active_reg;
+    reg<u1>         interrupt_entry_guard_reg;
 
     // Hold decode/execute when a pending load, split access, or atomic op would be observed too early.
     _LAZY_COMB(hazard_stall_comb, bool)
@@ -774,6 +788,28 @@ private:
         return sbi_timer_hi_comb = sbi_arg_value(11);
     }
 
+    // Keep raw pending interrupt state visible in mip/sip, but accept an
+    // interrupt only at a normal execute boundary. The one-cycle guard prevents
+    // immediate re-entry before trap-entry CSR updates are visible to the first
+    // handler instruction.
+    _LAZY_COMB(interrupt_accept_comb, bool)
+#ifdef ENABLE_ISR
+        bool trap_redirect;
+        trap_redirect = state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::MRET ||
+             state_reg[0].sys_op == Sys::SRET ||
+             state_reg[0].sys_op == Sys::ECALL ||
+             state_reg[0].sys_op == Sys::EBREAK ||
+             state_reg[0].sys_op == Sys::TRAP ||
+             state_reg[0].trap_op != Trap::TNONE ||
+             csr.illegal_trap_out());
+        return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
+            !interrupt_entry_guard_reg && !trap_redirect;
+#else
+        return interrupt_accept_comb = false;
+#endif
+    }
+
     // Execute input state after trap/xret/fence redirection and late load forwarding.
     _LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
@@ -795,7 +831,7 @@ private:
             !sbi_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
-             irq.interrupt_valid_out() ||
+             interrupt_accept_comb_func() ||
 #endif
              state_reg[0].sys_op == Sys::ECALL ||
              state_reg[0].sys_op == Sys::EBREAK ||
@@ -874,19 +910,19 @@ private:
 #endif
         if (
 #ifdef ENABLE_ISR
-            irq.interrupt_valid_out() ||
+            interrupt_accept_comb_func() ||
 #endif
             csr.illegal_trap_out()) {
             csr_state_comb = state_reg[0];
 #ifdef ENABLE_ISR
-            if (irq.interrupt_valid_out()) {
+            if (interrupt_accept_comb_func()) {
                 csr_state_comb.imm = 0;
             }
 #endif
             csr_state_comb.sys_op = Sys::TRAP;
             csr_state_comb.trap_op =
 #ifdef ENABLE_ISR
-                irq.interrupt_valid_out() ? Trap::TNONE :
+                interrupt_accept_comb_func() ? Trap::TNONE :
 #endif
                 Trap::ILLEGAL_INST;
             csr_state_comb.csr_op = Csr::CNONE;
@@ -1022,6 +1058,7 @@ public:
 #ifndef SYNTHESIS
         const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
         const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
+        const bool trace_pc_write_zero_only = std::getenv("TRIBE_TRACE_PC_WRITE_ZERO_ONLY") != nullptr;
         auto trace_pc_write = [&](const char* reason, uint32_t next_pc) {
             if (trace_pc_write_from_env == nullptr) {
                 return;
@@ -1031,6 +1068,9 @@ public:
                 return;
             }
             const uint32_t old_pc = (uint32_t)pc;
+            if (trace_pc_write_zero_only && old_pc != 0 && next_pc != 0) {
+                return;
+            }
             if (!trace_pc_write_all && old_pc >= 0x10000u && next_pc >= 0x10000u) {
                 return;
             }
@@ -1060,6 +1100,20 @@ public:
                 (uint32_t)immu.paddr_out(),
                 (bool)dmmu.fault_out(),
                 (bool)dmmu_active_fault_comb_func());
+#endif
+#ifdef ENABLE_ISR
+            std::print(" irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} clint_mtip={} external_irq={}",
+                (bool)irq.interrupt_valid_out(),
+                (uint32_t)irq.interrupt_cause_out(),
+                (bool)irq.interrupt_to_supervisor_out(),
+                (uint32_t)irq.mip_out(),
+                (uint32_t)csr.mie_out(),
+                (uint32_t)csr.mideleg_out(),
+                (bool)clint_mtip_in(),
+                (bool)external_irq_in());
+#endif
+#ifdef ENABLE_ZICSR
+            std::print(" csr_illegal={}", (bool)csr.illegal_trap_out());
 #endif
 #ifdef ENABLE_ZICSR
             std::print(" priv={} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x} mepc={:08x} mtvec={:08x}",
@@ -1106,13 +1160,14 @@ public:
             alu_result_reg._next = alu_result_reg;
             debug_branch_target_reg._next = epc;
             debug_branch_taken_reg._next = true;
+            interrupt_entry_guard_reg._next = false;
         }
         else
         if (!reset && state_reg[0].valid &&
             !sbi_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
-             irq.interrupt_valid_out() ||
+             interrupt_accept_comb_func() ||
 #endif
              state_reg[0].sys_op == Sys::ECALL ||
              state_reg[0].sys_op == Sys::EBREAK ||
@@ -1134,6 +1189,13 @@ public:
             alu_result_reg._next = alu_result_reg;
             debug_branch_target_reg._next = csr.trap_vector_out();
             debug_branch_taken_reg._next = true;
+            interrupt_entry_guard_reg._next =
+#ifdef ENABLE_ISR
+                (u1)interrupt_accept_comb_func();
+#else
+                (u1)false;
+#endif
+            ;
         }
         else
         if (!reset && immu.fault_out() && state_reg[0].valid && !dmmu_active_fault_comb_func()) {
@@ -1162,6 +1224,7 @@ public:
 #endif
             debug_branch_target_reg._next = exe.branch_target_out();
             debug_branch_taken_reg._next = exe.branch_taken_out();
+            interrupt_entry_guard_reg._next = false;
         }
         else
         if (!reset && (immu.fault_out() || dmmu_active_fault_comb_func())) {
@@ -1180,6 +1243,7 @@ public:
             predicted_taken_reg.clr();
             debug_branch_target_reg._next = csr.trap_vector_out();
             debug_branch_taken_reg._next = true;
+            interrupt_entry_guard_reg._next = false;
         }
         else
 #endif
@@ -1201,6 +1265,7 @@ public:
             alu_result_reg._next = alu_result_reg;
             debug_branch_target_reg._next = epc;
             debug_branch_taken_reg._next = true;
+            interrupt_entry_guard_reg._next = false;
         }
         else
 #endif
@@ -1209,6 +1274,7 @@ public:
 #ifndef SYNTHESIS
             trace_pc_write("memory-wait", (uint32_t)pc);
 #endif
+            interrupt_entry_guard_reg._next = false;
             valid._next = valid;
             state_reg._next = state_reg;
             predicted_next_reg._next = predicted_next_reg;
@@ -1227,6 +1293,7 @@ public:
             debug_branch_taken_reg._next = debug_branch_taken_reg;
         }
         else {
+            interrupt_entry_guard_reg._next = false;
             // Hold PC by default while the front end is waiting for a valid
             // translated/cacheable fetch. Redirects below override this.
             pc._next = pc;
@@ -1342,6 +1409,7 @@ public:
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
             output_write_active_reg.clr();
+            interrupt_entry_guard_reg.clr();
         }
     }
 
@@ -1414,6 +1482,7 @@ public:
         debug_branch_target_reg.strobe(checkpoint_fd);
         debug_branch_taken_reg.strobe(checkpoint_fd);
         output_write_active_reg.strobe(checkpoint_fd);
+        interrupt_entry_guard_reg.strobe(checkpoint_fd);
 
         regs._strobe(checkpoint_fd);
         exe._strobe(checkpoint_fd);
@@ -1489,6 +1558,14 @@ static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
     return out;
 }
 
+template<size_t WORDS>
+static logic<WORDS * 32> verilator_wide_to_logic(const WData (&bits)[WORDS])
+{
+    logic<WORDS * 32> out = 0;
+    memcpy(out.bytes, bits, sizeof(out.bytes));
+    return out;
+}
+
 static logic<64> verilator_wide_to_logic(const QData& bits)
 {
     return (uint64_t)bits;
@@ -1497,8 +1574,17 @@ static logic<64> verilator_wide_to_logic(const QData& bits)
 template<size_t WIDTH, size_t WORDS>
 static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits)
 {
-    static_assert(WIDTH == WORDS * 32);
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out.m_storage, 0, sizeof(out.m_storage));
     memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
+}
+
+template<size_t WIDTH, size_t WORDS>
+static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+{
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out, 0, sizeof(out));
+    memcpy(out, bits.bytes, sizeof(bits.bytes));
 }
 
 static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
@@ -1521,9 +1607,10 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<3,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<4,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
+    PLIC<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> plic;
     Accelerator<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> accelerator;
 
 #ifdef VERILATOR
@@ -1563,8 +1650,14 @@ class TestTribe : public Module
     uint32_t boot_priv = 3;
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
-    bool uart_rx_valid = false;
-    uint8_t uart_rx_data = 0;
+    // Testbench-driven UART RX is part of the simulated machine state.
+    // Keep it in CppHDL registers so checkpoints capture the pin level
+    // instead of hiding it in ordinary C++ variables.
+    reg<u1> uart_rx_valid_reg;
+    reg<u8> uart_rx_data_reg;
+    reg<u32> uart_script_pos_reg;
+    reg<u1> uart_script_enabled_reg;
+    reg<u1> uart_script_reported_reg;
     bool tohost_done = false;
 
     class StdinRawMode
@@ -1832,10 +1925,44 @@ public:
     TestTribe(bool debug)
     {
         debugen_in = debug;
+        drive_uart_rx(false);
+        init_uart_script_state(true);
     }
 
     ~TestTribe()
     {
+    }
+
+    void drive_uart_rx(bool valid, uint8_t data = 0)
+    {
+        uart_rx_valid_reg = (u1)valid;
+        uart_rx_valid_reg._next = (u1)false;
+        if (valid) {
+            uart_rx_data_reg = (u8)data;
+            uart_rx_data_reg._next = (u8)data;
+        }
+    }
+
+    void init_uart_script_state(bool enabled)
+    {
+        uart_script_pos_reg.set((u32)0);
+        uart_script_enabled_reg.set((u1)enabled);
+        uart_script_reported_reg.set((u1)enabled);
+    }
+
+    void enable_uart_script()
+    {
+        uart_script_enabled_reg.set((u1)true);
+    }
+
+    void mark_uart_script_reported()
+    {
+        uart_script_reported_reg.set((u1)true);
+    }
+
+    void advance_uart_script()
+    {
+        uart_script_pos_reg.set((u32)((uint32_t)uart_script_pos_reg + 1u));
     }
 
     void _assign()
@@ -1880,7 +2007,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
-        tribe.external_irq_in = uart.irq_out;
+        tribe.external_irq_in = plic.external_irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
@@ -1901,25 +2028,34 @@ public:
         iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
         iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[3]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
-        uart.uart_rx_valid_in = _ASSIGN(uart_rx_valid);
-        uart.uart_rx_data_in = _ASSIGN(uart_rx_data);
+        uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
+        uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
         clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
         clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
         clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
+        for (i = 0; i < 32; ++i) {
+            plic.source_irq_in[i] = _ASSIGN(false);
+        }
+        plic.source_irq_in[1] = uart.irq_out;
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
+        plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
         clint._assign();
+        plic._assign();
         accelerator._assign();
 
         AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
@@ -1928,6 +2064,7 @@ public:
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], plic.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
@@ -1956,12 +2093,12 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
-        tribe.external_irq_in = uart.irq_out();
+        tribe.external_irq_in = plic.external_irq_out();
 #endif
-        AXI4_DRIVER_FROM_VERILATOR(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(mem2.axi_in, tribe, 2, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
-        AXI4_DRIVER_FROM_VERILATOR(iospace.slave_in, tribe, 3, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem2.axi_in, tribe, 2, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(iospace.slave_in, tribe, 3, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         mem0.debugen_in = debugen_in;
         mem1.debugen_in = debugen_in;
         mem2.debugen_in = debugen_in;
@@ -1974,16 +2111,23 @@ public:
         iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
         iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
-        uart.uart_rx_valid_in = _ASSIGN(uart_rx_valid);
-        uart.uart_rx_data_in = _ASSIGN(uart_rx_data);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[3]);
+        uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
+        uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
         clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
         clint.set_mtimecmp_lo_in = _ASSIGN((uint32_t)tribe.sbi_timer_lo_out);
         clint.set_mtimecmp_hi_in = _ASSIGN((uint32_t)tribe.sbi_timer_hi_out);
+        for (i = 0; i < 32; ++i) {
+            plic.source_irq_in[i] = _ASSIGN(false);
+        }
+        plic.source_irq_in[1] = uart.irq_out;
         accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
         accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
         accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
@@ -1995,16 +2139,19 @@ public:
         accelerator.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
+        plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
         mem0._assign();
         mem1._assign();
         mem2._assign();
         uart._assign();
         clint._assign();
+        plic._assign();
         accelerator._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], plic.axi_in);
 #endif
     }
 
@@ -2041,7 +2188,7 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
-        tribe.external_irq_in = uart.irq_out();
+        tribe.external_irq_in = plic.external_irq_out();
 #endif
 
         tribe.clk = 0;
@@ -2054,6 +2201,7 @@ public:
         iospace._work(reset);
         uart._work(reset);
         clint._work(reset);
+        plic._work(reset);
         accelerator._work(reset);
 #ifdef VERILATOR
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
@@ -2096,6 +2244,11 @@ public:
         checkpoint_value(checkpoint_fd, ram_size);
         checkpoint_value(checkpoint_fd, tohost_done);
         checkpoint_value(checkpoint_fd, sys_clock);
+        uart_rx_valid_reg.strobe(checkpoint_fd);
+        uart_rx_data_reg.strobe(checkpoint_fd);
+        uart_script_pos_reg.strobe(checkpoint_fd);
+        uart_script_enabled_reg.strobe(checkpoint_fd);
+        uart_script_reported_reg.strobe(checkpoint_fd);
 #ifndef VERILATOR
         uint64_t tribe_strobe_time_start = tribe_runtime_tick();
         tribe._strobe(checkpoint_fd);
@@ -2107,6 +2260,7 @@ public:
         iospace._strobe(checkpoint_fd);
         uart._strobe(checkpoint_fd);
         clint._strobe(checkpoint_fd);
+        plic._strobe(checkpoint_fd);
         accelerator._strobe(checkpoint_fd);
     }
 
@@ -2233,7 +2387,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "")
     {
         std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
         if (label.empty()) {
@@ -2359,6 +2513,11 @@ public:
             }
             _strobe(checkpoint_read_fd(checkpoint_in));
             fclose(checkpoint_in);
+            // Checkpoint loading restores sys_clock together with registers and
+            // memories. Move to a fresh comb epoch before reading restored
+            // UART/PLIC/MMU outputs; otherwise lazy comb caches can still carry
+            // pre-load host-process values.
+            ++sys_clock;
             checkpoint_loaded_pending_work = true;
             std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
         }
@@ -2381,17 +2540,24 @@ public:
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
         const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
+        const bool trace_uart_rx = std::getenv("TRIBE_TRACE_UART_RX") != nullptr;
+        const char* trace_after_env = std::getenv("TRIBE_TRACE_AFTER");
+        std::string trace_after = trace_after_env ? trace_after_env : "";
+        bool trace_after_seen = trace_after.empty();
         bool last_immu_fault = false;
         std::string expected_output;
         std::string captured_output;
         bool expected_marker_seen = false;
+        bool checkpoint_save_after_seen = false;
+        bool checkpoint_save_after_completed = false;
         bool mirrored_uart_needs_newline = false;
         const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
         const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
         std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
         std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
-        size_t scripted_uart_pos = 0;
-        bool scripted_uart_enabled = scripted_uart_after.empty();
+        if (checkpoint_load_file.empty()) {
+            init_uart_script_state(scripted_uart_after.empty());
+        }
         StdinRawMode stdin_raw(interactive_uart_input);
         if (!tohost_addr && expected_output_contains.empty()) {
             std::ifstream expected_file(expected_log, std::ios::binary);
@@ -2437,9 +2603,22 @@ public:
                 mirrored_uart_needs_newline = ch != '\n';
             }
             captured_output.push_back(ch);
-            if (!scripted_uart_enabled && !scripted_uart_input.empty() &&
+            if (!trace_after_seen && !trace_after.empty() &&
+                captured_output.find(trace_after) != std::string::npos) {
+                trace_after_seen = true;
+                std::print("\n*** trace enabled after '{}' at cycle {} ***\n", trace_after, perf_clocks);
+            }
+            if (!checkpoint_save_after.empty() && !checkpoint_save_file.empty() &&
+                captured_output.find(checkpoint_save_after) != std::string::npos) {
+                checkpoint_save_after_seen = true;
+            }
+            if (!(bool)uart_script_enabled_reg && !scripted_uart_input.empty() &&
                 captured_output.find(scripted_uart_after) != std::string::npos) {
-                scripted_uart_enabled = true;
+                enable_uart_script();
+                if (trace_uart_rx && !(bool)uart_script_reported_reg) {
+                    mark_uart_script_reported();
+                    std::print("*** uart-rx-script-enabled after '{}' ***\n", scripted_uart_after);
+                }
             }
             if (!tohost_addr) {
                 if (!expected_output_contains.empty() && captured_output.find(expected_output_contains) != std::string::npos) {
@@ -2464,10 +2643,12 @@ public:
             }
             else {
                 FILE* checkpoint_out = nullptr;
-                if (!checkpoint_saved && !checkpoint_save_file.empty() && checkpoint_save_cycle && perf_clocks + 1 == checkpoint_save_cycle) {
+                bool checkpoint_due = !checkpoint_saved && !checkpoint_save_file.empty() &&
+                    ((checkpoint_save_cycle && perf_clocks + 1 == checkpoint_save_cycle) || checkpoint_save_after_seen);
+                if (checkpoint_due) {
                     checkpoint_out = fopen(checkpoint_save_file.c_str(), "wb");
                     if (!checkpoint_out) {
-                        std::print("can't open checkpoint output '{}'\n", checkpoint_save_file);
+                        std::print("*** can't open checkpoint output '{}' ***\n", checkpoint_save_file);
                         error = true;
                         break;
                     }
@@ -2478,7 +2659,15 @@ public:
                 if (checkpoint_out) {
                     fclose(checkpoint_out);
                     checkpoint_saved = true;
-                    std::print("Saved checkpoint '{}' at cycle {}\n", checkpoint_save_file, perf_clocks + 1);
+                    std::print("*** Saved checkpoint '{}' at cycle {} ***\n", checkpoint_save_file, perf_clocks + 1);
+                    if (checkpoint_save_only_success) {
+                        break;
+                    }
+                    if (checkpoint_save_after_seen && !checkpoint_save_after.empty()) {
+                        checkpoint_save_after_completed = true;
+                        tohost_value = 1;
+                        tohost_done = true;
+                    }
                 }
             }
             runtime_checkpoint_ticks += tribe_runtime_tick() - section_time_start - (runtime_strobe_ticks - strobe_ticks_before);
@@ -2488,20 +2677,25 @@ public:
             if (capture_uart_output()) {
                 break;
             }
-            uart_rx_valid = false;
-            if (uart.uart_rx_ready_out() && scripted_uart_enabled && scripted_uart_pos < scripted_uart_input.size()) {
-                uart_rx_data = (uint8_t)scripted_uart_input[scripted_uart_pos++];
-                uart_rx_valid = true;
+            drive_uart_rx(false);
+            uint32_t scripted_uart_pos = (uint32_t)uart_script_pos_reg;
+            if (uart.uart_rx_ready_out() && (bool)uart_script_enabled_reg && scripted_uart_pos < scripted_uart_input.size()) {
+                uint8_t uart_rx_data = (uint8_t)scripted_uart_input[scripted_uart_pos];
+                advance_uart_script();
+                drive_uart_rx(true, uart_rx_data);
+                if (trace_uart_rx) {
+                    std::print("uart-rx-script-send pos={} data={:02x}\n",
+                        scripted_uart_pos, (uint32_t)uart_rx_data);
+                }
             }
             else if (interactive_uart_input && uart.uart_rx_ready_out()) {
                 unsigned char ch;
                 ssize_t got = read(STDIN_FILENO, &ch, 1);
                 if (got == 1) {
-                    uart_rx_data = ch;
-                    uart_rx_valid = true;
+                    drive_uart_rx(true, ch);
                 }
                 else if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                    std::print("\nstdin read failed while feeding UART\n");
+                    std::print("\n***stdin read failed while feeding UART***\n");
                     error = true;
                 }
             }
@@ -2524,9 +2718,9 @@ public:
             _work(0);
             runtime_work_ticks += tribe_runtime_tick() - section_time_start;
             section_time_start = tribe_runtime_tick();
-            if (trace_period && (perf_clocks % trace_period) == 0) {
+            if (trace_after_seen && trace_period && (perf_clocks % trace_period) == 0) {
                 auto perf_now = PERF_VALUE(tribe.perf_out);
-                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
+                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} ds={} dh={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -2544,6 +2738,8 @@ public:
                     (bool)perf_now.icache_wait,
                     (uint32_t)perf_now.icache.state,
                     (bool)perf_now.icache.hit,
+                    (uint32_t)perf_now.dcache.state,
+                    (bool)perf_now.dcache.hit,
 #ifdef ENABLE_MMU_TLB
                     (bool)PORT_VALUE(tribe.debug_fetch_valid_out),
                     (bool)PORT_VALUE(tribe.debug_icache_read_valid_out),
@@ -2561,8 +2757,8 @@ public:
 #endif
                     );
             }
-            if (trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
-                std::print("trace-csr cycle={} priv={} ra={:08x} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}\n",
+            if (trace_after_seen && trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
+                std::print("trace-csr cycle={} priv={} ra={:08x} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_priv_out),
@@ -2581,6 +2777,21 @@ public:
                     3u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u
 #endif
                     );
+#ifdef ENABLE_ISR
+                std::print(" irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} external_irq={}",
+                    (bool)PORT_VALUE(tribe.debug_irq_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_irq_cause_out),
+                    (bool)PORT_VALUE(tribe.debug_irq_to_supervisor_out),
+			    (uint32_t)PORT_VALUE(tribe.debug_irq_mip_out),
+			    (uint32_t)PORT_VALUE(tribe.debug_irq_mie_out),
+			    (uint32_t)PORT_VALUE(tribe.debug_irq_mideleg_out),
+#ifdef VERILATOR
+			    (bool)tribe.external_irq_in);
+#else
+			    (bool)tribe.external_irq_in());
+#endif
+#endif
+                std::print("\n");
             }
 #ifdef ENABLE_MMU_TLB
             if (trace_mmu_fault) {
@@ -2759,23 +2970,29 @@ public:
 
         if (checkpoint_save_only_success) {
             if (!checkpoint_saved) {
-                std::print("checkpoint was not saved before cycle limit\n");
+                std::print("*** checkpoint was not saved before cycle limit ***\n");
+                error = true;
+            }
+        }
+        else if (!checkpoint_save_after.empty()) {
+            if (!checkpoint_save_after_completed) {
+                std::print("*** checkpoint marker '{}' was not seen before cycle limit ***\n", checkpoint_save_after);
                 error = true;
             }
         }
         else if (!expected_output_contains.empty()) {
             if (!expected_marker_seen) {
-                std::print("UART output marker '{}' was not seen before cycle limit\n", expected_output_contains);
+                std::print("*** UART output marker '{}' was not seen before cycle limit ***\n", expected_output_contains);
                 error = true;
             }
         }
         else if (tohost_addr) {
             if (!tohost_done) {
-                std::print("tohost was not written before cycle limit\n");
+                std::print("*** tohost was not written before cycle limit ***\n");
                 error = true;
             }
             else if (tohost_value != 1) {
-                std::print("tohost reported failure value {:08x}\n", tohost_value);
+                std::print("*** tohost reported failure value {:08x} ***\n", tohost_value);
                 error = true;
             }
         }
@@ -2887,6 +3104,7 @@ int main (int argc, char** argv)
     std::string checkpoint_load_file;
     std::string checkpoint_save_file;
     uint64_t checkpoint_save_cycle = 0;
+    std::string checkpoint_save_after;
     bool append_output = false;
     bool mirror_uart_output = false;
     bool interactive_uart_input = false;
@@ -2985,6 +3203,10 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--checkpoint-save-cycle") == 0 && i + 1 < argc) {
             checkpoint_save_cycle = std::stoull(argv[++i], nullptr, 0);
+            continue;
+        }
+        if (strcmp(argv[i], "--checkpoint-save-after") == 0 && i + 1 < argc) {
+            checkpoint_save_after = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--append-output") == 0) {
@@ -3109,7 +3331,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input, checkpoint_save_after))
     );
 }
 

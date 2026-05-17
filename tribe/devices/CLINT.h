@@ -5,6 +5,10 @@
 
 using namespace cpphdl;
 
+#ifndef TRIBE_CLINT_TICK_DIV_CONFIG
+#define TRIBE_CLINT_TICK_DIV_CONFIG 1
+#endif
+
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 256>
 class CLINT : public Module
 {
@@ -35,6 +39,7 @@ private:
     reg<u32> msip_reg;
     reg<u64> mtime_reg;
     reg<u64> mtimecmp_reg;
+    reg<u32> mtime_div_reg;
 
     // AXI data beat lane corresponding to the saved local register address.
     _LAZY_COMB(read_word_lane_comb, uint32_t)
@@ -113,7 +118,20 @@ public:
     {
         uint32_t addr;
         uint32_t word;
-        mtime_reg._next = (uint64_t)mtime_reg + 1u;
+        // mtime is a platform timer, not necessarily the CPU core clock. The
+        // divider lets long-running Linux simulation keep timer interrupts at
+        // a feasible rate while ordinary unit tests keep one tick per cycle.
+        if constexpr (TRIBE_CLINT_TICK_DIV_CONFIG <= 1) {
+            mtime_reg._next = (uint64_t)mtime_reg + 1u;
+        }
+        else if ((uint32_t)mtime_div_reg + 1u >= (uint32_t)TRIBE_CLINT_TICK_DIV_CONFIG) {
+            mtime_div_reg._next = 0;
+            mtime_reg._next = (uint64_t)mtime_reg + 1u;
+        }
+        else {
+            mtime_div_reg._next = (uint32_t)mtime_div_reg + 1u;
+            mtime_reg._next = mtime_reg;
+        }
 
         if (set_mtimecmp_in()) {
             mtimecmp_reg._next = ((uint64_t)set_mtimecmp_hi_in() << 32) | (uint64_t)set_mtimecmp_lo_in();
@@ -142,13 +160,13 @@ public:
                 msip_reg._next = word & 1u;
             }
             else if (addr == REG_MTIMECMP_LO) {
-                mtimecmp_reg._next = ((uint64_t)mtimecmp_reg & 0xffffffff00000000ull) | (uint64_t)word;
+                mtimecmp_reg._next = (uint64_t(uint32_t(uint64_t(mtimecmp_reg) >> 32)) << 32) | (uint64_t)word;
             }
             else if (addr == REG_MTIMECMP_HI) {
                 mtimecmp_reg._next = ((uint64_t)word << 32) | (uint64_t)(uint32_t)mtimecmp_reg;
             }
             else if (addr == REG_MTIME_LO) {
-                mtime_reg._next = ((uint64_t)mtime_reg & 0xffffffff00000000ull) | (uint64_t)word;
+                mtime_reg._next = (uint64_t(uint32_t(uint64_t(mtime_reg) >> 32)) << 32) | (uint64_t)word;
             }
             else if (addr == REG_MTIME_HI) {
                 mtime_reg._next = ((uint64_t)word << 32) | (uint64_t)(uint32_t)mtime_reg;
@@ -168,6 +186,7 @@ public:
             write_resp_valid_reg.clr();
             msip_reg.clr();
             mtime_reg.clr();
+            mtime_div_reg.clr();
             mtimecmp_reg._next = ~0ull;
         }
     }
@@ -184,5 +203,6 @@ public:
         msip_reg.strobe(checkpoint_fd);
         mtime_reg.strobe(checkpoint_fd);
         mtimecmp_reg.strobe(checkpoint_fd);
+        mtime_div_reg.strobe(checkpoint_fd);
     }
 };

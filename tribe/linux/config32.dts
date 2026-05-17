@@ -55,7 +55,8 @@
 			reg-shift = <0>;
 			reg-io-width = <1>;
 			fifo-size = <4096>;
-			interrupts-extended = <&cpu_intc 9>;
+			interrupt-parent = <&plic0>;
+			interrupts = <1>;
 			status = "okay";
 		};
 
@@ -63,6 +64,15 @@
 			compatible = "sifive,clint0", "riscv,clint0";
 			reg = <0x82000100 0x0000c000>;
 			interrupts-extended = <&cpu_intc 3 &cpu_intc 7>;
+		};
+
+		plic0: interrupt-controller@82010000 {
+			#interrupt-cells = <1>;
+			interrupt-controller;
+			compatible = "riscv,plic0";
+			reg = <0x82010000 0x00210000>;
+			riscv,ndev = <31>;
+			interrupts-extended = <&cpu_intc 9>;
 		};
 	};
 };

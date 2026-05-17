@@ -2,8 +2,12 @@
 
 #include "cpphdl.h"
 #include "Axi4.h"
+#include <cstdlib>
+#include <print>
 
 using namespace cpphdl;
+
+extern long sys_clock;
 
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 256>
 class NS16550A : public Module
@@ -31,6 +35,7 @@ private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
     reg<u<ID_WIDTH>> read_id_reg;
     reg<u1> read_valid_reg;
+    reg<logic<DATA_WIDTH>> read_data_reg;
     reg<u<ADDR_WIDTH>> write_addr_reg;
     reg<u<ID_WIDTH>> write_id_reg;
     reg<u1> write_addr_valid_reg;
@@ -46,15 +51,26 @@ private:
     reg<u8> uart_data_reg;
     reg<u1> rx_valid_reg;
     reg<u8> rx_data_reg;
+    reg<u1> rbr_duplicate_valid_reg;
+    reg<u8> rbr_duplicate_data_reg;
+    reg<u1> tx_irq_pending_reg;
+
+#ifndef SYNTHESIS
+    bool trace_uart() const
+    {
+        const char* trace_from_env = std::getenv("TRIBE_TRACE_UART_FROM");
+        long trace_from = trace_from_env ? std::strtol(trace_from_env, nullptr, 0) : 0;
+        return std::getenv("TRIBE_TRACE_UART") != nullptr && sys_clock >= trace_from;
+    }
+#endif
 
     _LAZY_COMB(dlab_comb, bool)
         return dlab_comb = (lcr_reg & u<8>(0x80)) != 0;
     }
 
     _LAZY_COMB(irq_comb, bool)
-        // Linux 8250 uses the receive-data interrupt to wake a blocking
-        // console read. Raise it while RX data is buffered and IER.ERBFI is set.
-        return irq_comb = rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0);
+        return irq_comb = ((mcr_reg & u<8>(0x08)) != 0) &&
+            (rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0));
     }
 
     // NS16550A read map. TX is modeled as always empty/ready: LSR.THRE and LSR.TEMT are set.
@@ -73,7 +89,12 @@ private:
             data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
         }
         if (addr == REG_IIR_FCR) {
-            data = irq_comb_func() ? 0x04 : 0x01;
+            if (rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0)) {
+                data = 0x04;
+            }
+            else {
+                data = 0x01;
+            }
         }
         if (addr == REG_LCR) {
             data = (uint8_t)lcr_reg;
@@ -103,7 +124,7 @@ public:
         axi_in.bid_out = _ASSIGN_REG(write_id_reg);
         axi_in.arready_out = _ASSIGN(!read_valid_reg);
         axi_in.rvalid_out = _ASSIGN_REG(read_valid_reg);
-        axi_in.rdata_out = _ASSIGN_COMB(read_data_comb_func());
+        axi_in.rdata_out = _ASSIGN_REG(read_data_reg);
         axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
         axi_in.rid_out = _ASSIGN_REG(read_id_reg);
     }
@@ -113,22 +134,103 @@ public:
         uint32_t addr;
         uint32_t lane;
         uint8_t data;
+        logic<DATA_WIDTH> read_data;
         uart_valid_reg._next = false;
 
         if (uart_rx_valid_in() && !rx_valid_reg) {
             rx_data_reg._next = uart_rx_data_in();
             rx_valid_reg._next = true;
+#ifndef SYNTHESIS
+            if (std::getenv("TRIBE_TRACE_UART_RX")) {
+                std::print("uart-rx-accept data={:02x} ier={:02x} irq={}\n",
+                    (uint32_t)(uint8_t)uart_rx_data_in(), (uint32_t)(uint8_t)ier_reg, irq_comb_func());
+            }
+#endif
         }
 
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
+            addr = (uint32_t)axi_in.araddr_in() & 7u;
+            lane = (uint32_t)axi_in.araddr_in() % (DATA_WIDTH / 8);
+            data = 0;
+            if (addr == REG_RBR_THR_DLL) {
+                if (dlab_comb_func()) {
+                    data = (uint8_t)dll_reg;
+                }
+                else if (rbr_duplicate_valid_reg) {
+                    data = (uint8_t)rbr_duplicate_data_reg;
+                    rbr_duplicate_valid_reg._next = false;
+                }
+                else {
+                    data = rx_valid_reg ? (uint8_t)rx_data_reg : 0;
+                    rbr_duplicate_data_reg._next = data;
+                    rbr_duplicate_valid_reg._next = true;
+                }
+            }
+            else {
+                rbr_duplicate_valid_reg._next = false;
+            }
+            if (addr == REG_IER_DLM) {
+                data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
+            }
+            if (addr == REG_IIR_FCR) {
+                if (rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0)) {
+                    data = 0x04;
+                }
+                else {
+                    data = 0x01;
+                }
+            }
+            if (addr == REG_LCR) {
+                data = (uint8_t)lcr_reg;
+            }
+            if (addr == REG_MCR) {
+                data = (uint8_t)mcr_reg;
+            }
+            if (addr == REG_LSR) {
+                data = (uint8_t)(0x60 | (rx_valid_reg ? 0x01 : 0x00));
+            }
+            if (addr == REG_MSR) {
+                data = 0;
+            }
+            if (addr == REG_SCR) {
+                data = (uint8_t)scr_reg;
+            }
+            read_data = 0;
+            read_data.bits(lane * 8 + 7, lane * 8) = data;
+            read_data_reg._next = read_data;
             read_addr_reg._next = axi_in.araddr_in();
             read_id_reg._next = axi_in.arid_in();
             read_valid_reg._next = true;
+            // RBR has read-to-clear semantics. Latch the returned byte when
+            // the AXI read is accepted so repeated data-phase observations of
+            // the same transaction cannot consume later RX bytes.
+            if (addr == REG_RBR_THR_DLL && !dlab_comb_func()) {
+                if (!rbr_duplicate_valid_reg) {
+                    rx_valid_reg._next = false;
+                }
+#ifndef SYNTHESIS
+                if (std::getenv("TRIBE_TRACE_UART_RX")) {
+                    std::print("uart-rx-read data={:02x} ier={:02x}\n",
+                        (uint32_t)(uint8_t)rx_data_reg, (uint32_t)(uint8_t)ier_reg);
+                }
+#endif
+            }
         }
         if (read_valid_reg && axi_in.rready_in()) {
-            if (((uint32_t)read_addr_reg & 7u) == REG_RBR_THR_DLL && !dlab_comb_func()) {
-                rx_valid_reg._next = false;
+#ifndef SYNTHESIS
+            if (trace_uart()) {
+                std::print("uart-read addr={} data={:02x} ier={:02x} iir={:02x} lsr={:02x} mcr={:02x} rxv={} txp={} irq={}\n",
+                    (uint32_t)((uint32_t)read_addr_reg & 7u),
+                    (uint32_t)((logic<DATA_WIDTH>)read_data_reg).bits(((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8 + 7, ((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8),
+                    (uint32_t)(uint8_t)ier_reg,
+                    (uint32_t)(uint8_t)(((logic<DATA_WIDTH>)read_data_reg).bits(((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8 + 7, ((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8)),
+                    (uint32_t)(uint8_t)(0x60 | (rx_valid_reg ? 0x01 : 0x00)),
+                    (uint32_t)(uint8_t)mcr_reg,
+                    (bool)rx_valid_reg,
+                    (bool)tx_irq_pending_reg,
+                    irq_comb_func());
             }
+#endif
             read_valid_reg._next = false;
         }
 
@@ -151,6 +253,12 @@ public:
                     dll_reg._next = data;
                 }
                 else {
+#ifndef SYNTHESIS
+                    if (trace_uart()) {
+                        std::print("uart-thr-write data={:02x} ier={:02x} txp={} irq={}\n",
+                            data, (uint32_t)(uint8_t)ier_reg, (bool)tx_irq_pending_reg, irq_comb_func());
+                    }
+#endif
                     uart_data_reg._next = data;
                     uart_valid_reg._next = true;
                 }
@@ -160,7 +268,16 @@ public:
                     dlm_reg._next = data;
                 }
                 else {
+                    // TX is polling-only in this model. LSR reports THR/TEMT
+                    // ready, but ETBEI is not converted into an interrupt.
+                    tx_irq_pending_reg._next = false;
                     ier_reg._next = data;
+#ifndef SYNTHESIS
+                    if (std::getenv("TRIBE_TRACE_UART_RX") || trace_uart()) {
+                        std::print("uart-ier-write data={:02x} old={:02x} txp={} irq={}\n",
+                            data, (uint32_t)(uint8_t)ier_reg, (bool)tx_irq_pending_reg, irq_comb_func());
+                    }
+#endif
                 }
             }
             if (addr == REG_LCR) {
@@ -181,6 +298,7 @@ public:
             read_addr_reg.clr();
             read_id_reg.clr();
             read_valid_reg.clr();
+            read_data_reg.clr();
             write_addr_reg.clr();
             write_id_reg.clr();
             write_addr_valid_reg.clr();
@@ -195,6 +313,9 @@ public:
             uart_data_reg.clr();
             rx_valid_reg.clr();
             rx_data_reg.clr();
+            rbr_duplicate_valid_reg.clr();
+            rbr_duplicate_data_reg.clr();
+            tx_irq_pending_reg.clr();
         }
     }
 
@@ -203,6 +324,7 @@ public:
         read_addr_reg.strobe(checkpoint_fd);
         read_id_reg.strobe(checkpoint_fd);
         read_valid_reg.strobe(checkpoint_fd);
+        read_data_reg.strobe(checkpoint_fd);
         write_addr_reg.strobe(checkpoint_fd);
         write_id_reg.strobe(checkpoint_fd);
         write_addr_valid_reg.strobe(checkpoint_fd);
@@ -217,5 +339,8 @@ public:
         uart_data_reg.strobe(checkpoint_fd);
         rx_valid_reg.strobe(checkpoint_fd);
         rx_data_reg.strobe(checkpoint_fd);
+        rbr_duplicate_valid_reg.strobe(checkpoint_fd);
+        rbr_duplicate_data_reg.strobe(checkpoint_fd);
+        tx_irq_pending_reg.strobe(checkpoint_fd);
     }
 };
