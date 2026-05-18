@@ -21,6 +21,7 @@ public:
     _PORT(uint32_t) dcache_write_addr_in;
     _PORT(uint32_t) dcache_write_data_in;
     _PORT(uint8_t)  dcache_write_mask_in;
+    _PORT(bool)     store_forward_enable_in;
 
     _PORT(bool)     hold_in;
 
@@ -119,7 +120,10 @@ private:
 
         result = raw;
         load_addr = held_load_valid_comb_func() ? (uint32_t)load_addr_reg : dcache_read_addr_in();
-        allow_store_forward = state_in().amo_op == Amo::AMONONE;
+        // Store forwarding is only valid for normal memory. MMIO registers
+        // can be read-to-clear or write-one-to-complete, so forwarding a
+        // previous device write into a following device read corrupts state.
+        allow_store_forward = store_forward_enable_in() && state_in().amo_op == Amo::AMONONE;
 
         if (allow_store_forward && store_forward_valid_reg[1]) {
             store_addr = store_forward_addr_reg[1];
