@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <print>
 #include <string>
 #include <vector>
@@ -113,6 +114,29 @@ static bool write_file(const std::filesystem::path& path, const std::string& tex
     return true;
 }
 
+static bool validate_checkpoint_uart_log(const std::filesystem::path& path, const std::string& expected)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        std::print("can't read checkpoint UART output {}\n", path.string());
+        return false;
+    }
+    std::string got((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (got != expected) {
+        std::print("checkpoint UART output mismatch: got {} bytes, expected {} bytes\n",
+            got.size(), expected.size());
+        if (got.find("FAIL\n") != std::string::npos) {
+            std::print("checkpoint ISR reported FAIL; PLIC claim loop or PRBS echo broke\n");
+        }
+        return false;
+    }
+    if (got.find("FAIL\n") != std::string::npos || got.find("PLIC0\nDONE\n") == std::string::npos) {
+        std::print("checkpoint UART output did not prove clean PLIC claim-zero termination\n");
+        return false;
+    }
+    return true;
+}
+
 static bool build_checkpoint_elf()
 {
     const auto code_dir = tribe_code_dir();
@@ -163,7 +187,7 @@ static bool run_checkpoint_cpp(bool debug)
     const auto expected = std::filesystem::current_path() / "checkpoint_isr.log";
     const std::string input = checkpoint_prbs_input();
     const std::string ready_marker = "READY\n";
-    const std::string expected_text = ready_marker + input + "DONE\n";
+    const std::string expected_text = ready_marker + input + "PLIC0\nDONE\n";
     const std::vector<uint64_t> save_cycles = {300, 1200, 3000, 7000, 13000, 22000};
     std::string previous_checkpoint;
 
@@ -196,8 +220,11 @@ static bool run_checkpoint_cpp(bool debug)
         previous_checkpoint = checkpoint.string();
     }
 
-    return run_checkpoint_segment(debug, elf, expected,
-        previous_checkpoint, "", 0, true, false, 300000);
+    if (!run_checkpoint_segment(debug, elf, expected,
+            previous_checkpoint, "", 0, true, false, 300000)) {
+        return false;
+    }
+    return validate_checkpoint_uart_log(std::filesystem::current_path() / "out.txt", expected_text);
 }
 
 static bool run_checkpoint_verilator(bool debug,
@@ -258,7 +285,7 @@ int main(int argc, char** argv)
     const auto expected = std::filesystem::current_path() / "checkpoint_isr.log";
     const std::string input = checkpoint_prbs_input();
     const std::string ready_marker = "READY\n";
-    const std::string expected_text = ready_marker + input + "DONE\n";
+    const std::string expected_text = ready_marker + input + "PLIC0\nDONE\n";
     ok = ok && write_file(expected, expected_text);
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);

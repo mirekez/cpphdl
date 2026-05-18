@@ -290,34 +290,39 @@ public:
         cycle(false);
 
         if (expect_hit) {
-            if (!valid()) {
-                stall = random_stall();
-                cycle(false);
-            }
-            if (valid() && stall) {
-                check_result(phase, request_addr);
+            bool got = valid() && raddr() == request_addr;
+            for (size_t i = 0; i < 8 && !got; ++i) {
                 stall = false;
                 cycle(false);
+                got = valid() && raddr() == request_addr;
+                if (got && stall) {
+                    check_result(phase, request_addr);
+                    stall = false;
+                    cycle(false);
+                }
             }
-            if (busy()) {
-                std::print("\n{} ERROR addr={:#x}: hit asserted busy\n", phase, request_addr);
+            if (!got) {
+                std::print("\n{} ERROR addr={:#x}: hit response was not returned\n", phase, request_addr);
                 error = true;
-            }
-            if (!valid() || raddr() != request_addr) {
-                cycle(false);
             }
             check_result(phase, request_addr);
         }
         else {
             bool saw_busy = false;
             bool got = false;
+            bool checked = false;
             for (size_t i = 0; i < 64 && !got; ++i) {
-                stall = random_stall();
+                stall = false;
                 cycle(false);
                 saw_busy |= busy();
                 if (valid() && raddr() == request_addr) {
                     check_result(phase, request_addr);
-                    got = !stall;
+                    checked = true;
+                    if (stall) {
+                        stall = false;
+                        cycle(false);
+                    }
+                    got = true;
                 }
             }
             if (!got) {
@@ -330,7 +335,9 @@ public:
                 std::print("\n{} ERROR addr={:#x}: miss did not assert busy\n", phase, request_addr);
                 error = true;
             }
-            check_result(phase, request_addr);
+            if (!checked) {
+                check_result(phase, request_addr);
+            }
         }
 
         stall = false;
@@ -509,8 +516,65 @@ public:
             error = true;
         }
 
+        // Same scenario with the first MMIO response held under downstream
+        // stall. Releasing the stall while polling the same address must not
+        // let the held value masquerade as a fresh device read.
+        idle();
+        direct_mode = true;
+        direct_mem_data = 1;
+        addr = request_addr;
+        read = true;
+        stall = false;
+        cycle(false);
+        got_first = false;
+        for (size_t i = 0; i < 32 && !got_first; ++i) {
+            cycle(false);
+            if (valid() && raddr() == request_addr) {
+                got_first = true;
+            }
+        }
+        if (!got_first) {
+            std::print("\nuncached stalled poll ERROR first response was not seen\n");
+            error = true;
+        }
+        stall = true;
+        for (size_t i = 0; i < 3; ++i) {
+            cycle(false);
+        }
+        direct_mem_data = 0;
+        stall = false;
+        saw_second_request = false;
+        got_second = false;
+        for (size_t i = 0; i < 64 && !got_second; ++i) {
+            cycle(false);
+            if (PORT_VALUE(cache.mem_read_out) && PORT_VALUE(cache.mem_addr_out) == request_addr) {
+                saw_second_request = true;
+            }
+            if (valid() && raddr() == request_addr) {
+                if (!saw_second_request && rdata() == 1) {
+                    std::print("\nuncached stalled poll ERROR held value reused before second MMIO request\n");
+                    error = true;
+                    break;
+                }
+                if (saw_second_request && rdata() == 0) {
+                    got_second = true;
+                }
+                else if (saw_second_request && rdata() != 0) {
+                    std::print("\nuncached stalled poll ERROR second data={:#x} expected=0\n", rdata());
+                    error = true;
+                    break;
+                }
+            }
+        }
+        if (!saw_second_request || !got_second) {
+            std::print("\nuncached stalled poll ERROR saw_second_request={} got_second={} valid={} raddr={:#x} data={:#x} busy={}\n",
+                saw_second_request, got_second, valid(), raddr(), rdata(), busy());
+            error = true;
+        }
+
         read = false;
         direct_mode = false;
+        stall = false;
         cycle(false);
     }
 
