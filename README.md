@@ -21,6 +21,11 @@ Then for both Win&Lin:
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
  - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" ..; make
 
+# tests
+
+cd build
+ctest
+
 # author
 
 This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-reznikov) based on the results of own research.

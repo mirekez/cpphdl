@@ -233,6 +233,9 @@ fi
 if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER:-}" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-after "${TRIBE_CHECKPOINT_SAVE_AFTER}")
 fi
+if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER_DELAY:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-after-delay "${TRIBE_CHECKPOINT_SAVE_AFTER_DELAY}")
+fi
 if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--append-output)
 fi

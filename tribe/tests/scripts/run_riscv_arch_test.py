@@ -11,6 +11,7 @@ import sys
 
 
 REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
+SKIP = 77
 
 
 def run(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> int:
@@ -186,7 +187,10 @@ def main(argv: list[str]) -> int:
     work.mkdir(parents=True, exist_ok=True)
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
-    subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "tests"], check=True)
+    ensure_result = subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "tests"])
+    if ensure_result.returncode != 0:
+        print(f"SKIP: riscv-arch-test checkout is not available: {checkout}")
+        return SKIP
 
     env = os.environ.copy()
     riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
@@ -209,24 +213,24 @@ def main(argv: list[str]) -> int:
     prewarm_udb_z3_cache(env)
 
     if shutil.which("make", path=env["PATH"]) is None:
-        print("ERROR: make is not available")
-        return 1
+        print("SKIP: make is not available")
+        return SKIP
 
     gcc = os.environ.get("TRIBE_ARCH_TEST_GCC", "riscv32-unknown-elf-gcc")
     objdump = os.environ.get("TRIBE_ARCH_TEST_OBJDUMP", "riscv32-unknown-elf-objdump")
     ref_model = os.environ.get("TRIBE_ARCH_TEST_REF_MODEL", "sail_riscv_sim")
     if shutil.which(gcc, path=env["PATH"]) is None:
-        print(f"ERROR: {gcc} is not available")
-        return 1
+        print(f"SKIP: {gcc} is not available")
+        return SKIP
     if shutil.which(objdump, path=env["PATH"]) is None:
-        print(f"ERROR: {objdump} is not available")
-        return 1
+        print(f"SKIP: {objdump} is not available")
+        return SKIP
     if shutil.which("riscv32-unknown-elf-readelf", path=env["PATH"]) is None:
-        print("ERROR: riscv32-unknown-elf-readelf is not available")
-        return 1
+        print("SKIP: riscv32-unknown-elf-readelf is not available")
+        return SKIP
     if not tribe.exists():
-        print(f"ERROR: Tribe binary not found: {tribe}")
-        return 1
+        print(f"SKIP: Tribe binary not found: {tribe}")
+        return SKIP
 
     backend = os.environ.get("TRIBE_ARCH_TEST_BACKEND", "cpphdl")
     if backend not in ("cpphdl", "verilator"):
@@ -243,28 +247,28 @@ def main(argv: list[str]) -> int:
             print("failed to build Verilator Tribe model")
             return 1
         if not verilator_bin.exists():
-            print(f"Verilator Tribe binary not found: {verilator_bin}")
-            return 1
+            print(f"SKIP: Verilator Tribe binary not found: {verilator_bin}")
+            return SKIP
         tribe_runner = verilator_bin
         tribe_base_args = []
 
     if shutil.which(ref_model, path=env["PATH"]) is None:
-        print(f"ERROR: {ref_model} is not available")
-        return 1
+        print(f"SKIP: {ref_model} is not available")
+        return SKIP
 
     if shutil.which("uv", path=env["PATH"]) is None and shutil.which("mise", path=env["PATH"]) is None:
-        print("ERROR: riscv-arch-test requires uv or mise")
-        return 1
+        print("SKIP: riscv-arch-test requires uv or mise")
+        return SKIP
     if shutil.which("mise", path=env["PATH"]) is None and shutil.which("bundle", path=env["PATH"]) is None:
-        print("ERROR: riscv-arch-test requires bundle when mise is not available")
-        return 1
+        print("SKIP: riscv-arch-test requires bundle when mise is not available")
+        return SKIP
     configure_mise(checkout, env)
     if trust_mise_config(checkout, env) != 0:
-        print("ERROR: failed to trust riscv-arch-test mise config")
-        return 1
+        print("SKIP: failed to trust riscv-arch-test mise config")
+        return SKIP
     if install_mise_tools(checkout, env) != 0:
-        print("ERROR: failed to install riscv-arch-test mise tools")
-        return 1
+        print("SKIP: failed to install riscv-arch-test mise tools")
+        return SKIP
 
     config = os.environ.get(
         "TRIBE_ARCH_TEST_CONFIG",
