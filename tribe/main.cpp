@@ -1541,6 +1541,74 @@ static inline uint64_t tribe_runtime_tick()
 #endif
 }
 
+class PcSymbolTable
+{
+    std::vector<std::pair<uint32_t, std::string>> symbols;
+
+public:
+    bool load(const char* filename)
+    {
+        if (!filename || !*filename) {
+            return false;
+        }
+
+        std::ifstream in(filename);
+        if (!in) {
+            std::print("can't open PC symbol file '{}'\n", filename);
+            return false;
+        }
+
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream iss(line);
+            std::string addr_text;
+            std::string type_text;
+            std::string name;
+            if (!(iss >> addr_text >> type_text >> name) || type_text.empty() ||
+                type_text[0] == 'U' || type_text[0] == 'A' || type_text[0] == 'a') {
+                continue;
+            }
+
+            try {
+                uint32_t addr = (uint32_t)std::stoull(addr_text, nullptr, 16);
+                symbols.emplace_back(addr, name);
+            }
+            catch (...) {
+                continue;
+            }
+        }
+
+        std::sort(symbols.begin(), symbols.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+        return !symbols.empty();
+    }
+
+    std::string lookup(uint32_t pc) const
+    {
+        if (symbols.empty()) {
+            return "-";
+        }
+
+        auto it = std::upper_bound(symbols.begin(), symbols.end(), pc,
+            [](uint32_t value, const auto& symbol) { return value < symbol.first; });
+        if (it == symbols.begin()) {
+            return "-";
+        }
+
+        --it;
+        uint32_t offset = pc - it->first;
+        if (offset > 0x100000u) {
+            return "-";
+        }
+        if (offset == 0) {
+            return it->second;
+        }
+        std::ostringstream out;
+        out << it->second << "+0x" << std::hex << offset;
+        return out.str();
+    }
+};
+
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
 #include MAKE_HEADER(VERILATOR_MODEL)
@@ -2504,6 +2572,10 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
+        const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
+        std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
+        std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
         bool checkpoint_loaded_pending_work = false;
         if (!checkpoint_load_file.empty()) {
             FILE* checkpoint_in = fopen(checkpoint_load_file.c_str(), "rb");
@@ -2519,10 +2591,18 @@ public:
             // pre-load host-process values.
             ++sys_clock;
             checkpoint_loaded_pending_work = true;
+            if (!scripted_uart_input.empty()) {
+                // Checkpoints restore the script feeder registers too. A new
+                // run may intentionally provide a different script or marker,
+                // so re-arm the feeder from the current environment.
+                init_uart_script_state(scripted_uart_after.empty());
+            }
             std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
         }
         const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
         uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
+        PcSymbolTable pc_symbols;
+        pc_symbols.load(std::getenv("TRIBE_TRACE_PC_SYMBOLS_FILE"));
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
         uint32_t trace_addr = trace_addr_env ? std::stoul(trace_addr_env, nullptr, 0) : 0;
         const char* trace_pc_from_env = std::getenv("TRIBE_TRACE_PC_FROM");
@@ -2551,10 +2631,6 @@ public:
         bool checkpoint_save_after_seen = false;
         bool checkpoint_save_after_completed = false;
         bool mirrored_uart_needs_newline = false;
-        const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
-        const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
-        std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
-        std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
         if (checkpoint_load_file.empty()) {
             init_uart_script_state(scripted_uart_after.empty());
         }
@@ -2720,13 +2796,14 @@ public:
             section_time_start = tribe_runtime_tick();
             if (trace_after_seen && trace_period && (perf_clocks % trace_period) == 0) {
                 auto perf_now = PERF_VALUE(tribe.perf_out);
-                std::print("trace cycle={} pc={:08x} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} ds={} dh={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
-                    perf_clocks,
+                uint32_t trace_pc = 0;
 #ifdef ENABLE_MMU_TLB
-                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
-#else
-                    (uint32_t)0,
+                trace_pc = (uint32_t)PORT_VALUE(tribe.debug_pc_out);
 #endif
+                std::print("trace cycle={} pc={:08x} sym={} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} ds={} dh={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
+                    perf_clocks,
+                    trace_pc,
+                    pc_symbols.lookup(trace_pc),
                     (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
                     (bool)PORT_VALUE(tribe.dmem_read_out),

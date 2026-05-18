@@ -381,6 +381,12 @@ public:
         if (read8(REG_RBR_THR_DLL) != 'A') {
             fail("RBR read did not return injected RX byte");
         }
+        if ((read8(REG_LSR) & LSR_DR) != 0) {
+            fail("LSR still reported RX data after RBR consumed the byte");
+        }
+        if (read8(REG_RBR_THR_DLL) != 0) {
+            fail("Second RBR read duplicated the already consumed RX byte");
+        }
         if (irq()) {
             fail("IRQ stayed high after RBR drained RX byte");
         }

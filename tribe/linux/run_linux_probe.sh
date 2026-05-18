@@ -46,6 +46,30 @@ find_objcopy()
     return 1
 }
 
+find_nm()
+{
+    local riscv_home="${RISCV_HOME:-/home/me/riscv}"
+    local candidate
+
+    for candidate in \
+        "${NM:-}" \
+        "${riscv_home}/bin/riscv32-unknown-linux-gnu-nm" \
+        "${riscv_home}/bin/riscv32-unknown-elf-nm" \
+        riscv32-unknown-linux-gnu-nm \
+        riscv32-unknown-elf-nm \
+        llvm-nm \
+        nm
+    do
+        if [[ -n "${candidate}" ]] && command -v "${candidate}" >/dev/null 2>&1; then
+            command -v "${candidate}"
+            return 0
+        fi
+    done
+
+    echo "missing nm; set NM or RISCV_HOME" >&2
+    return 1
+}
+
 find_dtc()
 {
     local candidate
@@ -175,7 +199,8 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || 
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     TRIBE_BIN_TMP="${TRIBE_BIN}.new.$$"
     rm -f "${TRIBE_BIN_TMP}"
-    clang++ "${ROOT_DIR}/tribe/main.cpp" \
+    read -r -a CXX_CMD <<< "${CXX:-clang++}"
+    "${CXX_CMD[@]}" "${ROOT_DIR}/tribe/main.cpp" \
         -std=c++26 -O3 -g -mavx2 -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
         -I"${ROOT_DIR}/include" \
@@ -218,6 +243,15 @@ if [[ "${TRIBE_LINUX_INTERACTIVE}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--uart-stdin)
 elif [[ "${TRIBE_LINUX_MIRROR_UART:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--mirror-uart)
+fi
+
+if [[ "${TRIBE_LINUX_TRACE_PC_SYMBOLS:-0}" == "1" ]]; then
+    export TRIBE_TRACE_PC_PERIOD="${TRIBE_TRACE_PC_PERIOD:-10000}"
+    PC_SYMBOLS_FILE="${LINUX_DIR}/vmlinux.nm"
+    if [[ ! -f "${PC_SYMBOLS_FILE}" || "${KERNEL_ELF}" -nt "${PC_SYMBOLS_FILE}" ]]; then
+        "$(find_nm)" -n "${KERNEL_ELF}" > "${PC_SYMBOLS_FILE}"
+    fi
+    export TRIBE_TRACE_PC_SYMBOLS_FILE="${PC_SYMBOLS_FILE}"
 fi
 
 TRIBE_RUN_ARGS=(
