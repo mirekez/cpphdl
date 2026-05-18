@@ -153,9 +153,10 @@ void _start(void)
      */
     flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     root_pt[0] = pte(0, flags); // Identity-map the first 4 MiB as a superpage for code.
-    root_pt[1] = pte(((uint32_t)leaf_pt) >> 12, PTE_V);
+    root_pt[2] = pte(((uint32_t)leaf_pt) >> 12, PTE_V);
     root_pt[0x100] = pte(0, flags); // Execute the same code through a high virtual alias.
-    alias_base = 0x00400000u;
+    // Keep this alias outside Tribe's direct MMIO bypass window so DMMU translation is required.
+    alias_base = 0x00800000u;
     alias_offset = ((uint32_t)&value_a) & 0xfffu;
     alias = (volatile uint32_t*)(alias_base + alias_offset);
     leaf_pt[0] = pte(((uint32_t)&value_a) >> 12, PTE_V | PTE_R | PTE_W | PTE_A | PTE_D);

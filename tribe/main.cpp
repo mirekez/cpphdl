@@ -379,12 +379,12 @@ public:
 
         dcache.read_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_read_out() && !dcache.busy_out()
 #ifdef ENABLE_MMU_TLB
-            && !dmmu.busy_out() && !dmmu.fault_out()
+            && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
 #endif
             );
         dcache.write_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_write_out() && !dcache.busy_out()
 #ifdef ENABLE_MMU_TLB
-            && !dmmu.busy_out() && !dmmu.fault_out()
+            && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
 #endif
             );
         dcache.addr_in =
@@ -652,6 +652,13 @@ private:
         mmu_l2_read_word_comb = (uint32_t)l2cache.d_read_data_out().bits(lane * 32 + 31, lane * 32);
         return mmu_l2_read_word_comb;
     }
+    // Do not let D-cache consume dmmu.paddr_out until the current translated access has a TLB hit.
+    _LAZY_COMB(dmmu_access_ready_comb, bool)
+        bool access;
+        access = state_reg[1].valid && (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+        dmmu_access_ready_comb = !access || !dmmu.translated_out() || dmmu.hit_out() || dmmu.fault_out();
+        return dmmu_access_ready_comb;
+    }
 #endif
 
     // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
@@ -664,6 +671,7 @@ private:
 #ifdef ENABLE_MMU_TLB
             immu.busy_out() ||
             dmmu.busy_out() ||
+            !dmmu_access_ready_comb_func() ||
 #endif
             (dcache.mem_read_out() && l2cache.d_wait_out()) ||
             ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
