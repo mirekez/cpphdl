@@ -46,6 +46,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "cache/L2Cache.h"
 
 #include <cstdlib>
+#include <csignal>
 #include <vector>
 #include <cerrno>
 #include <fcntl.h>
@@ -71,6 +72,15 @@ static constexpr size_t TRIBE_MEM_REGION2_SIZE = TRIBE_RAM_BYTES - TRIBE_MEM_REG
 #define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
 
 long sys_clock = -1;
+
+#ifndef SYNTHESIS
+static volatile sig_atomic_t tribe_uart_stdin_sigint_pending = 0;
+
+static void tribe_uart_stdin_sigint_handler(int)
+{
+    tribe_uart_stdin_sigint_pending = 1;
+}
+#endif
 
 struct TribePerf
 {
@@ -791,9 +801,8 @@ private:
     }
 
     // Keep raw pending interrupt state visible in mip/sip, but accept an
-    // interrupt only at a normal execute boundary. The one-cycle guard prevents
-    // immediate re-entry before trap-entry CSR updates are visible to the first
-    // handler instruction.
+    // interrupt only at a normal execute boundary. Waiting here is important:
+    // the PC redirect and CSR trap update must happen in the same cycle.
     _LAZY_COMB(interrupt_accept_comb, bool)
 #ifdef ENABLE_ISR
         bool trap_redirect;
@@ -806,7 +815,7 @@ private:
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out());
         return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
-            !interrupt_entry_guard_reg && !trap_redirect;
+            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func();
 #else
         return interrupt_accept_comb = false;
 #endif
@@ -1059,8 +1068,13 @@ public:
     {
 #ifndef SYNTHESIS
         const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
+        const char* trace_pc_write_target_env = std::getenv("TRIBE_TRACE_PC_WRITE_TARGET");
+        const char* trace_pc_write_reason_env = std::getenv("TRIBE_TRACE_PC_WRITE_REASON");
         const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
         const bool trace_pc_write_zero_only = std::getenv("TRIBE_TRACE_PC_WRITE_ZERO_ONLY") != nullptr;
+        const bool trace_pc_write_user_kernel = std::getenv("TRIBE_TRACE_PC_WRITE_USER_KERNEL") != nullptr;
+        const uint32_t trace_pc_write_target = trace_pc_write_target_env != nullptr ?
+            (uint32_t)std::strtoul(trace_pc_write_target_env, nullptr, 0) : 0;
         auto trace_pc_write = [&](const char* reason, uint32_t next_pc) {
             if (trace_pc_write_from_env == nullptr) {
                 return;
@@ -1069,11 +1083,21 @@ public:
             if (sys_clock < from_cycle) {
                 return;
             }
+            if (trace_pc_write_reason_env != nullptr && std::strstr(reason, trace_pc_write_reason_env) == nullptr) {
+                return;
+            }
             const uint32_t old_pc = (uint32_t)pc;
+            if (trace_pc_write_user_kernel &&
+                ((uint32_t)csr.priv_out() != 0 || (next_pc < 0x80000000u && old_pc < 0x80000000u))) {
+                return;
+            }
             if (trace_pc_write_zero_only && old_pc != 0 && next_pc != 0) {
                 return;
             }
-            if (!trace_pc_write_all && old_pc >= 0x10000u && next_pc >= 0x10000u) {
+            if (trace_pc_write_target != 0 && old_pc != trace_pc_write_target && next_pc != trace_pc_write_target) {
+                return;
+            }
+            if (trace_pc_write_target == 0 && !trace_pc_write_all && old_pc >= 0x10000u && next_pc >= 0x10000u) {
                 return;
             }
             std::print("trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x}",
@@ -1726,6 +1750,7 @@ class TestTribe : public Module
     reg<u1> uart_rx_valid_reg;
     reg<u8> uart_rx_data_reg;
     reg<u32> uart_script_pos_reg;
+    reg<u32> uart_script_delay_reg;
     reg<u1> uart_script_enabled_reg;
     reg<u1> uart_script_reported_reg;
     bool tohost_done = false;
@@ -1734,14 +1759,23 @@ class TestTribe : public Module
     {
         bool active = false;
         bool flags_active = false;
+        bool sigint_active = false;
         int old_flags = 0;
         termios old_term = {};
+        struct sigaction old_sigint = {};
 
     public:
         explicit StdinRawMode(bool enable)
         {
             if (!enable) {
                 return;
+            }
+            tribe_uart_stdin_sigint_pending = 0;
+            struct sigaction next_sigint = {};
+            next_sigint.sa_handler = tribe_uart_stdin_sigint_handler;
+            sigemptyset(&next_sigint.sa_mask);
+            if (sigaction(SIGINT, &next_sigint, &old_sigint) == 0) {
+                sigint_active = true;
             }
             old_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
             if (old_flags >= 0 && fcntl(STDIN_FILENO, F_SETFL, old_flags | O_NONBLOCK) == 0) {
@@ -1763,6 +1797,9 @@ class TestTribe : public Module
             }
             if (flags_active) {
                 fcntl(STDIN_FILENO, F_SETFL, old_flags);
+            }
+            if (sigint_active) {
+                sigaction(SIGINT, &old_sigint, nullptr);
             }
         }
     };
@@ -1930,7 +1967,9 @@ class TestTribe : public Module
                 return false;
             }
         }
-        std::print("Patched Linux early 8250 membase fallback at {:08x}\n", patch_phys);
+        // Disabled by default in run_linux_probe.sh; keep this silent when
+        // enabled so DTB-only earlycon experiments have clean UART logs.
+        // std::print("Patched Linux early 8250 membase fallback at {:08x}\n", patch_phys);
         return true;
     }
 
@@ -2016,6 +2055,7 @@ public:
     void init_uart_script_state(bool enabled)
     {
         uart_script_pos_reg.set((u32)0);
+        uart_script_delay_reg.set((u32)0);
         uart_script_enabled_reg.set((u1)enabled);
         uart_script_reported_reg.set((u1)enabled);
     }
@@ -2033,6 +2073,11 @@ public:
     void advance_uart_script()
     {
         uart_script_pos_reg.set((u32)((uint32_t)uart_script_pos_reg + 1u));
+    }
+
+    void set_uart_script_delay(uint32_t delay)
+    {
+        uart_script_delay_reg.set((u32)delay);
     }
 
     void _assign()
@@ -2317,6 +2362,9 @@ public:
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
         uart_script_pos_reg.strobe(checkpoint_fd);
+        // Local scripted-input pacing is runtime-only testbench state. Do not
+        // serialize it, or old Linux checkpoints become unreadable.
+        uart_script_delay_reg.strobe();
         uart_script_enabled_reg.strobe(checkpoint_fd);
         uart_script_reported_reg.strobe(checkpoint_fd);
 #ifndef VERILATOR
@@ -2578,6 +2626,8 @@ public:
         const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
         std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
         std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
+        const char* uart_input_char_delay_env = std::getenv("TRIBE_UART_INPUT_CHAR_DELAY");
+        uint32_t scripted_uart_char_delay = uart_input_char_delay_env ? std::stoul(uart_input_char_delay_env, nullptr, 0) : 0;
         bool checkpoint_loaded_pending_work = false;
         if (!checkpoint_load_file.empty()) {
             FILE* checkpoint_in = fopen(checkpoint_load_file.c_str(), "rb");
@@ -2624,6 +2674,7 @@ public:
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
         const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
         const bool trace_uart_rx = std::getenv("TRIBE_TRACE_UART_RX") != nullptr;
+        const bool uart_ctrl_c_to_guest = std::getenv("TRIBE_UART_CTRL_C_TO_GUEST") != nullptr;
         const char* trace_after_env = std::getenv("TRIBE_TRACE_AFTER");
         std::string trace_after = trace_after_env ? trace_after_env : "";
         bool trace_after_seen = trace_after.empty();
@@ -2634,6 +2685,7 @@ public:
         bool checkpoint_save_after_seen = false;
         bool checkpoint_save_after_completed = false;
         bool mirrored_uart_needs_newline = false;
+        bool host_interrupt = false;
         if (checkpoint_load_file.empty()) {
             init_uart_script_state(scripted_uart_after.empty());
         }
@@ -2714,7 +2766,7 @@ public:
         };
         int cycles = max_cycles;
         bool checkpoint_saved = false;
-        while (--cycles && !error && !tohost_done) {
+        while (--cycles && !error && !tohost_done && !host_interrupt) {
             uint64_t cycle_time_start = tribe_runtime_tick();
             uint64_t section_time_start = cycle_time_start;
             uint64_t strobe_ticks_before = runtime_strobe_ticks;
@@ -2741,6 +2793,11 @@ public:
                     checkpoint_saved = true;
                     std::print("*** Saved checkpoint '{}' at cycle {} ***\n", checkpoint_save_file, perf_clocks + 1);
                     if (checkpoint_save_only_success) {
+                        // Save-only checkpoint tests still need to preserve the
+                        // host-visible UART byte completed on this cycle. The
+                        // restored machine state is already post-strobe, so it
+                        // will not re-emit that byte after loading.
+                        capture_uart_output();
                         break;
                     }
                     if (checkpoint_save_after_seen && !checkpoint_save_after.empty()) {
@@ -2759,9 +2816,14 @@ public:
             }
             drive_uart_rx(false);
             uint32_t scripted_uart_pos = (uint32_t)uart_script_pos_reg;
-            if (uart.uart_rx_ready_out() && (bool)uart_script_enabled_reg && scripted_uart_pos < scripted_uart_input.size()) {
+            uint32_t scripted_uart_delay = (uint32_t)uart_script_delay_reg;
+            if ((bool)uart_script_enabled_reg && scripted_uart_pos < scripted_uart_input.size() && scripted_uart_delay) {
+                set_uart_script_delay(scripted_uart_delay - 1u);
+            }
+            else if (uart.uart_rx_ready_out() && (bool)uart_script_enabled_reg && scripted_uart_pos < scripted_uart_input.size()) {
                 uint8_t uart_rx_data = (uint8_t)scripted_uart_input[scripted_uart_pos];
                 advance_uart_script();
+                set_uart_script_delay(scripted_uart_char_delay);
                 drive_uart_rx(true, uart_rx_data);
                 if (trace_uart_rx) {
                     std::print("uart-rx-script-send pos={} data={:02x}\n",
@@ -2769,14 +2831,33 @@ public:
                 }
             }
             else if (interactive_uart_input && uart.uart_rx_ready_out()) {
-                unsigned char ch;
-                ssize_t got = read(STDIN_FILENO, &ch, 1);
-                if (got == 1) {
-                    drive_uart_rx(true, ch);
+                unsigned char ch = 0;
+                bool have_input = false;
+                if (tribe_uart_stdin_sigint_pending) {
+                    tribe_uart_stdin_sigint_pending = 0;
+                    ch = 0x03;
+                    have_input = true;
                 }
-                else if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                    std::print("\n***stdin read failed while feeding UART***\n");
-                    error = true;
+                else {
+                    ssize_t got = read(STDIN_FILENO, &ch, 1);
+                    if (got == 1) {
+                        have_input = true;
+                    }
+                    else if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                        std::print("\n***stdin read failed while feeding UART***\n");
+                        error = true;
+                    }
+                }
+                if (have_input && ch == 0x03 && !uart_ctrl_c_to_guest) {
+                    host_interrupt = true;
+                    have_input = false;
+                    std::print("\n*** Interrupted by Ctrl+C ***\n");
+                }
+                if (have_input) {
+                    drive_uart_rx(true, ch);
+                    if (trace_uart_rx) {
+                        std::print("uart-rx-stdin-send data={:02x}\n", (uint32_t)ch);
+                    }
                 }
             }
             runtime_uart_ticks += tribe_runtime_tick() - section_time_start;
@@ -3047,6 +3128,10 @@ public:
 
         if (mirrored_uart_needs_newline) {
             std::print("\n");
+        }
+
+        if (host_interrupt) {
+            return true;
         }
 
         if (checkpoint_save_only_success) {

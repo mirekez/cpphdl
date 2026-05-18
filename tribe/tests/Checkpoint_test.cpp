@@ -200,11 +200,14 @@ static bool run_checkpoint_cpp(bool debug)
 
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
+    ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
 
     // Scenario: a kernel-style supervisor trap handler services UART RX via
     // PLIC supervisor external interrupts while the testbench repeatedly saves and
     // restores the whole machine. Each restore resumes the same PRBS input
-    // stream and the final UART log must be byte-for-byte identical.
+    // stream with real inter-character gaps, and the final UART log must be
+    // byte-for-byte identical. The PLIC0 marker proves the claim loop drained
+    // to zero after the final interrupt.
     for (size_t i = 0; i < save_cycles.size(); ++i) {
         const auto checkpoint = std::filesystem::current_path() / ("checkpoint_isr_" + std::to_string(i) + ".bin");
         if (!run_checkpoint_segment(debug, elf, expected,
@@ -246,6 +249,7 @@ static bool run_checkpoint_verilator(bool debug,
 
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
+    ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
     std::string command = "Checkpoint/obj_dir/VTribe --program " + shell_quote(elf) +
         " --log " + shell_quote(expected) +
         " --cycles 300000 --boot-priv m";
@@ -289,6 +293,7 @@ int main(int argc, char** argv)
     ok = ok && write_file(expected, expected_text);
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
+    ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
     // Verilated DUT internals are not serialized by the C++ checkpoint file.
     // Keep Verilator coverage to the ISR/UART execution path; the restore
     // sequence is covered by the native C++ model above.
