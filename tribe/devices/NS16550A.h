@@ -51,6 +51,8 @@ private:
     reg<u8> uart_data_reg;
     reg<u1> rx_valid_reg;
     reg<u8> rx_data_reg;
+    // Kept in the checkpoint stream for compatibility with older saved Linux
+    // states. RBR no longer uses this duplicate path functionally.
     reg<u1> rbr_duplicate_valid_reg;
     reg<u8> rbr_duplicate_data_reg;
     reg<u1> tx_irq_pending_reg;
@@ -140,6 +142,7 @@ public:
         if (uart_rx_valid_in() && !rx_valid_reg) {
             rx_data_reg._next = uart_rx_data_in();
             rx_valid_reg._next = true;
+            rbr_duplicate_valid_reg._next = false;
 #ifndef SYNTHESIS
             if (std::getenv("TRIBE_TRACE_UART_RX")) {
                 std::print("uart-rx-accept data={:02x} ier={:02x} irq={}\n",
@@ -157,17 +160,11 @@ public:
                     data = (uint8_t)dll_reg;
                 }
                 else if (rbr_duplicate_valid_reg) {
-                    data = (uint8_t)rbr_duplicate_data_reg;
-                    rbr_duplicate_valid_reg._next = false;
+                    data = 0;
                 }
                 else {
                     data = rx_valid_reg ? (uint8_t)rx_data_reg : 0;
-                    rbr_duplicate_data_reg._next = data;
-                    rbr_duplicate_valid_reg._next = true;
                 }
-            }
-            else {
-                rbr_duplicate_valid_reg._next = false;
             }
             if (addr == REG_IER_DLM) {
                 data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
@@ -201,17 +198,17 @@ public:
             read_addr_reg._next = axi_in.araddr_in();
             read_id_reg._next = axi_in.arid_in();
             read_valid_reg._next = true;
-            // RBR has read-to-clear semantics. Latch the returned byte when
-            // the AXI read is accepted so repeated data-phase observations of
-            // the same transaction cannot consume later RX bytes.
+            // RBR has read-to-clear semantics: the accepted bus read consumes
+            // the buffered byte exactly once, matching a single-byte FIFO.
             if (addr == REG_RBR_THR_DLL && !dlab_comb_func()) {
                 if (!rbr_duplicate_valid_reg) {
                     rx_valid_reg._next = false;
+                    rbr_duplicate_valid_reg._next = true;
                 }
 #ifndef SYNTHESIS
                 if (std::getenv("TRIBE_TRACE_UART_RX")) {
                     std::print("uart-rx-read data={:02x} ier={:02x}\n",
-                        (uint32_t)(uint8_t)rx_data_reg, (uint32_t)(uint8_t)ier_reg);
+                        (uint32_t)data, (uint32_t)(uint8_t)ier_reg);
                 }
 #endif
             }
