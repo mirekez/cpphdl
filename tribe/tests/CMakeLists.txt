@@ -145,7 +145,15 @@ foreach(src ${TRIBE_TEST_SOURCES})
     )
 
     add_dependencies(${target_name} cpphdl)
-    if(target_name STREQUAL "CLINT_test" OR target_name STREQUAL "MMU_TLB_Test" OR target_name STREQUAL "NS16550A_test" OR target_name STREQUAL "Accelerator_test" OR target_name STREQUAL "CPU_test" OR target_name STREQUAL "Linux_test")
+    if(target_name STREQUAL "Accelerator_test"
+        OR target_name STREQUAL "Checkpoint_test"
+        OR target_name STREQUAL "CLINT_test"
+        OR target_name STREQUAL "CPU_test"
+        OR target_name STREQUAL "Cpp_test"
+        OR target_name STREQUAL "IOUART_test"
+        OR target_name STREQUAL "Linux_test"
+        OR target_name STREQUAL "MMU_TLB_Test"
+        OR target_name STREQUAL "NS16550A_test")
         add_dependencies(${target_name} tribe64)
     endif()
 
@@ -184,6 +192,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         Linux_test
         MMU_TLB_Test
         NS16550A_test
+        PLIC_test
     )
     if(target_name IN_LIST tribe_verilator_ctest_targets)
         set(verilator_test_args)

@@ -2591,11 +2591,12 @@ public:
             // pre-load host-process values.
             ++sys_clock;
             checkpoint_loaded_pending_work = true;
-            if (!scripted_uart_input.empty()) {
-                // Checkpoints restore the script feeder registers too. A new
-                // run may intentionally provide a different script or marker,
-                // so re-arm the feeder from the current environment.
-                init_uart_script_state(scripted_uart_after.empty());
+            if (!scripted_uart_input.empty() && scripted_uart_after.empty()) {
+                // Checkpoints restore the UART script feeder registers. Keep
+                // that state for marker-gated tests; only re-arm immediately
+                // when a restored run intentionally injects input with no
+                // output marker, such as interactive Linux command probes.
+                init_uart_script_state(true);
             }
             std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
         }

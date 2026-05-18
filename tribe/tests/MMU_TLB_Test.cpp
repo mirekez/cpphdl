@@ -50,6 +50,18 @@ static std::filesystem::path riscv_home_dir()
     if (const char* env = std::getenv("RISCV")) {
         return env;
     }
+    if (const char* home = std::getenv("HOME")) {
+        std::filesystem::path local = std::filesystem::path(home) / "riscv";
+        if (std::filesystem::exists(local)) {
+            return local;
+        }
+    }
+    if (std::filesystem::exists("/home/me/riscv")) {
+        return "/home/me/riscv";
+    }
+    if (std::filesystem::exists("/home/mike/riscv")) {
+        return "/home/mike/riscv";
+    }
     return "/home/me/riscv";
 }
 

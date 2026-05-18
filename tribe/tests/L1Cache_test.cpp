@@ -456,7 +456,7 @@ public:
         idle();
 
         direct_mode = true;
-        direct_mem_data = 0;
+        direct_mem_data = 1;
         addr = request_addr;
         read = true;
         stall = false;
@@ -466,7 +466,7 @@ public:
         for (size_t i = 0; i < 32 && !got_first; ++i) {
             if (valid() && raddr() == request_addr) {
                 got_first = true;
-                if (rdata() != 0) {
+                if (rdata() != 1) {
                     std::print("\nuncached repeated poll ERROR first data={:#x}\n", rdata());
                     error = true;
                 }
@@ -475,7 +475,10 @@ public:
             cycle(false);
         }
 
-        direct_mem_data = 2;
+        // Regression for Linux PLIC claim polling: after one uncached read of
+        // claim=1, a following same-address claim read must not retire the old
+        // response while the new MMIO access is still being issued.
+        direct_mem_data = 0;
         bool saw_second_request = false;
         bool got_second = false;
         for (size_t i = 0; i < 64 && !got_second; ++i) {
@@ -483,8 +486,20 @@ public:
             if (PORT_VALUE(cache.mem_read_out) && PORT_VALUE(cache.mem_addr_out) == request_addr) {
                 saw_second_request = true;
             }
-            if (valid() && raddr() == request_addr && rdata() == 2) {
-                got_second = true;
+            if (valid() && raddr() == request_addr) {
+                if (!saw_second_request && rdata() == 1) {
+                    std::print("\nuncached repeated poll ERROR stale same-address data returned before second MMIO request\n");
+                    error = true;
+                    break;
+                }
+                if (saw_second_request && rdata() == 0) {
+                    got_second = true;
+                }
+                else if (saw_second_request && rdata() != 0) {
+                    std::print("\nuncached repeated poll ERROR second data={:#x} expected=0\n", rdata());
+                    error = true;
+                    break;
+                }
             }
         }
 

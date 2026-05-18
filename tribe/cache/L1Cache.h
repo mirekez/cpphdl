@@ -171,7 +171,7 @@ private:
             if (state_reg == ST_IDLE) {
                 start_read_comb = true;
             }
-            if (state_reg == ST_DONE && (addr_in() != (uint32_t)last_addr_reg || !req_cacheable_reg)) {
+            if (state_reg == ST_DONE && req_cacheable_reg && addr_in() != (uint32_t)last_addr_reg) {
                 start_read_comb = true;
             }
             if (state_reg == ST_LOOKUP && req_read_reg && hit_comb_func() && addr_in() != (uint32_t)req_addr_reg) {
