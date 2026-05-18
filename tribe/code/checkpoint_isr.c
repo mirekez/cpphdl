@@ -32,6 +32,7 @@ static volatile uint32_t rx_count;
 static volatile uint32_t trap_count;
 static volatile uint32_t fail_count;
 static volatile uint32_t done_written;
+static volatile uint32_t plic_last_zero;
 
 extern void checkpoint_trap_entry(void);
 
@@ -77,8 +78,13 @@ static void uart_puts(const char* text)
 
 static void finish_if_done(void)
 {
-    if (!done_written && rx_count >= CHECKPOINT_INPUT_LEN) {
+    if (fail_count != 0u && !done_written) {
         done_written = 1;
+        uart_puts("FAIL\n");
+    }
+    if (!done_written && rx_count >= CHECKPOINT_INPUT_LEN && plic_last_zero != 0u) {
+        done_written = 1;
+        uart_puts("PLIC0\n");
         uart_puts("DONE\n");
     }
 }
@@ -90,7 +96,6 @@ static void handle_uart_rx(void)
         if (rx_count < CHECKPOINT_INPUT_LEN) {
             ++rx_count;
             uart_putc(ch);
-            finish_if_done();
         }
     }
 }
@@ -103,22 +108,41 @@ void checkpoint_trap_handler(void)
 
     if (mcause == 0x8000000bu) {
         uint32_t claim = read32(PLIC_CLAIM);
-        if (claim == PLIC_UART_SOURCE) {
+        while (claim == PLIC_UART_SOURCE) {
             uint32_t iir = read8(UART_IIR);
             if ((iir & 0x0fu) == UART_IIR_RX_AVAILABLE || (read8(UART_LSR) & UART_LSR_DR) != 0u) {
                 handle_uart_rx();
             }
+            else {
+                /*
+                 * Linux's plic_handle_irq loops until the claim register returns
+                 * zero. A stale forwarded completion write can make the CPU see
+                 * source 1 here even though UART IIR/LSR say no RX interrupt is
+                 * pending; catch that exact checkpoint/BusyBox failure mode.
+                 */
+                ++fail_count;
+                finish_if_done();
+                return;
+            }
             write32(PLIC_CLAIM, claim);
-            return;
+            claim = read32(PLIC_CLAIM);
         }
         if (claim != 0u) {
             write32(PLIC_CLAIM, claim);
         }
-        ++fail_count;
+        if (claim == 0u) {
+            plic_last_zero = 1;
+        }
+        else {
+            plic_last_zero = 0;
+            ++fail_count;
+        }
+        finish_if_done();
         return;
     }
 
     ++fail_count;
+    finish_if_done();
 }
 
 int main(void)
@@ -127,6 +151,7 @@ int main(void)
     trap_count = 0;
     fail_count = 0;
     done_written = 0;
+    plic_last_zero = 0;
 
     __asm__ volatile("csrw mtvec, %0" : : "r"(checkpoint_trap_entry) : "memory");
 
