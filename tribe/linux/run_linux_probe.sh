@@ -21,6 +21,8 @@ TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-1}"
 TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-16}"
 TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
 TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
+TRIBE_LINUX_BAUD="${TRIBE_LINUX_BAUD:-1000000}"
+TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon debug loglevel=8 ignore_loglevel initcall_debug}"
 
 find_objcopy()
 {
@@ -146,7 +148,7 @@ PY
 )"
 
     if true; then
-        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" <<'PY'
+        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" "${TRIBE_LINUX_BOOTARGS}" "${TRIBE_LINUX_BAUD}" <<'PY'
 import pathlib
 import sys
 
@@ -154,25 +156,43 @@ src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2])
 start = int(sys.argv[3], 0)
 end = int(sys.argv[4], 0)
+bootargs = sys.argv[5]
+baud = int(sys.argv[6], 0)
 text = src.read_text(encoding="utf-8")
 insert = (
+    f"\t\tbootargs = \"{bootargs}\";\n"
+    f"\t\tstdout-path = \"/soc/serial@82000000:{baud}n8\";\n"
     f"\t\tlinux,initrd-start = <0x{start:08x}>;\n"
     f"\t\tlinux,initrd-end = <0x{end:08x}>;\n"
 )
 lines = text.splitlines(keepends=True)
 out = []
 in_chosen = False
+in_uart = False
 inserted = False
 for line in lines:
     stripped = line.strip()
     if stripped == "chosen {":
         in_chosen = True
+        out.append(line)
+        continue
+    if "serial@82000000" in stripped and stripped.endswith("{"):
+        in_uart = True
     elif in_chosen and stripped == "};" and not inserted:
         out.append(insert)
-        inserted = True
+        out.append(line)
         in_chosen = False
-    elif in_chosen and stripped.startswith("linux,initrd-"):
+        inserted = True
         continue
+    elif in_chosen and (stripped.startswith("linux,initrd-") or
+                        stripped.startswith("bootargs =") or
+                        stripped.startswith("stdout-path =")):
+        continue
+    elif in_uart and stripped.startswith("current-speed ="):
+        out.append(f"\t\t\tcurrent-speed = <{baud}>;\n")
+        continue
+    elif in_uart and stripped == "};":
+        in_uart = False
     out.append(line)
 if not inserted:
     raise SystemExit("failed to find /chosen in DTS")
@@ -232,9 +252,6 @@ if [[ -n "${TRIBE_CHECKPOINT_SAVE_CYCLE:-}" ]]; then
 fi
 if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER:-}" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-after "${TRIBE_CHECKPOINT_SAVE_AFTER}")
-fi
-if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER_DELAY:-}" ]]; then
-    TRIBE_CHECKPOINT_ARGS+=(--checkpoint-save-after-delay "${TRIBE_CHECKPOINT_SAVE_AFTER_DELAY}")
 fi
 if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--append-output)
