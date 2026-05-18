@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 include(CTest)
 
 set(TRIBE_RAM_BYTES_CONFIG "458752" CACHE STRING "Tribe RAM size in bytes")
-set(TRIBE_IO_REGION_SIZE_CONFIG "65536" CACHE STRING "Tribe IO region size in bytes")
+set(TRIBE_IO_REGION_SIZE_CONFIG "4194304" CACHE STRING "Tribe IO region size in bytes")
 
 function(add_tribe_target target_name l2_axi_width output_subdir)
     add_executable(${target_name} main.cpp)

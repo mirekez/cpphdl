@@ -32,19 +32,16 @@ module Execute (
 ;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
 
 
     always_comb begin : alu_a_comb_func  // alu_a_comb_func
         alu_a_comb=state_in.rs1_val;
-        disable alu_a_comb_func;
     end
 
     always_comb begin : alu_b_comb_func  // alu_b_comb_func
         alu_b_comb=(((state_in.alu_op == Alu_pkg::ADD) && (state_in.mem_op != Mem_pkg::MNONE))) ? (unsigned'(32'(state_in.imm))) : ((((state_in.br_op != Br_pkg::BNONE) || state_in.rs2)) ? (state_in.rs2_val) : (unsigned'(32'(state_in.imm))));
-        disable alu_b_comb_func;
     end
 
     always_comb begin : alu_result_comb_func  // alu_result_comb_func
@@ -119,7 +116,6 @@ module Execute (
         if ((alu_op == Alu_pkg::SLT) || (alu_op == Alu_pkg::SLTU)) begin
             alu_result_comb|=(unsigned'(64'(((a == b))))) <<< 'h20;
         end
-        disable alu_result_comb_func;
     end
 
     always_comb begin : branch_taken_comb_func  // branch_taken_comb_func
@@ -164,7 +160,6 @@ module Execute (
         end
         endcase
         branch_taken_comb=branch_taken_comb && state_in.valid;
-        disable branch_taken_comb_func;
     end
 
     always_comb begin : branch_target_comb_func  // branch_target_comb_func
@@ -182,7 +177,6 @@ module Execute (
                 end
             end
         end
-        disable branch_target_comb_func;
     end
 
     task _work (input logic reset);

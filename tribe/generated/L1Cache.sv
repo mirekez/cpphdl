@@ -8,7 +8,7 @@ module L1Cache #(
     parameter TOTAL_CACHE_SIZE
 ,   parameter CACHE_LINE_SIZE
 ,   parameter WAYS
-,   parameter ID
+,   parameter DCACHE
 ,   parameter ADDR_BITS
 ,   parameter PORT_BITWIDTH
  )
@@ -62,6 +62,7 @@ module L1Cache #(
     reg[32-1:0] req_addr_reg;
     reg req_read_reg;
     reg req_cacheable_reg;
+    reg req_cache_disable_reg;
     reg[REFILL_BEAT_BITS-1:0] refill_beat_reg;
     reg[WAY_BITS-1:0] victim_reg;
     reg[SET_BITS-1:0] init_set_reg;
@@ -70,13 +71,17 @@ module L1Cache #(
     reg last_valid_reg;
     reg[HALF_LINE_BITS-1:0] refill_even_line_reg;
     reg[HALF_LINE_BITS-1:0] refill_odd_line_reg;
-    logic[SET_BITS-1:0] req_set_comb;
+    reg[32-1:0] refill_req_data_reg;
+    reg refill_req_data_valid_reg;
+    logic[31:0] req_set_comb;
 ;
-    logic[TAG_BITS-1:0] req_tag_comb;
+    logic[31:0] req_tag_comb;
+;
+    logic[REFILL_BEAT_BITS-1:0] req_refill_beat_comb;
 ;
     logic[WORD_BITS-1:0] req_word_comb;
 ;
-    logic[SET_BITS-1:0] input_set_comb;
+    logic[31:0] input_set_comb;
 ;
     logic input_cacheable_comb;
 ;
@@ -114,7 +119,7 @@ module L1Cache #(
 ;
 
     // members
-    genvar gi, gj, gk;
+    genvar __i;
       wire[$clog2((SETS))-1:0] even_ram__addr_in[WAYS];
       wire[(HALF_LINE_BITS)-1:0] even_ram__data_in[WAYS];
       wire even_ram__wr_in[WAYS];
@@ -122,19 +127,19 @@ module L1Cache #(
       wire[(HALF_LINE_BITS)-1:0] even_ram__q_out[WAYS];
       wire signed[31:0] even_ram__id_in[WAYS];
     generate
-    for (gi=0; gi < WAYS; gi = gi + 1) begin
+    for (__i=0; __i < WAYS; __i = __i + 1) begin
         RAM1PORT #(
         HALF_LINE_BITS
 ,       SETS
-    ) even_ram (
+        ) even_ram (
             .clk(clk)
-,           .reset(reset)
-,           .addr_in(even_ram__addr_in[gi])
-,           .data_in(even_ram__data_in[gi])
-,           .wr_in(even_ram__wr_in[gi])
-,           .rd_in(even_ram__rd_in[gi])
-,           .q_out(even_ram__q_out[gi])
-,           .id_in(even_ram__id_in[gi])
+        ,           .reset(reset)
+        ,           .addr_in(even_ram__addr_in[__i])
+        ,           .data_in(even_ram__data_in[__i])
+        ,           .wr_in(even_ram__wr_in[__i])
+        ,           .rd_in(even_ram__rd_in[__i])
+        ,           .q_out(even_ram__q_out[__i])
+        ,           .id_in(even_ram__id_in[__i])
         );
     end
     endgenerate
@@ -145,19 +150,19 @@ module L1Cache #(
       wire[(HALF_LINE_BITS)-1:0] odd_ram__q_out[WAYS];
       wire signed[31:0] odd_ram__id_in[WAYS];
     generate
-    for (gi=0; gi < WAYS; gi = gi + 1) begin
+    for (__i=0; __i < WAYS; __i = __i + 1) begin
         RAM1PORT #(
         HALF_LINE_BITS
 ,       SETS
-    ) odd_ram (
+        ) odd_ram (
             .clk(clk)
-,           .reset(reset)
-,           .addr_in(odd_ram__addr_in[gi])
-,           .data_in(odd_ram__data_in[gi])
-,           .wr_in(odd_ram__wr_in[gi])
-,           .rd_in(odd_ram__rd_in[gi])
-,           .q_out(odd_ram__q_out[gi])
-,           .id_in(odd_ram__id_in[gi])
+        ,           .reset(reset)
+        ,           .addr_in(odd_ram__addr_in[__i])
+        ,           .data_in(odd_ram__data_in[__i])
+        ,           .wr_in(odd_ram__wr_in[__i])
+        ,           .rd_in(odd_ram__rd_in[__i])
+        ,           .q_out(odd_ram__q_out[__i])
+        ,           .id_in(odd_ram__id_in[__i])
         );
     end
     endgenerate
@@ -168,19 +173,19 @@ module L1Cache #(
       wire[(TAG_BITS + 'h1)-1:0] tag_ram__q_out[WAYS];
       wire signed[31:0] tag_ram__id_in[WAYS];
     generate
-    for (gi=0; gi < WAYS; gi = gi + 1) begin
+    for (__i=0; __i < WAYS; __i = __i + 1) begin
         RAM1PORT #(
         TAG_BITS + 'h1
 ,       SETS
-    ) tag_ram (
+        ) tag_ram (
             .clk(clk)
-,           .reset(reset)
-,           .addr_in(tag_ram__addr_in[gi])
-,           .data_in(tag_ram__data_in[gi])
-,           .wr_in(tag_ram__wr_in[gi])
-,           .rd_in(tag_ram__rd_in[gi])
-,           .q_out(tag_ram__q_out[gi])
-,           .id_in(tag_ram__id_in[gi])
+        ,           .reset(reset)
+        ,           .addr_in(tag_ram__addr_in[__i])
+        ,           .data_in(tag_ram__data_in[__i])
+        ,           .wr_in(tag_ram__wr_in[__i])
+        ,           .rd_in(tag_ram__rd_in[__i])
+        ,           .q_out(tag_ram__q_out[__i])
+        ,           .id_in(tag_ram__id_in[__i])
         );
     end
     endgenerate
@@ -190,6 +195,7 @@ module L1Cache #(
     logic[32-1:0] req_addr_reg_tmp;
     logic req_read_reg_tmp;
     logic req_cacheable_reg_tmp;
+    logic req_cache_disable_reg_tmp;
     logic[REFILL_BEAT_BITS-1:0] refill_beat_reg_tmp;
     logic[WAY_BITS-1:0] victim_reg_tmp;
     logic[SET_BITS-1:0] init_set_reg_tmp;
@@ -198,11 +204,12 @@ module L1Cache #(
     logic last_valid_reg_tmp;
     logic[HALF_LINE_BITS-1:0] refill_even_line_reg_tmp;
     logic[HALF_LINE_BITS-1:0] refill_odd_line_reg_tmp;
+    logic[32-1:0] refill_req_data_reg_tmp;
+    logic refill_req_data_valid_reg_tmp;
 
 
     always_comb begin : req_tag_comb_func  // req_tag_comb_func
-        req_tag_comb = unsigned'(23'((unsigned'(32'(req_addr_reg)) >>> ((LINE_BITS + SET_BITS)))));
-        disable req_tag_comb_func;
+        req_tag_comb=unsigned'(32'(req_addr_reg))/((CACHE_LINE_SIZE*SETS));
     end
 
     always_comb begin : hit_comb_func  // hit_comb_func
@@ -215,7 +222,6 @@ module L1Cache #(
                 end
             end
         end
-        disable hit_comb_func;
     end
 
     always_comb begin : start_read_comb_func  // start_read_comb_func
@@ -224,29 +230,25 @@ module L1Cache #(
             if (state_reg == ST_IDLE) begin
                 start_read_comb=1;
             end
-            if ((state_reg == ST_DONE) && (addr_in != unsigned'(32'(last_addr_reg)))) begin
+            if (((state_reg == ST_DONE) && req_cacheable_reg) && (addr_in != unsigned'(32'(last_addr_reg)))) begin
                 start_read_comb=1;
             end
             if ((((state_reg == ST_LOOKUP) && req_read_reg) && hit_comb) && (addr_in != unsigned'(32'(req_addr_reg)))) begin
                 start_read_comb=1;
             end
         end
-        disable start_read_comb_func;
     end
 
     always_comb begin : issue_read_comb_func  // issue_read_comb_func
         issue_read_comb=((flush_in && read_in)) || start_read_comb;
-        disable issue_read_comb_func;
     end
 
     always_comb begin : req_set_comb_func  // req_set_comb_func
-        req_set_comb = unsigned'(4'((unsigned'(32'(req_addr_reg)) >>> LINE_BITS)));
-        disable req_set_comb_func;
+        req_set_comb=((unsigned'(32'(req_addr_reg))/CACHE_LINE_SIZE)) % SETS;
     end
 
     always_comb begin : input_set_comb_func  // input_set_comb_func
-        input_set_comb = unsigned'(4'((addr_in >>> LINE_BITS)));
-        disable input_set_comb_func;
+        input_set_comb=((addr_in/CACHE_LINE_SIZE)) % SETS;
     end
 
     always_comb begin : refill_even_line_comb_func  // refill_even_line_comb_func
@@ -257,15 +259,16 @@ module L1Cache #(
             word=(unsigned'(32'(refill_beat_reg))*PORT_WORDS) + i;
             refill_even_line_comb[word*'h10 +:16] = unsigned'(32'(mem_read_data_in[i*'h20 +:16]));
         end
-        disable refill_even_line_comb_func;
     end
 
     always_comb begin : input_cacheable_comb_func  // input_cacheable_comb_func
         input_cacheable_comb=!cache_disable_in && !((addr_in & 'h1));
-        if ((((addr_in & 'h3)) != 'h0) && ((((((addr_in >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1)))) begin
+        if (((DCACHE != 'h0) && (((addr_in & 'h3)) != 'h0)) && ((((((addr_in >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1)))) begin
             input_cacheable_comb=0;
         end
-        disable input_cacheable_comb_func;
+        if (((DCACHE == 'h0) && (((addr_in & 'h2)) != 'h0)) && ((((((addr_in >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1)))) begin
+            input_cacheable_comb=0;
+        end
     end
 
     always_comb begin : refill_odd_line_comb_func  // refill_odd_line_comb_func
@@ -276,37 +279,39 @@ module L1Cache #(
             word=(unsigned'(32'(refill_beat_reg))*PORT_WORDS) + i;
             refill_odd_line_comb[word*'h10 +:16] = unsigned'(32'(mem_read_data_in[(i*'h20) + 'h10 +:16]));
         end
-        disable refill_odd_line_comb_func;
     end
 
     always_comb begin : refill_tag_comb_func  // refill_tag_comb_func
         refill_tag_comb = (((unsigned'(64'('h1)) <<< TAG_BITS)) | unsigned'(64'(req_tag_comb)));
-        disable refill_tag_comb_func;
     end
 
     generate  // _assign
+        genvar gi;
         for (gi='h0;gi < WAYS;gi=gi+1) begin
             assign even_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
             assign even_ram__data_in[gi] = refill_even_line_comb;
             assign even_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi);
             assign even_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign even_ram__id_in[gi]=(ID*'h64) + (gi*'h3);
+            assign even_ram__id_in[gi]=(DCACHE*'h64) + (gi*'h3);
             assign odd_ram__addr_in[gi] = (((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb);
             assign odd_ram__data_in[gi] = refill_odd_line_comb;
             assign odd_ram__wr_in[gi] = (((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi);
             assign odd_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign odd_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h1;
+            assign odd_ram__id_in[gi]=((DCACHE*'h64) + (gi*'h3)) + 'h1;
             assign tag_ram__addr_in[gi] = ((state_reg == ST_INIT)) ? (init_set_reg) : (((write_in) ? (input_set_comb) : (((((state_reg == ST_REFILL) || (((state_reg == ST_LOOKUP) && !issue_read_comb)))) ? (req_set_comb) : (input_set_comb)))));
             assign tag_ram__data_in[gi] = ((state_reg == ST_REFILL)) ? (refill_tag_comb) : ('h0);
             assign tag_ram__wr_in[gi] = (((state_reg == ST_INIT)) || (((((((state_reg == ST_REFILL)) && req_read_reg) && req_cacheable_reg) && (refill_beat_reg == (REFILL_BEATS - 'h1))) && (victim_reg == gi)))) || write_in;
             assign tag_ram__rd_in[gi] = issue_read_comb && input_cacheable_comb;
-            assign tag_ram__id_in[gi]=((ID*'h64) + (gi*'h3)) + 'h2;
+            assign tag_ram__id_in[gi]=((DCACHE*'h64) + (gi*'h3)) + 'h2;
         end
     endgenerate
 
+    always_comb begin : req_refill_beat_comb_func  // req_refill_beat_comb_func
+        req_refill_beat_comb = unsigned'(REFILL_BEAT_BITS'(unsigned'(REFILL_BEAT_BITS'((((unsigned'(32'(req_addr_reg)) & ((CACHE_LINE_SIZE - 'h1))))/PORT_BYTES)))));
+    end
+
     always_comb begin : req_word_comb_func  // req_word_comb_func
-        req_word_comb = unsigned'(3'((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))));
-        disable req_word_comb_func;
+        req_word_comb = unsigned'(WORD_BITS'(unsigned'(WORD_BITS'((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))))));
     end
 
     always_comb begin : refill_data_comb_func  // refill_data_comb_func
@@ -326,13 +331,14 @@ module L1Cache #(
         else begin
             refill_data_comb=even_half | ((odd_half <<< 'h10));
         end
-        disable refill_data_comb_func;
     end
 
     always_comb begin : direct_data_comb_func  // direct_data_comb_func
         logic[31:0] _byte;
         logic[31:0] word;
-        if ((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && (((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1))) begin
+        _byte='h0;
+        word='h0;
+        if ((((DCACHE == 'h0) && !req_cacheable_reg) && (((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0)) && (((((unsigned'(32'(req_addr_reg)) >>> 'h2)) & ((LINE_WORDS - 'h1)))) == (LINE_WORDS - 'h1))) begin
             direct_data_comb=unsigned'(32'(mem_read_data_in['h0 +:32]));
         end
         else begin
@@ -348,7 +354,6 @@ module L1Cache #(
                 end
             end
         end
-        disable direct_data_comb_func;
     end
 
     always_comb begin : cache_data_comb_func  // cache_data_comb_func
@@ -376,30 +381,33 @@ module L1Cache #(
                 end
             end
         end
-        disable cache_data_comb_func;
     end
 
     task _work (input logic reset);
     begin: _work
         logic[63:0] i;
         if (invalidate_in) begin
-            req_read_reg_tmp = 0;
-            last_valid_reg_tmp = 0;
+            req_read_reg_tmp = unsigned'(1'(0));
+            last_valid_reg_tmp = unsigned'(1'(0));
+            refill_req_data_valid_reg_tmp = unsigned'(1'(0));
             init_set_reg_tmp = 'h0;
             state_reg_tmp = ST_INIT;
         end
         else begin
             if (flush_in) begin
-                req_addr_reg_tmp = addr_in;
-                req_read_reg_tmp = read_in;
-                req_cacheable_reg_tmp = input_cacheable_comb;
-                last_valid_reg_tmp = 0;
+                req_addr_reg_tmp = unsigned'(32'(addr_in));
+                req_read_reg_tmp = unsigned'(1'(read_in));
+                req_cacheable_reg_tmp = unsigned'(1'(input_cacheable_comb));
+                req_cache_disable_reg_tmp = unsigned'(1'(cache_disable_in));
+                last_valid_reg_tmp = unsigned'(1'(0));
+                refill_req_data_valid_reg_tmp = unsigned'(1'(0));
                 state_reg_tmp = (read_in) ? (ST_LOOKUP) : (ST_IDLE);
             end
             else begin
                 if (state_reg == ST_INIT) begin
-                    req_read_reg_tmp = 0;
-                    last_valid_reg_tmp = 0;
+                    req_read_reg_tmp = unsigned'(1'(0));
+                    last_valid_reg_tmp = unsigned'(1'(0));
+                    refill_req_data_valid_reg_tmp = unsigned'(1'(0));
                     if (init_set_reg == (SETS - 'h1)) begin
                         state_reg_tmp = ST_IDLE;
                     end
@@ -409,11 +417,12 @@ module L1Cache #(
                 end
                 else begin
                     if (state_reg == ST_IDLE) begin
-                        last_valid_reg_tmp = 0;
+                        last_valid_reg_tmp = unsigned'(1'(0));
                         if (read_in && !stall_in) begin
-                            req_addr_reg_tmp = addr_in;
-                            req_read_reg_tmp = 1;
-                            req_cacheable_reg_tmp = input_cacheable_comb;
+                            req_addr_reg_tmp = unsigned'(32'(addr_in));
+                            req_read_reg_tmp = unsigned'(1'(1));
+                            req_cacheable_reg_tmp = unsigned'(1'(input_cacheable_comb));
+                            req_cache_disable_reg_tmp = unsigned'(1'(cache_disable_in));
                             state_reg_tmp = ST_LOOKUP;
                         end
                     end
@@ -422,21 +431,22 @@ module L1Cache #(
                             if (hit_comb) begin
                                 if (stall_in) begin
                                     last_addr_reg_tmp = req_addr_reg;
-                                    last_data_reg_tmp = cache_data_comb;
-                                    last_valid_reg_tmp = 1;
+                                    last_data_reg_tmp = unsigned'(32'(cache_data_comb));
+                                    last_valid_reg_tmp = unsigned'(1'(1));
                                     state_reg_tmp = ST_DONE;
                                 end
                                 else begin
                                     if (start_read_comb) begin
-                                        req_addr_reg_tmp = addr_in;
-                                        req_cacheable_reg_tmp = input_cacheable_comb;
-                                        last_valid_reg_tmp = 0;
+                                        req_addr_reg_tmp = unsigned'(32'(addr_in));
+                                        req_cacheable_reg_tmp = unsigned'(1'(input_cacheable_comb));
+                                        req_cache_disable_reg_tmp = unsigned'(1'(cache_disable_in));
+                                        last_valid_reg_tmp = unsigned'(1'(0));
                                         state_reg_tmp = ST_LOOKUP;
                                     end
                                     else begin
-                                        req_read_reg_tmp = 0;
-                                        req_cacheable_reg_tmp = 0;
-                                        last_valid_reg_tmp = 0;
+                                        req_read_reg_tmp = unsigned'(1'(0));
+                                        req_cacheable_reg_tmp = unsigned'(1'(0));
+                                        last_valid_reg_tmp = unsigned'(1'(0));
                                         state_reg_tmp = ST_IDLE;
                                     end
                                 end
@@ -445,6 +455,7 @@ module L1Cache #(
                                 refill_beat_reg_tmp = 'h0;
                                 refill_even_line_reg_tmp = 'h0;
                                 refill_odd_line_reg_tmp = 'h0;
+                                refill_req_data_valid_reg_tmp = unsigned'(1'(0));
                                 state_reg_tmp = ST_REFILL;
                             end
                         end
@@ -454,11 +465,16 @@ module L1Cache #(
                                     if (!mem_wait_in) begin
                                         refill_even_line_reg_tmp = refill_even_line_comb;
                                         refill_odd_line_reg_tmp = refill_odd_line_comb;
+                                        if ((refill_beat_reg == req_refill_beat_comb) && ((((unsigned'(32'(req_addr_reg)) & 'h3)) == 'h0))) begin
+                                            refill_req_data_reg_tmp = unsigned'(32'(direct_data_comb));
+                                            refill_req_data_valid_reg_tmp = unsigned'(1'(1));
+                                        end
                                         if (refill_beat_reg == (REFILL_BEATS - 'h1)) begin
                                             last_addr_reg_tmp = req_addr_reg;
-                                            last_data_reg_tmp = refill_data_comb;
-                                            last_valid_reg_tmp = 1;
-                                            victim_reg_tmp = victim_reg + 'h1;
+                                            last_data_reg_tmp = unsigned'(32'(((refill_beat_reg == req_refill_beat_comb)) ? (direct_data_comb) : (((refill_req_data_valid_reg) ? (unsigned'(32'(refill_req_data_reg))) : (refill_data_comb)))));
+                                            last_valid_reg_tmp = unsigned'(1'(1));
+                                            refill_req_data_valid_reg_tmp = unsigned'(1'(0));
+                                            victim_reg_tmp = ((victim_reg == (WAYS - 'h1))) ? (unsigned'(WAY_BITS'(unsigned'(WAY_BITS'('h0))))) : (unsigned'(WAY_BITS'(unsigned'(WAY_BITS'(victim_reg + 'h1)))));
                                             state_reg_tmp = ST_DONE;
                                         end
                                         else begin
@@ -469,24 +485,25 @@ module L1Cache #(
                                 else begin
                                     if (!mem_wait_in) begin
                                         last_addr_reg_tmp = req_addr_reg;
-                                        last_data_reg_tmp = direct_data_comb;
-                                        last_valid_reg_tmp = 1;
+                                        last_data_reg_tmp = unsigned'(32'(direct_data_comb));
+                                        last_valid_reg_tmp = unsigned'(1'(1));
                                         state_reg_tmp = ST_DONE;
                                     end
                                 end
                             end
                             else begin
                                 if ((state_reg == ST_DONE) && !stall_in) begin
-                                    last_valid_reg_tmp = 0;
+                                    last_valid_reg_tmp = unsigned'(1'(0));
                                     if (start_read_comb) begin
-                                        req_addr_reg_tmp = addr_in;
-                                        req_read_reg_tmp = 1;
-                                        req_cacheable_reg_tmp = input_cacheable_comb;
+                                        req_addr_reg_tmp = unsigned'(32'(addr_in));
+                                        req_read_reg_tmp = unsigned'(1'(1));
+                                        req_cacheable_reg_tmp = unsigned'(1'(input_cacheable_comb));
+                                        req_cache_disable_reg_tmp = unsigned'(1'(cache_disable_in));
                                         state_reg_tmp = ST_LOOKUP;
                                     end
                                     else begin
-                                        req_read_reg_tmp = 0;
-                                        req_cacheable_reg_tmp = 0;
+                                        req_read_reg_tmp = unsigned'(1'(0));
+                                        req_cacheable_reg_tmp = unsigned'(1'(0));
                                         state_reg_tmp = ST_IDLE;
                                     end
                                 end
@@ -497,7 +514,7 @@ module L1Cache #(
             end
         end
         if (write_in) begin
-            last_valid_reg_tmp = 0;
+            last_valid_reg_tmp = unsigned'(1'(0));
         end
         for (i='h0;i < WAYS;i=i+1) begin
         end
@@ -506,6 +523,7 @@ module L1Cache #(
             req_addr_reg_tmp = '0;
             req_read_reg_tmp = '0;
             req_cacheable_reg_tmp = '0;
+            req_cache_disable_reg_tmp = '0;
             refill_beat_reg_tmp = '0;
             victim_reg_tmp = '0;
             init_set_reg_tmp = '0;
@@ -514,6 +532,8 @@ module L1Cache #(
             last_valid_reg_tmp = '0;
             refill_even_line_reg_tmp = '0;
             refill_odd_line_reg_tmp = '0;
+            refill_req_data_reg_tmp = '0;
+            refill_req_data_valid_reg_tmp = '0;
             state_reg_tmp = ST_INIT;
         end
     end
@@ -531,17 +551,14 @@ module L1Cache #(
                 read_data_comb=direct_data_comb;
             end
         end
-        disable read_data_comb_func;
     end
 
     always_comb begin : read_addr_comb_func  // read_addr_comb_func
         read_addr_comb=(last_valid_reg) ? (unsigned'(32'(last_addr_reg))) : (unsigned'(32'(req_addr_reg)));
-        disable read_addr_comb_func;
     end
 
     always_comb begin : read_valid_comb_func  // read_valid_comb_func
         read_valid_comb=last_valid_reg || ((((state_reg == ST_LOOKUP) && req_read_reg) && hit_comb));
-        disable read_valid_comb_func;
     end
 
     always_comb begin : busy_comb_func  // busy_comb_func
@@ -556,12 +573,10 @@ module L1Cache #(
                 busy_comb=0;
             end
         end
-        disable busy_comb_func;
     end
 
     always_comb begin : mem_read_comb_func  // mem_read_comb_func
         mem_read_comb=(state_reg == ST_REFILL) && req_read_reg;
-        disable mem_read_comb_func;
     end
 
     always_comb begin : mem_addr_comb_func  // mem_addr_comb_func
@@ -570,13 +585,17 @@ module L1Cache #(
         end
         else begin
             if ((state_reg == ST_REFILL) && req_read_reg) begin
-                mem_addr_comb=req_addr_reg;
+                if ((DCACHE != 'h0) && !req_cache_disable_reg) begin
+                    mem_addr_comb=unsigned'(32'(req_addr_reg)) & ~unsigned'(32'(((PORT_BYTES - 'h1))));
+                end
+                else begin
+                    mem_addr_comb=req_addr_reg;
+                end
             end
             else begin
                 mem_addr_comb=addr_in;
             end
         end
-        disable mem_addr_comb_func;
     end
 
     always_comb begin : perf_comb_func  // perf_comb_func
@@ -586,7 +605,6 @@ module L1Cache #(
         perf_comb.refill_wait=busy_comb && (state_reg == ST_REFILL);
         perf_comb.init_wait=busy_comb && (state_reg == ST_INIT);
         perf_comb.issue_wait=read_in && (state_reg == ST_IDLE);
-        disable perf_comb_func;
     end
 
     always @(posedge clk) begin
@@ -594,6 +612,7 @@ module L1Cache #(
         req_addr_reg_tmp = req_addr_reg;
         req_read_reg_tmp = req_read_reg;
         req_cacheable_reg_tmp = req_cacheable_reg;
+        req_cache_disable_reg_tmp = req_cache_disable_reg;
         refill_beat_reg_tmp = refill_beat_reg;
         victim_reg_tmp = victim_reg;
         init_set_reg_tmp = init_set_reg;
@@ -602,6 +621,8 @@ module L1Cache #(
         last_valid_reg_tmp = last_valid_reg;
         refill_even_line_reg_tmp = refill_even_line_reg;
         refill_odd_line_reg_tmp = refill_odd_line_reg;
+        refill_req_data_reg_tmp = refill_req_data_reg;
+        refill_req_data_valid_reg_tmp = refill_req_data_valid_reg;
 
         _work(reset);
 
@@ -609,6 +630,7 @@ module L1Cache #(
         req_addr_reg <= req_addr_reg_tmp;
         req_read_reg <= req_read_reg_tmp;
         req_cacheable_reg <= req_cacheable_reg_tmp;
+        req_cache_disable_reg <= req_cache_disable_reg_tmp;
         refill_beat_reg <= refill_beat_reg_tmp;
         victim_reg <= victim_reg_tmp;
         init_set_reg <= init_set_reg_tmp;
@@ -617,6 +639,8 @@ module L1Cache #(
         last_valid_reg <= last_valid_reg_tmp;
         refill_even_line_reg <= refill_even_line_reg_tmp;
         refill_odd_line_reg <= refill_odd_line_reg_tmp;
+        refill_req_data_reg <= refill_req_data_reg_tmp;
+        refill_req_data_valid_reg <= refill_req_data_valid_reg_tmp;
     end
 
     assign read_data_out = read_data_comb;

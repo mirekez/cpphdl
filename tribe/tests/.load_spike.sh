@@ -83,7 +83,10 @@ fi
 make -j"$(nproc)"
 make install
 
-"${PREFIX}/bin/spike" --help >/dev/null
+if [[ ! -x "${PREFIX}/bin/spike" ]]; then
+  echo "error: spike was not installed at ${PREFIX}/bin/spike" >&2
+  exit 1
+fi
 
 clone_or_update "${RISCV_TESTS_REPO_URL}" "${RISCV_TESTS_DIR}"
 git -C "${RISCV_TESTS_DIR}" submodule update --init --recursive

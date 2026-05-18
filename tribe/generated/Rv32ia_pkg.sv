@@ -1,4 +1,4 @@
-package Zicsr_pkg;
+package Rv32ia_pkg;
 
 parameter FUNCT5_AMOADD = 'h0;
 parameter FUNCT5_AMOSWAP = 'h1;
@@ -61,7 +61,7 @@ typedef struct packed {
         } r;
         logic[31:0] raw;
     } _;
-} Zicsr;
+} Rv32ia;
 
 
 endpackage

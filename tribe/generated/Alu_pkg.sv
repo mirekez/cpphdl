@@ -1,6 +1,6 @@
 package Alu_pkg;
 
-enum {
+typedef enum {
     ANONE,
     ADD,
     SUB,

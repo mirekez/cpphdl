@@ -1,10 +1,15 @@
 package Sys_pkg;
 
-enum {
+typedef enum {
     SNONE,
     ECALL,
+    EBREAK,
     MRET,
-    FENCEI
+    SRET,
+    WFI,
+    FENCEI,
+    SFENCE_VMA,
+    TRAP
 } Sys;
 
 

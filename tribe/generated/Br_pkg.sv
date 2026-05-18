@@ -1,6 +1,6 @@
 package Br_pkg;
 
-enum {
+typedef enum {
     BNONE,
     BEQ,
     BNE,

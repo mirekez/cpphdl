@@ -137,6 +137,7 @@ public:
         uint32_t pending_work;
         uint32_t claim_on_read;
         uint32_t read_word;
+        uint32_t completion_mask;
         logic<DATA_WIDTH> read_data;
 #ifndef SYNTHESIS
         bool trace;
@@ -148,11 +149,23 @@ public:
         trace_from = trace_from_env ? std::strtol(trace_from_env, nullptr, 0) : 0;
         trace = std::getenv("TRIBE_TRACE_PLIC") != nullptr && sys_clock >= trace_from;
 #endif
-        source_bits = source_bits_comb_func();
+        completion_mask = 0;
+        if (axi_in.wvalid_in() && axi_in.wready_out()) {
+            addr = (uint32_t)write_addr_reg;
+            lane = ((uint32_t)write_addr_reg % (DATA_WIDTH / 8));
+            data = (uint32_t)axi_in.wdata_in().bits(lane * 8 + 31, lane * 8);
+            if (addr == CONTEXT_BASE + CLAIM_OFFSET && data > 0 && data < 32) {
+                completion_mask = 1u << data;
+            }
+        }
+
+        source_bits = source_bits_comb_func() & ~completion_mask;
         // PLIC gateways latch a device request until the hart claims it. This
         // keeps a source claimable even if the level drops before Linux reaches
-        // the claim register. Completion below only releases the gateway; a
-        // still-asserted level can pend again on the following cycle.
+        // the claim register. A completion write also masks the sampled level
+        // for this cycle, avoiding a stale same-cycle device level at the
+        // C++/Verilator boundary. If the level is truly still asserted, it
+        // pends again on the following cycle.
         pending_next = (uint32_t)pending_reg | (source_bits & ~(uint32_t)gateway_busy_reg);
         pending_work = pending_next;
         pending_reg._next = pending_work;
@@ -249,8 +262,8 @@ public:
                 threshold_reg._next = data;
             }
             else if (addr == CONTEXT_BASE + CLAIM_OFFSET) {
-                if (data > 0 && data < 32) {
-                    gateway_busy_reg._next = (uint32_t)gateway_busy_reg & ~(1u << data);
+                if (completion_mask != 0) {
+                    gateway_busy_reg._next = (uint32_t)gateway_busy_reg & ~completion_mask;
                 }
             }
 #ifndef SYNTHESIS

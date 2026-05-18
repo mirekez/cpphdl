@@ -45,7 +45,6 @@ module BranchPredictor #(
 ;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[ENTRIES-1:0][COUNTER_BITS-1:0] counter_reg_tmp;
@@ -72,16 +71,16 @@ module BranchPredictor #(
                     counter_reg_tmp[index] = counter - 'h1;
                 end
             end
-            target_reg_tmp[index] = update_target_in;
-            tag_reg_tmp[index] = update_pc_in;
-            valid_reg_tmp[index] = 1;
+            target_reg_tmp[index] = unsigned'(32'(update_target_in));
+            tag_reg_tmp[index] = unsigned'(32'(update_pc_in));
+            valid_reg_tmp[index] = unsigned'(1'(1));
         end
         if (reset) begin
             for (i='h0;i < ENTRIES;i=i+1) begin
                 counter_reg_tmp[i] = COUNTER_INIT;
-                target_reg_tmp[i] = 'h0;
-                tag_reg_tmp[i] = 'h0;
-                valid_reg_tmp[i] = 0;
+                target_reg_tmp[i] = unsigned'(32'('h0));
+                tag_reg_tmp[i] = unsigned'(32'('h0));
+                valid_reg_tmp[i] = unsigned'(1'(0));
             end
         end
     end
@@ -91,20 +90,17 @@ module BranchPredictor #(
     endgenerate
 
     always_comb begin : lookup_index_comb_func  // lookup_index_comb_func
-        lookup_index_comb=(lookup_pc_in >>> 'h1);
-        disable lookup_index_comb_func;
+        lookup_index_comb=unsigned'(INDEX_BITS'((lookup_pc_in >>> 'h1)));
     end
 
     always_comb begin : lookup_unconditional_comb_func  // lookup_unconditional_comb_func
         lookup_unconditional_comb=((lookup_br_op_in == Br_pkg::JAL) || (lookup_br_op_in == Br_pkg::JALR)) || (lookup_br_op_in == Br_pkg::JR);
-        disable lookup_unconditional_comb_func;
     end
 
     always_comb begin : lookup_hit_comb_func  // lookup_hit_comb_func
         logic[31:0] index;
         index=unsigned'(32'(lookup_index_comb));
         lookup_hit_comb=valid_reg[index] && (tag_reg[index] == lookup_pc_in);
-        disable lookup_hit_comb_func;
     end
 
     always_comb begin : predict_taken_comb_func  // predict_taken_comb_func
@@ -121,7 +117,6 @@ module BranchPredictor #(
                 end
             end
         end
-        disable predict_taken_comb_func;
     end
 
     always_comb begin : predict_next_comb_func  // predict_next_comb_func
@@ -131,7 +126,6 @@ module BranchPredictor #(
         if (predict_taken_comb) begin
             predict_next_comb=(lookup_hit_comb) ? (unsigned'(32'(target_reg[index]))) : (lookup_target_in);
         end
-        disable predict_next_comb_func;
     end
 
     always @(posedge clk) begin

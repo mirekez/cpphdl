@@ -29,21 +29,12 @@ module Writeback (
 ;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
 
 
     always_comb begin : mem_word_comb_func  // mem_word_comb_func
-        logic[31:0] shift;
-        shift=mem_addr_in & 'h3;
-        if (mem_split_in) begin
-            mem_word_comb=((mem_data_in >>> ((shift*'h8)))) | ((mem_data_hi_in <<< (((('h4 - shift))*'h8))));
-        end
-        else begin
-            mem_word_comb=mem_data_in;
-        end
-        disable mem_word_comb_func;
+        mem_word_comb=mem_data_in;
     end
 
     always_comb begin : regs_out_comb_func  // regs_out_comb_func
@@ -84,7 +75,6 @@ module Writeback (
                 end
             end
         end
-        disable regs_out_comb_func;
     end
 
     always_comb begin : regs_write_comb_func  // regs_write_comb_func
@@ -92,7 +82,6 @@ module Writeback (
         if (state_in.wb_op != Wb_pkg::WNONE) begin
             regs_write_comb=state_in.valid;
         end
-        disable regs_write_comb_func;
     end
 
     task _work (input logic reset);

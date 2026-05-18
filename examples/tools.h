@@ -56,6 +56,50 @@ inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const s
     return current_generated;
 }
 
+inline std::string ToolShellQuote(const std::filesystem::path& path)
+{
+    std::string text = path.string();
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+#if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES) && defined(TRIBE_IO_REGION_SIZE)
+inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_root)
+{
+    namespace fs = std::filesystem;
+
+    fs::path cpphdl = fs::current_path() / ".." / "cpphdl";
+    if (!fs::exists(cpphdl)) {
+        cpphdl = source_root / "build" / "cpphdl";
+    }
+    if (!fs::exists(cpphdl)) {
+        std::cout << "can't find cpphdl generator near build directory or source root\n";
+        return false;
+    }
+
+    std::string command;
+    command += ToolShellQuote(cpphdl);
+    command += " " + ToolShellQuote(source_root / "tribe" / "main.cpp");
+    command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
+    command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
+    command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+    command += " -I " + ToolShellQuote(source_root / "include");
+    command += " -I " + ToolShellQuote(source_root / "tribe" / "common");
+    command += " -I " + ToolShellQuote(source_root / "tribe" / "spec");
+    command += " -I " + ToolShellQuote(source_root / "tribe" / "devices");
+    return SystemEcho(command.c_str()) == 0;
+}
+#endif
+
 template<typename... Args>
 inline bool VerilatorCompileInFolder(std::string cpp_name, std::string folder_base, std::string top_name, const std::vector<std::string>& modules, const std::vector<std::string>& includes, Args&&... args);
 
@@ -112,6 +156,11 @@ inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string fold
 
 inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string folder_base, const std::filesystem::path& source_root)
 {
+#if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES) && defined(TRIBE_IO_REGION_SIZE)
+    if (!RegenerateTribeSvForVerilator(source_root)) {
+        return false;
+    }
+#endif
     return VerilatorCompileInFolder(cpp_name, folder_base, "Tribe", {"Predef_pkg",
               "Amo_pkg",
               "Trap_pkg",

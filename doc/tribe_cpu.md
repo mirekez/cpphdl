@@ -2,7 +2,7 @@
 
 ## About
 
-Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model is intended to run both as a native C++ simulation and as generated SystemVerilog through Verilator. The core implements a small in-order pipeline with instruction and data L1 caches, a shared L2 cache, CSR/trap support, optional interrupt support, optional Sv32 MMU/TLB support, and AXI4-style memory and device interfaces.
+Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model is intended to run both as a native C++ simulation and as generated SystemVerilog through Verilator. The core implements a small in-order pipeline with instruction and data L1 caches, a shared L2 cache, CSR/trap support, optional interrupt support, optional Sv32 MMU/TLB support, coherent AXI4-style memory ports, and an SoC wrapper with memory-mapped devices.
 
 The base implementation targets 32-bit integer software. Build-time configuration in `tribe/Config.h` selects optional blocks such as `ENABLE_ZICSR`, `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB`. The L2 memory data width is selected with `L2_AXI_WIDTH`; common test targets use 64, 128, and 256 bits. Main memory starts at `memory_base_in`, has runtime size `memory_size_in`, and is split into four L2 memory/device regions. The last region is used as uncached IO/MMIO space.
 
@@ -19,13 +19,13 @@ The top-level CPU is the `Tribe` module in `tribe/main.cpp`. It instantiates the
 | `Writeback` | `tribe/Writeback.h` | Architectural register writeback formatting. |
 | `CSR` | `tribe/CSR.h` | CSR, privilege, trap, and return-from-trap state. |
 | `MMU_TLB` | `tribe/MMU_TLB.h` | Optional Sv32 instruction/data address translation and page-table walking. |
-| `InterruptController` | `tribe/InterruptController.h` | Optional CLINT interrupt routing into CSR trap input. |
+| `InterruptController` | `tribe/InterruptController.h` | Optional CLINT and PLIC/external interrupt routing into CSR trap input. |
 | `File<32,32>` | `File.h` | Integer register file. |
 | `L1Cache` | `tribe/cache/L1Cache.h` | Separate instruction and data L1 caches. |
 | `L2Cache` | `tribe/cache/L2Cache.h` | Shared coherent L2 cache, AXI memory/device master ports, and external AXI slave ports. |
 | `BranchPredictor` | `tribe/BranchPredictor.h` | Small direct-mapped branch predictor. |
 
-The test and SoC wrapper code in `tribe/main.cpp` also instantiates RAM regions, an IO region mux, UART/CLINT devices, and optional accelerator test plumbing. Those wrappers are not part of the `Tribe` CPU module itself, but they define the default executable simulation environment.
+The executable test wrapper in `tribe/main.cpp` instantiates three RAM regions, an IO region mux, NS16550A UART, CLINT, PLIC, and Accelerator. `tribe/SoC/System.cpp` packages the same CPU and devices into a synthesizable-style `System` module where the first two DRAM regions remain outside the DUT and the third RAM/device region is inside the SoC.
 
 ## Main (Core)
 
@@ -45,6 +45,15 @@ Top-level `Tribe` ports:
 | `debug_immu_ptw_addr_out` | `uint32_t` | MMU debug: IMMU page-table-walk address. |
 | `debug_immu_busy_out` | `bool` | MMU debug: IMMU is walking or waiting. |
 | `debug_immu_fault_out` | `bool` | MMU debug: IMMU fault state. |
+| `debug_immu_paddr_out` | `uint32_t` | MMU debug: current IMMU translated physical address. |
+| `debug_icache_read_valid_out` | `bool` | I-cache debug: read response valid. |
+| `debug_icache_read_addr_out` | `uint32_t` | I-cache debug: response address tag. |
+| `debug_fetch_valid_out` | `bool` | Fetch path has a valid instruction for decode. |
+| `debug_memory_wait_out` | `bool` | Core memory path is stalling the pipeline. |
+| `debug_wb_load_ready_out` | `bool` | Writeback memory stage has a completed load. |
+| `debug_wb_mem_wait_out` | `bool` | Writeback-stage memory operation is still waiting. |
+| `debug_icache_read_in_out` | `bool` | I-cache read request debug mirror. |
+| `debug_icache_stall_in_out` | `bool` | I-cache stall input debug mirror. |
 | `debug_immu_last_addr_out` | `uint32_t` | MMU debug: last IMMU PTE address. |
 | `debug_immu_last_pte_out` | `uint32_t` | MMU debug: last IMMU PTE value. |
 | `debug_dmmu_ptw_read_out` | `bool` | MMU debug: DMMU page-table-walk read request. |
@@ -53,6 +62,34 @@ Top-level `Tribe` ports:
 | `debug_dmmu_fault_out` | `bool` | MMU debug: DMMU fault state. |
 | `debug_mmu_ptw_word_out` | `uint32_t` | MMU debug: 32-bit PTE word selected from L2 data. |
 | `debug_pc_out` | `uint32_t` | MMU debug: current architectural PC. |
+| `debug_satp_out` | `uint32_t` | CSR debug: current `satp`. |
+| `debug_mstatus_out` | `uint32_t` | CSR debug: current `mstatus`. |
+| `debug_mtvec_out` | `uint32_t` | CSR debug: current `mtvec`. |
+| `debug_mepc_out` | `uint32_t` | CSR debug: current `mepc`. |
+| `debug_mcause_out` | `uint32_t` | CSR debug: current `mcause`. |
+| `debug_mtval_out` | `uint32_t` | CSR debug: current `mtval`. |
+| `debug_sepc_out` | `uint32_t` | CSR debug: current `sepc`. |
+| `debug_stvec_out` | `uint32_t` | CSR debug: current `stvec`. |
+| `debug_scause_out` | `uint32_t` | CSR debug: current `scause`. |
+| `debug_stval_out` | `uint32_t` | CSR debug: current `stval`. |
+| `debug_irq_valid_out` | `bool` | Interrupt debug: selected pending interrupt is takeable. |
+| `debug_irq_cause_out` | `uint32_t` | Interrupt debug: selected cause number. |
+| `debug_irq_to_supervisor_out` | `bool` | Interrupt debug: selected interrupt delegates to S-mode. |
+| `debug_irq_mip_out` | `uint32_t` | Interrupt debug: merged pending bits. |
+| `debug_irq_mie_out` | `uint32_t` | Interrupt debug: enable bits from CSR. |
+| `debug_irq_mideleg_out` | `uint32_t` | Interrupt debug: delegation bits from CSR. |
+| `debug_priv_out` | `u<2>` | CSR debug: current privilege mode. |
+| `debug_ra_out` | `uint32_t` | Register debug: current x1/RA value. |
+| `debug_regs_write_out` | `bool` | Register debug: writeback wants to write a register. |
+| `debug_regs_write_actual_out` | `bool` | Register debug: writeback is not blocked by memory wait. |
+| `debug_regs_wr_id_out` | `uint8_t` | Register debug: destination register index. |
+| `debug_regs_data_out` | `uint32_t` | Register debug: writeback data. |
+| `debug_branch_taken_now_out` | `bool` | Execute debug: branch taken this cycle. |
+| `debug_branch_target_now_out` | `uint32_t` | Execute debug: resolved branch target. |
+| `debug_decode_instr_out` | `uint32_t` | Decode debug: instruction word entering decode. |
+| `debug_decode_pc_out` | `uint32_t` | Decode debug: PC entering decode. |
+| `debug_decode_br_out` | `uint8_t` | Decode debug: branch operation field. |
+| `debug_decode_imm_out` | `uint32_t` | Decode debug: decoded immediate. |
 | `sbi_set_timer_out` | `bool` | Local emulation of legacy SBI `set_timer` ECALL. |
 | `sbi_timer_lo_out` | `uint32_t` | Low 32 bits of the requested SBI timer compare value. |
 | `sbi_timer_hi_out` | `uint32_t` | High 32 bits of the requested SBI timer compare value. |
@@ -65,12 +102,15 @@ Top-level `Tribe` ports:
 | `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Cumulative sizes of the four L2 memory/device regions. |
 | `clint_msip_in` | `bool` | CLINT machine software interrupt pending input, when interrupts are enabled. |
 | `clint_mtip_in` | `bool` | CLINT machine timer interrupt pending input, when interrupts are enabled. |
+| `external_irq_in` | `bool` | External interrupt input, normally driven by PLIC when interrupts are enabled. |
 | `axi_in` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | External coherent AXI master access into L2. Used by DMA-style devices. |
 | `axi_out` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | L2 master ports toward RAM and device regions. |
 | `perf_out` | `TribePerf` | Per-cycle performance/stall/cache debug snapshot. |
 | `debugen_in` | `bool` | C++ simulation debug print enable flag. |
 
 The main combinational control in `Tribe` handles pipeline hazards, branch redirects, global memory wait, MMU page-table-walk arbitration, trap redirection, SBI timer emulation, I-cache/TLB invalidation, and late load forwarding. The DMMU and IMMU page-table walkers share the L2 data-side port with normal data-cache traffic; DMMU requests have priority over IMMU requests after normal data-cache reads/writes. The data MMU has a direct physical window for the IO region so MMIO is not translated by Sv32.
+
+`Tribe` itself does not contain the UART, CLINT, PLIC, DRAM, or accelerator. It exposes the L2 AXI master/slave ports and interrupt inputs needed by wrappers. The default simulation wrapper and the SoC wrapper connect those ports to concrete devices.
 
 ### Decode
 
@@ -277,12 +317,13 @@ Ports:
 | `priv_in` | `u<2>` | Current privilege mode. |
 | `clint_msip_in` | `bool` | Machine software interrupt from CLINT. |
 | `clint_mtip_in` | `bool` | Machine timer interrupt from CLINT. |
+| `external_irq_in` | `bool` | External interrupt request, normally PLIC output. |
 | `mip_out` | `uint32_t` | Merged interrupt-pending bits. |
 | `interrupt_valid_out` | `bool` | An enabled interrupt should be taken. |
 | `interrupt_cause_out` | `uint32_t` | Selected interrupt cause number. |
 | `interrupt_to_supervisor_out` | `bool` | Interrupt should trap to supervisor mode by delegation. |
 
-`InterruptController` merges hardware CLINT interrupt inputs with writable CSR pending bits, masks them with `mie`, applies privilege-aware global enable rules from `mstatus`, and reports one pending cause to the CSR/trap block. Machine timer/software interrupt support is the primary hardware path; supervisor and external pending bits can also be routed when CSR tests set them.
+`InterruptController` merges hardware CLINT interrupt inputs, external interrupt input, and writable CSR pending bits. It masks pending bits with `mie`, applies privilege-aware global enable rules from `mstatus`, applies `mideleg`, and reports one pending cause to the CSR/trap block. The external interrupt path is used by PLIC for Linux UART interrupts.
 
 ### MMU/TLB
 
@@ -321,9 +362,106 @@ Ports:
 
 The walker reads the level-1 PTE from the `satp` root page and, when needed, reads the level-0 PTE. It supports level-1 superpages and level-0 pages, checks valid/write/read combinations, checks A/D/R/W/X/U permissions, and reports instruction/load/store page faults through the main CSR/trap path. `SFENCE.VMA` clears cached translations.
 
+### Axi4RegionMux
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `slave_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | AXI slave side connected to an L2 uncached/device region. |
+| `masters_out` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>[N]` | AXI master sides connected to devices. |
+| `region_base_in` | `uint32_t[N]` | Device-local base address for each region. |
+| `region_size_in` | `uint32_t[N]` | Byte size of each device region. |
+
+`Axi4RegionMux` routes one AXI device-region port to several memory-mapped device responders. Regions are decoded by local address range. The mux preserves AXI channel IDs and returns read/write responses from the selected device. Tribe uses this mux for the IO region behind the L2 uncached port.
+
+### Axi4Ram
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | AXI access to RAM storage. |
+
+`Axi4Ram` is the common testbench and SoC RAM responder. It accepts single-beat AXI reads and writes, stores data at the configured beat width, and supports checkpoint serialization through its `_strobe(FILE*)` path in native C++ tests. The default Tribe executable wrapper uses three RAM instances; the SoC wrapper keeps two DRAMs in `SystemTest` and places the third memory region inside `System`.
+
+## SoC
+
+`tribe/SoC/System.cpp` defines a `System` DUT and a `SystemTest` wrapper. `System` integrates the `Tribe` core with the on-chip IO space, NS16550A UART, CLINT, PLIC, Accelerator, and the third internal AXI RAM region. `SystemTest` provides external `dram0` and `dram1` RAMs and converts realistic hardware configuration values into `System` input ports before running the same program modes as the corresponding Tribe targets.
+
+`System` ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `reset_pc_in` | `uint32_t` | Reset PC forwarded to `Tribe`. |
+| `boot_hartid_in` | `uint32_t` | Boot hart id forwarded as initial `a0`. |
+| `boot_dtb_addr_in` | `uint32_t` | Boot DTB address forwarded as initial `a1`. |
+| `boot_priv_in` | `u<2>` | Initial privilege mode. |
+| `memory_base_in` | `uint32_t` | Physical base of the memory map. |
+| `memory_size_in` | `uint32_t` | Total visible memory-map size. |
+| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Region sizes forwarded to L2. |
+| `uart_rx_valid_in` | `bool` | External UART RX byte valid. |
+| `uart_rx_data_in` | `uint8_t` | External UART RX byte. |
+| `uart_rx_ready_out` | `bool` | UART can accept another RX byte. |
+| `uart_tx_valid_out` | `bool` | UART transmitted a byte this cycle. |
+| `uart_tx_data_out` | `uint8_t` | UART transmitted byte. |
+| `perf_out` | `TribePerf` | CPU performance snapshot. |
+| `dmem_write_out` | `bool` | CPU debug data-memory write indication. |
+| `dmem_write_data_out` | `uint32_t` | CPU debug data-memory write data. |
+| `dmem_write_mask_out` | `uint8_t` | CPU debug data-memory write mask. |
+| `dmem_read_out` | `bool` | CPU debug data-memory read indication. |
+| `dmem_addr_out` | `uint32_t` | CPU debug data-memory address. |
+| `imem_read_addr_out` | `uint32_t` | CPU debug instruction-memory address. |
+| `debug_immu_ptw_read_out` | `bool` | Optional IMMU page-table-walk read mirror. |
+| `debug_immu_ptw_addr_out` | `uint32_t` | Optional IMMU page-table-walk address mirror. |
+| `debug_immu_busy_out` | `bool` | Optional IMMU busy mirror. |
+| `debug_immu_fault_out` | `bool` | Optional IMMU fault mirror. |
+| `debug_immu_paddr_out` | `uint32_t` | Optional IMMU translated physical address mirror. |
+| `debug_immu_last_addr_out` | `uint32_t` | Optional IMMU last PTE address mirror. |
+| `debug_immu_last_pte_out` | `uint32_t` | Optional IMMU last PTE value mirror. |
+| `debug_icache_read_valid_out` | `bool` | Optional I-cache read-valid mirror. |
+| `debug_icache_read_addr_out` | `uint32_t` | Optional I-cache read address mirror. |
+| `debug_fetch_valid_out` | `bool` | Optional fetch-valid mirror. |
+| `debug_memory_wait_out` | `bool` | Optional memory-wait mirror. |
+| `debug_wb_load_ready_out` | `bool` | Optional writeback load-ready mirror. |
+| `debug_wb_mem_wait_out` | `bool` | Optional writeback memory-wait mirror. |
+| `debug_icache_read_in_out` | `bool` | Optional I-cache read request mirror. |
+| `debug_icache_stall_in_out` | `bool` | Optional I-cache stall mirror. |
+| `debug_dmmu_ptw_read_out` | `bool` | Optional DMMU page-table-walk read mirror. |
+| `debug_dmmu_ptw_addr_out` | `uint32_t` | Optional DMMU page-table-walk address mirror. |
+| `debug_dmmu_busy_out` | `bool` | Optional DMMU busy mirror. |
+| `debug_dmmu_fault_out` | `bool` | Optional DMMU fault mirror. |
+| `debug_mmu_ptw_word_out` | `uint32_t` | Optional page-table-walker word mirror. |
+| `debug_pc_out` | `uint32_t` | Optional current PC mirror. |
+| `debug_satp_out` | `uint32_t` | Optional `satp` mirror. |
+| `debug_mstatus_out` | `uint32_t` | Optional `mstatus` mirror. |
+| `debug_mtvec_out` | `uint32_t` | Optional `mtvec` mirror. |
+| `debug_mepc_out` | `uint32_t` | Optional `mepc` mirror. |
+| `debug_mcause_out` | `uint32_t` | Optional `mcause` mirror. |
+| `debug_mtval_out` | `uint32_t` | Optional `mtval` mirror. |
+| `debug_sepc_out` | `uint32_t` | Optional `sepc` mirror. |
+| `debug_stvec_out` | `uint32_t` | Optional `stvec` mirror. |
+| `debug_scause_out` | `uint32_t` | Optional `scause` mirror. |
+| `debug_stval_out` | `uint32_t` | Optional `stval` mirror. |
+| `debug_priv_out` | `u<2>` | Optional privilege-mode mirror. |
+| `debug_ra_out` | `uint32_t` | Optional x1/RA mirror. |
+| `debug_regs_write_out` | `bool` | Optional register write-request mirror. |
+| `debug_regs_write_actual_out` | `bool` | Optional unblocked register write mirror. |
+| `debug_regs_wr_id_out` | `uint8_t` | Optional register destination mirror. |
+| `debug_regs_data_out` | `uint32_t` | Optional register write-data mirror. |
+| `debug_branch_taken_now_out` | `bool` | Optional branch-taken mirror. |
+| `debug_branch_target_now_out` | `uint32_t` | Optional branch-target mirror. |
+| `debug_decode_instr_out` | `uint32_t` | Optional decode instruction mirror. |
+| `debug_decode_pc_out` | `uint32_t` | Optional decode PC mirror. |
+| `debug_decode_br_out` | `uint8_t` | Optional decode branch-operation mirror. |
+| `debug_decode_imm_out` | `uint32_t` | Optional decode immediate mirror. |
+| `axi_out` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[2]` | External AXI master ports for `dram0` and `dram1` in `SystemTest`. |
+
+The SoC memory map mirrors the default Tribe executable wrapper: two external DRAM regions, one internal RAM region, and one uncached IO region. Inside IO, `Axi4RegionMux` maps UART at offset `0x0`, CLINT at offset `0x100`, Accelerator at offset `0xC100`, and PLIC at offset `0x10000`. PLIC source 1 is driven by the NS16550A UART IRQ and then routed back to `Tribe.external_irq_in`.
+
 ## Devices
 
-Device modules live in `tribe/devices`. They are memory-mapped AXI responders, except `Accelerator`, which also owns an AXI master DMA port. In the default Tribe simulation wrapper, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
+Device modules live in `tribe/devices`. They are memory-mapped AXI responders, except `Accelerator`, which also owns an AXI master DMA port. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
 
 ### IOUART
 
@@ -346,8 +484,12 @@ Ports:
 | `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | MMIO register access to the 16550-style register file. |
 | `uart_valid_out` | `bool` | One-cycle pulse when software writes the transmit holding register. |
 | `uart_data_out` | `uint8_t` | Transmitted byte. |
+| `uart_rx_valid_in` | `bool` | External RX byte valid. |
+| `uart_rx_data_in` | `uint8_t` | External RX byte. |
+| `uart_rx_ready_out` | `bool` | Single-byte RX buffer is empty and can accept a byte. |
+| `irq_out` | `bool` | UART interrupt request, used as PLIC source 1 in the wrappers. |
 
-`NS16550A` models enough of a 16550-compatible UART for firmware and Linux console probing. It implements the usual register offsets for RBR/THR/DLL, IER/DLM, IIR/FCR, LCR, MCR, LSR, MSR, and SCR. Transmit is modeled as always empty and ready by setting `LSR.THRE` and `LSR.TEMT`; receive is not modeled. DLAB selects divisor latch registers at offsets 0 and 1.
+`NS16550A` models enough of a 16550-compatible UART for firmware and Linux console probing. It implements the usual register offsets for RBR/THR/DLL, IER/DLM, IIR/FCR, LCR, MCR, LSR, MSR, and SCR. Transmit is modeled as always empty and ready by setting `LSR.THRE` and `LSR.TEMT`; THR-empty interrupts are intentionally not generated, so Linux can use polling for TX without interrupt storms. Receive uses a one-byte buffer, sets `LSR.DR`, returns `IIR=0x04` when RX interrupt enable is set, clears RBR on read, and asserts `irq_out` when MCR.OUT2 and IER.RDI are enabled. DLAB selects divisor latch registers at offsets 0 and 1.
 
 ### CLINT
 
@@ -362,7 +504,19 @@ Ports:
 | `msip_out` | `bool` | Machine software interrupt pending. |
 | `mtip_out` | `bool` | Machine timer interrupt pending. |
 
-`CLINT` implements the basic RISC-V local interrupt timer registers used by Tribe: `msip`, `mtimecmp`, and `mtime`. The timer increments every CPU model cycle. `mtip_out` is asserted when `mtime >= mtimecmp`; `msip_out` follows bit 0 of the `msip` register. The direct `set_mtimecmp_*` inputs let the core emulate legacy SBI timer calls without requiring firmware support.
+`CLINT` implements the basic RISC-V local interrupt timer registers used by Tribe: `msip`, `mtimecmp`, and `mtime`. The timer increments according to `TRIBE_CLINT_TICK_DIV_CONFIG`, which lets Linux runs slow the timer relative to CPU model cycles. `mtip_out` is asserted when `mtime >= mtimecmp`; `msip_out` follows bit 0 of the `msip` register. The direct `set_mtimecmp_*` inputs let the core emulate legacy SBI timer calls without requiring firmware support.
+
+### PLIC
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | MMIO access to PLIC priority, pending, enable, threshold, and claim/complete registers. |
+| `source_irq_in` | `bool[SOURCES]` | Level-sensitive interrupt source inputs. Source 0 is unused by convention. |
+| `external_irq_out` | `bool` | External interrupt line to the CPU interrupt controller. |
+
+`PLIC` is a compact one-context platform interrupt controller. It implements source priority registers, a pending register, one enable register, one threshold register, and a claim/complete register at the standard PLIC-style offsets. Device source levels are latched by small gateway state so a request remains claimable until the CPU reads the claim register. Writing the claimed source ID to the complete register releases the gateway, allowing a still-asserted device level to pend again on a later cycle. In the current wrappers, source 1 is connected to `NS16550A.irq_out`, and `external_irq_out` drives `Tribe.external_irq_in`.
 
 ### Accelerator
 

@@ -24,7 +24,6 @@ module RAM1PORT #(
     reg[((WIDTH + 'h7))/'h8-1:0][8-1:0] buffer[DEPTH];
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[WIDTH-1:0] q_out_reg_tmp;

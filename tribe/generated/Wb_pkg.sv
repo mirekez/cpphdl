@@ -1,6 +1,6 @@
 package Wb_pkg;
 
-enum {
+typedef enum {
     WNONE,
     ALU,
     MEM,

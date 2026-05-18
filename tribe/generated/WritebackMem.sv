@@ -3,6 +3,7 @@
 import Predef_pkg::*;
 import State_pkg::*;
 import Wb_pkg::*;
+import Amo_pkg::*;
 
 
 module WritebackMem (
@@ -20,6 +21,7 @@ module WritebackMem (
 ,   input wire[31:0] dcache_write_addr_in
 ,   input wire[31:0] dcache_write_data_in
 ,   input wire[7:0] dcache_write_mask_in
+,   input wire store_forward_enable_in
 ,   input wire hold_in
 ,   output wire load_ready_out
 ,   output wire[31:0] load_raw_out
@@ -31,6 +33,7 @@ module WritebackMem (
 
     // regs and combs
     reg[32-1:0] load_data_reg;
+    reg[32-1:0] load_addr_reg;
     reg load_data_valid_reg;
     reg[32-1:0] split_load_low_reg;
     reg[32-1:0] split_load_high_reg;
@@ -40,6 +43,8 @@ module WritebackMem (
     reg[2-1:0][32-1:0] store_forward_data_reg;
     reg[2-1:0][8-1:0] store_forward_mask_reg;
     reg[2-1:0] store_forward_valid_reg;
+    logic held_load_valid_comb;
+;
     logic split_load_current_low_valid_comb;
 ;
     logic split_load_current_high_valid_comb;
@@ -64,10 +69,10 @@ module WritebackMem (
 ;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[32-1:0] load_data_reg_tmp;
+    logic[32-1:0] load_addr_reg_tmp;
     logic load_data_valid_reg_tmp;
     logic[32-1:0] split_load_low_reg_tmp;
     logic[32-1:0] split_load_high_reg_tmp;
@@ -81,22 +86,22 @@ module WritebackMem (
 
     always_comb begin : split_load_current_low_valid_comb_func  // split_load_current_low_valid_comb_func
         split_load_current_low_valid_comb=dcache_read_valid_in && (dcache_read_addr_in == split_load_low_addr_in);
-        disable split_load_current_low_valid_comb_func;
     end
 
     always_comb begin : split_load_low_ready_comb_func  // split_load_low_ready_comb_func
         split_load_low_ready_comb=split_load_low_valid_reg || split_load_current_low_valid_comb;
-        disable split_load_low_ready_comb_func;
     end
 
     always_comb begin : split_load_current_high_valid_comb_func  // split_load_current_high_valid_comb_func
         split_load_current_high_valid_comb=dcache_read_valid_in && (dcache_read_addr_in == split_load_high_addr_in);
-        disable split_load_current_high_valid_comb_func;
     end
 
     always_comb begin : split_load_high_ready_comb_func  // split_load_high_ready_comb_func
         split_load_high_ready_comb=split_load_high_valid_reg || split_load_current_high_valid_comb;
-        disable split_load_high_ready_comb_func;
+    end
+
+    always_comb begin : held_load_valid_comb_func  // held_load_valid_comb_func
+        held_load_valid_comb=load_data_valid_reg && (unsigned'(32'(load_addr_reg)) == alu_result_in);
     end
 
     always_comb begin : load_ready_comb_func  // load_ready_comb_func
@@ -104,19 +109,16 @@ module WritebackMem (
             load_ready_comb=split_load_low_ready_comb && split_load_high_ready_comb;
         end
         else begin
-            load_ready_comb=(state_in.valid && (state_in.wb_op == Wb_pkg::MEM)) && ((load_data_valid_reg || ((dcache_read_valid_in && (dcache_read_addr_in == alu_result_in)))));
+            load_ready_comb=(state_in.valid && (state_in.wb_op == Wb_pkg::MEM)) && ((held_load_valid_comb || ((dcache_read_valid_in && (dcache_read_addr_in == alu_result_in)))));
         end
-        disable load_ready_comb_func;
     end
 
     always_comb begin : split_load_low_data_comb_func  // split_load_low_data_comb_func
         split_load_low_data_comb=(split_load_low_valid_reg) ? (unsigned'(32'(split_load_low_reg))) : (((split_load_current_low_valid_comb) ? (dcache_read_data_in) : (unsigned'(32'('h0)))));
-        disable split_load_low_data_comb_func;
     end
 
     always_comb begin : split_load_high_data_comb_func  // split_load_high_data_comb_func
         split_load_high_data_comb=(split_load_high_valid_reg) ? (unsigned'(32'(split_load_high_reg))) : (((split_load_current_high_valid_comb) ? (dcache_read_data_in) : (unsigned'(32'('h0)))));
-        disable split_load_high_data_comb_func;
     end
 
     always_comb begin : load_raw_comb_func  // load_raw_comb_func
@@ -130,16 +132,18 @@ module WritebackMem (
         logic[31:0] diff;
         logic[7:0] store_mask;
         logic[31:0] shift;
+        logic allow_store_forward;
         if (split_load_in) begin
             shift=((alu_result_in & 'h3))*'h8;
             raw=((split_load_low_data_comb >>> shift)) | ((split_load_high_data_comb <<< (('h20 - shift))));
         end
         else begin
-            raw=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : (dcache_read_data_in);
+            raw=(held_load_valid_comb) ? (unsigned'(32'(load_data_reg))) : (dcache_read_data_in);
         end
         result=raw;
-        load_addr=alu_result_in;
-        if (store_forward_valid_reg['h1]) begin
+        load_addr=(held_load_valid_comb) ? (unsigned'(32'(load_addr_reg))) : (dcache_read_addr_in);
+        allow_store_forward=store_forward_enable_in && (state_in.amo_op == Amo_pkg::AMONONE);
+        if (allow_store_forward && store_forward_valid_reg['h1]) begin
             store_addr=store_forward_addr_reg['h1];
             store_data=store_forward_data_reg['h1];
             store_mask=store_forward_mask_reg['h1];
@@ -168,7 +172,7 @@ module WritebackMem (
                 result=((result & ~'hFF000000)) | ((store_byte <<< 'h18));
             end
         end
-        if (store_forward_valid_reg['h0]) begin
+        if (allow_store_forward && store_forward_valid_reg['h0]) begin
             store_addr=store_forward_addr_reg['h0];
             store_data=store_forward_data_reg['h0];
             store_mask=store_forward_mask_reg['h0];
@@ -198,7 +202,6 @@ module WritebackMem (
             end
         end
         load_raw_comb=result;
-        disable load_raw_comb_func;
     end
 
     always_comb begin : load_result_comb_func  // load_result_comb_func
@@ -222,7 +225,6 @@ module WritebackMem (
             load_result_comb=unsigned'(16'(raw));
         end
         endcase
-        disable load_result_comb_func;
     end
 
     always_comb begin : wb_mem_data_comb_func  // wb_mem_data_comb_func
@@ -230,14 +232,12 @@ module WritebackMem (
             wb_mem_data_comb=split_load_low_data_comb;
         end
         else begin
-            wb_mem_data_comb=(load_data_valid_reg) ? (unsigned'(32'(load_data_reg))) : ((((((state_in.valid && (state_in.wb_op == Wb_pkg::MEM)) && dcache_read_valid_in) && (dcache_read_addr_in == alu_result_in))) ? (dcache_read_data_in) : (unsigned'(32'('h0)))));
+            wb_mem_data_comb=(held_load_valid_comb) ? (unsigned'(32'(load_data_reg))) : (((((state_in.valid && (state_in.wb_op == Wb_pkg::MEM)) && dcache_read_valid_in)) ? (dcache_read_data_in) : (unsigned'(32'('h0)))));
         end
-        disable wb_mem_data_comb_func;
     end
 
     always_comb begin : wb_mem_data_hi_comb_func  // wb_mem_data_hi_comb_func
         wb_mem_data_hi_comb=(split_load_in) ? (split_load_high_data_comb) : (unsigned'(32'('h0)));
-        disable wb_mem_data_hi_comb_func;
     end
 
     task _work (input logic reset);
@@ -250,36 +250,38 @@ module WritebackMem (
                 store_forward_mask_reg_tmp['h1] = store_forward_mask_reg['h0];
                 store_forward_valid_reg_tmp['h1] = store_forward_valid_reg['h0];
             end
-            store_forward_addr_reg_tmp['h0] = dcache_write_addr_in;
-            store_forward_data_reg_tmp['h0] = dcache_write_data_in;
-            store_forward_mask_reg_tmp['h0] = dcache_write_mask_in;
-            store_forward_valid_reg_tmp['h0] = 1;
+            store_forward_addr_reg_tmp['h0] = unsigned'(32'(dcache_write_addr_in));
+            store_forward_data_reg_tmp['h0] = unsigned'(32'(dcache_write_data_in));
+            store_forward_mask_reg_tmp['h0] = unsigned'(8'(dcache_write_mask_in));
+            store_forward_valid_reg_tmp['h0] = unsigned'(1'(1));
         end
         if (hold_in) begin
             if (split_load_in) begin
                 if (split_load_current_low_valid_comb) begin
-                    split_load_low_reg_tmp = dcache_read_data_in;
-                    split_load_low_valid_reg_tmp = 1;
+                    split_load_low_reg_tmp = unsigned'(32'(dcache_read_data_in));
+                    split_load_low_valid_reg_tmp = unsigned'(1'(1));
                 end
                 if (split_load_current_high_valid_comb) begin
-                    split_load_high_reg_tmp = dcache_read_data_in;
-                    split_load_high_valid_reg_tmp = 1;
+                    split_load_high_reg_tmp = unsigned'(32'(dcache_read_data_in));
+                    split_load_high_valid_reg_tmp = unsigned'(1'(1));
                 end
             end
             else begin
                 if (((state_in.valid && (state_in.wb_op == Wb_pkg::MEM)) && dcache_read_valid_in) && (dcache_read_addr_in == alu_result_in)) begin
-                    load_data_reg_tmp = dcache_read_data_in;
-                    load_data_valid_reg_tmp = 1;
+                    load_data_reg_tmp = unsigned'(32'(dcache_read_data_in));
+                    load_addr_reg_tmp = unsigned'(32'(dcache_read_addr_in));
+                    load_data_valid_reg_tmp = unsigned'(1'(1));
                 end
             end
         end
         else begin
-            load_data_valid_reg_tmp = 0;
-            split_load_low_valid_reg_tmp = 0;
-            split_load_high_valid_reg_tmp = 0;
+            load_data_valid_reg_tmp = unsigned'(1'(0));
+            split_load_low_valid_reg_tmp = unsigned'(1'(0));
+            split_load_high_valid_reg_tmp = unsigned'(1'(0));
         end
         if (reset) begin
             load_data_reg_tmp = '0;
+            load_addr_reg_tmp = '0;
             load_data_valid_reg_tmp = '0;
             split_load_low_reg_tmp = '0;
             split_load_high_reg_tmp = '0;
@@ -298,6 +300,7 @@ module WritebackMem (
 
     always @(posedge clk) begin
         load_data_reg_tmp = load_data_reg;
+        load_addr_reg_tmp = load_addr_reg;
         load_data_valid_reg_tmp = load_data_valid_reg;
         split_load_low_reg_tmp = split_load_low_reg;
         split_load_high_reg_tmp = split_load_high_reg;
@@ -311,6 +314,7 @@ module WritebackMem (
         _work(reset);
 
         load_data_reg <= load_data_reg_tmp;
+        load_addr_reg <= load_addr_reg_tmp;
         load_data_valid_reg <= load_data_valid_reg_tmp;
         split_load_low_reg <= split_load_low_reg_tmp;
         split_load_high_reg <= split_load_high_reg_tmp;

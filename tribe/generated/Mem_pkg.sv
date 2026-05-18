@@ -1,6 +1,6 @@
 package Mem_pkg;
 
-enum {
+typedef enum {
     MNONE,
     LOAD,
     STORE

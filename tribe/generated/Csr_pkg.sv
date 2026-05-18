@@ -1,6 +1,6 @@
 package Csr_pkg;
 
-enum {
+typedef enum {
     CNONE,
     CSRRW,
     CSRRS,
