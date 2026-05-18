@@ -236,6 +236,8 @@ public:
         wb_mem.dcache_write_addr_in = dcache.mem_addr_out;
         wb_mem.dcache_write_data_in = dcache.mem_write_data_out;
         wb_mem.dcache_write_mask_in = dcache.mem_write_mask_out;
+        wb_mem.store_forward_enable_in = _ASSIGN(
+            (uint32_t)wb_mem.alu_result_in() < memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
         wb_mem.hold_in = _ASSIGN(memory_wait_comb_func());
         wb_mem.__inst_name = __inst_name + "/wb_mem";
         wb_mem._assign();
@@ -2455,7 +2457,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "", uint64_t checkpoint_save_after_delay = 0)
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "")
     {
         std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
         if (label.empty()) {
@@ -2631,7 +2633,6 @@ public:
         bool expected_marker_seen = false;
         bool checkpoint_save_after_seen = false;
         bool checkpoint_save_after_completed = false;
-        uint64_t checkpoint_save_after_cycle = 0;
         bool mirrored_uart_needs_newline = false;
         if (checkpoint_load_file.empty()) {
             init_uart_script_state(scripted_uart_after.empty());
@@ -2690,7 +2691,6 @@ public:
                 !checkpoint_save_after_seen &&
                 captured_output.find(checkpoint_save_after) != std::string::npos) {
                 checkpoint_save_after_seen = true;
-                checkpoint_save_after_cycle = perf_clocks + checkpoint_save_after_delay;
             }
             if (!(bool)uart_script_enabled_reg && !scripted_uart_input.empty() &&
                 captured_output.find(scripted_uart_after) != std::string::npos) {
@@ -2724,8 +2724,7 @@ public:
             else {
                 FILE* checkpoint_out = nullptr;
                 bool checkpoint_due = !checkpoint_saved && !checkpoint_save_file.empty() &&
-                    ((checkpoint_save_cycle && perf_clocks + 1 == checkpoint_save_cycle) ||
-                     (checkpoint_save_after_seen && perf_clocks + 1 >= checkpoint_save_after_cycle));
+                    ((checkpoint_save_cycle && perf_clocks + 1 == checkpoint_save_cycle) || checkpoint_save_after_seen);
                 if (checkpoint_due) {
                     checkpoint_out = fopen(checkpoint_save_file.c_str(), "wb");
                     if (!checkpoint_out) {
@@ -3187,7 +3186,6 @@ int main (int argc, char** argv)
     std::string checkpoint_save_file;
     uint64_t checkpoint_save_cycle = 0;
     std::string checkpoint_save_after;
-    uint64_t checkpoint_save_after_delay = 0;
     bool append_output = false;
     bool mirror_uart_output = false;
     bool interactive_uart_input = false;
@@ -3290,10 +3288,6 @@ int main (int argc, char** argv)
         }
         if (strcmp(argv[i], "--checkpoint-save-after") == 0 && i + 1 < argc) {
             checkpoint_save_after = argv[++i];
-            continue;
-        }
-        if (strcmp(argv[i], "--checkpoint-save-after-delay") == 0 && i + 1 < argc) {
-            checkpoint_save_after_delay = std::stoull(argv[++i], nullptr, 0);
             continue;
         }
         if (strcmp(argv[i], "--append-output") == 0) {
@@ -3418,7 +3412,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input, checkpoint_save_after, checkpoint_save_after_delay))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input, checkpoint_save_after))
     );
 }
 
