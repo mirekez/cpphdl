@@ -51,11 +51,9 @@ private:
     reg<u8> uart_data_reg;
     reg<u1> rx_valid_reg;
     reg<u8> rx_data_reg;
-    // Kept in the checkpoint stream for compatibility with older saved Linux
-    // states. RBR no longer uses this duplicate path functionally.
+    // Suppresses an immediate duplicate RBR read after the accepted bus read
+    // has already consumed the single-byte receive buffer.
     reg<u1> rbr_duplicate_valid_reg;
-    reg<u8> rbr_duplicate_data_reg;
-    reg<u1> tx_irq_pending_reg;
 
 #ifndef SYNTHESIS
     bool trace_uart() const
@@ -216,7 +214,7 @@ public:
         if (read_valid_reg && axi_in.rready_in()) {
 #ifndef SYNTHESIS
             if (trace_uart()) {
-                std::print("uart-read addr={} data={:02x} ier={:02x} iir={:02x} lsr={:02x} mcr={:02x} rxv={} txp={} irq={}\n",
+                std::print("uart-read addr={} data={:02x} ier={:02x} iir={:02x} lsr={:02x} mcr={:02x} rxv={} irq={}\n",
                     (uint32_t)((uint32_t)read_addr_reg & 7u),
                     (uint32_t)((logic<DATA_WIDTH>)read_data_reg).bits(((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8 + 7, ((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8),
                     (uint32_t)(uint8_t)ier_reg,
@@ -224,7 +222,6 @@ public:
                     (uint32_t)(uint8_t)(0x60 | (rx_valid_reg ? 0x01 : 0x00)),
                     (uint32_t)(uint8_t)mcr_reg,
                     (bool)rx_valid_reg,
-                    (bool)tx_irq_pending_reg,
                     irq_comb_func());
             }
 #endif
@@ -252,8 +249,8 @@ public:
                 else {
 #ifndef SYNTHESIS
                     if (trace_uart()) {
-                        std::print("uart-thr-write data={:02x} ier={:02x} txp={} irq={}\n",
-                            data, (uint32_t)(uint8_t)ier_reg, (bool)tx_irq_pending_reg, irq_comb_func());
+                        std::print("uart-thr-write data={:02x} ier={:02x} irq={}\n",
+                            data, (uint32_t)(uint8_t)ier_reg, irq_comb_func());
                     }
 #endif
                     uart_data_reg._next = data;
@@ -267,12 +264,11 @@ public:
                 else {
                     // TX is polling-only in this model. LSR reports THR/TEMT
                     // ready, but ETBEI is not converted into an interrupt.
-                    tx_irq_pending_reg._next = false;
                     ier_reg._next = data;
 #ifndef SYNTHESIS
                     if (std::getenv("TRIBE_TRACE_UART_RX") || trace_uart()) {
-                        std::print("uart-ier-write data={:02x} old={:02x} txp={} irq={}\n",
-                            data, (uint32_t)(uint8_t)ier_reg, (bool)tx_irq_pending_reg, irq_comb_func());
+                        std::print("uart-ier-write data={:02x} old={:02x} irq={}\n",
+                            data, (uint32_t)(uint8_t)ier_reg, irq_comb_func());
                     }
 #endif
                 }
@@ -311,8 +307,6 @@ public:
             rx_valid_reg.clr();
             rx_data_reg.clr();
             rbr_duplicate_valid_reg.clr();
-            rbr_duplicate_data_reg.clr();
-            tx_irq_pending_reg.clr();
         }
     }
 
@@ -337,7 +331,5 @@ public:
         rx_valid_reg.strobe(checkpoint_fd);
         rx_data_reg.strobe(checkpoint_fd);
         rbr_duplicate_valid_reg.strobe(checkpoint_fd);
-        rbr_duplicate_data_reg.strobe(checkpoint_fd);
-        tx_irq_pending_reg.strobe(checkpoint_fd);
     }
 };
