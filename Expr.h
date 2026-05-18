@@ -36,6 +36,7 @@ struct Expr
         EXPR_CAST,
         EXPR_PAREN,
         EXPR_INIT,
+        EXPR_CAT,
         EXPR_TRAIT,
         EXPR_RETURN,
         EXPR_FOR,
@@ -122,6 +123,7 @@ struct Expr
             case EXPR_CAST: str << "EXPR_CAST"; break;
             case EXPR_PAREN: str << "EXPR_PAREN"; break;
             case EXPR_INIT: str << "EXPR_INIT"; break;
+            case EXPR_CAT: str << "EXPR_CAT"; break;
             case EXPR_TRAIT: str << "EXPR_TRAIT"; break;
             case EXPR_RETURN: str << "EXPR_RETURN"; break;
             case EXPR_FOR: str << "EXPR_FOR"; break;

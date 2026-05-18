@@ -659,6 +659,24 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return ret;
             }
             return indent_str + sub[0].str();
+        case EXPR_CAT:
+        {
+            std::string ret = indent_str + "{";
+            bool first = true;
+            for (auto& e : sub) {
+                if (e.type == EXPR_NONE) {
+                    continue;
+                }
+                if (!first) {
+                    ret += ", ";
+                }
+                first = false;
+                e.flags |= flags;
+                ret += e.str();
+            }
+            ret += "}";
+            return ret;
+        }
         case EXPR_TRAIT:
             ASSERT(sub.size()==1);
             if (value == "sizeof") {

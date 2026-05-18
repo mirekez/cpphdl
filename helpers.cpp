@@ -820,6 +820,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            }
 //            return call;
             if (CE->getNumArgs()) {
+                std::string canonical_type = CE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy());
+                if (str.find("cpphdl::cat<") == 0 || canonical_type.find("cpphdl::cat<") != std::string::npos) {
+                    cpphdl::Expr expr{"cat", cpphdl::Expr::EXPR_CAT};
+                    for (unsigned i = 0; i < CE->getNumArgs(); ++i) {
+                        expr.sub.emplace_back(exprToExpr(CE->getArg(i)));
+                    }
+                    return expr;
+                }
                 if (str.find("std::basic_format_string") == 0) {
                     return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};  // we use it to determine std::print
                 }
