@@ -20,8 +20,10 @@ Content may change significantly before final approval.
 SystemVerilog:
 
 ```systemverilog
+    output wire out
+);
 assign out = a + b;
-child.valid_in = valid;
+assign valid_out = valid;
 ```
 
 CppHDL:
@@ -31,7 +33,7 @@ _PORT(u<32>) out = _ASSIGN(a_in() + b_in());
 
 void _assign()
 {
-    child.valid_in = _ASSIGN_REG(valid_reg);
+    valid_out = _ASSIGN_REG(valid_reg);
 }
 ```
 
@@ -49,7 +51,7 @@ end
 
 always_ff @(posedge clk) begin
     if (reset) valid <= 1'b0;
-    else valid <= enable;
+    else valid <= enable_in;
 end
 ```
 
