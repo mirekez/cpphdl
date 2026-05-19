@@ -4,6 +4,9 @@
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
+#if !defined(SYNTHESIS)
+#include "cpphdl_vcd.h"
+#endif
 #include <print>
 
 using namespace cpphdl;
@@ -108,6 +111,16 @@ public:
     void _assign()
     {
     }
+
+#if !defined(SYNTHESIS)
+    void add_vcd_signals(VcdFile& vcd, const std::string& prefix)
+    {
+        vcd.signals.push_back({prefix + "data_reg", WIDTH * DEPTH, &data_reg});
+        vcd.signals.push_back({prefix + "head_reg", INDEX_BITS, &head_reg});
+        vcd.signals.push_back({prefix + "tail_reg", INDEX_BITS, &tail_reg});
+        vcd.signals.push_back({prefix + "count_reg", COUNT_BITS, &count_reg});
+    }
+#endif
 };
 
 /////////////////////////////////////////////////////////////////////////
@@ -141,6 +154,8 @@ long sys_clock = -1;
 template<size_t WIDTH, size_t DEPTH>
 class TestBuffer : public Module
 {
+    static constexpr long VCD_MAX_SAMPLES = 4096;
+
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
 #else
@@ -161,6 +176,7 @@ class TestBuffer : public Module
     bool ready_out_value = false;
     bool valid_out_value = false;
     logic<WIDTH> data_out_value;
+    VcdFile vcd;
 
     uint32_t next_prbs()
     {
@@ -310,6 +326,21 @@ public:
     {
     }
 
+    void setup_vcd()
+    {
+        vcd.signals.clear();
+        vcd.signals.push_back({"valid_in_reg", 1, &valid_in_reg});
+        vcd.signals.push_back({"ready_in_reg", 1, &ready_in_reg});
+        vcd.signals.push_back({"data_in_reg", WIDTH, &data_in_reg});
+        vcd.signals.push_back({"ready_out", 1, &ready_out_value});
+        vcd.signals.push_back({"valid_out", 1, &valid_out_value});
+        vcd.signals.push_back({"data_out", WIDTH, &data_out_value});
+#ifndef VERILATOR
+        dut.add_vcd_signals(vcd, "dut.");
+#endif
+        vcd.create("output.vcd");
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -326,6 +357,8 @@ public:
         _assign();
         _work(true);
         _work_neg(true);
+        setup_vcd();
+        vcd.sample(0);
 
         int cycles = 80000;
         while (--cycles) {
@@ -334,6 +367,9 @@ public:
             _work(false);
             _strobe_neg();
             _work_neg(false);
+            if (sys_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(sys_clock);
+            }
 
             if (produced >= 20000 && pending.empty()) {
                 break;

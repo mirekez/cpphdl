@@ -48,7 +48,6 @@ struct VcdFile
         char id = '!';
 
         for (const auto& s : signals) {
-            const unsigned bytes = (s.width + 7) / 8;
             const uint8_t* data  = static_cast<const uint8_t*>(s.ptr);
 
             if (s.width == 1) {

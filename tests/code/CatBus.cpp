@@ -294,6 +294,10 @@ public:
 
 int main(int argc, char** argv)
 {
+#ifndef VERILATOR
+    std::filesystem::current_path(std::filesystem::absolute(argv[0]).parent_path());
+#endif
+
     bool noveril = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {

@@ -62,6 +62,7 @@ template<size_t WIDTH>
 logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
 {
     logic<WIDTH> result{};
+    std::memset(result.bytes, 0, sizeof(result.bytes));
     uint64_t raw = value;
     for (size_t i = 0; i < WIDTH; ++i) {
         result.set(i, (raw >> i) & 1);
@@ -112,6 +113,7 @@ struct cat : logic<SUM<N...>()>
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
+        std::memset(this->bytes, 0, sizeof(this->bytes));
         size_t high_offset = WIDTH;
         append(high_offset, cat_to_logic(args)...);
     }

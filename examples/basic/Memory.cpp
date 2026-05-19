@@ -4,6 +4,9 @@
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
+#if !defined(SYNTHESIS)
+#include "cpphdl_vcd.h"
+#endif
 #include <print>
 
 using namespace cpphdl;
@@ -75,6 +78,13 @@ public:
     }
 
     void _assign() {}
+
+#if !defined(SYNTHESIS)
+    void add_vcd_signals(VcdFile& vcd, const std::string& prefix)
+    {
+        vcd.signals.push_back({prefix + "data_out_reg", MEM_WIDTH_BYTES * 8, &data_out_reg});
+    }
+#endif
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -103,6 +113,8 @@ long sys_clock = -1;
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
 class TestMemory : Module
 {
+    static constexpr long VCD_MAX_SAMPLES = 4096;
+
 #ifdef VERILATOR
     VERILATOR_MODEL mem;
 #else
@@ -122,6 +134,7 @@ class TestMemory : Module
     bool                     error = false;
 
     logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
+    VcdFile vcd;
 
     memory<uint8_t,MEM_WIDTH_BYTES,MEM_DEPTH> mem_copy;
 
@@ -263,6 +276,25 @@ public:
     {
     }
 
+    void setup_vcd()
+    {
+        vcd.signals.clear();
+        vcd.signals.push_back({"write_addr_reg", clog2(MEM_DEPTH), &write_addr_reg});
+        vcd.signals.push_back({"data_reg", MEM_WIDTH_BYTES * 8, &data_reg});
+        vcd.signals.push_back({"write_reg", 1, &write_reg});
+        vcd.signals.push_back({"read_addr_reg", clog2(MEM_DEPTH), &read_addr_reg});
+        vcd.signals.push_back({"read_reg", 1, &read_reg});
+        vcd.signals.push_back({"was_read", 1, &was_read});
+        vcd.signals.push_back({"was_read_addr", clog2(MEM_DEPTH), &was_read_addr});
+        vcd.signals.push_back({"to_write_cnt", 16, &to_write_cnt});
+        vcd.signals.push_back({"to_read_cnt", 16, &to_read_cnt});
+        vcd.signals.push_back({"mem_read_data", MEM_WIDTH_BYTES * 8, &mem_read_data});
+#ifndef VERILATOR
+        mem.add_vcd_signals(vcd, "dut.");
+#endif
+        vcd.create("output.vcd");
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -278,6 +310,8 @@ public:
         _assign();
         _work(1);
         _work_neg(1);
+        setup_vcd();
+        vcd.sample(0);
         int cycles = 100000;
         while (--cycles) {
             _strobe();
@@ -285,6 +319,9 @@ public:
             _work(0);
             _strobe_neg();
             _work_neg(0);
+            if (sys_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(sys_clock);
+            }
 
             if (error) {
                 break;

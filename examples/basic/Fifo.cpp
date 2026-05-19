@@ -128,6 +128,17 @@ public:
         mem.debugen_in  = debugen_in;
         mem._assign();
     }
+
+#if !defined(SYNTHESIS)
+    void add_vcd_signals(VcdFile& vcd, const std::string& prefix)
+    {
+        vcd.signals.push_back({prefix + "wp_reg", clog2(FIFO_DEPTH), &wp_reg});
+        vcd.signals.push_back({prefix + "rp_reg", clog2(FIFO_DEPTH), &rp_reg});
+        vcd.signals.push_back({prefix + "full_reg", 1, &full_reg});
+        vcd.signals.push_back({prefix + "afull_reg", 1, &afull_reg});
+        mem.add_vcd_signals(vcd, prefix + "mem.");
+    }
+#endif
 };
 /////////////////////////////////////////////////////////////////////////
 
@@ -156,6 +167,8 @@ long sys_clock = -1;
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
 {
+    static constexpr long VCD_MAX_SAMPLES = 4096;
+
 #ifdef VERILATOR
     VERILATOR_MODEL fifo;
 #else
@@ -174,6 +187,7 @@ class TestFifo : public Module
     bool        error = false;
 
     logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
+    VcdFile vcd;
 
     std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
 
@@ -302,6 +316,25 @@ public:
     {
     }
 
+    void setup_vcd()
+    {
+        vcd.signals.clear();
+        vcd.signals.push_back({"read_addr", clog2(FIFO_DEPTH), &read_addr});
+        vcd.signals.push_back({"write_addr", clog2(FIFO_DEPTH), &write_addr});
+        vcd.signals.push_back({"data_reg", FIFO_WIDTH_BYTES * 8, &data_reg});
+        vcd.signals.push_back({"write_reg", 1, &write_reg});
+        vcd.signals.push_back({"read_reg", 1, &read_reg});
+        vcd.signals.push_back({"was_read", 1, &was_read});
+        vcd.signals.push_back({"clear_reg", 1, &clear_reg});
+        vcd.signals.push_back({"to_write_cnt", 16, &to_write_cnt});
+        vcd.signals.push_back({"to_read_cnt", 16, &to_read_cnt});
+        vcd.signals.push_back({"fifo_read_data", FIFO_WIDTH_BYTES * 8, &fifo_read_data});
+#ifndef VERILATOR
+        fifo.add_vcd_signals(vcd, "dut.");
+#endif
+        vcd.create("output.vcd");
+    }
+
     bool run()
     {
         for (size_t i=0; i < FIFO_DEPTH; ++i) {
@@ -322,6 +355,8 @@ public:
         _assign();
         _work(1);
         _work_neg(1);
+        setup_vcd();
+        vcd.sample(0);
         int cycles = 100000;
         while (--cycles) {
             _strobe();
@@ -329,6 +364,9 @@ public:
             _work(0);
             _strobe_neg();
             _work_neg(0);
+            if (sys_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(sys_clock);
+            }
 
             if (error) {
                 break;
