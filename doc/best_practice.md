@@ -58,7 +58,7 @@ CppHDL:
 
 ```cpp
 reg<u<8>> count_reg;
-reg<bool> valid_reg;
+reg<u1> valid_reg;
 
 void _work(bool reset)
 {

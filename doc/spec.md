@@ -21,9 +21,7 @@ SystemVerilog:
 
 ```systemverilog
 assign out = a + b;
-child.valid_i = valid;
-child.data_i = data[i];
-child.result_i[i] = result[i] ^ mask;
+child.valid_in = valid;
 ```
 
 CppHDL:
@@ -33,11 +31,7 @@ _PORT(u<32>) out = _ASSIGN(a_in() + b_in());
 
 void _assign()
 {
-    child.valid_in = _ASSIGN(valid_reg);
-    for (int i = 0; i < LANES; i++) {
-        child.data_in[i] = _ASSIGN_I(data_reg[i]);
-        child.result_in[i] = _ASSIGN_I(result_reg[i] ^ mask_reg);
-    }
+    child.valid_in = _ASSIGN_REG(valid_reg);
 }
 ```
 
@@ -63,7 +57,7 @@ CppHDL:
 
 ```cpp
 reg<u<8>> count_reg;
-reg<bool> valid_reg;
+reg<u1> valid_reg;
 
 void _work(bool reset)
 {
@@ -94,21 +88,15 @@ end
 CppHDL:
 
 ```cpp
-bool hit_comb;
-bool& hit_comb_func()
+bool hit_comb_func()
 {
-    hit_comb = valid_reg && tag_reg == req_tag_in();
-    return hit_comb;
+    return valid_reg && tag_reg == req_tag_in();
 }
 
-u<32> read_data_comb;
-u<32>& read_data_comb_func()
+u<32> read_data_comb_func()
 {
-    read_data_comb = hit_comb_func() ? line_reg[word_in()] : u<32>(0);
-    return read_data_comb;
+    return hit_comb_func() ? line_reg[word_in()] : u<32>(0);
 }
-
-_PORT(u<32>) read_data_out = _ASSIGN_COMB(read_data_comb_func());
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
@@ -118,7 +106,7 @@ void _strobe()
 {
     count_reg.strobe();
     valid_reg.strobe();
-    memory.apply();
+    member._strobe();
 }
 ```
 
