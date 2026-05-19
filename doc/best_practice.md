@@ -370,7 +370,7 @@ Use `array<T,N>` for packed arrays and `memory<T,WIDTH,DEPTH>` for memories.
 
 CppHDL can run any C++ in native simulation, but converted RTL should use a synthesizable subset:
 
-* Keep variables declared before complex statements when possible.
+* Variables can be declared inside methods/functions, but put all declarations at the very beginning of the method/function.
 * Avoid dynamic allocation in RTL models.
 * Avoid STL containers in synthesizable state.
 * Prefer fixed-size CppHDL types: `u<>`, `logic<>`, `array<>`, `memory<>`, and structs.

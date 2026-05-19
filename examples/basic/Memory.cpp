@@ -90,6 +90,7 @@ template class Memory<64,65536,0>;
 #include <filesystem>
 #include <string>
 #include <sstream>
+#include <vector>
 #include "../examples/tools.h"
 
 #ifdef VERILATOR
@@ -299,16 +300,16 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    int only = -1;
+    std::vector<std::string> positional;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
         }
-        if (strcmp(argv[i], "--noveril") == 0) {
+        else if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
-        if (argv[i][0] != '-') {
-            only = atoi(argv[argc-1]);
+        else {
+            positional.emplace_back(argv[i]);
         }
     }
 
@@ -322,8 +323,8 @@ int main (int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("Memory_64_65536_1/obj_dir/VMemory") + (debug?" --debug":"") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 1) || std::system((std::string("Memory_64_65536_0/obj_dir/VMemory") + (debug?" --debug":"") + " 1").c_str()) == 0)
+            && std::system((std::string("Memory_64_65536_1/obj_dir/VMemory 64 65536 1") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Memory_64_65536_0/obj_dir/VMemory 64 65536 0") + (debug?" --debug":"")).c_str()) == 0
         );
         std::cout << "Verilator compilation time: {} " << compile_us/2 << " microseconds\n";
     }
@@ -331,10 +332,23 @@ int main (int argc, char** argv)
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !( ok
-        && ((only != -1 && only != 0) || TestMemory<64,65536,1>(debug).run())
-        && ((only != -1 && only != 1) || TestMemory<64,65536,0>(debug).run())
-    );
+    if (positional.size() >= 3) {
+        size_t width = std::stoull(positional[0]);
+        size_t depth = std::stoull(positional[1]);
+        size_t showahead = std::stoull(positional[2]);
+        if (width == 64 && depth == 65536 && showahead == 1) {
+            return !(ok && TestMemory<64,65536,1>(debug).run());
+        }
+        if (width == 64 && depth == 65536 && showahead == 0) {
+            return !(ok && TestMemory<64,65536,0>(debug).run());
+        }
+        std::print("Unsupported Memory test parameters: WIDTH={} DEPTH={} SHOWAHEAD={}\n", width, depth, showahead);
+        return 1;
+    }
+
+    ok = ok && TestMemory<64,65536,1>(debug).run();
+    ok = ok && TestMemory<64,65536,0>(debug).run();
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

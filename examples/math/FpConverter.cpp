@@ -189,6 +189,7 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include <filesystem>
 #include <string>
 #include <sstream>
+#include <vector>
 #include "../examples/tools.h"
 
 #ifdef VERILATOR
@@ -362,16 +363,16 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    int only = -1;
+    std::vector<std::string> positional;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
         }
-        if (strcmp(argv[i], "--noveril") == 0) {
+        else if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
-        if (argv[i][0] != '-') {
-            only = atoi(argv[argc-1]);
+        else {
+            positional.emplace_back(argv[i]);
         }
     }
 
@@ -385,8 +386,8 @@ int main (int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5") + (debug?" --debug":"") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 0) || std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8") + (debug?" --debug":"") + " 1").c_str()) == 0)
+            && std::system((std::string("FpConverterFP32_8_FP16_5_8_1/obj_dir/VFpConverterFP32_8_FP16_5 32 8 16 5 8 1") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("FpConverterFP16_5_FP32_8_8_0/obj_dir/VFpConverterFP16_5_FP32_8 16 5 32 8 8 0") + (debug?" --debug":"")).c_str()) == 0
         );
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
@@ -394,10 +395,26 @@ int main (int argc, char** argv)
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !( ok
-        && ((only != -1 && only != 0) || TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run())
-        && ((only != -1 && only != 1) || TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run())
-    );
+    if (positional.size() >= 6) {
+        size_t in_width = std::stoull(positional[0]);
+        size_t in_exp = std::stoull(positional[1]);
+        size_t out_width = std::stoull(positional[2]);
+        size_t out_exp = std::stoull(positional[3]);
+        size_t steps = std::stoull(positional[4]);
+        size_t round = std::stoull(positional[5]);
+        if (in_width == 32 && in_exp == 8 && out_width == 16 && out_exp == 5 && steps == 8 && round == 1) {
+            return !(ok && TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run());
+        }
+        if (in_width == 16 && in_exp == 5 && out_width == 32 && out_exp == 8 && steps == 8 && round == 0) {
+            return !(ok && TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run());
+        }
+        std::print("Unsupported FpConverter test parameters: IN={} E{} OUT={} E{} STEPS={} ROUND={}\n", in_width, in_exp, out_width, out_exp, steps, round);
+        return 1;
+    }
+
+    ok = ok && TestFpConverter<FP<32,8>,FP<16,5>,8,1>(debug).run();
+    ok = ok && TestFpConverter<FP<16,5>,FP<32,8>,8,0>(debug).run();
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

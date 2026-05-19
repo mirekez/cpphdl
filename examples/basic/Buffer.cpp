@@ -128,6 +128,7 @@ template class Buffer<64, 8>;
 #include <random>
 #include <sstream>
 #include <string>
+#include <vector>
 #include "../examples/tools.h"
 
 #ifdef VERILATOR
@@ -359,16 +360,16 @@ int main(int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    int only = -1;
+    std::vector<std::string> positional;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
         }
-        if (strcmp(argv[i], "--noveril") == 0) {
+        else if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
-        if (argv[i][0] != '-') {
-            only = atoi(argv[i]);
+        else {
+            positional.emplace_back(argv[i]);
         }
     }
 
@@ -385,21 +386,40 @@ int main(int argc, char** argv)
             std::chrono::high_resolution_clock::now() - start)).count();
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok
-            && ((only != -1 && only != 0) || std::system((std::string("Buffer_32_1/obj_dir/VBuffer") + (debug ? " --debug" : "") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 1) || std::system((std::string("Buffer_32_2/obj_dir/VBuffer") + (debug ? " --debug" : "") + " 1").c_str()) == 0)
-            && ((only != -1 && only != 2) || std::system((std::string("Buffer_32_4/obj_dir/VBuffer") + (debug ? " --debug" : "") + " 2").c_str()) == 0)
-            && ((only != -1 && only != 3) || std::system((std::string("Buffer_64_8/obj_dir/VBuffer") + (debug ? " --debug" : "") + " 3").c_str()) == 0);
+            && std::system((std::string("Buffer_32_1/obj_dir/VBuffer 32 1") + (debug ? " --debug" : "")).c_str()) == 0
+            && std::system((std::string("Buffer_32_2/obj_dir/VBuffer 32 2") + (debug ? " --debug" : "")).c_str()) == 0
+            && std::system((std::string("Buffer_32_4/obj_dir/VBuffer 32 4") + (debug ? " --debug" : "")).c_str()) == 0
+            && std::system((std::string("Buffer_64_8/obj_dir/VBuffer 64 8") + (debug ? " --debug" : "")).c_str()) == 0;
         std::cout << "Verilator compilation time: " << compile_us / 4 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !(ok
-        && ((only != -1 && only != 0) || TestBuffer<32, 1>(debug).run())
-        && ((only != -1 && only != 1) || TestBuffer<32, 2>(debug).run())
-        && ((only != -1 && only != 2) || TestBuffer<32, 4>(debug).run())
-        && ((only != -1 && only != 3) || TestBuffer<64, 8>(debug).run()));
+    if (positional.size() >= 2) {
+        size_t width = std::stoull(positional[0]);
+        size_t depth = std::stoull(positional[1]);
+        if (width == 32 && depth == 1) {
+            return !(ok && TestBuffer<32, 1>(debug).run());
+        }
+        if (width == 32 && depth == 2) {
+            return !(ok && TestBuffer<32, 2>(debug).run());
+        }
+        if (width == 32 && depth == 4) {
+            return !(ok && TestBuffer<32, 4>(debug).run());
+        }
+        if (width == 64 && depth == 8) {
+            return !(ok && TestBuffer<64, 8>(debug).run());
+        }
+        std::print("Unsupported Buffer test parameters: WIDTH={} DEPTH={}\n", width, depth);
+        return 1;
+    }
+
+    ok = ok && TestBuffer<32, 1>(debug).run();
+    ok = ok && TestBuffer<32, 2>(debug).run();
+    ok = ok && TestBuffer<32, 4>(debug).run();
+    ok = ok && TestBuffer<64, 8>(debug).run();
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

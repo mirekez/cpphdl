@@ -272,7 +272,7 @@ function(add_tribe_width_tests width target_name)
     )
 
     add_test(
-        NAME ${prefix}_riscv_tests_rv32_verilator_supported
+        NAME ${prefix}_riscv_tests_rv32_verilator
         COMMAND Python3::Interpreter
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
@@ -280,7 +280,7 @@ function(add_tribe_width_tests width target_name)
                 "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work-verilator-${work_suffix}"
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
+    set_tests_properties(${prefix}_riscv_tests_rv32_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         ENVIRONMENT "TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"
@@ -399,7 +399,7 @@ function(add_soc_width_tests width target_name)
     )
 
     add_test(
-        NAME ${prefix}_riscv_tests_rv32_verilator_supported
+        NAME ${prefix}_riscv_tests_rv32_verilator
         COMMAND Python3::Interpreter
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
@@ -407,7 +407,7 @@ function(add_soc_width_tests width target_name)
                 "${CMAKE_CURRENT_BINARY_DIR}/riscv-tests-work-verilator-${work_suffix}"
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(${prefix}_riscv_tests_rv32_verilator_supported PROPERTIES
+    set_tests_properties(${prefix}_riscv_tests_rv32_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         ENVIRONMENT "TRIBE_RISCV_TESTS_BACKEND=verilator;TRIBE_RISCV_TESTS_VERILATOR_BIN=${verilator_bin};TRIBE_RISCV_TESTS_PATTERN=rv32ui-p-* rv32ua-p-* rv32um-p-* rv32uc-p-rvc;TRIBE_RISCV_TESTS_EXCLUDE_PATTERN=rv32ui-p-ma_data"

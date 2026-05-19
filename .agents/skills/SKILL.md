@@ -16,6 +16,8 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 - For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ CppHDL update order accidentally matching Verilator.
 - In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
 - sys_clock is mandatory global variable to be incremented once per main loop cycle, it is used to cache combinational variables functions results
+- it's better to put `if (reset)` section in the end of `_work()` method to do not forget to call nested `_work()` methods in case of reset
+- better use operators >> and << and | when possible instead of bits(a,b) and [] for logic<>, if it does not make logic much longer (bits() is slower)
 
 ## Verilator Cycle Pattern
 

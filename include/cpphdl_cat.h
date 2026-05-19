@@ -11,6 +11,9 @@
 namespace cpphdl
 {
 
+template<typename T>
+struct reg;
+
 template<size_t... N>
 constexpr size_t SUM()
 {
@@ -28,6 +31,22 @@ struct cat_width<logic<WIDTH>> {
 template<size_t WIDTH>
 struct cat_width<u<WIDTH>> {
     static constexpr size_t value = WIDTH;
+};
+
+template<> struct cat_width<u1> { static constexpr size_t value = 8; };
+template<> struct cat_width<u8> { static constexpr size_t value = 8; };
+template<> struct cat_width<u16> { static constexpr size_t value = 16; };
+template<> struct cat_width<u32> { static constexpr size_t value = 32; };
+template<> struct cat_width<u64> { static constexpr size_t value = 64; };
+
+template<typename TYPE, size_t COUNT>
+struct cat_width<array<TYPE, COUNT>> {
+    static constexpr size_t value = COUNT * sizeof(TYPE) * 8;
+};
+
+template<typename T>
+struct cat_width<reg<T>> {
+    static constexpr size_t value = cat_width<T>::value;
 };
 
 template<typename T>
@@ -48,6 +67,24 @@ logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
         result.set(i, (raw >> i) & 1);
     }
     return result;
+}
+
+inline logic<8> cat_to_logic(const u1& value) { return cat_to_logic(u<8>((uint64_t)value)); }
+inline logic<8> cat_to_logic(const u8& value) { return cat_to_logic(u<8>((uint64_t)value)); }
+inline logic<16> cat_to_logic(const u16& value) { return cat_to_logic(u<16>((uint64_t)value)); }
+inline logic<32> cat_to_logic(const u32& value) { return cat_to_logic(u<32>((uint64_t)value)); }
+inline logic<64> cat_to_logic(const u64& value) { return cat_to_logic(u<64>((uint64_t)value)); }
+
+template<typename TYPE, size_t COUNT>
+logic<COUNT * sizeof(TYPE) * 8> cat_to_logic(const array<TYPE, COUNT>& value)
+{
+    return (logic<COUNT * sizeof(TYPE) * 8>)value;
+}
+
+template<typename T>
+auto cat_to_logic(const reg<T>& value)
+{
+    return cat_to_logic(static_cast<const T&>(value));
 }
 
 template<size_t... N>

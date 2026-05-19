@@ -151,6 +151,7 @@ template class Axi4MuxFromSlave<8,64,16,512>;
 #include <sstream>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include "../examples/tools.h"
 
 #ifdef VERILATOR
@@ -786,16 +787,16 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    int only = -1;
+    std::vector<std::string> positional;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
         }
-        if (strcmp(argv[i], "--noveril") == 0) {
+        else if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
-        if (argv[i][0] != '-') {
-            only = atoi(argv[argc-1]);
+        else {
+            positional.emplace_back(argv[i]);
         }
     }
 
@@ -809,8 +810,8 @@ int main (int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("Axi4MuxFromSlave_4_32_8_128/obj_dir/VAxi4MuxFromSlave") + (debug?" --debug":"") + " 0").c_str()) == 0)
-            && ((only != -1 && only != 1) || std::system((std::string("Axi4MuxFromSlave_8_64_16_512/obj_dir/VAxi4MuxFromSlave") + (debug?" --debug":"") + " 1").c_str()) == 0)
+            && std::system((std::string("Axi4MuxFromSlave_4_32_8_128/obj_dir/VAxi4MuxFromSlave 4 32 8 128") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Axi4MuxFromSlave_8_64_16_512/obj_dir/VAxi4MuxFromSlave 8 64 16 512") + (debug?" --debug":"")).c_str()) == 0
         );
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
@@ -818,10 +819,24 @@ int main (int argc, char** argv)
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !( ok
-        && ((only != -1 && only != 0) || TestAxi4MuxFromSlave<4,32,8,128>(debug).run())
-        && ((only != -1 && only != 1) || TestAxi4MuxFromSlave<8,64,16,512>(debug).run())
-    );
+    if (positional.size() >= 4) {
+        size_t n = std::stoull(positional[0]);
+        size_t addr_width = std::stoull(positional[1]);
+        size_t id_width = std::stoull(positional[2]);
+        size_t data_width = std::stoull(positional[3]);
+        if (n == 4 && addr_width == 32 && id_width == 8 && data_width == 128) {
+            return !(ok && TestAxi4MuxFromSlave<4,32,8,128>(debug).run());
+        }
+        if (n == 8 && addr_width == 64 && id_width == 16 && data_width == 512) {
+            return !(ok && TestAxi4MuxFromSlave<8,64,16,512>(debug).run());
+        }
+        std::print("Unsupported Axi4MuxFromSlave test parameters: N={} ADDR={} ID={} DATA={}\n", n, addr_width, id_width, data_width);
+        return 1;
+    }
+
+    ok = ok && TestAxi4MuxFromSlave<4,32,8,128>(debug).run();
+    ok = ok && TestAxi4MuxFromSlave<8,64,16,512>(debug).run();
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

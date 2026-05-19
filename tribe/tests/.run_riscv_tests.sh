@@ -41,5 +41,5 @@ if [[ "${NO_VERIL}" -eq 0 ]]; then
     echo "Running supported RV32 riscv-tests on Verilator model"
     TRIBE_RISCV_TESTS_PATTERN="${PATTERN}" \
     TRIBE_RISCV_TESTS_EXCLUDE_PATTERN="${EXCLUDE_PATTERN}" \
-        ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_tests_rv32_verilator_supported$'
+        ctest --test-dir "${BUILD_DIR}" --output-on-failure -R '^Tribe(256|128|64)_riscv_tests_rv32_verilator$'
 fi

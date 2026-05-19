@@ -12,6 +12,7 @@
 
 class RiscV: public Pipeline<PipelineStages<DecodeFetch,ExecuteCalc,MemWB>>
 {
+    File<32,32>         regs;
 public:
     _PORT(bool)      dmem_write_out;
     _PORT(uint32_t)  dmem_write_addr_out;
@@ -25,8 +26,6 @@ public:
     bool              debugen_in;
 
 private:
-    File<32,32>         regs;
-
     reg<u32>            pc;
     reg<u1>             valid;
 
@@ -189,6 +188,7 @@ public:
 
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
@@ -407,16 +407,16 @@ int main (int argc, char** argv)
 {
     bool debug = false;
     bool noveril = false;
-    int only = -1;
+    std::vector<std::string> positional;
     for (int i=1; i < argc; ++i) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = true;
         }
-        if (strcmp(argv[i], "--noveril") == 0) {
+        else if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
         }
-        if (argv[i][0] != '-') {
-            only = atoi(argv[argc-1]);
+        else {
+            positional.emplace_back(argv[i]);
         }
     }
 
@@ -441,7 +441,7 @@ int main (int argc, char** argv)
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("RiscV/obj_dir/VRiscV") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && std::system((std::string("RiscV/obj_dir/VRiscV rv32i") + (debug?" --debug":"")).c_str()) == 0
         );
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
@@ -449,9 +449,16 @@ int main (int argc, char** argv)
     Verilated::commandArgs(argc, argv);
 #endif
 
-    return !( ok
-        && ((only != -1 && only != 0) || TestRiscV(debug).run("rv32i.bin", 0x37c))
-    );
+    if (!positional.empty()) {
+        if (positional[0] == "rv32i") {
+            return !(ok && TestRiscV(debug).run("rv32i.bin", 0x37c));
+        }
+        std::print("Unsupported RiscV test parameter: {}\n", positional[0]);
+        return 1;
+    }
+
+    ok = ok && TestRiscV(debug).run("rv32i.bin", 0x37c);
+    return !ok;
 }
 
 /////////////////////////////////////////////////////////////////////////

@@ -428,7 +428,7 @@ It is recommended to give register names with a *reg* suffix in case when regist
 
 * Combinational variable can be of any type.
 
-* Declarations of variables inside methods are allowed only at the beginning of the method, as in C.
+* Variables can be declared inside methods/functions, but declarations are allowed only at the very beginning of the method/function, as in C.
 
 ## Connect method
 
