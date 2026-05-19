@@ -15,7 +15,7 @@ Content may change significantly before final approval.
 
 # Mapping of SystemVerilog Expressions to C++
 
-CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are written in the `_assign()` section. This section runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in `_assign()`.
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are written in the `_assign()` section. This section runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in `_assign()`.
 
 SystemVerilog:
 
@@ -41,9 +41,9 @@ void _assign()
 }
 ```
 
-Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
+&nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
 
-All SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
+&nbsp;&nbsp;&nbsp;&nbsp;All SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
 
 SystemVerilog:
 
@@ -80,7 +80,7 @@ void _work(bool reset)
 }
 ```
 
-SystemVerilog `always_comb` blocks map to CppHDL combinational functions, usually named `*_comb_func()`. They calculate temporary combinational values from current inputs and current register values. The usual style is to store the result in a member variable and return it by reference, as shown in the root examples.
+&nbsp;&nbsp;&nbsp;&nbsp;SystemVerilog `always_comb` blocks map to CppHDL combinational functions, usually named `*_comb_func()`. They calculate temporary combinational values from current inputs and current register values. The usual style is to store the result in a member variable and return it by reference, as shown in the root examples.
 
 SystemVerilog:
 
@@ -111,7 +111,7 @@ u<32>& read_data_comb_func()
 _PORT(u<32>) read_data_out = _ASSIGN_COMB(read_data_comb_func());
 ```
 
-CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
 
 ```cpp
 void _strobe()
@@ -143,9 +143,10 @@ The following properties of the C++ language provide a strong foundation for the
 
 * Ability to use many professional IDEs and tools for development and debugging, including support for large project management
 * C++ is one of the most popular and powerful programming languages in the world, with an extremely wide community
-* CppHDL makes many C++ developers accessible for chipmaking industry
+* C++ is precisely understood language by modern AI models and extremely useful in both rapid hardware verification and developmet
+* CppHDL makes many of C++ developers accessible for chipmaking industry
 * C++ is extremely fast in compilation and execution
-* It is free and does not require paying for each instance
+* It is free and does not require paying for instances
 
 &nbsp;&nbsp;&nbsp;&nbsp;RTL modeling using CppHDL includes verification and testing, providing the power and speed of
 the C++ language for modeling digital signaling and digital system interaction.
