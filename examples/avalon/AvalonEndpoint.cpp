@@ -5,6 +5,9 @@
 
 #include "cpphdl.h"
 #include "../basic/Buffer.cpp"
+#if !defined(SYNTHESIS)
+#include <print>
+#endif
 
 using namespace cpphdl;
 
@@ -14,17 +17,19 @@ class AvalonEndpoint : public Module
     static constexpr size_t DATA_BYTES = (DATA_WIDTH + 7) / 8;
     static constexpr size_t AV_BYTES = AVALON_WIDTH / 8;
     static constexpr size_t DATA_BITS = AV_BYTES * 8;
-    static constexpr size_t OUTPUT_PACKET_BITS = DATA_BITS + 64 + AV_BYTES;
+    static constexpr size_t OUTPUT_BITS = DATA_BITS + 64 + AV_BYTES;
 
-    Buffer<OUTPUT_PACKET_BITS,2> output_buffer;
+    Buffer<OUTPUT_BITS,2> output_buffer;
 
 public:
+    bool debugen_in = false;
+
     _PORT(array<u8,DATA_BYTES>)  data_in;
     _PORT(bool)                  valid_in;
     _PORT(uint64_t)              addr_in;
     _PORT(uint8_t)               nbytes_in;
 
-    _PORT(bool)                wait_out = _ASSIGN( !output_buffer.ready_out() );
+    _PORT(bool)                wait_out = _ASSIGN( !output_buffer.ready_out() || hole_delayed );
     _PORT(uint64_t)            avmm_address_out    = _ASSIGN((uint64_t)(output_buffer.data_out() >> DATA_BITS));
     _PORT(array<u8,AV_BYTES>)  avmm_writedata_out  = _ASSIGN((array<u8,AV_BYTES>)output_buffer.data_out());
     _PORT(logic<AV_BYTES>)     avmm_byteenable_out = _ASSIGN((logic<AV_BYTES>)(output_buffer.data_out() >> (DATA_BITS + 64)));
@@ -75,6 +80,16 @@ public:
         uint64_t tail_address;
         size_t tail_pos;
         logic<DATA_BITS> wider_bus;
+
+        addr_lo = 0;
+        addr_hi = 0;
+        addr_sub = 0;
+        in_addr_sub = 0;
+        delayed_glue = false;
+        buffer1_has_bytes = false;
+        tail_valid = false;
+        tail_address = 0;
+        tail_pos = 0;
 
         if (output_buffer.ready_out()) {
             if (!hole_delayed) {
@@ -187,6 +202,16 @@ public:
 
         output_buffer._work(reset);
 
+#if !defined(SYNTHESIS)
+        if (debugen_in) {
+            std::print("MM_ENDPOINT({:d}), ({:d}){}@{:016x}/{}({:d}) => ({:d}){}@{}/{}({:d}) => ({:d}){}@{:08x}/{}({:d}), buffer2: ({:d}){}@{}/{}, buffer2_pos: {}, addr_sub: {}, addr_lo: {}, buffer1_precalc: {}, buffer2_precalc: {}\n",
+                reset, (bool)valid_in(), data_in(), addr_in(), nbytes_in(), (bool)!output_buffer.ready_out(),
+                (bool)valid_delayed, data_delayed, addr_delayed, nbytes_delayed, (bool)hole_delayed,
+                (bool)avmm_write_out(), avmm_writedata_out(), avmm_address_out(), avmm_byteenable_out(), (bool)avmm_waitrequest_in(),
+                (bool)buffer2_valid, buffer2, buffer2_address, buffer2_byteenable, buffer2_pos, addr_sub, addr_lo, buffer1_precalc, buffer2_precalc);
+        }
+#endif
+
         if (reset) {
             valid_delayed.clr();
             data_delayed.clr();
@@ -205,7 +230,6 @@ public:
             buffer2_byteenable.clr();
             buffer2_address.clr();
             buffer2_pos.clr();
-            output_buffer._work(reset);
         }
     }
 
@@ -244,6 +268,7 @@ template class AvalonEndpoint<256, 1024, 7>;
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <print>
 #include <string>
 #include <vector>
@@ -289,6 +314,7 @@ class TestAvalonEndpoint : public Module
     uint32_t prbs = 0x8b51cafeu ^ AVALON_WIDTH;
     bool error = false;
     bool debug = false;
+    bool handshake_regression = false;
 
     bool wait_out_value = false;
     bool avmm_write_value = false;
@@ -371,6 +397,7 @@ class TestAvalonEndpoint : public Module
         unpack_sv_byte_array(avmm_writedata_value, dut.avmm_writedata_out);
         std::memcpy(&avmm_byteenable_value, &dut.avmm_byteenable_out, sizeof(avmm_byteenable_value));
 #else
+        dut.debugen_in = debug;
         dut._work(reset);
         wait_out_value = dut.wait_out();
         avmm_write_value = dut.avmm_write_out();
@@ -512,14 +539,16 @@ public:
             return;
         }
 
-        check_avalon_write();
-        waitrequest_reg._next = rnd(3);
-        update_source();
+        if (!handshake_regression) {
+            check_avalon_write();
+            waitrequest_reg._next = rnd(3);
+            update_source();
 
-        if (debug && (sys_clock % 1000) == 0) {
-            std::print("cycle={} loop={} read_loop={} sent={} valid={} wait={} av_write={} av_addr=0x{:x} be={}\n",
-                sys_clock, loop, read_loop, sent_bytes, (bool)valid_in_reg, wait_out_value,
-                avmm_write_value, avmm_address_value, avmm_byteenable_value);
+            if (debug && (sys_clock % 1000) == 0) {
+                std::print("cycle={} loop={} read_loop={} sent={} valid={} wait={} av_write={} av_addr=0x{:x} be={}\n",
+                    sys_clock, loop, read_loop, sent_bytes, (bool)valid_in_reg, wait_out_value,
+                    avmm_write_value, avmm_address_value, avmm_byteenable_value);
+            }
         }
     }
 
@@ -545,6 +574,122 @@ public:
 #endif
     }
 
+    void set_input(uint64_t addr, uint8_t nbytes, uint8_t seed)
+    {
+        data_in_reg._next = 0;
+        for (size_t i = 0; i < BUS_BYTES; ++i) {
+            data_in_reg._next[i] = seed + i;
+        }
+        valid_in_reg._next = true;
+        addr_in_reg._next = addr;
+        nbytes_in_reg._next = nbytes;
+        waitrequest_reg._next = false;
+    }
+
+    void tick()
+    {
+        _strobe();
+        ++sys_clock;
+        _work(false);
+        _work_neg(false);
+    }
+
+    void collect_write(std::map<uint64_t, uint8_t>& captured)
+    {
+        if (!avmm_write_value || waitrequest_reg) {
+            return;
+        }
+        for (size_t i = 0; i < AV_BYTES; ++i) {
+            if (avmm_byteenable_value[i]) {
+                captured[avmm_address_value + i] = avmm_writedata_value[i];
+            }
+        }
+    }
+
+    bool run_hole_backpressure_regression()
+    {
+        struct Beat {
+            uint64_t addr;
+            uint8_t nbytes;
+            uint8_t seed;
+        };
+
+        const size_t cross_sub = AV_BYTES - BUS_BYTES + 2;
+        const Beat beats[] = {
+            {0x1000, uint8_t(BUS_BYTES), 0x10},
+            {0x1000 + AV_BYTES + cross_sub, uint8_t(BUS_BYTES), 0x20},
+            {0x1000 + AV_BYTES * 3 + cross_sub * 2, uint8_t(BUS_BYTES), 0x30},
+            {0x1000 + AV_BYTES * 5 + cross_sub * 3, uint8_t(BUS_BYTES), 0x40},
+        };
+        constexpr size_t BEAT_COUNT = sizeof(beats) / sizeof(beats[0]);
+        std::map<uint64_t, uint8_t> expected;
+        std::map<uint64_t, uint8_t> captured;
+
+        for (const auto& beat : beats) {
+            for (size_t i = 0; i < beat.nbytes; ++i) {
+                expected[beat.addr + i] = beat.seed + i;
+            }
+        }
+
+        handshake_regression = true;
+        reset_reference();
+        data_in_reg.clr();
+        valid_in_reg.clr();
+        addr_in_reg.clr();
+        nbytes_in_reg.clr();
+        waitrequest_reg.clr();
+        _work(true);
+        _work_neg(true);
+
+        size_t beat_index = 0;
+        size_t drain_cycles = 0;
+        set_input(beats[beat_index].addr, beats[beat_index].nbytes, beats[beat_index].seed);
+        for (size_t cycle = 0; cycle < 200 && (beat_index < BEAT_COUNT || drain_cycles < 20); ++cycle) {
+            _strobe();
+            ++sys_clock;
+            _work(false);
+            collect_write(captured);
+
+            if (beat_index < BEAT_COUNT) {
+                if (!wait_out_value) {
+                    ++beat_index;
+                }
+                if (beat_index < BEAT_COUNT) {
+                    set_input(beats[beat_index].addr, beats[beat_index].nbytes, beats[beat_index].seed);
+                }
+                else {
+                    valid_in_reg._next = false;
+                    ++drain_cycles;
+                }
+            }
+            else {
+                valid_in_reg._next = false;
+                ++drain_cycles;
+            }
+
+            _work_neg(false);
+        }
+
+        bool ok = true;
+        for (const auto& [addr, value] : expected) {
+            auto it = captured.find(addr);
+            if (it == captured.end()) {
+                std::print("\nERROR: hole regression missing byte at 0x{:x}, expected 0x{:02x}\n", addr, value);
+                ok = false;
+                break;
+            }
+            if (it->second != value) {
+                std::print("\nERROR: hole regression data mismatch at 0x{:x}: expected 0x{:02x}, got 0x{:02x}\n",
+                    addr, value, it->second);
+                ok = false;
+                break;
+            }
+        }
+
+        handshake_regression = false;
+        return ok;
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -559,6 +704,12 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "avalon_endpoint_test";
         _assign();
+        if (!run_hole_backpressure_regression()) {
+            std::print(" FAILED ({} us)\n",
+                (std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::high_resolution_clock::now() - start)).count());
+            return false;
+        }
         _work(true);
         _work_neg(true);
 

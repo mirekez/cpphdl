@@ -474,6 +474,7 @@ SystemVerilog datatype. Currently, the list of CppHDL datatypes includes:
 * *reg`<TYPE>`* - register definition, works only with CppHDL types or any structs
 * *array`<TYPE,SIZE>`* - variable optimized for large array access and element changes
 * *memory`<TYPE,SIZE>`* - special registered container implementing optimal memory access with strobing
+* *Cat`{...}`* - concatenation helper that maps to SystemVerilog `{...}` expressions
 
 ### logic`<WIDTH>`
 
@@ -540,6 +541,47 @@ Although *u`<>`* can be of any size, it supports a maximum of 64-bit math. Examp
 ```cpp
 u<STEPS_SIZE> cmd_steps;
 ```
+
+### Cat`{...}`
+
+&nbsp;&nbsp;&nbsp;&nbsp;*Cat`{...}`* builds a packed concatenation from CppHDL values and maps directly to a SystemVerilog concatenation expression.
+Arguments are placed from high bits to low bits in the same order as SystemVerilog `{a, b, c}`. The result width is inferred from the argument types.
+Supported operands include `logic<WIDTH>`, `u<WIDTH>`, fixed unsigned aliases such as `u8` and `u32`, and `reg<T>` values whose stored type is supported.
+
+Example assignment to a port:
+
+```cpp
+u<4> byteenable;
+u<5> address;
+u<8> data;
+
+void _assign()
+{
+    buffer.valid_in = _ASSIGN(Cat{byteenable, address, data});
+}
+```
+
+This is emitted as a SystemVerilog concatenation:
+
+```systemverilog
+assign buffer__valid_in = {byteenable, address, data};
+```
+
+The same helper can be used for register next-state assignment:
+
+```cpp
+reg<logic<17>> packet_reg;
+reg<u<4>> reg_byteenable;
+reg<u<5>> reg_address;
+reg<u<8>> reg_data;
+
+void _work(bool reset)
+{
+    packet_reg._next = Cat{reg_byteenable, reg_address, reg_data};
+}
+```
+
+The destination type must be wide enough for the concatenation result. Width mismatches are checked by the C++ type system and by the generated SystemVerilog tools.
 
 ### u1, u8, u16, u32, u64
 
