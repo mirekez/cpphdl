@@ -211,7 +211,7 @@ module Accelerator #(
         logic[31:0] beat_base;
         logic[31:0] word;
         logic[31:0] mem_index;
-        logic[128-1:0] read_data;
+        logic[64-1:0] read_data;
         logic[63:0] i;
         if (axi_in__arvalid_in && axi_in__arready_out) begin
             addr=unsigned'(32'(axi_in__araddr_in));

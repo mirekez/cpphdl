@@ -84,6 +84,7 @@ module Tribe (
 ,   input wire[31:0] boot_hartid_in
 ,   input wire[31:0] boot_dtb_addr_in
 ,   input wire[2-1:0] boot_priv_in
+,   input wire external_cache_invalidate_in
 ,   input wire[31:0] memory_base_in
 ,   input wire[31:0] memory_size_in
 ,   input wire[31:0] mem_region_size_in[4]
@@ -92,42 +93,42 @@ module Tribe (
 ,   input wire external_irq_in
 ,   input wire axi_in__awvalid_in[4]
 ,   output wire axi_in__awready_out[4]
-,   input wire[19-1:0] axi_in__awaddr_in[4]
+,   input wire[22-1:0] axi_in__awaddr_in[4]
 ,   input wire[4-1:0] axi_in__awid_in[4]
 ,   input wire axi_in__wvalid_in[4]
 ,   output wire axi_in__wready_out[4]
-,   input wire[128-1:0] axi_in__wdata_in[4]
+,   input wire[64-1:0] axi_in__wdata_in[4]
 ,   input wire axi_in__wlast_in[4]
 ,   output wire axi_in__bvalid_out[4]
 ,   input wire axi_in__bready_in[4]
 ,   output wire[4-1:0] axi_in__bid_out[4]
 ,   input wire axi_in__arvalid_in[4]
 ,   output wire axi_in__arready_out[4]
-,   input wire[19-1:0] axi_in__araddr_in[4]
+,   input wire[22-1:0] axi_in__araddr_in[4]
 ,   input wire[4-1:0] axi_in__arid_in[4]
 ,   output wire axi_in__rvalid_out[4]
 ,   input wire axi_in__rready_in[4]
-,   output wire[128-1:0] axi_in__rdata_out[4]
+,   output wire[64-1:0] axi_in__rdata_out[4]
 ,   output wire axi_in__rlast_out[4]
 ,   output wire[4-1:0] axi_in__rid_out[4]
 ,   output wire axi_out__awvalid_out[4]
 ,   input wire axi_out__awready_in[4]
-,   output wire[19-1:0] axi_out__awaddr_out[4]
+,   output wire[22-1:0] axi_out__awaddr_out[4]
 ,   output wire[4-1:0] axi_out__awid_out[4]
 ,   output wire axi_out__wvalid_out[4]
 ,   input wire axi_out__wready_in[4]
-,   output wire[128-1:0] axi_out__wdata_out[4]
+,   output wire[64-1:0] axi_out__wdata_out[4]
 ,   output wire axi_out__wlast_out[4]
 ,   input wire axi_out__bvalid_in[4]
 ,   output wire axi_out__bready_out[4]
 ,   input wire[4-1:0] axi_out__bid_in[4]
 ,   output wire axi_out__arvalid_out[4]
 ,   input wire axi_out__arready_in[4]
-,   output wire[19-1:0] axi_out__araddr_out[4]
+,   output wire[22-1:0] axi_out__araddr_out[4]
 ,   output wire[4-1:0] axi_out__arid_out[4]
 ,   input wire axi_out__rvalid_in[4]
 ,   output wire axi_out__rready_out[4]
-,   input wire[128-1:0] axi_out__rdata_in[4]
+,   input wire[64-1:0] axi_out__rdata_in[4]
 ,   input wire axi_out__rlast_in[4]
 ,   input wire[4-1:0] axi_out__rid_in[4]
 ,   output TribePerf perf_out
@@ -136,6 +137,7 @@ module Tribe (
 
 
     // regs and combs
+    reg icache_invalidate_issued_reg;
     reg[32-1:0] pc;
     reg valid;
     reg[32-1:0] alu_result_reg;
@@ -164,6 +166,8 @@ module Tribe (
     logic immu_ptw_selected_comb;
 ;
     logic[31:0] mmu_l2_read_word_comb;
+;
+    logic dmmu_access_ready_comb;
 ;
     logic memory_wait_comb;
 ;
@@ -616,7 +620,7 @@ module Tribe (
       wire[7:0] icache__mem_write_mask_out;
       wire icache__mem_read_out;
       wire[31:0] icache__mem_addr_out;
-      wire[(128)-1:0] icache__mem_read_data_in;
+      wire[(64)-1:0] icache__mem_read_data_in;
       wire icache__mem_wait_in;
       L1CachePerf icache__perf_out;
       wire icache__debugen_in;
@@ -626,7 +630,7 @@ module Tribe (
 ,       2
 ,       0
 ,       32
-,       128
+,       64
     ) icache (
         .clk(clk)
 ,       .reset(reset)
@@ -671,7 +675,7 @@ module Tribe (
       wire[7:0] dcache__mem_write_mask_out;
       wire dcache__mem_read_out;
       wire[31:0] dcache__mem_addr_out;
-      wire[(128)-1:0] dcache__mem_read_data_in;
+      wire[(64)-1:0] dcache__mem_read_data_in;
       wire dcache__mem_wait_in;
       L1CachePerf dcache__perf_out;
       wire dcache__debugen_in;
@@ -681,7 +685,7 @@ module Tribe (
 ,       2
 ,       1
 ,       32
-,       128
+,       64
     ) dcache (
         .clk(clk)
 ,       .reset(reset)
@@ -713,14 +717,14 @@ module Tribe (
       wire[31:0] l2cache__i_addr_in;
       wire[31:0] l2cache__i_write_data_in;
       wire[7:0] l2cache__i_write_mask_in;
-      wire[(128)-1:0] l2cache__i_read_data_out;
+      wire[(64)-1:0] l2cache__i_read_data_out;
       wire l2cache__i_wait_out;
       wire l2cache__d_read_in;
       wire l2cache__d_write_in;
       wire[31:0] l2cache__d_addr_in;
       wire[31:0] l2cache__d_write_data_in;
       wire[7:0] l2cache__d_write_mask_in;
-      wire[(128)-1:0] l2cache__d_read_data_out;
+      wire[(64)-1:0] l2cache__d_read_data_out;
       wire l2cache__d_wait_out;
       wire[31:0] l2cache__memory_base_in;
       wire[31:0] l2cache__memory_size_in;
@@ -728,52 +732,52 @@ module Tribe (
       wire l2cache__mem_region_uncached_in[(4)];
       wire l2cache__axi_in__awvalid_in[(4)];
       wire l2cache__axi_in__awready_out[(4)];
-      wire[(19)-1:0] l2cache__axi_in__awaddr_in[(4)];
+      wire[(22)-1:0] l2cache__axi_in__awaddr_in[(4)];
       wire['h4-1:0] l2cache__axi_in__awid_in[(4)];
       wire l2cache__axi_in__wvalid_in[(4)];
       wire l2cache__axi_in__wready_out[(4)];
-      wire[(128)-1:0] l2cache__axi_in__wdata_in[(4)];
+      wire[(64)-1:0] l2cache__axi_in__wdata_in[(4)];
       wire l2cache__axi_in__wlast_in[(4)];
       wire l2cache__axi_in__bvalid_out[(4)];
       wire l2cache__axi_in__bready_in[(4)];
       wire['h4-1:0] l2cache__axi_in__bid_out[(4)];
       wire l2cache__axi_in__arvalid_in[(4)];
       wire l2cache__axi_in__arready_out[(4)];
-      wire[(19)-1:0] l2cache__axi_in__araddr_in[(4)];
+      wire[(22)-1:0] l2cache__axi_in__araddr_in[(4)];
       wire['h4-1:0] l2cache__axi_in__arid_in[(4)];
       wire l2cache__axi_in__rvalid_out[(4)];
       wire l2cache__axi_in__rready_in[(4)];
-      wire[(128)-1:0] l2cache__axi_in__rdata_out[(4)];
+      wire[(64)-1:0] l2cache__axi_in__rdata_out[(4)];
       wire l2cache__axi_in__rlast_out[(4)];
       wire['h4-1:0] l2cache__axi_in__rid_out[(4)];
       wire l2cache__axi_out__awvalid_out[(4)];
       wire l2cache__axi_out__awready_in[(4)];
-      wire[(19)-1:0] l2cache__axi_out__awaddr_out[(4)];
+      wire[(22)-1:0] l2cache__axi_out__awaddr_out[(4)];
       wire['h4-1:0] l2cache__axi_out__awid_out[(4)];
       wire l2cache__axi_out__wvalid_out[(4)];
       wire l2cache__axi_out__wready_in[(4)];
-      wire[(128)-1:0] l2cache__axi_out__wdata_out[(4)];
+      wire[(64)-1:0] l2cache__axi_out__wdata_out[(4)];
       wire l2cache__axi_out__wlast_out[(4)];
       wire l2cache__axi_out__bvalid_in[(4)];
       wire l2cache__axi_out__bready_out[(4)];
       wire['h4-1:0] l2cache__axi_out__bid_in[(4)];
       wire l2cache__axi_out__arvalid_out[(4)];
       wire l2cache__axi_out__arready_in[(4)];
-      wire[(19)-1:0] l2cache__axi_out__araddr_out[(4)];
+      wire[(22)-1:0] l2cache__axi_out__araddr_out[(4)];
       wire['h4-1:0] l2cache__axi_out__arid_out[(4)];
       wire l2cache__axi_out__rvalid_in[(4)];
       wire l2cache__axi_out__rready_out[(4)];
-      wire[(128)-1:0] l2cache__axi_out__rdata_in[(4)];
+      wire[(64)-1:0] l2cache__axi_out__rdata_in[(4)];
       wire l2cache__axi_out__rlast_in[(4)];
       wire['h4-1:0] l2cache__axi_out__rid_in[(4)];
       wire l2cache__debugen_in;
     L2Cache #(
         8192
-,       128
+,       64
 ,       32
 ,       4
 ,       32
-,       19
+,       22
 ,       4
     ) l2cache (
         .clk(clk)
@@ -869,6 +873,7 @@ module Tribe (
     );
 
     // tmp variables
+    logic icache_invalidate_issued_reg_tmp;
     logic[32-1:0] pc_tmp;
     logic valid_tmp;
     logic[32-1:0] alu_result_reg_tmp;
@@ -884,8 +889,14 @@ module Tribe (
     logic interrupt_entry_guard_reg_tmp;
 
 
+    always_comb begin : dmmu_access_ready_comb_func  // dmmu_access_ready_comb_func
+        logic access;
+        access=state_reg['h1].valid && ((exe_mem__mem_read_out || exe_mem__mem_write_out));
+        dmmu_access_ready_comb=((!access || !dmmu__translated_out) || dmmu__hit_out) || dmmu__fault_out;
+    end
+
     always_comb begin : memory_wait_comb_func  // memory_wait_comb_func
-        memory_wait_comb=((((((dcache__busy_out || exe_mem__mem_split_busy_out) || exe_mem__atomic_busy_out) || immu__busy_out) || dmmu__busy_out) || ((dcache__mem_read_out && l2cache__d_wait_out))) || ((((exe_mem__mem_write_out || ((state_reg['h1].valid && (state_reg['h1].mem_op == Mem_pkg::STORE))))) && l2cache__d_wait_out))) || (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && !wb_mem__load_ready_out));
+        memory_wait_comb=(((((((dcache__busy_out || exe_mem__mem_split_busy_out) || exe_mem__atomic_busy_out) || immu__busy_out) || dmmu__busy_out) || !dmmu_access_ready_comb) || ((dcache__mem_read_out && l2cache__d_wait_out))) || ((((exe_mem__mem_write_out || ((state_reg['h1].valid && (state_reg['h1].mem_op == Mem_pkg::STORE))))) && l2cache__d_wait_out))) || (((state_reg['h1].valid && (state_reg['h1].wb_op == Wb_pkg::MEM)) && !wb_mem__load_ready_out));
     end
 
     always_comb begin : sbi_legacy_ecall_comb_func  // sbi_legacy_ecall_comb_func
@@ -1090,7 +1101,7 @@ module Tribe (
         logic[31:0] addr;
         logic[31:0] lane;
         addr=(dmmu_ptw_selected_comb) ? (unsigned'(32'(dmmu__mem_addr_out))) : (unsigned'(32'(immu__mem_addr_out)));
-        lane=((addr % 'h10))/'h4;
+        lane=((addr % 'h8))/'h4;
         mmu_l2_read_word_comb=unsigned'(32'(l2cache__d_read_data_out[lane*'h20 +:32]));
     end
 
@@ -1126,7 +1137,7 @@ module Tribe (
     end
 
     always_comb begin : icache_invalidate_comb_func  // icache_invalidate_comb_func
-        icache_invalidate_comb=(state_reg['h0].valid && (((state_reg['h0].sys_op == Sys_pkg::FENCEI) || (state_reg['h0].sys_op == Sys_pkg::SFENCE_VMA)))) && !memory_wait_comb;
+        icache_invalidate_comb=((state_reg['h0].valid && (((state_reg['h0].sys_op == Sys_pkg::FENCEI) || (state_reg['h0].sys_op == Sys_pkg::SFENCE_VMA)))) && !memory_wait_comb) && !icache_invalidate_issued_reg;
     end
 
     generate  // _assign
@@ -1224,8 +1235,8 @@ module Tribe (
         assign regs__reset_x10_in = boot_hartid_in;
         assign regs__reset_x11_in = boot_dtb_addr_in;
         assign regs__debugen_in=debugen_in;
-        assign dcache__read_in = (((state_reg['h1].valid && exe_mem__mem_read_out) && !dcache__busy_out) && !dmmu__busy_out) && !dmmu__fault_out;
-        assign dcache__write_in = (((state_reg['h1].valid && exe_mem__mem_write_out) && !dcache__busy_out) && !dmmu__busy_out) && !dmmu__fault_out;
+        assign dcache__read_in = ((((state_reg['h1].valid && exe_mem__mem_read_out) && !dcache__busy_out) && !dmmu__busy_out) && !dmmu__fault_out) && dmmu_access_ready_comb;
+        assign dcache__write_in = ((((state_reg['h1].valid && exe_mem__mem_write_out) && !dcache__busy_out) && !dmmu__busy_out) && !dmmu__fault_out) && dmmu_access_ready_comb;
         assign dcache__addr_in = dmmu__paddr_out;
         assign dcache__write_data_in = exe_mem__mem_write_data_out;
         assign dcache__write_mask_in = exe_mem__mem_write_mask_out;
@@ -1233,7 +1244,7 @@ module Tribe (
         assign dcache__mem_wait_in = l2cache__d_wait_out;
         assign dcache__stall_in = branch_stall_comb;
         assign dcache__flush_in = 0;
-        assign dcache__invalidate_in = 0;
+        assign dcache__invalidate_in = external_cache_invalidate_in;
         assign dcache__cache_disable_in = dcache__addr_in>=(((memory_base_in + mem_region_size_in['h0]) + mem_region_size_in['h1]) + mem_region_size_in['h2]) && (unsigned'(32'(dcache__addr_in)) < (memory_base_in + memory_size_in));
         assign dcache__debugen_in=debugen_in;
         assign bp__lookup_valid_in = decode_branch_valid_comb;
@@ -1367,14 +1378,14 @@ module Tribe (
         assign debug_decode_imm_out = unsigned'(32'(dec__state_out.imm));
         for (gi='h0;gi < 'h4;gi=gi+1) begin
             assign axi_out__awvalid_out[gi] = l2cache__axi_out__awvalid_out[gi];
-            assign axi_out__awaddr_out[gi] = unsigned'(19'(l2cache__axi_out__awaddr_out[gi]));
+            assign axi_out__awaddr_out[gi] = unsigned'(22'(l2cache__axi_out__awaddr_out[gi]));
             assign axi_out__awid_out[gi] = unsigned'(4'(l2cache__axi_out__awid_out[gi]));
             assign axi_out__wvalid_out[gi] = l2cache__axi_out__wvalid_out[gi];
             assign axi_out__wdata_out[gi] = l2cache__axi_out__wdata_out[gi];
             assign axi_out__wlast_out[gi] = l2cache__axi_out__wlast_out[gi];
             assign axi_out__bready_out[gi] = l2cache__axi_out__bready_out[gi];
             assign axi_out__arvalid_out[gi] = l2cache__axi_out__arvalid_out[gi];
-            assign axi_out__araddr_out[gi] = unsigned'(19'(l2cache__axi_out__araddr_out[gi]));
+            assign axi_out__araddr_out[gi] = unsigned'(22'(l2cache__axi_out__araddr_out[gi]));
             assign axi_out__arid_out[gi] = unsigned'(4'(l2cache__axi_out__arid_out[gi]));
             assign axi_out__rready_out[gi] = l2cache__axi_out__rready_out[gi];
         end
@@ -2717,6 +2728,14 @@ module Tribe (
                 end
             end
         end
+        if ((state_reg['h0].valid && (((state_reg['h0].sys_op == Sys_pkg::FENCEI) || (state_reg['h0].sys_op == Sys_pkg::SFENCE_VMA)))) && !memory_wait_comb) begin
+            icache_invalidate_issued_reg_tmp = unsigned'(1'(1));
+        end
+        else begin
+            if (!state_reg['h0].valid || (((state_reg['h0].sys_op != Sys_pkg::FENCEI) && (state_reg['h0].sys_op != Sys_pkg::SFENCE_VMA)))) begin
+                icache_invalidate_issued_reg_tmp = unsigned'(1'(0));
+            end
+        end
         if (reset) begin
             state_reg_tmp['h0].valid='h0;
             state_reg_tmp['h1].valid='h0;
@@ -2727,6 +2746,7 @@ module Tribe (
             predicted_taken_reg_tmp = '0;
             output_write_active_reg_tmp = '0;
             interrupt_entry_guard_reg_tmp = '0;
+            icache_invalidate_issued_reg_tmp = '0;
         end
     end
     endtask
@@ -2737,6 +2757,7 @@ module Tribe (
     endtask
 
     always @(posedge clk) begin
+        icache_invalidate_issued_reg_tmp = icache_invalidate_issued_reg;
         pc_tmp = pc;
         valid_tmp = valid;
         alu_result_reg_tmp = alu_result_reg;
@@ -2753,6 +2774,7 @@ module Tribe (
 
         _work(reset);
 
+        icache_invalidate_issued_reg <= icache_invalidate_issued_reg_tmp;
         pc <= pc_tmp;
         valid <= valid_tmp;
         alu_result_reg <= alu_result_reg_tmp;

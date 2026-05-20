@@ -45,7 +45,7 @@ module Memory #(
     task _work (input logic reset);
     begin: _work
         logic[63:0] i;
-        logic[128-1:0] mask;
+        logic[64-1:0] mask;
         if (debugen_in) begin
             $write("%m: port0: @%x(%x/%x)%x(%x)%x, port1: @%x(%x/%x)%x(%x)%x\n", addr0_in, signed'(32'(write0_in)), signed'(32'(read0_in)), write0_data_in, write0_mask_in, read0_data_out, addr1_in, signed'(32'(write1_in)), signed'(32'(read1_in)), write1_data_in, write1_mask_in, read1_data_out);
         end

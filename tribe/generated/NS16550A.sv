@@ -120,7 +120,7 @@ module NS16550A #(
         logic[31:0] addr;
         logic[31:0] lane;
         logic[7:0] data;
-        logic[128-1:0] read_data;
+        logic[64-1:0] read_data;
         uart_valid_reg_tmp = unsigned'(1'(0));
         if (uart_rx_valid_in && !rx_valid_reg) begin
             rx_data_reg_tmp = unsigned'(8'(uart_rx_data_in));

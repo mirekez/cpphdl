@@ -86,6 +86,7 @@ module L2Cache #(
     parameter  WORD_BITS = $clog2(LINE_WORDS);
     parameter  WAY_BITS = (WAYS<='h1) ? ('h1) : ($clog2(WAYS));
     parameter  TAG_BITS = (ADDR_BITS - SET_BITS) - LINE_BITS;
+    parameter  TAG_RAM_BITS = (((((TAG_BITS + 'h2) + 'h7))/'h8))*'h8;
     parameter  DATA_BANKS = WAYS*LINE_WORDS;
     parameter  MEM_PORT_BITS = $clog2(MEM_PORTS);
     parameter  MEM_ADDR_MASK64 = ((MEM_ADDR_BITS>='h40)) ? (~'h0) : (((('h1 <<< MEM_ADDR_BITS)) - 'h1));
@@ -115,6 +116,7 @@ module L2Cache #(
     reg[5-1:0] state_reg;
     reg[32-1:0] req_addr_reg;
     reg[32-1:0] req_write_data_reg;
+    reg[PORT_BITWIDTH-1:0] req_write_beat_reg;
     reg[8-1:0] req_write_mask_reg;
     reg req_read_reg;
     reg req_write_reg;
@@ -155,6 +157,8 @@ module L2Cache #(
     logic[31:0] active_addr_comb;
 ;
     logic[31:0] active_write_data_comb;
+;
+    logic[PORT_BITWIDTH-1:0] active_write_beat_comb;
 ;
     logic[7:0] active_write_mask_comb;
 ;
@@ -260,7 +264,7 @@ module L2Cache #(
 ;
     logic[PORT_BITWIDTH-1:0] cross_read_data_comb;
 ;
-    logic[TAG_BITS + 'h2-1:0] tag_write_data_comb;
+    logic[TAG_RAM_BITS-1:0] tag_write_data_comb;
 ;
     logic[PORT_BITWIDTH-1:0] read_data_comb;
 ;
@@ -295,15 +299,15 @@ module L2Cache #(
     end
     endgenerate
       wire[$clog2((SETS))-1:0] tag_ram__addr_in[WAYS];
-      wire[(TAG_BITS + 'h2)-1:0] tag_ram__data_in[WAYS];
+      wire[(TAG_RAM_BITS)-1:0] tag_ram__data_in[WAYS];
       wire tag_ram__wr_in[WAYS];
       wire tag_ram__rd_in[WAYS];
-      wire[(TAG_BITS + 'h2)-1:0] tag_ram__q_out[WAYS];
+      wire[(TAG_RAM_BITS)-1:0] tag_ram__q_out[WAYS];
       wire signed[31:0] tag_ram__id_in[WAYS];
     generate
     for (__i=0; __i < WAYS; __i = __i + 1) begin
         RAM1PORT #(
-        TAG_BITS + 'h2
+        TAG_RAM_BITS
 ,       SETS
         ) tag_ram (
             .clk(clk)
@@ -322,6 +326,7 @@ module L2Cache #(
     logic[5-1:0] state_reg_tmp;
     logic[32-1:0] req_addr_reg_tmp;
     logic[32-1:0] req_write_data_reg_tmp;
+    logic[PORT_BITWIDTH-1:0] req_write_beat_reg_tmp;
     logic[8-1:0] req_write_mask_reg_tmp;
     logic req_read_reg_tmp;
     logic req_write_reg_tmp;
@@ -399,10 +404,13 @@ module L2Cache #(
 
     always_comb begin : active_addr_comb_func  // active_addr_comb_func
         logic[63:0] i;
+        logic[31:0] slave_addr;
         active_addr_comb=(active_is_d_comb) ? (d_addr_in) : (i_addr_in);
+        slave_addr=active_addr_comb;
         for (i='h0;i < MEM_PORTS;i=i+1) begin
             if (active_is_slave_comb && (active_slave_index_comb == i)) begin
-                active_addr_comb=(slave_write_pending_comb) ? (((slave_aw_pending_reg[i]) ? (unsigned'(32'(slave_awaddr_reg[i]))) : (unsigned'(32'(axi_in__awaddr_in[i]))))) : (unsigned'(32'(axi_in__araddr_in[i])));
+                slave_addr=(slave_write_pending_comb) ? (((slave_aw_pending_reg[i]) ? (unsigned'(32'(slave_awaddr_reg[i]))) : (unsigned'(32'(axi_in__awaddr_in[i]))))) : (unsigned'(32'(axi_in__araddr_in[i])));
+                active_addr_comb=(slave_addr < memory_base_in) ? (slave_addr + memory_base_in) : (slave_addr);
             end
         end
     end
@@ -416,6 +424,16 @@ module L2Cache #(
             if ((active_is_slave_comb && slave_write_pending_comb) && (active_slave_index_comb == i)) begin
                 lane=((((slave_aw_pending_reg[i]) ? (unsigned'(32'(slave_awaddr_reg[i]))) : (unsigned'(32'(axi_in__awaddr_in[i])))) % PORT_BYTES))/'h4;
                 active_write_data_comb=unsigned'(32'(axi_in__wdata_in[i][lane*'h20 +:32]));
+            end
+        end
+    end
+
+    always_comb begin : active_write_beat_comb_func  // active_write_beat_comb_func
+        logic[63:0] i;
+        active_write_beat_comb = 'h0;
+        for (i='h0;i < MEM_PORTS;i=i+1) begin
+            if ((active_is_slave_comb && slave_write_pending_comb) && (active_slave_index_comb == i)) begin
+                active_write_beat_comb = axi_in__wdata_in[i];
             end
         end
     end
@@ -743,6 +761,10 @@ module L2Cache #(
         logic[31:0] _byte;
         logic[31:0] word;
         io_write_beat_comb = 'h0;
+        if (req_from_slave_reg) begin
+            io_write_beat_comb = req_write_beat_reg;
+            disable io_write_beat_comb_func;
+        end
         _byte=unsigned'(32'(req_addr_reg)) & 'h3;
         word=((unsigned'(32'(req_addr_reg)) % PORT_BYTES))/'h4;
         io_write_beat_comb[word*'h20 +:32] = unsigned'(32'(req_write_data_reg)) <<< ((_byte*'h8));
@@ -975,8 +997,8 @@ module L2Cache #(
         for (gi='h0;gi < DATA_BANKS;gi=gi+1) begin
             assign data_ram__addr_in[gi] = unsigned'(SET_BITS'(((state_reg == ST_IDLE)) ? (active_set_comb) : (req_set_comb)));
             assign data_ram__rd_in[gi] = (((state_reg == ST_IDLE) && ((active_read_comb || active_write_comb)))) || (state_reg == ST_CROSS_WRITE_LOOKUP);
-            assign data_ram__wr_in[gi] = (((((((state_reg == ST_AXI_R) && axi_rvalid_selected_comb) && axi_rready_comb) && (fill_way_reg == ((gi/LINE_WORDS)))) && (gi % LINE_WORDS)>=(unsigned'(32'(fill_beat_reg))*PORT_WORDS)) && (((gi % LINE_WORDS)) < (((unsigned'(32'(fill_beat_reg)) + 'h1))*PORT_WORDS)))) || ((((((((state_reg == ST_LOOKUP) || (state_reg == ST_CROSS_WRITE_LOOKUP))) && req_write_reg) && hit_comb) && (hit_way_comb == ((gi/LINE_WORDS)))) && (((req_word_comb == ((gi % LINE_WORDS))) || (((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS)))))))));
-            assign data_ram__data_in[gi] = (((state_reg == ST_LOOKUP) || (state_reg == ST_CROSS_WRITE_LOOKUP))) ? (((((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS))))) ? (write_next_word_comb) : (write_word_comb))) : ((((req_write_reg && (req_word_comb == ((gi % LINE_WORDS))))) ? (fill_write_word_comb) : ((((req_write_reg && (((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0)) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS))))) ? (fill_write_next_word_comb) : (unsigned'(32'(axi_rdata_selected_comb[((((gi % LINE_WORDS)) % PORT_WORDS))*'h20 +:(((gi % LINE_WORDS) % PORT_WORDS)*'h20) + 'h1F - ((gi % LINE_WORDS) % PORT_WORDS)*'h20 + 1]))))));
+            assign data_ram__wr_in[gi] = ((((((((state_reg == ST_AXI_R) && axi_rvalid_selected_comb) && axi_rready_comb) && (fill_way_reg == ((gi/LINE_WORDS)))) && (gi % LINE_WORDS)>=(unsigned'(32'(fill_beat_reg))*PORT_WORDS)) && (((gi % LINE_WORDS)) < (((unsigned'(32'(fill_beat_reg)) + 'h1))*PORT_WORDS)))) || ((((((((state_reg == ST_LOOKUP) && req_from_slave_reg) && req_write_reg) && hit_comb) && (hit_way_comb == ((gi/LINE_WORDS)))) && (gi % LINE_WORDS)>=(unsigned'(32'(req_beat_comb))*PORT_WORDS)) && (((gi % LINE_WORDS)) < (((unsigned'(32'(req_beat_comb)) + 'h1))*PORT_WORDS))))) || (((((((((state_reg == ST_LOOKUP) || (state_reg == ST_CROSS_WRITE_LOOKUP))) && req_write_reg) && hit_comb) && !req_from_slave_reg) && (hit_way_comb == ((gi/LINE_WORDS)))) && (((req_word_comb == ((gi % LINE_WORDS))) || (((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS)))))))));
+            assign data_ram__data_in[gi] = (((state_reg == ST_LOOKUP) || (state_reg == ST_CROSS_WRITE_LOOKUP))) ? (((req_from_slave_reg) ? (unsigned'(32'(req_write_beat_reg[((gi % PORT_WORDS))*'h20 +:((gi % PORT_WORDS)*'h20) + 'h1F - (gi % PORT_WORDS)*'h20 + 1]))) : (((((((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS))))) ? (write_next_word_comb) : (write_word_comb))))) : (((((((req_from_slave_reg && req_write_reg) && (req_beat_comb == fill_beat_reg)) && (gi % LINE_WORDS)>=(unsigned'(32'(fill_beat_reg))*PORT_WORDS)) && (((gi % LINE_WORDS)) < (((unsigned'(32'(fill_beat_reg)) + 'h1))*PORT_WORDS)))) ? (unsigned'(32'(req_write_beat_reg[((gi % PORT_WORDS))*'h20 +:((gi % PORT_WORDS)*'h20) + 'h1F - (gi % PORT_WORDS)*'h20 + 1]))) : (((req_write_reg && (req_word_comb == ((gi % LINE_WORDS))))) ? (fill_write_word_comb) : ((((req_write_reg && (((unsigned'(32'(req_addr_reg)) & 'h3)) != 'h0)) && ((req_word_comb + 'h1) == ((gi % LINE_WORDS))))) ? (fill_write_next_word_comb) : (unsigned'(32'(axi_rdata_selected_comb[((((gi % LINE_WORDS)) % PORT_WORDS))*'h20 +:(((gi % LINE_WORDS) % PORT_WORDS)*'h20) + 'h1F - ((gi % LINE_WORDS) % PORT_WORDS)*'h20 + 1])))))));
             assign data_ram__id_in[gi]='h7D0 + gi;
         end
         for (gi='h0;gi < WAYS;gi=gi+1) begin
@@ -1018,7 +1040,7 @@ module L2Cache #(
         logic trace_line_enabled;
         logic trace_req_line;
         logic trace_active_line;
-        logic[128-1:0] trace_data;
+        logic[64-1:0] trace_data;
         logic[31:0] trace_word0;
         logic[31:0] trace_word1;
         trace_line='h0;
@@ -1061,6 +1083,7 @@ module L2Cache #(
                     end
                     req_addr_reg_tmp = unsigned'(32'(active_addr_comb));
                     req_write_data_reg_tmp = unsigned'(32'(active_write_data_comb));
+                    req_write_beat_reg_tmp = active_write_beat_comb;
                     req_write_mask_reg_tmp = unsigned'(8'(active_write_mask_comb));
                     req_read_reg_tmp = unsigned'(1'(active_read_comb));
                     req_write_reg_tmp = unsigned'(1'(active_write_comb));
@@ -1430,6 +1453,7 @@ module L2Cache #(
             state_reg_tmp = '0;
             req_addr_reg_tmp = '0;
             req_write_data_reg_tmp = '0;
+            req_write_beat_reg_tmp = '0;
             req_write_mask_reg_tmp = '0;
             req_read_reg_tmp = '0;
             req_write_reg_tmp = '0;
@@ -1532,6 +1556,7 @@ module L2Cache #(
         state_reg_tmp = state_reg;
         req_addr_reg_tmp = req_addr_reg;
         req_write_data_reg_tmp = req_write_data_reg;
+        req_write_beat_reg_tmp = req_write_beat_reg;
         req_write_mask_reg_tmp = req_write_mask_reg;
         req_read_reg_tmp = req_read_reg;
         req_write_reg_tmp = req_write_reg;
@@ -1561,6 +1586,7 @@ module L2Cache #(
         state_reg <= state_reg_tmp;
         req_addr_reg <= req_addr_reg_tmp;
         req_write_data_reg <= req_write_data_reg_tmp;
+        req_write_beat_reg <= req_write_beat_reg_tmp;
         req_write_mask_reg <= req_write_mask_reg_tmp;
         req_read_reg <= req_read_reg_tmp;
         req_write_reg <= req_write_reg_tmp;

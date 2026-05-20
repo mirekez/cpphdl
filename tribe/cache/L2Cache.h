@@ -28,6 +28,7 @@ class L2Cache : public Module
     static constexpr size_t WORD_BITS = clog2(LINE_WORDS);
     static constexpr size_t WAY_BITS = WAYS <= 1 ? 1 : clog2(WAYS);
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
+    static constexpr size_t TAG_RAM_BITS = ((TAG_BITS + 2 + 7) / 8) * 8;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
     static constexpr uint64_t MEM_ADDR_MASK64 = (MEM_ADDR_BITS >= 64) ? ~0ull : ((1ull << MEM_ADDR_BITS) - 1ull);
@@ -86,11 +87,12 @@ public:
 
 private:
     RAM1PORT<32, SETS> data_ram[DATA_BANKS];
-    RAM1PORT<TAG_BITS + 2, SETS> tag_ram[WAYS]; // {valid, dirty, tag}
+    RAM1PORT<TAG_RAM_BITS, SETS> tag_ram[WAYS]; // {valid, dirty, tag}
 
     reg<u<5>> state_reg;
     reg<u32> req_addr_reg;
     reg<u32> req_write_data_reg;
+    reg<logic<PORT_BITWIDTH>> req_write_beat_reg;
     reg<u8> req_write_mask_reg;
     reg<u1> req_read_reg;
     reg<u1> req_write_reg;
@@ -184,12 +186,18 @@ private:
     // Address of the currently selected input port.
     _LAZY_COMB(active_addr_comb, uint32_t)
         size_t i;
+        uint32_t slave_addr;
         active_addr_comb = active_is_d_comb_func() ? d_addr_in() : i_addr_in();
+        slave_addr = active_addr_comb;
         for (i = 0; i < MEM_PORTS; ++i) {
             if (active_is_slave_comb_func() && active_slave_index_comb_func() == i) {
-                active_addr_comb = slave_write_pending_comb_func() ?
+                slave_addr = slave_write_pending_comb_func() ?
                     (slave_aw_pending_reg[i] ? (uint32_t)slave_awaddr_reg[i] : (uint32_t)axi_in[i].awaddr_in()) :
                     (uint32_t)axi_in[i].araddr_in();
+                // External AXI masters connected inside the SoC use local RAM
+                // offsets because their top-level address port is sized to the
+                // modeled memory window. CPU ports use full physical addresses.
+                active_addr_comb = slave_addr < memory_base_in() ? slave_addr + memory_base_in() : slave_addr;
             }
         }
         return active_addr_comb;
@@ -208,6 +216,19 @@ private:
             }
         }
         return active_write_data_comb;
+    }
+
+    // Full write beat supplied by an external AXI master. The local CPU/L1
+    // ports still carry 32-bit stores through req_write_data_reg/mask.
+    _LAZY_COMB(active_write_beat_comb, logic<PORT_BITWIDTH>)
+        size_t i;
+        active_write_beat_comb = 0;
+        for (i = 0; i < MEM_PORTS; ++i) {
+            if (active_is_slave_comb_func() && slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
+                active_write_beat_comb = axi_in[i].wdata_in();
+            }
+        }
+        return active_write_beat_comb;
     }
 
     // Write byte mask of the currently selected input port.
@@ -607,11 +628,14 @@ private:
         return req_uncached_region_comb = req_addr_in_memory_comb_func() && req_uncached_region_comb;
     }
 
-    // Write beat for uncached MMIO stores, placing the 32-bit CPU word at its byte lane.
+    // Write beat for uncached MMIO stores, placing the 32-bit word at its byte lane.
     _LAZY_COMB(io_write_beat_comb, logic<PORT_BITWIDTH>)
         uint32_t byte;
         uint32_t word;
         io_write_beat_comb = 0;
+        if (req_from_slave_reg) {
+            return io_write_beat_comb = req_write_beat_reg;
+        }
         byte = (uint32_t)req_addr_reg & 3u;
         word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
         // CPU stores keep the store value in low bits and carry the byte address separately.
@@ -867,12 +891,12 @@ private:
     }
 
     // Tag RAM payload: valid, dirty, and tag bits for init/fill/write updates.
-    _LAZY_COMB(tag_write_data_comb, logic<TAG_BITS + 2>)
+    _LAZY_COMB(tag_write_data_comb, logic<TAG_RAM_BITS>)
         if (state_reg == ST_INIT) {
             tag_write_data_comb = 0;
         }
         else {
-            tag_write_data_comb = (logic<TAG_BITS + 2>)(((uint64_t)1 << (TAG_BITS + 1)) |
+            tag_write_data_comb = (logic<TAG_RAM_BITS>)(((uint64_t)1 << (TAG_BITS + 1)) |
                 ((uint64_t)req_write_reg << TAG_BITS) | (uint64_t)req_tag_comb_func());
         }
         return tag_write_data_comb;
@@ -965,15 +989,26 @@ public:
                 (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
+                (state_reg == ST_LOOKUP && req_from_slave_reg && req_write_reg && hit_comb_func() &&
+                    hit_way_comb_func() == (i / LINE_WORDS) &&
+                    (i % LINE_WORDS) >= (uint32_t)req_beat_comb_func() * PORT_WORDS &&
+                    (i % LINE_WORDS) < ((uint32_t)req_beat_comb_func() + 1u) * PORT_WORDS) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() &&
+                    !req_from_slave_reg &&
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (req_word_comb_func() == (i % LINE_WORDS) ||
                      (((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)))));
             data_ram[i].data_in = _ASSIGN_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 // Store hit path merges CPU bytes with old cached words; fill path selects/merges words from AXI data.
-                ((((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
-                    write_next_word_comb_func() : write_word_comb_func()) :
-                ((req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
+                (req_from_slave_reg ?
+                    (uint32_t)req_write_beat_reg.bits(((i % PORT_WORDS) * 32) + 31, (i % PORT_WORDS) * 32) :
+                    ((((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
+                        write_next_word_comb_func() : write_word_comb_func())) :
+                ((req_from_slave_reg && req_write_reg && req_beat_comb_func() == fill_beat_reg &&
+                    (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
+                    (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
+                    (uint32_t)req_write_beat_reg.bits(((i % PORT_WORDS) * 32) + 31, (i % PORT_WORDS) * 32) :
+                 (req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_write_reg && ((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
                     (uint32_t)axi_rdata_selected_comb_func().bits(((i % LINE_WORDS) % PORT_WORDS) * 32 + 31, ((i % LINE_WORDS) % PORT_WORDS) * 32)));
             data_ram[i].id_in = 2000 + i;
@@ -1086,6 +1121,7 @@ public:
                 }
                 req_addr_reg._next = active_addr_comb_func();
                 req_write_data_reg._next = active_write_data_comb_func();
+                req_write_beat_reg._next = active_write_beat_comb_func();
                 req_write_mask_reg._next = active_write_mask_comb_func();
                 req_read_reg._next = active_read_comb_func();
                 req_write_reg._next = active_write_comb_func();
@@ -1432,6 +1468,7 @@ public:
             state_reg.clr();
             req_addr_reg.clr();
             req_write_data_reg.clr();
+            req_write_beat_reg.clr();
             req_write_mask_reg.clr();
             req_read_reg.clr();
             req_write_reg.clr();
@@ -1472,6 +1509,7 @@ public:
         state_reg.strobe(checkpoint_fd);
         req_addr_reg.strobe(checkpoint_fd);
         req_write_data_reg.strobe(checkpoint_fd);
+        req_write_beat_reg.strobe(checkpoint_fd);
         req_write_mask_reg.strobe(checkpoint_fd);
         req_read_reg.strobe(checkpoint_fd);
         req_write_reg.strobe(checkpoint_fd);

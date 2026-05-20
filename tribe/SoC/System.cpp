@@ -12,6 +12,9 @@
 #undef SYNTHESIS
 #endif
 #include "../common/Axi4Ram.h"
+#if !defined(SYNTHESIS)
+#include "../verif/SDCardVerif.h"
+#endif
 
 #include <chrono>
 #include <cstring>
@@ -90,11 +93,13 @@ class System : public Module
 public:
     Tribe tribe;
     Axi4Ram<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH, SOC_AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<4, clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<5, clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> clint;
     PLIC<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> plic;
     Accelerator<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> accelerator;
+    SDController<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> sdcard;
+    reg<u1> sd_dma_cache_invalidate_reg;
 
     bool debugen_in = false;
 
@@ -111,6 +116,15 @@ public:
     _PORT(bool) uart_rx_ready_out = _ASSIGN_COMB(uart.uart_rx_ready_out());
     _PORT(bool) uart_tx_valid_out = _ASSIGN_COMB(uart.uart_valid_out());
     _PORT(uint8_t) uart_tx_data_out = _ASSIGN_COMB(uart.uart_data_out());
+
+    _PORT(bool) sd_cmd_valid_out = _ASSIGN_COMB(sdcard.sd_cmd_valid_out());
+    _PORT(u<8>) sd_cmd_data_out = _ASSIGN_COMB(sdcard.sd_cmd_data_out());
+    _PORT(bool) sd_cmd_last_out = _ASSIGN_COMB(sdcard.sd_cmd_last_out());
+    _PORT(bool) sd_cmd_ready_in;
+    _PORT(bool) sd_rsp_valid_in;
+    _PORT(u<8>) sd_rsp_data_in;
+    _PORT(bool) sd_rsp_last_in;
+    _PORT(bool) sd_rsp_ready_out = _ASSIGN_COMB(sdcard.sd_rsp_ready_out());
 
     _PORT(TribePerf) perf_out = _ASSIGN_COMB(tribe.perf_out());
     _PORT(bool) dmem_write_out = _ASSIGN_COMB(tribe.dmem_write_out());
@@ -176,6 +190,7 @@ public:
         tribe.boot_hartid_in = boot_hartid_in;
         tribe.boot_dtb_addr_in = boot_dtb_addr_in;
         tribe.boot_priv_in = boot_priv_in;
+        tribe.external_cache_invalidate_in = _ASSIGN((bool)sd_dma_cache_invalidate_reg);
         tribe.memory_base_in = memory_base_in;
         tribe.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
@@ -203,6 +218,17 @@ public:
         tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
         tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
         tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
+        tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
+        tribe.axi_in[1].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.awaddr_in());
+        tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
+        tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
+        tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
+        tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
+        tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
+        tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
+        tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
+        tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
+        tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -216,6 +242,7 @@ public:
         AXI4_DRIVER_FROM(mem2.axi_in, tribe.axi_out[2]);
         AXI4_DRIVER_FROM(iospace.slave_in, tribe.axi_out[3]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
+        AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
 
         mem2.debugen_in = debugen_in;
         mem2.__inst_name = __inst_name + "/mem2";
@@ -228,16 +255,23 @@ public:
         iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
         iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
-        iospace.region_base_in[3] = _ASSIGN((uint32_t)0x10000);
-        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x210000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
-        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
         uart.uart_rx_valid_in = _ASSIGN(uart_rx_valid_in());
         uart.uart_rx_data_in = _ASSIGN(uart_rx_data_in());
+        sdcard.sd_cmd_ready_in = sd_cmd_ready_in;
+        sdcard.sd_rsp_valid_in = sd_rsp_valid_in;
+        sdcard.sd_rsp_data_in = sd_rsp_data_in;
+        sdcard.sd_rsp_last_in = sd_rsp_last_in;
         clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
         clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
         clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
@@ -245,18 +279,22 @@ public:
             plic.source_irq_in[i] = _ASSIGN(false);
         }
         plic.source_irq_in[1] = uart.irq_out;
+        plic.source_irq_in[2] = sdcard.irq_out;
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
+        sdcard.__inst_name = __inst_name + "/sdcard";
         uart._assign();
         clint._assign();
         plic._assign();
         accelerator._assign();
+        sdcard._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
-        AXI4_RESPONDER_FROM(iospace.masters_out[3], plic.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
         AXI4_RESPONDER_FROM_LATE(tribe.axi_out[0], axi_out[0]);
         AXI4_RESPONDER_FROM_LATE(tribe.axi_out[1], axi_out[1]);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
@@ -271,6 +309,11 @@ public:
         clint._work(reset);
         plic._work(reset);
         accelerator._work(reset);
+        sdcard._work(reset);
+        sd_dma_cache_invalidate_reg._next = sdcard.dma_write_complete_out();
+        if (reset) {
+            sd_dma_cache_invalidate_reg.clr();
+        }
     }
 
     void _work_neg(bool reset)
@@ -289,6 +332,8 @@ public:
         clint._strobe(checkpoint_fd);
         plic._strobe(checkpoint_fd);
         accelerator._strobe(checkpoint_fd);
+        sdcard._strobe(checkpoint_fd);
+        sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
     }
 };
 
@@ -337,6 +382,7 @@ class SystemTest : public Module
 
     reg<u1> uart_rx_valid_reg;
     reg<u8> uart_rx_data_reg;
+    SDCardVerifFrontend sdcard_verif;
 
     struct Elf32Header
     {
@@ -418,6 +464,7 @@ public:
     explicit SystemTest(bool debug = false)
     {
         debugen_in = debug;
+        sdcard_verif.fill_prbs();
     }
 
     void drive_uart_rx(bool valid, uint8_t data = 0)
@@ -446,6 +493,14 @@ public:
         system.mem_region_size_in[3] = _ASSIGN((uint32_t)TRIBE_IO_REGION_SIZE);
         system.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         system.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
+        system.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
+        system.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
+        system.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
+        system.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out;
+        sdcard_verif.sd_cmd_valid_in = system.sd_cmd_valid_out;
+        sdcard_verif.sd_cmd_data_in = system.sd_cmd_data_out;
+        sdcard_verif.sd_cmd_last_in = system.sd_cmd_last_out;
+        sdcard_verif.sd_rsp_ready_in = system.sd_rsp_ready_out;
         system.__inst_name = __inst_name + "/system";
         system._assign();
         AXI4_DRIVER_FROM(dram0.axi_in, system.axi_out[0]);
@@ -453,13 +508,19 @@ public:
 #else
         AXI4_DRIVER_FROM_VERILATOR_CONST(dram0.axi_in, system, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         AXI4_DRIVER_FROM_VERILATOR_CONST(dram1.axi_in, system, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        sdcard_verif.sd_cmd_valid_in = _ASSIGN((bool)system.sd_cmd_valid_out);
+        sdcard_verif.sd_cmd_data_in = _ASSIGN((u<8>)(uint8_t)system.sd_cmd_data_out);
+        sdcard_verif.sd_cmd_last_in = _ASSIGN((bool)system.sd_cmd_last_out);
+        sdcard_verif.sd_rsp_ready_in = _ASSIGN((bool)system.sd_rsp_ready_out);
 #endif
         dram0.debugen_in = debugen_in;
         dram1.debugen_in = debugen_in;
         dram0.__inst_name = __inst_name + "/dram0";
         dram1.__inst_name = __inst_name + "/dram1";
+        sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
         dram0._assign();
         dram1._assign();
+        sdcard_verif._assign();
 #ifndef VERILATOR
         AXI4_RESPONDER_FROM(system.axi_out[0], dram0.axi_in);
         AXI4_RESPONDER_FROM(system.axi_out[1], dram1.axi_in);
@@ -482,6 +543,10 @@ public:
         system.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
         system.uart_rx_valid_in = (bool)uart_rx_valid_reg;
         system.uart_rx_data_in = (uint8_t)uart_rx_data_reg;
+        system.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out();
+        system.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out();
+        system.sd_rsp_data_in = (uint8_t)sdcard_verif.sd_rsp_data_out();
+        system.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out();
         system.clk = 0;
         system.reset = reset;
         system.eval();
@@ -496,6 +561,7 @@ public:
         system.clk = 1;
         system.reset = reset;
         system.eval();
+        sdcard_verif._work(reset);
 #endif
         if (reset) {
             error = false;
@@ -538,6 +604,15 @@ public:
 #endif
         dram0._strobe(checkpoint_fd);
         dram1._strobe(checkpoint_fd);
+        if (checkpoint_fd && checkpoint_reading(checkpoint_fd)) {
+            sdcard_verif._strobe(checkpoint_fd);
+        }
+        else {
+#ifndef VERILATOR
+            sdcard_verif._work(false);
+#endif
+            sdcard_verif._strobe(checkpoint_fd);
+        }
     }
 
     void perf_sample()
@@ -813,7 +888,7 @@ int main(int argc, char** argv)
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
                 "File", "RAM1PORT", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
-                "Tribe", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator"}, {
+                "Tribe", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),
                     (source_root / "tribe").string(),
                     (source_root / "tribe" / "common").string(),

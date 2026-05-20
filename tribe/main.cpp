@@ -42,6 +42,10 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "devices/CLINT.h"
 #include "devices/PLIC.h"
 #include "devices/Accelerator.cpp"
+#include "devices/sd/SDController.h"
+#ifndef SYNTHESIS
+#include "verif/SDCardVerif.h"
+#endif
 #include "cache/L1Cache.h"
 #include "cache/L2Cache.h"
 
@@ -116,6 +120,7 @@ class Tribe: public Module
     L1Cache<L1_CACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
     L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
+    reg<u1> icache_invalidate_issued_reg;
 
 public:
 
@@ -183,6 +188,7 @@ public:
     _PORT(uint32_t)  boot_hartid_in;
     _PORT(uint32_t)  boot_dtb_addr_in;
     _PORT(u<2>)      boot_priv_in;
+    _PORT(bool)      external_cache_invalidate_in;
     _PORT(uint32_t)  memory_base_in;
     _PORT(uint32_t)  memory_size_in;
     _PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
@@ -399,7 +405,7 @@ public:
         dcache.mem_wait_in = l2cache.d_wait_out;
         dcache.stall_in = _ASSIGN(branch_stall_comb_func());
         dcache.flush_in = _ASSIGN(false);
-        dcache.invalidate_in = _ASSIGN(false);
+        dcache.invalidate_in = external_cache_invalidate_in;
         // MMIO region bypasses L1 caching; RAM stays cacheable and coherent through L2.
         dcache.cache_disable_in = _ASSIGN(
             (uint32_t)dcache.addr_in() >= memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
@@ -966,7 +972,7 @@ private:
     _LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb = state_reg[0].valid &&
             (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
-            !memory_wait_comb_func();
+            !memory_wait_comb_func() && !icache_invalidate_issued_reg;
     }
 
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
@@ -1433,6 +1439,16 @@ public:
         l2cache._work(reset);
         bp._work(reset);
 
+        if (state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+            !memory_wait_comb_func()) {
+            icache_invalidate_issued_reg._next = true;
+        }
+        else if (!state_reg[0].valid ||
+                 (state_reg[0].sys_op != Sys::FENCEI && state_reg[0].sys_op != Sys::SFENCE_VMA)) {
+            icache_invalidate_issued_reg._next = false;
+        }
+
         if (reset) {
             state_reg._next[0].valid = 0;
             state_reg._next[1].valid = 0;
@@ -1446,6 +1462,7 @@ public:
             predicted_taken_reg.clr();
             output_write_active_reg.clr();
             interrupt_entry_guard_reg.clr();
+            icache_invalidate_issued_reg.clr();
         }
     }
 
@@ -1519,6 +1536,7 @@ public:
         debug_branch_taken_reg.strobe(checkpoint_fd);
         output_write_active_reg.strobe(checkpoint_fd);
         interrupt_entry_guard_reg.strobe(checkpoint_fd);
+        icache_invalidate_issued_reg.strobe(checkpoint_fd);
 
         regs._strobe(checkpoint_fd);
         exe._strobe(checkpoint_fd);
@@ -1711,11 +1729,13 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<4,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<5,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
     PLIC<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> plic;
     Accelerator<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> accelerator;
+    SDController<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> sdcard;
+    SDCardVerifFrontend sdcard_verif;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -1763,6 +1783,7 @@ class TestTribe : public Module
     reg<u32> uart_script_delay_reg;
     reg<u1> uart_script_enabled_reg;
     reg<u1> uart_script_reported_reg;
+    reg<u1> sd_dma_cache_invalidate_reg;
     bool tohost_done = false;
 
     class StdinRawMode
@@ -2046,6 +2067,7 @@ public:
         debugen_in = debug;
         drive_uart_rx(false);
         init_uart_script_state(true);
+        sdcard_verif.fill_prbs();
     }
 
     ~TestTribe()
@@ -2062,16 +2084,17 @@ public:
         }
     }
 
-    void init_uart_script_state(bool enabled)
+    void init_uart_script_state(bool enabled, uint32_t delay = 0)
     {
         uart_script_pos_reg.set((u32)0);
-        uart_script_delay_reg.set((u32)0);
+        uart_script_delay_reg.set((u32)delay);
         uart_script_enabled_reg.set((u1)enabled);
         uart_script_reported_reg.set((u1)enabled);
     }
 
-    void enable_uart_script()
+    void enable_uart_script(uint32_t delay = 0)
     {
+        uart_script_delay_reg.set((u32)delay);
         uart_script_enabled_reg.set((u1)true);
     }
 
@@ -2099,6 +2122,7 @@ public:
         tribe.boot_hartid_in = _ASSIGN(boot_hartid);
         tribe.boot_dtb_addr_in = _ASSIGN(boot_dtb_addr);
         tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
+        tribe.external_cache_invalidate_in = _ASSIGN((bool)sd_dma_cache_invalidate_reg);
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
         tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
@@ -2129,6 +2153,17 @@ public:
         tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
         tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
         tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
+        tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
+        tribe.axi_in[1].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.awaddr_in());
+        tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
+        tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
+        tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
+        tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
+        tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
+        tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
+        tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
+        tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
+        tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -2153,15 +2188,27 @@ public:
         iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
         iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
-        iospace.region_base_in[3] = _ASSIGN((uint32_t)0x10000);
-        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x210000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
-        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
+        AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
+        sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
+        sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
+        sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
+        sdcard.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out;
+        sdcard_verif.sd_cmd_valid_in = sdcard.sd_cmd_valid_out;
+        sdcard_verif.sd_cmd_data_in = sdcard.sd_cmd_data_out;
+        sdcard_verif.sd_cmd_last_in = sdcard.sd_cmd_last_out;
+        sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
         uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
         clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
@@ -2171,10 +2218,13 @@ public:
             plic.source_irq_in[i] = _ASSIGN(false);
         }
         plic.source_irq_in[1] = uart.irq_out;
+        plic.source_irq_in[2] = sdcard.irq_out;
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
+        sdcard.__inst_name = __inst_name + "/sdcard";
+        sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
         mem0._assign();
         mem1._assign();
         mem2._assign();
@@ -2182,6 +2232,8 @@ public:
         clint._assign();
         plic._assign();
         accelerator._assign();
+        sdcard._assign();
+        sdcard_verif._assign();
 
         AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
@@ -2189,13 +2241,15 @@ public:
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
-        AXI4_RESPONDER_FROM(iospace.masters_out[3], plic.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
         tribe.boot_hartid_in = boot_hartid;
         tribe.boot_dtb_addr_in = boot_dtb_addr;
         tribe.boot_priv_in = boot_priv;
+        tribe.external_cache_invalidate_in = (bool)sd_dma_cache_invalidate_reg;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
@@ -2236,14 +2290,17 @@ public:
         iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
         iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
-        iospace.region_base_in[3] = _ASSIGN((uint32_t)0x10000);
-        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x210000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
-        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
         uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
         clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
@@ -2253,6 +2310,15 @@ public:
             plic.source_irq_in[i] = _ASSIGN(false);
         }
         plic.source_irq_in[1] = uart.irq_out;
+        plic.source_irq_in[2] = sdcard.irq_out;
+        sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
+        sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
+        sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
+        sdcard.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out;
+        sdcard_verif.sd_cmd_valid_in = sdcard.sd_cmd_valid_out;
+        sdcard_verif.sd_cmd_data_in = sdcard.sd_cmd_data_out;
+        sdcard_verif.sd_cmd_last_in = sdcard.sd_cmd_last_out;
+        sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
         accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
         accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
         accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
@@ -2262,10 +2328,21 @@ public:
         accelerator.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
         accelerator.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[0]);
         accelerator.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
+        sdcard.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[1]);
+        sdcard.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[1]);
+        sdcard.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[1]);
+        sdcard.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[1]);
+        sdcard.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[1]);
+        sdcard.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[1]);
+        sdcard.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[1]));
+        sdcard.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[1]);
+        sdcard.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[1]);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
+        sdcard.__inst_name = __inst_name + "/sdcard";
+        sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
         mem0._assign();
         mem1._assign();
         mem2._assign();
@@ -2273,10 +2350,13 @@ public:
         clint._assign();
         plic._assign();
         accelerator._assign();
+        sdcard._assign();
+        sdcard_verif._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
-        AXI4_RESPONDER_FROM(iospace.masters_out[3], plic.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
 #endif
     }
 
@@ -2310,6 +2390,17 @@ public:
         tribe.axi_in___05Faraddr_in[0] = (uint32_t)accelerator.dma_out.araddr_in();
         tribe.axi_in___05Farid_in[0] = (uint32_t)accelerator.dma_out.arid_in();
         tribe.axi_in___05Frready_in[0] = accelerator.dma_out.rready_in();
+        tribe.axi_in___05Fawvalid_in[1] = sdcard.dma_out.awvalid_in();
+        tribe.axi_in___05Fawaddr_in[1] = (uint32_t)sdcard.dma_out.awaddr_in();
+        tribe.axi_in___05Fawid_in[1] = (uint32_t)sdcard.dma_out.awid_in();
+        tribe.axi_in___05Fwvalid_in[1] = sdcard.dma_out.wvalid_in();
+        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[1], sdcard.dma_out.wdata_in());
+        tribe.axi_in___05Fwlast_in[1] = sdcard.dma_out.wlast_in();
+        tribe.axi_in___05Fbready_in[1] = sdcard.dma_out.bready_in();
+        tribe.axi_in___05Farvalid_in[1] = sdcard.dma_out.arvalid_in();
+        tribe.axi_in___05Faraddr_in[1] = (uint32_t)sdcard.dma_out.araddr_in();
+        tribe.axi_in___05Farid_in[1] = (uint32_t)sdcard.dma_out.arid_in();
+        tribe.axi_in___05Frready_in[1] = sdcard.dma_out.rready_in();
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
@@ -2328,6 +2419,8 @@ public:
         clint._work(reset);
         plic._work(reset);
         accelerator._work(reset);
+        sdcard._work(reset);
+        sd_dma_cache_invalidate_reg._next = sdcard.dma_write_complete_out();
 #ifdef VERILATOR
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
@@ -2342,6 +2435,7 @@ public:
 
         if (reset) {
             error = false;
+            sd_dma_cache_invalidate_reg.clr();
             return;
         }
     }
@@ -2377,6 +2471,7 @@ public:
         uart_script_delay_reg.strobe();
         uart_script_enabled_reg.strobe(checkpoint_fd);
         uart_script_reported_reg.strobe(checkpoint_fd);
+        sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
 #ifndef VERILATOR
         uint64_t tribe_strobe_time_start = tribe_runtime_tick();
         tribe._strobe(checkpoint_fd);
@@ -2390,6 +2485,14 @@ public:
         clint._strobe(checkpoint_fd);
         plic._strobe(checkpoint_fd);
         accelerator._strobe(checkpoint_fd);
+        sdcard._strobe(checkpoint_fd);
+        if (checkpoint_fd && checkpoint_reading(checkpoint_fd)) {
+            sdcard_verif._strobe(checkpoint_fd);
+        }
+        else {
+            sdcard_verif._work(false);
+            sdcard_verif._strobe(checkpoint_fd);
+        }
     }
 
     void _work_neg(bool reset)
@@ -2515,7 +2618,7 @@ public:
             runtime_part_percent(runtime_negedge_ticks));
     }
 
-    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "")
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", uint64_t max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "", const std::string& sd_image_file = "")
     {
         std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
         if (label.empty()) {
@@ -2622,6 +2725,26 @@ public:
         fclose(fbin);
         ///////////////////////////////////////
 
+        if (!sd_image_file.empty()) {
+            if (!sdcard_verif.load_image(sd_image_file)) {
+                std::print("can't open SD image '{}'\n", sd_image_file);
+                return false;
+            }
+            std::print("Reading SD image into card model (size: {}, file: {})\n",
+                sdcard_verif.image_size(), sd_image_file);
+        }
+
+        auto save_sd_image = [&]() {
+            if (sd_image_file.empty()) {
+                return true;
+            }
+            if (!sdcard_verif.save_image(sd_image_file)) {
+                std::print("*** can't write SD image '{}' ***\n", sd_image_file);
+                return false;
+            }
+            return true;
+        };
+
         __inst_name = "tribe_test";
         _assign();
         _strobe();
@@ -2638,6 +2761,8 @@ public:
         std::string scripted_uart_after = uart_input_after_env ? uart_input_after_env : "";
         const char* uart_input_char_delay_env = std::getenv("TRIBE_UART_INPUT_CHAR_DELAY");
         uint32_t scripted_uart_char_delay = uart_input_char_delay_env ? std::stoul(uart_input_char_delay_env, nullptr, 0) : 0;
+        const char* uart_input_start_delay_env = std::getenv("TRIBE_UART_INPUT_START_DELAY");
+        uint32_t scripted_uart_start_delay = uart_input_start_delay_env ? std::stoul(uart_input_start_delay_env, nullptr, 0) : 0;
         bool checkpoint_loaded_pending_work = false;
         if (!checkpoint_load_file.empty()) {
             FILE* checkpoint_in = fopen(checkpoint_load_file.c_str(), "rb");
@@ -2653,14 +2778,22 @@ public:
             // pre-load host-process values.
             ++sys_clock;
             checkpoint_loaded_pending_work = true;
-            if (!scripted_uart_input.empty() && scripted_uart_after.empty()) {
-                // Checkpoints restore the UART script feeder registers. Keep
-                // that state for marker-gated tests; only re-arm immediately
-                // when a restored run intentionally injects input with no
-                // output marker, such as interactive Linux command probes.
-                init_uart_script_state(true);
+            if (!scripted_uart_input.empty() && std::getenv("TRIBE_UART_INPUT_RESTART_ON_LOAD")) {
+                // Most checkpoint users need the serialized feeder registers
+                // restored exactly. This opt-in restart is only for loading an
+                // unrelated checkpoint and injecting a fresh host script.
+                init_uart_script_state(scripted_uart_after.empty(),
+                    scripted_uart_after.empty() ? scripted_uart_start_delay : 0);
             }
             std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
+            if (!sd_image_file.empty() && std::getenv("TRIBE_SD_IMAGE_OVERRIDE_CHECKPOINT")) {
+                if (!sdcard_verif.load_image(sd_image_file)) {
+                    std::print("can't reload SD image '{}' after checkpoint\n", sd_image_file);
+                    return false;
+                }
+                std::print("Reloaded SD image after checkpoint (size: {}, file: {})\n",
+                    sdcard_verif.image_size(), sd_image_file);
+            }
         }
         const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
         uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
@@ -2679,6 +2812,7 @@ public:
         const bool trace_mmu = std::getenv("TRIBE_TRACE_MMU") != nullptr;
         const bool trace_csr = std::getenv("TRIBE_TRACE_CSR") != nullptr;
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
+        const bool trace_sd = std::getenv("TRIBE_TRACE_SD") != nullptr;
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
@@ -2696,8 +2830,20 @@ public:
         bool checkpoint_save_after_completed = false;
         bool mirrored_uart_needs_newline = false;
         bool host_interrupt = false;
+        bool trace_sd_prev_active = false;
+        uint32_t trace_sd_prev_addr = 0;
+        bool trace_sd_prev_read = false;
+        bool trace_sd_prev_write = false;
+        uint32_t trace_sd_prev_wdata = 0;
+        uint32_t trace_sd_prev_mask = 0;
+        uint32_t trace_sd_prev_status = 0xffffffffu;
+        uint32_t trace_sd_prev_state = 0xffffffffu;
+        uint32_t trace_sd_prev_count_bucket = 0xffffffffu;
+        uint32_t trace_sd_prev_len = 0xffffffffu;
+        uint64_t trace_sd_last_poll_report = 0;
+        const bool trace_sd_data = std::getenv("TRIBE_TRACE_SD_DATA") != nullptr;
         if (checkpoint_load_file.empty()) {
-            init_uart_script_state(scripted_uart_after.empty());
+            init_uart_script_state(scripted_uart_after.empty(), scripted_uart_after.empty() ? scripted_uart_start_delay : 0);
         }
         StdinRawMode stdin_raw(interactive_uart_input);
         if (!tohost_addr && expected_output_contains.empty()) {
@@ -2756,7 +2902,7 @@ public:
             }
             if (!(bool)uart_script_enabled_reg && !scripted_uart_input.empty() &&
                 captured_output.find(scripted_uart_after) != std::string::npos) {
-                enable_uart_script();
+                enable_uart_script(scripted_uart_start_delay);
                 if (trace_uart_rx && !(bool)uart_script_reported_reg) {
                     mark_uart_script_reported();
                     std::print("*** uart-rx-script-enabled after '{}' ***\n", scripted_uart_after);
@@ -2774,9 +2920,15 @@ public:
             }
             return false;
         };
-        int cycles = max_cycles;
+        const bool unlimited_cycles = max_cycles == 0;
+        uint64_t cycles_remaining = max_cycles;
+        bool cycle_limit_reached = false;
         bool checkpoint_saved = false;
-        while (--cycles && !error && !tohost_done && !host_interrupt) {
+        while (!error && !tohost_done && !host_interrupt) {
+            if (!unlimited_cycles && cycles_remaining-- == 0) {
+                cycle_limit_reached = true;
+                break;
+            }
             uint64_t cycle_time_start = tribe_runtime_tick();
             uint64_t section_time_start = cycle_time_start;
             uint64_t strobe_ticks_before = runtime_strobe_ticks;
@@ -3093,6 +3245,78 @@ public:
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
             }
+            if (trace_sd) {
+                uint32_t trace_sd_addr_now = (uint32_t)PORT_VALUE(tribe.dmem_addr_out);
+                bool trace_sd_read_now = (bool)PORT_VALUE(tribe.dmem_read_out);
+                bool trace_sd_write_now = (bool)PORT_VALUE(tribe.dmem_write_out);
+                uint32_t trace_sd_wdata_now = (uint32_t)PORT_VALUE(tribe.dmem_write_data_out);
+                uint32_t trace_sd_mask_now = (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out);
+                uint32_t trace_sd_status_now = (uint32_t)sdcard.debug_status_out();
+                uint32_t trace_sd_state_now = (uint32_t)sdcard.debug_state_out();
+                uint32_t trace_sd_count_now = (uint32_t)sdcard.debug_count_out();
+                uint32_t trace_sd_len_now = (uint32_t)sdcard.debug_len_out();
+                uint32_t trace_sd_count_bucket_now = trace_sd_count_now / 4096u;
+                if (trace_sd_count_now == 0 || trace_sd_count_now == trace_sd_len_now) {
+                    trace_sd_count_bucket_now = trace_sd_count_now;
+                }
+                bool trace_sd_active_now =
+                    trace_sd_addr_now >= 0x8200d100u &&
+                    trace_sd_addr_now < 0x8200d140u &&
+                    (trace_sd_read_now || trace_sd_write_now);
+                uint32_t trace_sd_reg_now = trace_sd_addr_now - 0x8200d100u;
+                bool trace_sd_tuple_changed =
+                    !trace_sd_prev_active ||
+                    trace_sd_prev_addr != trace_sd_addr_now ||
+                    trace_sd_prev_read != trace_sd_read_now ||
+                    trace_sd_prev_write != trace_sd_write_now ||
+                    trace_sd_prev_wdata != trace_sd_wdata_now ||
+                    trace_sd_prev_mask != trace_sd_mask_now;
+                bool trace_sd_state_changed =
+                    trace_sd_prev_status != trace_sd_status_now ||
+                    trace_sd_prev_state != trace_sd_state_now ||
+                    trace_sd_prev_count_bucket != trace_sd_count_bucket_now ||
+                    trace_sd_prev_len != trace_sd_len_now;
+                bool trace_sd_periodic_poll =
+                    trace_sd_active_now && trace_sd_read_now && trace_sd_reg_now == 0x04u &&
+                    (perf_clocks - trace_sd_last_poll_report >= 1000000ull);
+                bool trace_sd_log_now =
+                    trace_sd_active_now &&
+                    ((trace_sd_write_now && trace_sd_tuple_changed) ||
+                     trace_sd_state_changed ||
+                     (trace_sd_data && trace_sd_tuple_changed && trace_sd_read_now && trace_sd_reg_now == 0x1cu) ||
+                     trace_sd_periodic_poll);
+                if (trace_sd_log_now) {
+                    std::print("trace-sd cycle={} pc={:08x} reg={:02x} rd={} wr={} wdata={:08x} mask={:02x} status={:02x} state={} count={} len={}\n",
+                        perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                        (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                        (uint32_t)0,
+#endif
+                        trace_sd_reg_now,
+                        trace_sd_read_now,
+                        trace_sd_write_now,
+                        trace_sd_wdata_now,
+                        trace_sd_mask_now,
+                        trace_sd_status_now,
+                        trace_sd_state_now,
+                        trace_sd_count_now,
+                        trace_sd_len_now);
+                    if (trace_sd_read_now && trace_sd_reg_now == 0x04u) {
+                        trace_sd_last_poll_report = perf_clocks;
+                    }
+                }
+                trace_sd_prev_active = trace_sd_active_now;
+                trace_sd_prev_addr = trace_sd_addr_now;
+                trace_sd_prev_read = trace_sd_read_now;
+                trace_sd_prev_write = trace_sd_write_now;
+                trace_sd_prev_wdata = trace_sd_wdata_now;
+                trace_sd_prev_mask = trace_sd_mask_now;
+                trace_sd_prev_status = trace_sd_status_now;
+                trace_sd_prev_state = trace_sd_state_now;
+                trace_sd_prev_count_bucket = trace_sd_count_bucket_now;
+                trace_sd_prev_len = trace_sd_len_now;
+            }
 #ifdef ENABLE_MMU_TLB
             if (trace_mmu && (PORT_VALUE(tribe.debug_immu_ptw_read_out) || PORT_VALUE(tribe.debug_dmmu_ptw_read_out) ||
                               PORT_VALUE(tribe.debug_immu_busy_out) || PORT_VALUE(tribe.debug_immu_fault_out) ||
@@ -3141,30 +3365,31 @@ public:
         }
 
         if (host_interrupt) {
-            return true;
+            error |= !save_sd_image();
+            return !error;
         }
 
         if (checkpoint_save_only_success) {
             if (!checkpoint_saved) {
-                std::print("*** checkpoint was not saved before cycle limit ***\n");
+                std::print("*** checkpoint was not saved{} ***\n", cycle_limit_reached ? " before cycle limit" : "");
                 error = true;
             }
         }
         else if (!checkpoint_save_after.empty()) {
             if (!checkpoint_save_after_completed) {
-                std::print("*** checkpoint marker '{}' was not seen before cycle limit ***\n", checkpoint_save_after);
+                std::print("*** checkpoint marker '{}' was not seen{} ***\n", checkpoint_save_after, cycle_limit_reached ? " before cycle limit" : "");
                 error = true;
             }
         }
         else if (!expected_output_contains.empty()) {
             if (!expected_marker_seen) {
-                std::print("*** UART output marker '{}' was not seen before cycle limit ***\n", expected_output_contains);
+                std::print("*** UART output marker '{}' was not seen{} ***\n", expected_output_contains, cycle_limit_reached ? " before cycle limit" : "");
                 error = true;
             }
         }
         else if (tohost_addr) {
             if (!tohost_done) {
-                std::print("*** tohost was not written before cycle limit ***\n");
+                std::print("*** tohost was not written{} ***\n", cycle_limit_reached ? " before cycle limit" : "");
                 error = true;
             }
             else if (tohost_value != 1) {
@@ -3177,6 +3402,7 @@ public:
             error |= !std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(b));
         }
 
+        error |= !save_sd_image();
         perf_print();
         std::print(" {} ({} microseconds)\n", !error ? (checkpoint_save_only_success ? "CHECKPOINT SAVED" : "PASSED") : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
@@ -3265,7 +3491,7 @@ int main (int argc, char** argv)
     bool log_arg = false;
     bool raw_program = false;
     size_t start_offset = 0x37c;
-    int max_cycles = 2000000;
+    uint64_t max_cycles = 2000000;
     uint32_t tohost = 0;
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
@@ -3276,6 +3502,7 @@ int main (int argc, char** argv)
     uint32_t elf_phys_offset = 0;
     std::string dtb_file;
     std::string initramfs_file;
+    std::string sd_image_file;
     uint32_t initramfs_addr = 0;
     std::string checkpoint_load_file;
     std::string checkpoint_save_file;
@@ -3284,6 +3511,7 @@ int main (int argc, char** argv)
     bool append_output = false;
     bool mirror_uart_output = false;
     bool interactive_uart_input = false;
+    std::string expected_output_contains;
     std::string bootargs;
     bool linux_earlycon_mapbase = false;
     int only = -1;
@@ -3318,7 +3546,7 @@ int main (int argc, char** argv)
             continue;
         }
         if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc) {
-            max_cycles = std::stoi(argv[++i]);
+            max_cycles = std::stoull(argv[++i], nullptr, 0);
             continue;
         }
         if (strcmp(argv[i], "--tohost") == 0 && i + 1 < argc) {
@@ -3369,6 +3597,10 @@ int main (int argc, char** argv)
             initramfs_addr = std::stoul(argv[++i], nullptr, 0);
             continue;
         }
+        if (strcmp(argv[i], "--sd-image") == 0 && i + 1 < argc) {
+            sd_image_file = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--checkpoint-load") == 0 && i + 1 < argc) {
             checkpoint_load_file = argv[++i];
             continue;
@@ -3396,6 +3628,10 @@ int main (int argc, char** argv)
         if (strcmp(argv[i], "--uart-stdin") == 0) {
             interactive_uart_input = true;
             mirror_uart_output = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--expected-output-contains") == 0 && i + 1 < argc) {
+            expected_output_contains = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--uart-input") == 0) {
@@ -3437,6 +3673,9 @@ int main (int argc, char** argv)
     }
     if (!initramfs_file.empty()) {
         initramfs_file = absolute_from(original_cwd, initramfs_file).string();
+    }
+    if (!sd_image_file.empty()) {
+        sd_image_file = absolute_from(original_cwd, sd_image_file).string();
     }
     if (!checkpoint_load_file.empty()) {
         checkpoint_load_file = absolute_from(original_cwd, checkpoint_load_file).string();
@@ -3507,7 +3746,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, "", "", mirror_uart_output, interactive_uart_input, checkpoint_save_after))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, expected_output_contains, "", mirror_uart_output, interactive_uart_input, checkpoint_save_after, sd_image_file))
     );
 }
 

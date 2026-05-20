@@ -214,6 +214,7 @@ int main(int argc, char** argv)
 {
     bool noveril = false;
     bool debug = false;
+    std::string only = std::getenv("CPU_TEST_ONLY") ? std::getenv("CPU_TEST_ONLY") : "";
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
@@ -222,25 +223,37 @@ int main(int argc, char** argv)
             debug = true;
         }
     }
+    auto run_selected = [&](const char* name) {
+        return only.empty() || only == name;
+    };
 
     bool ok = check_system_decode_has_no_decode_branch();
     // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
     // access. The fence must drain/serialize memory traffic without wedging the
     // current pipeline when the next instruction immediately returns to MMIO.
-    ok = ok && build_cpu_fence_elf();
-    ok = ok && run_cpu_fence_cpp(debug);
+    if (run_selected("fence")) {
+        ok = ok && build_cpu_fence_elf();
+        ok = ok && run_cpu_fence_cpp(debug);
+    }
     // Scenario: byte loads and stores around unaligned offsets must observe
     // dirty cached data instead of bypassing to stale RAM contents.
-    ok = ok && build_cpu_bytecopy_elf();
-    ok = ok && run_cpu_bytecopy_cpp(debug);
+    if (run_selected("bytecopy")) {
+        ok = ok && build_cpu_bytecopy_elf();
+        ok = ok && run_cpu_bytecopy_cpp(debug);
+    }
     // Scenario: checkpoint save/restore must preserve enough architectural,
     // cache, device, and memory state that execution can resume mid-program and
     // produce the same UART log as an uninterrupted run.
-    ok = ok && run_cpu_bytecopy_checkpoint_cpp(debug);
+    if (run_selected("bytecopy_checkpoint")) {
+        ok = ok && build_cpu_bytecopy_elf();
+        ok = ok && run_cpu_bytecopy_checkpoint_cpp(debug);
+    }
     // Scenario: trap entry saves ra, trap return restores it, and the next ret
     // must reach the original sentinel target instead of looping at the trap PC.
-    ok = ok && build_cpu_trap_ra_elf();
-    ok = ok && run_cpu_trap_ra_cpp(debug);
+    if (run_selected("trap_ra")) {
+        ok = ok && build_cpu_trap_ra_elf();
+        ok = ok && run_cpu_trap_ra_cpp(debug);
+    }
 
 #ifndef VERILATOR
     if (ok && !noveril) {

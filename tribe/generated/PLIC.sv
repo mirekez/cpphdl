@@ -135,8 +135,18 @@ module PLIC #(
         logic[31:0] pending_work;
         logic[31:0] claim_on_read;
         logic[31:0] read_word;
-        logic[128-1:0] read_data;
-        source_bits=source_bits_comb;
+        logic[31:0] completion_mask;
+        logic[64-1:0] read_data;
+        completion_mask='h0;
+        if (axi_in__wvalid_in && axi_in__wready_out) begin
+            addr=unsigned'(32'(write_addr_reg));
+            lane=(unsigned'(32'(write_addr_reg)) % ((DATA_WIDTH/'h8)));
+            data=unsigned'(32'(axi_in__wdata_in[lane*'h8 +:32]));
+            if (((addr == (CONTEXT_BASE + CLAIM_OFFSET)) && (data > 'h0)) && (data < 'h20)) begin
+                completion_mask='h1 <<< data;
+            end
+        end
+        source_bits=source_bits_comb & ~completion_mask;
         pending_next=unsigned'(32'(pending_reg)) | ((source_bits & ~unsigned'(32'(gateway_busy_reg))));
         pending_work=pending_next;
         pending_reg_tmp = unsigned'(32'(pending_work));
@@ -213,8 +223,8 @@ module PLIC #(
                     end
                     else begin
                         if (addr == (CONTEXT_BASE + CLAIM_OFFSET)) begin
-                            if ((data > 'h0) && (data < 'h20)) begin
-                                gateway_busy_reg_tmp = unsigned'(32'(unsigned'(32'(gateway_busy_reg)) & ~(('h1 <<< data))));
+                            if (completion_mask != 'h0) begin
+                                gateway_busy_reg_tmp = unsigned'(32'(unsigned'(32'(gateway_busy_reg)) & ~completion_mask));
                             end
                         end
                     end

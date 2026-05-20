@@ -124,6 +124,7 @@ class TestL2Cache : public Module
     Axi4Driver<32, 4, PORT_BITS> slave_axi[MEM_PORTS] = {};
     bool region_uncached[MEM_PORTS] = {};
     uint32_t region_size[MEM_PORTS] = {};
+    uint32_t memory_base = 0;
     bool error = false;
 
 public:
@@ -141,7 +142,7 @@ public:
         l2.d_addr_in = _ASSIGN_REG(d_addr);
         l2.d_write_data_in = _ASSIGN_REG(wdata);
         l2.d_write_mask_in = _ASSIGN_REG(wmask);
-        l2.memory_base_in = _ASSIGN((uint32_t)0);
+        l2.memory_base_in = _ASSIGN_REG(memory_base);
         l2.memory_size_in = _ASSIGN((uint32_t)0xffffffffu);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = _ASSIGN_REG_I(region_size[i]);
@@ -185,7 +186,7 @@ public:
         l2.d_addr_in = d_addr;
         l2.d_write_data_in = wdata;
         l2.d_write_mask_in = wmask;
-        l2.memory_base_in = 0;
+        l2.memory_base_in = memory_base;
         l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = region_size[i];
@@ -482,13 +483,40 @@ public:
 #endif
     }
 
-    void axi_write_word(size_t port, uint32_t request_addr, uint32_t data)
+    logic<PORT_BITS> axi_read_beat(size_t port, uint32_t request_addr)
     {
-        logic<PORT_BITS> beat = 0;
-        size_t lane = (request_addr % (PORT_BITS / 8)) / 4;
-        beat.bits(lane * 32 + 31, lane * 32) = data;
+        slave_axi[port].ar.valid = true;
+        slave_axi[port].ar.addr = request_addr & ~(uint32_t)((PORT_BITS / 8) - 1);
+        slave_axi[port].ar.id = 5;
+        slave_axi[port].r.ready = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(port); ++i) {
+            cycle(false);
+        }
+        if (!slave_arready(port)) {
+            std::print("\naxi read beat address ERROR port={} addr={:#x}\n", port, request_addr);
+            error = true;
+        }
+        cycle(false);
+        slave_axi[port].ar.valid = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(port); ++i) {
+            cycle(false);
+        }
+        logic<PORT_BITS> beat = slave_rdata(port);
+        if (!slave_rvalid(port)) {
+            std::print("\naxi read beat response ERROR port={} addr={:#x}\n", port, request_addr);
+            error = true;
+        }
+        slave_axi[port].r.ready = true;
+        cycle(false);
+        slave_axi[port].r.ready = false;
+        cycle(false);
+        return beat;
+    }
+
+    void axi_write_beat(size_t port, uint32_t request_addr, logic<PORT_BITS> beat)
+    {
         slave_axi[port].aw.valid = true;
-        slave_axi[port].aw.addr = request_addr;
+        slave_axi[port].aw.addr = request_addr & ~(uint32_t)((PORT_BITS / 8) - 1);
         slave_axi[port].aw.id = 3;
         slave_axi[port].w.valid = false;
         slave_axi[port].w.data = beat;
@@ -526,35 +554,19 @@ public:
         cycle(false);
     }
 
+    void axi_write_word(size_t port, uint32_t request_addr, uint32_t data)
+    {
+        logic<PORT_BITS> beat = axi_read_beat(port, request_addr);
+        size_t lane = (request_addr % (PORT_BITS / 8)) / 4;
+        beat.bits(lane * 32 + 31, lane * 32) = data;
+        axi_write_beat(port, request_addr, beat);
+    }
+
     uint32_t axi_read_word(size_t port, uint32_t request_addr)
     {
-        slave_axi[port].ar.valid = true;
-        slave_axi[port].ar.addr = request_addr;
-        slave_axi[port].ar.id = 5;
-        slave_axi[port].r.ready = false;
-        for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(port); ++i) {
-            cycle(false);
-        }
-        if (!slave_arready(port)) {
-            std::print("\naxi read address ERROR port={} addr={:#x}\n", port, request_addr);
-            error = true;
-        }
-        cycle(false);
-        slave_axi[port].ar.valid = false;
-        for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(port); ++i) {
-            cycle(false);
-        }
-        logic<PORT_BITS> beat = slave_rdata(port);
+        logic<PORT_BITS> beat = axi_read_beat(port, request_addr);
         uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
         uint32_t data = (uint32_t)beat.bits(lane * 32 + 31, lane * 32);
-        if (!slave_rvalid(port)) {
-            std::print("\naxi read response ERROR port={} addr={:#x}\n", port, request_addr);
-            error = true;
-        }
-        slave_axi[port].r.ready = true;
-        cycle(false);
-        slave_axi[port].r.ready = false;
-        cycle(false);
         return data;
     }
 
@@ -602,6 +614,49 @@ public:
         slave_axi[1].b.ready = false;
         cycle(false);
         read_check(0x0000010cu, 0x99aabbccu);
+    }
+
+    void slave_full_width_write_check()
+    {
+        logic<PORT_BITS> beat = 0;
+        uint32_t base = 0x00000400u;
+        read_check(base, 0);
+        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+            beat.bits(word * 32 + 31, word * 32) = 0x45000000u + (uint32_t)word * 0x01111111u;
+        }
+        axi_write_beat(1, base, beat);
+        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+            read_check(base + (uint32_t)word * 4u, 0x45000000u + (uint32_t)word * 0x01111111u);
+        }
+
+        beat = 0;
+        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+            beat.bits(word * 32 + 31, word * 32) = 0x73000000u + (uint32_t)word * 0x00010101u;
+        }
+        axi_write_beat(1, base + (uint32_t)(PORT_BITS / 8), beat);
+        logic<PORT_BITS> by_master = axi_read_beat(0, base + (uint32_t)(PORT_BITS / 8));
+        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+            uint32_t data = (uint32_t)by_master.bits(word * 32 + 31, word * 32);
+            uint32_t expected = 0x73000000u + (uint32_t)word * 0x00010101u;
+            if (data != expected) {
+                std::print("\nfull-width AXI write/read ERROR word={} data={:#x} expected={:#x}\n", word, data, expected);
+                error = true;
+            }
+        }
+    }
+
+    void local_slave_address_with_nonzero_memory_base_check()
+    {
+        memory_base = 0x80000000u;
+        axi_write_word(1, 0x00000040u, 0x13579bdfu);
+        read_check(memory_base + 0x00000040u, 0x13579bdfu);
+        write_only(memory_base + 0x00000044u, 0x2468ace0u, 0xf);
+        uint32_t by_master = axi_read_word(1, 0x00000044u);
+        if (by_master != 0x2468ace0u) {
+            std::print("\nnonzero memory_base external AXI local read ERROR got={:#x}\n", by_master);
+            error = true;
+        }
+        memory_base = 0;
     }
 
     void uncached_device_region_check()
@@ -948,8 +1003,8 @@ public:
                 slave_axi[0].aw.valid = false;
                 slave_axi[0].w.valid = false;
                 slave_axi[0].b.ready = true;
-                axi_write_pos += 4;
-                --axi_w_chunk_left;
+                axi_write_pos += PORT_BITS / 8;
+                axi_w_chunk_left = (axi_w_chunk_left > PORT_BITS / 32) ? (axi_w_chunk_left - PORT_BITS / 32) : 0;
                 axi_w_op = AxiWriteOp::Idle;
                 continue;
             } else if (axi_w_op == AxiWriteOp::Aw && slave_awready(0) && slave_wready(0)) {
@@ -962,8 +1017,8 @@ public:
             } else if (axi_w_op == AxiWriteOp::B && slave_bvalid(0)) {
                 cycle(false);
                 slave_axi[0].b.ready = false;
-                axi_write_pos += 4;
-                --axi_w_chunk_left;
+                axi_write_pos += PORT_BITS / 8;
+                axi_w_chunk_left = (axi_w_chunk_left > PORT_BITS / 32) ? (axi_w_chunk_left - PORT_BITS / 32) : 0;
                 axi_w_op = AxiWriteOp::Idle;
                 continue;
             } else if (axi_w_op == AxiWriteOp::Idle) {
@@ -977,9 +1032,12 @@ public:
                     }
                     axi_w_active_pos = axi_write_pos;
                     uint32_t request_addr = circular_addr(second_base, axi_write_pos);
-                    uint32_t lane = (request_addr % (PORT_BITS / 8)) / 4;
                     slave_axi[0].w.data = 0;
-                    slave_axi[0].w.data.bits(lane * 32 + 31, lane * 32) = prbs_word(axi_write_pos, seed_axi_to_d);
+                    for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+                        uint32_t pos = axi_write_pos + (uint32_t)word * 4u;
+                        slave_axi[0].w.data.bits(word * 32 + 31, word * 32) =
+                            pos < target_bytes ? prbs_word(pos, seed_axi_to_d) : 0;
+                    }
                     slave_axi[0].w.last = true;
                     slave_axi[0].aw.addr = request_addr;
                     slave_axi[0].aw.id = 9;
@@ -1099,10 +1157,12 @@ public:
                    "\n    - dirty eviction"
                    "\n    - external AXI master read of CPU-written cache line"
                    "\n    - CPU read of external AXI-master-written cache line"
+                   "\n    - full-width external AXI-master writes"
                    "\n    - simultaneous CPU/private and two external masters on one line"
                    "\n    - external AXI completion does not release CPU instruction port"
                    "\n    - external AXI request does not hide CPU write completion"
                    "\n    - external AXI request does not drop CPU data-port MMIO read"
+                   "\n    - external AXI local addresses with nonzero memory_base"
                    "\n    - uncached/device region CPU and AXI-master accesses"
                    "\n    - cyclic PRBS traffic from I-cache, D-cache, and external AXI actors\n");
         auto start = std::chrono::high_resolution_clock::now();
@@ -1123,9 +1183,11 @@ public:
         byte_store_check();
         dirty_eviction_check();
         slave_coherence_check();
+        slave_full_width_write_check();
         slave_completion_does_not_release_cpu_iport_check();
         slave_request_does_not_hide_cpu_write_completion_check();
         slave_request_does_not_drop_cpu_dport_read_check();
+        local_slave_address_with_nonzero_memory_base_check();
         uncached_device_region_check();
         cycle_prbs_test();
 

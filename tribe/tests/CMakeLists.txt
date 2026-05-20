@@ -77,6 +77,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         "${CMAKE_CURRENT_SOURCE_DIR}/../common"
         "${CMAKE_CURRENT_SOURCE_DIR}/../cache"
         "${CMAKE_CURRENT_SOURCE_DIR}/../devices"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../verif"
         "${CMAKE_CURRENT_SOURCE_DIR}/../spec"
         "${CMAKE_SOURCE_DIR}/examples/axi"
     )
@@ -168,6 +169,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../common
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../cache
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../devices
+                -I ${CMAKE_CURRENT_SOURCE_DIR}/../verif
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../spec
                 -I ${CMAKE_SOURCE_DIR}/examples/axi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
@@ -193,6 +195,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         MMU_TLB_Test
         NS16550A_test
         PLIC_test
+        SD_test
     )
     if(target_name IN_LIST tribe_verilator_ctest_targets)
         set(verilator_test_args)

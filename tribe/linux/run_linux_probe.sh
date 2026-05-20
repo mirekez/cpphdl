@@ -23,6 +23,29 @@ TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
 TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 TRIBE_LINUX_BAUD="${TRIBE_LINUX_BAUD:-1000000}"
 TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon debug loglevel=8 ignore_loglevel initcall_debug}"
+TRIBE_LINUX_SD_IMAGE="${TRIBE_LINUX_SD_IMAGE:-}"
+
+if [[ -n "${TRIBE_UART_INPUT_FILE:-}" ]]; then
+    TRIBE_UART_INPUT="$(cat "${TRIBE_UART_INPUT_FILE}")"$'\n'
+    export TRIBE_UART_INPUT
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sd-image)
+            if [[ $# -lt 2 ]]; then
+                echo "--sd-image requires a file path" >&2
+                exit 1
+            fi
+            TRIBE_LINUX_SD_IMAGE="$2"
+            shift 2
+            ;;
+        *)
+            echo "unknown run_linux_probe.sh option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
 find_objcopy()
 {
@@ -206,6 +229,7 @@ PY
 if [[ "${TRIBE_LINUX_INPUTS_PREPARED:-0}" != "1" ]]; then
     prepare_linux_inputs
     export TRIBE_LINUX_INPUTS_PREPARED=1
+    export TRIBE_LINUX_SD_IMAGE
     exec "${BASH}" "${BASH_SOURCE[0]}"
 fi
 
@@ -265,6 +289,12 @@ fi
 if [[ "${TRIBE_LINUX_MIRROR_UART:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--mirror-uart)
 fi
+if [[ -n "${TRIBE_LINUX_SD_IMAGE}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--sd-image "${TRIBE_LINUX_SD_IMAGE}")
+fi
+if [[ -n "${TRIBE_EXPECTED_OUTPUT_CONTAINS:-}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--expected-output-contains "${TRIBE_EXPECTED_OUTPUT_CONTAINS}")
+fi
 
 if [[ "${TRIBE_LINUX_TRACE_PC_SYMBOLS:-0}" == "1" ]]; then
     export TRIBE_TRACE_PC_PERIOD="${TRIBE_TRACE_PC_PERIOD:-10000}"
@@ -289,7 +319,7 @@ TRIBE_RUN_ARGS=(
     --initramfs "${INITRAMFS}"
     --initramfs-addr "${INITRAMFS_ADDR}"
     --tohost 1
-    --cycles "${TRIBE_LINUX_CYCLES:-300000000}"
+    --cycles "${TRIBE_LINUX_CYCLES:-0}"
     "${TRIBE_CHECKPOINT_ARGS[@]}"
 )
 if [[ "${TRIBE_LINUX_TAIL_UART}" == "1" ]]; then
