@@ -11,7 +11,7 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 
 - Put `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()`.
 - Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
-- `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle.
+- `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle. Never run any `_assign()` after `_work()` cycles begin
 - In Verilator mode, write all Verilated input ports before `eval()`.
 - For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ CppHDL update order accidentally matching Verilator.
 - In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
