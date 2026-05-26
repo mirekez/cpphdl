@@ -332,6 +332,34 @@ public:
         return uint8_t(data >> ((addr % 4) * 8));
     }
 
+    uint8_t read8_with_rx(uint32_t addr, uint8_t injected)
+    {
+        axi.ar.valid = true;
+        axi.ar.addr = u<16>(addr);
+        axi.ar.id = 2;
+        axi.r.ready = false;
+        rx_data = injected;
+        rx_valid = true;
+        if (!arready()) {
+            fail("NS16550A simultaneous RX/read address channel was not ready");
+            rx_valid = false;
+            return 0;
+        }
+        cycle();
+        rx_valid = false;
+
+        axi.ar.valid = false;
+        if (!rvalid()) {
+            fail("NS16550A simultaneous RX/read data channel was not valid");
+            return 0;
+        }
+        uint32_t data = rdata();
+        axi.r.ready = true;
+        cycle();
+        axi.r.ready = false;
+        return uint8_t(data >> ((addr % 4) * 8));
+    }
+
     void push_rx(uint8_t data)
     {
         if (!rx_ready()) {
@@ -404,6 +432,15 @@ public:
         }
         if (!rx_ready()) {
             fail("RX ready did not return high after RBR read");
+        }
+        if (read8_with_rx(REG_RBR_THR_DLL, 'C') != 'C') {
+            fail("RBR read racing a new RX byte lost the incoming byte");
+        }
+        if ((read8(REG_LSR) & LSR_DR) != 0) {
+            fail("Racing RBR read left RX data pending after consuming incoming byte");
+        }
+        if (!rx_ready()) {
+            fail("RX ready did not stay high after racing RBR read consumed incoming byte");
         }
 
         write8(REG_IER_DLM, 0x02);

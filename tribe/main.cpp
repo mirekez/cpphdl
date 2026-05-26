@@ -52,6 +52,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include <cstdlib>
 #include <csignal>
 #include <vector>
+#include <deque>
 #include <cerrno>
 #include <fcntl.h>
 #include <termios.h>
@@ -140,10 +141,25 @@ public:
     _PORT(uint32_t)  debug_immu_last_pte_out;
     _PORT(bool)      debug_icache_read_valid_out;
     _PORT(uint32_t)  debug_icache_read_addr_out;
+    _PORT(bool)      debug_dcache_read_valid_out;
+    _PORT(uint32_t)  debug_dcache_read_addr_out;
+    _PORT(uint32_t)  debug_dcache_read_data_out;
     _PORT(bool)      debug_fetch_valid_out;
     _PORT(bool)      debug_memory_wait_out;
     _PORT(bool)      debug_wb_load_ready_out;
     _PORT(bool)      debug_wb_mem_wait_out;
+    _PORT(bool)      debug_wb_load_data_valid_out;
+    _PORT(uint32_t)  debug_wb_load_addr_out;
+    _PORT(bool)      debug_wb_split_low_valid_out;
+    _PORT(bool)      debug_wb_split_high_valid_out;
+    _PORT(bool)      debug_wb_held_load_valid_out;
+    _PORT(bool)      debug_wb_split_load_in_out;
+    _PORT(uint32_t)  debug_wb_alu_addr_out;
+    _PORT(uint32_t)  debug_wb_state_pc_out;
+    _PORT(uint8_t)   debug_wb_state_wb_op_out;
+    _PORT(uint8_t)   debug_wb_state_mem_op_out;
+    _PORT(uint8_t)   debug_wb_state_rd_out;
+    _PORT(uint8_t)   debug_wb_state_funct3_out;
     _PORT(bool)      debug_icache_read_in_out;
     _PORT(bool)      debug_icache_stall_in_out;
     _PORT(bool)      debug_dmmu_ptw_read_out;
@@ -184,6 +200,13 @@ public:
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
     _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
+    _PORT(bool)      debug_sbi_ecall_out = _ASSIGN_COMB(sbi_ecall_debug_comb_func());
+    _PORT(uint32_t)  debug_sbi_a7_out = _ASSIGN_COMB(sbi_a7_debug_comb_func());
+    _PORT(uint32_t)  debug_sbi_a6_out = _ASSIGN_COMB(sbi_a6_debug_comb_func());
+    _PORT(uint32_t)  debug_sbi_a0_out = _ASSIGN_COMB(sbi_a0_debug_comb_func());
+    _PORT(bool)      debug_sbi_base_out = _ASSIGN_COMB(sbi_base_comb_func());
+    _PORT(bool)      debug_sbi_noop_out = _ASSIGN_COMB(sbi_noop_comb_func());
+    _PORT(bool)      debug_sbi_handled_out = _ASSIGN_COMB(sbi_handled_comb_func());
     _PORT(uint32_t)  reset_pc_in;
     _PORT(uint32_t)  boot_hartid_in;
     _PORT(uint32_t)  boot_dtb_addr_in;
@@ -240,7 +263,8 @@ public:
         wb_mem.state_in = _ASSIGN_REG(state_reg[1]);
         wb_mem.alu_result_in =
 #ifdef ENABLE_MMU_TLB
-            _ASSIGN((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg);
+            _ASSIGN(dcache.read_valid_out() ? (uint32_t)dcache.read_addr_out() :
+                ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg));
 #else
             _ASSIGN_REG(alu_result_reg);
 #endif
@@ -377,6 +401,9 @@ public:
             (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
+        regs.write2_in = _ASSIGN((bool)sbi_ret_a1_valid_reg);
+        regs.write2_addr_in = _ASSIGN((uint8_t)11);
+        regs.write2_data_in = _ASSIGN((uint32_t)sbi_ret_a1_reg);
         regs.reset_x10_in = boot_hartid_in;
         regs.reset_x11_in = boot_dtb_addr_in;
         regs.debugen_in = debugen_in;
@@ -508,10 +535,25 @@ public:
         debug_immu_last_pte_out = immu.debug_last_pte_out;
         debug_icache_read_valid_out = icache.read_valid_out;
         debug_icache_read_addr_out = icache.read_addr_out;
+        debug_dcache_read_valid_out = dcache.read_valid_out;
+        debug_dcache_read_addr_out = dcache.read_addr_out;
+        debug_dcache_read_data_out = dcache.read_data_out;
         debug_fetch_valid_out = _ASSIGN_COMB(fetch_valid_comb_func());
         debug_memory_wait_out = _ASSIGN_COMB(memory_wait_comb_func());
         debug_wb_load_ready_out = wb_mem.load_ready_out;
         debug_wb_mem_wait_out = _ASSIGN(state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && !wb_mem.load_ready_out());
+        debug_wb_load_data_valid_out = wb_mem.debug_load_data_valid_out;
+        debug_wb_load_addr_out = wb_mem.debug_load_addr_out;
+        debug_wb_split_low_valid_out = wb_mem.debug_split_low_valid_out;
+        debug_wb_split_high_valid_out = wb_mem.debug_split_high_valid_out;
+        debug_wb_held_load_valid_out = wb_mem.debug_held_load_valid_out;
+        debug_wb_split_load_in_out = exe_mem.split_load_out;
+        debug_wb_alu_addr_out = wb_mem.alu_result_in;
+        debug_wb_state_pc_out = _ASSIGN((uint32_t)state_reg[1].pc);
+        debug_wb_state_wb_op_out = _ASSIGN((uint8_t)state_reg[1].wb_op);
+        debug_wb_state_mem_op_out = _ASSIGN((uint8_t)state_reg[1].mem_op);
+        debug_wb_state_rd_out = _ASSIGN((uint8_t)state_reg[1].rd);
+        debug_wb_state_funct3_out = _ASSIGN((uint8_t)state_reg[1].funct3);
         debug_icache_read_in_out = _ASSIGN_COMB(icache.read_in());
         debug_icache_stall_in_out = _ASSIGN_COMB(icache.stall_in());
         debug_dmmu_ptw_read_out = dmmu.mem_read_out;
@@ -575,11 +617,13 @@ private:
     reg<u1>         debug_branch_taken_reg;
     reg<u1>         output_write_active_reg;
     reg<u1>         interrupt_entry_guard_reg;
+    reg<u1>         sbi_ret_a1_valid_reg;
+    reg<u32>        sbi_ret_a1_reg;
 
     // Hold decode/execute when a pending load, split access, or atomic op would be observed too early.
     _LAZY_COMB(hazard_stall_comb, bool)
         hazard_stall_comb = false;
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
+        if (fetch_valid_comb_func() && state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
             const auto& dec_state_tmp = dec.state_out();
 
             if (state_reg[0].rd == dec_state_tmp.rs1) {
@@ -669,19 +713,34 @@ private:
 
     // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
     _LAZY_COMB(memory_wait_comb, bool)
-        memory_wait_comb = dcache.busy_out() ||
-            exe_mem.mem_split_busy_out() ||
+        bool data_mem_access;
+        bool dmmu_faulted_access;
+        data_mem_access = state_reg[1].valid && (
+            exe_mem.mem_read_out() ||
+            exe_mem.mem_write_out() ||
+            state_reg[1].mem_op == Mem::STORE ||
+            state_reg[1].wb_op == Wb::MEM);
+        dmmu_faulted_access = false;
+#ifdef ENABLE_MMU_TLB
+        dmmu_faulted_access = state_reg[1].valid && dmmu.fault_out() &&
+            (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+#endif
+        memory_wait_comb =
 #ifdef ENABLE_RV32IA
-            exe_mem.atomic_busy_out() ||
+            (data_mem_access && !dmmu_faulted_access && exe_mem.atomic_busy_out()) ||
 #endif
 #ifdef ENABLE_MMU_TLB
-            immu.busy_out() ||
-            dmmu.busy_out() ||
-            !dmmu_access_ready_comb_func() ||
+            ((bool)valid && immu.busy_out()) ||
+            (data_mem_access && !dmmu_faulted_access && dmmu.busy_out()) ||
+            (data_mem_access && !dmmu_faulted_access && !dmmu_access_ready_comb_func()) ||
 #endif
-            (dcache.mem_read_out() && l2cache.d_wait_out()) ||
-            ((exe_mem.mem_write_out() || (state_reg[1].valid && state_reg[1].mem_op == Mem::STORE)) && l2cache.d_wait_out()) ||
+            (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
+            (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
+            (data_mem_access && !dmmu_faulted_access && dcache.mem_read_out() && l2cache.d_wait_out()) ||
+            (data_mem_access && !dmmu_faulted_access &&
+                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && l2cache.d_wait_out()) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            !dmmu_faulted_access &&
             !wb_mem.load_ready_out());
         return memory_wait_comb;
     }
@@ -760,12 +819,18 @@ private:
         return fetch_addr_comb;
     }
 
-    // Legacy SBI set_timer ECALL is handled locally by programming CLINT mtimecmp.
-    _LAZY_COMB(sbi_legacy_ecall_comb, bool)
+    static constexpr uint32_t SBI_EXT_BASE = 0x10;
+    static constexpr uint32_t SBI_EXT_TIME = 0x54494d45;
+    static constexpr uint32_t SBI_EXT_RFENCE = 0x52464e43;
+    static constexpr uint32_t SBI_SUCCESS = 0;
+
+    // SBI ECALLs are handled locally because this model has no M-mode firmware.
+    bool sbi_legacy_ecall_comb;
+    bool& sbi_legacy_ecall_comb_func()
+    {
         return sbi_legacy_ecall_comb = state_reg[0].valid &&
             state_reg[0].sys_op == Sys::ECALL &&
-            csr.priv_out() == (u<2>)1 &&
-            !memory_wait_comb_func();
+            csr.priv_out() == (u<2>)1;
     }
 
     uint32_t sbi_arg_value(uint8_t reg_id)
@@ -782,38 +847,122 @@ private:
         if (reg_id == 11) {
             return regs.x11_out();
         }
+        if (reg_id == 16) {
+            return regs.x16_out();
+        }
         if (reg_id == 17) {
             return regs.x17_out();
         }
         return 0;
     }
 
-    // Single-hart Linux still emits legacy remote fence SBI calls during VM changes; they are no-ops here.
-    _LAZY_COMB(sbi_noop_comb, bool)
+    // Single-hart Linux still emits remote fence SBI calls during VM changes; they are no-ops here.
+    bool sbi_noop_comb;
+    bool& sbi_noop_comb_func()
+    {
         uint32_t ext;
         ext = sbi_arg_value(17);
-        return sbi_noop_comb = sbi_legacy_ecall_comb_func() && (ext == 5 || ext == 6 || ext == 7);
+        return sbi_noop_comb = sbi_legacy_ecall_comb_func() &&
+            (ext == 5 || ext == 6 || ext == 7 || ext == SBI_EXT_RFENCE);
     }
 
-    _LAZY_COMB(sbi_set_timer_comb, bool)
+    bool sbi_base_comb;
+    bool& sbi_base_comb_func()
+    {
+        return sbi_base_comb = sbi_legacy_ecall_comb_func() && sbi_arg_value(17) == SBI_EXT_BASE;
+    }
+
+    bool sbi_set_timer_comb;
+    bool& sbi_set_timer_comb_func()
+    {
+        uint32_t ext;
+        ext = sbi_arg_value(17);
         return sbi_set_timer_comb = sbi_legacy_ecall_comb_func() &&
-            sbi_arg_value(17) == 0 &&
-            !memory_wait_comb_func();
+            (ext == 0 || (ext == SBI_EXT_TIME && sbi_arg_value(16) == 0));
     }
 
-    // All locally handled legacy SBI calls retire as successful calls with a0=0.
-    _LAZY_COMB(sbi_handled_comb, bool)
-        return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func();
+    uint32_t sbi_ret_value_comb;
+    uint32_t& sbi_ret_value_comb_func()
+    {
+        uint32_t fid;
+        uint32_t ext;
+        uint32_t probe_ext;
+        fid = sbi_arg_value(16);
+        ext = sbi_arg_value(17);
+        probe_ext = sbi_arg_value(10);
+        sbi_ret_value_comb = 0;
+        if (ext == SBI_EXT_BASE) {
+            if (fid == 0) {
+                // SBI v0.2 is enough for Linux to use the TIME extension.
+                sbi_ret_value_comb = 2;
+            }
+            else if (fid == 1) {
+                sbi_ret_value_comb = 0;
+            }
+            else if (fid == 2) {
+                sbi_ret_value_comb = 1;
+            }
+            else if (fid == 3) {
+                sbi_ret_value_comb = (probe_ext == SBI_EXT_BASE ||
+                    probe_ext == SBI_EXT_TIME ||
+                    probe_ext == SBI_EXT_RFENCE) ? 1 : 0;
+            }
+            else {
+                sbi_ret_value_comb = 0;
+            }
+        }
+        return sbi_ret_value_comb;
+    }
+
+    bool sbi_writes_a1_comb;
+    bool& sbi_writes_a1_comb_func()
+    {
+        return sbi_writes_a1_comb = sbi_base_comb_func() || sbi_set_timer_comb_func();
+    }
+
+    // All locally handled SBI calls retire as successful calls with a0=0.
+    bool sbi_handled_comb;
+    bool& sbi_handled_comb_func()
+    {
+        return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func() || sbi_base_comb_func();
     }
 
     // Low word of the SBI timer value is passed in a0 on RV32.
-    _LAZY_COMB(sbi_timer_lo_comb, uint32_t)
+    uint32_t sbi_timer_lo_comb;
+    uint32_t& sbi_timer_lo_comb_func()
+    {
         return sbi_timer_lo_comb = sbi_arg_value(10);
     }
 
     // High word of the SBI timer value is passed in a1 on RV32.
-    _LAZY_COMB(sbi_timer_hi_comb, uint32_t)
+    uint32_t sbi_timer_hi_comb;
+    uint32_t& sbi_timer_hi_comb_func()
+    {
         return sbi_timer_hi_comb = sbi_arg_value(11);
+    }
+
+    bool sbi_ecall_debug_comb;
+    bool& sbi_ecall_debug_comb_func()
+    {
+        return sbi_ecall_debug_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::ECALL;
+    }
+
+    uint32_t sbi_a7_debug_comb;
+    uint32_t& sbi_a7_debug_comb_func()
+    {
+        return sbi_a7_debug_comb = sbi_arg_value(17);
+    }
+
+    uint32_t sbi_a6_debug_comb;
+    uint32_t& sbi_a6_debug_comb_func()
+    {
+        return sbi_a6_debug_comb = sbi_arg_value(16);
+    }
+
+    uint32_t sbi_a0_debug_comb;
+    uint32_t& sbi_a0_debug_comb_func()
+    {
+        return sbi_a0_debug_comb = sbi_arg_value(10);
     }
 
     // Keep raw pending interrupt state visible in mip/sip, but accept an
@@ -1086,6 +1235,7 @@ public:
         const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
         const char* trace_pc_write_target_env = std::getenv("TRIBE_TRACE_PC_WRITE_TARGET");
         const char* trace_pc_write_reason_env = std::getenv("TRIBE_TRACE_PC_WRITE_REASON");
+        const char* trace_pc_write_file_env = std::getenv("TRIBE_TRACE_PC_WRITE_FILE");
         const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
         const bool trace_pc_write_zero_only = std::getenv("TRIBE_TRACE_PC_WRITE_ZERO_ONLY") != nullptr;
         const bool trace_pc_write_user_kernel = std::getenv("TRIBE_TRACE_PC_WRITE_USER_KERNEL") != nullptr;
@@ -1116,7 +1266,19 @@ public:
             if (trace_pc_write_target == 0 && !trace_pc_write_all && old_pc >= 0x10000u && next_pc >= 0x10000u) {
                 return;
             }
-            std::print("trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x}",
+            static FILE* trace_pc_write_file = nullptr;
+            static bool trace_pc_write_file_initialized = false;
+            if (!trace_pc_write_file_initialized) {
+                trace_pc_write_file_initialized = true;
+                if (trace_pc_write_file_env != nullptr && trace_pc_write_file_env[0] != 0) {
+                    trace_pc_write_file = fopen(trace_pc_write_file_env, "wb");
+                    if (trace_pc_write_file != nullptr) {
+                        setvbuf(trace_pc_write_file, nullptr, _IOLBF, 0);
+                    }
+                }
+            }
+            FILE* trace_pc_write_out = trace_pc_write_file != nullptr ? trace_pc_write_file : stdout;
+            std::print(trace_pc_write_out, "trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} hazard={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_wb={} state0_rd={} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x} state1_wb={} state1_rd={}",
                 sys_clock,
                 reason,
                 old_pc,
@@ -1125,18 +1287,23 @@ public:
                 (bool)fetch_valid_comb_func(),
                 (bool)memory_wait_comb_func(),
                 (bool)stall_comb_func(),
+                (bool)hazard_stall_comb_func(),
                 (bool)branch_mispredict_comb_func(),
                 (uint32_t)branch_actual_next_comb_func(),
                 (uint32_t)predicted_next_reg[0],
                 (bool)state_reg[0].valid,
                 (uint32_t)state_reg[0].pc,
+                (uint32_t)state_reg[0].wb_op,
+                (uint32_t)state_reg[0].rd,
                 (uint32_t)state_reg[0].sys_op,
                 (uint32_t)state_reg[0].trap_op,
                 (uint32_t)state_reg[0].br_op,
                 (bool)state_reg[1].valid,
-                (uint32_t)state_reg[1].pc);
+                (uint32_t)state_reg[1].pc,
+                (uint32_t)state_reg[1].wb_op,
+                (uint32_t)state_reg[1].rd);
 #ifdef ENABLE_MMU_TLB
-            std::print(" immu_fault={} immu_busy={} immu_paddr={:08x} dmmu_fault={} dmmu_active={}",
+            std::print(trace_pc_write_out, " immu_fault={} immu_busy={} immu_paddr={:08x} dmmu_fault={} dmmu_active={}",
                 (bool)immu.fault_out(),
                 (bool)immu.busy_out(),
                 (uint32_t)immu.paddr_out(),
@@ -1144,7 +1311,7 @@ public:
                 (bool)dmmu_active_fault_comb_func());
 #endif
 #ifdef ENABLE_ISR
-            std::print(" irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} clint_mtip={} external_irq={}",
+            std::print(trace_pc_write_out, " irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} clint_mtip={} external_irq={}",
                 (bool)irq.interrupt_valid_out(),
                 (uint32_t)irq.interrupt_cause_out(),
                 (bool)irq.interrupt_to_supervisor_out(),
@@ -1155,10 +1322,10 @@ public:
                 (bool)external_irq_in());
 #endif
 #ifdef ENABLE_ZICSR
-            std::print(" csr_illegal={}", (bool)csr.illegal_trap_out());
+            std::print(trace_pc_write_out, " csr_illegal={}", (bool)csr.illegal_trap_out());
 #endif
 #ifdef ENABLE_ZICSR
-            std::print(" priv={} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x} mepc={:08x} mtvec={:08x}",
+            std::print(trace_pc_write_out, " priv={} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x} mepc={:08x} mtvec={:08x}",
                 (uint32_t)csr.priv_out(),
                 (uint32_t)csr.stvec_out(),
                 (uint32_t)csr.sepc_out(),
@@ -1167,12 +1334,14 @@ public:
                 (uint32_t)csr.mepc_out(),
                 (uint32_t)csr.mtvec_out());
 #endif
-            std::print("\n");
+            std::print(trace_pc_write_out, "\n");
         };
 #endif
         if (debugen_in && !reset) {
             debug();
         }
+        sbi_ret_a1_valid_reg._next = false;
+        sbi_ret_a1_reg._next = sbi_ret_a1_reg;
 
         if (dmem_addr_out() == 0x11223344 && dmem_write_out() && !output_write_active_reg) {
             FILE* out = fopen("out.txt", "a");
@@ -1311,6 +1480,26 @@ public:
         }
         else
 #endif
+        if (sbi_handled_comb_func()) {
+            interrupt_entry_guard_reg._next = false;
+            pc._next = pc;
+#ifndef SYNTHESIS
+            trace_pc_write("sbi-retire", (uint32_t)pc);
+#endif
+            valid._next = false;
+            state_reg._next[0] = State{};
+            state_reg._next[0].valid = false;
+            state_reg._next[1] = exe_state_comb_func();
+            predicted_next_reg.clr();
+            fallthrough_reg.clr();
+            predicted_taken_reg.clr();
+            alu_result_reg._next = 0;
+            sbi_ret_a1_valid_reg._next = sbi_writes_a1_comb_func();
+            sbi_ret_a1_reg._next = sbi_ret_value_comb_func();
+            debug_branch_target_reg._next = pc;
+            debug_branch_taken_reg._next = false;
+        }
+        else
         if (memory_wait_comb_func()) {
             pc._next = pc;
 #ifndef SYNTHESIS
@@ -1462,6 +1651,8 @@ public:
             predicted_taken_reg.clr();
             output_write_active_reg.clr();
             interrupt_entry_guard_reg.clr();
+            sbi_ret_a1_valid_reg.clr();
+            sbi_ret_a1_reg.clr();
             icache_invalidate_issued_reg.clr();
         }
     }
@@ -1536,6 +1727,8 @@ public:
         debug_branch_taken_reg.strobe(checkpoint_fd);
         output_write_active_reg.strobe(checkpoint_fd);
         interrupt_entry_guard_reg.strobe(checkpoint_fd);
+        sbi_ret_a1_valid_reg.strobe(checkpoint_fd);
+        sbi_ret_a1_reg.strobe(checkpoint_fd);
         icache_invalidate_issued_reg.strobe(checkpoint_fd);
 
         regs._strobe(checkpoint_fd);
@@ -1946,64 +2139,6 @@ class TestTribe : public Module
         return true;
     }
 
-    bool patch_word(std::vector<uint32_t>& ram, uint32_t addr, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t value)
-    {
-        if (addr < mem_base || addr - mem_base + 4 > mem_size_bytes) {
-            std::print("patch outside test RAM window: addr={:08x}, mem_base={:08x}\n", addr, mem_base);
-            return false;
-        }
-        ram[(addr - mem_base) / 4] = value;
-        return true;
-    }
-
-    bool patch_linux_earlycon_mapbase(std::vector<uint32_t>& ram, uint32_t mem_base, uint32_t mem_size_bytes)
-    {
-        static constexpr std::array<uint32_t, 5> SEARCH_WORDS = {
-            0x00050913u, // mv s2,a0
-            0x00079863u, // bnez a5,...
-            0x00c52783u, // lw a5,12(a0)
-            0xfed00513u, // li a0,-19
-            0x12078863u, // beqz a5,...
-        };
-        static constexpr std::array<uint32_t, 5> PATCH_WORDS = {
-            0x00050913u, // mv s2,a0          ; preserve early_serial8250_setup's device pointer
-            0x0d852783u, // lw a5,216(a0)     ; fallback to early_console_dev.port.mapbase
-            0x00f52823u, // sw a5,16(a0)      ; make port.membase usable when early ioremap failed
-            0x00079663u, // bnez a5,+12       ; keep using the configured mapbase when present
-            0xfed00513u, // li a0,-19
-        };
-        uint32_t patch_phys = 0;
-        bool found = false;
-        const size_t words = mem_size_bytes / 4;
-        for (size_t pos = 0; pos + SEARCH_WORDS.size() <= words; ++pos) {
-            bool match = true;
-            for (size_t i = 0; i < SEARCH_WORDS.size(); ++i) {
-                if (ram[pos + i] != SEARCH_WORDS[i]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-                patch_phys = mem_base + (uint32_t)(pos * 4);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            std::print("can't find Linux early 8250 membase fallback patch site\n");
-            return false;
-        }
-        for (size_t i = 0; i < PATCH_WORDS.size(); ++i) {
-            if (!patch_word(ram, patch_phys + (uint32_t)i * 4u, mem_base, mem_size_bytes, PATCH_WORDS[i])) {
-                return false;
-            }
-        }
-        // Disabled by default in run_linux_probe.sh; keep this silent when
-        // enabled so DTB-only earlycon experiments have clean UART logs.
-        // std::print("Patched Linux early 8250 membase fallback at {:08x}\n", patch_phys);
-        return true;
-    }
-
     uint8_t ram_byte(const std::vector<uint32_t>& ram, uint32_t byte_addr)
     {
         return (uint8_t)((ram[byte_addr / 4] >> ((byte_addr & 3u) * 8u)) & 0xffu);
@@ -2122,7 +2257,13 @@ public:
         tribe.boot_hartid_in = _ASSIGN(boot_hartid);
         tribe.boot_dtb_addr_in = _ASSIGN(boot_dtb_addr);
         tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
-        tribe.external_cache_invalidate_in = _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg &&
+                !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
+#else
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+#endif
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
         tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
@@ -2249,7 +2390,13 @@ public:
         tribe.boot_hartid_in = boot_hartid;
         tribe.boot_dtb_addr_in = boot_dtb_addr;
         tribe.boot_priv_in = boot_priv;
-        tribe.external_cache_invalidate_in = (bool)sd_dma_cache_invalidate_reg;
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            (bool)sd_dma_cache_invalidate_reg &&
+                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+            (bool)sd_dma_cache_invalidate_reg;
+#endif
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
@@ -2362,6 +2509,8 @@ public:
 
     void _work(bool reset)
     {
+        bool sd_dma_cache_invalidate_ready;
+        sd_dma_cache_invalidate_ready = true;
 #ifndef VERILATOR
         uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe._work(reset);
@@ -2375,6 +2524,13 @@ public:
         tribe.boot_priv_in = boot_priv;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            (bool)sd_dma_cache_invalidate_reg &&
+                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+            (bool)sd_dma_cache_invalidate_reg;
+#endif
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
@@ -2420,7 +2576,24 @@ public:
         plic._work(reset);
         accelerator._work(reset);
         sdcard._work(reset);
-        sd_dma_cache_invalidate_reg._next = sdcard.dma_write_complete_out();
+#ifdef ENABLE_MMU_TLB
+#ifdef VERILATOR
+        sd_dma_cache_invalidate_ready =
+            !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+        sd_dma_cache_invalidate_ready =
+            !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+#endif
+#endif
+        if (sdcard.dma_write_complete_out()) {
+            sd_dma_cache_invalidate_reg._next = true;
+        }
+        else if (sd_dma_cache_invalidate_reg && sd_dma_cache_invalidate_ready) {
+            sd_dma_cache_invalidate_reg._next = false;
+        }
+        else {
+            sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
+        }
 #ifdef VERILATOR
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
@@ -2644,6 +2817,7 @@ public:
         boot_dtb_addr = boot_dtb_addr_arg;
         boot_priv = boot_priv_arg;
         ram_size = ram_words;
+        (void)linux_earlycon_mapbase;
         if (ram_size == 0 || ram_size > TRIBE_RAM_BYTES/4) {
             std::print("invalid --ram-size {}; supported range is 1..{} words\n", ram_size, TRIBE_RAM_BYTES/4);
             return false;
@@ -2661,10 +2835,6 @@ public:
         if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry, elf_phys_override, elf_phys_offset)) {
             reset_pc = elf_entry;
             std::print("Reading ELF program into memory (size: {})\n", read_bytes);
-            if (linux_earlycon_mapbase && !patch_linux_earlycon_mapbase(ram, start_mem_addr, ram_size * 4)) {
-                fclose(fbin);
-                return false;
-            }
         }
         else {
             fseek(fbin, start_offset, SEEK_SET);
@@ -2797,6 +2967,16 @@ public:
         }
         const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
         uint32_t trace_period = trace_period_env ? std::stoul(trace_period_env, nullptr, 0) : 0;
+        const char* trace_pc_file_env = std::getenv("TRIBE_TRACE_PC_FILE");
+        FILE* trace_pc_file = nullptr;
+        if (trace_pc_file_env && trace_pc_file_env[0]) {
+            trace_pc_file = fopen(trace_pc_file_env, "wb");
+            if (!trace_pc_file) {
+                std::print("can't open PC trace file '{}'\n", trace_pc_file_env);
+                return false;
+            }
+            setvbuf(trace_pc_file, nullptr, _IOLBF, 0);
+        }
         PcSymbolTable pc_symbols;
         pc_symbols.load(std::getenv("TRIBE_TRACE_PC_SYMBOLS_FILE"));
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
@@ -2811,13 +2991,58 @@ public:
         uint32_t debug_pc_ge = debug_pc_ge_env ? std::stoul(debug_pc_ge_env, nullptr, 0) : 0;
         const bool trace_mmu = std::getenv("TRIBE_TRACE_MMU") != nullptr;
         const bool trace_csr = std::getenv("TRIBE_TRACE_CSR") != nullptr;
+        const char* trace_csr_file_env = std::getenv("TRIBE_TRACE_CSR_FILE");
+        FILE* trace_csr_file = nullptr;
+        if (trace_csr_file_env && trace_csr_file_env[0]) {
+            trace_csr_file = fopen(trace_csr_file_env, "ab");
+            if (!trace_csr_file) {
+                std::print("can't open CSR trace file '{}'\n", trace_csr_file_env);
+                return false;
+            }
+            setvbuf(trace_csr_file, nullptr, _IOLBF, 0);
+        }
+        const bool trace_wb = std::getenv("TRIBE_TRACE_WB") != nullptr;
         const bool trace_io = std::getenv("TRIBE_TRACE_IO") != nullptr;
         const bool trace_sd = std::getenv("TRIBE_TRACE_SD") != nullptr;
+        const bool trace_clint = std::getenv("TRIBE_TRACE_CLINT") != nullptr;
+        const char* trace_clint_file_env = std::getenv("TRIBE_TRACE_CLINT_FILE");
+        FILE* trace_clint_file = nullptr;
+        if (trace_clint_file_env && trace_clint_file_env[0]) {
+            trace_clint_file = fopen(trace_clint_file_env, "wb");
+            if (!trace_clint_file) {
+                std::print("can't open CLINT trace file '{}'\n", trace_clint_file_env);
+                return false;
+            }
+            setvbuf(trace_clint_file, nullptr, _IOLBF, 0);
+        }
+        const char* trace_sd_file_env = std::getenv("TRIBE_TRACE_SD_FILE");
+        FILE* trace_sd_file = nullptr;
+        if (trace_sd_file_env && trace_sd_file_env[0]) {
+            trace_sd_file = fopen(trace_sd_file_env, "wb");
+            if (!trace_sd_file) {
+                std::print("can't open SD trace file '{}'\n", trace_sd_file_env);
+                return false;
+            }
+            setvbuf(trace_sd_file, nullptr, _IOLBF, 0);
+        }
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
         const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
-        const bool trace_uart_rx = std::getenv("TRIBE_TRACE_UART_RX") != nullptr;
+        const char* trace_uart_rx_file_env = std::getenv("TRIBE_TRACE_UART_RX_FILE");
+        FILE* trace_uart_rx_file = nullptr;
+        if (trace_uart_rx_file_env && trace_uart_rx_file_env[0]) {
+            trace_uart_rx_file = fopen(trace_uart_rx_file_env, "wb");
+            if (!trace_uart_rx_file) {
+                std::print("can't open UART RX trace file '{}'\n", trace_uart_rx_file_env);
+                return false;
+            }
+            setvbuf(trace_uart_rx_file, nullptr, _IOLBF, 0);
+        }
+        const bool trace_uart_rx = std::getenv("TRIBE_TRACE_UART_RX") != nullptr || trace_uart_rx_file != nullptr;
+        auto uart_rx_trace_out = [&]() {
+            return trace_uart_rx_file ? trace_uart_rx_file : stdout;
+        };
         const bool uart_ctrl_c_to_guest = std::getenv("TRIBE_UART_CTRL_C_TO_GUEST") != nullptr;
         const char* trace_after_env = std::getenv("TRIBE_TRACE_AFTER");
         std::string trace_after = trace_after_env ? trace_after_env : "";
@@ -2830,6 +3055,8 @@ public:
         bool checkpoint_save_after_completed = false;
         bool mirrored_uart_needs_newline = false;
         bool host_interrupt = false;
+        std::deque<unsigned char> interactive_uart_queue;
+        uint64_t interactive_uart_last_block_report = 0;
         bool trace_sd_prev_active = false;
         uint32_t trace_sd_prev_addr = 0;
         bool trace_sd_prev_read = false;
@@ -2840,6 +3067,22 @@ public:
         uint32_t trace_sd_prev_state = 0xffffffffu;
         uint32_t trace_sd_prev_count_bucket = 0xffffffffu;
         uint32_t trace_sd_prev_len = 0xffffffffu;
+        bool trace_sd_prev_cmd_valid = false;
+        bool trace_sd_prev_cmd_ready = false;
+        uint32_t trace_sd_prev_cmd_data = 0xffffffffu;
+        bool trace_sd_prev_rsp_valid = false;
+        bool trace_sd_prev_rsp_ready = false;
+        uint32_t trace_sd_prev_rsp_data = 0xffffffffu;
+        bool trace_sd_prev_dma_awvalid = false;
+        bool trace_sd_prev_dma_awready = false;
+        bool trace_sd_prev_dma_wvalid = false;
+        bool trace_sd_prev_dma_wready = false;
+        bool trace_sd_prev_dma_bvalid = false;
+        bool trace_sd_prev_dma_bready = false;
+        bool trace_sd_prev_dma_arvalid = false;
+        bool trace_sd_prev_dma_arready = false;
+        bool trace_sd_prev_dma_rvalid = false;
+        bool trace_sd_prev_dma_rready = false;
         uint64_t trace_sd_last_poll_report = 0;
         const bool trace_sd_data = std::getenv("TRIBE_TRACE_SD_DATA") != nullptr;
         if (checkpoint_load_file.empty()) {
@@ -2905,7 +3148,7 @@ public:
                 enable_uart_script(scripted_uart_start_delay);
                 if (trace_uart_rx && !(bool)uart_script_reported_reg) {
                     mark_uart_script_reported();
-                    std::print("*** uart-rx-script-enabled after '{}' ***\n", scripted_uart_after);
+                    std::print(uart_rx_trace_out(), "*** uart-rx-script-enabled after '{}' ***\n", scripted_uart_after);
                 }
             }
             if (!tohost_addr) {
@@ -2955,11 +3198,9 @@ public:
                     checkpoint_saved = true;
                     std::print("*** Saved checkpoint '{}' at cycle {} ***\n", checkpoint_save_file, perf_clocks + 1);
                     if (checkpoint_save_only_success) {
-                        // Save-only checkpoint tests still need to preserve the
-                        // host-visible UART byte completed on this cycle. The
-                        // restored machine state is already post-strobe, so it
-                        // will not re-emit that byte after loading.
-                        capture_uart_output();
+                        // The checkpoint stores UART output-valid state. If a
+                        // byte is visible on this save cycle, a later restore
+                        // must be the single place that captures it.
                         break;
                     }
                     if (checkpoint_save_after_seen && !checkpoint_save_after.empty()) {
@@ -2977,6 +3218,55 @@ public:
                 break;
             }
             drive_uart_rx(false);
+            if (interactive_uart_input) {
+                if (tribe_uart_stdin_sigint_pending) {
+                    tribe_uart_stdin_sigint_pending = 0;
+                    if (uart_ctrl_c_to_guest) {
+                        interactive_uart_queue.push_back(0x03);
+                    }
+                    else {
+                        host_interrupt = true;
+                    }
+                }
+                for (size_t stdin_reads = 0; stdin_reads < 64 && !host_interrupt; ++stdin_reads) {
+                    unsigned char ch = 0;
+                    ssize_t got = read(STDIN_FILENO, &ch, 1);
+                    if (got == 1) {
+                        if (ch == 0x03 && !uart_ctrl_c_to_guest) {
+                            host_interrupt = true;
+                            std::print("\n*** Interrupted by Ctrl+C ***\n");
+                            break;
+                        }
+                        if (interactive_uart_queue.size() < 4096) {
+                            interactive_uart_queue.push_back(ch);
+                            if (trace_uart_rx) {
+                                std::print(uart_rx_trace_out(), "uart-rx-stdin-queue data={:02x} queued={}\n",
+                                    (uint32_t)ch, interactive_uart_queue.size());
+                            }
+                        }
+                        else if (trace_uart_rx) {
+                            std::print(uart_rx_trace_out(), "uart-rx-stdin-drop data={:02x} queued={}\n",
+                                (uint32_t)ch, interactive_uart_queue.size());
+                        }
+                        continue;
+                    }
+                    if (got == 0 || (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+                        break;
+                    }
+                    std::print("\n***stdin read failed while feeding UART***\n");
+                    error = true;
+                    break;
+                }
+                if (host_interrupt) {
+                    break;
+                }
+                if (trace_uart_rx && !interactive_uart_queue.empty() && !uart.uart_rx_ready_out() &&
+                    perf_clocks - interactive_uart_last_block_report >= 1000000ull) {
+                    interactive_uart_last_block_report = perf_clocks;
+                    std::print(uart_rx_trace_out(), "uart-rx-stdin-blocked queued={} ready={} irq={}\n",
+                        interactive_uart_queue.size(), (bool)uart.uart_rx_ready_out(), (bool)uart.irq_out());
+                }
+            }
             uint32_t scripted_uart_pos = (uint32_t)uart_script_pos_reg;
             uint32_t scripted_uart_delay = (uint32_t)uart_script_delay_reg;
             if ((bool)uart_script_enabled_reg && scripted_uart_pos < scripted_uart_input.size() && scripted_uart_delay) {
@@ -2988,37 +3278,22 @@ public:
                 set_uart_script_delay(scripted_uart_char_delay);
                 drive_uart_rx(true, uart_rx_data);
                 if (trace_uart_rx) {
-                    std::print("uart-rx-script-send pos={} data={:02x}\n",
+                    std::print(uart_rx_trace_out(), "uart-rx-script-send pos={} data={:02x}\n",
                         scripted_uart_pos, (uint32_t)uart_rx_data);
                 }
             }
-            else if (interactive_uart_input && uart.uart_rx_ready_out()) {
-                unsigned char ch = 0;
-                bool have_input = false;
-                if (tribe_uart_stdin_sigint_pending) {
-                    tribe_uart_stdin_sigint_pending = 0;
-                    ch = 0x03;
-                    have_input = true;
-                }
-                else {
-                    ssize_t got = read(STDIN_FILENO, &ch, 1);
-                    if (got == 1) {
-                        have_input = true;
-                    }
-                    else if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        std::print("\n***stdin read failed while feeding UART***\n");
-                        error = true;
-                    }
-                }
-                if (have_input && ch == 0x03 && !uart_ctrl_c_to_guest) {
+            else if (interactive_uart_input && uart.uart_rx_ready_out() && !interactive_uart_queue.empty()) {
+                unsigned char ch = interactive_uart_queue.front();
+                interactive_uart_queue.pop_front();
+                if (ch == 0x03 && !uart_ctrl_c_to_guest) {
                     host_interrupt = true;
-                    have_input = false;
                     std::print("\n*** Interrupted by Ctrl+C ***\n");
                 }
-                if (have_input) {
+                else {
                     drive_uart_rx(true, ch);
                     if (trace_uart_rx) {
-                        std::print("uart-rx-stdin-send data={:02x}\n", (uint32_t)ch);
+                        std::print(uart_rx_trace_out(), "uart-rx-stdin-send data={:02x} queued={}\n",
+                            (uint32_t)ch, interactive_uart_queue.size());
                     }
                 }
             }
@@ -3047,7 +3322,8 @@ public:
 #ifdef ENABLE_MMU_TLB
                 trace_pc = (uint32_t)PORT_VALUE(tribe.debug_pc_out);
 #endif
-                std::print("trace cycle={} pc={:08x} sym={} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} ds={} dh={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
+                FILE* trace_pc_out = trace_pc_file ? trace_pc_file : stdout;
+                std::print(trace_pc_out, "trace cycle={} pc={:08x} sym={} imem={:08x} dmem={:08x} rd={} wr={} data={:08x} hst={} bst={} dcw={} icw={} is={} ih={} ds={} dh={} fv={} irv={} ira={:08x} ipa={:08x} ibusy={} ifault={} mw={} wblr={} wbmemw={} iread={} istall={}\n",
                     perf_clocks,
                     trace_pc,
                     pc_symbols.lookup(trace_pc),
@@ -3080,9 +3356,43 @@ public:
                     false, false, 0u, 0u, false, false, false, false, false, false, false
 #endif
                     );
+                if (trace_pc_file) {
+                    fflush(trace_pc_file);
+                }
+            }
+            if (trace_after_seen && trace_wb && trace_period && (perf_clocks % trace_period) == 0) {
+#ifdef ENABLE_MMU_TLB
+                FILE* trace_pc_out = trace_pc_file ? trace_pc_file : stdout;
+                std::print(trace_pc_out,
+                    "trace-wb cycle={} pc={:08x} wbpc={:08x} wbop={} memop={} rd={} f3={} ready={} wait={} hold={} ldv={} held={} ldaddr={:08x} split_in={} split_lo_v={} split_hi_v={} alu={:08x} dcv={} dcaddr={:08x} dcd={:08x}\n",
+                    perf_clocks,
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_state_pc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_state_wb_op_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_state_mem_op_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_state_rd_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_state_funct3_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_load_ready_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_mem_wait_out),
+                    (bool)PORT_VALUE(tribe.debug_memory_wait_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_load_data_valid_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_held_load_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_load_addr_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_split_load_in_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_split_low_valid_out),
+                    (bool)PORT_VALUE(tribe.debug_wb_split_high_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_wb_alu_addr_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_read_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out));
+                if (trace_pc_file) {
+                    fflush(trace_pc_file);
+                }
+#endif
             }
             if (trace_after_seen && trace_csr && trace_period && (perf_clocks % trace_period) == 0) {
-                std::print("trace-csr cycle={} priv={} ra={:08x} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}",
+                FILE* trace_csr_out = trace_csr_file ? trace_csr_file : stdout;
+                std::print(trace_csr_out, "trace-csr cycle={} priv={} ra={:08x} satp={:08x} mstatus={:08x} mtvec={:08x} mepc={:08x} mcause={:08x} mtval={:08x} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x}",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_priv_out),
@@ -3102,7 +3412,7 @@ public:
 #endif
                     );
 #ifdef ENABLE_ISR
-                std::print(" irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} external_irq={}",
+                std::print(trace_csr_out, " irq_valid={} irq_cause={} irq_to_s={} irq_mip={:08x} irq_mie={:08x} irq_mideleg={:08x} external_irq={}",
                     (bool)PORT_VALUE(tribe.debug_irq_valid_out),
                     (uint32_t)PORT_VALUE(tribe.debug_irq_cause_out),
                     (bool)PORT_VALUE(tribe.debug_irq_to_supervisor_out),
@@ -3115,7 +3425,26 @@ public:
 			    (bool)tribe.external_irq_in());
 #endif
 #endif
-                std::print("\n");
+                std::print(trace_csr_out, "\n");
+            }
+            if (trace_after_seen && trace_clint && trace_period && (perf_clocks % trace_period) == 0) {
+                uint64_t trace_mtime = ((uint64_t)clint.debug_mtime_hi_out() << 32) |
+                    (uint32_t)clint.debug_mtime_lo_out();
+                uint64_t trace_mtimecmp = ((uint64_t)clint.debug_mtimecmp_hi_out() << 32) |
+                    (uint32_t)clint.debug_mtimecmp_lo_out();
+                FILE* trace_clint_out = trace_clint_file ? trace_clint_file : stdout;
+                std::print(trace_clint_out, "trace-clint cycle={} mtime={} mtimecmp={} delta={} mtip={} set_timer={} timer={:08x}{:08x}\n",
+                    perf_clocks,
+                    trace_mtime,
+                    trace_mtimecmp,
+                    trace_mtimecmp - trace_mtime,
+                    (bool)clint.mtip_out(),
+                    (bool)PORT_VALUE(tribe.sbi_set_timer_out),
+                    (uint32_t)PORT_VALUE(tribe.sbi_timer_hi_out),
+                    (uint32_t)PORT_VALUE(tribe.sbi_timer_lo_out));
+                if (trace_clint_file) {
+                    fflush(trace_clint_file);
+                }
             }
 #ifdef ENABLE_MMU_TLB
             if (trace_mmu_fault) {
@@ -3148,6 +3477,23 @@ public:
 #endif
                     (uint32_t)PORT_VALUE(tribe.sbi_timer_hi_out),
                     (uint32_t)PORT_VALUE(tribe.sbi_timer_lo_out));
+            }
+            if (trace_sbi && (bool)PORT_VALUE(tribe.debug_sbi_ecall_out)) {
+                std::print("trace-sbi-ecall cycle={} pc={:08x} priv={} a7={:08x} a6={:08x} a0={:08x} base={} timer={} noop={} handled={}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    (uint32_t)0,
+#endif
+                    (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sbi_a7_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sbi_a6_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sbi_a0_out),
+                    (bool)PORT_VALUE(tribe.debug_sbi_base_out),
+                    (bool)PORT_VALUE(tribe.sbi_set_timer_out),
+                    (bool)PORT_VALUE(tribe.debug_sbi_noop_out),
+                    (bool)PORT_VALUE(tribe.debug_sbi_handled_out));
             }
             if (trace_ra && (bool)PORT_VALUE(tribe.debug_regs_write_out) && (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out) == 1) {
                 std::print("trace-ra cycle={} pc={:08x} ra={:08x}\n",
@@ -3255,6 +3601,22 @@ public:
                 uint32_t trace_sd_state_now = (uint32_t)sdcard.debug_state_out();
                 uint32_t trace_sd_count_now = (uint32_t)sdcard.debug_count_out();
                 uint32_t trace_sd_len_now = (uint32_t)sdcard.debug_len_out();
+                bool trace_sd_cmd_valid_now = (bool)sdcard.sd_cmd_valid_out();
+                bool trace_sd_cmd_ready_now = (bool)sdcard.sd_cmd_ready_in();
+                uint32_t trace_sd_cmd_data_now = (uint32_t)sdcard.sd_cmd_data_out();
+                bool trace_sd_rsp_valid_now = (bool)sdcard.sd_rsp_valid_in();
+                bool trace_sd_rsp_ready_now = (bool)sdcard.sd_rsp_ready_out();
+                uint32_t trace_sd_rsp_data_now = (uint32_t)sdcard.sd_rsp_data_in();
+                bool trace_sd_dma_awvalid_now = (bool)sdcard.dma_out.awvalid_in();
+                bool trace_sd_dma_awready_now = (bool)sdcard.dma_out.awready_out();
+                bool trace_sd_dma_wvalid_now = (bool)sdcard.dma_out.wvalid_in();
+                bool trace_sd_dma_wready_now = (bool)sdcard.dma_out.wready_out();
+                bool trace_sd_dma_bvalid_now = (bool)sdcard.dma_out.bvalid_out();
+                bool trace_sd_dma_bready_now = (bool)sdcard.dma_out.bready_in();
+                bool trace_sd_dma_arvalid_now = (bool)sdcard.dma_out.arvalid_in();
+                bool trace_sd_dma_arready_now = (bool)sdcard.dma_out.arready_out();
+                bool trace_sd_dma_rvalid_now = (bool)sdcard.dma_out.rvalid_out();
+                bool trace_sd_dma_rready_now = (bool)sdcard.dma_out.rready_in();
                 uint32_t trace_sd_count_bucket_now = trace_sd_count_now / 4096u;
                 if (trace_sd_count_now == 0 || trace_sd_count_now == trace_sd_len_now) {
                     trace_sd_count_bucket_now = trace_sd_count_now;
@@ -3285,8 +3647,31 @@ public:
                      trace_sd_state_changed ||
                      (trace_sd_data && trace_sd_tuple_changed && trace_sd_read_now && trace_sd_reg_now == 0x1cu) ||
                      trace_sd_periodic_poll);
+                bool trace_sd_cmd_log_now =
+                    trace_sd_cmd_valid_now &&
+                    (trace_sd_cmd_valid_now != trace_sd_prev_cmd_valid ||
+                     trace_sd_cmd_ready_now != trace_sd_prev_cmd_ready ||
+                     trace_sd_cmd_data_now != trace_sd_prev_cmd_data);
+                bool trace_sd_rsp_log_now =
+                    trace_sd_rsp_valid_now &&
+                    (trace_sd_rsp_valid_now != trace_sd_prev_rsp_valid ||
+                     trace_sd_rsp_ready_now != trace_sd_prev_rsp_ready ||
+                     trace_sd_rsp_data_now != trace_sd_prev_rsp_data);
+                bool trace_sd_dma_log_now =
+                    trace_sd_state_changed ||
+                    trace_sd_dma_awvalid_now != trace_sd_prev_dma_awvalid ||
+                    trace_sd_dma_awready_now != trace_sd_prev_dma_awready ||
+                    trace_sd_dma_wvalid_now != trace_sd_prev_dma_wvalid ||
+                    trace_sd_dma_wready_now != trace_sd_prev_dma_wready ||
+                    trace_sd_dma_bvalid_now != trace_sd_prev_dma_bvalid ||
+                    trace_sd_dma_bready_now != trace_sd_prev_dma_bready ||
+                    trace_sd_dma_arvalid_now != trace_sd_prev_dma_arvalid ||
+                    trace_sd_dma_arready_now != trace_sd_prev_dma_arready ||
+                    trace_sd_dma_rvalid_now != trace_sd_prev_dma_rvalid ||
+                    trace_sd_dma_rready_now != trace_sd_prev_dma_rready;
                 if (trace_sd_log_now) {
-                    std::print("trace-sd cycle={} pc={:08x} reg={:02x} rd={} wr={} wdata={:08x} mask={:02x} status={:02x} state={} count={} len={}\n",
+                    FILE* trace_sd_out = trace_sd_file ? trace_sd_file : stdout;
+                    std::print(trace_sd_out, "trace-sd cycle={} pc={:08x} reg={:02x} rd={} wr={} wdata={:08x} mask={:02x} status={:02x} state={} count={} len={}\n",
                         perf_clocks,
 #ifdef ENABLE_MMU_TLB
                         (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -3302,8 +3687,62 @@ public:
                         trace_sd_state_now,
                         trace_sd_count_now,
                         trace_sd_len_now);
+                    if (trace_sd_file) {
+                        fflush(trace_sd_file);
+                    }
                     if (trace_sd_read_now && trace_sd_reg_now == 0x04u) {
                         trace_sd_last_poll_report = perf_clocks;
+                    }
+                }
+                if (trace_sd_cmd_log_now || trace_sd_rsp_log_now) {
+                    FILE* trace_sd_out = trace_sd_file ? trace_sd_file : stdout;
+                    if (trace_sd_cmd_log_now) {
+                        std::print(trace_sd_out, "trace-sd-cmd cycle={} valid={} ready={} data={:02x} last={} state={} count={} len={}\n",
+                            perf_clocks,
+                            trace_sd_cmd_valid_now,
+                            trace_sd_cmd_ready_now,
+                            trace_sd_cmd_data_now,
+                            (bool)sdcard.sd_cmd_last_out(),
+                            trace_sd_state_now,
+                            trace_sd_count_now,
+                            trace_sd_len_now);
+                    }
+                    if (trace_sd_rsp_log_now) {
+                        std::print(trace_sd_out, "trace-sd-rsp cycle={} valid={} ready={} data={:02x} last={} state={} count={} len={}\n",
+                            perf_clocks,
+                            trace_sd_rsp_valid_now,
+                            trace_sd_rsp_ready_now,
+                            trace_sd_rsp_data_now,
+                            (bool)sdcard.sd_rsp_last_in(),
+                            trace_sd_state_now,
+                            trace_sd_count_now,
+                            trace_sd_len_now);
+                    }
+                    if (trace_sd_file) {
+                        fflush(trace_sd_file);
+                    }
+                }
+                if (trace_sd_dma_log_now && trace_sd_state_now != 0) {
+                    FILE* trace_sd_out = trace_sd_file ? trace_sd_file : stdout;
+                    std::print(trace_sd_out,
+                        "trace-sd-dma cycle={} state={} count={} len={} status={:02x} aw={}/{} w={}/{} b={}/{} ar={}/{} r={}/{}\n",
+                        perf_clocks,
+                        trace_sd_state_now,
+                        trace_sd_count_now,
+                        trace_sd_len_now,
+                        trace_sd_status_now,
+                        trace_sd_dma_awvalid_now,
+                        trace_sd_dma_awready_now,
+                        trace_sd_dma_wvalid_now,
+                        trace_sd_dma_wready_now,
+                        trace_sd_dma_bvalid_now,
+                        trace_sd_dma_bready_now,
+                        trace_sd_dma_arvalid_now,
+                        trace_sd_dma_arready_now,
+                        trace_sd_dma_rvalid_now,
+                        trace_sd_dma_rready_now);
+                    if (trace_sd_file) {
+                        fflush(trace_sd_file);
                     }
                 }
                 trace_sd_prev_active = trace_sd_active_now;
@@ -3316,6 +3755,22 @@ public:
                 trace_sd_prev_state = trace_sd_state_now;
                 trace_sd_prev_count_bucket = trace_sd_count_bucket_now;
                 trace_sd_prev_len = trace_sd_len_now;
+                trace_sd_prev_cmd_valid = trace_sd_cmd_valid_now;
+                trace_sd_prev_cmd_ready = trace_sd_cmd_ready_now;
+                trace_sd_prev_cmd_data = trace_sd_cmd_data_now;
+                trace_sd_prev_rsp_valid = trace_sd_rsp_valid_now;
+                trace_sd_prev_rsp_ready = trace_sd_rsp_ready_now;
+                trace_sd_prev_rsp_data = trace_sd_rsp_data_now;
+                trace_sd_prev_dma_awvalid = trace_sd_dma_awvalid_now;
+                trace_sd_prev_dma_awready = trace_sd_dma_awready_now;
+                trace_sd_prev_dma_wvalid = trace_sd_dma_wvalid_now;
+                trace_sd_prev_dma_wready = trace_sd_dma_wready_now;
+                trace_sd_prev_dma_bvalid = trace_sd_dma_bvalid_now;
+                trace_sd_prev_dma_bready = trace_sd_dma_bready_now;
+                trace_sd_prev_dma_arvalid = trace_sd_dma_arvalid_now;
+                trace_sd_prev_dma_arready = trace_sd_dma_arready_now;
+                trace_sd_prev_dma_rvalid = trace_sd_dma_rvalid_now;
+                trace_sd_prev_dma_rready = trace_sd_dma_rready_now;
             }
 #ifdef ENABLE_MMU_TLB
             if (trace_mmu && (PORT_VALUE(tribe.debug_immu_ptw_read_out) || PORT_VALUE(tribe.debug_dmmu_ptw_read_out) ||
@@ -3366,6 +3821,9 @@ public:
 
         if (host_interrupt) {
             error |= !save_sd_image();
+            if (trace_uart_rx_file) {
+                fclose(trace_uart_rx_file);
+            }
             return !error;
         }
 
@@ -3403,6 +3861,9 @@ public:
         }
 
         error |= !save_sd_image();
+        if (trace_uart_rx_file) {
+            fclose(trace_uart_rx_file);
+        }
         perf_print();
         std::print(" {} ({} microseconds)\n", !error ? (checkpoint_save_only_success ? "CHECKPOINT SAVED" : "PASSED") : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());

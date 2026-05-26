@@ -484,6 +484,24 @@ public:
 #ifndef SYNTHESIS
         trace_csr_events = std::getenv("TRIBE_TRACE_CSR_EVENTS") != nullptr;
 #endif
+#ifndef SYNTHESIS
+        FILE* trace_csr_out = stdout;
+        static FILE* trace_csr_file = nullptr;
+        static bool trace_csr_file_initialized = false;
+        if (!trace_csr_file_initialized) {
+            trace_csr_file_initialized = true;
+            const char* trace_csr_file_env = std::getenv("TRIBE_TRACE_CSR_FILE");
+            if (trace_csr_file_env != nullptr && trace_csr_file_env[0] != 0) {
+                trace_csr_file = fopen(trace_csr_file_env, "wb");
+                if (trace_csr_file != nullptr) {
+                    setvbuf(trace_csr_file, nullptr, _IOLBF, 0);
+                }
+            }
+        }
+        if (trace_csr_file != nullptr) {
+            trace_csr_out = trace_csr_file;
+        }
+#endif
 
         cycle_reg._next = inhibit_cycle ? cycle_reg : uint64_t(cycle_reg) + 1;
         instret_reg._next = (inhibit_instret || !state_in().valid) ? instret_reg : uint64_t(instret_reg) + 1;
@@ -491,9 +509,15 @@ public:
         if (csr_writes()) {
             if (trace_csr_events &&
                 (state_in().csr_addr == 0x100 || state_in().csr_addr == 0x141 || state_in().csr_addr == 0x180)) {
+#ifndef SYNTHESIS
+                std::print(trace_csr_out, "trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
+                    state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
+                    csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
+#else
                 std::print("trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
                     state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
                     csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
+#endif
             }
             csr_write(state_in().csr_addr, csr_write_value(read_data_comb_func()));
         }
@@ -510,8 +534,13 @@ public:
 
             if (to_s) {
                 if (trace_csr_events) {
+#ifndef SYNTHESIS
+                    std::print(trace_csr_out, "trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
+                        state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
+#else
                     std::print("trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
                         state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
+#endif
                 }
                 sepc_reg._next = state_in().pc & ~1u;
                 scause_reg._next = is_interrupt ? (cause | 0x80000000u) : cause;

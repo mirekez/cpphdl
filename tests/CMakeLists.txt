@@ -52,4 +52,13 @@ foreach(src ${TEST_SOURCES})
 
     add_dependencies(${target_name} cpphdl)
 
+    add_test(
+        NAME ${target_name}
+        COMMAND "$<TARGET_FILE:${target_name}>"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
+    )
+    set_tests_properties(${target_name} PROPERTIES
+        TIMEOUT 600
+    )
+
 endforeach()

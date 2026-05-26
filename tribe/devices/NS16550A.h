@@ -134,10 +134,16 @@ public:
         uint32_t addr;
         uint32_t lane;
         uint8_t data;
+        bool rx_incoming;
+        bool rx_available;
+        uint8_t rx_data;
         logic<DATA_WIDTH> read_data;
         uart_valid_reg._next = false;
+        rx_incoming = uart_rx_valid_in() && !rx_valid_reg;
+        rx_available = rx_valid_reg || rx_incoming;
+        rx_data = rx_valid_reg ? (uint8_t)rx_data_reg : (uint8_t)uart_rx_data_in();
 
-        if (uart_rx_valid_in() && !rx_valid_reg) {
+        if (rx_incoming) {
             rx_data_reg._next = uart_rx_data_in();
             rx_valid_reg._next = true;
             rbr_duplicate_valid_reg._next = false;
@@ -157,18 +163,18 @@ public:
                 if (dlab_comb_func()) {
                     data = (uint8_t)dll_reg;
                 }
-                else if (rbr_duplicate_valid_reg) {
+                else if (rbr_duplicate_valid_reg && !rx_incoming) {
                     data = 0;
                 }
                 else {
-                    data = rx_valid_reg ? (uint8_t)rx_data_reg : 0;
+                    data = rx_available ? rx_data : 0;
                 }
             }
             if (addr == REG_IER_DLM) {
                 data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
             }
             if (addr == REG_IIR_FCR) {
-                if (rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0)) {
+                if (rx_available && ((ier_reg & u<8>(0x01)) != 0)) {
                     data = 0x04;
                 }
                 else {
@@ -182,7 +188,7 @@ public:
                 data = (uint8_t)mcr_reg;
             }
             if (addr == REG_LSR) {
-                data = (uint8_t)(0x60 | (rx_valid_reg ? 0x01 : 0x00));
+                data = (uint8_t)(0x60 | (rx_available ? 0x01 : 0x00));
             }
             if (addr == REG_MSR) {
                 data = 0;
@@ -199,7 +205,7 @@ public:
             // RBR has read-to-clear semantics: the accepted bus read consumes
             // the buffered byte exactly once, matching a single-byte FIFO.
             if (addr == REG_RBR_THR_DLL && !dlab_comb_func()) {
-                if (!rbr_duplicate_valid_reg) {
+                if (rx_available && (!rbr_duplicate_valid_reg || rx_incoming)) {
                     rx_valid_reg._next = false;
                     rbr_duplicate_valid_reg._next = true;
                 }

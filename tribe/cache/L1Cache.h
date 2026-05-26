@@ -241,6 +241,16 @@ private:
         return refill_data_comb;
     }
 
+    // True when a direct 32-bit read starts in the final word of a memory beat
+    // and needs high bytes from the following beat.
+    _LAZY_COMB(direct_cross_beat_read_comb, bool)
+        uint32_t byte;
+        uint32_t word;
+        byte = (uint32_t)req_addr_reg & 3u;
+        word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
+        return direct_cross_beat_read_comb = !req_cache_disable_reg && byte != 0 && word + 1 >= PORT_WORDS;
+    }
+
     // Direct memory bypass data, including unaligned words inside or across a memory beat.
     // Cached RAM direct reads stay beat-aligned so dirty L2 data is used instead of stale backing RAM.
     _LAZY_COMB(direct_data_comb, uint32_t)
@@ -248,9 +258,8 @@ private:
         uint32_t word;
         byte = 0;
         word = 0;
-        if (DCACHE == 0 && !req_cacheable_reg && ((uint32_t)req_addr_reg & 3u) != 0 &&
-            (((uint32_t)req_addr_reg >> 2) & (LINE_WORDS - 1)) == LINE_WORDS - 1) {
-            // Cross-line direct reads return the assembled 32-bit word in the low bits.
+        if (!req_cacheable_reg && direct_cross_beat_read_comb_func()) {
+            // Cross-beat direct reads return the assembled 32-bit word in the low bits.
             direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
         }
         else {
@@ -379,8 +388,11 @@ private:
             if (DCACHE != 0 && !req_cache_disable_reg) {
                 // Odd byte/half data loads are served as a direct beat read because
                 // this L1 stores cached data in 16-bit banks. Keep them inside the
-                // containing beat so dirty L2 cache data is used instead of stale RAM.
-                mem_addr_comb = (uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1);
+                // containing beat unless the requested word crosses into the next beat.
+                // Cross-beat reads use the raw address so L2 can assemble both beats.
+                mem_addr_comb = direct_cross_beat_read_comb_func() ?
+                    (uint32_t)req_addr_reg :
+                    ((uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1));
             }
             else {
                 mem_addr_comb = req_addr_reg;

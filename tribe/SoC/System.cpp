@@ -190,7 +190,13 @@ public:
         tribe.boot_hartid_in = boot_hartid_in;
         tribe.boot_dtb_addr_in = boot_dtb_addr_in;
         tribe.boot_priv_in = boot_priv_in;
-        tribe.external_cache_invalidate_in = _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg &&
+                !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
+#else
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+#endif
         tribe.memory_base_in = memory_base_in;
         tribe.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
@@ -302,6 +308,8 @@ public:
 
     void _work(bool reset)
     {
+        bool sd_dma_cache_invalidate_ready;
+        sd_dma_cache_invalidate_ready = true;
         tribe._work(reset);
         mem2._work(reset);
         iospace._work(reset);
@@ -310,7 +318,19 @@ public:
         plic._work(reset);
         accelerator._work(reset);
         sdcard._work(reset);
-        sd_dma_cache_invalidate_reg._next = sdcard.dma_write_complete_out();
+#ifdef ENABLE_MMU_TLB
+        sd_dma_cache_invalidate_ready =
+            !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+#endif
+        if (sdcard.dma_write_complete_out()) {
+            sd_dma_cache_invalidate_reg._next = true;
+        }
+        else if (sd_dma_cache_invalidate_reg && sd_dma_cache_invalidate_ready) {
+            sd_dma_cache_invalidate_reg._next = false;
+        }
+        else {
+            sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
+        }
         if (reset) {
             sd_dma_cache_invalidate_reg.clr();
         }

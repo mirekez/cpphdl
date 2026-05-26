@@ -27,6 +27,10 @@ public:
     _PORT(uint32_t) set_mtimecmp_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool) msip_out = _ASSIGN_COMB(msip_comb_func());
     _PORT(bool) mtip_out = _ASSIGN_COMB(mtip_comb_func());
+    _PORT(uint32_t) debug_mtime_lo_out = _ASSIGN((uint32_t)mtime_reg);
+    _PORT(uint32_t) debug_mtime_hi_out = _ASSIGN((uint32_t)((uint64_t)mtime_reg >> 32));
+    _PORT(uint32_t) debug_mtimecmp_lo_out = _ASSIGN((uint32_t)mtimecmp_reg);
+    _PORT(uint32_t) debug_mtimecmp_hi_out = _ASSIGN((uint32_t)((uint64_t)mtimecmp_reg >> 32));
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;

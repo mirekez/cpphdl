@@ -13,13 +13,17 @@ CROSS_COMPILE="${CROSS_COMPILE:-${RISCV_HOME}/bin/riscv32-unknown-linux-gnu-}"
 CC="${CC:-${CROSS_COMPILE}gcc}"
 STRIP="${STRIP:-${CROSS_COMPILE}strip}"
 TRIBE_SD_TEST_SRC="${TRIBE_SD_TEST_SRC:-${ROOT_DIR}/tribe/code/sd_test.c}"
+TRIBE_CLOCK_TEST_SRC="${TRIBE_CLOCK_TEST_SRC:-${ROOT_DIR}/tribe/code/clock_test.c}"
 STRESS_NG_REPO="${STRESS_NG_REPO:-https://github.com/ColinIanKing/stress-ng.git}"
 STRESS_REPO="${STRESS_REPO:-https://github.com/resurrecting-open-source-projects/stress.git}"
+STRACE_REPO="${STRACE_REPO:-https://github.com/strace/strace.git}"
 STRESS_NG_REF="${STRESS_NG_REF:-master}"
 STRESS_REF="${STRESS_REF:-master}"
+STRACE_REF="${STRACE_REF:-master}"
 TRIBE_SD_OFFLINE="${TRIBE_SD_OFFLINE:-0}"
 TRIBE_SD_SKIP_STRESS_NG="${TRIBE_SD_SKIP_STRESS_NG:-0}"
 TRIBE_SD_SKIP_STRESS="${TRIBE_SD_SKIP_STRESS:-0}"
+TRIBE_SD_SKIP_STRACE="${TRIBE_SD_SKIP_STRACE:-0}"
 
 usage()
 {
@@ -36,9 +40,11 @@ Environment:
   TRIBE_SD_BUILD_DIR=$BUILD_DIR
   STRESS_NG_REPO=$STRESS_NG_REPO
   STRESS_REPO=$STRESS_REPO
+  STRACE_REPO=$STRACE_REPO
   TRIBE_SD_OFFLINE=0
   TRIBE_SD_SKIP_STRESS_NG=0
   TRIBE_SD_SKIP_STRESS=0
+  TRIBE_SD_SKIP_STRACE=0
 EOF
 }
 
@@ -125,11 +131,136 @@ restore_cached_tool()
     return 1
 }
 
+patch_strace_riscv32()
+{
+    local src="$1"
+
+    python3 - "${src}/configure.ac" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+if "riscv32*)" in text:
+    raise SystemExit(0)
+
+needle = "riscv64*)\n\tarch=riscv64\n\tkarch=riscv\n\tAC_DEFINE([RISCV64], 1, [Define for the RISC-V 64-bit architecture])\n\t;;"
+replacement = "riscv32*)\n\tarch=riscv64\n\tkarch=riscv\n\tAC_DEFINE([RISCV64], 1, [Define for the RISC-V backend])\n\t;;\n" + needle
+if needle not in text:
+    raise SystemExit("could not find strace riscv64 configure case")
+path.write_text(text.replace(needle, replacement))
+print("patched strace configure.ac for riscv32")
+PY
+
+    if [[ ! -f "${src}/bundled/linux/include/uapi/linux/time_types.h" ]]; then
+        local time_types="${RISCV_HOME}/riscv-gnu-toolchain/linux-headers/include/linux/time_types.h"
+        if [[ -f "${time_types}" ]]; then
+            cp "${time_types}" "${src}/bundled/linux/include/uapi/linux/time_types.h"
+        fi
+    fi
+    if [[ -f "${src}/bundled/linux/include/uapi/linux/time_types.h" ]] &&
+       ! grep -q "strace riscv32 compat" "${src}/bundled/linux/include/uapi/linux/time_types.h"; then
+        python3 - "${src}/bundled/linux/include/uapi/linux/time_types.h" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+marker = "#include <linux/types.h>\n"
+insert = (
+    marker +
+    "\n/* strace riscv32 compat: old bundled headers may lack this typedef. */\n"
+    "#ifndef __kernel_old_time_t\n"
+    "typedef __kernel_long_t __kernel_old_time_t;\n"
+    "#endif\n"
+)
+path.write_text(text.replace(marker, insert, 1))
+PY
+    fi
+
+    python3 - "${src}/src/linux/64/syscallent.h" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    raise SystemExit(0)
+
+text = path.read_text()
+replacements = {
+    "SEN(io_getevents_time64)": "SEN(io_getevents_time32)",
+    "SEN(nanosleep_time64)": "SEN(nanosleep_time32)",
+    "SEN(adjtimex64)": "SEN(adjtimex32)",
+}
+updated = text
+for old, new in replacements.items():
+    updated = updated.replace(old, new)
+if updated != text:
+    path.write_text(updated)
+    print("patched strace riscv32 syscall table time64 aliases")
+PY
+
+    python3 - "${src}/src/strace.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+if "strace riscv32 getopt compat" in text:
+    raise SystemExit(0)
+
+needle = "\tlopt_idx = -1;\n\twhile ((c = getopt_long(argc, argv, optstring, longopts, &lopt_idx)) != EOF) {"
+replacement = (
+    "\t/* strace riscv32 getopt compat: keep the original command line so\n"
+    "\t * we can recover PROG if the target libc getopt_long consumes all\n"
+    "\t * non-option arguments while using the riscv64 backend on rv32. */\n"
+    "\tint riscv32_orig_argc = argc;\n"
+    "\tchar **riscv32_orig_argv = argv;\n\n" +
+    needle
+)
+if needle not in text:
+    raise SystemExit("could not find strace getopt loop")
+text = text.replace(needle, replacement, 1)
+
+needle = "\targv += optind;\n\targc -= optind;\n\n\tif (argc < 0 || (!nprocs && !argc)) {"
+replacement = (
+    "\targv += optind;\n"
+    "\targc -= optind;\n"
+    "\tif (!nprocs && argc <= 0) {\n"
+    "\t\tfor (int riscv32_i = 1; riscv32_i < riscv32_orig_argc; ++riscv32_i) {\n"
+    "\t\t\tif (!riscv32_orig_argv[riscv32_i])\n"
+    "\t\t\t\tcontinue;\n"
+    "\t\t\tif (riscv32_orig_argv[riscv32_i][0] != '-' ||\n"
+    "\t\t\t    riscv32_orig_argv[riscv32_i][1] == '\\0') {\n"
+    "\t\t\t\targv = &riscv32_orig_argv[riscv32_i];\n"
+    "\t\t\t\targc = riscv32_orig_argc - riscv32_i;\n"
+    "\t\t\t\tbreak;\n"
+    "\t\t\t}\n"
+    "\t\t\tif (riscv32_orig_argv[riscv32_i][0] == '-' &&\n"
+    "\t\t\t    riscv32_orig_argv[riscv32_i][1] == '-' &&\n"
+    "\t\t\t    riscv32_orig_argv[riscv32_i][2] == '\\0' &&\n"
+    "\t\t\t    riscv32_i + 1 < riscv32_orig_argc) {\n"
+    "\t\t\t\targv = &riscv32_orig_argv[riscv32_i + 1];\n"
+    "\t\t\t\targc = riscv32_orig_argc - riscv32_i - 1;\n"
+    "\t\t\t\tbreak;\n"
+    "\t\t\t}\n"
+    "\t\t}\n"
+    "\t}\n\n"
+    "\tif (argc < 0 || (!nprocs && !argc)) {"
+)
+if needle not in text:
+    raise SystemExit("could not find strace argv/argc adjustment")
+path.write_text(text.replace(needle, replacement, 1))
+print("patched strace riscv32 getopt fallback")
+PY
+}
+
 build_stress_ng()
 {
     local src="${BUILD_DIR}/stress-ng"
 
     clone_or_update "${STRESS_NG_REPO}" "${STRESS_NG_REF}" "${src}"
+    patch_stress_ng_tribe "${src}"
     make -C "${src}" clean >/dev/null 2>&1 || true
     make -C "${src}" -j"${JOBS}" \
         CC="${CC}" \
@@ -137,7 +268,274 @@ build_stress_ng()
         LDFLAGS="-static" \
         STATIC=1 \
         stress-ng
-    install_tool "${src}/stress-ng" "${ROOTFS_DIR}/STRESSNG"
+    install_tool "${src}/stress-ng" "${ROOTFS_DIR}/STRESSNG.BIN"
+    install_stress_ng_wrapper
+}
+
+install_stress_ng_wrapper()
+{
+cat > "${ROOTFS_DIR}/STRESSNG" <<'EOF'
+#!/bin/sh
+set -e
+
+if [ -d /mnt ]; then
+    tribe_tmp=/mnt/TMP
+else
+    tribe_tmp="$(dirname "$0")/TMP"
+fi
+
+set -- "$@" ""
+tribe_args=
+while [ "$#" -gt 1 ]; do
+    case "$1" in
+        --temp-path)
+            shift 2
+            ;;
+        --temp-path=*)
+            shift
+            ;;
+        *)
+            tribe_args="${tribe_args} '$1'"
+            shift
+            ;;
+    esac
+done
+
+if [ -x /mnt/STRESSNG.BIN ]; then
+    eval "exec /mnt/STRESSNG.BIN --temp-path '$tribe_tmp' ${tribe_args}"
+fi
+
+eval "exec '$(dirname "$0")/STRESSNG.BIN' --temp-path '$tribe_tmp' ${tribe_args}"
+EOF
+    chmod +x "${ROOTFS_DIR}/STRESSNG"
+}
+
+patch_stress_ng_tribe()
+{
+    local src="$1"
+
+    python3 - "${src}/stress-ng.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+if "tribe stress-ng getopt fallback" in text:
+    raise SystemExit(0)
+
+marker = "int stress_opts_parse(int argc, char **argv, const bool jobmode)\n{"
+helper = r'''
+/* tribe stress-ng getopt fallback: rv32 static getopt_long currently accepts
+ * global options such as --timeout, but can leave stressor options unlisted.
+ * Repair only the workers explicitly requested by the command line. */
+static bool stress_tribe_stressor_already_listed(const stress_stressor_t *stressor)
+{
+	stress_list_item_t *item;
+
+	for (item = stress_stressor_list.head; item; item = item->next) {
+		if (item->stressor == stressor)
+			return true;
+	}
+	return false;
+}
+
+static void stress_tribe_stressor_fallback_add(const char *name, const char *value)
+{
+	size_t i;
+	int32_t instances;
+
+	if (!value || !*value)
+		return;
+
+	for (i = 0; i < SIZEOF_ARRAY(stressors); i++) {
+		if (strcmp(stressors[i].name, name) != 0)
+			continue;
+		if (stress_tribe_stressor_already_listed(&stressors[i]))
+			return;
+		g_item_current = stress_list_item_find(&stressors[i]);
+		g_opt_flags |= OPT_FLAGS_SET;
+		instances = (int32_t)strtol(value, NULL, 0);
+		stress_check_max_stressors(name, instances);
+		g_item_current->instances = instances;
+		if (stress_tribe_time_debug_enabled()) {
+			(void)fprintf(stderr,
+				"TRIBE_STRESS_ARG fallback stressor=%s instances=%" PRId32 "\n",
+				name, instances);
+			(void)fflush(stderr);
+		}
+		return;
+	}
+}
+
+static const char *stress_tribe_next_arg(int *i, int argc, char **argv)
+{
+	if (*i + 1 >= argc)
+		return NULL;
+	(*i)++;
+	return argv[*i];
+}
+
+static void stress_tribe_stressor_fallback(int argc, char **argv)
+{
+	int i;
+
+	for (i = 1; i < argc; i++) {
+		const char *arg = argv[i];
+
+		if (!arg)
+			continue;
+		if (strcmp(arg, "--cpu") == 0) {
+			stress_tribe_stressor_fallback_add("cpu", stress_tribe_next_arg(&i, argc, argv));
+		} else if (strncmp(arg, "--cpu=", 6) == 0) {
+			stress_tribe_stressor_fallback_add("cpu", arg + 6);
+		} else if (strcmp(arg, "-c") == 0) {
+			stress_tribe_stressor_fallback_add("cpu", stress_tribe_next_arg(&i, argc, argv));
+		} else if (arg[0] == '-' && arg[1] == 'c' && arg[2] != '\0') {
+			stress_tribe_stressor_fallback_add("cpu", arg + 2);
+		} else if (strcmp(arg, "--vm") == 0) {
+			stress_tribe_stressor_fallback_add("vm", stress_tribe_next_arg(&i, argc, argv));
+		} else if (strncmp(arg, "--vm=", 5) == 0) {
+			stress_tribe_stressor_fallback_add("vm", arg + 5);
+		} else if (strcmp(arg, "-m") == 0) {
+			stress_tribe_stressor_fallback_add("vm", stress_tribe_next_arg(&i, argc, argv));
+		} else if (arg[0] == '-' && arg[1] == 'm' && arg[2] != '\0') {
+			stress_tribe_stressor_fallback_add("vm", arg + 2);
+		}
+	}
+}
+
+'''
+if marker not in text:
+    raise SystemExit("could not find stress_opts_parse")
+text = text.replace(marker, helper + "\n" + marker, 1)
+
+needle = "\tif (optind < argc) {"
+replacement = "\tstress_tribe_stressor_fallback(argc, argv);\n\n" + needle
+if needle not in text:
+    raise SystemExit("could not find optind check")
+text = text.replace(needle, replacement, 1)
+path.write_text(text)
+print("patched stress-ng Tribe stressor fallback")
+PY
+
+    python3 - "${src}/core-mmap.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+
+needle = """#else
+\tconst int prot_flag = prot & (PROT_READ | PROT_WRITE | PROT_EXEC);
+
+\treturn mmap(NULL, length, prot_flag, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+#endif
+}
+"""
+replacement = """#else
+\tconst int prot_flag = prot & (PROT_READ | PROT_WRITE | PROT_EXEC);
+\tvoid *addr;
+
+\taddr = mmap(NULL, length, prot_flag, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+#if defined(HAVE_SYS_SHM_H)
+\t/* tribe stress-ng shared mmap fallback: on the small Tribe Linux image,
+\t * anonymous shared mmap can fail with EROFS when shmem/tmpfs backing is
+\t * unavailable. SysV shared memory gives stress-ng the same parent/child
+\t * sharing semantics without depending on the filesystem path. */
+\tif (addr == MAP_FAILED && errno == EROFS) {
+\t\tconst int saved_errno = errno;
+\t\tconst int shm_flag = IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR;
+\t\tint shmid = shmget(IPC_PRIVATE, length, shm_flag);
+
+\t\tif (shmid >= 0) {
+\t\t\taddr = shmat(shmid, NULL, 0);
+\t\t\t(void)shmctl(shmid, IPC_RMID, NULL);
+\t\t\tif (addr != (void *)-1) {
+\t\t\t\t(void)mprotect(addr, length, prot_flag);
+\t\t\t\treturn addr;
+\t\t\t}
+\t\t}
+\t\taddr = mmap(NULL, length, prot_flag, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+\t\tif (addr != MAP_FAILED)
+\t\t\treturn addr;
+\t\terrno = saved_errno;
+\t}
+#endif
+\treturn addr;
+#endif
+}
+"""
+if "tribe stress-ng shared mmap fallback" not in text:
+    if needle not in text:
+        raise SystemExit("could not find stress_mmap_anon_shared mmap return")
+    path.write_text(text.replace(needle, replacement, 1))
+    print("patched stress-ng shared mmap fallback")
+elif "MAP_ANONYMOUS | MAP_PRIVATE" not in text:
+    needle = """\t\tif (shmid >= 0) {
+\t\t\taddr = shmat(shmid, NULL, 0);
+\t\t\t(void)shmctl(shmid, IPC_RMID, NULL);
+\t\t\tif (addr != (void *)-1) {
+\t\t\t\t(void)mprotect(addr, length, prot_flag);
+\t\t\t\treturn addr;
+\t\t\t}
+\t\t}
+\t\terrno = saved_errno;
+"""
+    replacement = """\t\tif (shmid >= 0) {
+\t\t\taddr = shmat(shmid, NULL, 0);
+\t\t\t(void)shmctl(shmid, IPC_RMID, NULL);
+\t\t\tif (addr != (void *)-1) {
+\t\t\t\t(void)mprotect(addr, length, prot_flag);
+\t\t\t\treturn addr;
+\t\t\t}
+\t\t}
+\t\taddr = mmap(NULL, length, prot_flag, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+\t\tif (addr != MAP_FAILED)
+\t\t\treturn addr;
+\t\terrno = saved_errno;
+"""
+    if needle not in text:
+        raise SystemExit("could not update existing stress-ng shared mmap fallback")
+    path.write_text(text.replace(needle, replacement, 1))
+    print("updated stress-ng shared mmap fallback")
+PY
+
+    python3 - "${src}/core-stressors.h" "${src}/Makefile" <<'PY'
+import pathlib
+import re
+import sys
+
+core_stressors = pathlib.Path(sys.argv[1])
+makefile = pathlib.Path(sys.argv[2])
+
+text = core_stressors.read_text()
+if "tribe stress-ng minimal stressors" not in text:
+    text = re.sub(
+        r"#define STRESSORS\(MACRO\)\s+\\\n(?:\s*MACRO\([^)]+\)\s*\\\n)*\s*MACRO\([^)]+\)\n",
+        "/* tribe stress-ng minimal stressors: keep SD image executable small. */\n"
+        "#define STRESSORS(MACRO)\t\\\n"
+        "\tMACRO(cpu)\t\t\\\n"
+        "\tMACRO(vm)\n",
+        text,
+        count=1,
+    )
+    core_stressors.write_text(text)
+    print("patched stress-ng minimal stressor table")
+
+text = makefile.read_text()
+if "# tribe stress-ng minimal stressor objects" not in text:
+    text = re.sub(
+        r"STRESS_SRC = \\\n(?:\tstress-[^\n]+\.c\s*\\\n)+",
+        "# tribe stress-ng minimal stressor objects\n"
+        "STRESS_SRC = \\\n"
+        "\tstress-cpu.c \\\n"
+        "\tstress-vm.c \\\n",
+        text,
+        count=1,
+    )
+    makefile.write_text(text)
+    print("patched stress-ng minimal stressor objects")
+PY
 }
 
 build_stress()
@@ -170,6 +568,34 @@ build_stress()
         install_tool "${src}/stress" "${ROOTFS_DIR}/STRESS"
 }
 
+build_strace()
+{
+    local src="${BUILD_DIR}/strace"
+
+    clone_or_update "${STRACE_REPO}" "${STRACE_REF}" "${src}"
+    patch_strace_riscv32 "${src}"
+    if [[ -x "${src}/bootstrap" ]]; then
+        (cd "${src}" && ./bootstrap)
+    elif [[ ! -x "${src}/configure" && -x "${src}/autogen.sh" ]]; then
+        (cd "${src}" && ./autogen.sh)
+    elif [[ ! -x "${src}/configure" ]]; then
+        echo "strace source has no configure/bootstrap/autogen.sh" >&2
+        exit 1
+    fi
+    (
+        cd "${src}"
+        make clean >/dev/null 2>&1 || true
+        ./configure --host=riscv32-unknown-linux-gnu CC="${CC}" \
+            CFLAGS="-march=rv32ima_zicsr_zifencei -mabi=ilp32 -Os" \
+            LDFLAGS="-static" \
+            --enable-mpers=no
+        make -C src -j"${JOBS}" native_printer_decls.h native_printer_defs.h printers.h sys_func.h scno.h sen.h ioctlent0.h bpf_attr_check.c
+        make -C src -j"${JOBS}" strace
+    )
+    install_tool "${src}/src/strace" "${ROOTFS_DIR}/STRACE" 2>/dev/null ||
+        install_tool "${src}/strace" "${ROOTFS_DIR}/STRACE"
+}
+
 build_sd_test()
 {
     local out="${BUILD_DIR}/sd_test"
@@ -185,19 +611,126 @@ build_sd_test()
     install_tool "${out}" "${ROOTFS_DIR}/SDTEST"
 }
 
+build_clock_test()
+{
+    local out="${BUILD_DIR}/clock_test"
+
+    if [[ ! -f "${TRIBE_CLOCK_TEST_SRC}" ]]; then
+        echo "missing clock test source: ${TRIBE_CLOCK_TEST_SRC}" >&2
+        exit 1
+    fi
+    "${CC}" -march=rv32ima_zicsr_zifencei -mabi=ilp32 -Os -static \
+        -o "${out}" "${TRIBE_CLOCK_TEST_SRC}"
+    install_tool "${out}" "${ROOTFS_DIR}/CLOCKTST"
+}
+
+build_argvdump()
+{
+    local src="${BUILD_DIR}/argvdump.c"
+    local out="${BUILD_DIR}/argvdump"
+
+    cat > "${src}" <<'EOF'
+#include <stdio.h>
+
+int main(int argc, char **argv)
+{
+    printf("ARGVDUMP argc=%d\n", argc);
+    for (int i = 0; i < argc; ++i) {
+        printf("argv[%d]=<%s>\n", i, argv[i] ? argv[i] : "(null)");
+    }
+    return 0;
+}
+EOF
+    "${CC}" -march=rv32ima_zicsr_zifencei -mabi=ilp32 -Os -static \
+        -o "${out}" "${src}"
+    install_tool "${out}" "${ROOTFS_DIR}/ARGVDUMP"
+}
+
+build_mmap_test()
+{
+    local src="${BUILD_DIR}/mmap_test.c"
+    local out="${BUILD_DIR}/mmap_test"
+
+    cat > "${src}" <<'EOF'
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static void say(const char *s)
+{
+    write(1, s, strlen(s));
+}
+
+int main(void)
+{
+    const size_t size = 4096;
+    say("MMAPTEST start\n");
+    unsigned char *p = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                            MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) {
+        dprintf(1, "MMAPTEST shared-anon failed errno=%d %s\n", errno, strerror(errno));
+        return 1;
+    }
+    dprintf(1, "MMAPTEST mapped %p\n", p);
+    p[0] = 0x5a;
+    pid_t pid = fork();
+    if (pid < 0) {
+        dprintf(1, "MMAPTEST fork failed errno=%d %s\n", errno, strerror(errno));
+        return 2;
+    }
+    if (pid == 0) {
+        say("MMAPTEST child\n");
+        p[1] = p[0] ^ 0xff;
+        _exit(0);
+    }
+    dprintf(1, "MMAPTEST parent pid=%d\n", pid);
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) {
+        dprintf(1, "MMAPTEST wait failed errno=%d %s\n", errno, strerror(errno));
+        return 3;
+    }
+    dprintf(1, "MMAPTEST status=%d p0=%02x p1=%02x\n", status, p[0], p[1]);
+    return (status == 0 && p[0] == 0x5a && p[1] == 0xa5) ? 0 : 4;
+}
+EOF
+    "${CC}" -march=rv32ima_zicsr_zifencei -mabi=ilp32 -Os -static \
+        -o "${out}" "${src}"
+    install_tool "${out}" "${ROOTFS_DIR}/MMAPTEST"
+}
+
 write_readme()
 {
     cat > "${ROOTFS_DIR}/README.TXT" <<'EOF'
 Tribe RISC-V Linux stress SD image
 
 Tools:
+  ARGVDUMP
+  CLOCKTST
+  MMAPTEST
+  RUNSTNG
+  TCPU1
+  TVM1
+  TVM5
   STRESSNG
   STRESS
+  STRACE
+  RUNTRACE
   SDTEST
 
 Example after mounting the card:
+  /mnt/CLOCKTST
+  /mnt/MMAPTEST
+  sh /mnt/TCPU1
+  sh /mnt/TVM1
+  sh /mnt/TVM5
+  sh /mnt/RUNSTNG --cpu 1 --vm 2 --vm-bytes 5m --timeout 1s
   /mnt/STRESS --cpu 1 --io 1 --vm 1 --timeout 10
   /mnt/STRESSNG --cpu 1 --matrix 1 --timeout 10 --metrics-brief
+  /mnt/STRACE -f -e futex /mnt/STRESSNG --cpu 1 --matrix 1 --timeout 5
+  sh /mnt/RUNTRACE
 
 Raw SD driver test:
   cp /mnt/SDTEST /tmp/SDTEST
@@ -206,13 +739,59 @@ Raw SD driver test:
 
 SDTEST is destructive: it overwrites the target block device with PRBS data.
 EOF
+
+cat > "${ROOTFS_DIR}/RUNTRACE" <<'EOF'
+#!/bin/sh
+echo RUNTRACE_START
+/mnt/ARGVDUMP /mnt/STRESSNG --cpu 1 --timeout 1 --verbose
+/mnt/STRACE -f -tt /mnt/STRESSNG --cpu 1 --timeout 1 --verbose
+rc=$?
+echo RUNTRACE_DONE:$rc
+EOF
+
+cat > "${ROOTFS_DIR}/RUNSTNG" <<'EOF'
+#!/bin/sh
+set -e
+exec /mnt/STRESSNG "$@"
+EOF
+
+cat > "${ROOTFS_DIR}/TCPU1" <<'EOF'
+#!/bin/sh
+echo TCPU1_START
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --timeout 1s --temp-path /tmp
+rc=$?
+echo TCPU1_RC:$rc
+EOF
+
+cat > "${ROOTFS_DIR}/TVM1" <<'EOF'
+#!/bin/sh
+echo TVM1_START
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --vm 1 --vm-bytes 1m --timeout 1s --temp-path /tmp
+rc=$?
+echo TVM1_RC:$rc
+EOF
+
+cat > "${ROOTFS_DIR}/TVM5" <<'EOF'
+#!/bin/sh
+echo TVM5_START
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --vm 2 --vm-bytes 5m --timeout 1s --temp-path /tmp
+rc=$?
+echo TVM5_RC:$rc
+EOF
+
+chmod +x "${ROOTFS_DIR}/RUNTRACE" "${ROOTFS_DIR}/RUNSTNG" \
+  "${ROOTFS_DIR}/TCPU1" "${ROOTFS_DIR}/TVM1" "${ROOTFS_DIR}/TVM5"
+mkdir -p "${ROOTFS_DIR}/TMP"
 }
 
-pack_fat32()
+pack_ext2()
 {
-    python3 - "${ROOTFS_DIR}" "${SD_IMG}" "${SD_IMAGE_MB}" <<'PY'
-import math
-import os
+    if ! command -v mke2fs >/dev/null 2>&1; then
+        echo "missing mke2fs; install e2fsprogs to build ext2 SD image" >&2
+        exit 1
+    fi
+
+    python3 - "${ROOTFS_DIR}" "${SD_IMG}" "${SD_IMAGE_MB}" "${BUILD_DIR}/sd.ext2.part" <<'PY'
 import pathlib
 import struct
 import sys
@@ -220,115 +799,41 @@ import sys
 root = pathlib.Path(sys.argv[1])
 image = pathlib.Path(sys.argv[2])
 image_mb = int(sys.argv[3], 0)
+part = pathlib.Path(sys.argv[4])
 sector_size = 512
 part_start = 2048
 total_sectors = image_mb * 1024 * 1024 // sector_size
-if image_mb < 64 or total_sectors <= part_start + 4096:
+if image_mb < 16 or total_sectors <= part_start + 4096:
     raise SystemExit("TRIBE_SD_IMAGE_MB is too small")
 part_sectors = total_sectors - part_start
-reserved = 32
-fat_count = 2
-sectors_per_cluster = 1 if image_mb <= 128 else 8
-root_cluster = 2
+part.parent.mkdir(parents=True, exist_ok=True)
+with part.open("wb") as out:
+    out.truncate(part_sectors * sector_size)
 
-files = []
-for path in sorted(root.iterdir()):
-    if not path.is_file():
-        continue
-    name = path.name.upper()
-    if "." in name:
-        base, ext = name.rsplit(".", 1)
-    else:
-        base, ext = name, ""
-    if not base or len(base) > 8 or len(ext) > 3:
-        raise SystemExit(f"file name is not FAT 8.3 compatible: {path.name}")
-    data = path.read_bytes()
-    files.append((base, ext, data))
+files = [path for path in sorted(root.iterdir()) if path.is_file()]
+print(f"Preparing ext2 partition image {part} ({part_sectors * sector_size // (1024 * 1024)} MiB)")
+for path in files:
+    print(f"  {path.name}: {path.stat().st_size} bytes")
+PY
+    mke2fs -F -q -t ext2 -L TRIBE_SD -d "${ROOTFS_DIR}" "${BUILD_DIR}/sd.ext2.part"
 
-spf = 1
-while True:
-    data_sectors = part_sectors - reserved - fat_count * spf
-    clusters = data_sectors // sectors_per_cluster
-    needed_spf = math.ceil((clusters + 2) * 4 / sector_size)
-    if needed_spf == spf:
-        break
-    spf = needed_spf
-if clusters < 65525:
-    raise SystemExit("image is too small for FAT32")
+    python3 - "${SD_IMG}" "${SD_IMAGE_MB}" "${BUILD_DIR}/sd.ext2.part" <<'PY'
+import pathlib
+import struct
+import sys
 
-fat = bytearray(spf * sector_size)
-struct.pack_into("<I", fat, 0, 0x0ffffff8)
-struct.pack_into("<I", fat, 4, 0xffffffff)
-struct.pack_into("<I", fat, root_cluster * 4, 0x0fffffff)
-cluster_data = {}
-next_free = root_cluster + 1
-entries = []
-for base, ext, data in files:
-    cluster_count = max(1, math.ceil(len(data) / (sectors_per_cluster * sector_size)))
-    first = next_free
-    for index in range(cluster_count):
-        cluster = next_free
-        next_free += 1
-        value = 0x0fffffff if index == cluster_count - 1 else next_free
-        struct.pack_into("<I", fat, cluster * 4, value)
-        start = index * sectors_per_cluster * sector_size
-        cluster_data[cluster] = data[start:start + sectors_per_cluster * sector_size]
-    entries.append((base, ext, first, len(data)))
-
-root_dir = bytearray(sectors_per_cluster * sector_size)
-root_dir[0:11] = b"TRIBE SD   "
-root_dir[11] = 0x08
-for idx, (base, ext, first, size) in enumerate(entries, start=1):
-    off = idx * 32
-    if off + 32 > len(root_dir):
-        raise SystemExit("too many root directory entries for this simple FAT32 packer")
-    root_dir[off:off + 8] = base.encode("ascii").ljust(8, b" ")
-    root_dir[off + 8:off + 11] = ext.encode("ascii").ljust(3, b" ")
-    root_dir[off + 11] = 0x20
-    struct.pack_into("<H", root_dir, off + 20, (first >> 16) & 0xffff)
-    struct.pack_into("<H", root_dir, off + 26, first & 0xffff)
-    struct.pack_into("<I", root_dir, off + 28, size)
-cluster_data[root_cluster] = root_dir
-
-boot = bytearray(sector_size)
-boot[0:3] = b"\xeb\x3c\x90"
-boot[3:11] = b"CPPHDL  "
-struct.pack_into("<H", boot, 11, sector_size)
-boot[13] = sectors_per_cluster
-struct.pack_into("<H", boot, 14, reserved)
-boot[16] = fat_count
-struct.pack_into("<H", boot, 17, 0)
-struct.pack_into("<H", boot, 19, part_sectors if part_sectors < 65536 else 0)
-boot[21] = 0xf8
-struct.pack_into("<H", boot, 22, 0)
-struct.pack_into("<H", boot, 24, 63)
-struct.pack_into("<H", boot, 26, 255)
-struct.pack_into("<I", boot, 28, part_start)
-struct.pack_into("<I", boot, 32, part_sectors if part_sectors >= 65536 else 0)
-struct.pack_into("<I", boot, 36, spf)
-struct.pack_into("<H", boot, 40, 0)
-struct.pack_into("<H", boot, 42, 0)
-struct.pack_into("<I", boot, 44, root_cluster)
-struct.pack_into("<H", boot, 48, 1)
-struct.pack_into("<H", boot, 50, 6)
-boot[64] = 0x80
-boot[66] = 0x29
-struct.pack_into("<I", boot, 67, 0x43504844)
-boot[71:82] = b"TRIBE SD   "
-boot[82:90] = b"FAT32   "
-boot[510:512] = b"\x55\xaa"
-
-fsinfo = bytearray(sector_size)
-struct.pack_into("<I", fsinfo, 0, 0x41615252)
-struct.pack_into("<I", fsinfo, 484, 0x61417272)
-struct.pack_into("<I", fsinfo, 488, 0xffffffff)
-struct.pack_into("<I", fsinfo, 492, next_free)
-struct.pack_into("<I", fsinfo, 508, 0xaa550000)
+image = pathlib.Path(sys.argv[1])
+image_mb = int(sys.argv[2], 0)
+part = pathlib.Path(sys.argv[3])
+sector_size = 512
+part_start = 2048
+total_sectors = image_mb * 1024 * 1024 // sector_size
+part_sectors = total_sectors - part_start
 
 mbr = bytearray(sector_size)
 entry = 446
 mbr[entry] = 0x00
-mbr[entry + 4] = 0x0c
+mbr[entry + 4] = 0x83
 struct.pack_into("<I", mbr, entry + 8, part_start)
 struct.pack_into("<I", mbr, entry + 12, part_sectors)
 mbr[510:512] = b"\x55\xaa"
@@ -338,28 +843,15 @@ with image.open("wb") as out:
     out.truncate(total_sectors * sector_size)
     out.seek(0)
     out.write(mbr)
-    part_base = part_start * sector_size
-    out.seek(part_base)
-    out.write(boot)
-    out.seek(part_base + sector_size)
-    out.write(fsinfo)
-    out.seek(part_base + 6 * sector_size)
-    out.write(boot)
-    out.seek(part_base + 7 * sector_size)
-    out.write(fsinfo)
-    fat0 = part_base + reserved * sector_size
-    for fat_index in range(fat_count):
-        out.seek(fat0 + fat_index * spf * sector_size)
-        out.write(fat)
-    data_off = fat0 + fat_count * spf * sector_size
-    for cluster, data in cluster_data.items():
-        off = data_off + (cluster - 2) * sectors_per_cluster * sector_size
-        out.seek(off)
-        out.write(data)
+    out.seek(part_start * sector_size)
+    with part.open("rb") as inp:
+        while True:
+            chunk = inp.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
 
-print(f"Created {image} ({image_mb} MiB, FAT32 partition starts at sector {part_start})")
-for base, ext, _first, size in entries:
-    print(f"  {base + ('.' + ext if ext else '')}: {size} bytes")
+print(f"Created {image} ({image_mb} MiB, ext2 partition starts at sector {part_start})")
 PY
 }
 
@@ -374,22 +866,33 @@ if [[ "${PACK_ONLY}" != "1" ]]; then
     if [[ "${TRIBE_SD_SKIP_STRESS_NG}" != "1" ]]; then
         build_stress_ng
     else
-        restore_cached_tool "${ROOTFS_DIR}/STRESSNG" "${BUILD_DIR}/stress-ng/stress-ng" || true
+        restore_cached_tool "${ROOTFS_DIR}/STRESSNG.BIN" "${BUILD_DIR}/stress-ng/stress-ng" || true
+        install_stress_ng_wrapper
     fi
     if [[ "${TRIBE_SD_SKIP_STRESS}" != "1" ]]; then
         build_stress
     else
         restore_cached_tool "${ROOTFS_DIR}/STRESS" "${BUILD_DIR}/stress/src/stress" "${BUILD_DIR}/stress/stress" || true
     fi
+    if [[ "${TRIBE_SD_SKIP_STRACE}" != "1" ]]; then
+        build_strace
+    else
+        restore_cached_tool "${ROOTFS_DIR}/STRACE" "${BUILD_DIR}/strace/src/strace" "${BUILD_DIR}/strace/strace" || true
+    fi
 else
-    restore_cached_tool "${ROOTFS_DIR}/STRESSNG" "${BUILD_DIR}/stress-ng/stress-ng" || true
+    restore_cached_tool "${ROOTFS_DIR}/STRESSNG.BIN" "${BUILD_DIR}/stress-ng/stress-ng" || true
+    install_stress_ng_wrapper
     restore_cached_tool "${ROOTFS_DIR}/STRESS" "${BUILD_DIR}/stress/src/stress" "${BUILD_DIR}/stress/stress" || true
+    restore_cached_tool "${ROOTFS_DIR}/STRACE" "${BUILD_DIR}/strace/src/strace" "${BUILD_DIR}/strace/strace" || true
 fi
 
 build_sd_test
+build_clock_test
+build_argvdump
+build_mmap_test
 
 write_readme
-pack_fat32
+pack_ext2
 
 echo
 echo "SD image ready: ${SD_IMG}"
