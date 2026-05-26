@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -225,16 +226,7 @@ static std::string trim(std::string s)
     return s;
 }
 
-static std::string readTextFile(const std::filesystem::path& path)
-{
-    std::ifstream in(path);
-    if (!in) {
-        return "";
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
+static void replaceAll(std::string& s, const std::string& from, const std::string& to);
 
 static bool isZeroLiteralText(const std::string& expr)
 {
@@ -275,78 +267,127 @@ static std::string templateParamDefault(const std::string& param)
     return trim(param.substr(eq + 1));
 }
 
-static std::vector<std::string> fallbackModuleParams(const std::string& type)
+static std::vector<std::string> configuredModuleParams(const std::string& type)
 {
-    static const std::map<std::string, std::vector<std::string>> params = {
-        {"rr_arb_tree", {"unsigned NumIn = 64", "unsigned DataWidth = 32", "typename DataType = logic<DataWidth>",
-                         "uint64_t ExtPrio = 0", "uint64_t AxiVldRdy = 0", "uint64_t LockIn = 0",
-                         "uint64_t FairArb = 1"}},
-        {"stream_arbiter_flushable", {"typename DATA_T = bool", "unsigned N_INP = 1", "uint64_t ARBITER = 0"}},
-        {"compressed_instr_decoder", {"typename copro_compressed_resp_t = bool", "unsigned NbInstr = 1",
-                                      "uint64_t CoproInstr = 0", "typename x_compressed_req_t = bool",
-                                      "typename x_compressed_resp_t = bool"}},
-        {"instr_decoder", {"typename copro_issue_resp_t = bool", "typename opcode_t = bool", "unsigned NbInstr = 1",
-                           "uint64_t CoproInstr = 0", "unsigned NrRgprPorts = 2", "typename hartid_t = bool",
-                           "typename id_t = bool", "typename x_issue_req_t = bool", "typename x_issue_resp_t = bool",
-                           "typename x_register_t = bool", "typename registers_t = bool"}},
-        {"scoreboard", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty", "typename bp_resolve_t = bool",
-                        "typename exception_t = bool", "typename scoreboard_entry_t = bool",
-                        "typename forwarding_t = bool", "typename writeback_t = bool", "typename rs3_len_t = bool"}},
-        {"issue_read_operands", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                                 "typename branchpredict_sbe_t = bool", "typename fu_data_t = bool",
-                                 "typename scoreboard_entry_t = bool", "typename forwarding_t = bool",
-                                 "typename writeback_t = bool", "typename rs3_len_t = bool",
-                                 "typename x_issue_req_t = bool", "typename x_issue_resp_t = bool",
-                                 "typename x_register_t = bool", "typename x_commit_t = bool"}},
-        {"cva6_shared_tlb", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                             "typename pte_cva6_t = bool", "typename tlb_update_cva6_t = bool",
-                             "unsigned SHARED_TLB_WAYS = 2", "unsigned HYP_EXT = 0"}},
-        {"shift_reg", {"typename dtype = logic", "unsigned Depth = 1"}},
-        {"cva6_fifo_v3", {"uint64_t FALL_THROUGH = 0", "uint64_t FPGA_ALTERA = 0", "unsigned DATA_WIDTH = 32",
-                          "unsigned DEPTH = 8", "typename dtype = logic<DATA_WIDTH>", "uint64_t FPGA_EN = 0"}},
-        {"wt_axi_adapter", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                            "unsigned ReqFifoDepth = 2", "unsigned MetaFifoDepth = CVA6Cfg.DCACHE_MAX_TX",
-                            "typename axi_req_t = bool", "typename axi_rsp_t = bool", "typename dcache_req_t = bool",
-                            "typename dcache_rtrn_t = bool", "typename dcache_inval_t = bool",
-                            "typename icache_req_t = bool", "typename icache_rtrn_t = bool"}},
-        {"axi_adapter", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty", "unsigned DATA_WIDTH = 256",
-                         "uint64_t CRITICAL_WORD_FIRST = 0", "unsigned CACHELINE_BYTE_OFFSET = 8",
-                         "typename axi_req_t = bool", "typename axi_rsp_t = bool"}},
-        {"wt_cache_subsystem", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                                "typename icache_areq_t = bool", "typename icache_arsp_t = bool",
-                                "typename icache_dreq_t = bool", "typename icache_drsp_t = bool",
-                                "typename dcache_req_i_t = bool", "typename dcache_req_o_t = bool",
-                                "typename icache_req_t = bool", "typename icache_rtrn_t = bool",
-                                "unsigned NumPorts = 4", "typename noc_req_t = bool", "typename noc_resp_t = bool"}},
-        {"perf_counters", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty", "typename bp_resolve_t = bool",
-                           "typename dcache_req_i_t = bool", "typename dcache_req_o_t = bool",
-                           "typename exception_t = bool", "typename icache_dreq_t = bool",
-                           "typename scoreboard_entry_t = bool", "unsigned NumPorts = 3"}},
-        {"cva6_mmu", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                      "typename icache_areq_t = bool", "typename icache_arsp_t = bool",
-                      "typename icache_dreq_t = bool", "typename icache_drsp_t = bool",
-                      "typename dcache_req_i_t = bool", "typename dcache_req_o_t = bool",
-                      "typename exception_t = bool", "unsigned HYP_EXT = 0"}},
-        {"load_store_unit", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                             "typename dcache_req_i_t = bool", "typename dcache_req_o_t = bool",
-                             "typename exception_t = bool", "typename fu_data_t = bool",
-                             "typename icache_areq_t = bool", "typename icache_arsp_t = bool",
-                             "typename icache_dreq_t = bool", "typename icache_drsp_t = bool",
-                             "typename lsu_ctrl_t = bool", "typename acc_mmu_req_t = bool",
-                             "typename acc_mmu_resp_t = bool", "typename cbo_t = bool",
-                             "typename bp_resolve_t = bool"}},
-        {"lzc", {"unsigned WIDTH = 2", "uint64_t MODE = 0", "unsigned CNT_WIDTH = clog2(WIDTH + 1)"}},
-        {"acc_dispatcher", {"config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty",
-                            "typename dcache_req_i_t = bool", "typename dcache_req_o_t = bool",
-                            "typename exception_t = bool", "typename fu_data_t = bool",
-                            "typename scoreboard_entry_t = bool", "typename acc_req_t = bool",
-                            "typename acc_resp_t = bool", "typename accelerator_req_t = bool",
-                            "typename accelerator_resp_t = bool", "typename acc_mmu_req_t = bool",
-                            "typename acc_mmu_resp_t = bool", "typename acc_cfg_t = bool",
-                            "acc_cfg_t AccCfg = {}"}}
-    };
+    static bool loaded = false;
+    static std::map<std::string, std::vector<std::string>> params;
+    if (!loaded) {
+        loaded = true;
+        if (auto* path = std::getenv("HDLCPP_MODULE_PARAMS")) {
+            std::ifstream in(path);
+            std::string line;
+            while (std::getline(in, line)) {
+                line = trim(line);
+                if (line.empty() || line[0] == '#') {
+                    continue;
+                }
+                auto sep = line.find('\t');
+                if (sep == std::string::npos) {
+                    continue;
+                }
+                auto module = trim(line.substr(0, sep));
+                auto rest = line.substr(sep + 1);
+                std::vector<std::string> decls;
+                for (size_t start = 0; start <= rest.size();) {
+                    auto end = rest.find('\t', start);
+                    auto item = trim(rest.substr(start, end == std::string::npos ? std::string::npos : end - start));
+                    if (!item.empty()) {
+                        decls.push_back(item);
+                    }
+                    if (end == std::string::npos) {
+                        break;
+                    }
+                    start = end + 1;
+                }
+                if (!module.empty() && !decls.empty()) {
+                    params[module] = decls;
+                }
+            }
+        }
+    }
     auto it = params.find(type);
     return it == params.end() ? std::vector<std::string>{} : it->second;
+}
+
+struct ConfiguredLinePatch {
+    std::string mode;
+    std::string needle;
+    std::string replacement;
+};
+
+static std::string decodePatchText(std::string s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char c = s[++i];
+            if (c == 'n') {
+                out += '\n';
+            }
+            else if (c == 't') {
+                out += '\t';
+            }
+            else if (c == '\\') {
+                out += '\\';
+            }
+            else {
+                out += c;
+            }
+        }
+        else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+static const std::vector<ConfiguredLinePatch>& configuredLinePatches()
+{
+    static bool loaded = false;
+    static std::vector<ConfiguredLinePatch> patches;
+    if (!loaded) {
+        loaded = true;
+        if (auto* path = std::getenv("HDLCPP_LINE_PATCHES")) {
+            std::ifstream in(path);
+            std::string line;
+            while (std::getline(in, line)) {
+                line = trim(line);
+                if (line.empty() || line[0] == '#') {
+                    continue;
+                }
+                auto first = line.find('\t');
+                auto second = first == std::string::npos ? std::string::npos : line.find('\t', first + 1);
+                if (first == std::string::npos || second == std::string::npos) {
+                    continue;
+                }
+                ConfiguredLinePatch patch;
+                patch.mode = trim(line.substr(0, first));
+                patch.needle = decodePatchText(line.substr(first + 1, second - first - 1));
+                patch.replacement = decodePatchText(line.substr(second + 1));
+                if (!patch.mode.empty() && !patch.needle.empty()) {
+                    patches.push_back(std::move(patch));
+                }
+            }
+        }
+    }
+    return patches;
+}
+
+static void applyConfiguredLinePatches(std::string& line)
+{
+    for (const auto& patch : configuredLinePatches()) {
+        if (patch.mode == "replace") {
+            replaceAll(line, patch.needle, patch.replacement);
+        }
+        else if (patch.mode == "whole-contains" && line.find(patch.needle) != std::string::npos) {
+            line = patch.replacement;
+        }
+        else if (patch.mode == "prefix" && trim(line).rfind(patch.needle, 0) == 0) {
+            auto indent = line.substr(0, line.find_first_not_of(" \t"));
+            line = indent + patch.replacement;
+        }
+    }
 }
 
 static std::string combDriverFor(const ModuleGen& m, const std::string& base)
@@ -724,23 +765,15 @@ static std::string postProcessCppLine(std::string line)
     }
     replaceAll(line, "<<<", "<<");
     replaceAll(line, ">>>", ">>");
+    applyConfiguredLinePatches(line);
     replaceAll(line, "SMODE_STATUS_READ_MASK.bits(", "logic<64>(SMODE_STATUS_READ_MASK).bits(");
-    replaceAll(line, "ariane_pkg::SMODE_STATUS_WRITE_MASK.bits(", "logic<64>(ariane_pkg::SMODE_STATUS_WRITE_MASK).bits(");
-    replaceAll(line, "ariane_pkg::HSTATUS_WRITE_MASK.bits(", "logic<64>(ariane_pkg::HSTATUS_WRITE_MASK).bits(");
-    replaceAll(line, "static_cast<riscv::priv_lvl_t>({", "riscv::priv_lvl_t({");
     replaceAll(line, "fpnew_pkg::static_cast<fp_format_e>(", "sv_cast<fpnew_pkg::fp_format_e>(");
     replaceAll(line, "fpnew_pkg::static_cast<int_format_e>(", "sv_cast<fpnew_pkg::int_format_e>(");
     replaceAll(line, "fpnew_pkg::static_cast<opgroup_e>(", "sv_cast<fpnew_pkg::opgroup_e>(");
     replaceAll(line, "fpnew_pkg::static_cast<operation_e>(", "sv_cast<fpnew_pkg::operation_e>(");
     replaceAll(line, "fpnew_pkg::static_cast<roundmode_e>(", "sv_cast<fpnew_pkg::roundmode_e>(");
     replaceAll(line, "(uint64_t)(trap_vector_base_o)", "(uint64_t)(trap_vector_base_o_comb)");
-    replaceAll(line, "CVA6Cfg.logic<PLEN>", "logic<CVA6Cfg.PLEN>");
-    replaceAll(line, "CVA6Cfg.logic<GPLEN>", "logic<CVA6Cfg.GPLEN>");
-    replaceAll(line, "CVA6Cfg.logic<XLEN>", "logic<CVA6Cfg.XLEN>");
-    replaceAll(line, "CVA6Cfg.logic<VpnLen>", "logic<CVA6Cfg.VpnLen>");
-    replaceAll(line, "CVA6Cfg.logic<AxiAddrWidth>", "logic<CVA6Cfg.AxiAddrWidth>");
     replaceAll(line, "logic<1>(new_index[0])", "logic<1>(((uint64_t)(new_index) & 1ull))");
-    replaceAll(line, "array<logic<CVA6Cfg.XLEN>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;", "array<logic<CVA6Cfg.FLen>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;");
     auto replaceDecoderInstructionFields = [&]() {
         const std::pair<const char*, const char*> fields[] = {
             {"instr_comb_func().rtype.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
@@ -812,8 +845,6 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "{cl_offset_q, 0b0}", "((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))");
     replaceAll(line, "{cl_offset_q, logic<3>(0b0)}", "((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))");
     replaceAll(line, "icache_areq_o_out().fetch_exception.cause", "icache_areq_o.fetch_exception.cause");
-    replaceAll(line, "logic<1>((uint64_t)(icache_areq_i_in().fetch_paddr))", "logic<CVA6Cfg.PLEN>((uint64_t)(icache_areq_i_in().fetch_paddr))");
-    replaceAll(line, "logic<1>((uint64_t)(areq_i_in().fetch_paddr))", "logic<CVA6Cfg.PLEN>((uint64_t)(areq_i_in().fetch_paddr))");
     replaceAll(line, "i_axi_shim.rd_req_i_in = _ASSIGN(axi_rd_req);", "i_axi_shim.rd_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_req));");
     replaceAll(line, "i_axi_shim.rd_addr_i_in = _ASSIGN(axi_rd_addr);", "i_axi_shim.rd_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_addr));");
     replaceAll(line, "i_axi_shim.rd_blen_i_in = _ASSIGN(axi_rd_blen);", "i_axi_shim.rd_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_blen));");
@@ -835,15 +866,11 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "pc_q._next = pc_d;", "reset_address_d_comb_func();\n            pc_q._next = pc_d;");
     replaceAll(line, "reset_address_q._next = reset_address_d_comb_func();", "reset_address_q._next = reset_address_d_comb;");
     replaceAll(line, "issue_pointer_q._next = issue_pointer_n_comb_func();", "mem_n_comb_func();\n            issue_pointer_q._next = issue_pointer_n_comb_func();");
-    replaceAll(line, "flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>", "rs2_forwarding_comb_func();\n        flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>");
     replaceAll(line, "fu_data_bypass_comb.operand_a = result_o_comb_func()[(unsigned)((uint64_t)(0))];", "fu_data_bypass_comb.operand_a = alu_i.result_o_out();");
     replaceAll(line, "fu_data_bypass_comb.operand_b = result_o_comb_func()[(unsigned)((uint64_t)(0))];", "fu_data_bypass_comb.operand_b = alu_i.result_o_out();");
     replaceAll(line,
         "logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])",
         "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))");
-    replaceAll(line,
-        "logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(CVA6Cfg.INSTR_PER_FETCH - 1))])",
-        "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(((uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16))+1,(uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16)))))");
     replaceAll(line,
         "!logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])",
         "!logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))");
@@ -1120,8 +1147,16 @@ static std::string postProcessCppLine(std::string line)
             pos += elem.size();
         }
     };
-    replacePackedInputElementBits("miss_paddr_i", "CVA6Cfg.PLEN");
-    replacePackedInputElementBits("tx_paddr_i", "CVA6Cfg.PLEN");
+    if (auto width = std::getenv("HDLCPP_PACKED_INPUT_ELEMENT_WIDTH")) {
+        std::stringstream ss(width);
+        std::string item;
+        while (std::getline(ss, item, ';')) {
+            auto eq = item.find('=');
+            if (eq != std::string::npos) {
+                replacePackedInputElementBits(trim(item.substr(0, eq)), trim(item.substr(eq + 1)));
+            }
+        }
+    }
     if (auto pos = line.find(".saturation_counter = {"); pos != std::string::npos) {
         auto brace = line.find('{', pos);
         int depth = 0;
@@ -1242,18 +1277,9 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "$high(div_shift_comb_func())", "clog2((uint64_t)(WIDTH) + ((uint64_t)(1) & ((1ull << 32) - 1ull)))");
     replaceAll(line, "$high(op_a_i_in())", "((uint64_t)(WIDTH) - 1)");
     replaceAll(line, "$high(op_b_i_in())", "((uint64_t)(WIDTH) - 1)");
-    replaceAll(line, "logic<REQ_ID_BITS>", "logic<(CVA6Cfg.NrLoadBufEntries > 1 ? clog2(CVA6Cfg.NrLoadBufEntries) : 1)>");
-    replaceAll(line, "CVA6Cfg.PMPAddrRstVal[i].bits(", "logic<64>(CVA6Cfg.PMPAddrRstVal[i]).bits(");
+    replaceAll(line, "logic<REQ_ID_BITS>", "logic<(ReqFifoDepth > 1 ? clog2(ReqFifoDepth) : 1)>");
     replaceAll(line, "HS_DELEG_INTERRUPTS.bits(", "logic<64>(HS_DELEG_INTERRUPTS).bits(");
     replaceAll(line, "VS_DELEG_INTERRUPTS.bits(", "logic<64>(VS_DELEG_INTERRUPTS).bits(");
-    replaceAll(line, "static constexpr uint64_t HS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };",
-               "static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);");
-    replaceAll(line, "static constexpr uint64_t VS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };",
-               "static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);");
-    replaceAll(line, "static constexpr uint64_t HS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };",
-               "static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);");
-    replaceAll(line, "static constexpr uint64_t VS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };",
-               "static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);");
     if (trim(line) == "using acc_mmu_req_t = bool;") {
         line = "struct acc_mmu_req_t { logic<1> acc_mmu_req; logic<1> acc_mmu_is_store; exception_t acc_mmu_misaligned_ex; logic<CVA6Cfg.VLEN> acc_mmu_vaddr; template<size_t W> acc_mmu_req_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_req_t& operator=(T v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = logic<sizeof(acc_mmu_req_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_req_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_req_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_req_t)*8>&)*this).to_ullong(); } };";
     }
@@ -3160,8 +3186,8 @@ struct Converter : SyntaxVisitor<Converter> {
                 };
                 auto type = tok(node.type);
                 auto* child = findModule(type);
-                auto fallbackParams = child ? std::vector<std::string>{} : fallbackModuleParams(type);
-                auto& declParams = child ? child->params : fallbackParams;
+                auto configuredParams = child ? std::vector<std::string>{} : configuredModuleParams(type);
+                auto& declParams = child ? child->params : configuredParams;
                 if (!declParams.empty()) {
                     std::vector<std::string> paramNames;
                     for (auto& declared : declParams) {
