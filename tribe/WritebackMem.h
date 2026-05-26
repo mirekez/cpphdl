@@ -30,10 +30,17 @@ public:
     _PORT(uint32_t) load_result_out   = _ASSIGN_COMB(load_result_comb_func());
     _PORT(uint32_t) wb_mem_data_out   = _ASSIGN_COMB(wb_mem_data_comb_func());
     _PORT(uint32_t) wb_mem_data_hi_out = _ASSIGN_COMB(wb_mem_data_hi_comb_func());
+    _PORT(bool)     debug_load_data_valid_out = _ASSIGN_COMB(debug_load_data_valid_comb_func());
+    _PORT(uint32_t) debug_load_addr_out       = _ASSIGN_COMB(debug_load_addr_comb_func());
+    _PORT(bool)     debug_split_low_valid_out = _ASSIGN_COMB(debug_split_low_valid_comb_func());
+    _PORT(bool)     debug_split_high_valid_out = _ASSIGN_COMB(debug_split_high_valid_comb_func());
+    _PORT(bool)     debug_held_load_valid_out = _ASSIGN_COMB(held_load_valid_comb_func());
 
 private:
     reg<u32> load_data_reg;
     reg<u32> load_addr_reg;
+    reg<u32> load_pc_reg;
+    reg<u<5>> load_rd_reg;
     reg<u1>  load_data_valid_reg;
     reg<u32> split_load_low_reg;
     reg<u32> split_load_high_reg;
@@ -44,9 +51,34 @@ private:
     reg<array<u8,2>>  store_forward_mask_reg;
     reg<array<u1,2>>  store_forward_valid_reg;
 
-    // A held load response is usable only for the same architectural load.
+    _LAZY_COMB(debug_load_data_valid_comb, bool)
+        debug_load_data_valid_comb = load_data_valid_reg;
+        return debug_load_data_valid_comb;
+    }
+
+    _LAZY_COMB(debug_load_addr_comb, uint32_t)
+        debug_load_addr_comb = load_addr_reg;
+        return debug_load_addr_comb;
+    }
+
+    _LAZY_COMB(debug_split_low_valid_comb, bool)
+        debug_split_low_valid_comb = split_load_low_valid_reg;
+        return debug_split_low_valid_comb;
+    }
+
+    _LAZY_COMB(debug_split_high_valid_comb, bool)
+        debug_split_high_valid_comb = split_load_high_valid_reg;
+        return debug_split_high_valid_comb;
+    }
+
+    // A held non-split load response belongs to the single outstanding
+    // architectural load in writeback. Tag it by instruction identity instead
+    // of the live translated address mux; the MMU physical-address output can
+    // move while the pipe is held.
     _LAZY_COMB(held_load_valid_comb, bool)
-        held_load_valid_comb = load_data_valid_reg && (uint32_t)load_addr_reg == alu_result_in();
+        held_load_valid_comb = load_data_valid_reg &&
+            (uint32_t)load_pc_reg == state_in().pc &&
+            (uint8_t)load_rd_reg == state_in().rd;
         return held_load_valid_comb;
     }
 
@@ -72,6 +104,12 @@ private:
         return split_load_high_ready_comb;
     }
 
+    _LAZY_COMB(non_split_current_valid_comb, bool)
+        non_split_current_valid_comb = dcache_read_valid_in() &&
+            dcache_read_addr_in() == alu_result_in();
+        return non_split_current_valid_comb;
+    }
+
     _LAZY_COMB(split_load_low_data_comb, uint32_t)
         split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg :
             (split_load_current_low_valid_comb_func() ? dcache_read_data_in() : (uint32_t)0);
@@ -89,9 +127,11 @@ private:
             load_ready_comb = split_load_low_ready_comb_func() && split_load_high_ready_comb_func();
         }
         else {
+            // The core has only one non-split load outstanding. The D-cache
+            // valid/data pair is still address-tagged; a held response from a
+            // previous load must not complete the current writeback load.
             load_ready_comb = state_in().valid && state_in().wb_op == Wb::MEM &&
-                (held_load_valid_comb_func() ||
-                 (dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()));
+                (held_load_valid_comb_func() || non_split_current_valid_comb_func());
         }
         return load_ready_comb;
     }
@@ -197,7 +237,7 @@ private:
         }
         else {
             wb_mem_data_comb = held_load_valid_comb_func() ? (uint32_t)load_data_reg :
-                ((state_in().valid && state_in().wb_op == Wb::MEM && dcache_read_valid_in()) ?
+                ((state_in().valid && state_in().wb_op == Wb::MEM && non_split_current_valid_comb_func()) ?
                     dcache_read_data_in() : (uint32_t)0);
         }
         return wb_mem_data_comb;
@@ -225,6 +265,9 @@ private:
 public:
     void _work(bool reset)
     {
+        bool captured_load;
+        captured_load = false;
+
         if (dcache_write_valid_in() && dcache_write_mask_in()) {
             bool same_head = store_forward_valid_reg[0] &&
                 (uint32_t)store_forward_addr_reg[0] == dcache_write_addr_in() &&
@@ -242,28 +285,33 @@ public:
             store_forward_valid_reg._next[0] = true;
         }
 
-        if (hold_in()) {
-            if (split_load_in()) {
-                if (split_load_current_low_valid_comb_func()) {
-                    split_load_low_reg._next = dcache_read_data_in();
-                    split_load_low_valid_reg._next = true;
-                }
-                if (split_load_current_high_valid_comb_func()) {
-                    split_load_high_reg._next = dcache_read_data_in();
-                    split_load_high_valid_reg._next = true;
-                }
+        if (split_load_in()) {
+            if (split_load_current_low_valid_comb_func()) {
+                split_load_low_reg._next = dcache_read_data_in();
+                split_load_low_valid_reg._next = true;
+                captured_load = true;
             }
-            else if (state_in().valid && state_in().wb_op == Wb::MEM &&
-                     dcache_read_valid_in() && dcache_read_addr_in() == alu_result_in()) {
-                // L1/L2 refills can expose intermediate valid data from neighboring
-                // beats; only the word tagged with the architectural load address
-                // may release the stalled writeback stage.
-                load_data_reg._next = dcache_read_data_in();
-                load_addr_reg._next = dcache_read_addr_in();
-                load_data_valid_reg._next = true;
+            if (split_load_current_high_valid_comb_func()) {
+                split_load_high_reg._next = dcache_read_data_in();
+                split_load_high_valid_reg._next = true;
+                captured_load = true;
             }
         }
-        else {
+        else if (state_in().valid && state_in().wb_op == Wb::MEM &&
+                 non_split_current_valid_comb_func()) {
+            // Latch the accepted single outstanding D-cache load response.
+            // The normal combinational path can retire it immediately, and
+            // this register keeps it available if the pipe is held in the
+            // same cycle by another wait source.
+            load_data_reg._next = dcache_read_data_in();
+            load_addr_reg._next = dcache_read_addr_in();
+            load_pc_reg._next = state_in().pc;
+            load_rd_reg._next = state_in().rd;
+            load_data_valid_reg._next = true;
+            captured_load = true;
+        }
+
+        if (!hold_in() && !captured_load) {
             load_data_valid_reg._next = false;
             split_load_low_valid_reg._next = false;
             split_load_high_valid_reg._next = false;
@@ -272,6 +320,8 @@ public:
         if (reset) {
             load_data_reg.clr();
             load_addr_reg.clr();
+            load_pc_reg.clr();
+            load_rd_reg.clr();
             load_data_valid_reg.clr();
             split_load_low_reg.clr();
             split_load_high_reg.clr();
@@ -288,6 +338,8 @@ public:
     {
         load_data_reg.strobe(checkpoint_fd);
         load_addr_reg.strobe(checkpoint_fd);
+        load_pc_reg.strobe(checkpoint_fd);
+        load_rd_reg.strobe(checkpoint_fd);
         load_data_valid_reg.strobe(checkpoint_fd);
         split_load_low_reg.strobe(checkpoint_fd);
         split_load_high_reg.strobe(checkpoint_fd);

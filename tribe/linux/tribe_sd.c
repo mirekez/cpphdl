@@ -17,6 +17,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/numa.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
@@ -62,7 +63,6 @@
 struct tribe_sd {
 	struct device *dev;
 	void __iomem *regs;
-	struct request_queue *queue;
 	struct gendisk *disk;
 	struct mutex lock;
 	int major;
@@ -138,7 +138,7 @@ static int tribe_sd_push_desc(struct tribe_sd *sd, phys_addr_t addr, u32 len)
 	return 0;
 }
 
-static int __maybe_unused tribe_sd_transfer(struct tribe_sd *sd, struct bio *bio)
+static int tribe_sd_transfer(struct tribe_sd *sd, struct bio *bio)
 {
 	struct bvec_iter iter;
 	struct bio_vec bvec;
@@ -197,74 +197,9 @@ unmap:
 	return ret;
 }
 
-static int tribe_sd_pio_transfer(struct tribe_sd *sd, struct bio *bio)
+static void tribe_sd_submit_bio(struct bio *bio)
 {
-	struct bvec_iter iter;
-	struct bio_vec bvec;
-	sector_t sector = bio->bi_iter.bi_sector;
-	u32 total = bio->bi_iter.bi_size;
-	u32 done = 0;
-	bool write = bio_data_dir(bio) == WRITE;
-	int ret = 0;
-
-	if ((total & (TRIBE_SD_SECTOR_BYTES - 1)) ||
-	    sector + (total >> 9) > sd->capacity_sectors)
-		return -EIO;
-
-	/*
-	 * Tribe currently has no Linux-visible D-cache maintenance operation.
-	 * Descriptor DMA can update RAM behind stale CPU cache lines, so the
-	 * in-kernel block path uses PIO until cache-coherent DMA is available.
-	 */
-	tribe_sd_writel(sd, TRIBE_SD_REG_CONTROL, TRIBE_SD_CTRL_CLEAR_DONE);
-	tribe_sd_writel(sd, TRIBE_SD_REG_CMD,
-			write ? TRIBE_SD_CMD_WRITE : TRIBE_SD_CMD_READ);
-	tribe_sd_writel(sd, TRIBE_SD_REG_ARG, (u32)sector);
-	tribe_sd_writel(sd, TRIBE_SD_REG_LEN, total);
-	tribe_sd_writel(sd, TRIBE_SD_REG_CONTROL,
-			TRIBE_SD_CTRL_START | (write ? TRIBE_SD_CTRL_WRITE : 0));
-
-	bio_for_each_segment(bvec, bio, iter) {
-		void *kaddr = kmap_atomic(bvec.bv_page);
-		u8 *buf = (u8 *)kaddr + bvec.bv_offset;
-		u32 i;
-
-		for (i = 0; i < bvec.bv_len; ++i, ++done) {
-			u32 status;
-
-			if (done >= total) {
-				break;
-			}
-
-			if (write) {
-				ret = tribe_sd_wait_status(sd, TRIBE_SD_STATUS_TX_READY, &status);
-				if (ret) {
-					kunmap_atomic(kaddr);
-					return ret;
-				}
-				tribe_sd_writel(sd, TRIBE_SD_REG_TXDATA, buf[i]);
-			}
-			else {
-				ret = tribe_sd_wait_status(sd, TRIBE_SD_STATUS_RX_VALID, &status);
-				if (ret) {
-					kunmap_atomic(kaddr);
-					return ret;
-				}
-				buf[i] = tribe_sd_readl(sd, TRIBE_SD_REG_RXDATA) & 0xffu;
-			}
-		}
-
-		kunmap_atomic(kaddr);
-	}
-
-	if (done != total)
-		return -EIO;
-	return tribe_sd_finish(sd);
-}
-
-static blk_qc_t tribe_sd_make_request(struct request_queue *queue, struct bio *bio)
-{
-	struct tribe_sd *sd = queue->queuedata;
+	struct tribe_sd *sd = bio->bi_bdev->bd_disk->private_data;
 	int ret;
 
 	mutex_lock(&sd->lock);
@@ -275,12 +210,11 @@ static blk_qc_t tribe_sd_make_request(struct request_queue *queue, struct bio *b
 		bio_io_error(bio);
 	else
 		bio_endio(bio);
-	return ret ? BLK_QC_T_NONE : BLK_QC_T_NONE;
 }
 
-static int tribe_sd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
+static int tribe_sd_getgeo(struct gendisk *disk, struct hd_geometry *geo)
 {
-	struct tribe_sd *sd = bdev->bd_disk->private_data;
+	struct tribe_sd *sd = disk->private_data;
 
 	geo->heads = 4;
 	geo->sectors = 16;
@@ -290,6 +224,7 @@ static int tribe_sd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 
 static const struct block_device_operations tribe_sd_fops = {
 	.owner = THIS_MODULE,
+	.submit_bio = tribe_sd_submit_bio,
 	.getgeo = tribe_sd_getgeo,
 };
 
@@ -297,6 +232,14 @@ static int tribe_sd_probe(struct platform_device *pdev)
 {
 	struct tribe_sd *sd;
 	struct resource *res;
+	struct queue_limits lim = {
+		.features = BLK_FEAT_SYNCHRONOUS,
+		.logical_block_size = TRIBE_SD_SECTOR_BYTES,
+		.physical_block_size = TRIBE_SD_SECTOR_BYTES,
+		.max_hw_sectors = TRIBE_SD_MAX_HW_SECTORS,
+		.max_segments = TRIBE_SD_MAX_DESCS,
+		.max_segment_size = PAGE_SIZE,
+	};
 	u32 capacity = 131072;
 	int ret;
 
@@ -318,60 +261,45 @@ static int tribe_sd_probe(struct platform_device *pdev)
 	if (sd->major < 0)
 		return sd->major;
 
-	sd->queue = blk_alloc_queue(GFP_KERNEL);
-	if (!sd->queue) {
-		ret = -ENOMEM;
+	sd->disk = blk_alloc_disk(&lim, NUMA_NO_NODE);
+	if (IS_ERR(sd->disk)) {
+		ret = PTR_ERR(sd->disk);
 		goto err_unregister;
 	}
-	blk_queue_make_request(sd->queue, tribe_sd_make_request);
-	blk_queue_logical_block_size(sd->queue, TRIBE_SD_SECTOR_BYTES);
-	blk_queue_physical_block_size(sd->queue, TRIBE_SD_SECTOR_BYTES);
-	blk_queue_max_hw_sectors(sd->queue, TRIBE_SD_MAX_HW_SECTORS);
-	blk_queue_max_segments(sd->queue, TRIBE_SD_MAX_DESCS);
-	blk_queue_max_segment_size(sd->queue, PAGE_SIZE);
-	blk_queue_flag_set(QUEUE_FLAG_NONROT, sd->queue);
-	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, sd->queue);
-	sd->queue->queuedata = sd;
 
-	sd->disk = alloc_disk(16);
-	if (!sd->disk) {
-		ret = -ENOMEM;
-		goto err_queue;
-	}
 	sd->disk->major = sd->major;
 	sd->disk->first_minor = 0;
+	sd->disk->minors = 16;
 	sd->disk->fops = &tribe_sd_fops;
 	sd->disk->private_data = sd;
-	sd->disk->queue = sd->queue;
-	sd->disk->flags = GENHD_FL_EXT_DEVT;
 	snprintf(sd->disk->disk_name, DISK_NAME_LEN, TRIBE_SD_NAME);
 	set_capacity(sd->disk, sd->capacity_sectors);
 
 	platform_set_drvdata(pdev, sd);
 	tribe_sd_writel(sd, TRIBE_SD_REG_IRQ_ENABLE, 0);
 	tribe_sd_writel(sd, TRIBE_SD_REG_IRQ_PENDING, 1);
-	add_disk(sd->disk);
+	ret = add_disk(sd->disk);
+	if (ret)
+		goto err_disk;
 
 	dev_info(&pdev->dev, "registered %s, %llu sectors\n", TRIBE_SD_NAME,
 		 (unsigned long long)sd->capacity_sectors);
 	return 0;
 
-err_queue:
-	blk_cleanup_queue(sd->queue);
+err_disk:
+	put_disk(sd->disk);
 err_unregister:
 	unregister_blkdev(sd->major, TRIBE_SD_NAME);
 	return ret;
 }
 
-static int tribe_sd_remove(struct platform_device *pdev)
+static void tribe_sd_remove(struct platform_device *pdev)
 {
 	struct tribe_sd *sd = platform_get_drvdata(pdev);
 
 	del_gendisk(sd->disk);
 	put_disk(sd->disk);
-	blk_cleanup_queue(sd->queue);
 	unregister_blkdev(sd->major, TRIBE_SD_NAME);
-	return 0;
 }
 
 static const struct of_device_id tribe_sd_of_match[] = {

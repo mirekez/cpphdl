@@ -262,18 +262,23 @@ private:
         return req_tag_comb = (u<TAG_BITS>)((uint32_t)req_addr_reg >> (LINE_BITS + SET_BITS));
     }
 
+    // True for an unaligned read whose 32-bit result crosses the current memory beat.
+    _LAZY_COMB(req_cross_beat_read_comb, bool)
+        uint32_t byte;
+        uint32_t word;
+        byte = (uint32_t)req_addr_reg & 3u;
+        word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
+        return req_cross_beat_read_comb = req_read_reg && byte != 0 && word + 1 >= PORT_WORDS;
+    }
+
     // True for an unaligned read whose 32-bit result crosses the cache-line boundary.
     _LAZY_COMB(active_cross_line_read_comb, bool)
         uint32_t byte;
         uint32_t word;
         byte = active_addr_comb_func() & 3u;
         word = (active_addr_comb_func() >> 2) & (LINE_WORDS - 1);
-        // Instruction fetch can legally ask L2 for a 32-bit instruction whose
-        // low halfword is at the end of a line. Data-side unaligned accesses
-        // are split above L2, so keep them on the cached hit path; otherwise a
-        // byte/half load at the final word can bypass dirty cached data.
-        active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() && !active_is_d_comb_func() &&
-            byte != 0 && word == LINE_WORDS - 1;
+        active_cross_line_read_comb = active_read_comb_func() && !active_is_slave_comb_func() &&
+            !active_is_d_comb_func() && byte != 0 && word == LINE_WORDS - 1;
         return active_cross_line_read_comb;
     }
 
@@ -351,7 +356,7 @@ private:
             line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)req_beat_comb_func() * PORT_BYTES);
         }
         if (state_reg == ST_CROSS_AR1 || state_reg == ST_CROSS_R1) {
-            line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
+            line_addr = ((uint32_t)req_addr_reg & ~(uint32_t)(PORT_BYTES - 1)) + PORT_BYTES;
         }
         return axi_araddr_full_comb = line_addr;
     }
@@ -870,7 +875,7 @@ private:
         return hit_beat_comb;
     }
 
-    // Assemble a cross-line unaligned read from the saved low and high AXI beats.
+    // Assemble a cross-beat unaligned read from the saved low and high AXI beats.
     _LAZY_COMB(cross_read_data_comb, logic<PORT_BITWIDTH>)
         uint32_t low_word;
         uint32_t byte;
@@ -1065,6 +1070,7 @@ public:
         logic<PORT_BITWIDTH> trace_data;
         uint32_t trace_word0;
         uint32_t trace_word1;
+        logic<PORT_BITWIDTH> response_data;
 
         trace_line = 0;
         trace_line_enabled = false;
@@ -1081,6 +1087,7 @@ public:
         trace_data = 0;
         trace_word0 = 0;
         trace_word1 = 0;
+        response_data = 0;
 
         for (i = 0; i < DATA_BANKS; ++i) {
             data_ram[i]._work(reset);
@@ -1206,7 +1213,12 @@ public:
                     last_data_reg._next = 0;
                 }
                 if (!req_from_slave_reg && req_read_reg) {
-                    last_data_reg._next = hit_beat_comb_func();
+                    response_data = hit_beat_comb_func();
+                    if (req_cross_beat_read_comb_func()) {
+                        response_data = 0;
+                        response_data.bits(31, 0) = hit_word_comb_func();
+                    }
+                    last_data_reg._next = response_data;
                 }
                 if (req_cross_line_write_comb_func()) {
                     // Finish the part of an unaligned store that spills into the first word of the next line.
@@ -1230,7 +1242,8 @@ public:
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
-                state_reg._next = (evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR;
+                state_reg._next = (!req_from_slave_reg && req_cross_beat_read_comb_func()) ? ST_CROSS_AR0 :
+                    ((evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR);
             }
         }
         else if (state_reg == ST_CROSS_WRITE_LOOKUP) {

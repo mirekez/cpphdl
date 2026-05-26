@@ -17,13 +17,14 @@ DTB_WITH_INITRD="${DTB_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dtb}"
 DTS_WITH_INITRD="${DTS_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dts}"
 TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
 TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-4194304}"
-TRIBE_LINUX_EARLYCON_MAPBASE="${TRIBE_LINUX_EARLYCON_MAPBASE:-1}"
 TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-16}"
 TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
 TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 TRIBE_LINUX_BAUD="${TRIBE_LINUX_BAUD:-1000000}"
-TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon debug loglevel=8 ignore_loglevel initcall_debug}"
+TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon unaligned_scalar_speed=slow}"
 TRIBE_LINUX_SD_IMAGE="${TRIBE_LINUX_SD_IMAGE:-}"
+TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-50000000}"
+TRIBE_TIMEBASE_HZ="${TRIBE_TIMEBASE_HZ:-$((TRIBE_CPU_CLOCK_HZ / TRIBE_CLINT_TICK_DIV))}"
 
 if [[ -n "${TRIBE_UART_INPUT_FILE:-}" ]]; then
     TRIBE_UART_INPUT="$(cat "${TRIBE_UART_INPUT_FILE}")"$'\n'
@@ -171,7 +172,7 @@ PY
 )"
 
     if true; then
-        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" "${TRIBE_LINUX_BOOTARGS}" "${TRIBE_LINUX_BAUD}" <<'PY'
+        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" "${TRIBE_LINUX_BOOTARGS}" "${TRIBE_LINUX_BAUD}" "${TRIBE_TIMEBASE_HZ}" "${TRIBE_CPU_CLOCK_HZ}" <<'PY'
 import pathlib
 import sys
 
@@ -181,6 +182,8 @@ start = int(sys.argv[3], 0)
 end = int(sys.argv[4], 0)
 bootargs = sys.argv[5]
 baud = int(sys.argv[6], 0)
+timebase = int(sys.argv[7], 0)
+cpu_clock = int(sys.argv[8], 0)
 text = src.read_text(encoding="utf-8")
 insert = (
     f"\t\tbootargs = \"{bootargs}\";\n"
@@ -210,6 +213,12 @@ for line in lines:
     elif in_chosen and (stripped.startswith("linux,initrd-") or
                         stripped.startswith("bootargs =") or
                         stripped.startswith("stdout-path =")):
+        continue
+    elif stripped.startswith("timebase-frequency ="):
+        out.append(f"\t\ttimebase-frequency = <{timebase}>;\n")
+        continue
+    elif stripped.startswith("clock-frequency =") and not in_uart:
+        out.append(f"\t\t\tclock-frequency = <{cpu_clock}>;\n")
         continue
     elif in_uart and stripped.startswith("current-speed ="):
         out.append(f"\t\t\tcurrent-speed = <{baud}>;\n")
@@ -279,9 +288,6 @@ if [[ -n "${TRIBE_CHECKPOINT_SAVE_AFTER:-}" ]]; then
 fi
 if [[ "${TRIBE_APPEND_OUTPUT:-0}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--append-output)
-fi
-if [[ "${TRIBE_LINUX_EARLYCON_MAPBASE}" == "1" ]]; then
-    TRIBE_CHECKPOINT_ARGS+=(--linux-earlycon-mapbase)
 fi
 if [[ "${TRIBE_LINUX_INTERACTIVE}" == "1" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--uart-stdin)

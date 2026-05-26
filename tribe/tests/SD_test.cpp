@@ -4,9 +4,9 @@
 #include "devices/sd/SDController.h"
 #include "verif/SDCardVerif.h"
 
-static constexpr size_t SD_TEST_ADDR_WIDTH = 16;
+static constexpr size_t SD_TEST_ADDR_WIDTH = 20;
 static constexpr size_t SD_TEST_DATA_WIDTH = 64;
-static constexpr size_t SD_TEST_RAM_WORDS = 4096;
+static constexpr size_t SD_TEST_RAM_WORDS = 32768;
 static constexpr size_t SD_TEST_DATA_BYTES = SD_TEST_DATA_WIDTH / 8;
 
 #ifdef SYNTHESIS
@@ -105,6 +105,7 @@ class SDDirectTest : public Module
     Axi4Driver<SD_TEST_ADDR_WIDTH, 4, SD_TEST_DATA_WIDTH> dma_drv = {};
 #endif
     bool error = false;
+    uint32_t dma_complete_pulses = 0;
 
     void fail(const char* text)
     {
@@ -218,6 +219,9 @@ public:
         card._work(reset);
         card._strobe();
 #endif
+        if (dma_write_complete()) {
+            ++dma_complete_pulses;
+        }
         ++sys_clock;
     }
 
@@ -287,6 +291,15 @@ public:
         return (uint8_t)ram.ram.buffer.data[addr / SD_TEST_DATA_BYTES][addr % SD_TEST_DATA_BYTES];
     }
 
+    bool dma_write_complete()
+    {
+#ifdef VERILATOR
+        return dut.dma_write_complete_out;
+#else
+        return dut.dma_write_complete_out();
+#endif
+    }
+
     void ram_write_byte(uint32_t addr, uint32_t value)
     {
         ram.ram.buffer.data[addr / SD_TEST_DATA_BYTES][addr % SD_TEST_DATA_BYTES] = (uint8_t)value;
@@ -327,7 +340,7 @@ public:
 
     bool wait_done()
     {
-        for (int i = 0; i < 20000; ++i) {
+        for (int i = 0; i < 1000000; ++i) {
             uint32_t status = read32(sd::REG_STATUS);
             if (status & sd::STATUS_ERROR) {
                 fail("SD status error");
@@ -437,7 +450,7 @@ public:
         }
     }
 
-    void dma_desc_read_check(uint32_t block, const std::vector<std::pair<uint32_t, uint32_t>>& descs)
+    void dma_desc_read_check(uint32_t block, const std::vector<std::pair<uint32_t, uint32_t>>& descs, bool check_completion_pulse = false)
     {
         uint32_t total = 0;
         uint32_t pos = 0;
@@ -451,8 +464,28 @@ public:
         for (const auto& desc : descs) {
             push_desc(desc.first, desc.second);
         }
+        dma_complete_pulses = 0;
         write32(sd::REG_CONTROL, sd::CTRL_START | sd::CTRL_DMA);
-        wait_done();
+        for (int i = 0; i < 1000000; ++i) {
+            uint32_t status = read32(sd::REG_STATUS);
+            if (status & sd::STATUS_ERROR) {
+                fail("SD status error");
+                return;
+            }
+            if (status & sd::STATUS_DONE) {
+                break;
+            }
+            cycle();
+            if (i == 999999) {
+                fail("SD operation timeout");
+                return;
+            }
+        }
+        if (check_completion_pulse && dma_complete_pulses != 1) {
+            std::print("\nDMA descriptor read completion pulse count mismatch: got={} expected=1\n", dma_complete_pulses);
+            error = true;
+            return;
+        }
         for (const auto& desc : descs) {
             for (uint32_t i = 0; i < desc.second; ++i) {
                 uint32_t got = ram_read_byte(desc.first + i);
@@ -524,8 +557,22 @@ public:
         dma_write_readback(9, 64, 0x200, 0xa0);
         dma_desc_read_check(11, {{0x300, 13}, {0x440, 29}, {0x580, 22}});
         dma_desc_write_readback(13, {{0x680, 17}, {0x7c0, 31}, {0x900, 16}}, 0x55);
-        dma_desc_read_check(15, {{0x1000, 512}, {0x2000, 512}});
+        dma_desc_read_check(15, {{0x1000, 512}, {0x2000, 512}}, true);
         dma_desc_write_readback(18, {{0x3000, 512}, {0x4000, 512}}, 0xb0);
+        dma_desc_read_check(40, {
+            {0x08000, 4096}, {0x09000, 4096}, {0x0a000, 4096}, {0x0b000, 4096},
+            {0x0c000, 4096}, {0x0d000, 4096}, {0x0e000, 4096}, {0x0f000, 4096},
+            {0x10000, 4096}, {0x11000, 4096}, {0x12000, 4096}, {0x13000, 4096},
+            {0x14000, 4096}, {0x15000, 4096}, {0x16000, 4096}, {0x17000, 4096},
+            {0x18000, 2560},
+        });
+        dma_desc_write_readback(180, {
+            {0x19000, 4096}, {0x1a000, 4096}, {0x1b000, 4096}, {0x1c000, 4096},
+            {0x1d000, 4096}, {0x1e000, 4096}, {0x1f000, 4096}, {0x20000, 4096},
+            {0x21000, 4096}, {0x22000, 4096}, {0x23000, 4096}, {0x24000, 4096},
+            {0x25000, 4096}, {0x26000, 4096}, {0x27000, 4096}, {0x28000, 4096},
+            {0x29000, 2560},
+        }, 0x7c);
 
         for (uint32_t i = 0; i < 8 && !error; ++i) {
             uint32_t block = 20 + i * 3;

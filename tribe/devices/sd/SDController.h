@@ -32,7 +32,7 @@ public:
 
 private:
     static constexpr uint32_t DATA_BYTES = DATA_WIDTH / 8;
-    static constexpr uint32_t HEADER_BYTES = 7;
+    static constexpr uint32_t HEADER_BYTES = 9;
 
     static constexpr uint32_t C_CMD17_READ_SINGLE_BLOCK = sd::CMD17_READ_SINGLE_BLOCK;
     static constexpr uint32_t C_CMD24_WRITE_SINGLE_BLOCK = sd::CMD24_WRITE_SINGLE_BLOCK;
@@ -84,6 +84,7 @@ private:
     static constexpr uint32_t ST_DONE = 12;
     static constexpr uint32_t ST_ERROR = 13;
     static constexpr uint32_t ST_DMA_LOAD_DESC = 14;
+    static constexpr uint32_t ST_DMA_READ_DONE = 15;
 
     static constexpr size_t FIFO_INDEX_BITS = clog2(FIFO_DEPTH);
     static constexpr size_t FIFO_COUNT_BITS = clog2(FIFO_DEPTH + 1);
@@ -253,10 +254,10 @@ private:
         if (idx >= 1 && idx <= 4) {
             return header_byte_comb = (uint8_t)(((uint32_t)arg_reg >> ((idx - 1u) * 8u)) & 0xffu);
         }
-        if (idx == 5) {
-            return header_byte_comb = (uint8_t)((uint32_t)len_reg & 0xffu);
+        if (idx >= 5 && idx <= 8) {
+            return header_byte_comb = (uint8_t)(((uint32_t)len_reg >> ((idx - 5u) * 8u)) & 0xffu);
         }
-        return header_byte_comb = (uint8_t)(((uint32_t)len_reg >> 8) & 0xffu);
+        return header_byte_comb = 0;
     }
 
     _LAZY_COMB(tx_byte_comb, u<8>)
@@ -683,17 +684,18 @@ public:
                 state_reg._next = ST_DMA_READ_B;
             }
         }
+        else if (state_reg == ST_DMA_READ_B && dma_out.bvalid_out() && dma_out.bready_in() && count_reg >= len_reg) {
+            state_reg._next = ST_DMA_READ_DONE;
+        }
         else if (state_reg == ST_DMA_READ_B) {
             if (dma_out.bvalid_out() && dma_out.bready_in()) {
-                dma_write_complete_reg._next = true;
-                if (count_reg >= len_reg) {
-                    state_reg._next = ST_DONE;
-                }
-                else if (active_desc_remaining_reg == 0) {
+                if (active_desc_remaining_reg == 0) {
+                    dma_write_complete_reg._next = false;
                     active_desc_valid_reg._next = false;
                     state_reg._next = ST_DMA_LOAD_DESC;
                 }
                 else {
+                    dma_write_complete_reg._next = false;
                     active_desc_addr_reg._next = (uint32_t)active_desc_addr_reg + (uint32_t)dma_beat_limit_reg;
                     dma_beat_reg._next = 0;
                     dma_byte_index_reg._next = 0;
@@ -701,6 +703,10 @@ public:
                     state_reg._next = ST_DMA_READ_RECV;
                 }
             }
+        }
+        else if (state_reg == ST_DMA_READ_DONE) {
+            dma_write_complete_reg._next = true;
+            state_reg._next = ST_DONE;
         }
         else if (state_reg == ST_DMA_WRITE_AR) {
             if (dma_out.arvalid_in() && dma_out.arready_out()) {

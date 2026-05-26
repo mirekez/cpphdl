@@ -13,11 +13,12 @@ using namespace cpphdl;
 
 class SDCardVerif
 {
-    static constexpr uint32_t HEADER_BYTES = 7;
+    static constexpr uint32_t HEADER_BYTES = 9;
 
     std::vector<uint8_t> storage;
     std::deque<uint8_t> rsp;
-    uint8_t header[HEADER_BYTES] = {};
+    uint8_t header[7] = {};
+    uint8_t header_len_hi[2] = {};
     uint32_t header_pos = 0;
     bool write_active = false;
     uint32_t write_base = 0;
@@ -176,7 +177,13 @@ public:
                 }
             }
             else {
-                header[header_pos++] = cmd_data;
+                if (header_pos < 7) {
+                    header[header_pos] = cmd_data;
+                }
+                else if (header_pos < HEADER_BYTES) {
+                    header_len_hi[header_pos - 7] = cmd_data;
+                }
+                ++header_pos;
                 if (header_pos == HEADER_BYTES) {
                     const uint8_t cmd = header[0];
                     const uint32_t block =
@@ -184,7 +191,11 @@ public:
                         ((uint32_t)header[2] << 8) |
                         ((uint32_t)header[3] << 16) |
                         ((uint32_t)header[4] << 24);
-                    const uint32_t len = (uint32_t)header[5] | ((uint32_t)header[6] << 8);
+                    const uint32_t len =
+                        (uint32_t)header[5] |
+                        ((uint32_t)header[6] << 8) |
+                        ((uint32_t)header_len_hi[0] << 16) |
+                        ((uint32_t)header_len_hi[1] << 24);
                     const uint32_t base = block * sd::DEFAULT_BLOCK_BYTES;
                     last_cmd = cmd;
                     last_block = block;

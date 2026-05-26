@@ -10,7 +10,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,1000000 earlycon debug loglevel=8 ignore_loglevel initcall_debug";
+		bootargs = "console=ttyS0,1000000 earlycon unaligned_scalar_speed=slow";
 		stdout-path = "/soc/serial@82000000:1000000n8";
 	};
 
@@ -24,7 +24,9 @@
 			reg = <0>;
 			status = "okay";
 			compatible = "riscv";
-			riscv,isa = "rv32ima";
+			riscv,isa = "rv32imac";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "c";
 			mmu-type = "riscv,sv32";
 			clock-frequency = <50000000>;
 

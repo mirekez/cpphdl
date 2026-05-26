@@ -118,6 +118,8 @@ static volatile uint32_t high_target;
 static volatile uint32_t trap_seen;
 static volatile uint32_t lazy_trap_seen;
 static volatile uint32_t lazy_trap_frame[16];
+static volatile uint32_t handler_mem_probe = 0x2468ace0u;
+static volatile uint32_t handler_mem_seen;
 
 static void fail(const char* reason)
 {
@@ -210,6 +212,35 @@ load_fault_handler:
     __asm__ volatile("sret" : : : "memory");
 
 after_load_fault_handler:
+    /*
+     * Scenario: after a data page fault, the first useful work in the trap
+     * handler may be a mapped memory access through the kernel mapping. Linux
+     * hit this path in handle_exception while servicing a user load fault. The
+     * faulting data access must not keep the pipeline globally memory-stalled
+     * after pc has redirected to stvec.
+     */
+    write_stvec((uint32_t)&&handler_mem_fault_handler);
+    handler_mem_seen = 0;
+handler_mem_faulting_load:
+    __asm__ volatile("lw zero, 0(%0)" : : "r"(0x00c01000u) : "memory");
+after_handler_mem_fault:
+    if (handler_mem_seen != 0x2468ace1u) {
+        fail("handler-mem-progress");
+    }
+    goto after_handler_mem_fault_handler;
+
+handler_mem_fault_handler:
+    if (read_scause() != 13u) {
+        fail("handler-mem-scause");
+    }
+    if (read_stval() != 0x00c01000u) {
+        fail("handler-mem-stval");
+    }
+    handler_mem_seen = handler_mem_probe + 1u;
+    write_sepc((uint32_t)&&after_handler_mem_fault);
+    __asm__ volatile("sret" : : : "memory");
+
+after_handler_mem_fault_handler:
     /*
      * Scenario: Linux commonly faults on a missing user PTE, installs the PTE,
      * executes sfence.vma, and returns to retry the original load. The CPU must

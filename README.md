@@ -19,7 +19,7 @@ And for Linux:
 
 Then for both Win&Lin:
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
- - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" ..; make
+ - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ..; make
 
 # tests
 

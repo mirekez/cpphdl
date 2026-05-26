@@ -377,6 +377,42 @@ public:
         read_check("focused store reload hit", request_addr, true);
     }
 
+    void focused_cached_hit_stall_hold_check()
+    {
+        uint32_t request_addr = 12 * SETS * LINE_SIZE + 4 * LINE_SIZE + 8;
+        read_check("focused stalled hit fill", request_addr, false);
+        idle();
+
+        addr = request_addr;
+        read = true;
+        stall = false;
+        cycle(false);
+
+        stall = true;
+        bool held = false;
+        for (size_t i = 0; i < 4; ++i) {
+            cycle(false);
+            if (valid() && raddr() == request_addr && rdata() == expected_ram_read(request_addr)) {
+                held = true;
+            }
+            else {
+                std::print("\nfocused stalled hit ERROR cycle={} addr={:#x}: valid={} raddr={:#x} data={:#x} expected={:#x} busy={}\n",
+                    i, request_addr, valid(), raddr(), rdata(), expected_ram_read(request_addr), busy());
+                error = true;
+                break;
+            }
+        }
+
+        stall = false;
+        cycle(false);
+        read = false;
+        cycle(false);
+        if (!held) {
+            std::print("\nfocused stalled hit ERROR response was not held under stall\n");
+            error = true;
+        }
+    }
+
     void focused_flush_cached_hit_check()
     {
         uint32_t old_addr = 7 * SETS * LINE_SIZE + 5 * LINE_SIZE;
@@ -656,6 +692,9 @@ public:
             focused_store_invalidate_check();
         }
         if (!error) {
+            focused_cached_hit_stall_hold_check();
+        }
+        if (!error) {
             focused_flush_cached_hit_check();
         }
         if (!error) {
@@ -762,8 +801,8 @@ public:
         mem_read_data_comb = 0;
         request_addr = (uint32_t)cache.mem_addr_out();
         if ((request_addr & 3u) != 0 &&
-            (((request_addr >> 2) & ((LINE_SIZE / 4) - 1)) == (LINE_SIZE / 4) - 1)) {
-            // Match L2 direct cross-line behavior: assembled 32-bit data is returned in bits [31:0].
+            (((request_addr % (PORT_BITS / 8)) / 4u) + 1 >= (PORT_BITS / 32))) {
+            // Match L2 direct cross-beat behavior: assembled 32-bit data is returned in bits [31:0].
             byte = request_addr & 3u;
             low = mem_word(request_addr >> 2);
             high = mem_word((request_addr >> 2) + 1);
@@ -879,6 +918,18 @@ public:
         read_check("wide final-word byte direct", request_addr, false, 0xffu);
     }
 
+    void cross_beat_direct_word_regression()
+    {
+        // Linux's __riscv_copy_words_unaligned uses LW from odd addresses. When
+        // such an LW starts at the last 32-bit lane of an L2 beat, L1 must ask L2
+        // for a cross-beat direct read instead of wrapping within the same beat.
+        if constexpr (PORT_BITS > 32) {
+            uint32_t base = 15 * SETS * LINE_SIZE + 5 * LINE_SIZE;
+            uint32_t request_addr = base + PORT_BYTES - 1;
+            read_check("wide cross-beat direct word", request_addr, false);
+        }
+    }
+
     bool run()
     {
         std::print("CppHDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
@@ -899,6 +950,9 @@ public:
         }
         if (!error) {
             final_word_byte_direct_regression();
+        }
+        if (!error) {
+            cross_beat_direct_word_regression();
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
