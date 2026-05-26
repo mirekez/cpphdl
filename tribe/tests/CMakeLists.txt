@@ -48,6 +48,31 @@ done < <(find "$DIR" -maxdepth 1 -type f -perm -111 ! -name '*.elf' ! -name 'Lin
 file(CHMOD "${TRIBE_TEST_ALL_SCRIPT}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
+set(TRIBE_RISCV_TOOLCHAIN_RUNNER "${CMAKE_CURRENT_BINARY_DIR}/run_if_riscv_toolchain.sh")
+file(WRITE "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" [=[
+#!/usr/bin/env bash
+set -euo pipefail
+
+have_tool()
+{
+    local name="$1"
+
+    if [[ -n "${RISCV_HOME:-}" && -x "${RISCV_HOME}/bin/${name}" ]]; then
+        return 0
+    fi
+    command -v "${name}" >/dev/null 2>&1
+}
+
+if ! have_tool riscv32-unknown-elf-gcc || ! have_tool riscv32-unknown-elf-g++; then
+    echo "SKIP: RISCV_HOME is not set to a RISC-V toolchain and riscv32-unknown-elf-gcc/g++ are not in PATH"
+    exit 77
+fi
+
+exec "$@"
+]=])
+file(CHMOD "${TRIBE_RISCV_TOOLCHAIN_RUNNER}"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
 file(GLOB TRIBE_TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
@@ -177,8 +202,11 @@ foreach(src ${TRIBE_TEST_SOURCES})
 
     add_test(
         NAME ${target_name}
-        COMMAND ${target_name} ${test_args}
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "$<TARGET_FILE:${target_name}>" ${test_args}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${target_name} PROPERTIES
+        SKIP_RETURN_CODE 77
     )
 
     set(tribe_verilator_ctest_targets
@@ -214,10 +242,11 @@ foreach(src ${TRIBE_TEST_SOURCES})
         endif()
         add_test(
             NAME ${target_name}_verilator
-            COMMAND ${target_name} ${verilator_test_args}
+            COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "$<TARGET_FILE:${target_name}>" ${verilator_test_args}
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         )
         set_tests_properties(${target_name}_verilator PROPERTIES
+            SKIP_RETURN_CODE 77
             TIMEOUT ${verilator_test_timeout}
         )
     endif()
@@ -234,7 +263,7 @@ function(add_tribe_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_rv32_spike_fragments
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_SPIKE_WORK_DIR}-${work_suffix}"
@@ -247,7 +276,7 @@ function(add_tribe_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_rv32_spike_fragments_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments-verilator-${work_suffix}"
@@ -261,7 +290,7 @@ function(add_tribe_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_tests_rv32
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_TESTS_DIR}"
@@ -276,7 +305,7 @@ function(add_tribe_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_tests_rv32_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_TESTS_DIR}"
@@ -291,7 +320,7 @@ function(add_tribe_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_arch_test
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_ARCH_TEST_DIR}"
@@ -301,12 +330,13 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_arch_test_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_ARCH_TEST_DIR}"
@@ -316,12 +346,13 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
+        ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_dv
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_DV_DIR}"
@@ -331,12 +362,13 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_dv_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_DV_DIR}"
@@ -346,7 +378,8 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
     )
 endfunction()
 
@@ -361,7 +394,7 @@ function(add_soc_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_rv32_spike_fragments
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_SPIKE_WORK_DIR}-${work_suffix}"
@@ -374,7 +407,7 @@ function(add_soc_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_rv32_spike_fragments_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_spike_fragments.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${CMAKE_CURRENT_BINARY_DIR}/spike-fragments-verilator-${work_suffix}"
@@ -388,7 +421,7 @@ function(add_soc_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_tests_rv32
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_TESTS_DIR}"
@@ -403,7 +436,7 @@ function(add_soc_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_tests_rv32_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_tests.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_TESTS_DIR}"
@@ -418,7 +451,7 @@ function(add_soc_width_tests width target_name)
 
     add_test(
         NAME ${prefix}_riscv_arch_test
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_ARCH_TEST_DIR}"
@@ -428,12 +461,13 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_arch_test_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_arch_test.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_ARCH_TEST_DIR}"
@@ -443,12 +477,13 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 1200
-        ENVIRONMENT "PATH=${CMAKE_BINARY_DIR}/pydeps/bin:$ENV{PATH};UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator;TRIBE_ARCH_TEST_VERILATOR_BIN=${verilator_bin}"
+        ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator;TRIBE_ARCH_TEST_VERILATOR_BIN=${verilator_bin}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_dv
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_DV_DIR}"
@@ -458,12 +493,13 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
     )
 
     add_test(
         NAME ${prefix}_riscv_dv_verilator
-        COMMAND Python3::Interpreter
+        COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_riscv_dv.py"
                 "$<TARGET_FILE:${target_name}>"
                 "${TRIBE_RISCV_DV_DIR}"
@@ -473,7 +509,8 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "PATH=/usr/bin:$ENV{PATH};TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin}"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
     )
 endfunction()
 

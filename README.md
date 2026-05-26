@@ -23,8 +23,12 @@ Then for both Win&Lin:
 
 # tests
 
+```
 cd build
 ctest
+# be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run CPU tests
+# you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe/tests/ if you want to run CPU tests
+```
 
 # author
 
