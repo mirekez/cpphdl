@@ -390,6 +390,56 @@ static void applyConfiguredLinePatches(std::string& line)
     }
 }
 
+static std::set<std::string> configuredNameSet(const char* envName)
+{
+    std::set<std::string> out;
+    if (auto* raw = std::getenv(envName)) {
+        std::stringstream ss(raw);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item = trim(item);
+            if (!item.empty()) {
+                out.insert(item);
+            }
+        }
+    }
+    return out;
+}
+
+static bool configuredNameEquals(const char* envName, const std::string& value)
+{
+    auto names = configuredNameSet(envName);
+    return names.count(value) != 0;
+}
+
+static std::map<std::string, std::string> configuredTextMap(const char* envName)
+{
+    static std::map<std::string, std::map<std::string, std::string>> cache;
+    auto key = std::string(envName);
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        return it->second;
+    }
+    std::map<std::string, std::string> out;
+    if (auto* path = std::getenv(envName)) {
+        std::ifstream in(path);
+        std::string line;
+        while (std::getline(in, line)) {
+            line = trim(line);
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+            auto sep = line.find('\t');
+            if (sep == std::string::npos) {
+                continue;
+            }
+            out[trim(line.substr(0, sep))] = decodePatchText(line.substr(sep + 1));
+        }
+    }
+    cache[key] = out;
+    return out;
+}
+
 static std::string combDriverFor(const ModuleGen& m, const std::string& base)
 {
     auto direct = m.wireMap.find(base);
@@ -719,34 +769,6 @@ static std::string normalizeSvLiterals(const std::string& s)
 
 static std::string postProcessCppLine(std::string line)
 {
-    static bool inInstrRealignClass = false;
-    static bool inInstrRealignValidComb = false;
-    if (line.find("class ") != std::string::npos) {
-        inInstrRealignClass = line.find("class instr_realign") != std::string::npos;
-        inInstrRealignValidComb = false;
-    }
-    if (inInstrRealignClass && line.find("_LAZY_COMB(valid_o_comb") != std::string::npos) {
-        inInstrRealignValidComb = true;
-    }
-    if (line.find("unaligned_d = unaligned_q;") != std::string::npos) {
-        inInstrRealignValidComb = true;
-    }
-    if (inInstrRealignValidComb && line.find("return valid_o_comb;") != std::string::npos) {
-        line =
-            "if (CVA6Cfg.FETCH_WIDTH == 32 && CVA6Cfg.RVC && valid_i_in() && !logic<1>((address_i_in())[(unsigned)(uint64_t)((uint64_t)(1))]) && "
-            "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0)))) && "
-            "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(17,16))))) { valid_o_comb = logic<(uint64_t)(CVA6Cfg.INSTR_PER_FETCH)>(0b11); }\n"
-            "        " + line;
-        inInstrRealignValidComb = false;
-    }
-    if (line.find("return valid_o_comb;") != std::string::npos) {
-        line =
-            "if constexpr (requires(decltype(*this) t) { t.data_i_in(); t.address_i_in(); }) { "
-            "if (CVA6Cfg.FETCH_WIDTH == 32 && CVA6Cfg.RVC && valid_i_in() && !logic<1>((address_i_in())[(unsigned)(uint64_t)((uint64_t)(1))]) && "
-            "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0)))) && logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(17,16))))) "
-            "{ valid_o_comb = logic<(uint64_t)(CVA6Cfg.INSTR_PER_FETCH)>(0b11); } }\n"
-            "        " + line;
-    }
     for (size_t pos = 0; pos < line.size();) {
         if (!std::isdigit(static_cast<unsigned char>(line[pos]))) {
             ++pos;
@@ -767,11 +789,6 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, ">>>", ">>");
     applyConfiguredLinePatches(line);
     replaceAll(line, "SMODE_STATUS_READ_MASK.bits(", "logic<64>(SMODE_STATUS_READ_MASK).bits(");
-    replaceAll(line, "fpnew_pkg::static_cast<fp_format_e>(", "sv_cast<fpnew_pkg::fp_format_e>(");
-    replaceAll(line, "fpnew_pkg::static_cast<int_format_e>(", "sv_cast<fpnew_pkg::int_format_e>(");
-    replaceAll(line, "fpnew_pkg::static_cast<opgroup_e>(", "sv_cast<fpnew_pkg::opgroup_e>(");
-    replaceAll(line, "fpnew_pkg::static_cast<operation_e>(", "sv_cast<fpnew_pkg::operation_e>(");
-    replaceAll(line, "fpnew_pkg::static_cast<roundmode_e>(", "sv_cast<fpnew_pkg::roundmode_e>(");
     replaceAll(line, "(uint64_t)(trap_vector_base_o)", "(uint64_t)(trap_vector_base_o_comb)");
     replaceAll(line, "logic<1>(new_index[0])", "logic<1>(((uint64_t)(new_index) & 1ull))");
     auto replaceDecoderInstructionFields = [&]() {
@@ -874,25 +891,10 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line,
         "!logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])",
         "!logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))");
-    if (line.find("icache_rd_shift_d = cat{logic<(uint64_t)(CVA6Cfg.AxiDataWidth)>((uint64_t)(axi_rd_data_comb_func()))") != std::string::npos) {
-        line = "if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } icache_rd_shift_d[(CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }";
-    }
-    if (line.find("icache_rd_shift_user_d = cat{logic<(uint64_t)(CVA6Cfg.AxiUserWidth)>((uint64_t)(axi_rd_user_comb_func()))") != std::string::npos) {
-        line = "if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_user_d[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } icache_rd_shift_user_d[(CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }";
-    }
-    if (line.find("dcache_rd_shift_d = cat{logic<(uint64_t)(CVA6Cfg.AxiDataWidth)>((uint64_t)(axi_rd_data_comb_func()))") != std::string::npos) {
-        line = "if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } dcache_rd_shift_d[(CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }";
-    }
-    if (line.find("dcache_rd_shift_user_d_comb = cat{logic<(uint64_t)(CVA6Cfg.AxiUserWidth)>((uint64_t)(axi_rd_user_comb_func()))") != std::string::npos) {
-        line = "if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_user_d_comb[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } dcache_rd_shift_user_d_comb[(CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }";
-    }
     replaceAll(line, "if (icache_first_q) {", "if (icache_first_q && axi_rd_last_comb_func()) {");
     replaceAll(line, "if (dcache_first_q) {", "if (dcache_first_q && axi_rd_last_comb_func()) {");
     replaceAll(line, "empty_o_out = _ASSIGN( ~push_i_in() );", "empty_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~push_i_in()) : logic<1>((status_cnt_q == 0) & ~(logic<1>(FALL_THROUGH) & push_i_in())) );");
     replaceAll(line, "full_o_out = _ASSIGN( ~pop_i_in() );", "full_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~pop_i_in()) : logic<1>(status_cnt_q == FifoDepth) );");
-    replaceAll(line,
-        "fetch_entry_valid_o = _ASSIGN( !((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf)) );",
-        "if constexpr (CVA6Cfg.SuperscalarEn) { fetch_entry_valid_o[(unsigned)(uint64_t)((uint64_t)(NID))] = logic<1>(!((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf))); }");
     replaceAll(line, "(((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[i].fu))");
     replaceAll(line, "(((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[0].fu))");
     replaceAll(line, "(((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[1].fu))");
@@ -901,7 +903,6 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "((((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)((issue_instr_i_in())[1].fu))");
     replaceAll(line, "(((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull))", "((uint64_t)(lsu_ctrl_comb_func().fu))");
     replaceAll(line, "((((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)(lsu_ctrl_comb_func().fu))");
-    replaceAll(line, "logic<1>((uint64_t)(lsu_ctrl_comb_func().vaddr))", "logic<CVA6Cfg.VLEN>((uint64_t)(lsu_ctrl_comb_func().vaddr))");
     if (line.find("lsu_req_i_comb = cat{logic<1>((uint64_t)(lsu_valid_i_in()))") != std::string::npos) {
         line =
             "lsu_req_i_comb = 0;\n"
@@ -1280,15 +1281,6 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "logic<REQ_ID_BITS>", "logic<(ReqFifoDepth > 1 ? clog2(ReqFifoDepth) : 1)>");
     replaceAll(line, "HS_DELEG_INTERRUPTS.bits(", "logic<64>(HS_DELEG_INTERRUPTS).bits(");
     replaceAll(line, "VS_DELEG_INTERRUPTS.bits(", "logic<64>(VS_DELEG_INTERRUPTS).bits(");
-    if (trim(line) == "using acc_mmu_req_t = bool;") {
-        line = "struct acc_mmu_req_t { logic<1> acc_mmu_req; logic<1> acc_mmu_is_store; exception_t acc_mmu_misaligned_ex; logic<CVA6Cfg.VLEN> acc_mmu_vaddr; template<size_t W> acc_mmu_req_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_req_t& operator=(T v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = logic<sizeof(acc_mmu_req_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_req_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_req_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_req_t)*8>&)*this).to_ullong(); } };";
-    }
-    if (trim(line) == "using acc_mmu_resp_t = bool;") {
-        line = "struct acc_mmu_resp_t { logic<1> acc_mmu_valid; logic<CVA6Cfg.PLEN> acc_mmu_paddr; exception_t acc_mmu_exception; logic<1> acc_mmu_dtlb_hit; logic<CVA6Cfg.PPNW> acc_mmu_dtlb_ppn; template<size_t W> acc_mmu_resp_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_resp_t& operator=(T v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = logic<sizeof(acc_mmu_resp_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_resp_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_resp_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_resp_t)*8>&)*this).to_ullong(); } };";
-    }
-    if (line.find("static constexpr uint64_t IsaCode =") != std::string::npos) {
-        line = "static constexpr uint64_t IsaCode = ((uint64_t)(CVA6Cfg.RVA) << 0) | ((uint64_t)(CVA6Cfg.RVB) << 1) | ((uint64_t)(CVA6Cfg.RVC) << 2) | ((uint64_t)(CVA6Cfg.RVD) << 3) | ((uint64_t)(CVA6Cfg.RVF) << 5) | ((uint64_t)(CVA6Cfg.RVH) << 7) | ((uint64_t)(1) << 8) | ((uint64_t)(1) << 12) | ((uint64_t)(0) << 13) | ((uint64_t)(CVA6Cfg.RVS) << 18) | ((uint64_t)(CVA6Cfg.RVU) << 20) | ((uint64_t)(CVA6Cfg.RVV) << 21) | ((uint64_t)(CVA6Cfg.NSX) << 23) | ((uint64_t)(CVA6Cfg.XLEN == 64 ? 2 : 1) << (CVA6Cfg.XLEN - 2));";
-    }
     if (line.find("inline constexpr uint64_t napot_match(uint64_t base, uint64_t value)") != std::string::npos) {
         line = "template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base, const VALUE_T& value)";
     }
@@ -2093,22 +2085,10 @@ static std::string namedAggregateToConstexprLambda(const std::string& type, cons
     }
     std::string out = "[] { " + type + " v{};";
     for (auto& [name, value] : entries) {
-        if (type.find("cva6_user_cfg_t") != std::string::npos) {
-            if (name == "NonIdempotentLength" && (value == "0" || value == "{}")) {
-                value = "std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}";
-            }
-            else if (name == "ExecuteRegionAddrBase" && (value == "0" || value == "{}")) {
-                value = "std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull, 0x10000ull, 0x0ull}";
-            }
-            else if (name == "ExecuteRegionLength" && (value == "0" || value == "{}")) {
-                value = "std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull, 0x10000ull, 0x1000ull}";
-            }
-            else if (name == "CachedRegionAddrBase" && (value == "0" || value == "{}")) {
-                value = "std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}";
-            }
-            else if (name == "CachedRegionLength" && (value == "0" || value == "{}")) {
-                value = "std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull}";
-            }
+        auto aggregateDefaults = configuredTextMap("HDLCPP_AGGREGATE_DEFAULTS");
+        auto defaultIt = aggregateDefaults.find(type + "." + name);
+        if (defaultIt != aggregateDefaults.end() && (value == "0" || value == "{}")) {
+            value = defaultIt->second;
         }
         if (value.empty()) {
             value = "{}";
@@ -2132,19 +2112,13 @@ static std::string cppExprText(std::string s)
         s = replaceAssignmentPatternFields(s);
         s = removeAssignmentPatternDefault(std::move(s));
     }
-    replaceAll(s, "cva6_cfg_t'(0)", "{}");
-    replaceAll(s, "config_pkg::cva6_cfg_t'(0)", "{}");
+    applyConfiguredLinePatches(s);
     replaceAll(s, "unsigned'(", "(");
     replaceAll(s, "signed'(", "(");
     replaceAll(s, "int'(", "(");
     replaceAll(s, "longint'(", "(");
     replaceAll(s, "bit'(", "(");
     replaceAll(s, "logic'(", "(");
-    replaceAll(s, "fpnew_pkg::fp_format_e'(", "sv_cast<fpnew_pkg::fp_format_e>(");
-    replaceAll(s, "fpnew_pkg::int_format_e'(", "sv_cast<fpnew_pkg::int_format_e>(");
-    replaceAll(s, "fpnew_pkg::opgroup_e'(", "sv_cast<fpnew_pkg::opgroup_e>(");
-    replaceAll(s, "fpnew_pkg::operation_e'(", "sv_cast<fpnew_pkg::operation_e>(");
-    replaceAll(s, "fpnew_pkg::roundmode_e'(", "sv_cast<fpnew_pkg::roundmode_e>(");
     replaceAll(s, "fp_format_e'(", "static_cast<fp_format_e>(");
     replaceAll(s, "int_format_e'(", "static_cast<int_format_e>(");
     replaceAll(s, "opgroup_e'(", "static_cast<opgroup_e>(");
@@ -2152,12 +2126,13 @@ static std::string cppExprText(std::string s)
     replaceAll(s, "roundmode_e'(", "static_cast<roundmode_e>(");
     s = replaceGenericSvCasts(std::move(s));
     s = replaceSvCastBraced(std::move(s));
-    replaceAll(s, "CVA6Cfg.logic<XLEN>(", "logic<CVA6Cfg.XLEN>(");
-    replaceAll(s, "CVA6Cfg.logic<CVA6Cfg.XLEN>(", "logic<CVA6Cfg.XLEN>(");
     s = replaceRawRangeSelects(std::move(s));
     s = replaceMultipleConcatPattern(std::move(s));
     s = replaceInsideOps(std::move(s));
-    replaceAll(s, "avoid_neg(", "ariane_pkg::avoid_neg(");
+    auto qualifiedCalls = configuredTextMap("HDLCPP_QUALIFIED_CALLS");
+    for (const auto& [from, to] : qualifiedCalls) {
+        replaceAll(s, from + "(", to + "(");
+    }
     replaceAll(s, "idx_width(", "cf_math_pkg::idx_width(");
     replaceAll(s, "cf_math_pkg::cf_math_pkg::idx_width(", "cf_math_pkg::idx_width(");
     replaceAll(s, ".UnitTypes = {{}, {}, {}, {}}", ".UnitTypes = {}");
@@ -2549,7 +2524,7 @@ struct Converter : SyntaxVisitor<Converter> {
                         if (name == "INTERRUPTS") {
                             init = type + "{}";
                         }
-                        if (mod->name == "cva6" && name == "AccCfg") {
+                        if (configuredNameEquals("HDLCPP_SKIP_PARAMS", mod->name + "." + name)) {
                             continue;
                         }
                         mod->params.push_back(type + " " + name + (init.empty() ? "" : " = " + trim(init)));
@@ -2557,32 +2532,21 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 else if (p->kind == SyntaxKind::TypeParameterDeclaration) {
                     auto& td = p->as<TypeParameterDeclarationSyntax>();
-                    static const std::set<std::string> cva6InternalTypes = {
-                        "branchpredict_sbe_t", "exception_t", "icache_areq_t", "icache_arsp_t",
-                        "icache_dreq_t", "icache_drsp_t", "fetch_entry_t", "jvt_t",
-                        "scoreboard_entry_t", "writeback_t", "bp_resolve_t", "irq_ctrl_t",
-                        "lsu_ctrl_t", "cbo_t", "fu_data_t", "icache_req_t", "icache_rtrn_t",
-                        "dcache_req_i_t", "dcache_req_o_t", "accelerator_req_t", "accelerator_resp_t",
-                        "acc_mmu_req_t", "acc_mmu_resp_t", "b_chan_t", "r_chan_t", "acc_cfg_t"
-                    };
+                    auto localTypeModules = configuredNameSet("HDLCPP_LOCAL_TYPE_MODULES");
+                    auto localTypeNames = configuredNameSet("HDLCPP_LOCAL_TYPE_NAMES");
+                    auto typeDeclOverrides = configuredTextMap("HDLCPP_TYPE_DECL_OVERRIDES");
+                    auto typeParamDefaults = configuredTextMap("HDLCPP_TYPE_PARAM_DEFAULTS");
                     for (auto d : td.declarators) {
                         auto name = tok(d->name);
-                        if (mod->name == "ariane" && d->assignment) {
-                            if (name == "readregflags_t") { mod->types[name] = name; mod->typeDecls.push_back("using readregflags_t = logic<(CVA6Cfg.X_NUM_RS+CVA6Cfg.X_DUALREAD)>;"); continue; }
-                            if (name == "writeregflags_t") { mod->types[name] = name; mod->typeDecls.push_back("using writeregflags_t = logic<(CVA6Cfg.X_DUALWRITE+1)>;"); continue; }
-                            if (name == "id_t") { mod->types[name] = name; mod->typeDecls.push_back("using id_t = logic<CVA6Cfg.X_ID_WIDTH>;"); continue; }
-                            if (name == "hartid_t") { mod->types[name] = name; mod->typeDecls.push_back("using hartid_t = logic<CVA6Cfg.X_HARTID_WIDTH>;"); continue; }
-                            if (name == "x_compressed_req_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_compressed_req_t {\n    logic<16> instr;\n    hartid_t hartid;\n" + packedAggregateHelpers("x_compressed_req_t") + "};"); continue; }
-                            if (name == "x_compressed_resp_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_compressed_resp_t {\n    logic<32> instr;\n    bool accept;\n" + packedAggregateHelpers("x_compressed_resp_t") + "};"); continue; }
-                            if (name == "x_issue_req_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_issue_req_t {\n    logic<32> instr;\n    hartid_t hartid;\n    id_t id;\n" + packedAggregateHelpers("x_issue_req_t") + "};"); continue; }
-                            if (name == "x_issue_resp_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_issue_resp_t {\n    bool accept;\n    writeregflags_t writeback;\n    readregflags_t register_read;\n" + packedAggregateHelpers("x_issue_resp_t") + "};"); continue; }
-                            if (name == "x_register_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_register_t {\n    hartid_t hartid;\n    id_t id;\n    array<logic<CVA6Cfg.X_RFR_WIDTH>,CVA6Cfg.X_NUM_RS> rs;\n    readregflags_t rs_valid;\n" + packedAggregateHelpers("x_register_t") + "};"); continue; }
-                            if (name == "x_commit_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_commit_t {\n    hartid_t hartid;\n    id_t id;\n    bool commit_kill;\n" + packedAggregateHelpers("x_commit_t") + "};"); continue; }
-                            if (name == "x_result_t") { mod->types[name] = name; mod->typeDecls.push_back("struct x_result_t {\n    hartid_t hartid;\n    id_t id;\n    logic<CVA6Cfg.X_RFW_WIDTH> data;\n    logic<5> rd;\n    writeregflags_t we;\n" + packedAggregateHelpers("x_result_t") + "};"); continue; }
-                            if (name == "cvxif_req_t") { mod->types[name] = name; mod->typeDecls.push_back("struct cvxif_req_t {\n    bool compressed_valid;\n    x_compressed_req_t compressed_req;\n    bool issue_valid;\n    x_issue_req_t issue_req;\n    bool register_valid;\n    x_register_t register_;\n    bool commit_valid;\n    x_commit_t commit;\n    bool result_ready;\n" + packedAggregateHelpers("cvxif_req_t") + "};"); continue; }
-                            if (name == "cvxif_resp_t") { mod->types[name] = name; mod->typeDecls.push_back("struct cvxif_resp_t {\n    bool compressed_ready;\n    x_compressed_resp_t compressed_resp;\n    bool issue_ready;\n    x_issue_resp_t issue_resp;\n    bool register_ready;\n    bool result_valid;\n    x_result_t result;\n" + packedAggregateHelpers("cvxif_resp_t") + "};"); continue; }
+                        auto overrideIt = typeDeclOverrides.find(mod->name + "." + name);
+                        if (overrideIt != typeDeclOverrides.end() && d->assignment) {
+                            auto decl = overrideIt->second;
+                            replaceAll(decl, "@PACKED@", packedAggregateHelpers(name));
+                            mod->types[name] = name;
+                            mod->typeDecls.push_back(decl);
+                            continue;
                         }
-                        bool makeLocalType = mod->name == "cva6" && cva6InternalTypes.count(name) && d->assignment;
+                        bool makeLocalType = localTypeModules.count(mod->name) && localTypeNames.count(name) && d->assignment;
                         if (makeLocalType) {
                             mod->types[name] = name;
                             if (d->assignment->type->kind == SyntaxKind::StructType ||
@@ -2616,7 +2580,7 @@ struct Converter : SyntaxVisitor<Converter> {
                                     initType = "bool";
                                 }
                                 mod->typeDecls.push_back("using " + name + " = " + initType + ";");
-                                if (mod->name == "cva6" && name == "acc_cfg_t") {
+                                if (configuredNameEquals("HDLCPP_FALSE_CONSTANT_TYPES", mod->name + "." + name)) {
                                     mod->constants.push_back({"acc_cfg_t", "AccCfg = false"});
                                 }
                             }
@@ -2624,14 +2588,10 @@ struct Converter : SyntaxVisitor<Converter> {
                         }
                         auto init = d->assignment ? trim(cppTypeFromSvText(d->assignment->toString())) : "bool";
                         auto assignmentText = d->assignment ? d->assignment->toString() : std::string();
-                        if (name == "rvfi_probes_instr_t") {
-                            init = "cpphdl_rvfi::probes_instr_t<CVA6Cfg>";
-                        }
-                        else if (name == "rvfi_probes_csr_t") {
-                            init = "cpphdl_rvfi::probes_csr_t<CVA6Cfg>";
-                        }
-                        else if (name == "rvfi_probes_t" && assignmentText.find("struct") != std::string::npos) {
-                            init = "cpphdl_rvfi::probes_t<CVA6Cfg>";
+                        auto defaultIt = typeParamDefaults.find(name);
+                        if (defaultIt != typeParamDefaults.end() &&
+                            (assignmentText.empty() || assignmentText.find("struct") != std::string::npos || init == "bool")) {
+                            init = defaultIt->second;
                         }
                         else if (init == "logic") {
                             init = "bool";
@@ -2999,24 +2959,10 @@ struct Converter : SyntaxVisitor<Converter> {
                     mod->typeDecls.push_back(line);
                 }
                 else if (d->assignment) {
-                    auto assignmentText = d->assignment->toString();
-                    if (name == "rvfi_instr_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::instr_t<CVA6Cfg>;");
-                    }
-                    else if (name == "rvfi_csr_elmt_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::csr_elmt_t<CVA6Cfg>;");
-                    }
-                    else if (name == "rvfi_csr_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::csr_t<CVA6Cfg>;");
-                    }
-                    else if (name == "rvfi_to_iti_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::to_iti_t<CVA6Cfg>;");
-                    }
-                    else if (name == "rvfi_probes_instr_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::probes_instr_t<CVA6Cfg>;");
-                    }
-                    else if (name == "rvfi_probes_csr_t") {
-                        mod->typeDecls.push_back("using " + name + " = cpphdl_rvfi::probes_csr_t<CVA6Cfg>;");
+                    auto aliasOverrides = configuredTextMap("HDLCPP_TYPE_ALIAS_OVERRIDES");
+                    auto aliasIt = aliasOverrides.find(name);
+                    if (aliasIt != aliasOverrides.end()) {
+                        mod->typeDecls.push_back("using " + name + " = " + aliasIt->second + ";");
                     }
                     else {
                         mod->typeDecls.push_back("using " + name + " = " + typeText(*d->assignment->type) + ";");
@@ -3130,7 +3076,7 @@ struct Converter : SyntaxVisitor<Converter> {
         if (!mod) {
             return;
         }
-        if (mod->name == "cva6_fifo_v3" || mod->name == "cva6_shared_tlb") {
+        if (configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
             mod->assignLines.push_back("if constexpr (" + emitExpr(*node.condition) + ") {");
             emitGenerateMember(*node.block, "");
             if (node.elseClause) {
@@ -3372,130 +3318,14 @@ struct Converter : SyntaxVisitor<Converter> {
             }
         }
         if (mod->isPackage) {
-            if (m.name == "build_config" && m.ret == "config_pkg::cva6_cfg_t") {
-                m.body.push_back("auto pow2 = [](unsigned x) constexpr { return 1u << x; };");
-                m.body.push_back("bool IS_XLEN32 = CVA6Cfg.XLEN == 32;");
-                m.body.push_back("bool IS_XLEN64 = CVA6Cfg.XLEN != 32;");
-                m.body.push_back("bool FpPresent = (bool)CVA6Cfg.RVF || (bool)CVA6Cfg.RVD || (bool)CVA6Cfg.XF16 || (bool)CVA6Cfg.XF16ALT || (bool)CVA6Cfg.XF8;");
-                m.body.push_back("bool NSX = (bool)CVA6Cfg.XF16 || (bool)CVA6Cfg.XF16ALT || (bool)CVA6Cfg.XF8 || (bool)CVA6Cfg.XFVec;");
-                m.body.push_back("unsigned FLen = (bool)CVA6Cfg.RVD ? 64 : (bool)CVA6Cfg.RVF ? 32 : (bool)CVA6Cfg.XF16 ? 16 : (bool)CVA6Cfg.XF16ALT ? 16 : (bool)CVA6Cfg.XF8 ? 8 : 1;");
-                m.body.push_back("bool RVFVec = (bool)CVA6Cfg.RVF && (bool)CVA6Cfg.XFVec && (FLen > 32);");
-                m.body.push_back("bool XF16Vec = (bool)CVA6Cfg.XF16 && (bool)CVA6Cfg.XFVec && (FLen > 16);");
-                m.body.push_back("bool XF16ALTVec = (bool)CVA6Cfg.XF16ALT && (bool)CVA6Cfg.XFVec && (FLen > 16);");
-                m.body.push_back("bool XF8Vec = (bool)CVA6Cfg.XF8 && (bool)CVA6Cfg.XFVec && (FLen > 8);");
-                m.body.push_back("bool EnableAccelerator = CVA6Cfg.RVV;");
-                m.body.push_back("unsigned NrWbPorts = (CVA6Cfg.CvxifEn || EnableAccelerator) ? 5 : 4;");
-                m.body.push_back("unsigned ICACHE_INDEX_WIDTH = clog2(CVA6Cfg.IcacheByteSize / CVA6Cfg.IcacheSetAssoc);");
-                m.body.push_back("unsigned DCACHE_INDEX_WIDTH = clog2(CVA6Cfg.DcacheByteSize / CVA6Cfg.DcacheSetAssoc);");
-                m.body.push_back("unsigned DCACHE_OFFSET_WIDTH = clog2(CVA6Cfg.DcacheLineWidth / 8);");
-                m.body.push_back("unsigned VpnLen = (CVA6Cfg.XLEN == 64) ? (CVA6Cfg.RVH ? 29 : 27) : 20;");
-                m.body.push_back("unsigned PtLevels = (CVA6Cfg.XLEN == 64) ? 3 : 2;");
-                m.body.push_back("unsigned PLEN_v = (CVA6Cfg.XLEN == 32) ? 34 : 56;");
-                m.body.push_back("unsigned GPLEN_v = (CVA6Cfg.XLEN == 32) ? 34 : 41;");
-                m.body.push_back("unsigned ASID_WIDTH_v = (CVA6Cfg.XLEN == 64) ? 16 : 1;");
-                m.body.push_back("unsigned VMID_WIDTH_v = (CVA6Cfg.XLEN == 64) ? 14 : 1;");
-                m.body.push_back("unsigned ICACHE_USER_LINE_WIDTH_v = (CVA6Cfg.AxiUserWidth == 1) ? 4 : CVA6Cfg.IcacheLineWidth;");
-                m.body.push_back("unsigned DCACHE_USER_LINE_WIDTH_v = (CVA6Cfg.AxiUserWidth == 1) ? 4 : CVA6Cfg.DcacheLineWidth;");
-                m.body.push_back("unsigned AXI_USER_EN_v = (CVA6Cfg.DataUserEn | CVA6Cfg.FetchUserEn) != 0;");
-                m.body.push_back("unsigned ModeW_v = (CVA6Cfg.XLEN == 32) ? 1 : 4;");
-                m.body.push_back("unsigned ASIDW_v = (CVA6Cfg.XLEN == 32) ? 9 : 16;");
-                m.body.push_back("unsigned VMIDW_v = (CVA6Cfg.XLEN == 32) ? 7 : 14;");
-                m.body.push_back("unsigned PPNW_v = (CVA6Cfg.XLEN == 32) ? 22 : 44;");
-                m.body.push_back("unsigned GPPNW_v = (CVA6Cfg.XLEN == 32) ? 22 : 29;");
-                m.body.push_back("auto MODE_SV_v = (CVA6Cfg.XLEN == 32) ? config_pkg::ModeSv32 : config_pkg::ModeSv39;");
-                m.body.push_back("unsigned SV_v = (MODE_SV_v == config_pkg::ModeSv32) ? 32 : 39;");
-                m.body.push_back("unsigned SVX_v = (MODE_SV_v == config_pkg::ModeSv32) ? 34 : 41;");
-                m.body.push_back("config_pkg::cva6_cfg_t cfg{};");
-                const char* direct[] = {
-                    "XLEN", "VLEN", "FpgaEn", "FpgaAlteraEn", "TechnoCut", "NrLoadPipeRegs", "NrStorePipeRegs",
-                    "AxiAddrWidth", "AxiDataWidth", "AxiIdWidth", "AxiUserWidth", "RVF", "RVD", "XF16", "XF16ALT",
-                    "XF8", "RVA", "RVB", "ZKN", "RVV", "RVC", "RVH", "RVZCB", "RVZCMT", "RVZCMP", "XFVec",
-                    "CvxifEn", "CoproType", "RVZiCond", "RVZiCbom", "RVZicntr", "RVZihpm", "PerfCounterEn",
-                    "MmuPresent", "RVS", "RVU", "SoftwareInterruptEn", "HaltAddress", "ExceptionAddress", "RASDepth",
-                    "BTBEntries", "BPType", "BHTEntries", "BHTHist", "DmBaseAddress", "TvalEn", "DirectVecOnly",
-                    "NrPMPEntries", "PMPCfgRstVal", "PMPAddrRstVal", "PMPEntryReadOnly", "PMPNapotEn", "NOCType",
-                    "NrNonIdempotentRules", "NonIdempotentAddrBase", "NonIdempotentLength", "NrExecuteRegionRules",
-                    "ExecuteRegionAddrBase", "ExecuteRegionLength", "NrCachedRegionRules", "CachedRegionAddrBase",
-                    "CachedRegionLength", "MaxOutstandingStores", "DebugEn", "SDTRIG", "Mcontrol6", "Icount", "Etrigger",
-                    "Itrigger", "AxiBurstWriteEn", "DCacheType", "DcacheIdWidth", "DcacheFlushOnFence", "DcacheFlushOnFenceI",
-                    "DcacheInvalidateOnFlush", "WtDcacheWbufDepth", "InstrTlbEntries", "DataTlbEntries", "UseSharedTlb",
-                    "SvnapotEn", "SharedTlbDepth"
-                };
-                for (auto field : direct) {
-                    m.body.push_back(std::string("sv_assign_field(cfg.") + field + ", CVA6Cfg." + field + ");");
+            if (auto body = configuredTextMap("HDLCPP_METHOD_BODY_OVERRIDES"); body.count(m.name + "|" + m.ret)) {
+                std::stringstream ss(body[m.name + "|" + m.ret]);
+                std::string bodyLine;
+                while (std::getline(ss, bodyLine)) {
+                    if (!bodyLine.empty()) {
+                        m.body.push_back(bodyLine);
+                    }
                 }
-                m.body.push_back("sv_assign_field(cfg.PLEN, PLEN_v);");
-                m.body.push_back("sv_assign_field(cfg.GPLEN, GPLEN_v);");
-                m.body.push_back("sv_assign_field(cfg.IS_XLEN32, IS_XLEN32);");
-                m.body.push_back("sv_assign_field(cfg.IS_XLEN64, IS_XLEN64);");
-                m.body.push_back("sv_assign_field(cfg.XLEN_ALIGN_BYTES, clog2(CVA6Cfg.XLEN / 8));");
-                m.body.push_back("sv_assign_field(cfg.ASID_WIDTH, ASID_WIDTH_v);");
-                m.body.push_back("sv_assign_field(cfg.VMID_WIDTH, VMID_WIDTH_v);");
-                m.body.push_back("sv_assign_field(cfg.SuperscalarEn, CVA6Cfg.SuperscalarEn);");
-                m.body.push_back("sv_assign_field(cfg.NrCommitPorts, CVA6Cfg.SuperscalarEn ? 2 : CVA6Cfg.NrCommitPorts);");
-                m.body.push_back("sv_assign_field(cfg.NrIssuePorts, CVA6Cfg.SuperscalarEn ? 2 : 1);");
-                m.body.push_back("sv_assign_field(cfg.SpeculativeSb, CVA6Cfg.SuperscalarEn);");
-                m.body.push_back("sv_assign_field(cfg.NrALUs, CVA6Cfg.SuperscalarEn ? 2 : 1);");
-                m.body.push_back("sv_assign_field(cfg.ALUBypass, CVA6Cfg.SuperscalarEn ? (bool)CVA6Cfg.ALUBypass : false);");
-                m.body.push_back("sv_assign_field(cfg.MEM_TID_WIDTH, CVA6Cfg.MemTidWidth);");
-                m.body.push_back("sv_assign_field(cfg.NrLoadBufEntries, CVA6Cfg.NrLoadBufEntries);");
-                m.body.push_back("sv_assign_field(cfg.NR_SB_ENTRIES, CVA6Cfg.NrScoreboardEntries);");
-                m.body.push_back("sv_assign_field(cfg.TRANS_ID_BITS, clog2(CVA6Cfg.NrScoreboardEntries));");
-                m.body.push_back("sv_assign_field(cfg.FpPresent, FpPresent);");
-                m.body.push_back("sv_assign_field(cfg.NSX, NSX);");
-                m.body.push_back("sv_assign_field(cfg.FLen, FLen);");
-                m.body.push_back("sv_assign_field(cfg.RVFVec, RVFVec);");
-                m.body.push_back("sv_assign_field(cfg.XF16Vec, XF16Vec);");
-                m.body.push_back("sv_assign_field(cfg.XF16ALTVec, XF16ALTVec);");
-                m.body.push_back("sv_assign_field(cfg.XF8Vec, XF8Vec);");
-                m.body.push_back("sv_assign_field(cfg.NrRgprPorts, CVA6Cfg.SuperscalarEn ? 4 : 2);");
-                m.body.push_back("sv_assign_field(cfg.NrWbPorts, NrWbPorts);");
-                m.body.push_back("sv_assign_field(cfg.EnableAccelerator, EnableAccelerator);");
-                m.body.push_back("sv_assign_field(cfg.NonIdemPotenceEn, false);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_SET_ASSOC, CVA6Cfg.IcacheSetAssoc);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_SET_ASSOC_WIDTH, CVA6Cfg.IcacheSetAssoc > 1 ? clog2(CVA6Cfg.IcacheSetAssoc) : CVA6Cfg.IcacheSetAssoc);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_INDEX_WIDTH, ICACHE_INDEX_WIDTH);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_TAG_WIDTH, cfg.PLEN - ICACHE_INDEX_WIDTH);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_LINE_WIDTH, CVA6Cfg.IcacheLineWidth);");
-                m.body.push_back("sv_assign_field(cfg.ICACHE_USER_LINE_WIDTH, ICACHE_USER_LINE_WIDTH_v);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_SET_ASSOC, CVA6Cfg.DcacheSetAssoc);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_SET_ASSOC_WIDTH, CVA6Cfg.DcacheSetAssoc > 1 ? clog2(CVA6Cfg.DcacheSetAssoc) : CVA6Cfg.DcacheSetAssoc);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_INDEX_WIDTH, DCACHE_INDEX_WIDTH);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_TAG_WIDTH, cfg.PLEN - DCACHE_INDEX_WIDTH);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_LINE_WIDTH, CVA6Cfg.DcacheLineWidth);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_USER_LINE_WIDTH, DCACHE_USER_LINE_WIDTH_v);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_USER_WIDTH, CVA6Cfg.AxiUserWidth);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_OFFSET_WIDTH, DCACHE_OFFSET_WIDTH);");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_NUM_WORDS, pow2(DCACHE_INDEX_WIDTH - DCACHE_OFFSET_WIDTH));");
-                m.body.push_back("sv_assign_field(cfg.DCACHE_MAX_TX, pow2(CVA6Cfg.MemTidWidth));");
-                m.body.push_back("sv_assign_field(cfg.DATA_USER_EN, CVA6Cfg.DataUserEn);");
-                m.body.push_back("sv_assign_field(cfg.FETCH_USER_WIDTH, CVA6Cfg.FetchUserWidth);");
-                m.body.push_back("sv_assign_field(cfg.FETCH_USER_EN, CVA6Cfg.FetchUserEn);");
-                m.body.push_back("sv_assign_field(cfg.AXI_USER_EN, AXI_USER_EN_v);");
-                m.body.push_back("sv_assign_field(cfg.FETCH_WIDTH, CVA6Cfg.SuperscalarEn ? 64 : 32);");
-                m.body.push_back("sv_assign_field(cfg.FETCH_ALIGN_BITS, clog2(cfg.FETCH_WIDTH / 8));");
-                m.body.push_back("sv_assign_field(cfg.INSTR_PER_FETCH, cfg.FETCH_WIDTH / (CVA6Cfg.RVC ? 16 : 32));");
-                m.body.push_back("sv_assign_field(cfg.LOG2_INSTR_PER_FETCH, cfg.INSTR_PER_FETCH > 1 ? clog2(cfg.INSTR_PER_FETCH) : 1);");
-                m.body.push_back("sv_assign_field(cfg.ModeW, ModeW_v);");
-                m.body.push_back("sv_assign_field(cfg.ASIDW, ASIDW_v);");
-                m.body.push_back("sv_assign_field(cfg.VMIDW, VMIDW_v);");
-                m.body.push_back("sv_assign_field(cfg.PPNW, PPNW_v);");
-                m.body.push_back("sv_assign_field(cfg.GPPNW, GPPNW_v);");
-                m.body.push_back("sv_assign_field(cfg.MODE_SV, MODE_SV_v);");
-                m.body.push_back("sv_assign_field(cfg.SV, SV_v);");
-                m.body.push_back("sv_assign_field(cfg.SVX, SVX_v);");
-                m.body.push_back("sv_assign_field(cfg.VpnLen, VpnLen);");
-                m.body.push_back("sv_assign_field(cfg.PtLevels, PtLevels);");
-                m.body.push_back("sv_assign_field(cfg.X_NUM_RS, cfg.NrRgprPorts / cfg.NrIssuePorts);");
-                m.body.push_back("sv_assign_field(cfg.X_ID_WIDTH, cfg.TRANS_ID_BITS);");
-                m.body.push_back("sv_assign_field(cfg.X_RFR_WIDTH, cfg.XLEN);");
-                m.body.push_back("sv_assign_field(cfg.X_RFW_WIDTH, cfg.XLEN);");
-                m.body.push_back("sv_assign_field(cfg.X_NUM_HARTS, 1);");
-                m.body.push_back("sv_assign_field(cfg.X_HARTID_WIDTH, cfg.XLEN);");
-                m.body.push_back("sv_assign_field(cfg.X_DUALREAD, 0);");
-                m.body.push_back("sv_assign_field(cfg.X_DUALWRITE, 0);");
-                m.body.push_back("sv_assign_field(cfg.X_ISSUE_REGISTER_SPLIT, 0);");
-                m.body.push_back("return cfg;");
             }
             else if (m.name == "minimum" && m.args.find(',') != std::string::npos) {
                 m.body.push_back("return a < b ? a : b;");
@@ -3600,7 +3430,7 @@ struct Converter : SyntaxVisitor<Converter> {
         }
         else if (node.kind == SyntaxKind::IfGenerate) {
             auto& ifGen = node.as<IfGenerateSyntax>();
-            if (mod && mod->name == "cva6_shared_tlb") {
+            if (mod && configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
                 auto cond = emitExpr(*ifGen.condition);
                 applyGenerateReplacements(cond);
                 mod->assignLines.push_back("if constexpr (" + cond + ") {");
@@ -3645,13 +3475,19 @@ struct Converter : SyntaxVisitor<Converter> {
                     }
                     params += value;
                 };
-                if (type == "cva6_fifo_v3") {
-                    appendParam(namedParams.count("FALL_THROUGH") ? namedParams["FALL_THROUGH"] : "0");
-                    appendParam(namedParams.count("FPGA_ALTERA") ? namedParams["FPGA_ALTERA"] : "0");
-                    appendParam(namedParams.count("DATA_WIDTH") ? namedParams["DATA_WIDTH"] : "32");
-                    appendParam(namedParams.count("DEPTH") ? namedParams["DEPTH"] : "8");
-                    appendParam(namedParams.count("dtype") ? namedParams["dtype"] : "logic<" + (namedParams.count("DATA_WIDTH") ? namedParams["DATA_WIDTH"] : "32") + ">");
-                    appendParam(namedParams.count("FPGA_EN") ? namedParams["FPGA_EN"] : "0");
+                if (auto order = configuredTextMap("HDLCPP_NAMED_PARAM_ORDER"); order.count(type)) {
+                    std::stringstream ss(order[type]);
+                    std::string spec;
+                    while (std::getline(ss, spec, ',')) {
+                        auto eq = spec.find('=');
+                        auto paramName = trim(eq == std::string::npos ? spec : spec.substr(0, eq));
+                        auto defaultValue = trim(eq == std::string::npos ? std::string() : spec.substr(eq + 1));
+                        if (defaultValue.find("@DATA_WIDTH@") != std::string::npos) {
+                            auto dataWidth = namedParams.count("DATA_WIDTH") ? namedParams["DATA_WIDTH"] : "32";
+                            replaceAll(defaultValue, "@DATA_WIDTH@", dataWidth);
+                        }
+                        appendParam(namedParams.count(paramName) ? namedParams[paramName] : defaultValue);
+                    }
                 }
                 else {
                     auto* child = findModule(type);
@@ -4010,7 +3846,7 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (package && package->isPackage && package->types.count(name)) {
                     return import + "::" + name;
                 }
-                if (import == "cvxif_instr_pkg" && name.size() >= 2 &&
+                if (configuredNameEquals("HDLCPP_QUALIFY_IMPORTED_TYPE_PACKAGES", import) && name.size() >= 2 &&
                     name.substr(name.size() - 2) == "_t") {
                     return import + "::" + name;
                 }
@@ -4573,15 +4409,17 @@ struct Converter : SyntaxVisitor<Converter> {
             }
         }
         auto simple = trim(exprText(text));
-        if (simple.rfind("riscv::Opcode", 0) == 0) {
-            auto name = simple.substr(std::string("riscv::Opcode").size());
-            if (name == "C0" || name == "C1" || name == "C2") {
-                return "2";
+        for (const auto& [prefix, defaultWidth] : configuredTextMap("HDLCPP_ENUM_WIDTH_PREFIXES")) {
+            if (simple.rfind(prefix, 0) == 0) {
+                auto name = simple.substr(prefix.size());
+                if (name == "C0" || name == "C1" || name == "C2") {
+                    return "2";
+                }
+                if (name.rfind("C0", 0) == 0 || name.rfind("C1", 0) == 0 || name.rfind("C2", 0) == 0) {
+                    return "3";
+                }
+                return defaultWidth;
             }
-            if (name.rfind("C0", 0) == 0 || name.rfind("C1", 0) == 0 || name.rfind("C2", 0) == 0) {
-                return "3";
-            }
-            return "7";
         }
         if (auto literalWidth = numericLiteralWidth(simple); !literalWidth.empty()) {
             return literalWidth;
@@ -5412,8 +5250,8 @@ struct Converter : SyntaxVisitor<Converter> {
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
             auto callee = exprText(i.left->toString());
-            if (callee == "avoid_neg") {
-                callee = "ariane_pkg::avoid_neg";
+            if (auto qualifiedCalls = configuredTextMap("HDLCPP_QUALIFIED_CALLS"); qualifiedCalls.count(callee)) {
+                callee = qualifiedCalls[callee];
             }
             if (callee == "$bits") {
                 return emitExpr(expr);
@@ -5894,8 +5732,8 @@ struct Converter : SyntaxVisitor<Converter> {
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
             auto callee = exprText(i.left->toString());
-            if (callee == "avoid_neg") {
-                callee = "ariane_pkg::avoid_neg";
+            if (auto qualifiedCalls = configuredTextMap("HDLCPP_QUALIFIED_CALLS"); qualifiedCalls.count(callee)) {
+                callee = qualifiedCalls[callee];
             }
             if (callee == "$bits") {
                 auto arg = i.arguments ? trim(exprText(i.arguments->toString())) : std::string();
@@ -6189,7 +6027,7 @@ struct Converter : SyntaxVisitor<Converter> {
                 continue;
             }
             for (auto& import : m.imports) {
-                if (import != "cvxif_instr_pkg") {
+                if (!configuredNameEquals("HDLCPP_SKIP_USING_NAMESPACE_IMPORTS", import)) {
                     h << "using namespace " << import << ";\n";
                 }
             }
@@ -6321,8 +6159,12 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 auto emittedType = (m.combAssignedVars.count(v.second) && !m.seqAssignedVars.count(v.second)) ? unwrapRegType(v.first) :
                     (m.seqAssignedVars.count(v.second) ? regTypeFor(v.first) : v.first);
-                if (v.second == "fp_wdata_pack") {
-                    replaceAll(emittedType, "logic<CVA6Cfg.XLEN>", "logic<CVA6Cfg.FLen>");
+                if (auto patches = configuredTextMap("HDLCPP_VAR_TYPE_PATCHES"); patches.count(v.second)) {
+                    auto spec = patches[v.second];
+                    auto sep = spec.find("=>");
+                    if (sep != std::string::npos) {
+                        replaceAll(emittedType, trim(spec.substr(0, sep)), trim(spec.substr(sep + 2)));
+                    }
                 }
                 if (isAssignDrivenVar(m, v.second)) {
                     emittedType = unwrapRegType(emittedType);
@@ -6344,7 +6186,20 @@ struct Converter : SyntaxVisitor<Converter> {
                 explicitCombStorage.insert(f.returnName);
             }
 	            h << "\n";
-	            if (m.name == "rr_arb_tree") {
+	            if (configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", m.name)) {
+                    for (auto& [key, body] : configuredTextMap("HDLCPP_INLINE_COMB_BODIES")) {
+                        auto sep = key.find('.');
+                        if (sep == std::string::npos || key.substr(0, sep) != m.name) {
+                            continue;
+                        }
+                        std::stringstream ss(body);
+                        std::string bodyLine;
+                        while (std::getline(ss, bodyLine)) {
+                            h << bodyLine << "\n";
+                        }
+                    }
+                }
+	            if (false) {
 	                h << "    _LAZY_COMB(req_o_comb, logic<1>)\n";
 	                h << "        req_o_comb = logic<1>(0b0);\n";
 	                h << "        for (unsigned i = 0; (uint64_t)(i) < (uint64_t)(NumIn); ++i) {\n";
@@ -6416,28 +6271,33 @@ struct Converter : SyntaxVisitor<Converter> {
                     h << "        " << name << "._work(reset);\n";
                 }
             }
-            if (m.name == "issue_read_operands") {
-                h << "        branch_valid_n_comb_func();\n";
-                h << "        cvxif_off_instr_n_comb_func();\n";
+            if (auto calls = configuredTextMap("HDLCPP_WORK_PRECOMB_CALLS"); calls.count(m.name)) {
+                std::stringstream ss(calls[m.name]);
+                std::string call;
+                while (std::getline(ss, call, ',')) {
+                    call = trim(call);
+                    if (!call.empty()) {
+                        h << "        " << call << ";\n";
+                    }
+                }
             }
             for (auto& f : m.methods) {
                 if (f.args == "bool reset" && f.name.rfind("always_", 0) == 0) {
                     for (auto& line : f.body) {
                         auto emittedLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, f, line)));
                         auto trimmedLine = trim(emittedLine);
-                        if (m.name == "cva6_fifo_v3" && trimmedLine == "read_pointer_q._next = read_pointer_n;") {
-                            h << "        fifo_ram_read_address_comb_func();\n";
-                        }
-                        if (m.name == "wt_axi_adapter" && trimmedLine == "icache_first_q._next = icache_first_d;") {
-                            h << "        dcache_wr_pop_comb_func();\n";
-                            h << "        dcache_rd_shift_user_d_comb_func();\n";
+                        auto beforeStrobe = configuredTextMap("HDLCPP_BEFORE_STROBE_LINE_CALLS");
+                        if (auto it = beforeStrobe.find(m.name + "|" + trimmedLine); it != beforeStrobe.end()) {
+                            std::stringstream ss(it->second);
+                            std::string call;
+                            while (std::getline(ss, call, ',')) {
+                                h << "        " << trim(call) << ";\n";
+                            }
                         }
                         h << "        " << emittedLine << "\n";
-                        if (m.name == "cva6_fifo_v3" && trimmedLine == "status_cnt_q._next = 0;") {
-                            h << "        if constexpr (!FPGA_EN) { if (~rst_ni_in()) { mem_q = 0; } }\n";
-                        }
-                        if (m.name == "cva6_fifo_v3" && trimmedLine == "status_cnt_q._next = status_cnt_n;") {
-                            h << "        if constexpr (!FPGA_EN) { if (!gate_clock) { mem_q = mem_n; } }\n";
+                        auto afterStrobe = configuredTextMap("HDLCPP_AFTER_STROBE_LINE_CODE");
+                        if (auto it = afterStrobe.find(m.name + "|" + trimmedLine); it != afterStrobe.end()) {
+                            h << "        " << it->second << "\n";
                         }
                     }
                 }
@@ -6478,18 +6338,13 @@ struct Converter : SyntaxVisitor<Converter> {
 	            for (auto& import : m.imports) {
 	                h << "        using namespace " << import << ";\n";
 	            }
-		            if (m.name == "instr_queue") {
-		                h << "        i_popcount._assign();\n";
-		                h << "        for (unsigned i = 0;(uint64_t)(i) < (uint64_t)((uint64_t)(CVA6Cfg.INSTR_PER_FETCH));i++) {\n";
-		                h << "            i_fifo_instr_data[(unsigned)(uint64_t)((uint64_t)(i))]._assign();\n";
-		                h << "        }\n";
-		                h << "        i_fifo_address._assign();\n";
-		                h << "        i_unread_branch_mask._assign();\n";
-		                h << "        i_unread_fifo_pos._assign();\n";
-		            }
-			            if (m.name == "decoder") {
-			                h << "        interrupt_cause_comb_func();\n";
-			            }
+                    if (auto code = configuredTextMap("HDLCPP_ASSIGN_PREFIX_CODE"); code.count(m.name)) {
+                        std::stringstream ss(code[m.name]);
+                        std::string codeLine;
+                        while (std::getline(ss, codeLine)) {
+                            h << "        " << codeLine << "\n";
+                        }
+                    }
 			            auto isDirectMemberBinding = [&](const std::string& line) {
 			                auto t = trim(line);
 			                if (t.find(" = ") == std::string::npos) {
@@ -6515,7 +6370,7 @@ struct Converter : SyntaxVisitor<Converter> {
 			                return "";
 			            };
 			            MethodGen assignMethod;
-		            if (m.name != "rr_arb_tree") {
+		            if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
 		                for (auto& line : m.assignLines) {
 		                    if (!isDirectMemberBinding(line)) {
 		                        continue;
@@ -6541,7 +6396,7 @@ struct Converter : SyntaxVisitor<Converter> {
 	                    h << "        " << name << "._assign();\n";
 	                }
 	            }
-		            if (m.name != "rr_arb_tree") {
+		            if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
 		                for (auto& line : m.assignLines) {
 		                    if (isDirectMemberBinding(line)) {
 		                        continue;
@@ -6551,20 +6406,21 @@ struct Converter : SyntaxVisitor<Converter> {
 		                        continue;
 		                    }
 		                    auto emittedAssignLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, assignMethod, line)));
-		                    if (m.name == "issue_stage" &&
-		                        (trim(emittedAssignLine).rfind("issue_instr_o_out = ", 0) == 0 ||
-		                         trim(emittedAssignLine).rfind("issue_instr_hs_o_out = ", 0) == 0)) {
+		                    if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(' ')))) {
 		                        continue;
 		                    }
-		                    if (m.name == "decoder" && trim(emittedAssignLine) == "instruction_o.valid = instruction_o_out().ex.valid;") {
-		                        emittedAssignLine = "instruction_o.valid = instruction_o.ex.valid;";
+		                    if (auto patches = configuredTextMap("HDLCPP_ASSIGN_LINE_PATCHES"); patches.count(m.name + "|" + trim(emittedAssignLine))) {
+		                        emittedAssignLine = patches[m.name + "|" + trim(emittedAssignLine)];
 		                    }
 		                    h << "        " << emittedAssignLine << "\n";
 		                }
 		            }
-		            if (m.name == "issue_stage") {
-		                h << "        issue_instr_o_out = _ASSIGN( issue_instr_sb_iro_comb_func()[(unsigned)((uint64_t)(0))] );\n";
-		                h << "        issue_instr_hs_o_out = _ASSIGN( logic<1>(issue_instr_valid_sb_iro_comb_func()[(unsigned)(uint64_t)((uint64_t)(0))]) & logic<1>(issue_ack_iro_sb_comb_func()[(unsigned)(uint64_t)((uint64_t)(0))]) );\n";
+		            if (auto code = configuredTextMap("HDLCPP_ASSIGN_SUFFIX_CODE"); code.count(m.name)) {
+                        std::stringstream ss(code[m.name]);
+                        std::string codeLine;
+                        while (std::getline(ss, codeLine)) {
+                            h << "        " << codeLine << "\n";
+                        }
 		            }
                     for (auto& call : sideEffectCombCalls(m)) {
                         h << "        " << call << "\n";
@@ -6601,11 +6457,11 @@ struct Converter : SyntaxVisitor<Converter> {
                 isOutput = isOutput || child->outputPortCppNames.count(conn.port) != 0;
             }
             else {
-                if (conn.type == "instr_tracer") {
+                if (configuredNameEquals("HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES", conn.type)) {
                     continue;
                 }
                 isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos || portName.find("_DO") != std::string::npos || portName == "orig_instr_aes_bits";
-                if ((conn.type == "acc_dispatcher" || conn.type == "fpu_wrap") && !isOutput) {
+                if (configuredNameEquals("HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES", conn.type) && !isOutput) {
                     continue;
                 }
                 portName += isOutput ? "_out" : "_in";
@@ -6844,14 +6700,12 @@ struct Converter : SyntaxVisitor<Converter> {
             for (auto& l : m.body) {
                 out << "        " << repairMalformedEquality(postProcessCppLine(lateBindCombRhs(mod, m, l))) << "\n";
             }
-            if (mod.name == "instr_realign" && m.returnName == "valid_o_comb") {
-                out << "        if (CVA6Cfg.FETCH_WIDTH == 32 && CVA6Cfg.RVC && valid_i_in() && !logic<1>((address_i_in())[(unsigned)(uint64_t)((uint64_t)(1))]) && "
-                       "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0)))) && "
-                       "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(17,16))))) { valid_o_comb = logic<(uint64_t)(CVA6Cfg.INSTR_PER_FETCH)>(0b11); }\n";
-            }
-            if (mod.name == "instr_queue" && m.returnName == "valid_comb") {
-                out << "        if (CVA6Cfg.INSTR_PER_FETCH == 2 && logic<1>((valid_i_in())[(unsigned)(uint64_t)((uint64_t)(0))]) && "
-                       "(cf_type_i_in())[0] == ariane_pkg::NoCF && (cf_type_i_in())[1] == ariane_pkg::NoCF) { valid_comb = valid_i_in(); }\n";
+            if (auto injections = configuredTextMap("HDLCPP_COMB_RETURN_INJECTIONS"); injections.count(mod.name + "|" + m.returnName)) {
+                std::stringstream ss(injections[mod.name + "|" + m.returnName]);
+                std::string injectionLine;
+                while (std::getline(ss, injectionLine)) {
+                    out << "        " << injectionLine << "\n";
+                }
             }
             out << "        return " << m.returnName << ";\n";
             out << "    }\n\n";
