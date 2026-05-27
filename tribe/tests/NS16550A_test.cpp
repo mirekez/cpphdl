@@ -113,8 +113,8 @@ class TestNS16550ADirect : public Module
     static constexpr uint32_t REG_LSR = 0x05;
     static constexpr uint32_t LSR_DR = 0x01;
     static constexpr uint32_t LSR_THRE_TEMT = 0x60;
-    static constexpr uint32_t IIR_NO_INTERRUPT = 0x01;
-    static constexpr uint32_t IIR_RX_AVAILABLE = 0x04;
+    static constexpr uint32_t IIR_NO_INTERRUPT = 0xc1;
+    static constexpr uint32_t IIR_RX_AVAILABLE = 0xc4;
 
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
@@ -406,8 +406,8 @@ public:
             fail("IRQ asserted before RX data arrived");
         }
         push_rx('A');
-        if (rx_ready()) {
-            fail("RX ready stayed high while RX byte was buffered");
+        if (!rx_ready()) {
+            fail("RX ready dropped after one byte even though RX FIFO has space");
         }
         if (!irq()) {
             fail("RX interrupt did not assert with IER.ERBFI set");
@@ -441,6 +441,24 @@ public:
         }
         if (!rx_ready()) {
             fail("RX ready did not stay high after racing RBR read consumed incoming byte");
+        }
+        for (uint8_t i = 0; i < 16; ++i) {
+            push_rx(uint8_t('a' + i));
+        }
+        if (rx_ready()) {
+            fail("RX ready stayed high after filling the 16-byte RX FIFO");
+        }
+        for (uint8_t i = 0; i < 16; ++i) {
+            if (read8(REG_RBR_THR_DLL) != uint8_t('a' + i)) {
+                fail("RX FIFO burst read returned bytes out of order");
+                break;
+            }
+        }
+        if ((read8(REG_LSR) & LSR_DR) != 0) {
+            fail("LSR still reported RX data after draining RX FIFO");
+        }
+        if (!rx_ready()) {
+            fail("RX ready did not return high after draining RX FIFO");
         }
 
         write8(REG_IER_DLM, 0x02);

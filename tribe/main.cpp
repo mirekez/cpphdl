@@ -87,6 +87,22 @@ static void tribe_uart_stdin_sigint_handler(int)
 {
     tribe_uart_stdin_sigint_pending = 1;
 }
+
+static bool normalize_interactive_uart_byte(unsigned char in, bool& previous_cr, unsigned char& out)
+{
+    if (in == '\r') {
+        previous_cr = true;
+        out = '\n';
+        return true;
+    }
+    if (in == '\n' && previous_cr) {
+        previous_cr = false;
+        return false;
+    }
+    previous_cr = false;
+    out = in;
+    return true;
+}
 #endif
 
 struct TribePerf
@@ -218,6 +234,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
     _PORT(bool)      clint_msip_in;
     _PORT(bool)      clint_mtip_in;
+    _PORT(uint32_t)  time_lo_in = _ASSIGN((uint32_t)0);
+    _PORT(uint32_t)  time_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool)      external_irq_in = _ASSIGN(false);
 #endif
 
@@ -300,6 +318,8 @@ public:
         csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
+        csr.time_lo_in = time_lo_in;
+        csr.time_hi_in = time_hi_in;
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
         csr.interrupt_cause_in = irq.interrupt_cause_out;
@@ -2308,6 +2328,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
+        tribe.time_lo_in = clint.debug_mtime_lo_out;
+        tribe.time_hi_in = clint.debug_mtime_hi_out;
         tribe.external_irq_in = plic.external_irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
@@ -2419,6 +2441,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
         tribe.external_irq_in = plic.external_irq_out();
 #endif
         AXI4_DRIVER_FROM_VERILATOR_CONST(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
@@ -2560,6 +2584,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
         tribe.external_irq_in = plic.external_irq_out();
 #endif
 
@@ -3056,6 +3082,7 @@ public:
         bool mirrored_uart_needs_newline = false;
         bool host_interrupt = false;
         std::deque<unsigned char> interactive_uart_queue;
+        bool interactive_uart_previous_cr = false;
         uint64_t interactive_uart_last_block_report = 0;
         bool trace_sd_prev_active = false;
         uint32_t trace_sd_prev_addr = 0;
@@ -3236,6 +3263,9 @@ public:
                             host_interrupt = true;
                             std::print("\n*** Interrupted by Ctrl+C ***\n");
                             break;
+                        }
+                        if (!normalize_interactive_uart_byte(ch, interactive_uart_previous_cr, ch)) {
+                            continue;
                         }
                         if (interactive_uart_queue.size() < 4096) {
                             interactive_uart_queue.push_back(ch);

@@ -261,6 +261,31 @@ static bool build_cpu_irq_load_hazard_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_time_csr_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_time_csr.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "cpu_time_csr.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU time CSR bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
@@ -316,6 +341,17 @@ static bool run_cpu_irq_load_hazard_cpp(bool debug)
         0, expected.string(), 500000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
         "CPU IRQ load hazard");
+}
+
+static bool run_cpu_time_csr_cpp(bool debug)
+{
+    const auto log = tribe_code_dir() / "cpu_time_csr.log";
+    if (!write_file(log, "TIMECSR\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_time_csr.elf").string(),
+        0, log.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU time CSR");
 }
 
 static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
@@ -493,6 +529,13 @@ int main(int argc, char** argv)
     bool ok = check_system_decode_has_no_decode_branch();
     if (run_selected("writeback_mem_addr")) {
         ok = ok && check_writeback_mem_address_tags();
+    }
+    // Scenario: RISC-V time/timeh CSRs must expose the platform timer used by
+    // CLINT/SBI, not the raw CPU cycle counter. Linux uses rdtime as its
+    // clocksource and SBI set_timer deadlines are in the same timebase.
+    if (run_selected("csr_time")) {
+        ok = ok && build_cpu_time_csr_elf();
+        ok = ok && run_cpu_time_csr_cpp(debug);
     }
     // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
     // access. The fence must drain/serialize memory traffic without wedging the

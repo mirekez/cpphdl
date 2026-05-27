@@ -30,7 +30,7 @@ usage()
     cat <<EOF
 Usage: $0 [--pack-only] [--clean]
 
-Builds RISC-V 32-bit Linux stress tools and packs them into a FAT32 SD image.
+Builds RISC-V 32-bit Linux stress tools and packs them into an ext2 SD image.
 
 Environment:
   RISCV_HOME=/home/me/riscv
@@ -83,6 +83,7 @@ clone_or_update()
     local repo="$1"
     local ref="$2"
     local dir="$3"
+    local target
 
     if [[ ! -d "${dir}/.git" ]]; then
         if [[ "${TRIBE_SD_OFFLINE}" == "1" ]]; then
@@ -92,11 +93,20 @@ clone_or_update()
         git clone "${repo}" "${dir}"
     fi
     if [[ "${TRIBE_SD_OFFLINE}" == "1" ]]; then
+        git -C "${dir}" reset --hard HEAD
+        git -C "${dir}" clean -fd
         return
     fi
     git -C "${dir}" fetch --tags origin
-    git -C "${dir}" checkout "${ref}"
-    git -C "${dir}" pull --ff-only origin "${ref}" || true
+    git -C "${dir}" reset --hard HEAD
+    git -C "${dir}" clean -fd
+    target="${ref}"
+    if git -C "${dir}" rev-parse --verify --quiet "origin/${ref}^{commit}" >/dev/null; then
+        target="origin/${ref}"
+    fi
+    git -C "${dir}" checkout --detach "${target}"
+    git -C "${dir}" reset --hard "${target}"
+    git -C "${dir}" clean -fd
 }
 
 install_tool()
@@ -337,6 +347,13 @@ static bool stress_tribe_stressor_already_listed(const stress_stressor_t *stress
 			return true;
 	}
 	return false;
+}
+
+static bool stress_tribe_time_debug_enabled(void)
+{
+	const char *env = getenv("STRESS_TRIBE_TIME_DEBUG");
+
+	return env && *env && strcmp(env, "0") != 0;
 }
 
 static void stress_tribe_stressor_fallback_add(const char *name, const char *value)

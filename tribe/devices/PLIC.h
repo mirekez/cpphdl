@@ -3,6 +3,7 @@
 #include "cpphdl.h"
 #include "Axi4.h"
 #include <cstdlib>
+#include <cstdio>
 #include <print>
 
 using namespace cpphdl;
@@ -142,12 +143,24 @@ public:
 #ifndef SYNTHESIS
         bool trace;
         const char* trace_from_env;
+        const char* trace_file_env;
         long trace_from;
         static uint32_t last_trace_signature = 0xffffffffu;
+        static FILE* trace_file = nullptr;
+        static bool trace_file_checked = false;
+        FILE* trace_out;
         uint32_t trace_signature;
         trace_from_env = std::getenv("TRIBE_TRACE_PLIC_FROM");
         trace_from = trace_from_env ? std::strtol(trace_from_env, nullptr, 0) : 0;
         trace = std::getenv("TRIBE_TRACE_PLIC") != nullptr && sys_clock >= trace_from;
+        if (!trace_file_checked) {
+            trace_file_checked = true;
+            trace_file_env = std::getenv("TRIBE_TRACE_PLIC_FILE");
+            if (trace_file_env && trace_file_env[0] != '\0') {
+                trace_file = std::fopen(trace_file_env, "w");
+            }
+        }
+        trace_out = trace_file ? trace_file : stdout;
 #endif
         completion_mask = 0;
         if (axi_in.wvalid_in() && axi_in.wready_out()) {
@@ -176,9 +189,12 @@ public:
                 ((claim_comb_func() & 0xffu) << 24);
             if (trace_signature != last_trace_signature) {
                 last_trace_signature = trace_signature;
-                std::print("plic-status pending={:08x} enable={:08x} threshold={} prio1={} claim={} irq={}\n",
+                std::print(trace_out, "plic-status cycle={} pending={:08x} enable={:08x} threshold={} prio1={} prio2={} claim={} irq={} source={:08x} gateway={:08x}\n",
+                    sys_clock,
                     pending_bits_comb_func(), (uint32_t)enable_reg, (uint32_t)threshold_reg,
-                    (uint32_t)priority_reg[1], claim_comb_func(), external_irq_comb_func());
+                    (uint32_t)priority_reg[1], (uint32_t)priority_reg[2],
+                    claim_comb_func(), external_irq_comb_func(), source_bits, (uint32_t)gateway_busy_reg);
+                std::fflush(trace_out);
             }
         }
 #endif
@@ -219,20 +235,22 @@ public:
             read_valid_reg._next = true;
 #ifndef SYNTHESIS
             if (trace) {
-                std::print("plic-read-addr addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
-                    addr, read_word, pending_work, (uint32_t)enable_reg,
+                std::print(trace_out, "plic-read-addr cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
+                    sys_clock, addr, read_word, pending_work, (uint32_t)enable_reg,
                     (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
+                std::fflush(trace_out);
             }
 #endif
         }
         if (read_valid_reg && axi_in.rready_in()) {
 #ifndef SYNTHESIS
             if (trace) {
-                std::print("plic-read-data addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
-                    (uint32_t)read_addr_reg,
+                std::print(trace_out, "plic-read-data cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
+                    sys_clock, (uint32_t)read_addr_reg,
                     (uint32_t)((logic<DATA_WIDTH>)read_data_reg).bits(((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8 + 31, ((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8),
                     pending_bits_comb_func(), (uint32_t)enable_reg,
                     (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
+                std::fflush(trace_out);
             }
 #endif
             read_valid_reg._next = false;
@@ -268,8 +286,10 @@ public:
             }
 #ifndef SYNTHESIS
             if (trace) {
-                std::print("plic-write addr={:x} data={:08x} pending={:08x} enable={:08x} claim={}\n",
-                    addr, data, pending_bits_comb_func(), (uint32_t)enable_reg, claim_comb_func());
+                std::print(trace_out, "plic-write cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
+                    sys_clock, addr, data, pending_bits_comb_func(), (uint32_t)enable_reg,
+                    (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
+                std::fflush(trace_out);
             }
 #endif
             // Completion releases the gateway only. If the device is still

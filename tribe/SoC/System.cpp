@@ -238,6 +238,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
+        tribe.time_lo_in = clint.debug_mtime_lo_out;
+        tribe.time_hi_in = clint.debug_mtime_hi_out;
         tribe.external_irq_in = plic.external_irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
