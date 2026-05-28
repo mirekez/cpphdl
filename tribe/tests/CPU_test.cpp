@@ -409,6 +409,19 @@ static bool check_system_decode_has_no_decode_branch()
             return false;
         }
     }
+
+    {
+        Rv32ic instr = {{{0x9002}}};
+        State state;
+        instr.decode(state);
+        if (state.sys_op != Sys::EBREAK || state.trap_op != Trap::BREAKPOINT ||
+            state.br_op != Br::BNONE || state.wb_op != Wb::WNONE) {
+            std::print("bad compressed ebreak decode: sys={} trap={} br={} wb={} rd={}\n",
+                (uint32_t)state.sys_op, (uint32_t)state.trap_op,
+                (uint32_t)state.br_op, (uint32_t)state.wb_op, (uint32_t)state.rd);
+            return false;
+        }
+    }
     return true;
 }
 
