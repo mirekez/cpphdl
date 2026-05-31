@@ -160,6 +160,11 @@ public:
     _PORT(bool)      debug_dcache_read_valid_out;
     _PORT(uint32_t)  debug_dcache_read_addr_out;
     _PORT(uint32_t)  debug_dcache_read_data_out;
+    _PORT(bool)      debug_dcache_cpu_read_out;
+    _PORT(bool)      debug_dcache_cpu_write_out;
+    _PORT(uint32_t)  debug_dcache_cpu_addr_out;
+    _PORT(uint32_t)  debug_dcache_cpu_wdata_out;
+    _PORT(uint8_t)   debug_dcache_cpu_wmask_out;
     _PORT(bool)      debug_fetch_valid_out;
     _PORT(bool)      debug_memory_wait_out;
     _PORT(bool)      debug_wb_load_ready_out;
@@ -558,6 +563,11 @@ public:
         debug_dcache_read_valid_out = dcache.read_valid_out;
         debug_dcache_read_addr_out = dcache.read_addr_out;
         debug_dcache_read_data_out = dcache.read_data_out;
+        debug_dcache_cpu_read_out = dcache.read_in;
+        debug_dcache_cpu_write_out = dcache.write_in;
+        debug_dcache_cpu_addr_out = dcache.addr_in;
+        debug_dcache_cpu_wdata_out = dcache.write_data_in;
+        debug_dcache_cpu_wmask_out = dcache.write_mask_in;
         debug_fetch_valid_out = _ASSIGN_COMB(fetch_valid_comb_func());
         debug_memory_wait_out = _ASSIGN_COMB(memory_wait_comb_func());
         debug_wb_load_ready_out = wb_mem.load_ready_out;
@@ -3007,6 +3017,20 @@ public:
         pc_symbols.load(std::getenv("TRIBE_TRACE_PC_SYMBOLS_FILE"));
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
         uint32_t trace_addr = trace_addr_env ? std::stoul(trace_addr_env, nullptr, 0) : 0;
+        const char* trace_addr_from_env = std::getenv("TRIBE_TRACE_ADDR_FROM");
+        const char* trace_addr_to_env = std::getenv("TRIBE_TRACE_ADDR_TO");
+        uint32_t trace_addr_from = trace_addr_from_env ? std::stoul(trace_addr_from_env, nullptr, 0) : 0;
+        uint32_t trace_addr_to = trace_addr_to_env ? std::stoul(trace_addr_to_env, nullptr, 0) : 0;
+        const char* trace_addr_file_env = std::getenv("TRIBE_TRACE_ADDR_FILE");
+        FILE* trace_addr_file = nullptr;
+        if (trace_addr_file_env && trace_addr_file_env[0]) {
+            trace_addr_file = fopen(trace_addr_file_env, "wb");
+            if (!trace_addr_file) {
+                std::print("can't open address trace file '{}'\n", trace_addr_file_env);
+                return false;
+            }
+            setvbuf(trace_addr_file, nullptr, _IOLBF, 0);
+        }
         const char* trace_pc_from_env = std::getenv("TRIBE_TRACE_PC_FROM");
         const char* trace_pc_to_env = std::getenv("TRIBE_TRACE_PC_TO");
         uint32_t trace_pc_from = trace_pc_from_env ? std::stoul(trace_pc_from_env, nullptr, 0) : 0;
@@ -3054,6 +3078,18 @@ public:
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
+        const char* trace_reg_id_env = std::getenv("TRIBE_TRACE_REG_ID");
+        const int trace_reg_id = trace_reg_id_env ? std::stoi(trace_reg_id_env, nullptr, 0) : -1;
+        const char* trace_reg_file_env = std::getenv("TRIBE_TRACE_REG_FILE");
+        FILE* trace_reg_file = nullptr;
+        if (trace_reg_file_env && trace_reg_file_env[0]) {
+            trace_reg_file = fopen(trace_reg_file_env, "wb");
+            if (!trace_reg_file) {
+                std::print("can't open register trace file '{}'\n", trace_reg_file_env);
+                return false;
+            }
+            setvbuf(trace_reg_file, nullptr, _IOLBF, 0);
+        }
         const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
         const char* trace_uart_rx_file_env = std::getenv("TRIBE_TRACE_UART_RX_FILE");
         FILE* trace_uart_rx_file = nullptr;
@@ -3535,6 +3571,30 @@ public:
 #endif
                     (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
             }
+            if (trace_reg_id >= 0 && (bool)PORT_VALUE(tribe.debug_regs_write_out) &&
+                (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out) == (uint8_t)trace_reg_id) {
+                FILE* trace_reg_out = trace_reg_file ? trace_reg_file : stdout;
+                std::print(trace_reg_out, "trace-reg cycle={} pc={:08x} x{}={:08x} actual={} priv={} satp={:08x} scause={:08x} sepc={:08x} stval={:08x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    0u,
+#endif
+                    trace_reg_id,
+                    (uint32_t)PORT_VALUE(tribe.debug_regs_data_out),
+                    (bool)PORT_VALUE(tribe.debug_regs_write_actual_out),
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_satp_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_scause_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sepc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_stval_out)
+#else
+                    3u, 0u, 0u, 0u, 0u
+#endif
+                    );
+            }
             if (trace_bad_branch && (bool)PORT_VALUE(tribe.debug_branch_taken_now_out)) {
                 uint32_t target = (uint32_t)PORT_VALUE(tribe.debug_branch_target_now_out);
                 if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
@@ -3555,9 +3615,13 @@ public:
                         (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
                 }
             }
-            if (trace_addr && (uint32_t)PORT_VALUE(tribe.dmem_addr_out) == trace_addr &&
-                ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
-                std::print("trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+            const uint32_t trace_daddr = (uint32_t)PORT_VALUE(tribe.dmem_addr_out);
+            const bool trace_addr_hit =
+                (trace_addr && trace_daddr == trace_addr) ||
+                (trace_addr_from < trace_addr_to && trace_daddr >= trace_addr_from && trace_daddr < trace_addr_to);
+            if (trace_addr_hit && ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
+                FILE* out = trace_addr_file ? trace_addr_file : stdout;
+                std::print(out, "trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} source=l2\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -3565,12 +3629,33 @@ public:
                     (uint32_t)0,
 #endif
                     (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
-                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    trace_daddr,
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
             }
+#ifdef ENABLE_MMU_TLB
+            const uint32_t trace_cpu_daddr = (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_addr_out);
+            const bool trace_cpu_addr_hit =
+                (trace_addr && trace_cpu_daddr == trace_addr) ||
+                (trace_addr_from < trace_addr_to && trace_cpu_daddr >= trace_addr_from && trace_cpu_daddr < trace_addr_to);
+            if (trace_cpu_addr_hit && ((bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out) || (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out))) {
+                FILE* out = trace_addr_file ? trace_addr_file : stdout;
+                std::print(out, "trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} source=dcache-cpu rvalid={} raddr={:08x} rdata={:08x}\n",
+                    perf_clocks,
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    trace_cpu_daddr,
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wdata_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wmask_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_read_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out));
+            }
+#endif
             if (trace_pc_from && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= trace_pc_from &&
                 (uint32_t)PORT_VALUE(tribe.debug_pc_out) < trace_pc_to) {
                 std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dinstr={:08x} dpc={:08x} dbr={} dimm={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x} wbwr={} wbact={} wbid={} wbdata={:08x} loadready={} memwait={} brtake={} brtarget={:08x}\n",
