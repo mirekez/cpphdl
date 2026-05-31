@@ -363,9 +363,12 @@ public:
 
     void focused_refill_assembly_check()
     {
-        uint32_t request_addr = 5 * SETS * LINE_SIZE + 3 * LINE_SIZE + 2;
-        read_check("focused refill addr[1]", request_addr, false);
-        read_check("focused hit addr[1]", request_addr, true);
+        for (uint32_t byte = 1; byte < 4; ++byte) {
+            uint32_t line_base = (12 + byte) * SETS * LINE_SIZE + (3 + byte) * LINE_SIZE;
+            uint32_t request_addr = line_base + byte;
+            read_check("focused refill byte offset", request_addr, false);
+            read_check("focused hit byte offset", request_addr, true);
+        }
     }
 
     void focused_store_invalidate_check()
@@ -943,7 +946,7 @@ public:
             read_check("wide refill", base + half, half != 0);
         }
         if (!error) {
-            read_check("wide direct odd byte", base + 1, false);
+            read_check("wide cached odd byte", base + 1, true);
         }
         if (!error) {
             requested_beat_hold_regression();

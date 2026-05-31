@@ -1010,7 +1010,8 @@ private:
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out());
         return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
-            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func();
+            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func() &&
+            !hazard_stall_comb_func();
 #else
         return interrupt_accept_comb = false;
 #endif
@@ -1047,6 +1048,11 @@ private:
             exe_state_comb.rs1_val = csr.trap_vector_out();
             exe_state_comb.imm = 0;
             exe_state_comb.br_op = Br::JR;
+            exe_state_comb.mem_op = Mem::MNONE;
+            exe_state_comb.wb_op = Wb::WNONE;
+#ifdef ENABLE_RV32IA
+            exe_state_comb.amo_op = Amo::AMONONE;
+#endif
         }
         else if (state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             exe_state_comb.rs1_val = csr.epc_out();

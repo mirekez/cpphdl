@@ -147,13 +147,12 @@ private:
         size_t i;
         active_slave_index_comb = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
-            u<32> port_index = (u<32>)(uint32_t)i;
             if (!slave_write_pending_comb_func() && axi_in[i].arvalid_in() && !slave_rvalid_reg[i]) {
-                active_slave_index_comb = port_index;
+                active_slave_index_comb = i;
             }
             if (((slave_aw_pending_reg[i] && axi_in[i].wvalid_in()) ||
                  (axi_in[i].awvalid_in() && axi_in[i].wvalid_in())) && !slave_bvalid_reg[i]) {
-                active_slave_index_comb = port_index;
+                active_slave_index_comb = i;
             }
         }
         return active_slave_index_comb;
@@ -212,7 +211,7 @@ private:
         for (i = 0; i < MEM_PORTS; ++i) {
             if (active_is_slave_comb_func() && slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
                 lane = ((slave_aw_pending_reg[i] ? (uint32_t)slave_awaddr_reg[i] : (uint32_t)axi_in[i].awaddr_in()) % PORT_BYTES) / 4u;
-                active_write_data_comb = (uint32_t)axi_in[i].wdata_in().bits(lane * 32 + 31, lane * 32);
+                active_write_data_comb = (uint32_t)(axi_in[i].wdata_in() >> (lane * 32u));
             }
         }
         return active_write_data_comb;
@@ -224,7 +223,8 @@ private:
         size_t i;
         active_write_beat_comb = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
-            if (active_is_slave_comb_func() && slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
+            if (active_is_slave_comb_func() && slave_write_pending_comb_func() &&
+                active_slave_index_comb_func() == i) {
                 active_write_beat_comb = axi_in[i].wdata_in();
             }
         }
@@ -268,7 +268,8 @@ private:
         uint32_t word;
         byte = (uint32_t)req_addr_reg & 3u;
         word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
-        return req_cross_beat_read_comb = req_read_reg && byte != 0 && word + 1 >= PORT_WORDS;
+        return req_cross_beat_read_comb = req_read_reg && !req_from_slave_reg &&
+            byte != 0 && word + 1 >= PORT_WORDS;
     }
 
     // True for an unaligned read whose 32-bit result crosses the cache-line boundary.
@@ -367,7 +368,7 @@ private:
     }
 
     // Memory/device port selected by cumulative region sizes for AXI reads.
-    _LAZY_COMB(axi_ar_sel_comb, uint32_t)
+    _LAZY_COMB(axi_ar_sel_comb, u<MEM_PORT_BITS>)
         size_t i;
         uint64_t base;
         uint64_t local;
@@ -510,7 +511,7 @@ private:
     }
 
     // Memory/device port selected by cumulative region sizes for AXI writes.
-    _LAZY_COMB(axi_aw_sel_comb, uint32_t)
+    _LAZY_COMB(axi_aw_sel_comb, u<MEM_PORT_BITS>)
         size_t i;
         uint64_t base;
         uint64_t local;
@@ -791,7 +792,7 @@ private:
     _LAZY_COMB(axi_aligned_word_comb, uint32_t)
         uint32_t word;
         word = (uint32_t)req_word_comb_func() % PORT_WORDS;
-        return axi_aligned_word_comb = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
+        return axi_aligned_word_comb = (uint32_t)(axi_rdata_selected_comb_func() >> (word * 32u));
     }
 
     // Merge a pending write into the addressed word while filling a cache line from AXI.
@@ -832,7 +833,7 @@ private:
         word = ((uint32_t)req_word_comb_func() + 1) % PORT_WORDS;
         old_data = 0;
         if ((uint32_t)req_word_comb_func() + 1 < LINE_WORDS) {
-            old_data = (uint32_t)axi_rdata_selected_comb_func().bits(word * 32 + 31, word * 32);
+            old_data = (uint32_t)(axi_rdata_selected_comb_func() >> (word * 32u));
         }
         new_data = byte == 0 ? (uint32_t)0 : (uint32_t)req_write_data_reg >> (32 - byte * 8);
         mask = 0;
@@ -1006,16 +1007,16 @@ public:
             data_ram[i].data_in = _ASSIGN_I((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 // Store hit path merges CPU bytes with old cached words; fill path selects/merges words from AXI data.
                 (req_from_slave_reg ?
-                    (uint32_t)req_write_beat_reg.bits(((i % PORT_WORDS) * 32) + 31, (i % PORT_WORDS) * 32) :
+                    (uint32_t)(req_write_beat_reg >> (((i % PORT_WORDS) * 32))) :
                     ((((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
                         write_next_word_comb_func() : write_word_comb_func())) :
                 ((req_from_slave_reg && req_write_reg && req_beat_comb_func() == fill_beat_reg &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
-                    (uint32_t)req_write_beat_reg.bits(((i % PORT_WORDS) * 32) + 31, (i % PORT_WORDS) * 32) :
+                    (uint32_t)(req_write_beat_reg >> (((i % PORT_WORDS) * 32))) :
                  (req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_write_reg && ((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
-                    (uint32_t)axi_rdata_selected_comb_func().bits(((i % LINE_WORDS) % PORT_WORDS) * 32 + 31, ((i % LINE_WORDS) % PORT_WORDS) * 32)));
+                    (uint32_t)(axi_rdata_selected_comb_func() >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))));
             data_ram[i].id_in = 2000 + i;
         }
 
@@ -1067,10 +1068,8 @@ public:
         bool trace_line_enabled;
         bool trace_req_line;
         bool trace_active_line;
-        logic<PORT_BITWIDTH> trace_data;
         uint32_t trace_word0;
         uint32_t trace_word1;
-        logic<PORT_BITWIDTH> response_data;
 
         trace_line = 0;
         trace_line_enabled = false;
@@ -1084,10 +1083,8 @@ public:
         trace_req_line = trace_line_env && (((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
         trace_active_line = trace_line_env && ((active_addr_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
 #endif
-        trace_data = 0;
         trace_word0 = 0;
         trace_word1 = 0;
-        response_data = 0;
 
         for (i = 0; i < DATA_BANKS; ++i) {
             data_ram[i]._work(reset);
@@ -1186,9 +1183,8 @@ public:
             }
             else if (hit_comb_func()) {
                 if (trace_req_line) {
-                    trace_data = hit_beat_comb_func();
-                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    trace_word0 = (uint32_t)hit_beat_comb_func();
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(hit_beat_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} lookup-hit addr={:08x} rd={} wr={} way={} word={} hit_word={:08x} beat0={:08x} beat1={:08x} wdata={:08x} mask={:02x}\n",
                         sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
                         (uint32_t)hit_way_comb_func(), (uint32_t)req_word_comb_func(), hit_word_comb_func(),
@@ -1213,12 +1209,13 @@ public:
                     last_data_reg._next = 0;
                 }
                 if (!req_from_slave_reg && req_read_reg) {
-                    response_data = hit_beat_comb_func();
                     if (req_cross_beat_read_comb_func()) {
-                        response_data = 0;
-                        response_data.bits(31, 0) = hit_word_comb_func();
+                        last_data_reg._next = 0;
+                        last_data_reg._next.bits(31, 0) = hit_word_comb_func();
                     }
-                    last_data_reg._next = response_data;
+                    else {
+                        last_data_reg._next = hit_beat_comb_func();
+                    }
                 }
                 if (req_cross_line_write_comb_func()) {
                     // Finish the part of an unaligned store that spills into the first word of the next line.
@@ -1290,9 +1287,8 @@ public:
         else if (state_reg == ST_EVICT_W) {
             if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
                 if (trace_line_enabled && ((axi_awaddr_full_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
-                    trace_data = evict_line_comb_func();
-                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    trace_word0 = (uint32_t)evict_line_comb_func();
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(evict_line_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} evict addr={:08x} beat={} data0={:08x} data1={:08x} way={}\n",
                         sys_clock, axi_awaddr_full_comb_func(), (uint32_t)evict_beat_reg,
                         trace_word0, trace_word1, (uint32_t)evict_way_comb_func());
@@ -1320,9 +1316,8 @@ public:
         else if (state_reg == ST_AXI_R) {
             if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
                 if (trace_req_line) {
-                    trace_data = axi_rdata_selected_comb_func();
-                    trace_word0 = (uint32_t)trace_data.bits(31, 0);
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)trace_data.bits(63, 32) : 0;
+                    trace_word0 = (uint32_t)axi_rdata_selected_comb_func();
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_rdata_selected_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
                         sys_clock, axi_araddr_full_comb_func(), (uint32_t)fill_beat_reg,
                         trace_word0, trace_word1, (uint32_t)req_word_comb_func(), (uint32_t)req_beat_comb_func());

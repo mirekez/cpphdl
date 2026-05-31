@@ -261,6 +261,33 @@ static bool build_cpu_irq_load_hazard_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_irq_atomic_hazard_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_irq_atomic_hazard.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32ima_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -DCPU_IRQ_INPUT_LEN=" + std::to_string(CPU_IRQ_INPUT_LEN);
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "checkpoint_isr.S");
+    cmd += " " + shell_quote(code_dir / "cpu_irq_atomic_hazard.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU IRQ atomic-hazard bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool build_cpu_time_csr_elf()
 {
     const auto code_dir = tribe_code_dir();
@@ -341,6 +368,28 @@ static bool run_cpu_irq_load_hazard_cpp(bool debug)
         0, expected.string(), 500000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
         "CPU IRQ load hazard");
+}
+
+static bool run_cpu_irq_atomic_hazard_cpp(bool debug)
+{
+    const auto elf = std::filesystem::current_path() / "cpu_irq_atomic_hazard.elf";
+    const auto expected = tribe_code_dir() / "cpu_irq_atomic_hazard.log";
+    const std::string input = cpu_irq_input();
+    const std::string ready_marker = "READY\n";
+    const std::string expected_text = ready_marker + input + "IRQATOMIC\nDONE\n";
+
+    if (!write_file(expected, expected_text)) {
+        return false;
+    }
+
+    ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
+    ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
+    ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "7");
+
+    return TestTribe(debug).run(elf.string(),
+        0, expected.string(), 700000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU IRQ atomic hazard");
 }
 
 static bool run_cpu_time_csr_cpp(bool debug)
@@ -598,6 +647,13 @@ int main(int argc, char** argv)
     if (run_selected("irq_load_hazard")) {
         ok = ok && build_cpu_irq_load_hazard_elf();
         ok = ok && run_cpu_irq_load_hazard_cpp(debug);
+    }
+    // Scenario: an interrupt must not enter while LR/SC is holding the memory
+    // pipeline busy. Otherwise the trap flush can leave atomic_busy asserted
+    // with no valid instruction left, wedging trap-vector fetch at stvec.
+    if (run_selected("irq_atomic_hazard")) {
+        ok = ok && build_cpu_irq_atomic_hazard_elf();
+        ok = ok && run_cpu_irq_atomic_hazard_cpp(debug);
     }
 
 #ifndef VERILATOR
