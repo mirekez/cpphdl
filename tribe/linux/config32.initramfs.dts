@@ -1,6 +1,7 @@
 /dts-v1/;
 
 / {
+	model = "CppHDL Tribe";
 	#address-cells = <1>;
 	#size-cells = <1>;
 	compatible = "cpphdl,tribe";
@@ -10,7 +11,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,1000000 earlycon unaligned_scalar_speed=slow";
+		bootargs = "console=ttyS0,1000000 earlycon=uart,mmio,0x82000000 unaligned_scalar_speed=slow";
 		stdout-path = "/soc/serial@82000000:1000000n8";
 		linux,initrd-start = <0x81c00000>;
 		linux,initrd-end = <0x81e4d4a8>;
