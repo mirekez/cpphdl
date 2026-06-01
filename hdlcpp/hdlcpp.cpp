@@ -13,10 +13,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -90,6 +92,8 @@ struct ModuleGen {
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
     std::map<std::string, std::string> types;
+    std::map<std::string, std::string> typeWidths;
+    std::map<std::string, std::map<std::string, std::string>> typeFields;
     int alwaysNo = 0;
     bool hasWorkTask = false;
 };
@@ -342,6 +346,16 @@ static std::string decodePatchText(std::string s)
     return out;
 }
 
+static std::string decodeConfiguredText(std::string s)
+{
+    s = trim(s);
+    if (s.size() > 1 && s[0] == '@') {
+        std::ifstream in(s.substr(1));
+        return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    }
+    return decodePatchText(s);
+}
+
 static const std::vector<ConfiguredLinePatch>& configuredLinePatches()
 {
     static bool loaded = false;
@@ -433,18 +447,111 @@ static std::map<std::string, std::string> configuredTextMap(const char* envName)
             if (sep == std::string::npos) {
                 continue;
             }
-            out[trim(line.substr(0, sep))] = decodePatchText(line.substr(sep + 1));
+            out[trim(line.substr(0, sep))] = decodeConfiguredText(line.substr(sep + 1));
         }
     }
     cache[key] = out;
     return out;
 }
 
-static std::string combDriverFor(const ModuleGen& m, const std::string& base)
+static std::optional<uint64_t> parseConfiguredUint(std::string value)
 {
+    value = trim(std::move(value));
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    if (value == "false") {
+        return 0;
+    }
+    if (value == "true") {
+        return 1;
+    }
+    try {
+        size_t pos = 0;
+        auto parsed = std::stoull(value, &pos, 0);
+        if (pos == value.size()) {
+            return parsed;
+        }
+    }
+    catch (...) {
+    }
+    return std::nullopt;
+}
+
+static std::optional<bool> evalConfiguredGenerateCondition(const ModuleGen& m, std::string cond)
+{
+    auto values = configuredTextMap("HDLCPP_GENERATE_PARAM_VALUES");
+    if (values.empty()) {
+        return std::nullopt;
+    }
+
+    for (auto& item : values) {
+        auto key = item.first;
+        auto dot = key.find('.');
+        if (dot != std::string::npos) {
+            if (key.substr(0, dot) != m.name) {
+                continue;
+            }
+            key = key.substr(dot + 1);
+        }
+        replaceAll(cond, "(uint64_t)(" + key + ")", item.second);
+        replaceAll(cond, key, item.second);
+    }
+
+    cond = trim(cond);
+    while (cond.size() >= 2 && cond.front() == '(' && cond.back() == ')') {
+        cond = trim(cond.substr(1, cond.size() - 2));
+    }
+    if (cond.empty()) {
+        return std::nullopt;
+    }
+    if (cond.front() == '!') {
+        auto inner = evalConfiguredGenerateCondition(m, cond.substr(1));
+        if (inner) {
+            return !*inner;
+        }
+        return std::nullopt;
+    }
+
+    const char* ops[] = {"==", "!=", ">=", "<=", ">", "<"};
+    for (auto* op : ops) {
+        auto pos = cond.find(op);
+        if (pos == std::string::npos) {
+            continue;
+        }
+        auto lhs = parseConfiguredUint(cond.substr(0, pos));
+        auto rhs = parseConfiguredUint(cond.substr(pos + std::strlen(op)));
+        if (!lhs || !rhs) {
+            return std::nullopt;
+        }
+        std::string opText(op);
+        if (opText == "==") return *lhs == *rhs;
+        if (opText == "!=") return *lhs != *rhs;
+        if (opText == ">=") return *lhs >= *rhs;
+        if (opText == "<=") return *lhs <= *rhs;
+        if (opText == ">") return *lhs > *rhs;
+        if (opText == "<") return *lhs < *rhs;
+    }
+
+    auto value = parseConfiguredUint(cond);
+    if (value) {
+        return *value != 0;
+    }
+    return std::nullopt;
+}
+
+static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::string& base)
+{
+    std::vector<std::string> drivers;
+    auto addDriver = [&](const std::string& name) {
+        if (!name.empty() && std::find(drivers.begin(), drivers.end(), name) == drivers.end()) {
+            drivers.push_back(name);
+        }
+    };
+
     auto direct = m.wireMap.find(base);
     if (direct != m.wireMap.end()) {
-        return direct->second;
+        addDriver(direct->second);
     }
 
     auto storage = combStorageName(m, base);
@@ -461,11 +568,18 @@ static std::string combDriverFor(const ModuleGen& m, const std::string& base)
             auto lhsBaseEnd = lhs.find_first_of("[.");
             auto lhsBase = trim(lhsBaseEnd == std::string::npos ? lhs : lhs.substr(0, lhsBaseEnd));
             if (lhs == storage || lhsBase == storage || lhs == base || lhsBase == base) {
-                return method.name;
+                addDriver(method.name);
+                break;
             }
         }
     }
-    return "";
+    return drivers;
+}
+
+static std::string combDriverFor(const ModuleGen& m, const std::string& base)
+{
+    auto drivers = combDriversFor(m, base);
+    return drivers.empty() ? std::string() : drivers.front();
 }
 
 static std::string simpleBoundName(std::string s)
@@ -562,21 +676,16 @@ static bool isCppKeyword(const std::string& s)
 static std::string knownFunctionReturnWidth(const std::string& callee)
 {
     auto name = callee;
+    auto widths = configuredTextMap("HDLCPP_FUNCTION_WIDTHS");
+    if (auto it = widths.find(name); it != widths.end()) {
+        return it->second;
+    }
     auto pos = name.rfind("::");
     if (pos != std::string::npos) {
         name = name.substr(pos + 2);
     }
-    if (name == "aes_sbox_fwd" || name == "aes_sbox_inv") {
-        return "8";
-    }
-    if (name == "aes_mixcolumn_fwd" || name == "aes_mixcolumn_inv" || name == "aes_mixcolumn_inv8") {
-        return "32";
-    }
-    if (name == "sext32to64") {
-        return "64";
-    }
-    if (name == "toSize64" || (name.size() >= 10 && name.substr(name.size() - 10) == "::toSize64")) {
-        return "2";
+    if (auto it = widths.find(name); it != widths.end()) {
+        return it->second;
     }
     return "";
 }
@@ -588,9 +697,28 @@ static bool wantsNumericFunctionArgs(const std::string& callee)
 
 static bool wantsNumericFunctionArg(const std::string& callee, size_t index, bool numericArgs)
 {
-    if (callee.find("is_inside_") != std::string::npos &&
-        callee.find("_regions") != std::string::npos) {
-        return index > 0;
+    auto indices = configuredTextMap("HDLCPP_NUMERIC_ARG_INDICES");
+    auto wantsConfiguredIndex = [&](const std::string& name) {
+        auto it = indices.find(name);
+        if (it == indices.end()) {
+            return false;
+        }
+        std::stringstream ss(it->second);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item = trim(item);
+            if (!item.empty() && std::stoull(item) == index) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (wantsConfiguredIndex(callee)) {
+        return true;
+    }
+    auto pos = callee.rfind("::");
+    if (pos != std::string::npos && wantsConfiguredIndex(callee.substr(pos + 2))) {
+        return true;
     }
     return numericArgs;
 }
@@ -788,139 +916,8 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "<<<", "<<");
     replaceAll(line, ">>>", ">>");
     applyConfiguredLinePatches(line);
-    replaceAll(line, "SMODE_STATUS_READ_MASK.bits(", "logic<64>(SMODE_STATUS_READ_MASK).bits(");
-    replaceAll(line, "(uint64_t)(trap_vector_base_o)", "(uint64_t)(trap_vector_base_o_comb)");
-    replaceAll(line, "logic<1>(new_index[0])", "logic<1>(((uint64_t)(new_index) & 1ull))");
-    auto replaceDecoderInstructionFields = [&]() {
-        const std::pair<const char*, const char*> fields[] = {
-            {"instr_comb_func().rtype.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
-            {"instr_comb_func().itype.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
-            {"instr_comb_func().stype.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
-            {"instr_comb_func().atype.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
-            {"instr_comb_func().r4type.opcode", "logic<7>(instruction_i_in().bits(6,0))"},
-            {"instr_comb_func().rtype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().itype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().utype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().atype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().r4type.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().rftype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().rvftype.rd", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().rtype.funct3", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().itype.funct3", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().stype.funct3", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().atype.funct3", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().r4type.funct3", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().rtype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().itype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().stype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().atype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().r4type.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().rftype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().rvftype.rs1", "logic<5>(instruction_i_in().bits(19,15))"},
-            {"instr_comb_func().rtype.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().stype.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().atype.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().r4type.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().rftype.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().rvftype.rs2", "logic<5>(instruction_i_in().bits(24,20))"},
-            {"instr_comb_func().rtype.funct7", "logic<7>(instruction_i_in().bits(31,25))"},
-            {"instr_comb_func().itype.imm", "logic<12>(instruction_i_in().bits(31,20))"},
-            {"instr_comb_func().stype.imm", "logic<7>(instruction_i_in().bits(31,25))"},
-            {"instr_comb_func().stype.imm0", "logic<5>(instruction_i_in().bits(11,7))"},
-            {"instr_comb_func().utype.imm", "logic<20>(instruction_i_in().bits(31,12))"},
-            {"instr_comb_func().atype.funct5", "logic<5>(instruction_i_in().bits(31,27))"},
-            {"instr_comb_func().atype.aq", "logic<1>(instruction_i_in()[26])"},
-            {"instr_comb_func().atype.rl", "logic<1>(instruction_i_in()[25])"},
-            {"instr_comb_func().r4type.rs3", "logic<5>(instruction_i_in().bits(31,27))"},
-            {"instr_comb_func().r4type.funct2", "logic<2>(instruction_i_in().bits(26,25))"},
-            {"instr_comb_func().rftype.funct5", "logic<5>(instruction_i_in().bits(31,27))"},
-            {"instr_comb_func().rftype.fmt", "logic<2>(instruction_i_in().bits(26,25))"},
-            {"instr_comb_func().rftype.rm", "logic<3>(instruction_i_in().bits(14,12))"},
-            {"instr_comb_func().rvftype.funct2", "logic<2>(instruction_i_in().bits(31,30))"},
-            {"instr_comb_func().rvftype.vecfltop", "logic<5>(instruction_i_in().bits(29,25))"},
-            {"instr_comb_func().rvftype.repl", "logic<1>(instruction_i_in()[14])"},
-            {"instr_comb_func().rvftype.vfmt", "logic<2>(instruction_i_in().bits(13,12))"},
-            {"instr_comb_func().instr.bits(31,27)", "instruction_i_in().bits(31,27)"},
-            {"instr_comb_func().instr.bits(31,26)", "instruction_i_in().bits(31,26)"},
-            {"instr_comb_func().instr.bits(31,25)", "instruction_i_in().bits(31,25)"},
-            {"instr_comb_func().instr.bits(31,24)", "instruction_i_in().bits(31,24)"},
-            {"instr_comb_func().instr.bits(31,20)", "instruction_i_in().bits(31,20)"},
-            {"instr_comb_func().instr.bits(24,20)", "instruction_i_in().bits(24,20)"},
-            {"instr_comb_func().instr[25]", "instruction_i_in()[25]"},
-            {"instr_comb_func().rftype.rs2.bits(24,23)", "instruction_i_in().bits(24,23)"},
-            {"instr_comb_func().rftype.rs2.bits(24,22)", "instruction_i_in().bits(24,22)"},
-            {"instr_comb_func().rftype.rs2.bits(22,20)", "instruction_i_in().bits(22,20)"},
-            {"instr_comb_func().rvftype.rs2.bits(21,20)", "instruction_i_in().bits(21,20)"}
-        };
-        for (auto& field : fields) {
-            replaceAll(line, field.first, field.second);
-        }
-        replaceAll(line, "logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))", "logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))");
-        replaceAll(line, "logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))", "logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))");
-    };
-    replaceDecoderInstructionFields();
-    replaceAll(line, "{cl_offset_q, 0b0}", "((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))");
-    replaceAll(line, "{cl_offset_q, logic<3>(0b0)}", "((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))");
-    replaceAll(line, "icache_areq_o_out().fetch_exception.cause", "icache_areq_o.fetch_exception.cause");
-    replaceAll(line, "i_axi_shim.rd_req_i_in = _ASSIGN(axi_rd_req);", "i_axi_shim.rd_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_req));");
-    replaceAll(line, "i_axi_shim.rd_addr_i_in = _ASSIGN(axi_rd_addr);", "i_axi_shim.rd_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_addr));");
-    replaceAll(line, "i_axi_shim.rd_blen_i_in = _ASSIGN(axi_rd_blen);", "i_axi_shim.rd_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_blen));");
-    replaceAll(line, "i_axi_shim.rd_size_i_in = _ASSIGN(axi_rd_size);", "i_axi_shim.rd_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_size));");
-    replaceAll(line, "i_axi_shim.rd_id_i_in = _ASSIGN(axi_rd_id_in);", "i_axi_shim.rd_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_id_in));");
-    replaceAll(line, "i_axi_shim.rd_rdy_i_in = _ASSIGN(axi_rd_rdy);", "i_axi_shim.rd_rdy_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_rdy));");
-    replaceAll(line, "i_axi_shim.rd_lock_i_in = _ASSIGN(axi_rd_lock);", "i_axi_shim.rd_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_lock));");
-    replaceAll(line, "i_axi_shim.wr_req_i_in = _ASSIGN(axi_wr_req);", "i_axi_shim.wr_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_req));");
-    replaceAll(line, "i_axi_shim.wr_addr_i_in = _ASSIGN(axi_wr_addr);", "i_axi_shim.wr_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_addr));");
-    replaceAll(line, "i_axi_shim.wr_data_i_in = _ASSIGN(axi_wr_data);", "i_axi_shim.wr_data_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_data));");
-    replaceAll(line, "i_axi_shim.wr_user_i_in = _ASSIGN(axi_wr_user);", "i_axi_shim.wr_user_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_user));");
-    replaceAll(line, "i_axi_shim.wr_be_i_in = _ASSIGN(axi_wr_be);", "i_axi_shim.wr_be_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_be));");
-    replaceAll(line, "i_axi_shim.wr_size_i_in = _ASSIGN(axi_wr_size);", "i_axi_shim.wr_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_size));");
-    replaceAll(line, "i_axi_shim.wr_id_i_in = _ASSIGN(axi_wr_id_in);", "i_axi_shim.wr_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_id_in));");
-    replaceAll(line, "i_axi_shim.wr_atop_i_in = _ASSIGN(axi_wr_atop_comb_func());", "i_axi_shim.wr_atop_i_in = _ASSIGN_COMB(axi_wr_atop_comb_func());");
-    replaceAll(line, "i_axi_shim.wr_blen_i_in = _ASSIGN(axi_wr_blen);", "i_axi_shim.wr_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_blen));");
-    replaceAll(line, "i_axi_shim.wr_lock_i_in = _ASSIGN(axi_wr_lock);", "i_axi_shim.wr_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_lock));");
-    replaceAll(line, "((((uint64_t)(fu_data_i_in().operation)) & ((1ull << 1) - 1ull)))", "((uint64_t)(fu_data_i_in().operation))");
-    replaceAll(line, "pc_q._next = pc_d;", "reset_address_d_comb_func();\n            pc_q._next = pc_d;");
-    replaceAll(line, "reset_address_q._next = reset_address_d_comb_func();", "reset_address_q._next = reset_address_d_comb;");
-    replaceAll(line, "issue_pointer_q._next = issue_pointer_n_comb_func();", "mem_n_comb_func();\n            issue_pointer_q._next = issue_pointer_n_comb_func();");
-    replaceAll(line, "fu_data_bypass_comb.operand_a = result_o_comb_func()[(unsigned)((uint64_t)(0))];", "fu_data_bypass_comb.operand_a = alu_i.result_o_out();");
-    replaceAll(line, "fu_data_bypass_comb.operand_b = result_o_comb_func()[(unsigned)((uint64_t)(0))];", "fu_data_bypass_comb.operand_b = alu_i.result_o_out();");
-    replaceAll(line,
-        "logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])",
-        "logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))");
-    replaceAll(line,
-        "!logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])",
-        "!logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))");
-    replaceAll(line, "if (icache_first_q) {", "if (icache_first_q && axi_rd_last_comb_func()) {");
-    replaceAll(line, "if (dcache_first_q) {", "if (dcache_first_q && axi_rd_last_comb_func()) {");
     replaceAll(line, "empty_o_out = _ASSIGN( ~push_i_in() );", "empty_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~push_i_in()) : logic<1>((status_cnt_q == 0) & ~(logic<1>(FALL_THROUGH) & push_i_in())) );");
     replaceAll(line, "full_o_out = _ASSIGN( ~pop_i_in() );", "full_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~pop_i_in()) : logic<1>(status_cnt_q == FifoDepth) );");
-    replaceAll(line, "(((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[i].fu))");
-    replaceAll(line, "(((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[0].fu))");
-    replaceAll(line, "(((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull))", "((uint64_t)((issue_instr_i_in())[1].fu))");
-    replaceAll(line, "((((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)((issue_instr_i_in())[i].fu))");
-    replaceAll(line, "((((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)((issue_instr_i_in())[0].fu))");
-    replaceAll(line, "((((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)((issue_instr_i_in())[1].fu))");
-    replaceAll(line, "(((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull))", "((uint64_t)(lsu_ctrl_comb_func().fu))");
-    replaceAll(line, "((((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull)))", "((uint64_t)(lsu_ctrl_comb_func().fu))");
-    if (line.find("lsu_req_i_comb = cat{logic<1>((uint64_t)(lsu_valid_i_in()))") != std::string::npos) {
-        line =
-            "lsu_req_i_comb = 0;\n"
-            "        lsu_req_i_comb.valid = lsu_valid_i_in();\n"
-            "        lsu_req_i_comb.vaddr = vaddr_i_comb_func();\n"
-            "        lsu_req_i_comb.tinst = tinst_i_in();\n"
-            "        lsu_req_i_comb.hs_ld_st_inst = hs_ld_st_inst;\n"
-            "        lsu_req_i_comb.hlvx_inst = hlvx_inst_comb_func();\n"
-            "        lsu_req_i_comb.overflow = overflow_comb_func();\n"
-            "        lsu_req_i_comb.g_overflow = g_overflow_comb_func();\n"
-            "        lsu_req_i_comb.data = fu_data_i_in().operand_b;\n"
-            "        lsu_req_i_comb.be = be_i_comb_func();\n"
-            "        lsu_req_i_comb.fu = fu_data_i_in().fu;\n"
-            "        lsu_req_i_comb.operation = fu_data_i_in().operation;\n"
-            "        lsu_req_i_comb.trans_id = fu_data_i_in().trans_id;\n"
-            "        lsu_req_i_comb.is_speculative_load = speculative_load_i_in();\n"
-            "        lsu_req_i_comb.is_speculative_load_miss = logic<1>(0b0);";
-    }
     auto repairRuntimeLogicWidths = [&]() {
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
@@ -1032,10 +1029,19 @@ static std::string postProcessCppLine(std::string line)
             amp = lhsStart + lhs.size();
         }
     };
-    removeTargetedMasks("instr_comb_func().");
+    if (auto tokens = std::getenv("HDLCPP_REMOVE_TARGETED_MASK_TOKENS")) {
+        std::stringstream ss(tokens);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token = trim(token);
+            if (!token.empty()) {
+                removeTargetedMasks(token);
+            }
+        }
+    }
     removeTargetedMasks("issue_instr_i_in()");
     removeTargetedMasks("lsu_ctrl_comb_func().fu");
-    replaceAll(line, "(((((uint64_t)(instr_comb_func()", "((((uint64_t)(instr_comb_func()");
+    applyConfiguredLinePatches(line);
     replaceAll(line, "(((((uint64_t)((issue_instr_i_in()", "((((uint64_t)((issue_instr_i_in()");
     replaceAll(line, "(((((uint64_t)(lsu_ctrl_comb_func().fu", "((((uint64_t)(lsu_ctrl_comb_func().fu");
     auto removeOneBitMasks = [&](const std::string& token) {
@@ -1088,7 +1094,16 @@ static std::string postProcessCppLine(std::string line)
             amp = lhsStart + lhs.size();
         }
     };
-    removeOneBitMasks("instruction_i_in().bits");
+    if (auto tokens = std::getenv("HDLCPP_REMOVE_ONE_BIT_MASK_TOKENS")) {
+        std::stringstream ss(tokens);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token = trim(token);
+            if (!token.empty()) {
+                removeOneBitMasks(token);
+            }
+        }
+    }
     for (size_t pos = 0; (pos = line.find("_in()[", pos)) != std::string::npos;) {
         auto nameStart = pos;
         while (nameStart > 0 && (std::isalnum(static_cast<unsigned char>(line[nameStart - 1])) || line[nameStart - 1] == '_')) {
@@ -1261,10 +1276,6 @@ static std::string postProcessCppLine(std::string line)
             }
         }
     }
-    replaceAll(line, "atop.bits(", "logic<6>(atop).bits(");
-    replaceAll(line, "axi_pkg::ATOP_ATOMICSWAP.bits(", "logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(");
-    replaceAll(line, "== logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4)",
-               "== logic<2>(logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4))");
     replaceAll(line, "case ((uint64_t)(\"zeros\")):", "case 0:");
     replaceAll(line, "case ((uint64_t)(\"ones\")):", "case 1:");
     replaceAll(line, "case ((uint64_t)(\"random\")):", "case 2:");
@@ -1274,18 +1285,6 @@ static std::string postProcessCppLine(std::string line)
         auto indent = line.substr(0, line.find_first_not_of(" \t"));
         auto rhs = trim(trimmedForResult.substr(9, trimmedForResult.size() - 10));
         line = indent + "result = (uint64_t)(" + rhs + ");";
-    }
-    replaceAll(line, "$high(div_shift_comb_func())", "clog2((uint64_t)(WIDTH) + ((uint64_t)(1) & ((1ull << 32) - 1ull)))");
-    replaceAll(line, "$high(op_a_i_in())", "((uint64_t)(WIDTH) - 1)");
-    replaceAll(line, "$high(op_b_i_in())", "((uint64_t)(WIDTH) - 1)");
-    replaceAll(line, "logic<REQ_ID_BITS>", "logic<(ReqFifoDepth > 1 ? clog2(ReqFifoDepth) : 1)>");
-    replaceAll(line, "HS_DELEG_INTERRUPTS.bits(", "logic<64>(HS_DELEG_INTERRUPTS).bits(");
-    replaceAll(line, "VS_DELEG_INTERRUPTS.bits(", "logic<64>(VS_DELEG_INTERRUPTS).bits(");
-    if (line.find("inline constexpr uint64_t napot_match(uint64_t base, uint64_t value)") != std::string::npos) {
-        line = "template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base, const VALUE_T& value)";
-    }
-    if (line.find("inline constexpr uint64_t match_scontext(uint64_t scontext, uint64_t sselect, uint64_t sbytemask, uint64_t svalue, uint64_t flag)") != std::string::npos) {
-        line = "template<typename SCONTEXT_T, typename SSELECT_T, typename SBYTEMASK_T, typename SVALUE_T, typename FLAG_T> inline uint64_t match_scontext(const SCONTEXT_T& scontext, const SSELECT_T& sselect, const SBYTEMASK_T& sbytemask, const SVALUE_T& svalue, const FLAG_T& flag)";
     }
     auto control = trim(line);
     if ((control.rfind("if (", 0) == 0 || control.rfind("else if (", 0) == 0 ||
@@ -2280,16 +2279,73 @@ static std::string constexprStructFieldType(std::string type)
     return constexprType(std::move(type));
 }
 
-static std::string packedAggregateHelpers(const std::string& name)
+struct PackedFieldInfo {
+    std::string name;
+    std::string width;
+};
+
+static std::string joinedPackedWidth(const std::vector<PackedFieldInfo>& fields)
 {
+    if (fields.empty()) {
+        return "";
+    }
+    auto width = fields.front().width;
+    for (size_t i = 1; i < fields.size(); ++i) {
+        width += " + " + fields[i].width;
+    }
+    return foldWidth(width);
+}
+
+static std::string addWidthExpr(const std::string& offset, const std::string& width)
+{
+    if (offset == "0") {
+        return width;
+    }
+    return offset + " + " + width;
+}
+
+static std::string packedAggregateHelpers(const std::string& name, std::string width = "", const std::vector<PackedFieldInfo>& fields = {})
+{
+    if (width.empty() || fields.empty()) {
+        width = "sizeof(" + name + ")*8";
+    }
     std::string line;
-    line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { (*(logic<sizeof(" + name + ")*8>*)this) = v; return *this; }\n";
-    line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { (*(logic<sizeof(" + name + ")*8>*)this) = logic<sizeof(" + name + ")*8>(v); return *this; }\n";
-    line += "    auto bits(size_t last, size_t first) { return (*(logic<sizeof(" + name + ")*8>*)this).bits(last, first); }\n";
+    if (!fields.empty()) {
+        line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
+        std::string offset = "0";
+        for (auto& field : fields) {
+            auto next = addWidthExpr(offset, field.width);
+            line += "        this->" + field.name + " = logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")));\n";
+            offset = next;
+        }
+        line += "        return *this; }\n";
+        line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return (*this = logic<" + width + ">(v)); }\n";
+        line += "    logic<" + width + "> pack() const { logic<" + width + "> packed = 0;\n";
+        offset = "0";
+        for (auto& field : fields) {
+            auto next = addWidthExpr(offset, field.width);
+            line += "        packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = logic<" + field.width + ">((uint64_t)(this->" + field.name + "));\n";
+            offset = next;
+        }
+        line += "        return packed; }\n";
+        line += "    auto bits(size_t last, size_t first) { return pack().bits(last, first); }\n";
+    }
+    else {
+        line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { (*(logic<" + width + ">*)this) = v; return *this; }\n";
+        line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { (*(logic<" + width + ">*)this) = logic<" + width + ">(v); return *this; }\n";
+        line += "    auto bits(size_t last, size_t first) { return (*(logic<" + width + ">*)this).bits(last, first); }\n";
+    }
     line += "    auto bits(size_t last, size_t first) const { return const_cast<" + name + "*>(this)->bits(last, first); }\n";
-    line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return (*(const logic<sizeof(" + name + ")*8>*)this) | rhs; }\n";
-    line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return (*(const logic<sizeof(" + name + ")*8>*)this) & rhs; }\n";
-    line += "    explicit operator uint64_t() const { return ((const logic<sizeof(" + name + ")*8>&)*this).to_ullong(); }\n";
+    if (!fields.empty()) {
+        line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return pack() | rhs; }\n";
+        line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return pack() & rhs; }\n";
+        line += "    explicit operator uint64_t() const { return pack().to_ullong(); }\n";
+    }
+    else {
+        line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) | rhs; }\n";
+        line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) & rhs; }\n";
+        line += "    explicit operator uint64_t() const { return ((const logic<" + width + ">&)*this).to_ullong(); }\n";
+    }
     return line;
 }
 
@@ -2344,6 +2400,35 @@ static std::vector<std::string> memoryArgs(const std::string& type)
             --nested;
         }
         if (c == ',' && nested == 0) {
+            args.push_back(trim(current));
+            current.clear();
+        }
+        else {
+            current += c;
+        }
+    }
+    args.push_back(trim(current));
+    return args;
+}
+
+static std::vector<std::string> templateArgsFor(const std::string& type, const std::string& prefix)
+{
+    std::vector<std::string> args;
+    if (type.rfind(prefix + "<", 0) != 0 || type.empty() || type.back() != '>') {
+        return args;
+    }
+    int depth = 0;
+    std::string current;
+    auto start = prefix.size() + 1;
+    for (size_t i = start; i + 1 < type.size(); ++i) {
+        char c = type[i];
+        if (c == '<') {
+            ++depth;
+        }
+        else if (c == '>') {
+            --depth;
+        }
+        if (c == ',' && depth == 0) {
             args.push_back(trim(current));
             current.clear();
         }
@@ -2477,6 +2562,102 @@ struct Converter : SyntaxVisitor<Converter> {
         return nullptr;
     }
 
+    void registerTypeField(const std::string& typeName, const std::string& fieldName, const std::string& fieldType)
+    {
+        if (!mod || typeName.empty() || fieldName.empty() || fieldType.empty()) {
+            return;
+        }
+        mod->typeFields[typeName][fieldName] = fieldType;
+        if (mod->isPackage) {
+            mod->typeFields[mod->name + "::" + typeName][fieldName] = fieldType;
+        }
+    }
+
+    std::string unwrappedValueType(std::string type)
+    {
+        type = trim(std::move(type));
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
+                type = trim(type.substr(4, type.size() - 5));
+                changed = true;
+                continue;
+            }
+            auto arrayArgs = templateArgsFor(type, "array");
+            if (arrayArgs.size() == 2) {
+                type = arrayArgs[0];
+                changed = true;
+                continue;
+            }
+        }
+        return type;
+    }
+
+    std::string fieldTypeFor(std::string parentType, const std::string& field)
+    {
+        parentType = unwrappedValueType(std::move(parentType));
+        if (parentType.empty()) {
+            return "";
+        }
+        auto findInModule = [&](ModuleGen& m, const std::string& type) -> std::string {
+            auto it = m.typeFields.find(type);
+            if (it != m.typeFields.end()) {
+                auto fit = it->second.find(field);
+                if (fit != it->second.end()) {
+                    return fit->second;
+                }
+            }
+            auto alias = m.types.find(type);
+            if (alias != m.types.end() && alias->second != type) {
+                auto ait = m.typeFields.find(alias->second);
+                if (ait != m.typeFields.end()) {
+                    auto fit = ait->second.find(field);
+                    if (fit != ait->second.end()) {
+                        return fit->second;
+                    }
+                }
+            }
+            return "";
+        };
+        auto sep = parentType.rfind("::");
+        if (sep != std::string::npos) {
+            auto pkg = parentType.substr(0, sep);
+            if (auto* m = findModule(pkg)) {
+                auto found = findInModule(*m, parentType);
+                if (!found.empty()) {
+                    return found;
+                }
+                return findInModule(*m, parentType.substr(sep + 2));
+            }
+        }
+        if (mod) {
+            auto found = findInModule(*mod, parentType);
+            if (!found.empty()) {
+                return found;
+            }
+            for (auto& import : mod->imports) {
+                if (auto* m = findModule(import)) {
+                    found = findInModule(*m, parentType);
+                    if (!found.empty()) {
+                        return found;
+                    }
+                    found = findInModule(*m, import + "::" + parentType);
+                    if (!found.empty()) {
+                        return found;
+                    }
+                }
+            }
+        }
+        for (auto& candidate : modules) {
+            auto found = findInModule(candidate, parentType);
+            if (!found.empty()) {
+                return found;
+            }
+        }
+        return "";
+    }
+
     const ExpressionSyntax* propertyExpr(const PropertyExprSyntax& prop)
     {
         if (prop.kind != SyntaxKind::SimplePropertyExpr) {
@@ -2546,34 +2727,58 @@ struct Converter : SyntaxVisitor<Converter> {
                             mod->typeDecls.push_back(decl);
                             continue;
                         }
-                        bool makeLocalType = localTypeModules.count(mod->name) && localTypeNames.count(name) && d->assignment;
+                        bool localparamType = p->toString().find("localparam") != std::string::npos;
+                        bool makeLocalType = (localparamType ||
+                                              (localTypeModules.count(mod->name) && localTypeNames.count(name))) &&
+                                             d->assignment;
                         if (makeLocalType) {
                             mod->types[name] = name;
-                            if (d->assignment->type->kind == SyntaxKind::StructType ||
-                                d->assignment->type->kind == SyntaxKind::UnionType) {
-                                auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
-                                std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
-                                for (auto member : st.members) {
-                                    for (auto md : member->declarators) {
-                                        if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
-                                auto& nested = member->type->as<StructUnionTypeSyntax>();
-                                line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
+	                            if (d->assignment->type->kind == SyntaxKind::StructType ||
+	                                d->assignment->type->kind == SyntaxKind::UnionType) {
+	                                auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
+	                                std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+	                                std::vector<PackedFieldInfo> fieldWidths;
+	                                std::vector<std::string> fieldLines;
+	                                for (auto member : st.members) {
+	                                    for (auto md : member->declarators) {
+	                                        if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
+	                                auto& nested = member->type->as<StructUnionTypeSyntax>();
+	                                line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
                                 for (auto nestedMember : nested.members) {
                                     for (auto nd : nestedMember->declarators) {
                                         line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
                                     }
                                 }
                                 line += "} " + cppIdent(tok(md->name)) + ";\n";
-                            }
-                            else {
-                                line += "    " + varType(*member->type, *md) + " " + cppIdent(tok(md->name)) + ";\n";
-                            }
-                                    }
-                                }
-                                line += packedAggregateHelpers(name);
-                                line += "};";
-                                mod->typeDecls.push_back(line);
-                            }
+	                            }
+	                            else {
+	                                auto fieldType = varType(*member->type, *md);
+	                                registerTypeField(name, tok(md->name), fieldType);
+	                                auto fieldWidth = typeWidth(fieldType);
+	                                if (!fieldWidth.empty()) {
+	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth});
+	                                }
+	                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
+	                            }
+	                        }
+	                    }
+	                                auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	                                if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                                    (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+	                                    std::reverse(fieldLines.begin(), fieldLines.end());
+	                                    std::reverse(fieldWidths.begin(), fieldWidths.end());
+	                                }
+	                                auto packedWidth = joinedPackedWidth(fieldWidths);
+	                                for (auto& fieldLine : fieldLines) {
+	                                    line += fieldLine;
+	                                }
+	                                line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+	                                line += "};";
+	                                if (!packedWidth.empty()) {
+	                                    mod->typeWidths[name] = packedWidth;
+	                                }
+	                                mod->typeDecls.push_back(line);
+	                            }
                             else {
                                 auto initType = cppTypeFromSvText(d->assignment->toString());
                                 if (initType == "logic") {
@@ -2714,7 +2919,9 @@ struct Converter : SyntaxVisitor<Converter> {
             auto firstName = tok(node.declarators[0]->name);
             anonymousStructType = firstName + "_t";
             std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + anonymousStructType + " {\n";
-            for (auto member : st.members) {
+	            std::vector<PackedFieldInfo> fieldWidths;
+	            std::vector<std::string> fieldLines;
+	            for (auto member : st.members) {
                 for (auto d : member->declarators) {
                     if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
                         auto& nested = member->type->as<StructUnionTypeSyntax>();
@@ -2726,12 +2933,28 @@ struct Converter : SyntaxVisitor<Converter> {
                         }
                         line += "} " + cppIdent(tok(d->name)) + ";\n";
                     }
-                    else {
-                        line += "    " + varType(*member->type, *d) + " " + cppIdent(tok(d->name)) + ";\n";
-                    }
-                }
-            }
-            line += packedAggregateHelpers(anonymousStructType);
+	                    else {
+	                        auto fieldType = varType(*member->type, *d);
+	                        registerTypeField(anonymousStructType, tok(d->name), fieldType);
+	                        auto fieldWidth = typeWidth(fieldType);
+	                        if (!fieldWidth.empty()) {
+	                            fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth});
+	                        }
+		                        fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
+		                    }
+		                }
+		            }
+	            auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	            if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                (reversePackedTypes.count(anonymousStructType) || reversePackedTypes.count(mod->name + "." + anonymousStructType))) {
+	                std::reverse(fieldLines.begin(), fieldLines.end());
+	                std::reverse(fieldWidths.begin(), fieldWidths.end());
+	            }
+	            auto packedWidth = joinedPackedWidth(fieldWidths);
+	            for (auto& fieldLine : fieldLines) {
+	                line += fieldLine;
+	            }
+	            line += packedAggregateHelpers(anonymousStructType, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
             line += "};";
             mod->typeDecls.push_back(line);
             mod->types[anonymousStructType] = anonymousStructType;
@@ -2889,18 +3112,38 @@ struct Converter : SyntaxVisitor<Converter> {
         if (node.type->kind == SyntaxKind::StructType || node.type->kind == SyntaxKind::UnionType) {
             auto& st = node.type->as<StructUnionTypeSyntax>();
             std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+	            std::vector<PackedFieldInfo> fieldWidths;
+	            std::vector<std::string> fieldLines;
             for (auto member : st.members) {
-                for (auto d : member->declarators) {
-                    auto fieldType = varType(*member->type, *d);
+	                for (auto d : member->declarators) {
+	                    auto fieldType = varType(*member->type, *d);
+	                    registerTypeField(name, tok(d->name), fieldType);
+	                    auto fieldWidth = typeWidth(fieldType);
+	                    if (!fieldWidth.empty()) {
+	                        fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth});
+                    }
                     if (mod->isPackage) {
                         fieldType = constexprStructFieldType(fieldType);
                     }
-                    line += "    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n";
-                }
-            }
-            line += packedAggregateHelpers(name);
+	                    fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
+	                }
+	            }
+	            auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	            if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+	                std::reverse(fieldLines.begin(), fieldLines.end());
+	                std::reverse(fieldWidths.begin(), fieldWidths.end());
+	            }
+	            auto packedWidth = joinedPackedWidth(fieldWidths);
+	            for (auto& fieldLine : fieldLines) {
+	                line += fieldLine;
+	            }
+	            line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
             line += "};";
             mod->typeDecls.push_back(line);
+            if (!packedWidth.empty()) {
+                mod->typeWidths[name] = packedWidth;
+            }
             if (mod->isPackage) {
                 mod->packageDecls.push_back(line);
             }
@@ -2935,11 +3178,13 @@ struct Converter : SyntaxVisitor<Converter> {
                 mod->types[name] = name;
                 if (d->assignment && (d->assignment->type->kind == SyntaxKind::StructType ||
                                       d->assignment->type->kind == SyntaxKind::UnionType)) {
-                    auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
-                    std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
-                    for (auto member : st.members) {
-                        for (auto md : member->declarators) {
-                            if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
+	                    auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
+	                    std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+		                    std::vector<PackedFieldInfo> fieldWidths;
+		                    std::vector<std::string> fieldLines;
+	                    for (auto member : st.members) {
+	                        for (auto md : member->declarators) {
+	                            if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
                                 auto& nested = member->type->as<StructUnionTypeSyntax>();
                                 line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
                                 for (auto nestedMember : nested.members) {
@@ -2947,17 +3192,36 @@ struct Converter : SyntaxVisitor<Converter> {
                                         line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
                                     }
                                 }
-                                line += "} " + cppIdent(tok(md->name)) + ";\n";
-                            }
-                            else {
-                                line += "    " + varType(*member->type, *md) + " " + cppIdent(tok(md->name)) + ";\n";
-                            }
-                        }
-                    }
-                    line += packedAggregateHelpers(name);
-                    line += "};";
-                    mod->typeDecls.push_back(line);
-                }
+	                                line += "} " + cppIdent(tok(md->name)) + ";\n";
+	                            }
+	                            else {
+	                                auto fieldType = varType(*member->type, *md);
+	                                registerTypeField(name, tok(md->name), fieldType);
+	                                auto fieldWidth = typeWidth(fieldType);
+	                                if (!fieldWidth.empty()) {
+	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth});
+	                                }
+		                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
+		                            }
+		                        }
+		                    }
+		                    auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+		                    if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+		                        (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+		                        std::reverse(fieldLines.begin(), fieldLines.end());
+		                        std::reverse(fieldWidths.begin(), fieldWidths.end());
+		                    }
+		                    auto packedWidth = joinedPackedWidth(fieldWidths);
+		                    for (auto& fieldLine : fieldLines) {
+		                        line += fieldLine;
+		                    }
+		                    line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+	                    line += "};";
+	                    if (!packedWidth.empty()) {
+	                        mod->typeWidths[name] = packedWidth;
+	                    }
+	                    mod->typeDecls.push_back(line);
+	                }
                 else if (d->assignment) {
                     auto aliasOverrides = configuredTextMap("HDLCPP_TYPE_ALIAS_OVERRIDES");
                     auto aliasIt = aliasOverrides.find(name);
@@ -3002,20 +3266,26 @@ struct Converter : SyntaxVisitor<Converter> {
                     lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
                     rhs = emitConditionalAsDecltype(b.right->as<ConditionalExpressionSyntax>(), lhs);
                 }
-                if (!base.empty() && wholeNetAssign) {
-                    mod->assignExprByBase[base] = rhs;
-                }
-                mod->assigns.push_back({lhs, rhs});
-                if (internalWholeNet || (!base.empty() && mod->varNames.count(base) && !wholeNetAssign &&
-                                         !mod->outputPortCppNames.count(base))) {
-                    addCombAssignment(*mod, base, lhs, rhs);
-                    continue;
-                }
                 for (auto& p : mod->ports) {
                     if (p.name == lhs && needsTypedZero(p.type) && isZeroLiteralText(rhs)) {
                         rhs = p.type + "{}";
                         break;
                     }
+                }
+                if (!base.empty() && wholeNetAssign) {
+                    mod->assignExprByBase[base] = rhs;
+                }
+                mod->assigns.push_back({lhs, rhs});
+                if (!base.empty() && mod->outputPortCppNames.count(base) &&
+                    b.left->kind != SyntaxKind::IdentifierName &&
+                    !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", mod->name)) {
+                    addCombAssignment(*mod, base, emitLValue(*b.left), rhs);
+                    continue;
+                }
+                if (internalWholeNet || (!base.empty() && mod->varNames.count(base) && !wholeNetAssign &&
+                                         !mod->outputPortCppNames.count(base))) {
+                    addCombAssignment(*mod, base, lhs, rhs);
+                    continue;
                 }
                 mod->assignLines.push_back(lhs + " = " + ((lhs.find('.') != std::string::npos && lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) ? rhs : assignWrapper(rhs, "")) + ";");
             }
@@ -3074,6 +3344,25 @@ struct Converter : SyntaxVisitor<Converter> {
     void handle(const IfGenerateSyntax& node)
     {
         if (!mod) {
+            return;
+        }
+        auto visitGenerateClause = [&](const MemberSyntax& member) {
+            if (member.kind == SyntaxKind::GenerateBlock) {
+                for (auto child : member.as<GenerateBlockSyntax>().members) {
+                    child->visit(*this);
+                }
+            }
+            else {
+                member.visit(*this);
+            }
+        };
+        if (auto decision = evalConfiguredGenerateCondition(*mod, emitExpr(*node.condition))) {
+            if (*decision) {
+                visitGenerateClause(*node.block);
+            }
+            else if (node.elseClause && node.elseClause->clause) {
+                visitGenerateClause(node.elseClause->clause->as<MemberSyntax>());
+            }
             return;
         }
         if (configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
@@ -3333,28 +3622,6 @@ struct Converter : SyntaxVisitor<Converter> {
             else if (m.name == "maximum" && m.args.find(',') != std::string::npos) {
                 m.body.push_back("return a > b ? a : b;");
             }
-            else if (mod->name == "config_pkg" && m.name == "range_check") {
-                m.body.push_back("return (address >= base) && ((__uint128_t)address < ((__uint128_t)base + (__uint128_t)len));");
-            }
-            else if (mod->name == "config_pkg" && m.name == "is_inside_nonidempotent_regions") {
-                m.body.push_back("for (unsigned k = 0; k < Cfg.NrNonIdempotentRules; ++k) {");
-                m.body.push_back("    if (range_check(Cfg.NonIdempotentAddrBase[k], Cfg.NonIdempotentLength[k], address)) return 1;");
-                m.body.push_back("}");
-                m.body.push_back("return 0;");
-            }
-            else if (mod->name == "config_pkg" && m.name == "is_inside_execute_regions") {
-                m.body.push_back("if (Cfg.NrExecuteRegionRules == 0) return 1;");
-                m.body.push_back("for (unsigned k = 0; k < Cfg.NrExecuteRegionRules; ++k) {");
-                m.body.push_back("    if (range_check(Cfg.ExecuteRegionAddrBase[k], Cfg.ExecuteRegionLength[k], address)) return 1;");
-                m.body.push_back("}");
-                m.body.push_back("return 0;");
-            }
-            else if (mod->name == "config_pkg" && m.name == "is_inside_cacheable_regions") {
-                m.body.push_back("for (unsigned k = 0; k < Cfg.NrCachedRegionRules; ++k) {");
-                m.body.push_back("    if (range_check(Cfg.CachedRegionAddrBase[k], Cfg.CachedRegionLength[k], address)) return 1;");
-                m.body.push_back("}");
-                m.body.push_back("return 0;");
-            }
             else if (m.ret != "void") {
                 m.body.push_back("return {};");
             }
@@ -3430,6 +3697,22 @@ struct Converter : SyntaxVisitor<Converter> {
         }
         else if (node.kind == SyntaxKind::IfGenerate) {
             auto& ifGen = node.as<IfGenerateSyntax>();
+            auto condForEval = emitExpr(*ifGen.condition);
+            applyGenerateReplacements(condForEval);
+            if (auto decision = evalConfiguredGenerateCondition(*mod, condForEval)) {
+                if (*decision) {
+                    emitGenerateMember(*ifGen.block, index, indexLimit, replacements, methodLoopHeaders);
+                }
+                else if (ifGen.elseClause && ifGen.elseClause->clause) {
+                    auto* clause = ifGen.elseClause->clause.get();
+                    if (clause->kind == SyntaxKind::IfGenerate || clause->kind == SyntaxKind::GenerateBlock ||
+                        clause->kind == SyntaxKind::DataDeclaration || clause->kind == SyntaxKind::ContinuousAssign ||
+                        clause->kind == SyntaxKind::HierarchyInstantiation) {
+                        emitGenerateMember(clause->as<MemberSyntax>(), index, indexLimit, replacements, methodLoopHeaders);
+                    }
+                }
+                return;
+            }
             if (mod && configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
                 auto cond = emitExpr(*ifGen.condition);
                 applyGenerateReplacements(cond);
@@ -3488,31 +3771,49 @@ struct Converter : SyntaxVisitor<Converter> {
                         }
                         appendParam(namedParams.count(paramName) ? namedParams[paramName] : defaultValue);
                     }
-                }
-                else {
-                    auto* child = findModule(type);
-                    if (child && !child->params.empty()) {
-                        for (auto& declared : child->params) {
-                            auto pname = templateParamName(declared);
-                            if ((type == "instr_tracer") &&
-                                (pname == "INTERRUPTS" || declared.find("INTERRUPTS") != std::string::npos)) {
-                                continue;
-                            }
-                            auto it = namedParams.find(pname);
-                            if (it != namedParams.end()) {
-                                appendParam(it->second);
-                            }
-                        }
-                    }
-                    else {
-                        for (auto& item : namedParamOrder) {
-                            if (type == "instr_tracer" && item.first == "INTERRUPTS") {
-                                continue;
-                            }
-                            appendParam(item.second);
-                        }
-                    }
-                }
+	                }
+	                else {
+	                    auto* child = findModule(type);
+	                    auto configuredParams = child ? std::vector<std::string>{} : configuredModuleParams(type);
+	                    auto& declParams = child ? child->params : configuredParams;
+	                    if (!declParams.empty()) {
+	                        std::vector<std::string> paramNames;
+	                        for (auto& declared : declParams) {
+	                            paramNames.push_back(templateParamName(declared));
+	                        }
+	                        int lastNeeded = -1;
+	                        for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
+	                            if (namedParams.count(paramNames[i])) {
+	                                lastNeeded = i;
+	                            }
+	                        }
+	                        std::map<std::string, std::string> emittedParams;
+	                        for (int i = 0; i <= lastNeeded; ++i) {
+	                            auto& declared = declParams[i];
+	                            auto& pname = paramNames[i];
+	                            auto it = namedParams.find(pname);
+	                            if (it != namedParams.end()) {
+	                                appendParam(it->second);
+	                                emittedParams[pname] = it->second;
+	                            }
+	                            else {
+	                                auto def = templateParamDefault(declared);
+	                                if (!def.empty()) {
+	                                    for (auto& prior : emittedParams) {
+	                                        replaceIdentifierAll(def, prior.first, prior.second);
+	                                    }
+	                                    appendParam(def);
+	                                    emittedParams[pname] = def;
+	                                }
+	                            }
+	                        }
+	                    }
+	                    else {
+	                        for (auto& item : namedParamOrder) {
+	                            appendParam(item.second);
+	                        }
+	                    }
+	                }
             }
             for (auto inst : instNode.instances) {
                 if (!inst->decl) {
@@ -3528,7 +3829,6 @@ struct Converter : SyntaxVisitor<Converter> {
                     mod->memberArraySizes[name] = indexLimit;
                 }
                 auto elem = name + "[(unsigned)(uint64_t)((uint64_t)(i))]";
-                std::vector<std::string> outputLines;
                 for (auto conn : inst->connections) {
                     if (conn->kind != SyntaxKind::NamedPortConnection) {
                         continue;
@@ -3557,10 +3857,31 @@ struct Converter : SyntaxVisitor<Converter> {
                         }
                         isOutput = isOutput || child->outputPortCppNames.count(port) != 0;
                     }
-                    else {
-                        isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos;
-                        portName += isOutput ? "_out" : "_in";
-                    }
+	                    else {
+	                        isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos;
+	                        portName += isOutput ? "_out" : "_in";
+	                    }
+	                    if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); portTypes.count(type + "." + port)) {
+	                        auto spec = portTypes[type + "." + port];
+	                        auto sep = spec.find(':');
+	                        auto direction = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
+	                        auto configuredType = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+	                        if (direction == "output") {
+	                            isOutput = true;
+	                            if (!hasSuffix(portName, "_out")) {
+	                                portName = port + "_out";
+	                            }
+	                        }
+	                        else if (direction == "input") {
+	                            isOutput = false;
+	                            if (!hasSuffix(portName, "_in")) {
+	                                portName = port + "_in";
+	                            }
+	                        }
+	                        if (!configuredType.empty()) {
+	                            portType = configuredType;
+	                        }
+	                    }
                     if (!c.expr) {
                         continue;
                     }
@@ -3574,21 +3895,17 @@ struct Converter : SyntaxVisitor<Converter> {
                     applyGenerateReplacements(lhs);
                     if (isOutput) {
                         auto outExpr = elem + "." + portName + "()";
-                        if (((portType.rfind("array<", 0) == 0 && portType.find(",1>") != std::string::npos) ||
-                             (type == "tc_sram_wrapper" && port == "rdata_o")) &&
-                            lhs.find(".bits(") != std::string::npos) {
+                        if (portType.rfind("array<", 0) == 0 &&
+                            (lhs.find(".bits(") != std::string::npos || lhs.find(".get(") != std::string::npos)) {
                             outExpr += "[0]";
                         }
-                        outputLines.push_back("    " + lhs + " = " + outExpr + ";");
+                        addCombAssignment(*mod, baseFromLValueText(lhs), lhs, outExpr, methodLoopHeaders);
                     }
                     else {
                         mod->assignLines.push_back("    " + elem + "." + portName + " = " + assignWrapper(rhs, "i") + ";");
                     }
                 }
                 mod->assignLines.push_back("    " + elem + "._assign();");
-                for (auto& line : outputLines) {
-                    mod->assignLines.push_back(line);
-                }
             }
         }
         else if (node.kind == SyntaxKind::AlwaysBlock ||
@@ -3734,6 +4051,16 @@ struct Converter : SyntaxVisitor<Converter> {
         return methodHasExternallyVisibleCombSideEffects(mod, method);
     }
 
+    bool isPlainCombDriver(const ModuleGen& mod, const std::string& driver)
+    {
+        for (auto& method : mod.methods) {
+            if (method.name == driver) {
+                return emitPlainCombMethod(mod, method);
+            }
+        }
+        return false;
+    }
+
     std::vector<std::string> sideEffectCombCalls(const ModuleGen& mod)
     {
         std::vector<std::string> calls;
@@ -3745,7 +4072,50 @@ struct Converter : SyntaxVisitor<Converter> {
         return calls;
     }
 
-    void addCombAssignment(ModuleGen& target, const std::string& svBase, const std::string& lhs, const std::string& rhs)
+    void movePartialOutputAssignLinesToComb(ModuleGen& target)
+    {
+        std::vector<std::string> kept;
+        for (auto& line : target.assignLines) {
+            auto t = trim(line);
+            auto eq = t.find('=');
+            if (eq == std::string::npos) {
+                kept.push_back(line);
+                continue;
+            }
+            auto lhs = trim(t.substr(0, eq));
+            auto rhs = trim(t.substr(eq + 1));
+            if (!rhs.empty() && rhs.back() == ';') {
+                rhs.pop_back();
+                rhs = trim(rhs);
+            }
+            auto base = baseFromLValueText(lhs);
+            auto containsIdentifier = [](const std::string& text, const std::string& id) {
+                for (size_t pos = 0; (pos = text.find(id, pos)) != std::string::npos; ++pos) {
+                    auto before = pos == 0 ? '\0' : text[pos - 1];
+                    auto after = pos + id.size() >= text.size() ? '\0' : text[pos + id.size()];
+                    if (!std::isalnum(static_cast<unsigned char>(before)) && before != '_' &&
+                        !std::isalnum(static_cast<unsigned char>(after)) && after != '_') {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            auto loopScoped = containsIdentifier(lhs, "i") || containsIdentifier(rhs, "i") ||
+                              containsIdentifier(lhs, "j") || containsIdentifier(rhs, "j") ||
+                              containsIdentifier(lhs, "k") || containsIdentifier(rhs, "k") ||
+                              containsIdentifier(lhs, "m") || containsIdentifier(rhs, "m");
+            if (!base.empty() && target.outputPortCppNames.count(base) && lhs != target.outputPortCppNames[base] &&
+                !loopScoped && !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", target.name)) {
+                addCombAssignment(target, base, lhs, rhs);
+                continue;
+            }
+            kept.push_back(line);
+        }
+        target.assignLines.swap(kept);
+    }
+
+    void addCombAssignment(ModuleGen& target, const std::string& svBase, const std::string& lhs, const std::string& rhs,
+                           const std::vector<std::string>& loopHeaders = {})
     {
         auto base = !svBase.empty() ? svBase : baseFromLValueText(lhs);
         if (base.empty() || !target.types.count(base)) {
@@ -3792,7 +4162,18 @@ struct Converter : SyntaxVisitor<Converter> {
 
         // Procedural assignments to fields are value updates. Port/function_ref binding is
         // handled when emitting port initializers and instance connections.
-        method->body.push_back(lhs + " = " + finalRhs + ";");
+        if (!loopHeaders.empty()) {
+            for (auto& header : loopHeaders) {
+                method->body.push_back(header);
+            }
+            method->body.push_back("    " + lhs + " = " + finalRhs + ";");
+            for (size_t n = 0; n < loopHeaders.size(); ++n) {
+                method->body.push_back("}");
+            }
+        }
+        else {
+            method->body.push_back(lhs + " = " + finalRhs + ";");
+        }
     }
 
     std::string translateExpr(std::string s)
@@ -4307,11 +4688,11 @@ struct Converter : SyntaxVisitor<Converter> {
         return "";
     }
 
-    std::string typeWidth(const std::string& type)
-    {
-        auto between = [&](const std::string& prefix) -> std::string {
-            if (type.rfind(prefix, 0) != 0 || type.back() != '>') {
-                return "";
+	    std::string typeWidth(const std::string& type)
+	    {
+	        auto between = [&](const std::string& prefix) -> std::string {
+	            if (type.rfind(prefix, 0) != 0 || type.back() != '>') {
+	                return "";
             }
             return type.substr(prefix.size(), type.size() - prefix.size() - 1);
         };
@@ -4344,11 +4725,47 @@ struct Converter : SyntaxVisitor<Converter> {
         if (type == "uint64_t") {
             return "64";
         }
-        if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
-            return typeWidth(type.substr(4, type.size() - 5));
-        }
-        return "";
-    }
+	        if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
+	            return typeWidth(type.substr(4, type.size() - 5));
+	        }
+	        if (type.rfind("array<", 0) == 0 && type.back() == '>') {
+	            std::vector<std::string> args;
+	            std::string cur;
+	            int depth = 0;
+	            auto body = type.substr(6, type.size() - 7);
+	            for (char c : body) {
+	                if (c == '<') {
+	                    depth++;
+	                }
+	                else if (c == '>') {
+	                    depth--;
+	                }
+	                if (c == ',' && depth == 0) {
+	                    args.push_back(trim(cur));
+	                    cur.clear();
+	                }
+	                else {
+	                    cur.push_back(c);
+	                }
+	            }
+	            if (!cur.empty()) {
+	                args.push_back(trim(cur));
+	            }
+	            if (args.size() == 2) {
+	                auto elemWidth = typeWidth(args[0]);
+	                if (!elemWidth.empty()) {
+	                    return foldWidth("(" + elemWidth + ") * (" + args[1] + ")");
+	                }
+	            }
+	        }
+	        if (mod) {
+	            auto it = mod->typeWidths.find(type);
+	            if (it != mod->typeWidths.end()) {
+	                return it->second;
+	            }
+	        }
+	        return "";
+	    }
 
     std::string resolvedTypeWidth(const std::string& type)
     {
@@ -4366,6 +4783,175 @@ struct Converter : SyntaxVisitor<Converter> {
             }
         }
         return "";
+    }
+
+    std::string exprType(const ExpressionSyntax& expr)
+    {
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            return exprType(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        }
+        if (expr.kind == SyntaxKind::IdentifierName) {
+            auto name = tok(expr.as<IdentifierNameSyntax>().identifier);
+            if (mod && mod->types.count(name)) {
+                return mod->types[name];
+            }
+            return "";
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            auto& e = expr.as<MemberAccessExpressionSyntax>();
+            return fieldTypeFor(exprType(*e.left), tok(e.name));
+        }
+        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            auto& e = expr.as<ElementSelectExpressionSyntax>();
+            auto type = unwrappedValueType(exprType(*e.left));
+            auto args = templateArgsFor(type, "array");
+            if (args.size() == 2) {
+                return args[0];
+            }
+            return type;
+        }
+        if (expr.kind == SyntaxKind::IdentifierSelectName) {
+            auto& n = expr.as<IdentifierSelectNameSyntax>();
+            std::string type;
+            if (mod && mod->types.count(tok(n.identifier))) {
+                type = mod->types[tok(n.identifier)];
+            }
+            for (auto sel : n.selectors) {
+                auto args = templateArgsFor(unwrappedValueType(type), "array");
+                if (args.size() == 2) {
+                    type = args[0];
+                }
+            }
+            return type;
+        }
+        return "";
+    }
+
+    std::string pathType(std::string path)
+    {
+        path = trim(exprText(std::move(path)));
+        if (path.find("::") != std::string::npos) {
+            return "";
+        }
+        std::vector<std::string> names;
+        for (size_t i = 0; i < path.size();) {
+            if (!(std::isalpha(static_cast<unsigned char>(path[i])) || path[i] == '_')) {
+                ++i;
+                continue;
+            }
+            auto start = i++;
+            while (i < path.size() && (std::isalnum(static_cast<unsigned char>(path[i])) || path[i] == '_')) {
+                ++i;
+            }
+            names.push_back(path.substr(start, i - start));
+            while (i < path.size() && std::isspace(static_cast<unsigned char>(path[i]))) {
+                ++i;
+            }
+            if (i + 1 < path.size() && path[i] == '(' && path[i + 1] == ')') {
+                i += 2;
+            }
+            while (i < path.size() && path[i] == '[') {
+                int depth = 1;
+                ++i;
+                while (i < path.size() && depth != 0) {
+                    if (path[i] == '[') {
+                        ++depth;
+                    }
+                    else if (path[i] == ']') {
+                        --depth;
+                    }
+                    ++i;
+                }
+            }
+            while (i < path.size() && std::isspace(static_cast<unsigned char>(path[i]))) {
+                ++i;
+            }
+            if (i >= path.size()) {
+                break;
+            }
+            if (path[i] != '.') {
+                return "";
+            }
+            ++i;
+        }
+        if (names.empty() || !mod || !mod->types.count(names.front())) {
+            return "";
+        }
+        auto type = mod->types[names.front()];
+        for (size_t i = 1; i < names.size(); ++i) {
+            type = fieldTypeFor(type, names[i]);
+            if (type.empty()) {
+                return "";
+            }
+        }
+        return type;
+    }
+
+    std::string pathValueExpr(std::string path)
+    {
+        path = trim(exprText(std::move(path)));
+        if (path.find("::") != std::string::npos || path.find('(') != std::string::npos) {
+            return "";
+        }
+        std::vector<std::pair<std::string, std::string>> segments;
+        for (size_t i = 0; i < path.size();) {
+            if (!(std::isalpha(static_cast<unsigned char>(path[i])) || path[i] == '_')) {
+                ++i;
+                continue;
+            }
+            auto start = i++;
+            while (i < path.size() && (std::isalnum(static_cast<unsigned char>(path[i])) || path[i] == '_')) {
+                ++i;
+            }
+            auto name = path.substr(start, i - start);
+            std::string selects;
+            while (i < path.size() && path[i] == '[') {
+                auto selStart = i;
+                int depth = 1;
+                ++i;
+                while (i < path.size() && depth != 0) {
+                    if (path[i] == '[') {
+                        ++depth;
+                    }
+                    else if (path[i] == ']') {
+                        --depth;
+                    }
+                    ++i;
+                }
+                selects += path.substr(selStart, i - selStart);
+            }
+            segments.push_back({name, selects});
+            if (i >= path.size()) {
+                break;
+            }
+            if (path[i] != '.') {
+                return "";
+            }
+            ++i;
+        }
+        if (segments.empty()) {
+            return "";
+        }
+        auto base = segments.front().first;
+        std::string out;
+        if (mod && mod->outputPortCppNames.count(base)) {
+            out = isAssignOnlyOutput(*mod, base) ? mod->outputPortCppNames[base] + "()" : outputStorageName(*mod, base);
+        }
+        else if (mod && mod->portCppNames.count(base)) {
+            out = mod->portCppNames[base] + "()";
+        }
+        else if (mod && isAssignDrivenVar(*mod, base)) {
+            out = base + "()";
+        }
+        else {
+            out = base;
+        }
+        out += replaceKeywordMemberAccess(segments.front().second);
+        for (size_t i = 1; i < segments.size(); ++i) {
+            out += "." + cppIdent(segments[i].first);
+            out += replaceKeywordMemberAccess(segments[i].second);
+        }
+        return out;
     }
 
     std::string exprWidth(const ExpressionSyntax& expr)
@@ -4424,6 +5010,16 @@ struct Converter : SyntaxVisitor<Converter> {
         if (auto literalWidth = numericLiteralWidth(simple); !literalWidth.empty()) {
             return literalWidth;
         }
+        if (simple.find('.') != std::string::npos) {
+            auto width = foldWidth(resolvedTypeWidth(pathType(simple)));
+            if (!width.empty()) {
+                return width;
+            }
+            auto emitted = pathValueExpr(simple);
+            if (emitted.find('.') != std::string::npos) {
+                return "cpphdl::type_width<std::remove_cvref_t<decltype(" + emitted + ")>>()";
+            }
+        }
         if (mod && mod->types.count(simple)) {
             auto w = resolvedTypeWidth(mod->types[simple]);
             if (!w.empty()) {
@@ -4459,6 +5055,12 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
             }
             auto width = foldWidth(selectsWidth(n.selectors));
+            if (!width.empty()) {
+                return width;
+            }
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            auto width = foldWidth(resolvedTypeWidth(exprType(expr)));
             if (!width.empty()) {
                 return width;
             }
@@ -4557,6 +5159,21 @@ struct Converter : SyntaxVisitor<Converter> {
             if (isNumber(left) && isNumber(right)) {
                 return std::to_string(std::max(std::stoul(left), std::stoul(right)));
             }
+            if (!left.empty() && left == right) {
+                return left;
+            }
+            if (left.rfind("cpphdl::type_width<", 0) == 0 && right == "1") {
+                return left;
+            }
+            if (right.rfind("cpphdl::type_width<", 0) == 0 && left == "1") {
+                return right;
+            }
+            if (isZeroLiteralExpr(*c.left) && !right.empty()) {
+                return right;
+            }
+            if (isZeroLiteralExpr(*c.right) && !left.empty()) {
+                return left;
+            }
             if (!left.empty() || !right.empty()) {
                 return "64";
             }
@@ -4597,6 +5214,67 @@ struct Converter : SyntaxVisitor<Converter> {
         return "1";
     }
 
+    std::string emittedBitsCallWidth(const std::string& expr)
+    {
+        auto pos = expr.rfind(".bits(");
+        if (pos == std::string::npos) {
+            return "";
+        }
+        auto start = pos + 6;
+        int depth = 1;
+        size_t comma = std::string::npos;
+        size_t end = std::string::npos;
+        for (size_t i = start; i < expr.size(); ++i) {
+            if (expr[i] == '(') {
+                ++depth;
+            }
+            else if (expr[i] == ')') {
+                if (--depth == 0) {
+                    end = i;
+                    break;
+                }
+            }
+            else if (expr[i] == ',' && depth == 1) {
+                comma = i;
+            }
+        }
+        if (comma == std::string::npos || end == std::string::npos || comma <= start || comma >= end) {
+            return "";
+        }
+        auto left = foldWidth(expr.substr(start, comma - start));
+        auto right = foldWidth(expr.substr(comma + 1, end - comma - 1));
+        if (isNumber(left) && isNumber(right)) {
+            auto lv = std::stoul(left);
+            auto rv = std::stoul(right);
+            return std::to_string((lv > rv ? lv - rv : rv - lv) + 1);
+        }
+        if (right == "0" || right == "0x0") {
+            return "(" + left + ")+1";
+        }
+        return "";
+    }
+
+    std::string emittedLogicCastWidth(const std::string& expr)
+    {
+        auto pos = expr.find("logic<");
+        if (pos == std::string::npos) {
+            return "";
+        }
+        auto start = pos + 6;
+        int depth = 1;
+        for (size_t i = start; i < expr.size(); ++i) {
+            if (expr[i] == '<') {
+                ++depth;
+            }
+            else if (expr[i] == '>') {
+                if (--depth == 0) {
+                    return trim(expr.substr(start, i - start));
+                }
+            }
+        }
+        return "";
+    }
+
     std::string emitConcat(const ConcatenationExpressionSyntax& c)
     {
         std::vector<std::pair<std::string, std::string>> parts;
@@ -4604,6 +5282,15 @@ struct Converter : SyntaxVisitor<Converter> {
         bool numeric = true;
         for (auto e : c.expressions) {
             auto width = foldWidth(exprWidth(*e));
+            auto emitted = emitNumericExpr(*e);
+            auto bitsWidth = emittedBitsCallWidth(emitted);
+            if (!bitsWidth.empty()) {
+                width = bitsWidth;
+            }
+            auto castWidth = emittedLogicCastWidth(emitted);
+            if (!castWidth.empty() && (width.empty() || width == "1")) {
+                width = castWidth;
+            }
             if (width.empty()) {
                 auto base = assignedBase(*e);
                 if (mod && !base.empty() && mod->types.count(base)) {
@@ -4613,7 +5300,7 @@ struct Converter : SyntaxVisitor<Converter> {
             if (width.empty()) {
                 width = "64";
             }
-            parts.push_back({width, emitNumericExpr(*e)});
+            parts.push_back({width, emitted});
             if (width.empty() || !isNumber(width)) {
                 numeric = false;
             }
@@ -6010,6 +6697,7 @@ struct Converter : SyntaxVisitor<Converter> {
             auto& m = *mp;
             emitInstanceConnections(m);
             wireAssignsToPorts(m);
+            movePartialOutputAssignLinesToComb(m);
             if (m.isPackage) {
                 if (std::any_of(m.packageDecls.begin(), m.packageDecls.end(), [](const std::string& decl) {
                         return decl.find(" SNAN ") != std::string::npos;
@@ -6088,29 +6776,45 @@ struct Converter : SyntaxVisitor<Converter> {
             for (auto& c : m.constants) {
                 h << "    " << postProcessCppLine("static constexpr " + constexprType(c.first) + " " + c.second + ";") << "\n";
             }
+            auto combOutputInit = [&](const std::string& svName) -> std::string {
+                auto drivers = combDriversFor(m, svName);
+                if (drivers.empty()) {
+                    return "";
+                }
+                auto storageName = outputStorageName(m, svName);
+                std::string expr;
+                for (auto& driver : drivers) {
+                    std::string call;
+                    if (isPlainCombDriver(m, driver)) {
+                        call = "(" + driver + "_active ? " + storageName + " : (" + driver + "(), " + storageName + "))";
+                    }
+                    else {
+                        call = "(" + driver + "(), " + storageName + ")";
+                    }
+                    if (!expr.empty()) {
+                        expr += ", ";
+                    }
+                    expr += call;
+                }
+                return " = _ASSIGN_COMB( (" + expr + ", " + storageName + ") )";
+            };
+
             for (auto& p : m.ports) {
                 std::string init = p.init;
 	                for (auto& out : m.outputPortCppNames) {
 	                    if (out.second == p.name) {
                         if (isCombOnlyOutput(m, out.first)) {
-                            auto driver = combDriverFor(m, out.first);
-                            if (!driver.empty()) {
-                                auto storageName = outputStorageName(m, out.first);
-                                if (m.wireMap.count(out.first)) {
-                                    init = " = _ASSIGN_COMB( " + driver + "() )";
-                                }
-                                else {
-                                    init = " = _ASSIGN_COMB( (" + driver + "(), " + storageName + ") )";
-                                }
+                            auto combInit = combOutputInit(out.first);
+                            if (!combInit.empty()) {
+                                init = combInit;
                             }
-                        }
+	                        }
                         else if (!m.seqAssignedVars.count(out.first)) {
-                            auto driver = combDriverFor(m, out.first);
-                            if (!driver.empty()) {
-                                auto storageName = outputStorageName(m, out.first);
-                                init = " = _ASSIGN_COMB( (" + driver + "(), " + storageName + ") )";
+                            auto combInit = combOutputInit(out.first);
+                            if (!combInit.empty()) {
+                                init = combInit;
                             }
-                        }
+	                        }
                         else if (isAssignOnlyOutput(m, out.first)) {
                             init = " = _ASSIGN( " + p.type + "{} )";
                         }
@@ -6130,13 +6834,25 @@ struct Converter : SyntaxVisitor<Converter> {
                             init = lateBindExpr(m, init, "");
 			                h << "    _PORT(" << postProcessCppLine(p.type) << ") " << p.name << p.array << postProcessCppLine(init) << ";\n";
 			            }
-            h << "\nprivate:\n";
-            for (auto& member : m.members) {
-                h << "    " << postProcessCppLine(member) << "\n";
-            }
-            if (!m.members.empty()) {
-                h << "\n";
-            }
+	            h << "\nprivate:\n";
+	            for (auto& member : m.members) {
+	                h << "    " << postProcessCppLine(member) << "\n";
+	            }
+	            if (!m.members.empty()) {
+	                h << "\n";
+	            }
+	            std::set<std::string> combActiveFlags;
+	            for (auto& f : m.methods) {
+	                if (emitPlainCombMethod(m, f) && !f.returnName.empty()) {
+	                    combActiveFlags.insert(f.name);
+	                }
+	            }
+	            for (auto& name : combActiveFlags) {
+	                h << "    bool " << name << "_active = false;\n";
+	            }
+	            if (!combActiveFlags.empty()) {
+	                h << "\n";
+	            }
             for (auto& p : m.outputPortCppNames) {
                 if (isAssignOnlyOutput(m, p.first)) {
                     continue;
@@ -6422,10 +7138,7 @@ struct Converter : SyntaxVisitor<Converter> {
                             h << "        " << codeLine << "\n";
                         }
 		            }
-                    for (auto& call : sideEffectCombCalls(m)) {
-                        h << "        " << call << "\n";
-                    }
-		            h << "    }\n};\n\n";
+			            h << "    }\n};\n\n";
 	        }
     }
 
@@ -6460,11 +7173,35 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (configuredNameEquals("HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES", conn.type)) {
                     continue;
                 }
-                isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos || portName.find("_DO") != std::string::npos || portName == "orig_instr_aes_bits";
+                isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos ||
+                           portName.find("_DO") != std::string::npos ||
+                           configuredNameEquals("HDLCPP_UNKNOWN_OUTPUT_PORTS", conn.type + "." + conn.port) ||
+                           configuredNameEquals("HDLCPP_UNKNOWN_OUTPUT_PORTS", conn.port);
                 if (configuredNameEquals("HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES", conn.type) && !isOutput) {
                     continue;
                 }
                 portName += isOutput ? "_out" : "_in";
+            }
+            if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); portTypes.count(conn.type + "." + conn.port)) {
+                auto spec = portTypes[conn.type + "." + conn.port];
+                auto sep = spec.find(':');
+                auto direction = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
+                auto configuredType = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+                if (direction == "output") {
+                    isOutput = true;
+                    if (!hasSuffix(portName, "_out")) {
+                        portName = conn.port + "_out";
+                    }
+                }
+                else if (direction == "input") {
+                    isOutput = false;
+                    if (!hasSuffix(portName, "_in")) {
+                        portName = conn.port + "_in";
+                    }
+                }
+                if (!configuredType.empty()) {
+                    portType = configuredType;
+                }
             }
             if (isOutput) {
                 if (conn.connected) {
@@ -6679,7 +7416,8 @@ struct Converter : SyntaxVisitor<Converter> {
                 break;
             }
         }
-        return boundLhs + "=" + lateBindExpr(mod, rhs, "");
+        auto rhsExclude = (comb && !method.returnName.empty()) ? method.returnName : std::string();
+        return boundLhs + "=" + lateBindExpr(mod, rhs, rhsExclude);
     }
 
     void emitMethod(std::ofstream& out, const ModuleGen& mod, const MethodGen& m)
@@ -6688,17 +7426,24 @@ struct Converter : SyntaxVisitor<Converter> {
             auto typeIt = mod.combReturnTypes.find(m.returnName);
             auto type = typeIt != mod.combReturnTypes.end() ? typeIt->second : std::string("auto");
             auto plainComb = emitPlainCombMethod(mod, m);
-            if (plainComb) {
-                out << "    " << type << "& " << m.name << "()\n    {\n";
-            }
-            else {
-                out << "    _LAZY_COMB(" << m.returnName << ", " << type << ")\n";
-            }
-            for (auto& import : mod.imports) {
-                out << "        using namespace " << import << ";\n";
-            }
+	            if (plainComb) {
+	                out << "    " << type << "& " << m.name << "()\n    {\n";
+	            }
+	            else {
+	                out << "    _LAZY_COMB(" << m.returnName << ", " << type << ")\n";
+	            }
+	            if (plainComb) {
+	                out << "        " << m.name << "_active = true;\n";
+	            }
+	            for (auto& import : mod.imports) {
+	                out << "        using namespace " << import << ";\n";
+	            }
             for (auto& l : m.body) {
-                out << "        " << repairMalformedEquality(postProcessCppLine(lateBindCombRhs(mod, m, l))) << "\n";
+                auto emittedLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(mod, m, l)));
+                if (!m.returnName.empty()) {
+                    replaceAll(emittedLine, m.returnName + "_func()", m.returnName);
+                }
+                out << "        " << emittedLine << "\n";
             }
             if (auto injections = configuredTextMap("HDLCPP_COMB_RETURN_INJECTIONS"); injections.count(mod.name + "|" + m.returnName)) {
                 std::stringstream ss(injections[mod.name + "|" + m.returnName]);
@@ -6707,38 +7452,24 @@ struct Converter : SyntaxVisitor<Converter> {
                     out << "        " << injectionLine << "\n";
                 }
             }
-            out << "        return " << m.returnName << ";\n";
+	            if (plainComb) {
+	                out << "        " << m.name << "_active = false;\n";
+	            }
+	            out << "        return " << m.returnName << ";\n";
             out << "    }\n\n";
             return;
         }
-        if (mod.isPackage && m.name == "napot_match") {
-            out << "    template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base_in, const VALUE_T& value_in)\n";
-            out << "    {\n";
-            out << "        uint64_t base = (uint64_t)(logic<64>(base_in));\n";
-            out << "        uint64_t value = (uint64_t)(logic<64>(value_in));\n";
-            out << "        bool is_valid_napot = ((base & (base + 1)) == 0);\n";
-            out << "        if (!is_valid_napot) return 0;\n";
-            out << "        uint64_t mask = ~(base & ~(base + 1));\n";
-            out << "        return ((value & mask) == (base & mask)) ? 1 : 0;\n";
-            out << "    }\n\n";
-            return;
-        }
-        if (mod.isPackage && m.name == "match_scontext") {
-            out << "    template<typename SCONTEXT_T, typename SSELECT_T, typename SBYTEMASK_T, typename SVALUE_T, typename FLAG_T> inline uint64_t match_scontext(const SCONTEXT_T& scontext_in, const SSELECT_T& sselect_in, const SBYTEMASK_T& sbytemask_in, const SVALUE_T& svalue_in, const FLAG_T& flag_in)\n";
-            out << "    {\n";
-            out << "        uint64_t scontext = (uint64_t)(logic<32>(scontext_in));\n";
-            out << "        uint64_t sselect = (uint64_t)(logic<2>(sselect_in));\n";
-            out << "        uint64_t sbytemask = (uint64_t)(logic<4>(sbytemask_in));\n";
-            out << "        uint64_t svalue = (uint64_t)(logic<32>(svalue_in));\n";
-            out << "        bool flag = (bool)(logic<1>(flag_in));\n";
-            out << "        if (sselect != 1) return 0;\n";
-            out << "        int max_bytes = flag ? 4 : 2;\n";
-            out << "        for (int b = 0; b < max_bytes; ++b) {\n";
-            out << "            if (!((sbytemask >> b) & 1u) && (((scontext >> (8*b)) & 0xffu) != ((svalue >> (8*b)) & 0xffu))) return 0;\n";
-            out << "        }\n";
-            out << "        return 1;\n";
-            out << "    }\n\n";
-            return;
+        if (mod.isPackage) {
+            auto overrides = configuredTextMap("HDLCPP_PACKAGE_METHOD_OVERRIDES");
+            if (auto it = overrides.find(m.name); it != overrides.end()) {
+                std::stringstream ss(it->second);
+                std::string line;
+                while (std::getline(ss, line)) {
+                    out << line << "\n";
+                }
+                out << "\n";
+                return;
+            }
         }
         out << "    " << (mod.isPackage ? "inline constexpr " : "") << m.ret << " " << m.name << "(" << m.args << ")\n    {\n";
         for (auto& import : mod.imports) {
