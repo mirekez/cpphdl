@@ -25,6 +25,40 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 //const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
+static bool isCombFuncName(const std::string& name)
+{
+    return str_ending(name, "_comb_func");
+}
+
+static std::string flattenedCombSignalName(const cpphdl::Module* mod, const std::string& combFuncName)
+{
+    if (!mod) {
+        return "";
+    }
+
+    std::string signal = combFuncName;
+    if (isCombFuncName(signal)) {
+        str_replace(signal, "_comb_func", "_comb");
+    }
+    else if (!str_ending(signal, "_comb")) {
+        return "";
+    }
+
+    size_t pos = signal.rfind("___");
+    if (pos != std::string::npos) {
+        signal = signal.substr(pos + 3);
+    }
+
+    for (const auto& var : mod->vars) {
+        std::string suffix = std::string("___") + signal;
+        if (var.name == signal || str_ending(var.name, suffix.c_str())) {
+            return var.name;
+        }
+    }
+
+    return "";
+}
+
 std::string Helpers::castTypeName(QualType QT)
 {
     std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
@@ -590,6 +624,20 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             const clang::FunctionDecl* function = llvm::dyn_cast<clang::FunctionDecl>(DRE->getDecl());
             DEBUG_AST1(" DRE(" << function->getQualifiedNameAsString() << ")");
             call.value = function->getNameAsString();
+            if (const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(function)) {
+                auto newName = putMethod(method, *this);
+                DEBUG_AST1(" Called static method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
+                std::string combSignal = flattenedCombSignalName(mod, call.value);
+                if (combSignal.empty()) {
+                    combSignal = flattenedCombSignalName(mod, newName);
+                }
+                if (!combSignal.empty()) {
+                    call.value = combSignal + "_func";
+                }
+                else if (newName.length() && !isCombFuncName(method->getNameAsString())) {
+                    call.value = newName;
+                }
+            }
 
             if (function->getQualifiedNameAsString() == "std::apply") {
                 DEBUG_AST1(" APPLY");
@@ -713,7 +761,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             if (method) {
                 auto newName = putMethod(method, *this);
                 DEBUG_AST1(" Called method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
-                if (newName.length()) {
+                std::string combSignal = flattenedCombSignalName(mod, call.value);
+                if (combSignal.empty()) {
+                    combSignal = flattenedCombSignalName(mod, newName);
+                }
+                if (!combSignal.empty()) {
+                    call.value = combSignal + "_func";
+                }
+                else if (newName.length() && !isCombFuncName(method->getNameAsString())) {
                     call.value = newName;
                 }
             }
@@ -756,6 +811,20 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            member.sub.emplace_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
 //            member.type = cpphdl::Expr::EXPR_MEMBER;
             call.sub.emplace_back(member);
+            if (const auto* method = llvm::dyn_cast_or_null<clang::CXXMethodDecl>(CE->getDirectCallee())) {
+                auto newName = putMethod(method, *this);
+                DEBUG_AST1(" Called dependent method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
+                std::string combSignal = flattenedCombSignalName(mod, call.value);
+                if (combSignal.empty()) {
+                    combSignal = flattenedCombSignalName(mod, newName);
+                }
+                if (!combSignal.empty()) {
+                    call.value = combSignal + "_func";
+                }
+                else if (newName.length() && !isCombFuncName(method->getNameAsString())) {
+                    call.value = newName;
+                }
+            }
         }
 
         for (auto* arg : CE->arguments()) {
@@ -798,8 +867,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         if (CRD && mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+            && call.value.find("___") == std::string::npos
             && !str_ending(call.value, "_in") && !str_ending(call.value, "_out") ) {  // add base class name, ports dont get this prefix
-            call.value = genTypeName(CRD->getQualifiedNameAsString()) + "___" + call.value;
+            std::string combSignal = flattenedCombSignalName(mod, call.value);
+            if (!combSignal.empty()) {
+                call.value = combSignal + "_func";
+            }
+            else {
+                call.value = genTypeName(CRD->getQualifiedNameAsString()) + "___" + call.value;
+            }
         }
 
         return call;
