@@ -420,15 +420,24 @@ public:
         uart_data_reg.strobe(checkpoint_fd);
         rx_valid_reg.strobe(checkpoint_fd);
         rx_data_reg.strobe(checkpoint_fd);
-        // Keep old Linux checkpoints loadable. The extension FIFO is empty at
-        // shell prompts and improves post-restore interactive typing, but it is
-        // not part of the historical checkpoint stream yet.
-        for (size_t i = 0; i < 15; ++i) {
-            rx_fifo_reg[i].strobe();
+        // Keep old Linux checkpoints loadable by default. Tests that need exact
+        // in-flight UART RX preservation opt in explicitly.
+        if (std::getenv("TRIBE_CHECKPOINT_UART_RX_FIFO")) {
+            for (size_t i = 0; i < 15; ++i) {
+                rx_fifo_reg[i].strobe(checkpoint_fd);
+            }
+            rx_fifo_head_reg.strobe(checkpoint_fd);
+            rx_fifo_tail_reg.strobe(checkpoint_fd);
+            rx_fifo_count_reg.strobe(checkpoint_fd);
         }
-        rx_fifo_head_reg.strobe();
-        rx_fifo_tail_reg.strobe();
-        rx_fifo_count_reg.strobe();
+        else {
+            for (size_t i = 0; i < 15; ++i) {
+                rx_fifo_reg[i].strobe();
+            }
+            rx_fifo_head_reg.strobe();
+            rx_fifo_tail_reg.strobe();
+            rx_fifo_count_reg.strobe();
+        }
         rbr_duplicate_valid_reg.strobe(checkpoint_fd);
     }
 };

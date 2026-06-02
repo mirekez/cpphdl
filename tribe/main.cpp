@@ -744,12 +744,15 @@ private:
     // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
     _LAZY_COMB(memory_wait_comb, bool)
         bool data_mem_access;
+        bool next_data_mem_access;
         bool dmmu_faulted_access;
         data_mem_access = state_reg[1].valid && (
             exe_mem.mem_read_out() ||
             exe_mem.mem_write_out() ||
             state_reg[1].mem_op == Mem::STORE ||
             state_reg[1].wb_op == Wb::MEM);
+        next_data_mem_access = state_reg[0].valid &&
+            (state_reg[0].mem_op == Mem::LOAD || state_reg[0].mem_op == Mem::STORE);
         dmmu_faulted_access = false;
 #ifdef ENABLE_MMU_TLB
         dmmu_faulted_access = state_reg[1].valid && dmmu.fault_out() &&
@@ -764,6 +767,7 @@ private:
             (data_mem_access && !dmmu_faulted_access && dmmu.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && !dmmu_access_ready_comb_func()) ||
 #endif
+            (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.mem_read_out() && l2cache.d_wait_out()) ||
@@ -2681,9 +2685,15 @@ public:
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
         uart_script_pos_reg.strobe(checkpoint_fd);
-        // Local scripted-input pacing is runtime-only testbench state. Do not
-        // serialize it, or old Linux checkpoints become unreadable.
-        uart_script_delay_reg.strobe();
+        // Keep the default checkpoint format compatible with existing Linux
+        // checkpoints. Tests that need exact scripted UART pacing across
+        // save/restore opt in explicitly.
+        if (std::getenv("TRIBE_CHECKPOINT_UART_SCRIPT_DELAY")) {
+            uart_script_delay_reg.strobe(checkpoint_fd);
+        }
+        else {
+            uart_script_delay_reg.strobe();
+        }
         uart_script_enabled_reg.strobe(checkpoint_fd);
         uart_script_reported_reg.strobe(checkpoint_fd);
         sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
@@ -3436,7 +3446,7 @@ public:
 #ifdef ENABLE_MMU_TLB
                 FILE* trace_pc_out = trace_pc_file ? trace_pc_file : stdout;
                 std::print(trace_pc_out,
-                    "trace-wb cycle={} pc={:08x} wbpc={:08x} wbop={} memop={} rd={} f3={} ready={} wait={} hold={} ldv={} held={} ldaddr={:08x} split_in={} split_lo_v={} split_hi_v={} alu={:08x} dcv={} dcaddr={:08x} dcd={:08x}\n",
+                    "trace-wb cycle={} pc={:08x} wbpc={:08x} wbop={} memop={} rd={} f3={} ready={} wait={} hold={} ldv={} held={} ldaddr={:08x} split_in={} split_lo_v={} split_hi_v={} alu={:08x} dcv={} dcaddr={:08x} dcd={:08x} cpu_rd={} cpu_wr={} cpu_addr={:08x} cpu_wdata={:08x} cpu_wmask={:x}\n",
                     perf_clocks,
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
                     (uint32_t)PORT_VALUE(tribe.debug_wb_state_pc_out),
@@ -3456,7 +3466,12 @@ public:
                     (uint32_t)PORT_VALUE(tribe.debug_wb_alu_addr_out),
                     (bool)PORT_VALUE(tribe.debug_dcache_read_valid_out),
                     (uint32_t)PORT_VALUE(tribe.debug_dcache_read_addr_out),
-                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out));
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wdata_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wmask_out));
                 if (trace_pc_file) {
                     fflush(trace_pc_file);
                 }

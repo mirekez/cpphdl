@@ -7,6 +7,9 @@ KERNEL_SRC="${KERNEL_SRC:-${LINUX_DIR}/linux-build/linux}"
 KERNEL_OUT="${KERNEL_OUT:-}"
 KERNEL_CONFIG="${KERNEL_CONFIG:-${LINUX_DIR}/config-v6.19-rv32}"
 TRIBE_SD_DRIVER="${TRIBE_SD_DRIVER:-${LINUX_DIR}/tribe_sd.c}"
+LINUX_GIT_URL="${LINUX_GIT_URL:-https://github.com/torvalds/linux.git}"
+LINUX_GIT_REF="${LINUX_GIT_REF:-v6.19}"
+LINUX_GIT_BRANCH="${LINUX_GIT_BRANCH:-cpphdl-v6.19-tribe}"
 RISCV_HOME="${RISCV_HOME:-/home/me/riscv}"
 CROSS_COMPILE="${CROSS_COMPILE:-${RISCV_HOME}/bin/riscv32-unknown-linux-gnu-}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
@@ -21,10 +24,13 @@ usage()
     cat <<EOF
 Usage: $0 [--no-build] [--clean]
 
-Prepare and build the Tribe RV32 Linux kernel from an already-cloned tree.
+Prepare and build the Tribe RV32 Linux kernel.
 
 Defaults:
   KERNEL_SRC=${KERNEL_SRC}
+  LINUX_GIT_URL=${LINUX_GIT_URL}
+  LINUX_GIT_REF=${LINUX_GIT_REF}
+  LINUX_GIT_BRANCH=${LINUX_GIT_BRANCH}
   KERNEL_CONFIG=${KERNEL_CONFIG}
   TRIBE_SD_DRIVER=${TRIBE_SD_DRIVER}
   CROSS_COMPILE=${CROSS_COMPILE}
@@ -62,11 +68,41 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -d "${KERNEL_SRC}/.git" ]]; then
-    echo "missing cloned Linux kernel tree: ${KERNEL_SRC}" >&2
-    echo "clone or move Linux there first; this script intentionally does not clone" >&2
-    exit 1
-fi
+ensure_kernel_tree()
+{
+    if [[ ! -d "${KERNEL_SRC}/.git" ]]; then
+        echo "cloning Linux kernel ${LINUX_GIT_REF} into ${KERNEL_SRC}"
+        mkdir -p "$(dirname "${KERNEL_SRC}")"
+        git clone "${LINUX_GIT_URL}" "${KERNEL_SRC}"
+        git -C "${KERNEL_SRC}" checkout -B "${LINUX_GIT_BRANCH}" "${LINUX_GIT_REF}"
+        return
+    fi
+
+    if ! git -C "${KERNEL_SRC}" rev-parse --verify --quiet "${LINUX_GIT_REF}^{commit}" >/dev/null; then
+        echo "fetching Linux ref ${LINUX_GIT_REF}"
+        git -C "${KERNEL_SRC}" fetch --tags origin "${LINUX_GIT_REF}" || git -C "${KERNEL_SRC}" fetch --tags origin
+    fi
+
+    local wanted current dirty
+    wanted="$(git -C "${KERNEL_SRC}" rev-parse "${LINUX_GIT_REF}^{commit}")"
+    current="$(git -C "${KERNEL_SRC}" rev-parse HEAD)"
+    if [[ "${current}" == "${wanted}" ]]; then
+        return
+    fi
+
+    dirty="$(git -C "${KERNEL_SRC}" status --porcelain)"
+    if [[ -n "${dirty}" ]]; then
+        echo "kernel tree is not at ${LINUX_GIT_REF}, but has local changes:" >&2
+        git -C "${KERNEL_SRC}" status --short >&2
+        echo "clean or move ${KERNEL_SRC}, then rerun to checkout ${LINUX_GIT_BRANCH} at ${LINUX_GIT_REF}" >&2
+        exit 1
+    fi
+
+    git -C "${KERNEL_SRC}" checkout -B "${LINUX_GIT_BRANCH}" "${LINUX_GIT_REF}"
+}
+
+ensure_kernel_tree
+
 if [[ ! -f "${TRIBE_SD_DRIVER}" ]]; then
     echo "missing Tribe SD driver source: ${TRIBE_SD_DRIVER}" >&2
     exit 1
