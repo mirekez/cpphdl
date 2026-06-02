@@ -195,7 +195,11 @@ struct Rv32ic : public Rv32i
                 state_out.wb_op  = Wb::MEM;
             }
             else if (funct3 == 0b100) {
-                if (rs2 != 0) {  // C.MV / C.ADD
+                if (rs2 == 0 && rd_rs1 == 0 && b12 == 1) {  // C.EBREAK
+                    state_out.sys_op = Sys::EBREAK;
+                    state_out.trap_op = Trap::BREAKPOINT;
+                }
+                else if (rs2 != 0) {  // C.MV / C.ADD
                     state_out.rd = rd_rs1;
                     state_out.rs2 = rs2;
                     if (b12 == 0) {

@@ -28,7 +28,7 @@ public:
     _PORT(uint8_t) uart_data_out = _ASSIGN_REG(uart_data_reg);
     _PORT(bool) uart_rx_valid_in;
     _PORT(uint8_t) uart_rx_data_in;
-    _PORT(bool) uart_rx_ready_out = _ASSIGN(!rx_valid_reg);
+    _PORT(bool) uart_rx_ready_out = _ASSIGN(rx_fifo_count_reg < u<8>(15));
     _PORT(bool) irq_out = _ASSIGN_COMB(irq_comb_func());
 
 private:
@@ -44,6 +44,7 @@ private:
     reg<u8> ier_reg;
     reg<u8> lcr_reg;
     reg<u8> mcr_reg;
+    reg<u8> fcr_reg;
     reg<u8> scr_reg;
     reg<u8> dll_reg;
     reg<u8> dlm_reg;
@@ -51,6 +52,10 @@ private:
     reg<u8> uart_data_reg;
     reg<u1> rx_valid_reg;
     reg<u8> rx_data_reg;
+    reg<u8> rx_fifo_reg[15];
+    reg<u8> rx_fifo_head_reg;
+    reg<u8> rx_fifo_tail_reg;
+    reg<u8> rx_fifo_count_reg;
     // Suppresses an immediate duplicate RBR read after the accepted bus read
     // has already consumed the single-byte receive buffer.
     reg<u1> rbr_duplicate_valid_reg;
@@ -90,10 +95,10 @@ private:
         }
         if (addr == REG_IIR_FCR) {
             if (rx_valid_reg && ((ier_reg & u<8>(0x01)) != 0)) {
-                data = 0x04;
+                data = 0xc4;
             }
             else {
-                data = 0x01;
+                data = 0xc1;
             }
         }
         if (addr == REG_LCR) {
@@ -136,21 +141,45 @@ public:
         uint8_t data;
         bool rx_incoming;
         bool rx_available;
+        bool rbr_read;
+        bool direct_incoming_consumed;
         uint8_t rx_data;
+        uint32_t fifo_head;
+        uint32_t fifo_tail;
+        uint32_t fifo_count;
+        uint32_t qi;
         logic<DATA_WIDTH> read_data;
         uart_valid_reg._next = false;
-        rx_incoming = uart_rx_valid_in() && !rx_valid_reg;
+        for (qi = 0; qi < 15; ++qi) {
+            rx_fifo_reg[qi]._next = rx_fifo_reg[qi];
+        }
+        rx_fifo_head_reg._next = rx_fifo_head_reg;
+        rx_fifo_tail_reg._next = rx_fifo_tail_reg;
+        rx_fifo_count_reg._next = rx_fifo_count_reg;
+        rx_incoming = uart_rx_valid_in() && (rx_fifo_count_reg < u<8>(15));
         rx_available = rx_valid_reg || rx_incoming;
         rx_data = rx_valid_reg ? (uint8_t)rx_data_reg : (uint8_t)uart_rx_data_in();
+        fifo_head = (uint32_t)(uint8_t)rx_fifo_head_reg;
+        fifo_tail = (uint32_t)(uint8_t)rx_fifo_tail_reg;
+        fifo_count = (uint32_t)(uint8_t)rx_fifo_count_reg;
+        rbr_read = false;
+        direct_incoming_consumed = false;
 
         if (rx_incoming) {
-            rx_data_reg._next = uart_rx_data_in();
-            rx_valid_reg._next = true;
+            if (!rx_valid_reg) {
+                rx_data_reg._next = uart_rx_data_in();
+                rx_valid_reg._next = true;
+            }
+            else if (fifo_count < 15) {
+                rx_fifo_reg[fifo_tail]._next = uart_rx_data_in();
+                rx_fifo_tail_reg._next = (u8)((fifo_tail + 1) % 15);
+                rx_fifo_count_reg._next = (u8)(fifo_count + 1);
+            }
             rbr_duplicate_valid_reg._next = false;
 #ifndef SYNTHESIS
             if (std::getenv("TRIBE_TRACE_UART_RX")) {
-                std::print("uart-rx-accept data={:02x} ier={:02x} irq={}\n",
-                    (uint32_t)(uint8_t)uart_rx_data_in(), (uint32_t)(uint8_t)ier_reg, irq_comb_func());
+                std::print("uart-rx-accept data={:02x} ier={:02x} irq={} fifo={}\n",
+                    (uint32_t)(uint8_t)uart_rx_data_in(), (uint32_t)(uint8_t)ier_reg, irq_comb_func(), fifo_count);
             }
 #endif
         }
@@ -163,22 +192,23 @@ public:
                 if (dlab_comb_func()) {
                     data = (uint8_t)dll_reg;
                 }
-                else if (rbr_duplicate_valid_reg && !rx_incoming) {
+                else if (rbr_duplicate_valid_reg && !rx_available) {
                     data = 0;
                 }
                 else {
                     data = rx_available ? rx_data : 0;
                 }
+                rbr_read = true;
             }
             if (addr == REG_IER_DLM) {
                 data = dlab_comb_func() ? (uint8_t)dlm_reg : (uint8_t)ier_reg;
             }
             if (addr == REG_IIR_FCR) {
                 if (rx_available && ((ier_reg & u<8>(0x01)) != 0)) {
-                    data = 0x04;
+                    data = 0xc4;
                 }
                 else {
-                    data = 0x01;
+                    data = 0xc1;
                 }
             }
             if (addr == REG_LCR) {
@@ -202,20 +232,44 @@ public:
             read_addr_reg._next = axi_in.araddr_in();
             read_id_reg._next = axi_in.arid_in();
             read_valid_reg._next = true;
-            // RBR has read-to-clear semantics: the accepted bus read consumes
-            // the buffered byte exactly once, matching a single-byte FIFO.
+            // RBR has read-to-clear semantics: each accepted bus read consumes
+            // one visible receive byte. The duplicate guard only matters after
+            // the receive queue is empty; it must not block FIFO draining.
             if (addr == REG_RBR_THR_DLL && !dlab_comb_func()) {
-                if (rx_available && (!rbr_duplicate_valid_reg || rx_incoming)) {
-                    rx_valid_reg._next = false;
+                if (rx_available) {
+                    if (rx_valid_reg) {
+                        if (fifo_count != 0) {
+                            rx_data_reg._next = rx_fifo_reg[fifo_head];
+                            rx_valid_reg._next = true;
+                            rx_fifo_head_reg._next = (u8)((fifo_head + 1) % 15);
+                            rx_fifo_count_reg._next = (u8)(fifo_count - 1 + (rx_incoming ? 1 : 0));
+                        }
+                        else if (rx_incoming) {
+                            rx_data_reg._next = uart_rx_data_in();
+                            rx_valid_reg._next = true;
+                            rx_fifo_tail_reg._next = rx_fifo_tail_reg;
+                            rx_fifo_count_reg._next = 0;
+                        }
+                        else {
+                            rx_valid_reg._next = false;
+                        }
+                    }
+                    else {
+                        direct_incoming_consumed = true;
+                        rx_valid_reg._next = false;
+                    }
                     rbr_duplicate_valid_reg._next = true;
                 }
 #ifndef SYNTHESIS
                 if (std::getenv("TRIBE_TRACE_UART_RX")) {
-                    std::print("uart-rx-read data={:02x} ier={:02x}\n",
-                        (uint32_t)data, (uint32_t)(uint8_t)ier_reg);
+                    std::print("uart-rx-read data={:02x} ier={:02x} fifo={}\n",
+                        (uint32_t)data, (uint32_t)(uint8_t)ier_reg, fifo_count);
                 }
 #endif
             }
+        }
+        if (rbr_read && direct_incoming_consumed) {
+            rx_valid_reg._next = false;
         }
         if (read_valid_reg && axi_in.rready_in()) {
 #ifndef SYNTHESIS
@@ -285,6 +339,16 @@ public:
             if (addr == REG_MCR) {
                 mcr_reg._next = data;
             }
+            if (addr == REG_IIR_FCR) {
+                fcr_reg._next = data;
+                if ((data & 0x02) != 0) {
+                    rx_valid_reg._next = false;
+                    rx_fifo_head_reg._next = 0;
+                    rx_fifo_tail_reg._next = 0;
+                    rx_fifo_count_reg._next = 0;
+                    rbr_duplicate_valid_reg._next = false;
+                }
+            }
             if (addr == REG_SCR) {
                 scr_reg._next = data;
             }
@@ -305,6 +369,7 @@ public:
             ier_reg.clr();
             lcr_reg.clr();
             mcr_reg.clr();
+            fcr_reg.clr();
             scr_reg.clr();
             dll_reg.clr();
             dlm_reg.clr();
@@ -312,6 +377,24 @@ public:
             uart_data_reg.clr();
             rx_valid_reg.clr();
             rx_data_reg.clr();
+            rx_fifo_reg[0]._next = 0;
+            rx_fifo_reg[1]._next = 0;
+            rx_fifo_reg[2]._next = 0;
+            rx_fifo_reg[3]._next = 0;
+            rx_fifo_reg[4]._next = 0;
+            rx_fifo_reg[5]._next = 0;
+            rx_fifo_reg[6]._next = 0;
+            rx_fifo_reg[7]._next = 0;
+            rx_fifo_reg[8]._next = 0;
+            rx_fifo_reg[9]._next = 0;
+            rx_fifo_reg[10]._next = 0;
+            rx_fifo_reg[11]._next = 0;
+            rx_fifo_reg[12]._next = 0;
+            rx_fifo_reg[13]._next = 0;
+            rx_fifo_reg[14]._next = 0;
+            rx_fifo_head_reg.clr();
+            rx_fifo_tail_reg.clr();
+            rx_fifo_count_reg.clr();
             rbr_duplicate_valid_reg.clr();
         }
     }
@@ -329,6 +412,7 @@ public:
         ier_reg.strobe(checkpoint_fd);
         lcr_reg.strobe(checkpoint_fd);
         mcr_reg.strobe(checkpoint_fd);
+        fcr_reg.strobe();
         scr_reg.strobe(checkpoint_fd);
         dll_reg.strobe(checkpoint_fd);
         dlm_reg.strobe(checkpoint_fd);
@@ -336,6 +420,24 @@ public:
         uart_data_reg.strobe(checkpoint_fd);
         rx_valid_reg.strobe(checkpoint_fd);
         rx_data_reg.strobe(checkpoint_fd);
+        // Keep old Linux checkpoints loadable by default. Tests that need exact
+        // in-flight UART RX preservation opt in explicitly.
+        if (std::getenv("TRIBE_CHECKPOINT_UART_RX_FIFO")) {
+            for (size_t i = 0; i < 15; ++i) {
+                rx_fifo_reg[i].strobe(checkpoint_fd);
+            }
+            rx_fifo_head_reg.strobe(checkpoint_fd);
+            rx_fifo_tail_reg.strobe(checkpoint_fd);
+            rx_fifo_count_reg.strobe(checkpoint_fd);
+        }
+        else {
+            for (size_t i = 0; i < 15; ++i) {
+                rx_fifo_reg[i].strobe();
+            }
+            rx_fifo_head_reg.strobe();
+            rx_fifo_tail_reg.strobe();
+            rx_fifo_count_reg.strobe();
+        }
         rbr_duplicate_valid_reg.strobe(checkpoint_fd);
     }
 };

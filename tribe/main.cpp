@@ -87,6 +87,22 @@ static void tribe_uart_stdin_sigint_handler(int)
 {
     tribe_uart_stdin_sigint_pending = 1;
 }
+
+static bool normalize_interactive_uart_byte(unsigned char in, bool& previous_cr, unsigned char& out)
+{
+    if (in == '\r') {
+        previous_cr = true;
+        out = '\n';
+        return true;
+    }
+    if (in == '\n' && previous_cr) {
+        previous_cr = false;
+        return false;
+    }
+    previous_cr = false;
+    out = in;
+    return true;
+}
 #endif
 
 struct TribePerf
@@ -144,6 +160,11 @@ public:
     _PORT(bool)      debug_dcache_read_valid_out;
     _PORT(uint32_t)  debug_dcache_read_addr_out;
     _PORT(uint32_t)  debug_dcache_read_data_out;
+    _PORT(bool)      debug_dcache_cpu_read_out;
+    _PORT(bool)      debug_dcache_cpu_write_out;
+    _PORT(uint32_t)  debug_dcache_cpu_addr_out;
+    _PORT(uint32_t)  debug_dcache_cpu_wdata_out;
+    _PORT(uint8_t)   debug_dcache_cpu_wmask_out;
     _PORT(bool)      debug_fetch_valid_out;
     _PORT(bool)      debug_memory_wait_out;
     _PORT(bool)      debug_wb_load_ready_out;
@@ -218,6 +239,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
     _PORT(bool)      clint_msip_in;
     _PORT(bool)      clint_mtip_in;
+    _PORT(uint32_t)  time_lo_in = _ASSIGN((uint32_t)0);
+    _PORT(uint32_t)  time_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool)      external_irq_in = _ASSIGN(false);
 #endif
 
@@ -300,6 +323,8 @@ public:
         csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
+        csr.time_lo_in = time_lo_in;
+        csr.time_hi_in = time_hi_in;
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
         csr.interrupt_cause_in = irq.interrupt_cause_out;
@@ -538,6 +563,11 @@ public:
         debug_dcache_read_valid_out = dcache.read_valid_out;
         debug_dcache_read_addr_out = dcache.read_addr_out;
         debug_dcache_read_data_out = dcache.read_data_out;
+        debug_dcache_cpu_read_out = dcache.read_in;
+        debug_dcache_cpu_write_out = dcache.write_in;
+        debug_dcache_cpu_addr_out = dcache.addr_in;
+        debug_dcache_cpu_wdata_out = dcache.write_data_in;
+        debug_dcache_cpu_wmask_out = dcache.write_mask_in;
         debug_fetch_valid_out = _ASSIGN_COMB(fetch_valid_comb_func());
         debug_memory_wait_out = _ASSIGN_COMB(memory_wait_comb_func());
         debug_wb_load_ready_out = wb_mem.load_ready_out;
@@ -714,12 +744,15 @@ private:
     // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
     _LAZY_COMB(memory_wait_comb, bool)
         bool data_mem_access;
+        bool next_data_mem_access;
         bool dmmu_faulted_access;
         data_mem_access = state_reg[1].valid && (
             exe_mem.mem_read_out() ||
             exe_mem.mem_write_out() ||
             state_reg[1].mem_op == Mem::STORE ||
             state_reg[1].wb_op == Wb::MEM);
+        next_data_mem_access = state_reg[0].valid &&
+            (state_reg[0].mem_op == Mem::LOAD || state_reg[0].mem_op == Mem::STORE);
         dmmu_faulted_access = false;
 #ifdef ENABLE_MMU_TLB
         dmmu_faulted_access = state_reg[1].valid && dmmu.fault_out() &&
@@ -734,6 +767,7 @@ private:
             (data_mem_access && !dmmu_faulted_access && dmmu.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && !dmmu_access_ready_comb_func()) ||
 #endif
+            (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.mem_read_out() && l2cache.d_wait_out()) ||
@@ -980,7 +1014,8 @@ private:
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out());
         return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
-            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func();
+            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func() &&
+            !hazard_stall_comb_func();
 #else
         return interrupt_accept_comb = false;
 #endif
@@ -1017,6 +1052,11 @@ private:
             exe_state_comb.rs1_val = csr.trap_vector_out();
             exe_state_comb.imm = 0;
             exe_state_comb.br_op = Br::JR;
+            exe_state_comb.mem_op = Mem::MNONE;
+            exe_state_comb.wb_op = Wb::WNONE;
+#ifdef ENABLE_RV32IA
+            exe_state_comb.amo_op = Amo::AMONONE;
+#endif
         }
         else if (state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             exe_state_comb.rs1_val = csr.epc_out();
@@ -2308,6 +2348,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
+        tribe.time_lo_in = clint.debug_mtime_lo_out;
+        tribe.time_hi_in = clint.debug_mtime_hi_out;
         tribe.external_irq_in = plic.external_irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
@@ -2419,6 +2461,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
         tribe.external_irq_in = plic.external_irq_out();
 #endif
         AXI4_DRIVER_FROM_VERILATOR_CONST(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
@@ -2560,6 +2604,8 @@ public:
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
         tribe.external_irq_in = plic.external_irq_out();
 #endif
 
@@ -2639,9 +2685,15 @@ public:
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
         uart_script_pos_reg.strobe(checkpoint_fd);
-        // Local scripted-input pacing is runtime-only testbench state. Do not
-        // serialize it, or old Linux checkpoints become unreadable.
-        uart_script_delay_reg.strobe();
+        // Keep the default checkpoint format compatible with existing Linux
+        // checkpoints. Tests that need exact scripted UART pacing across
+        // save/restore opt in explicitly.
+        if (std::getenv("TRIBE_CHECKPOINT_UART_SCRIPT_DELAY")) {
+            uart_script_delay_reg.strobe(checkpoint_fd);
+        }
+        else {
+            uart_script_delay_reg.strobe();
+        }
         uart_script_enabled_reg.strobe(checkpoint_fd);
         uart_script_reported_reg.strobe(checkpoint_fd);
         sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
@@ -2981,6 +3033,20 @@ public:
         pc_symbols.load(std::getenv("TRIBE_TRACE_PC_SYMBOLS_FILE"));
         const char* trace_addr_env = std::getenv("TRIBE_TRACE_ADDR");
         uint32_t trace_addr = trace_addr_env ? std::stoul(trace_addr_env, nullptr, 0) : 0;
+        const char* trace_addr_from_env = std::getenv("TRIBE_TRACE_ADDR_FROM");
+        const char* trace_addr_to_env = std::getenv("TRIBE_TRACE_ADDR_TO");
+        uint32_t trace_addr_from = trace_addr_from_env ? std::stoul(trace_addr_from_env, nullptr, 0) : 0;
+        uint32_t trace_addr_to = trace_addr_to_env ? std::stoul(trace_addr_to_env, nullptr, 0) : 0;
+        const char* trace_addr_file_env = std::getenv("TRIBE_TRACE_ADDR_FILE");
+        FILE* trace_addr_file = nullptr;
+        if (trace_addr_file_env && trace_addr_file_env[0]) {
+            trace_addr_file = fopen(trace_addr_file_env, "wb");
+            if (!trace_addr_file) {
+                std::print("can't open address trace file '{}'\n", trace_addr_file_env);
+                return false;
+            }
+            setvbuf(trace_addr_file, nullptr, _IOLBF, 0);
+        }
         const char* trace_pc_from_env = std::getenv("TRIBE_TRACE_PC_FROM");
         const char* trace_pc_to_env = std::getenv("TRIBE_TRACE_PC_TO");
         uint32_t trace_pc_from = trace_pc_from_env ? std::stoul(trace_pc_from_env, nullptr, 0) : 0;
@@ -3028,6 +3094,18 @@ public:
         const bool trace_sbi = std::getenv("TRIBE_TRACE_SBI") != nullptr;
         const bool trace_mmu_fault = std::getenv("TRIBE_TRACE_MMU_FAULT") != nullptr;
         const bool trace_ra = std::getenv("TRIBE_TRACE_RA") != nullptr;
+        const char* trace_reg_id_env = std::getenv("TRIBE_TRACE_REG_ID");
+        const int trace_reg_id = trace_reg_id_env ? std::stoi(trace_reg_id_env, nullptr, 0) : -1;
+        const char* trace_reg_file_env = std::getenv("TRIBE_TRACE_REG_FILE");
+        FILE* trace_reg_file = nullptr;
+        if (trace_reg_file_env && trace_reg_file_env[0]) {
+            trace_reg_file = fopen(trace_reg_file_env, "wb");
+            if (!trace_reg_file) {
+                std::print("can't open register trace file '{}'\n", trace_reg_file_env);
+                return false;
+            }
+            setvbuf(trace_reg_file, nullptr, _IOLBF, 0);
+        }
         const bool trace_bad_branch = std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr;
         const char* trace_uart_rx_file_env = std::getenv("TRIBE_TRACE_UART_RX_FILE");
         FILE* trace_uart_rx_file = nullptr;
@@ -3056,6 +3134,7 @@ public:
         bool mirrored_uart_needs_newline = false;
         bool host_interrupt = false;
         std::deque<unsigned char> interactive_uart_queue;
+        bool interactive_uart_previous_cr = false;
         uint64_t interactive_uart_last_block_report = 0;
         bool trace_sd_prev_active = false;
         uint32_t trace_sd_prev_addr = 0;
@@ -3237,6 +3316,9 @@ public:
                             std::print("\n*** Interrupted by Ctrl+C ***\n");
                             break;
                         }
+                        if (!normalize_interactive_uart_byte(ch, interactive_uart_previous_cr, ch)) {
+                            continue;
+                        }
                         if (interactive_uart_queue.size() < 4096) {
                             interactive_uart_queue.push_back(ch);
                             if (trace_uart_rx) {
@@ -3364,7 +3446,7 @@ public:
 #ifdef ENABLE_MMU_TLB
                 FILE* trace_pc_out = trace_pc_file ? trace_pc_file : stdout;
                 std::print(trace_pc_out,
-                    "trace-wb cycle={} pc={:08x} wbpc={:08x} wbop={} memop={} rd={} f3={} ready={} wait={} hold={} ldv={} held={} ldaddr={:08x} split_in={} split_lo_v={} split_hi_v={} alu={:08x} dcv={} dcaddr={:08x} dcd={:08x}\n",
+                    "trace-wb cycle={} pc={:08x} wbpc={:08x} wbop={} memop={} rd={} f3={} ready={} wait={} hold={} ldv={} held={} ldaddr={:08x} split_in={} split_lo_v={} split_hi_v={} alu={:08x} dcv={} dcaddr={:08x} dcd={:08x} cpu_rd={} cpu_wr={} cpu_addr={:08x} cpu_wdata={:08x} cpu_wmask={:x}\n",
                     perf_clocks,
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
                     (uint32_t)PORT_VALUE(tribe.debug_wb_state_pc_out),
@@ -3384,7 +3466,12 @@ public:
                     (uint32_t)PORT_VALUE(tribe.debug_wb_alu_addr_out),
                     (bool)PORT_VALUE(tribe.debug_dcache_read_valid_out),
                     (uint32_t)PORT_VALUE(tribe.debug_dcache_read_addr_out),
-                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out));
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wdata_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wmask_out));
                 if (trace_pc_file) {
                     fflush(trace_pc_file);
                 }
@@ -3505,6 +3592,30 @@ public:
 #endif
                     (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
             }
+            if (trace_reg_id >= 0 && (bool)PORT_VALUE(tribe.debug_regs_write_out) &&
+                (uint8_t)PORT_VALUE(tribe.debug_regs_wr_id_out) == (uint8_t)trace_reg_id) {
+                FILE* trace_reg_out = trace_reg_file ? trace_reg_file : stdout;
+                std::print(trace_reg_out, "trace-reg cycle={} pc={:08x} x{}={:08x} actual={} priv={} satp={:08x} scause={:08x} sepc={:08x} stval={:08x}\n",
+                    perf_clocks,
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+#else
+                    0u,
+#endif
+                    trace_reg_id,
+                    (uint32_t)PORT_VALUE(tribe.debug_regs_data_out),
+                    (bool)PORT_VALUE(tribe.debug_regs_write_actual_out),
+#ifdef ENABLE_MMU_TLB
+                    (uint32_t)PORT_VALUE(tribe.debug_priv_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_satp_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_scause_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_sepc_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_stval_out)
+#else
+                    3u, 0u, 0u, 0u, 0u
+#endif
+                    );
+            }
             if (trace_bad_branch && (bool)PORT_VALUE(tribe.debug_branch_taken_now_out)) {
                 uint32_t target = (uint32_t)PORT_VALUE(tribe.debug_branch_target_now_out);
                 if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
@@ -3525,9 +3636,13 @@ public:
                         (uint32_t)PORT_VALUE(tribe.debug_regs_data_out));
                 }
             }
-            if (trace_addr && (uint32_t)PORT_VALUE(tribe.dmem_addr_out) == trace_addr &&
-                ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
-                std::print("trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x}\n",
+            const uint32_t trace_daddr = (uint32_t)PORT_VALUE(tribe.dmem_addr_out);
+            const bool trace_addr_hit =
+                (trace_addr && trace_daddr == trace_addr) ||
+                (trace_addr_from < trace_addr_to && trace_daddr >= trace_addr_from && trace_daddr < trace_addr_to);
+            if (trace_addr_hit && ((bool)PORT_VALUE(tribe.dmem_read_out) || (bool)PORT_VALUE(tribe.dmem_write_out))) {
+                FILE* out = trace_addr_file ? trace_addr_file : stdout;
+                std::print(out, "trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} source=l2\n",
                     perf_clocks,
 #ifdef ENABLE_MMU_TLB
                     (uint32_t)PORT_VALUE(tribe.debug_pc_out),
@@ -3535,12 +3650,33 @@ public:
                     (uint32_t)0,
 #endif
                     (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
-                    (uint32_t)PORT_VALUE(tribe.dmem_addr_out),
+                    trace_daddr,
                     (bool)PORT_VALUE(tribe.dmem_read_out),
                     (bool)PORT_VALUE(tribe.dmem_write_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_data_out),
                     (uint32_t)PORT_VALUE(tribe.dmem_write_mask_out));
             }
+#ifdef ENABLE_MMU_TLB
+            const uint32_t trace_cpu_daddr = (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_addr_out);
+            const bool trace_cpu_addr_hit =
+                (trace_addr && trace_cpu_daddr == trace_addr) ||
+                (trace_addr_from < trace_addr_to && trace_cpu_daddr >= trace_addr_from && trace_cpu_daddr < trace_addr_to);
+            if (trace_cpu_addr_hit && ((bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out) || (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out))) {
+                FILE* out = trace_addr_file ? trace_addr_file : stdout;
+                std::print(out, "trace-addr cycle={} pc={:08x} imem={:08x} addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} source=dcache-cpu rvalid={} raddr={:08x} rdata={:08x}\n",
+                    perf_clocks,
+                    (uint32_t)PORT_VALUE(tribe.debug_pc_out),
+                    (uint32_t)PORT_VALUE(tribe.imem_read_addr_out),
+                    trace_cpu_daddr,
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_read_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_cpu_write_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wdata_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_cpu_wmask_out),
+                    (bool)PORT_VALUE(tribe.debug_dcache_read_valid_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_addr_out),
+                    (uint32_t)PORT_VALUE(tribe.debug_dcache_read_data_out));
+            }
+#endif
             if (trace_pc_from && (uint32_t)PORT_VALUE(tribe.debug_pc_out) >= trace_pc_from &&
                 (uint32_t)PORT_VALUE(tribe.debug_pc_out) < trace_pc_to) {
                 std::print("trace-pc-range cycle={} pc={:08x} imem={:08x} dinstr={:08x} dpc={:08x} dbr={} dimm={:08x} dmem={:08x} rd={} wr={} wdata={:08x} mask={:02x} wbwr={} wbact={} wbid={} wbdata={:08x} loadready={} memwait={} brtake={} brtarget={:08x}\n",

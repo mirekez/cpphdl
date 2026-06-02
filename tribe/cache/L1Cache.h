@@ -146,7 +146,8 @@ private:
     }
 
     // Whether the incoming address can be served from this cache line format.
-    // Odd-byte data reads at the final line word use a direct L2 beat so L1 never fills a partial line.
+    // Odd-byte reads use a direct L2 beat because cached data is stored in
+    // 16-bit banks. Even unaligned reads can still be assembled from halves.
     _LAZY_COMB(input_cacheable_comb, bool)
         input_cacheable_comb = !cache_disable_in() && !(addr_in() & 0x1);
         if (DCACHE != 0 && (addr_in() & 0x3u) != 0 &&
@@ -222,21 +223,27 @@ private:
     // Requested word assembled from the completed refill line image.
     _LAZY_COMB(refill_data_comb, uint32_t)
         uint32_t word;
+        uint32_t byte;
+        uint32_t word_data;
+        uint32_t next_word_data;
         uint32_t even_half;
         uint32_t odd_half;
         word = (uint32_t)req_word_comb_func();
+        byte = (uint32_t)req_addr_reg & 3u;
         even_half = (uint32_t)refill_even_line_comb_func().bits(word * 16 + 15, word * 16);
         odd_half = (uint32_t)refill_odd_line_comb_func().bits(word * 16 + 15, word * 16);
-        if (req_addr_reg & 0x2) {
-            // Half-word shifted access: low half comes from current odd half, high half from next even half.
-            even_half = 0;
+        word_data = even_half | (odd_half << 16);
+        next_word_data = 0;
+        if (byte != 0) {
             if (word + 1 < LINE_WORDS) {
                 even_half = (uint32_t)refill_even_line_comb_func().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                odd_half = (uint32_t)refill_odd_line_comb_func().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                next_word_data = even_half | (odd_half << 16);
             }
-            refill_data_comb = odd_half | (even_half << 16);
+            refill_data_comb = (word_data >> (byte * 8u)) | (next_word_data << (32u - byte * 8u));
         }
         else {
-            refill_data_comb = even_half | (odd_half << 16);
+            refill_data_comb = word_data;
         }
         return refill_data_comb;
     }
@@ -298,10 +305,16 @@ private:
     _LAZY_COMB(cache_data_comb, uint32_t)
         size_t i;
         uint32_t word;
+        uint32_t byte;
+        uint32_t word_data;
+        uint32_t next_word_data;
         uint32_t even_half;
         uint32_t odd_half;
         cache_data_comb = 0;
         word = (uint32_t)req_word_comb_func();
+        byte = (uint32_t)req_addr_reg & 3u;
+        word_data = 0;
+        next_word_data = 0;
         even_half = 0;
         odd_half = 0;
         for (i = 0; i < WAYS; ++i) {
@@ -309,16 +322,17 @@ private:
                 tag_ram[i].q_out().bits(TAG_BITS - 1, 0) == req_tag_comb_func()) {
                 even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
-                if (req_addr_reg & 0x2) {
-                    // Half-word shifted cached read mirrors refill assembly: current odd half plus next even half.
-                    even_half = 0;
+                word_data = even_half | (odd_half << 16);
+                if (byte != 0) {
                     if (word + 1 < LINE_WORDS) {
                         even_half = (uint32_t)even_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                        odd_half = (uint32_t)odd_ram[i].q_out().bits((word + 1) * 16 + 15, (word + 1) * 16);
+                        next_word_data = even_half | (odd_half << 16);
                     }
-                    cache_data_comb = odd_half | (even_half << 16);
+                    cache_data_comb = (word_data >> (byte * 8u)) | (next_word_data << (32u - byte * 8u));
                 }
                 else {
-                    cache_data_comb = even_half | (odd_half << 16);
+                    cache_data_comb = word_data;
                 }
             }
         }

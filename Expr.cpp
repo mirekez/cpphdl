@@ -868,6 +868,15 @@ std::string Expr::typeToSV(std::string type, std::string size)
     if (type.compare(0, 5, "const") == 0) {
         type = type.substr(5);
     }
+    while (!type.empty() && std::isspace(static_cast<unsigned char>(type.front()))) {
+        type.erase(type.begin());
+    }
+    if (type == "std::string" || type == "string" ||
+        type.find("std_basic_string") != std::string::npos ||
+        type.find("basic_string") != std::string::npos) {
+        declSize = 64;
+        return "string";
+    }
     std::string u_width = templateWidth(type, "u<");
     std::string i_width = templateWidth(type, "i<");
     std::string logic_width = templateWidth(type, "logic<");

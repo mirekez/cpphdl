@@ -28,7 +28,8 @@ template<size_t WIDTH, typename T>
 static logic<WIDTH> copy_to_logic(const T& bits)
 {
     logic<WIDTH> out = 0;
-    memcpy(out.bytes, &bits, sizeof(out.bytes));
+    const size_t copy_bytes = sizeof(bits) < sizeof(out.bytes) ? sizeof(bits) : sizeof(out.bytes);
+    memcpy(out.bytes, &bits, copy_bytes);
     return out;
 }
 
@@ -74,6 +75,11 @@ static uint32_t port_word(const WData (&bits)[WORDS], size_t word)
 static uint32_t port_word(QData bits, size_t word)
 {
     return (uint32_t)(bits >> (word * 32));
+}
+
+static uint32_t port_word(uint32_t bits, size_t word)
+{
+    return word == 0 ? bits : 0;
 }
 #else
 template<size_t WIDTH>
@@ -280,9 +286,11 @@ public:
             error = true;
             return;
         }
-        logic<PORT_BITS> value = ram[port].ram.buffer.data[beat];
-        value.bits(lane * 32 + 31, lane * 32) = data;
-        ram[port].ram.buffer.data[beat] = value;
+        auto& row = ram[port].ram.buffer.data[beat];
+        row.data[lane * 4 + 0] = (u8)(data >> 0);
+        row.data[lane * 4 + 1] = (u8)(data >> 8);
+        row.data[lane * 4 + 2] = (u8)(data >> 16);
+        row.data[lane * 4 + 3] = (u8)(data >> 24);
     }
 
     static uint32_t prbs_mix(uint32_t x)
@@ -362,6 +370,37 @@ public:
         cycle(false);
     }
 
+    void data_port_unaligned_beat_end_direct_read_check()
+    {
+        // Scenario from Linux string output and CPU byte loads: L1 d-cache asks
+        // L2 for a direct unaligned read at the final word of an L2 AXI beat.
+        // L2 must assemble the low 32 bits from the tail word and the next beat.
+        constexpr uint32_t beat_base = 0x00000800u;
+        constexpr uint32_t low_word = 0xbbaa4433u;
+        constexpr uint32_t next_word = 0x2211ddccu;
+        constexpr uint32_t request_addr = beat_base + (uint32_t)(PORT_BITS / 8) - 3u;
+        constexpr uint32_t expected = (low_word >> 8) | (next_word << 24);
+        set_backing_word(beat_base + (uint32_t)(PORT_BITS / 8) - 4u, low_word);
+        set_backing_word(beat_base + (uint32_t)(PORT_BITS / 8), next_word);
+
+        read = false;
+        d_read = true;
+        write = false;
+        d_addr = request_addr;
+        for (size_t i = 0; i < WAIT_LIMIT && L2_VALUE(l2.d_wait_out); ++i) {
+            cycle(false);
+        }
+        uint32_t data = port_word(L2_VALUE(l2.d_read_data_out), 0);
+        if (L2_VALUE(l2.d_wait_out) || data != expected) {
+            std::print("\ndirect d-read cross-beat ERROR addr={:#x} wait={} data={:#x} expected={:#x}\n",
+                request_addr, L2_VALUE(l2.d_wait_out), data, expected);
+            error = true;
+        }
+        cycle(false);
+        d_read = false;
+        cycle(false);
+    }
+
     void d_read_check(uint32_t request_addr, uint32_t expected)
     {
         read = false;
@@ -372,6 +411,9 @@ public:
             cycle(false);
         }
         uint32_t beat_word = ((request_addr % (PORT_BITS / 8)) / 4);
+        if ((request_addr & 3u) != 0 && beat_word + 1 >= PORT_BITS / 32) {
+            beat_word = 0;
+        }
         uint32_t data = port_word(L2_VALUE(l2.d_read_data_out), beat_word);
         if (L2_VALUE(l2.d_wait_out) || data != expected) {
             std::print("\nd-read ERROR addr={:#x} wait={} data={:#x} expected={:#x}\n",
@@ -477,7 +519,8 @@ public:
     {
 #ifdef VERILATOR
         eval_l2(false);
-        return copy_to_logic<PORT_BITS>(l2.axi_in___05Frdata_out[port]);
+        const auto& raw = l2.axi_in___05Frdata_out[port];
+        return copy_to_logic<PORT_BITS>(raw);
 #else
         return l2.axi_in[port].rdata_out();
 #endif
@@ -810,7 +853,7 @@ public:
         write_only(0x0000017cu, 0x0000004du, 0x1);
         write_only(0x0000017du, 0x00000045u, 0x1);
         read_check(0x0000017cu, 0x0000454du);
-        d_read_check(0x0000017du, 0x0000454du);
+        d_read_check(0x0000017du, 0x00000045u);
     }
 
     void dirty_eviction_check()
@@ -1152,6 +1195,7 @@ public:
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
                    "\n    - instruction-port direct read crossing a cache-line end"
+                   "\n    - data-port direct read crossing an L2 beat end"
                    "\n    - immediate CPU hit from a line that was just filled"
                    "\n    - cached CPU partial writes"
                    "\n    - dirty eviction"
@@ -1176,6 +1220,7 @@ public:
         read_check(8, 0);
         read_check(8, 0);
         instruction_cross_line_direct_check();
+        data_port_unaligned_beat_end_direct_read_check();
         immediate_hit_after_fill_check();
         write_then_read_check(64 + 4, 0x12345678u, 0xf, 0x12345678u);
         write_then_read_check(64 + 4, 0xabcd0000u, 0xc, 0xabcd5678u);
@@ -1217,65 +1262,71 @@ int main(int argc, char** argv)
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        auto compile_l2 = [&](size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
+        auto compile_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
+            if (only != -1 && only != index) {
+                return true;
+            }
             return VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "cache").string()},
                 cache_size, port_bits, LINE_SIZE, ways, 32, 32, mem_ports);
         };
-        ok &= compile_l2(16384, 64, 4, 1);
-        ok &= compile_l2(16384, 64, 4, 2);
-        ok &= compile_l2(16384, 64, 4, 4);
-        ok &= compile_l2(16384, 256, 4, 1);
-        ok &= compile_l2(16384, 256, 4, 2);
-        ok &= compile_l2(16384, 256, 4, 4);
-        ok &= compile_l2(16384, 64, 8, 1);
-        ok &= compile_l2(16384, 64, 8, 2);
-        ok &= compile_l2(16384, 64, 8, 4);
-        ok &= compile_l2(16384, 256, 8, 1);
-        ok &= compile_l2(16384, 256, 8, 2);
-        ok &= compile_l2(16384, 256, 8, 4);
-        ok &= compile_l2(65536, 64, 4, 1);
-        ok &= compile_l2(65536, 64, 4, 2);
-        ok &= compile_l2(65536, 64, 4, 4);
-        ok &= compile_l2(65536, 256, 4, 1);
-        ok &= compile_l2(65536, 256, 4, 2);
-        ok &= compile_l2(65536, 256, 4, 4);
-        ok &= compile_l2(65536, 64, 8, 1);
-        ok &= compile_l2(65536, 64, 8, 2);
-        ok &= compile_l2(65536, 64, 8, 4);
-        ok &= compile_l2(65536, 256, 8, 1);
-        ok &= compile_l2(65536, 256, 8, 2);
-        ok &= compile_l2(65536, 256, 8, 4);
+        ok &= compile_l2(0, 16384, 64, 4, 1);
+        ok &= compile_l2(1, 16384, 64, 4, 2);
+        ok &= compile_l2(2, 16384, 64, 4, 4);
+        ok &= compile_l2(3, 16384, 256, 4, 1);
+        ok &= compile_l2(4, 16384, 256, 4, 2);
+        ok &= compile_l2(5, 16384, 256, 4, 4);
+        ok &= compile_l2(6, 16384, 64, 8, 1);
+        ok &= compile_l2(7, 16384, 64, 8, 2);
+        ok &= compile_l2(8, 16384, 64, 8, 4);
+        ok &= compile_l2(9, 16384, 256, 8, 1);
+        ok &= compile_l2(10, 16384, 256, 8, 2);
+        ok &= compile_l2(11, 16384, 256, 8, 4);
+        ok &= compile_l2(12, 65536, 64, 4, 1);
+        ok &= compile_l2(13, 65536, 64, 4, 2);
+        ok &= compile_l2(14, 65536, 64, 4, 4);
+        ok &= compile_l2(15, 65536, 256, 4, 1);
+        ok &= compile_l2(16, 65536, 256, 4, 2);
+        ok &= compile_l2(17, 65536, 256, 4, 4);
+        ok &= compile_l2(18, 65536, 64, 8, 1);
+        ok &= compile_l2(19, 65536, 64, 8, 2);
+        ok &= compile_l2(20, 65536, 64, 8, 4);
+        ok &= compile_l2(21, 65536, 256, 8, 1);
+        ok &= compile_l2(22, 65536, 256, 8, 2);
+        ok &= compile_l2(23, 65536, 256, 8, 4);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
+        auto run_l2 = [&](int index, const char* command) {
+            return (only != -1 && only != index) || std::system(command) == 0;
+        };
         ok = ok &&
-            std::system("L2Cache_16384_64_32_1_32_32_4/obj_dir/VL2Cache 0") == 0 &&
-            std::system("L2Cache_16384_64_32_2_32_32_4/obj_dir/VL2Cache 1") == 0 &&
-            std::system("L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 2") == 0 &&
-            std::system("L2Cache_16384_256_32_1_32_32_4/obj_dir/VL2Cache 3") == 0 &&
-            std::system("L2Cache_16384_256_32_2_32_32_4/obj_dir/VL2Cache 4") == 0 &&
-            std::system("L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 5") == 0 &&
-            std::system("L2Cache_16384_64_32_1_32_32_8/obj_dir/VL2Cache 6") == 0 &&
-            std::system("L2Cache_16384_64_32_2_32_32_8/obj_dir/VL2Cache 7") == 0 &&
-            std::system("L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 8") == 0 &&
-            std::system("L2Cache_16384_256_32_1_32_32_8/obj_dir/VL2Cache 9") == 0 &&
-            std::system("L2Cache_16384_256_32_2_32_32_8/obj_dir/VL2Cache 10") == 0 &&
-            std::system("L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 11") == 0 &&
-            std::system("L2Cache_65536_64_32_1_32_32_4/obj_dir/VL2Cache 12") == 0 &&
-            std::system("L2Cache_65536_64_32_2_32_32_4/obj_dir/VL2Cache 13") == 0 &&
-            std::system("L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 14") == 0 &&
-            std::system("L2Cache_65536_256_32_1_32_32_4/obj_dir/VL2Cache 15") == 0 &&
-            std::system("L2Cache_65536_256_32_2_32_32_4/obj_dir/VL2Cache 16") == 0 &&
-            std::system("L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 17") == 0 &&
-            std::system("L2Cache_65536_64_32_1_32_32_8/obj_dir/VL2Cache 18") == 0 &&
-            std::system("L2Cache_65536_64_32_2_32_32_8/obj_dir/VL2Cache 19") == 0 &&
-            std::system("L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 20") == 0 &&
-            std::system("L2Cache_65536_256_32_1_32_32_8/obj_dir/VL2Cache 21") == 0 &&
-            std::system("L2Cache_65536_256_32_2_32_32_8/obj_dir/VL2Cache 22") == 0 &&
-            std::system("L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 23") == 0;
+            run_l2(0, "L2Cache_16384_64_32_1_32_32_4/obj_dir/VL2Cache 0") &&
+            run_l2(1, "L2Cache_16384_64_32_2_32_32_4/obj_dir/VL2Cache 1") &&
+            run_l2(2, "L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 2") &&
+            run_l2(3, "L2Cache_16384_256_32_1_32_32_4/obj_dir/VL2Cache 3") &&
+            run_l2(4, "L2Cache_16384_256_32_2_32_32_4/obj_dir/VL2Cache 4") &&
+            run_l2(5, "L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 5") &&
+            run_l2(6, "L2Cache_16384_64_32_1_32_32_8/obj_dir/VL2Cache 6") &&
+            run_l2(7, "L2Cache_16384_64_32_2_32_32_8/obj_dir/VL2Cache 7") &&
+            run_l2(8, "L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 8") &&
+            run_l2(9, "L2Cache_16384_256_32_1_32_32_8/obj_dir/VL2Cache 9") &&
+            run_l2(10, "L2Cache_16384_256_32_2_32_32_8/obj_dir/VL2Cache 10") &&
+            run_l2(11, "L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 11") &&
+            run_l2(12, "L2Cache_65536_64_32_1_32_32_4/obj_dir/VL2Cache 12") &&
+            run_l2(13, "L2Cache_65536_64_32_2_32_32_4/obj_dir/VL2Cache 13") &&
+            run_l2(14, "L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 14") &&
+            run_l2(15, "L2Cache_65536_256_32_1_32_32_4/obj_dir/VL2Cache 15") &&
+            run_l2(16, "L2Cache_65536_256_32_2_32_32_4/obj_dir/VL2Cache 16") &&
+            run_l2(17, "L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 17") &&
+            run_l2(18, "L2Cache_65536_64_32_1_32_32_8/obj_dir/VL2Cache 18") &&
+            run_l2(19, "L2Cache_65536_64_32_2_32_32_8/obj_dir/VL2Cache 19") &&
+            run_l2(20, "L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 20") &&
+            run_l2(21, "L2Cache_65536_256_32_1_32_32_8/obj_dir/VL2Cache 21") &&
+            run_l2(22, "L2Cache_65536_256_32_2_32_32_8/obj_dir/VL2Cache 22") &&
+            run_l2(23, "L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 23");
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

@@ -1,6 +1,7 @@
 /dts-v1/;
 
 / {
+	model = "CppHDL Tribe";
 	#address-cells = <1>;
 	#size-cells = <1>;
 	compatible = "cpphdl,tribe";
@@ -10,14 +11,14 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,1000000 earlycon unaligned_scalar_speed=slow";
+		bootargs = "console=ttyS0,1000000 earlycon=uart,mmio,0x82000000 unaligned_scalar_speed=slow";
 		stdout-path = "/soc/serial@82000000:1000000n8";
 	};
 
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		timebase-frequency = <50000000>;
+		timebase-frequency = <195312>;
 
 		cpu@0 {
 			device_type = "cpu";

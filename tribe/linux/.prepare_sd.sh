@@ -30,7 +30,7 @@ usage()
     cat <<EOF
 Usage: $0 [--pack-only] [--clean]
 
-Builds RISC-V 32-bit Linux stress tools and packs them into a FAT32 SD image.
+Builds RISC-V 32-bit Linux stress tools and packs them into an ext2 SD image.
 
 Environment:
   RISCV_HOME=/home/me/riscv
@@ -83,6 +83,7 @@ clone_or_update()
     local repo="$1"
     local ref="$2"
     local dir="$3"
+    local target
 
     if [[ ! -d "${dir}/.git" ]]; then
         if [[ "${TRIBE_SD_OFFLINE}" == "1" ]]; then
@@ -92,11 +93,20 @@ clone_or_update()
         git clone "${repo}" "${dir}"
     fi
     if [[ "${TRIBE_SD_OFFLINE}" == "1" ]]; then
+        git -C "${dir}" reset --hard HEAD
+        git -C "${dir}" clean -fd
         return
     fi
     git -C "${dir}" fetch --tags origin
-    git -C "${dir}" checkout "${ref}"
-    git -C "${dir}" pull --ff-only origin "${ref}" || true
+    git -C "${dir}" reset --hard HEAD
+    git -C "${dir}" clean -fd
+    target="${ref}"
+    if git -C "${dir}" rev-parse --verify --quiet "origin/${ref}^{commit}" >/dev/null; then
+        target="origin/${ref}"
+    fi
+    git -C "${dir}" checkout --detach "${target}"
+    git -C "${dir}" reset --hard "${target}"
+    git -C "${dir}" clean -fd
 }
 
 install_tool()
@@ -268,46 +278,7 @@ build_stress_ng()
         LDFLAGS="-static" \
         STATIC=1 \
         stress-ng
-    install_tool "${src}/stress-ng" "${ROOTFS_DIR}/STRESSNG.BIN"
-    install_stress_ng_wrapper
-}
-
-install_stress_ng_wrapper()
-{
-cat > "${ROOTFS_DIR}/STRESSNG" <<'EOF'
-#!/bin/sh
-set -e
-
-if [ -d /mnt ]; then
-    tribe_tmp=/mnt/TMP
-else
-    tribe_tmp="$(dirname "$0")/TMP"
-fi
-
-set -- "$@" ""
-tribe_args=
-while [ "$#" -gt 1 ]; do
-    case "$1" in
-        --temp-path)
-            shift 2
-            ;;
-        --temp-path=*)
-            shift
-            ;;
-        *)
-            tribe_args="${tribe_args} '$1'"
-            shift
-            ;;
-    esac
-done
-
-if [ -x /mnt/STRESSNG.BIN ]; then
-    eval "exec /mnt/STRESSNG.BIN --temp-path '$tribe_tmp' ${tribe_args}"
-fi
-
-eval "exec '$(dirname "$0")/STRESSNG.BIN' --temp-path '$tribe_tmp' ${tribe_args}"
-EOF
-    chmod +x "${ROOTFS_DIR}/STRESSNG"
+    install_tool "${src}/stress-ng" "${ROOTFS_DIR}/stress-ng"
 }
 
 patch_stress_ng_tribe()
@@ -337,6 +308,13 @@ static bool stress_tribe_stressor_already_listed(const stress_stressor_t *stress
 			return true;
 	}
 	return false;
+}
+
+static bool stress_tribe_time_debug_enabled(void)
+{
+	const char *env = getenv("STRESS_TRIBE_TIME_DEBUG");
+
+	return env && *env && strcmp(env, "0") != 0;
 }
 
 static void stress_tribe_stressor_fallback_add(const char *name, const char *value)
@@ -714,7 +692,7 @@ Tools:
   TCPU1
   TVM1
   TVM5
-  STRESSNG
+  stress-ng
   STRESS
   STRACE
   RUNTRACE
@@ -728,8 +706,8 @@ Example after mounting the card:
   sh /mnt/TVM5
   sh /mnt/RUNSTNG --cpu 1 --vm 2 --vm-bytes 5m --timeout 1s
   /mnt/STRESS --cpu 1 --io 1 --vm 1 --timeout 10
-  /mnt/STRESSNG --cpu 1 --matrix 1 --timeout 10 --metrics-brief
-  /mnt/STRACE -f -e futex /mnt/STRESSNG --cpu 1 --matrix 1 --timeout 5
+  /mnt/stress-ng --cpu 1 --matrix 1 --timeout 10 --metrics-brief
+  /mnt/STRACE -f -e futex /mnt/stress-ng --cpu 1 --matrix 1 --timeout 5
   sh /mnt/RUNTRACE
 
 Raw SD driver test:
@@ -743,8 +721,8 @@ EOF
 cat > "${ROOTFS_DIR}/RUNTRACE" <<'EOF'
 #!/bin/sh
 echo RUNTRACE_START
-/mnt/ARGVDUMP /mnt/STRESSNG --cpu 1 --timeout 1 --verbose
-/mnt/STRACE -f -tt /mnt/STRESSNG --cpu 1 --timeout 1 --verbose
+/mnt/ARGVDUMP /mnt/stress-ng --cpu 1 --timeout 1 --verbose
+/mnt/STRACE -f -tt /mnt/stress-ng --cpu 1 --timeout 1 --verbose
 rc=$?
 echo RUNTRACE_DONE:$rc
 EOF
@@ -752,13 +730,13 @@ EOF
 cat > "${ROOTFS_DIR}/RUNSTNG" <<'EOF'
 #!/bin/sh
 set -e
-exec /mnt/STRESSNG "$@"
+exec /mnt/stress-ng "$@"
 EOF
 
 cat > "${ROOTFS_DIR}/TCPU1" <<'EOF'
 #!/bin/sh
 echo TCPU1_START
-STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --timeout 1s --temp-path /tmp
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/stress-ng --cpu 1 --timeout 1s --temp-path /tmp
 rc=$?
 echo TCPU1_RC:$rc
 EOF
@@ -766,7 +744,7 @@ EOF
 cat > "${ROOTFS_DIR}/TVM1" <<'EOF'
 #!/bin/sh
 echo TVM1_START
-STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --vm 1 --vm-bytes 1m --timeout 1s --temp-path /tmp
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/stress-ng --cpu 1 --vm 1 --vm-bytes 1m --timeout 1s --temp-path /tmp
 rc=$?
 echo TVM1_RC:$rc
 EOF
@@ -774,7 +752,7 @@ EOF
 cat > "${ROOTFS_DIR}/TVM5" <<'EOF'
 #!/bin/sh
 echo TVM5_START
-STRESS_TRIBE_TIME_DEBUG=1 /mnt/STRESSNG --cpu 1 --vm 2 --vm-bytes 5m --timeout 1s --temp-path /tmp
+STRESS_TRIBE_TIME_DEBUG=1 /mnt/stress-ng --cpu 1 --vm 2 --vm-bytes 5m --timeout 1s --temp-path /tmp
 rc=$?
 echo TVM5_RC:$rc
 EOF
@@ -866,8 +844,7 @@ if [[ "${PACK_ONLY}" != "1" ]]; then
     if [[ "${TRIBE_SD_SKIP_STRESS_NG}" != "1" ]]; then
         build_stress_ng
     else
-        restore_cached_tool "${ROOTFS_DIR}/STRESSNG.BIN" "${BUILD_DIR}/stress-ng/stress-ng" || true
-        install_stress_ng_wrapper
+        restore_cached_tool "${ROOTFS_DIR}/stress-ng" "${BUILD_DIR}/stress-ng/stress-ng" || true
     fi
     if [[ "${TRIBE_SD_SKIP_STRESS}" != "1" ]]; then
         build_stress
@@ -880,8 +857,7 @@ if [[ "${PACK_ONLY}" != "1" ]]; then
         restore_cached_tool "${ROOTFS_DIR}/STRACE" "${BUILD_DIR}/strace/src/strace" "${BUILD_DIR}/strace/strace" || true
     fi
 else
-    restore_cached_tool "${ROOTFS_DIR}/STRESSNG.BIN" "${BUILD_DIR}/stress-ng/stress-ng" || true
-    install_stress_ng_wrapper
+    restore_cached_tool "${ROOTFS_DIR}/stress-ng" "${BUILD_DIR}/stress-ng/stress-ng" || true
     restore_cached_tool "${ROOTFS_DIR}/STRESS" "${BUILD_DIR}/stress/src/stress" "${BUILD_DIR}/stress/stress" || true
     restore_cached_tool "${ROOTFS_DIR}/STRACE" "${BUILD_DIR}/strace/src/strace" "${BUILD_DIR}/strace/strace" || true
 fi

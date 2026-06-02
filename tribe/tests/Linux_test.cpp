@@ -106,6 +106,23 @@ static bool run_command(const std::string& command)
     return true;
 }
 
+static bool test_interactive_uart_normalization()
+{
+    bool previous_cr = false;
+    unsigned char out = 0;
+    std::string normalized;
+    for (unsigned char ch : std::string("pwd\r\nls\r echo\rx")) {
+        if (normalize_interactive_uart_byte(ch, previous_cr, out)) {
+            normalized.push_back((char)out);
+        }
+    }
+    if (normalized != "pwd\nls\n echo\nx") {
+        std::print("interactive UART newline normalization failed: '{}'\n", normalized);
+        return false;
+    }
+    return true;
+}
+
 static bool newer_than(const std::filesystem::path& a, const std::filesystem::path& b)
 {
     return std::filesystem::exists(a) && (!std::filesystem::exists(b) ||
@@ -504,6 +521,7 @@ int main(int argc, char** argv)
     }
 
     bool ok = true;
+    ok = ok && test_interactive_uart_normalization();
     if (prepare_only) {
         std::filesystem::path vmlinux;
         std::filesystem::path initramfs;

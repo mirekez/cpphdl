@@ -21,10 +21,16 @@ struct logic : public bitops<logic<WIDTH>>
     logic() = default;
     logic(const logic& other) = default;
 
+    template<size_t WIDTH1>
+    logic(const logic_bits<WIDTH1>& other);
+
     template<typename T>
     logic(const T& other) : bitops<logic<WIDTH>>(other) {}
 
     logic& operator=(const logic& other) = default;
+
+    template<size_t WIDTH1>
+    logic& operator=(const logic_bits<WIDTH1>& other);
 
     logic_bits<WIDTH> bits(size_t last, size_t first);
     logic_bits<WIDTH> operator[](size_t bitnum);
@@ -125,6 +131,21 @@ struct logic : public bitops<logic<WIDTH>>
         return WIDTH;
     }
 };
+
+template<size_t WIDTH>
+template<size_t WIDTH1>
+logic<WIDTH>::logic(const logic_bits<WIDTH1>& other)
+{
+    *this = static_cast<const logic<WIDTH1>&>(other);
+}
+
+template<size_t WIDTH>
+template<size_t WIDTH1>
+logic<WIDTH>& logic<WIDTH>::operator=(const logic_bits<WIDTH1>& other)
+{
+    bitops<logic<WIDTH>>::operator=(static_cast<const logic<WIDTH1>&>(other));
+    return *this;
+}
 
 template<size_t WIDTH>
 struct logic_bits : public logic<WIDTH>

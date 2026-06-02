@@ -9,7 +9,6 @@ using namespace cpphdl;
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 256, size_t DEPTH = 2048>
 class Axi4Ram : public Module
 {
-    static constexpr uint64_t FULL_MASK = (DATA_WIDTH / 8 >= 64) ? ~0ull : ((1ull << (DATA_WIDTH / 8)) - 1);
 public:
     Memory<DATA_WIDTH / 8, DEPTH, true, 0> ram;
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
@@ -48,7 +47,7 @@ public:
         ram.read1_in = _ASSIGN(false);
         ram.write1_in = _ASSIGN(axi_in.wvalid_in() && axi_in.wready_out());
         ram.write1_data_in = axi_in.wdata_in;
-        ram.write1_mask_in = _ASSIGN((logic<DATA_WIDTH / 8>)FULL_MASK);
+        ram.write1_mask_in = _ASSIGN(~logic<DATA_WIDTH / 8>(0));
         ram.debugen_in = debugen_in;
         ram.__inst_name = __inst_name + "/ram";
         ram._assign();

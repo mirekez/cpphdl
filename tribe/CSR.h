@@ -15,6 +15,8 @@ public:
     _PORT(bool) interrupt_to_supervisor_in;
     _PORT(uint32_t) irq_pending_bits_in;
     _PORT(uint32_t) read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    _PORT(uint32_t) time_lo_in = _ASSIGN((uint32_t)0);
+    _PORT(uint32_t) time_hi_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t) trap_vector_out = _ASSIGN_COMB(trap_vector_comb_func());
     _PORT(uint32_t) epc_out = _ASSIGN_COMB(epc_comb_func());
     _PORT(uint32_t) mepc_out = _ASSIGN_REG(mepc_reg);
@@ -207,8 +209,10 @@ private:
     uint32_t csr_read(uint32_t addr)
     {
         uint64_t cycle_value;
+        uint64_t time_value;
         uint64_t instret_value;
         cycle_value = cycle_reg;
+        time_value = ((uint64_t)time_hi_in() << 32) | (uint64_t)time_lo_in();
         instret_value = instret_reg;
 
         if (addr == 0x001) { return 0; }                  // fflags, excluded
@@ -217,8 +221,8 @@ private:
 
         if (addr == 0xC00 || addr == 0xB00) { return (uint32_t)cycle_value; }
         if (addr == 0xC80 || addr == 0xB80) { return (uint32_t)(cycle_value >> 32); }
-        if (addr == 0xC01) { return (uint32_t)cycle_value; }
-        if (addr == 0xC81) { return (uint32_t)(cycle_value >> 32); }
+        if (addr == 0xC01) { return (uint32_t)time_value; }
+        if (addr == 0xC81) { return (uint32_t)(time_value >> 32); }
         if (addr == 0xC02 || addr == 0xB02) { return (uint32_t)instret_value; }
         if (addr == 0xC82 || addr == 0xB82) { return (uint32_t)(instret_value >> 32); }
         if ((addr >= 0xC03 && addr <= 0xC1F) || (addr >= 0xC83 && addr <= 0xC9F) ||

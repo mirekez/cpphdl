@@ -261,6 +261,58 @@ static bool build_cpu_irq_load_hazard_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_irq_atomic_hazard_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_irq_atomic_hazard.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32ima_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -DCPU_IRQ_INPUT_LEN=" + std::to_string(CPU_IRQ_INPUT_LEN);
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "checkpoint_isr.S");
+    cmd += " " + shell_quote(code_dir / "cpu_irq_atomic_hazard.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU IRQ atomic-hazard bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
+static bool build_cpu_time_csr_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_time_csr.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "cpu_time_csr.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU time CSR bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
@@ -318,6 +370,39 @@ static bool run_cpu_irq_load_hazard_cpp(bool debug)
         "CPU IRQ load hazard");
 }
 
+static bool run_cpu_irq_atomic_hazard_cpp(bool debug)
+{
+    const auto elf = std::filesystem::current_path() / "cpu_irq_atomic_hazard.elf";
+    const auto expected = tribe_code_dir() / "cpu_irq_atomic_hazard.log";
+    const std::string input = cpu_irq_input();
+    const std::string ready_marker = "READY\n";
+    const std::string expected_text = ready_marker + input + "IRQATOMIC\nDONE\n";
+
+    if (!write_file(expected, expected_text)) {
+        return false;
+    }
+
+    ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
+    ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
+    ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "7");
+
+    return TestTribe(debug).run(elf.string(),
+        0, expected.string(), 700000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU IRQ atomic hazard");
+}
+
+static bool run_cpu_time_csr_cpp(bool debug)
+{
+    const auto log = tribe_code_dir() / "cpu_time_csr.log";
+    if (!write_file(log, "TIMECSR\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_time_csr.elf").string(),
+        0, log.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU time CSR");
+}
+
 static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "cpu_bytecopy.elf";
@@ -370,6 +455,19 @@ static bool check_system_decode_has_no_decode_branch()
         if (state.sys_op != tc.sys || state.br_op != Br::BNONE) {
             std::print("bad system decode for {}: sys={} br={}\n",
                 tc.name, (uint32_t)state.sys_op, (uint32_t)state.br_op);
+            return false;
+        }
+    }
+
+    {
+        Rv32ic instr = {{{0x9002}}};
+        State state;
+        instr.decode(state);
+        if (state.sys_op != Sys::EBREAK || state.trap_op != Trap::BREAKPOINT ||
+            state.br_op != Br::BNONE || state.wb_op != Wb::WNONE) {
+            std::print("bad compressed ebreak decode: sys={} trap={} br={} wb={} rd={}\n",
+                (uint32_t)state.sys_op, (uint32_t)state.trap_op,
+                (uint32_t)state.br_op, (uint32_t)state.wb_op, (uint32_t)state.rd);
             return false;
         }
     }
@@ -494,6 +592,13 @@ int main(int argc, char** argv)
     if (run_selected("writeback_mem_addr")) {
         ok = ok && check_writeback_mem_address_tags();
     }
+    // Scenario: RISC-V time/timeh CSRs must expose the platform timer used by
+    // CLINT/SBI, not the raw CPU cycle counter. Linux uses rdtime as its
+    // clocksource and SBI set_timer deadlines are in the same timebase.
+    if (run_selected("csr_time")) {
+        ok = ok && build_cpu_time_csr_elf();
+        ok = ok && run_cpu_time_csr_cpp(debug);
+    }
     // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
     // access. The fence must drain/serialize memory traffic without wedging the
     // current pipeline when the next instruction immediately returns to MMIO.
@@ -542,6 +647,13 @@ int main(int argc, char** argv)
     if (run_selected("irq_load_hazard")) {
         ok = ok && build_cpu_irq_load_hazard_elf();
         ok = ok && run_cpu_irq_load_hazard_cpp(debug);
+    }
+    // Scenario: an interrupt must not enter while LR/SC is holding the memory
+    // pipeline busy. Otherwise the trap flush can leave atomic_busy asserted
+    // with no valid instruction left, wedging trap-vector fetch at stvec.
+    if (run_selected("irq_atomic_hazard")) {
+        ok = ok && build_cpu_irq_atomic_hazard_elf();
+        ok = ok && run_cpu_irq_atomic_hazard_cpp(debug);
     }
 
 #ifndef VERILATOR

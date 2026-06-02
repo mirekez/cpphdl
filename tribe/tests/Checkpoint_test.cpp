@@ -201,6 +201,8 @@ static bool run_checkpoint_cpp(bool debug)
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
     ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
+    ScopedEnv checkpoint_script_delay("TRIBE_CHECKPOINT_UART_SCRIPT_DELAY", "1");
+    ScopedEnv checkpoint_uart_fifo("TRIBE_CHECKPOINT_UART_RX_FIFO", "1");
 
     // Scenario: a kernel-style supervisor trap handler services UART RX via
     // PLIC supervisor external interrupts while the testbench repeatedly saves and

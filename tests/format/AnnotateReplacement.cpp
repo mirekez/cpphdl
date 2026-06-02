@@ -28,6 +28,11 @@ struct AnnotateReplacementFileBadStruct
     double bad;
 };
 
+struct AnnotateReplacementTemplateBadStruct
+{
+    double bad;
+};
+
 struct AnnotateReplacementNestedLocal
 {
     unsigned value:8;
@@ -116,6 +121,47 @@ private:
     {
         bad_struct.bad = 3.0;
         return value_comb = value_in() ^ u<8>(0x5a);
+    }
+
+public:
+    void _work(bool reset) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+inline constexpr char AnnotateReplacementTemplateTag[] = "TEMPLATE";
+
+template <int MASK = 109, const char* TAG = AnnotateReplacementTemplateTag>
+class [[clang::annotate(
+    "CPPHDL_REPLACEMENT="
+    "`default_nettype none\n"
+    "\n"
+    "module AnnotateReplacementTemplate #(\n"
+    "    parameter int __paramNumber1 = $(MASK)\n"
+    ") (\n"
+    "    input wire clk\n"
+    ",   input wire reset\n"
+    ",   input wire[8-1:0] value_in\n"
+    ",   output wire[8-1:0] value_out\n"
+    ");\n"
+    "    // CPPHDL_ANNOTATE_REPLACEMENT_TEMPLATE_MARKER_$(MASK)_$(TAG)_$$\n"
+    "    assign value_out = value_in ^ 8'd$(MASK);\n"
+    "endmodule\n"
+    ";"
+)]] AnnotateReplacementTemplate : public Module
+{
+public:
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
+
+private:
+    u<8> value_comb;
+    AnnotateReplacementTemplateBadStruct bad_struct;
+
+    u<8>& value_comb_func()
+    {
+        bad_struct.bad = 4.0;
+        return value_comb = value_in() ^ u<8>(MASK);
     }
 
 public:
@@ -318,6 +364,78 @@ private:
     u<8>& value_comb_func()
     {
         return value_comb = value_in() ^ u<8>(0x5a);
+    }
+
+public:
+    void _assign()
+    {
+        nested.value_in = value_in;
+        nested.__inst_name = __inst_name + "/nested";
+        nested._assign();
+    }
+
+    void _work(bool reset)
+    {
+        local.value = value_in();
+        nested._work(reset);
+    }
+
+    void _strobe()
+    {
+        nested._strobe();
+    }
+};
+
+class AnnotateReplacementTemplateNested : public Module
+{
+public:
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
+
+private:
+    AnnotateReplacementTemplate<109, AnnotateReplacementTemplateTag> child;
+    AnnotateReplacementNestedLocal local;
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = value_in() ^ u<8>(109);
+    }
+
+public:
+    void _assign()
+    {
+        child.value_in = value_in;
+        child.__inst_name = __inst_name + "/child";
+        child._assign();
+    }
+
+    void _work(bool reset)
+    {
+        local.value = value_in();
+        child._work(reset);
+    }
+
+    void _strobe()
+    {
+        child._strobe();
+    }
+};
+
+class AnnotateReplacementTemplateParent : public Module
+{
+public:
+    _PORT(u<8>) value_in;
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
+
+private:
+    AnnotateReplacementTemplateNested nested;
+    AnnotateReplacementParentLocal local;
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = value_in() ^ u<8>(109);
     }
 
 public:
@@ -552,6 +670,14 @@ int main(int argc, char** argv)
             "AnnotateReplacementFile",
             "AnnotateReplacementFileNested"
         }, {"../../../../include"}, 1);
+        setenv("CPPHDL_VERILATOR_CFLAGS", "-DCPPHDL_TEMPLATE_REPLACEMENT_TOP", 1);
+        ok &= VerilatorCompile(__FILE__, "AnnotateReplacementTemplateParent", {
+            "Predef_pkg",
+            "AnnotateReplacementNestedLocal_pkg",
+            "AnnotateReplacementParentLocal_pkg",
+            "AnnotateReplacementTemplate",
+            "AnnotateReplacementTemplateNested"
+        }, {"../../../../include"}, 1);
         unsetenv("CPPHDL_VERILATOR_CFLAGS");
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
@@ -559,6 +685,7 @@ int main(int argc, char** argv)
         ok = ok && std::system("AnnotateReplacementParent_1/obj_dir/VAnnotateReplacementParent") == 0;
         ok = ok && std::system("AnnotateReplacementScriptParent_1/obj_dir/VAnnotateReplacementScriptParent") == 0;
         ok = ok && std::system("AnnotateReplacementFileParent_1/obj_dir/VAnnotateReplacementFileParent") == 0;
+        ok = ok && std::system("AnnotateReplacementTemplateParent_1/obj_dir/VAnnotateReplacementTemplateParent") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
@@ -584,6 +711,15 @@ int main(int argc, char** argv)
         "AnnotateReplacementScriptParent_1/AnnotateReplacementScriptParent.sv",
         "AnnotateReplacementScriptParent_1/AnnotateReplacementScriptNested.sv",
         "import AnnotateReplacementScriptBadStruct_pkg::*;").run());
+#elif defined(CPPHDL_TEMPLATE_REPLACEMENT_TOP)
+    return !(ok && TestAnnotateReplacement<AnnotateReplacementTemplateParent>(
+        "TestAnnotateReplacementTemplate",
+        109,
+        "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplate.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_TEMPLATE_MARKER_109_TEMPLATE_$",
+        "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplateParent.sv",
+        "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplateNested.sv",
+        "import AnnotateReplacementTemplateBadStruct_pkg::*;").run());
 #else
     return !(ok && TestAnnotateReplacement<AnnotateReplacementParent>(
         "TestAnnotateReplacement",
@@ -619,6 +755,14 @@ int main(int argc, char** argv)
         "generated/AnnotateReplacementFileParent.sv",
         "generated/AnnotateReplacementFileNested.sv",
         "import AnnotateReplacementFileBadStruct_pkg::*;").run();
+    ok = ok && TestAnnotateReplacement<AnnotateReplacementTemplateParent>(
+        "TestAnnotateReplacementTemplate",
+        109,
+        "generated/AnnotateReplacementTemplate.sv",
+        "CPPHDL_ANNOTATE_REPLACEMENT_TEMPLATE_MARKER_109_TEMPLATE_$",
+        "generated/AnnotateReplacementTemplateParent.sv",
+        "generated/AnnotateReplacementTemplateNested.sv",
+        "import AnnotateReplacementTemplateBadStruct_pkg::*;").run();
     return !ok;
 #endif
 }

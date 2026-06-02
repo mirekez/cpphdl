@@ -30,11 +30,15 @@
 #include <map>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 using namespace clang;
 
 namespace
 {
+
+using AnnotationVars = std::unordered_map<std::string, std::string>;
 
 std::string stripAnnotationValue(std::string text, std::string_view prefix)
 {
@@ -44,6 +48,162 @@ std::string stripAnnotationValue(std::string text, std::string_view prefix)
         text.erase(end);
     }
     return text;
+}
+
+std::string stripIntegerSuffixes(std::string text)
+{
+    while (!text.empty()) {
+        if (text.size() >= 2 && text.ends_with("LL")) {
+            text.resize(text.size() - 2);
+        }
+        else if (text.ends_with("L") || text.ends_with("U")) {
+            text.resize(text.size() - 1);
+        }
+        else {
+            break;
+        }
+    }
+    return text;
+}
+
+std::string stripQuotedString(std::string text)
+{
+    if (text.size() >= 2 && ((text.front() == '"' && text.back() == '"')
+            || (text.front() == '\'' && text.back() == '\''))) {
+        return text.substr(1, text.size() - 2);
+    }
+    return text;
+}
+
+std::string printTemplateArgument(const TemplateArgument& arg, const ASTContext& ctx)
+{
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    arg.print(ctx.getPrintingPolicy(), os, true);
+    os.flush();
+    return text;
+}
+
+std::string templateArgumentText(const TemplateArgument& arg, const ASTContext& ctx)
+{
+    switch (arg.getKind()) {
+    case TemplateArgument::Integral:
+        if (arg.getIntegralType()->isBooleanType()) {
+            return arg.getAsIntegral().isZero() ? "false" : "true";
+        }
+        return stripIntegerSuffixes(printTemplateArgument(arg, ctx));
+
+    case TemplateArgument::Expression: {
+        Helpers hlp(const_cast<ASTContext*>(&ctx));
+        cpphdl::Expr expr = hlp.exprToExpr(arg.getAsExpr());
+        return stripQuotedString(expr.str());
+    }
+
+    case TemplateArgument::Declaration:
+        if (const auto* VD = dyn_cast_or_null<VarDecl>(arg.getAsDecl())) {
+            if (const clang::Expr* init = VD->getInit()) {
+                init = init->IgnoreParenImpCasts();
+                if (const auto* SL = dyn_cast<StringLiteral>(init)) {
+                    return SL->getString().str();
+                }
+                Helpers hlp(const_cast<ASTContext*>(&ctx));
+                cpphdl::Expr expr = hlp.exprToExpr(init);
+                return stripQuotedString(expr.str());
+            }
+        }
+        return printTemplateArgument(arg, ctx);
+
+    case TemplateArgument::Type: {
+        QualType QT = arg.getAsType().getNonReferenceType();
+        std::string text;
+        llvm::raw_string_ostream os(text);
+        QT.print(os, ctx.getPrintingPolicy());
+        os.flush();
+        return text;
+    }
+
+    default:
+        return printTemplateArgument(arg, ctx);
+    }
+}
+
+AnnotationVars annotationTemplateVariables(const CXXRecordDecl* RD, const ASTContext& ctx)
+{
+    AnnotationVars vars;
+    const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
+    if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        return vars;
+    }
+
+    const TemplateArgumentList& args = CTSD->getTemplateArgs();
+    const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+    unsigned count = std::min<unsigned>(args.size(), params->size());
+    for (unsigned i = 0; i < count; ++i) {
+        const NamedDecl* param = params->getParam(i);
+        if (!param || param->getName().empty()) {
+            continue;
+        }
+        if (args[i].getKind() == TemplateArgument::Pack) {
+            continue;
+        }
+        vars.emplace(param->getNameAsString(), templateArgumentText(args[i], ctx));
+    }
+    return vars;
+}
+
+std::string replaceAnnotationVariables(const std::string& text, const AnnotationVars& vars)
+{
+    std::string out;
+    out.reserve(text.size());
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '$') {
+            out += text[i];
+            continue;
+        }
+
+        if (i + 1 < text.size() && text[i + 1] == '$') {
+            out += '$';
+            ++i;
+            continue;
+        }
+
+        if (i + 1 < text.size() && text[i + 1] == '(') {
+            size_t close = text.find(')', i + 2);
+            if (close != std::string::npos) {
+                std::string name = text.substr(i + 2, close - (i + 2));
+                auto it = vars.find(name);
+                if (it != vars.end()) {
+                    out += it->second;
+                }
+                else {
+                    out += text.substr(i, close - i + 1);
+                }
+                i = close;
+                continue;
+            }
+        }
+
+        out += text[i];
+    }
+
+    return out;
+}
+
+std::vector<const CXXRecordDecl*> annotationRecordsFor(const CXXRecordDecl* RD)
+{
+    std::vector<const CXXRecordDecl*> records;
+    records.push_back(RD);
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const ClassTemplateDecl* TD = CTSD->getSpecializedTemplate()) {
+            if (const CXXRecordDecl* templated = TD->getTemplatedDecl()) {
+                if (templated != RD) {
+                    records.push_back(templated);
+                }
+            }
+        }
+    }
+    return records;
 }
 
 std::string shellQuote(const std::filesystem::path& path)
@@ -138,19 +298,25 @@ std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTC
     constexpr std::string_view script_prefix = "CPPHDL_REPLACEMENT_SCRIPT=";
     constexpr std::string_view file_prefix = "CPPHDL_REPLACEMENT_FILE=";
 
-    for (const Attr* attr : RD->attrs()) {
-        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
-            std::string text = ann->getAnnotation().str();
-            if (text.rfind(replacement_prefix, 0) == 0) {
-                return stripAnnotationValue(std::move(text), replacement_prefix);
-            }
-            if (text.rfind(script_prefix, 0) == 0) {
-                std::string script = stripAnnotationValue(std::move(text), script_prefix);
-                return readReplacementFromScript(scriptCommandFromAnnotation(script, RD, ctx));
-            }
-            if (text.rfind(file_prefix, 0) == 0) {
-                std::string file = stripAnnotationValue(std::move(text), file_prefix);
-                return readReplacementFromFile(resolveAnnotationPath(file, RD, ctx));
+    AnnotationVars vars = annotationTemplateVariables(RD, ctx);
+    for (const CXXRecordDecl* annotationRD : annotationRecordsFor(RD)) {
+        for (const Attr* attr : annotationRD->attrs()) {
+            if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+                std::string text = ann->getAnnotation().str();
+                if (text.rfind(replacement_prefix, 0) == 0) {
+                    std::string replacement = stripAnnotationValue(std::move(text), replacement_prefix);
+                    return replaceAnnotationVariables(replacement, vars);
+                }
+                if (text.rfind(script_prefix, 0) == 0) {
+                    std::string script = stripAnnotationValue(std::move(text), script_prefix);
+                    script = replaceAnnotationVariables(script, vars);
+                    return readReplacementFromScript(scriptCommandFromAnnotation(script, annotationRD, ctx));
+                }
+                if (text.rfind(file_prefix, 0) == 0) {
+                    std::string file = stripAnnotationValue(std::move(text), file_prefix);
+                    file = replaceAnnotationVariables(file, vars);
+                    return readReplacementFromFile(resolveAnnotationPath(file, annotationRD, ctx));
+                }
             }
         }
     }
@@ -163,13 +329,15 @@ bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
     constexpr std::string_view script_prefix = "CPPHDL_REPLACEMENT_SCRIPT=";
     constexpr std::string_view file_prefix = "CPPHDL_REPLACEMENT_FILE=";
 
-    for (const Attr* attr : RD->attrs()) {
-        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
-            std::string text = ann->getAnnotation().str();
-            if (text.rfind(replacement_prefix, 0) == 0
-                || text.rfind(script_prefix, 0) == 0
-                || text.rfind(file_prefix, 0) == 0) {
-                return true;
+    for (const CXXRecordDecl* annotationRD : annotationRecordsFor(RD)) {
+        for (const Attr* attr : annotationRD->attrs()) {
+            if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+                std::string text = ann->getAnnotation().str();
+                if (text.rfind(replacement_prefix, 0) == 0
+                    || text.rfind(script_prefix, 0) == 0
+                    || text.rfind(file_prefix, 0) == 0) {
+                    return true;
+                }
             }
         }
     }
@@ -714,7 +882,17 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         method = cpphdl::Method{MD->getNameAsString()};
     }
     else {
-        method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{MD->getReturnType().getAsString(), cpphdl::Expr::EXPR_TYPE}}};
+        QualType QT = MD->getReturnType().getNonReferenceType();
+        const std::string returnType = QT.getAsString(hlp.ctx->getPrintingPolicy());
+        const std::string canonicalReturnType = QT.getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy());
+        if (returnType == "std::string" || returnType == "string" ||
+            canonicalReturnType.find("std::basic_string") != std::string::npos ||
+            canonicalReturnType.find("basic_string") != std::string::npos) {
+            method = cpphdl::Method{MD->getNameAsString(), {cpphdl::Expr{"std::string", cpphdl::Expr::EXPR_TYPE}}};
+        }
+        else {
+            method = cpphdl::Method{MD->getNameAsString(), {hlp.digQT(QT)}};
+        }
     }
 
     unsigned savedFlags = hlp.flags;
@@ -723,7 +901,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     // - base module object's methods
     // - external object's methods (require _this)
     if (hlp.mod->origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of base class or external object (not current mod)
-        method.name = genTypeName(MD->getParent()->getQualifiedNameAsString()) + "___";
+        std::string parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
         if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
             if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_assign") {
                 return "";  // we need not work functions from third party classes (not Modules)
@@ -731,7 +909,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 
             // extracting parameters of the template
             std::vector<cpphdl::Field> params;
-            hlp.followSpecialization(MD->getParent(), method.name, &params);
+            hlp.followSpecialization(MD->getParent(), parentName, &params);
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
@@ -754,9 +932,10 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             DEBUG_EXPR(debugIndent, " param Expr: " << method.arguments.back().expr.debug(debugIndent));
         }
         else {
+            parentName = genTypeName(MD->getParent()->getNameAsString());
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         }
-//        method.name += "_";
+        method.name = parentName + "___";
         method.name += MD->getNameAsString();
     }
 
@@ -845,7 +1024,12 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
         Helpers hlp(context, &mod, RD);
 
-        for (Decl* D : RD->getDefinition()->decls()) {
+        const CXXRecordDecl* definition = RD->getDefinition();
+        if (dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+            definition = RD;
+        }
+
+        for (Decl* D : definition->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
 
                 DEBUG_AST(debugIndent++, "# putField: "); on_return ret_debug([](){ --debugIndent; });
@@ -952,7 +1136,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         // when all vars are already in
-        for (const CXXMethodDecl *MD : RD->methods()) {
+        for (const CXXMethodDecl *MD : definition->methods()) {
             putMethod(MD, hlp);
         }
 
