@@ -230,6 +230,41 @@ static std::string trim(std::string s)
     return s;
 }
 
+
+static bool isIdentifierChar(char c)
+{
+    return std::isalnum((unsigned char)c) || c == '_';
+}
+
+static bool isClockPortName(const std::string& name)
+{
+    auto n = name;
+    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return n == "clk" || n == "clk_i" || n == "clock" || n == "clock_i" ||
+           n == "aclk" || n == "clk_in" || n == "clock_in" ||
+           n.rfind("clk_", 0) == 0 || n.rfind("clock_", 0) == 0 ||
+           (n.size() > 4 && n.substr(n.size() - 4) == "_clk") ||
+           (n.size() > 6 && n.substr(n.size() - 6) == "_clock");
+}
+
+static bool isIdentifierUsed(const std::string& text, const std::string& name)
+{
+    if (name.empty()) {
+        return false;
+    }
+    size_t pos = 0;
+    while ((pos = text.find(name, pos)) != std::string::npos) {
+        bool leftOk = pos == 0 || !isIdentifierChar(text[pos - 1]);
+        auto end = pos + name.size();
+        bool rightOk = end >= text.size() || !isIdentifierChar(text[end]);
+        if (leftOk && rightOk) {
+            return true;
+        }
+        pos = end;
+    }
+    return false;
+}
+
 static void replaceAll(std::string& s, const std::string& from, const std::string& to);
 
 static bool isZeroLiteralText(const std::string& expr)
@@ -2856,7 +2891,7 @@ struct Converter : SyntaxVisitor<Converter> {
             port.type = typeText(*h.dataType);
         }
         auto svName = port.name;
-        if (svName == "clk" || svName == "reset") {
+        if (isClockPortName(svName) || svName == "reset") {
             return;
         }
         auto cppName = svName;
@@ -3889,6 +3924,9 @@ struct Converter : SyntaxVisitor<Converter> {
                     if (!expr) {
                         continue;
                     }
+                    if (isClockPortName(port)) {
+                        continue;
+                    }
                     auto rhs = emitExpr(*expr);
                     auto lhs = emitLValue(*expr);
                     applyGenerateReplacements(rhs);
@@ -3905,7 +3943,6 @@ struct Converter : SyntaxVisitor<Converter> {
                         mod->assignLines.push_back("    " + elem + "." + portName + " = " + assignWrapper(rhs, "i") + ";");
                     }
                 }
-                mod->assignLines.push_back("    " + elem + "._assign();");
             }
         }
         else if (node.kind == SyntaxKind::AlwaysBlock ||
@@ -4001,11 +4038,40 @@ struct Converter : SyntaxVisitor<Converter> {
 
     std::string assignWrapper(const std::string& rhs, const std::string& index)
     {
-        auto suffix = index.empty() ? "" : "_I";
-        if (isSimpleCombRef(rhs)) {
-            return std::string("_ASSIGN_COMB") + suffix + "( " + rhs + " )";
+        std::vector<std::string> captures;
+        auto addCapture = [&](const std::string& name) {
+            if (!name.empty() && std::find(captures.begin(), captures.end(), name) == captures.end()) {
+                captures.push_back(name);
+            }
+        };
+        addCapture(index);
+        const std::string names[] = {"i", "j", "k", "m", "z_gen", "w_gen"};
+        for (auto& name : names) {
+            if (rhs.find(name) != std::string::npos && isIdentifierUsed(rhs, name)) {
+                addCapture(name);
+            }
         }
-        return std::string("_ASSIGN") + suffix + "( " + rhs + " )";
+        auto comb = isSimpleCombRef(rhs);
+        if (captures.empty()) {
+            return std::string(comb ? "_ASSIGN_COMB" : "_ASSIGN") + "( " + rhs + " )";
+        }
+        if (captures.size() == 1 && captures[0] == "i") {
+            return std::string(comb ? "_ASSIGN_COMB_I" : "_ASSIGN_I") + "( " + rhs + " )";
+        }
+        if (captures.size() == 1 && captures[0] == "j") {
+            return std::string(comb ? "_ASSIGN_COMB_J" : "_ASSIGN_J") + "( " + rhs + " )";
+        }
+        if (captures.size() == 2 && captures[0] == "i" && captures[1] == "j") {
+            return std::string(comb ? "_ASSIGN_COMB_IJ" : "_ASSIGN_IJ") + "( " + rhs + " )";
+        }
+        std::string capList;
+        for (size_t n = 0; n < captures.size(); ++n) {
+            if (n) {
+                capList += ",";
+            }
+            capList += captures[n];
+        }
+        return std::string(comb ? "_ASSIGN_COMB_INDEXED" : "_ASSIGN_INDEXED") + "((" + capList + "), " + rhs + " )";
     }
 
     std::string baseFromLValueText(const std::string& lhs)
@@ -4070,6 +4136,47 @@ struct Converter : SyntaxVisitor<Converter> {
             }
         }
         return calls;
+    }
+
+    bool isControlOrScopeLine(const std::string& line)
+    {
+        auto t = trim(line);
+        return t.empty() || t == "{" || t == "}" || t == "};" || t == "else {" ||
+               t.rfind("for ", 0) == 0 || t.rfind("for(", 0) == 0 ||
+               t.rfind("if ", 0) == 0 || t.rfind("if(", 0) == 0 ||
+               t.rfind("if constexpr", 0) == 0 || t.rfind("else", 0) == 0 ||
+               t.rfind("switch ", 0) == 0 || t.rfind("switch(", 0) == 0 ||
+               t.rfind("case ", 0) == 0 || t.rfind("default:", 0) == 0 ||
+               t == "break;" || t == "continue;";
+    }
+
+    bool isStructuralAssignLine(const std::string& line)
+    {
+        auto t = trim(line);
+        if (t.find("._assign(") != std::string::npos) {
+            return true;
+        }
+        auto eq = t.find("=");
+        if (eq == std::string::npos) {
+            return false;
+        }
+        auto rhs = trim(t.substr(eq + 1));
+        return rhs.rfind("_ASSIGN", 0) == 0;
+    }
+
+    bool isRuntimeAssignLine(const std::string& line)
+    {
+        return !isControlOrScopeLine(line) && !isStructuralAssignLine(line);
+    }
+
+    bool hasRuntimeAssignLines(const ModuleGen& mod)
+    {
+        for (auto& line : mod.assignLines) {
+            if (isRuntimeAssignLine(line)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void movePartialOutputAssignLinesToComb(ModuleGen& target)
@@ -6734,14 +6841,16 @@ struct Converter : SyntaxVisitor<Converter> {
 	                h << "    logic<(uint64_t)(PopcountWidth)> popcount_o;\n\n";
 	                h << "public:\n";
 	                h << "    popcount()\n    {\n    }\n\n";
-	                h << "    void _work(bool reset)\n    {\n    }\n\n";
-	                h << "    void _strobe()\n    {\n    }\n\n";
-	                h << "    void _assign()\n    {\n";
+	                h << "    void _settle()\n    {\n";
 	                h << "        uint64_t count = 0;\n";
 	                h << "        for (unsigned i = 0; i < INPUT_WIDTH; ++i) {\n";
 	                h << "            count += (uint64_t)(logic<1>(data_i_in()[i]));\n";
 	                h << "        }\n";
 	                h << "        popcount_o = logic<(uint64_t)(PopcountWidth)>(count);\n";
+	                h << "    }\n\n";
+	                h << "    void _work(bool reset)\n    {\n        _settle();\n    }\n\n";
+	                h << "    void _strobe()\n    {\n    }\n\n";
+	                h << "    void _assign()\n    {\n";
 	                h << "        popcount_o_out = _ASSIGN(popcount_o);\n";
 	                h << "    }\n};\n\n";
 	                continue;
@@ -6963,7 +7072,47 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 emitMethod(h, m, f);
             }
+            if (hasRuntimeAssignLines(m)) {
+                MethodGen runtimeAssignMethod;
+                runtimeAssignMethod.name = "assign_comb_func";
+                h << "    void assign_comb_func()\n    {\n";
+                if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
+                    for (auto& line : m.assignLines) {
+                        if (isStructuralAssignLine(line)) {
+                            continue;
+                        }
+                        auto emittedAssignLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, runtimeAssignMethod, line)));
+                        if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(" ")))) {
+                            continue;
+                        }
+                        if (auto patches = configuredTextMap("HDLCPP_ASSIGN_LINE_PATCHES"); patches.count(m.name + "|" + trim(emittedAssignLine))) {
+                            emittedAssignLine = patches[m.name + "|" + trim(emittedAssignLine)];
+                        }
+                        h << "        " << emittedAssignLine << "\n";
+                    }
+                }
+                h << "    }\n\n";
+            }
             h << "public:\n";
+            h << "    void _settle()\n    {\n";
+            for (int settlePass = 0; settlePass < 2; ++settlePass) {
+                h << "        ++comb_epoch;\n";
+                if (hasRuntimeAssignLines(m)) {
+                    h << "        assign_comb_func();\n";
+                }
+                for (auto& name : m.memberNames) {
+                    auto arr = m.memberArraySizes.find(name);
+                    if (arr != m.memberArraySizes.end()) {
+                        h << "        for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(" << arr->second << " );i++) {\n";
+                        h << "            " << name << "[(unsigned)(uint64_t)((uint64_t)(i))]._settle();\n";
+                        h << "        }\n";
+                    }
+                    else {
+                        h << "        " << name << "._settle();\n";
+                    }
+                }
+            }
+            h << "    }\n\n";
             h << "    " << m.name << "()\n    {\n";
             h << "    }\n\n";
             for (auto& f : m.methods) {
@@ -6976,6 +7125,7 @@ struct Converter : SyntaxVisitor<Converter> {
                 emitMethod(h, m, f);
             }
             h << "    void _work(bool reset)\n    {\n";
+            h << "        _settle();\n";
             for (auto& name : m.memberNames) {
                 auto arr = m.memberArraySizes.find(name);
                 if (arr != m.memberArraySizes.end()) {
@@ -7063,11 +7213,11 @@ struct Converter : SyntaxVisitor<Converter> {
                     }
 			            auto isDirectMemberBinding = [&](const std::string& line) {
 			                auto t = trim(line);
-			                if (t.find(" = ") == std::string::npos) {
+			                if (t.find(" = ") == std::string::npos || !isStructuralAssignLine(t)) {
 			                    return false;
 			                }
 			                for (auto& name : m.memberNames) {
-			                    if (t.rfind(name + ".", 0) == 0) {
+			                    if (t.rfind(name + ".", 0) == 0 || t.rfind(name + "[", 0) == 0) {
 			                        return true;
 			                    }
 			                }
@@ -7086,14 +7236,87 @@ struct Converter : SyntaxVisitor<Converter> {
 			                return "";
 			            };
 			            MethodGen assignMethod;
+			            std::map<std::string, std::string> assignLocalExprs;
+			            std::map<std::string, std::string> assignLocalTypes;
+			            for (auto& localLine : m.assignLines) {
+			                auto t = trim(localLine);
+			                auto eq = t.find('=');
+			                if (eq == std::string::npos) {
+			                    auto decl = t;
+			                    if (!decl.empty() && decl.back() == ';') {
+			                        decl.pop_back();
+			                    }
+			                    auto sp = decl.find_last_of(" ");
+			                    if (sp != std::string::npos) {
+			                        auto declType = trim(decl.substr(0, sp));
+			                        auto declName = trim(decl.substr(sp + 1));
+			                        if (!declType.empty() && !declName.empty() && declName.find_first_of(".[(") == std::string::npos) {
+			                            assignLocalTypes[declName] = declType;
+			                        }
+			                    }
+			                    continue;
+			                }
+			                if (t.find("_ASSIGN") != std::string::npos) {
+			                    continue;
+			                }
+			                auto lhsDecl = trim(t.substr(0, eq));
+			                auto lhs = lhsDecl;
+			                if (lhs.find_first_of(".[(") != std::string::npos) {
+			                    continue;
+			                }
+			                std::string lhsType;
+			                auto sp = lhs.find_last_of(" ");
+			                if (sp != std::string::npos) {
+			                    lhsType = trim(lhs.substr(0, sp));
+			                    lhs = trim(lhs.substr(sp + 1));
+			                }
+			                auto rhs = trim(t.substr(eq + 1));
+			                if (!rhs.empty() && rhs.back() == ';') {
+			                    rhs.pop_back();
+			                }
+			                if (lhsType.empty()) {
+			                    if (auto typeIt = assignLocalTypes.find(lhs); typeIt != assignLocalTypes.end()) {
+			                        lhsType = typeIt->second;
+			                    }
+			                }
+			                if (!lhsType.empty()) {
+			                    replaceAll(rhs, "decltype(" + lhs + ")", lhsType);
+			                }
+			                if (!lhs.empty() && isIdentifierUsed(lhs, lhs)) {
+			                    assignLocalExprs[lhs] = rhs;
+			                    if (!lhsType.empty()) {
+			                        assignLocalTypes[lhs] = lhsType;
+			                    }
+			                }
+			            }
 		            if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
 		                for (auto& line : m.assignLines) {
 		                    if (!isDirectMemberBinding(line)) {
 		                        continue;
 		                    }
 		                    auto emittedAssignLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, assignMethod, line)));
+		                    for (auto& kv : assignLocalExprs) {
+		                        if (isIdentifierUsed(emittedAssignLine, kv.first)) {
+		                            auto replacement = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, assignMethod, kv.second)));
+		                            if (auto typeIt = assignLocalTypes.find(kv.first); typeIt != assignLocalTypes.end()) {
+		                                replaceAll(replacement, "decltype(" + kv.first + ")", typeIt->second);
+		                            }
+		                            replaceIdentifierAll(emittedAssignLine, kv.first, "(" + replacement + ")");
+		                        }
+		                    }
+		                    for (auto& typeKv : assignLocalTypes) {
+		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
+		                    }
 		                    auto arraySize = directMemberBindingArraySize(line);
 		                    if (!arraySize.empty()) {
+		                        const std::string generatedLoopAliases[] = {"j", "k", "m", "z_gen", "w_gen"};
+		                        for (auto& alias : generatedLoopAliases) {
+		                            if (isIdentifierUsed(emittedAssignLine, alias)) {
+		                                replaceIdentifierAll(emittedAssignLine, alias, "i");
+		                            }
+		                        }
+		                        replaceAll(emittedAssignLine, "_ASSIGN_INDEXED((i,i),", "_ASSIGN_I(");
+		                        replaceAll(emittedAssignLine, "_ASSIGN_COMB_INDEXED((i,i),", "_ASSIGN_COMB_I(");
 		                        h << "        for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(" << arraySize << ");i++) {\n";
 		                        h << "            " << emittedAssignLine << "\n";
 		                        h << "        }\n";
@@ -7103,18 +7326,9 @@ struct Converter : SyntaxVisitor<Converter> {
 		                    }
 		                }
 		            }
-            for (auto& name : m.memberNames) {
-                auto arr = m.memberArraySizes.find(name);
-                if (arr != m.memberArraySizes.end()) {
-                    continue;
-                }
-	                else {
-	                    h << "        " << name << "._assign();\n";
-	                }
-	            }
 		            if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
 		                for (auto& line : m.assignLines) {
-		                    if (isDirectMemberBinding(line)) {
+		                    if (isDirectMemberBinding(line) || !isStructuralAssignLine(line) || trim(line).find("._assign(") != std::string::npos) {
 		                        continue;
 		                    }
 		                    auto eq = line.find('=');
@@ -7122,6 +7336,18 @@ struct Converter : SyntaxVisitor<Converter> {
 		                        continue;
 		                    }
 		                    auto emittedAssignLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, assignMethod, line)));
+		                    for (auto& kv : assignLocalExprs) {
+		                        if (isIdentifierUsed(emittedAssignLine, kv.first)) {
+		                            auto replacement = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, assignMethod, kv.second)));
+		                            if (auto typeIt = assignLocalTypes.find(kv.first); typeIt != assignLocalTypes.end()) {
+		                                replaceAll(replacement, "decltype(" + kv.first + ")", typeIt->second);
+		                            }
+		                            replaceIdentifierAll(emittedAssignLine, kv.first, "(" + replacement + ")");
+		                        }
+		                    }
+		                    for (auto& typeKv : assignLocalTypes) {
+		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
+		                    }
 		                    if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(' ')))) {
 		                        continue;
 		                    }
@@ -7138,6 +7364,17 @@ struct Converter : SyntaxVisitor<Converter> {
                             h << "        " << codeLine << "\n";
                         }
 		            }
+            for (auto& name : m.memberNames) {
+                auto arr = m.memberArraySizes.find(name);
+                if (arr != m.memberArraySizes.end()) {
+                    h << "        for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(" << arr->second << ");i++) {\n";
+                    h << "            " << name << "[(unsigned)(uint64_t)((uint64_t)(i))]._assign();\n";
+                    h << "        }\n";
+                }
+                else {
+                    h << "        " << name << "._assign();\n";
+                }
+            }
 			            h << "    }\n};\n\n";
 	        }
     }
@@ -7145,6 +7382,9 @@ struct Converter : SyntaxVisitor<Converter> {
     void emitInstanceConnections(ModuleGen& m)
     {
         for (auto& conn : m.instanceConns) {
+            if (isClockPortName(conn.port)) {
+                continue;
+            }
             auto* child = findModule(conn.type);
             auto portName = conn.port;
             bool isOutput = false;
@@ -7299,8 +7539,30 @@ struct Converter : SyntaxVisitor<Converter> {
                         if (portIt != mod.portCppNames.end() && id != exclude && prev != '.' && next != '(') {
                             out += portIt->second + "()";
                         }
-                        else if (isAssignDrivenVar(mod, id) && id != exclude && prev != '.' && next != '(') {
-                            out += id + "()";
+                        else if (id != exclude && prev != '.' && next != '(') {
+                            bool replacedComb = false;
+                            auto combBaseIt = mod.combMethodByBase.find(id);
+                            if (combBaseIt != mod.combMethodByBase.end() && !mod.seqAssignedVars.count(id)) {
+                                out += mod.methods[combBaseIt->second].name + "()";
+                                replacedComb = true;
+                            }
+                            else {
+                                for (auto& combItem : mod.combMethodByBase) {
+                                    if (id == combStorageName(mod, combItem.first) && id != combStorageName(mod, exclude) && !mod.seqAssignedVars.count(combItem.first)) {
+                                        out += mod.methods[combItem.second].name + "()";
+                                        replacedComb = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!replacedComb) {
+                                if (isAssignDrivenVar(mod, id)) {
+                                    out += id + "()";
+                                }
+                                else {
+                                    out += id;
+                                }
+                            }
                         }
                         else {
                             out += id;
