@@ -27,7 +27,7 @@ struct Helpers
     void ArgToExpr(const TemplateArgument& Arg, cpphdl::Expr& expr, bool specialization = true);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);
-    void genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes = false);
+    bool genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes = false);
     void followSpecialization(const CXXRecordDecl* RD, std::string& name, std::vector<cpphdl::Field>* params = nullptr, bool onlyTypes = false);
     bool skipStdFunctionType(QualType& QT);
     CXXRecordDecl* resolveCXXRecordDecl(QualType QT);

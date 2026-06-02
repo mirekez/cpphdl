@@ -31,6 +31,7 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace clang;
@@ -401,7 +402,150 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
     }
 }
 
-cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr)
+cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
+
+std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    std::unordered_map<std::string, cpphdl::Expr> result;
+    const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
+    if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        return result;
+    }
+
+    const TemplateArgumentList& args = CTSD->getTemplateArgs();
+    const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+    const unsigned n = std::min<unsigned>(args.size(), params->size());
+    for (unsigned i = 0; i < n; ++i) {
+        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(params->getParam(i));
+        if (!typeParam || args[i].getKind() != TemplateArgument::Type) {
+            continue;
+        }
+
+        cpphdl::Expr tmp;
+        hlp.ArgToExpr(args[i], tmp, false);
+        if (!tmp.sub.empty()) {
+            QualType QT = args[i].getAsType().getNonReferenceType();
+            CXXRecordDecl* CRD = hlp.resolveCXXRecordDecl(QT);
+            if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != 0
+                && CRD->getQualifiedNameAsString().find("std::") != 0) {
+                auto st = exportStruct(CRD, hlp);
+                if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(),
+                        [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
+                    hlp.mod->imports.emplace_back(st.name);
+                    currProject->structs.emplace_back(std::move(st));
+                }
+            }
+            result.emplace(typeParam->getNameAsString(), std::move(tmp.sub.front()));
+        }
+    }
+    return result;
+}
+
+void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl* RD, Helpers& hlp)
+{
+    const ClassTemplateDecl* CTD = RD ? RD->getDescribedClassTemplate() : nullptr;
+    if (!CTD) {
+        return;
+    }
+
+    const auto substitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    if (substitutions.empty()) {
+        return;
+    }
+
+    bool first = true;
+    for (const NamedDecl* param : *CTD->getTemplateParameters()) {
+        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(param);
+        if (!typeParam) {
+            continue;
+        }
+        auto it = substitutions.find(typeParam->getNameAsString());
+        if (it == substitutions.end()) {
+            continue;
+        }
+        if (!first) {
+            name += "_";
+        }
+        cpphdl::Expr arg = it->second;
+        name += genTypeName(arg.str());
+        first = false;
+    }
+}
+
+void applyTemplateTypeSubstitutions(cpphdl::Expr& expr, const std::unordered_map<std::string, cpphdl::Expr>& substitutions)
+{
+    if (substitutions.empty()) {
+        return;
+    }
+
+    if ((expr.type == cpphdl::Expr::EXPR_TYPE || expr.type == cpphdl::Expr::EXPR_VAR)
+        && substitutions.contains(expr.value)) {
+        expr = substitutions.at(expr.value);
+    }
+    else if (expr.type == cpphdl::Expr::EXPR_TEMPLATE) {
+        if (auto it = substitutions.find(expr.value); it != substitutions.end()) {
+            expr = it->second;
+        }
+    }
+
+    for (auto& sub : expr.sub) {
+        applyTemplateTypeSubstitutions(sub, substitutions);
+    }
+}
+
+bool structHasAnonymousAggregateWrapper(const std::string& typeName)
+{
+    auto it = std::find_if(currProject->structs.begin(), currProject->structs.end(),
+        [&](const cpphdl::Struct& st) { return st.name == typeName; });
+    if (it == currProject->structs.end()) {
+        return false;
+    }
+
+    return std::any_of(it->fields.begin(), it->fields.end(), [](const cpphdl::Field& field) {
+        return field.name.empty() && field.definition.type != cpphdl::Struct::STRUCT_EMPTY;
+    });
+}
+
+void fixAnonymousLocalMemberAccess(cpphdl::Expr& expr, std::unordered_map<std::string, bool>& localAnonTypes)
+{
+    if (expr.type == cpphdl::Expr::EXPR_MEMBER && expr.sub.size() == 1
+        && !(expr.flags & cpphdl::Expr::FLAG_ANON)
+        && expr.sub[0].type == cpphdl::Expr::EXPR_VAR
+        && localAnonTypes.contains(expr.sub[0].value)) {
+        cpphdl::Expr base = std::move(expr.sub[0]);
+        expr.sub[0] = cpphdl::Expr{"", cpphdl::Expr::EXPR_MEMBER, {std::move(base)}, cpphdl::Expr::FLAG_ANON};
+    }
+
+    for (auto& sub : expr.sub) {
+        fixAnonymousLocalMemberAccess(sub, localAnonTypes);
+    }
+}
+
+void fixAnonymousLocalMemberAccesses(cpphdl::Method& method, const std::unordered_map<std::string, cpphdl::Expr>& substitutions)
+{
+    std::unordered_set<std::string> substitutedTypeNames;
+    for (const auto& [_, expr] : substitutions) {
+        if (expr.type == cpphdl::Expr::EXPR_TYPE) {
+            substitutedTypeNames.insert(expr.value);
+        }
+    }
+
+    std::unordered_map<std::string, bool> localAnonTypes;
+    for (auto& statement : method.statements) {
+        statement.traverseIf([&](cpphdl::Expr& expr) {
+            if (expr.type == cpphdl::Expr::EXPR_DECL && expr.sub.size()
+                && expr.sub[0].type == cpphdl::Expr::EXPR_TYPE
+                && substitutedTypeNames.contains(expr.sub[0].value)
+                && structHasAnonymousAggregateWrapper(expr.sub[0].value)) {
+                localAnonTypes.emplace(expr.value, true);
+            }
+            return false;
+        });
+        fixAnonymousLocalMemberAccess(statement, localAnonTypes);
+    }
+}
+
+cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 {
     DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
     cpphdl::Struct st_obj = {};
@@ -910,6 +1054,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             // extracting parameters of the template
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), parentName, &params);
+            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
@@ -966,6 +1111,20 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             DEBUG_EXPR(debugIndent, " Expr: " << method.statements.back().debug(debugIndent));
         }
     }
+
+    const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    for (auto& ret : method.ret) {
+        applyTemplateTypeSubstitutions(ret, typeSubstitutions);
+    }
+    for (auto& arg : method.arguments) {
+        applyTemplateTypeSubstitutions(arg.expr, typeSubstitutions);
+        applyTemplateTypeSubstitutions(arg.initializer, typeSubstitutions);
+        applyTemplateTypeSubstitutions(arg.bitwidth, typeSubstitutions);
+    }
+    for (auto& statement : method.statements) {
+        applyTemplateTypeSubstitutions(statement, typeSubstitutions);
+    }
+    fixAnonymousLocalMemberAccesses(method, typeSubstitutions);
 
 //    if (MD->getNameAsString() != hlp.mod->name
 ////     && MD->getNameAsString() != std::string("~") + hlp.mod->name

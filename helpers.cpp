@@ -59,6 +59,41 @@ static std::string flattenedCombSignalName(const cpphdl::Module* mod, const std:
     return "";
 }
 
+static const ClassTemplateDecl* findClassTemplateDecl(DeclContext* dc, llvm::StringRef name)
+{
+    if (!dc) {
+        return nullptr;
+    }
+
+    for (Decl* decl : dc->decls()) {
+        if (const auto* ctd = dyn_cast<ClassTemplateDecl>(decl)) {
+            if (ctd->getName() == name) {
+                return ctd;
+            }
+        }
+        if (auto* ns = dyn_cast<NamespaceDecl>(decl)) {
+            if (const auto* found = findClassTemplateDecl(ns, name)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
+}
+
+static std::string dependentQualifierText(const DependentScopeDeclRefExpr* expr, const PrintingPolicy& policy)
+{
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    if (expr->getQualifier()) {
+        expr->getQualifier()->print(os, policy);
+    }
+    os.flush();
+    while (str_ending(text, "::")) {
+        text.resize(text.size() - 2);
+    }
+    return text;
+}
+
 std::string Helpers::castTypeName(QualType QT)
 {
     std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
@@ -619,6 +654,33 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" CallExpr(" << callee->getStmtClassName() << ")");
 
         //////////// this code is for std::tuple and should be refactored to separated source file //
+
+        if (const auto* DSDRE = llvm::dyn_cast<clang::DependentScopeDeclRefExpr>(callee)) {
+            DEBUG_AST1(" DSDRE(" << DSDRE->getDeclName().getAsString() << ")");
+            const std::string qualifier = dependentQualifierText(DSDRE, ctx->getPrintingPolicy());
+            std::string templateName = qualifier;
+            if (size_t pos = templateName.find('<'); pos != std::string::npos) {
+                templateName.resize(pos);
+            }
+            if (size_t pos = templateName.rfind("::"); pos != std::string::npos) {
+                templateName.erase(0, pos + 2);
+            }
+
+            call.value = genTypeName(qualifier) + "___" + DSDRE->getDeclName().getAsString();
+            if (const ClassTemplateDecl* ctd = findClassTemplateDecl(ctx->getTranslationUnitDecl(), templateName)) {
+                if (const CXXRecordDecl* templated = ctd->getTemplatedDecl()) {
+                    for (const CXXMethodDecl* method : templated->methods()) {
+                        if (method->getNameAsString() == DSDRE->getDeclName().getAsString()) {
+                            auto newName = putMethod(method, *this);
+                            if (!newName.empty()) {
+                                call.value = newName;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         if (const auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(callee)) { // we do it only for std::apply
             const clang::FunctionDecl* function = llvm::dyn_cast<clang::FunctionDecl>(DRE->getDecl());
@@ -1289,8 +1351,9 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
                     // type argument here can recursively re-enter exportStruct().
                     ArgToExpr(arg, tmp, false);
                     for (auto& expr: tmp.sub) {
-                        genSpecializationTypeName(first, name, expr, onlyTypes);
-                        first = false;
+                        if (genSpecializationTypeName(first, name, expr, onlyTypes)) {
+                            first = false;
+                        }
                         if (params) {
                             params->emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), std::move(expr)});
                         }
@@ -1304,8 +1367,9 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
             // type argument here can recursively re-enter exportStruct().
             ArgToExpr(args[i], tmp, false);
             for (auto& expr: tmp.sub) {
-                genSpecializationTypeName(first, name, expr, onlyTypes);
-                first = false;
+                if (genSpecializationTypeName(first, name, expr, onlyTypes)) {
+                    first = false;
+                }
                 if (params) {
                     params->emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), std::move(expr)});
                 }
@@ -1349,7 +1413,7 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
     }
 }
 */
-void Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
+bool Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
 {
     if (!onlyTypes || param.type != cpphdl::Expr::EXPR_NUM) {
         std::string str = param.str();  // first place we call str() in Clang part (to make a string value)
@@ -1359,6 +1423,7 @@ void Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::E
         name += genTypeName(str);
     }
     str_replace(name, "::", "_");
+    return !onlyTypes || param.type != cpphdl::Expr::EXPR_NUM;
 }
 
 bool Helpers::skipStdFunctionType(QualType& QT)
