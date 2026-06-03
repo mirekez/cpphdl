@@ -100,6 +100,54 @@ function(cpphdl_link_stdcxxexp_if_available target)
   endif()
 endfunction()
 
+function(cpphdl_llvm_prefix_works prefix out_var)
+  set(${out_var} TRUE PARENT_SCOPE)
+  if(NOT EXISTS "${prefix}/lib/libLLVM.so")
+    return()
+  endif()
+
+  set(test_dir "${CMAKE_BINARY_DIR}/CMakeFiles/cpphdl-llvm-prefix-check")
+  file(MAKE_DIRECTORY "${test_dir}")
+  file(WRITE "${test_dir}/llvm_runtime_check.cpp" [=[
+#include "llvm/Support/raw_ostream.h"
+int main()
+{
+    llvm::outs() << "";
+    return 0;
+}
+]=])
+  execute_process(
+    COMMAND
+      "${CMAKE_CXX_COMPILER}"
+      "${test_dir}/llvm_runtime_check.cpp"
+      "-I${prefix}/include"
+      "-L${prefix}/lib"
+      "-Wl,-rpath,${prefix}/lib"
+      "-lLLVM"
+      "-o" "${test_dir}/llvm_runtime_check"
+    RESULT_VARIABLE compile_result
+    OUTPUT_VARIABLE compile_output
+    ERROR_VARIABLE compile_error
+  )
+  if(NOT compile_result EQUAL 0)
+    message(STATUS "Skipping LLVM prefix ${prefix}: runtime probe did not link")
+    set(${out_var} FALSE PARENT_SCOPE)
+    return()
+  endif()
+
+  execute_process(
+    COMMAND "${test_dir}/llvm_runtime_check"
+    RESULT_VARIABLE run_result
+    OUTPUT_VARIABLE run_output
+    ERROR_VARIABLE run_error
+  )
+  if(NOT run_result EQUAL 0)
+    string(STRIP "${run_output}\n${run_error}" runtime_error)
+    message(STATUS "Skipping LLVM prefix ${prefix}: runtime probe failed: ${runtime_error}")
+    set(${out_var} FALSE PARENT_SCOPE)
+  endif()
+endfunction()
+
 foreach(CPPHDL_LLVM_PREFIX
     "${CMAKE_SOURCE_DIR}/.conda"
     "/usr/lib/llvm-20"
@@ -110,8 +158,11 @@ foreach(CPPHDL_LLVM_PREFIX
     "/usr/lib/llvm-15")
   if((CPPHDL_USE_LOCAL_CONDA OR NOT CPPHDL_LLVM_PREFIX STREQUAL "${CMAKE_SOURCE_DIR}/.conda")
       AND EXISTS "${CPPHDL_LLVM_PREFIX}/include/clang/Tooling/Tooling.h")
-    list(APPEND CMAKE_PREFIX_PATH "${CPPHDL_LLVM_PREFIX}")
-    list(APPEND CPPHDL_LLVM_PREFIXES "${CPPHDL_LLVM_PREFIX}")
+    cpphdl_llvm_prefix_works("${CPPHDL_LLVM_PREFIX}" CPPHDL_PREFIX_WORKS)
+    if(CPPHDL_PREFIX_WORKS)
+      list(APPEND CMAKE_PREFIX_PATH "${CPPHDL_LLVM_PREFIX}")
+      list(APPEND CPPHDL_LLVM_PREFIXES "${CPPHDL_LLVM_PREFIX}")
+    endif()
   endif()
 endforeach()
 if(CPPHDL_LLVM_PREFIXES)
