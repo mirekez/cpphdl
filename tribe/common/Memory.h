@@ -5,8 +5,6 @@
 
 using namespace cpphdl;
 
-extern long sys_clock;
-
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true, int ID = 0>

@@ -95,7 +95,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -253,7 +253,7 @@ public:
         seed = seed_value;
         eval(false);
         neg(false);
-        ++sys_clock;
+        ++_system_clock;
 
         if (plain() != expected_plain(seed_value)) {
             std::print("\nplain ERROR: got {:08x}, expected {:08x}\n",

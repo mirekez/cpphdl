@@ -1,6 +1,6 @@
 #pragma once
 
-extern long sys_clock;
+extern long _system_clock;
 
 #include "cpphdl.h"
 

@@ -214,7 +214,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static OuterBits expected_sample(uint32_t seed)
 {
@@ -510,14 +510,14 @@ public:
         seed = 0;
         eval(true);
         neg(true);
-        ++sys_clock;
+        ++_system_clock;
 
         for (uint32_t i = 0; i < 256 && !error; ++i) {
             seed = i;
             eval(false);
             check(i);
             neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us, sizes tiny/mixed/outer/union_struct/struct_union/enum_struct={}/{}/{}/{}/{}/{})\n", !error ? "PASSED" : "FAILED",

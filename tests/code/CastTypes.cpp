@@ -92,7 +92,7 @@ template class CastTypes<8>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -231,7 +231,7 @@ public:
         value = value_in;
         eval(false);
         neg(false);
-        ++sys_clock;
+        ++_system_clock;
 
         constexpr uint32_t mask = (1u << CastTypes<8>::CAST_BITS) - 1u;
         uint32_t expected = ((value_in & (CastTypes<8>::WIDTH * CastTypes<8>::WIDTH - 1u)) / CastTypes<8>::WIDTH) & mask;

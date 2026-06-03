@@ -57,6 +57,7 @@ public:
     _PORT(bool)       write_in;
     _PORT(logic<512>) digest_out = _ASSIGN_COMB( digest_comb_func() );
     _PORT(logic<512>) memory_out = _ASSIGN_COMB( memory_comb_func() );
+    _PORT(logic<512>) slice_widen_out = _ASSIGN_COMB( slice_widen_comb_func() );
 
 private:
 #define DECL_U(W) reg<u<W>> u##W##_reg;
@@ -92,6 +93,7 @@ private:
     memory<u8,64,16> byte_memory;
     logic<512> digest_comb;
     logic<512> memory_comb;
+    logic<512> slice_widen_comb;
 
     logic<512>& digest_comb_func()
     {
@@ -131,6 +133,37 @@ private:
     {
         memory_comb = byte_memory[(uint64_t)addr_in() & 0xf];
         return memory_comb;
+    }
+
+    logic<512>& slice_widen_comb_func()
+    {
+        logic<32> src32;
+        logic<34> ctor34;
+        logic<40> assign40;
+        logic<37> src37;
+        logic<29> ctor29;
+        logic<128> src128;
+        logic<512> wide512;
+
+        src32 = 0x80000004u;
+        ctor34 = logic<34>(src32.bits(31, 0));
+        assign40 = src32.bits(31, 0);
+
+        src37 = 0x1abcdef123ULL;
+        ctor29 = logic<29>(src37.bits(28, 4));
+
+        src128 = 0;
+        src128.bits(127, 120) = 0xa5;
+        src128.bits(95, 64) = 0x80000004u;
+        src128.bits(7, 0) = 0x5a;
+        wide512 = logic<512>(src128.bits(127, 0));
+
+        slice_widen_comb = 0;
+        slice_widen_comb.bits(33, 0) = ctor34;
+        slice_widen_comb.bits(79, 40) = assign40;
+        slice_widen_comb.bits(108, 80) = ctor29;
+        slice_widen_comb.bits(255, 128) = wide512.bits(127, 0);
+        return slice_widen_comb;
     }
 
 public:
@@ -250,7 +283,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static logic<512> expected_memory(uint8_t seed)
 {
@@ -273,7 +306,10 @@ static logic<512> expected_digest(uint8_t seed)
         v = v - u<W>(W / 8); \
         v = v + u<W>(((uint64_t)v >> (W - 1)) & 1); \
         digest.bits(W - 1, 0) = v; \
-        digest = digest ^ (logic<512>(v) << ((W * 3) % 64)); \
+        logic<512> tmp; \
+        tmp = 0; \
+        tmp.bits(W - 1, 0) = v; \
+        digest = digest ^ (tmp << ((W * 3) % 64)); \
     }
     CPPHDL_U_WIDTHS(EXPECT_U)
 #undef EXPECT_U
@@ -410,6 +446,15 @@ public:
 #endif
     }
 
+    logic<512> read_slice_widen()
+    {
+#ifdef VERILATOR
+        return verilator_read<logic<512>>(&dut.slice_widen_out);
+#else
+        return dut.slice_widen_out();
+#endif
+    }
+
     bool check(const char* name, const logic<512>& got, const logic<512>& exp)
     {
         if (got != exp) {
@@ -417,6 +462,19 @@ public:
             error = true;
         }
         return !error;
+    }
+
+    logic<512> expected_slice_widen()
+    {
+        logic<512> exp;
+        exp = 0;
+        exp.bits(33, 0) = 0x80000004ull;
+        exp.bits(79, 40) = 0x80000004ull;
+        exp.bits(108, 80) = (0x1abcdef123ULL >> 4) & ((1ULL << 25) - 1);
+        exp.bits(255, 248) = 0xa5;
+        exp.bits(223, 192) = 0x80000004ull;
+        exp.bits(135, 128) = 0x5a;
+        return exp;
     }
 
     bool run()
@@ -436,7 +494,9 @@ public:
         eval_pos(true);
         _strobe();
         eval_neg(true);
-        ++sys_clock;
+        ++_system_clock;
+
+        check("slice widen", read_slice_widen(), expected_slice_widen());
 
         for (uint8_t i=0; i < 32; ++i) {
             seed = (uint8_t)(i * 7 + 3);
@@ -445,7 +505,7 @@ public:
             eval_pos(false);
             _strobe();
             eval_neg(false);
-            ++sys_clock;
+            ++_system_clock;
 
             write = false;
             eval_pos(false);
@@ -457,7 +517,7 @@ public:
                 break;
             }
             eval_neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

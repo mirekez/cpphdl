@@ -149,7 +149,7 @@ template class Buffer<64, 8>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t WIDTH, size_t DEPTH>
 class TestBuffer : public Module
@@ -273,12 +273,12 @@ public:
         if (output_fire) {
             if (pending.empty()) {
                 std::print("{:s} ERROR: output handshake with empty reference queue at cycle {}\n",
-                    __inst_name, sys_clock);
+                    __inst_name, _system_clock);
                 error = true;
             }
             else if (data_out_value != pending.front()) {
                 std::print("{:s} ERROR: data mismatch at cycle {}: got {} expected {}\n",
-                    __inst_name, sys_clock, data_out_value, pending.front());
+                    __inst_name, _system_clock, data_out_value, pending.front());
                 error = true;
             }
             else {
@@ -289,17 +289,17 @@ public:
 
         if (pending.size() > DEPTH) {
             std::print("{:s} ERROR: reference queue exceeded DEPTH at cycle {}: {}\n",
-                __inst_name, sys_clock, pending.size());
+                __inst_name, _system_clock, pending.size());
             error = true;
         }
 
-        valid_in_reg._next = producer_valid(sys_clock) && produced < 20000;
-        ready_in_reg._next = consumer_ready(sys_clock);
+        valid_in_reg._next = producer_valid(_system_clock) && produced < 20000;
+        ready_in_reg._next = consumer_ready(_system_clock);
         data_in_reg._next = make_word();
 
-        if (debugen_in && (sys_clock % 1000) == 0) {
+        if (debugen_in && (_system_clock % 1000) == 0) {
             std::print("{:s}: cycle={} produced={} consumed={} pending={} valid={} ready={}\n",
-                __inst_name, sys_clock, produced, consumed, pending.size(),
+                __inst_name, _system_clock, produced, consumed, pending.size(),
                 (bool)valid_in_reg, (bool)ready_in_reg);
         }
     }
@@ -363,12 +363,12 @@ public:
         int cycles = 80000;
         while (--cycles) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(false);
             _strobe_neg();
             _work_neg(false);
-            if (sys_clock <= VCD_MAX_SAMPLES) {
-                vcd.sample(sys_clock);
+            if (_system_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(_system_clock);
             }
 
             if (produced >= 20000 && pending.empty()) {

@@ -162,7 +162,7 @@ template class Fifo<64,65536,0>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
 class TestFifo : public Module
@@ -360,12 +360,12 @@ public:
         int cycles = 100000;
         while (--cycles) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);
-            if (sys_clock <= VCD_MAX_SAMPLES) {
-                vcd.sample(sys_clock);
+            if (_system_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(_system_clock);
             }
 
             if (error) {

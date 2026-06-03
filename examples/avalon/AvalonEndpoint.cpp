@@ -279,7 +279,7 @@ template class AvalonEndpoint<256, 1024, 7>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t DATA_WIDTH = 512, size_t AVALON_WIDTH = 512, size_t AVALON_BITS = clog2(AVALON_WIDTH / 8)>
 class TestAvalonEndpoint : public Module
@@ -433,12 +433,12 @@ class TestAvalonEndpoint : public Module
             }
         }
         if (!seen_byte) {
-            std::print("\nERROR: Avalon write with empty byteenable at cycle {}\n", sys_clock);
+            std::print("\nERROR: Avalon write with empty byteenable at cycle {}\n", _system_clock);
             error = true;
             return;
         }
         if (non_contiguous) {
-            std::print("\nERROR: non-contiguous byteenable {} at cycle {}\n", avmm_byteenable_value, sys_clock);
+            std::print("\nERROR: non-contiguous byteenable {} at cycle {}\n", avmm_byteenable_value, _system_clock);
             error = true;
             return;
         }
@@ -448,7 +448,7 @@ class TestAvalonEndpoint : public Module
                 uint64_t absolute = avmm_address_value + i;
                 if (absolute < offsets[read_loop] || absolute - offsets[read_loop] >= sizes[read_loop]) {
                     std::print("\nERROR: write address 0x{:x} outside buffer {} offset={} size={} at cycle {}\n",
-                        absolute, read_loop, offsets[read_loop], sizes[read_loop], sys_clock);
+                        absolute, read_loop, offsets[read_loop], sizes[read_loop], _system_clock);
                     error = true;
                     return;
                 }
@@ -544,9 +544,9 @@ public:
             waitrequest_reg._next = rnd(3);
             update_source();
 
-            if (debug && (sys_clock % 1000) == 0) {
+            if (debug && (_system_clock % 1000) == 0) {
                 std::print("cycle={} loop={} read_loop={} sent={} valid={} wait={} av_write={} av_addr=0x{:x} be={}\n",
-                    sys_clock, loop, read_loop, sent_bytes, (bool)valid_in_reg, wait_out_value,
+                    _system_clock, loop, read_loop, sent_bytes, (bool)valid_in_reg, wait_out_value,
                     avmm_write_value, avmm_address_value, avmm_byteenable_value);
             }
         }
@@ -589,7 +589,7 @@ public:
     void tick()
     {
         _strobe();
-        ++sys_clock;
+        ++_system_clock;
         _work(false);
         _work_neg(false);
     }
@@ -646,7 +646,7 @@ public:
         set_input(beats[beat_index].addr, beats[beat_index].nbytes, beats[beat_index].seed);
         for (size_t cycle = 0; cycle < 200 && (beat_index < BEAT_COUNT || drain_cycles < 20); ++cycle) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(false);
             collect_write(captured);
 
@@ -716,7 +716,7 @@ public:
         int cycles = 200000;
         while (--cycles && !error) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(false);
             _work_neg(false);
             if (loop >= MEM_CNT && read_loop >= MEM_CNT) {

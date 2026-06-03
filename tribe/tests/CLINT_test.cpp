@@ -21,7 +21,7 @@ using namespace cpphdl;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static std::filesystem::path source_root_dir()
 {
@@ -278,7 +278,7 @@ public:
         dut._work(reset);
         dut._strobe();
 #endif
-        ++sys_clock;
+        ++_system_clock;
     }
 
     bool awready()

@@ -77,7 +77,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t WIDTH>
 static logic<WIDTH> verilator_u32_to_logic(uint32_t value)
@@ -222,7 +222,7 @@ public:
         if (dma_write_complete()) {
             ++dma_complete_pulses;
         }
-        ++sys_clock;
+        ++_system_clock;
     }
 
     void reset()

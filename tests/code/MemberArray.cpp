@@ -132,7 +132,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static uint16_t expected(uint16_t seed)
 {
@@ -263,7 +263,7 @@ public:
                 error = true;
             }
             neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

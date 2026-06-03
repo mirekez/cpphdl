@@ -3,6 +3,18 @@
 #include <cstring>
 #include <type_traits>
 
+template<typename T, typename = void>
+struct bitops_value_size
+{
+    static constexpr size_t value = sizeof(T);
+};
+
+template<typename T>
+struct bitops_value_size<T, std::void_t<decltype(T::SIZE)>>
+{
+    static constexpr size_t value = T::SIZE;
+};
+
 template<typename BASE>
 class bitops
 {
@@ -35,7 +47,7 @@ private:
     template<typename F64>
     static void apply_binary(BASE& dst, const BASE& rhs, F64 op)
     {
-        size_t size = sizeof(BASE);
+        size_t size = bitops_value_size<BASE>::value;
 
         uint8_t* dptr = (uint8_t*)&dst;
         const uint8_t* rptr = (const uint8_t*)&rhs;
@@ -102,7 +114,7 @@ public:
     {
         BASE result = static_cast<const BASE&>(*this);
 
-        size_t size = sizeof(BASE);
+        size_t size = bitops_value_size<BASE>::value;
         uint8_t* ptr = (uint8_t*)&result;
 
         for (size_t i = 0; i < size; ++i)
@@ -115,7 +127,7 @@ public:
     {
         BASE result{};
 
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
         constexpr size_t total_bits = size * 8;
 
@@ -187,7 +199,7 @@ public:
     {
         BASE result{};
 
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
         constexpr size_t total_bits = size * 8;
 
@@ -262,7 +274,7 @@ public:
         const uint8_t* bp = (const uint8_t*)&rhs;
         uint8_t* rp = (uint8_t*)&result;
 
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
 
         uint64_t carry = 0;
@@ -301,7 +313,7 @@ public:
         const uint8_t* bp = (const uint8_t*)&rhs;
         uint8_t* rp = (uint8_t*)&result;
 
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
 
         uint64_t borrow = 0;
@@ -330,7 +342,7 @@ public:
 
     bool operator==(const BASE& rhs) const
     {
-        return std::memcmp(this, &rhs, sizeof(BASE)) == 0;
+        return std::memcmp(this, &rhs, bitops_value_size<BASE>::value) == 0;
     }
 
     bool operator!=(const BASE& rhs) const
@@ -352,7 +364,7 @@ public:
 
     bool operator<(const BASE& rhs) const
     {
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
 
         const uint8_t* a = (const uint8_t*)this;
@@ -420,14 +432,14 @@ public:
 
     uint64_t to_ullong() const
     {
-        uint64_t value;
-        std::memcpy(&value, this, std::min(sizeof(BASE), sizeof(uint64_t)));
+        uint64_t value = 0;
+        std::memcpy(&value, this, std::min(bitops_value_size<BASE>::value, sizeof(uint64_t)));
         return value;
     }
 
     std::string to_hex(bool trim_leading_zeros = false) const
     {
-        constexpr size_t size = sizeof(BASE);
+        constexpr size_t size = bitops_value_size<BASE>::value;
         static const char* digits = "0123456789abcdef";
         const uint8_t* ptr = (const uint8_t*)this;
 

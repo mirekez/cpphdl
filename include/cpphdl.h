@@ -237,12 +237,12 @@ constexpr void sv_assign_field(array<T, N>& dst, const V& value)
 // _LAZY_COMB saves some time when calling comb() 
 #define _LAZY_COMB(name, type...) \
     type name; \
-    long __prev_sys_clock_##name = -1; \
+    long __prev__system_clock_##name = -1; \
     type& name##_func() { \
-        if (__prev_sys_clock_##name == sys_clock) { \
+        if (__prev__system_clock_##name == _system_clock) { \
             return name; \
         } \
-        __prev_sys_clock_##name = sys_clock;
+        __prev__system_clock_##name = _system_clock;
 
 #else  // legacy CPPHDL_STATIC - requires all methods to be static - 2 times faster but does not support arrays of modules -> not supported now
 
@@ -254,11 +254,11 @@ constexpr void sv_assign_field(array<T, N>& dst, const V& value)
 // _LAZY_COMB saves some time when calling comb() 
 #define _LAZY_COMB(name, type...) \
     inline static type name; \
-    inline static long __prev_sys_clock_##name = -1; \
+    inline static long __prev__system_clock_##name = -1; \
     static type& name##_func() { \
-        if (__prev_sys_clock_##name == sys_clock) { \
+        if (__prev__system_clock_##name == _system_clock) { \
             return name; \
         } \
-        __prev_sys_clock_##name = sys_clock;
+        __prev__system_clock_##name = _system_clock;
 
 #endif

@@ -18,7 +18,7 @@
 #define MAKE_HEADER(name) STRINGIFY(name.h)
 #include MAKE_HEADER(VERILATOR_MODEL)
 
-long sys_clock = -1;
+long _system_clock = -1;
 #else
 #define MAIN_FILE_INCLUDED
 
@@ -207,7 +207,7 @@ public:
         mmu._work(reset);
         mmu._strobe();
 #endif
-        ++sys_clock;
+        ++_system_clock;
     }
 
 #ifdef VERILATOR

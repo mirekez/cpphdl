@@ -195,7 +195,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 class TestRiscV : public Module
 {
@@ -326,7 +326,7 @@ public:
 #endif
 
         if (debugen_in) {
-            printf("----- %lx\n", sys_clock);
+            printf("----- %lx\n", _system_clock);
         }
     }
 
@@ -351,7 +351,7 @@ public:
         __inst_name = "riscv_test";
         _assign();
         _strobe();
-        ++sys_clock;
+        ++_system_clock;
         _work(1);
         _strobe_neg();
         _work_neg(1);
@@ -373,7 +373,7 @@ public:
             imem_write_addr = addr*4;
             imem_write_data = ram[addr];
             imem._strobe();
-            ++sys_clock;
+            ++_system_clock;
             imem._work(0);
             if (debugen_in) {
                 std::print("{:04x}: {:08x}\n", addr, ram[addr]);
@@ -388,7 +388,7 @@ public:
         int cycles = 200000;
         while (--cycles && !error) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);

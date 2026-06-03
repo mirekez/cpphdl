@@ -261,7 +261,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static uint16_t expected_comb(uint16_t seed)
 {
@@ -545,7 +545,7 @@ public:
         eval_pos(true);
         _strobe();
         eval_neg(true);
-        ++sys_clock;
+        ++_system_clock;
 
         for (uint32_t i = 0; i < 32 && !error; ++i) {
             seed = u<16>(i * 13 + 9);
@@ -569,7 +569,7 @@ public:
             step_reg_ref(ref, static_cast<uint16_t>(seed));
             _strobe();
             eval_neg(false);
-            ++sys_clock;
+            ++_system_clock;
 
             uint16_t reg_got = reg_sum();
             uint16_t reg_ref = expected_reg_sum(ref);

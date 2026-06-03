@@ -97,7 +97,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -247,7 +247,7 @@ public:
 
         eval(false);
         neg(false);
-        ++sys_clock;
+        ++_system_clock;
 
         const uint32_t expected = ((uint32_t)byteenable << 13) | ((uint32_t)address << 8) | (uint32_t)data;
         const uint32_t got = bus_value();

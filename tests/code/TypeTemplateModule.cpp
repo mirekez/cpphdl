@@ -123,7 +123,7 @@ template class TypeTemplateModuleParent<2>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static uint16_t expected_convert(uint16_t in)
 {
@@ -136,8 +136,8 @@ static bool check_generated_sv()
     std::filesystem::path parent_path = "generated/TypeTemplateModuleParent.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(leaf_path)) {
-        leaf_path = "TypeTemplateModuleParent_1/TypeTemplateModuleLeafTypeTemplateConv16.sv";
-        parent_path = "TypeTemplateModuleParent_1/TypeTemplateModuleParent.sv";
+        leaf_path = "TypeTemplateModuleParent_2/TypeTemplateModuleLeafTypeTemplateConv16.sv";
+        parent_path = "TypeTemplateModuleParent_2/TypeTemplateModuleParent.sv";
     }
 #endif
 
@@ -154,7 +154,8 @@ static bool check_generated_sv()
     bool ok = true;
     ok &= leaf.find("CONV_TYPE") == std::string::npos;
     ok &= leaf.find("unknown(") == std::string::npos;
-    ok &= leaf.find("TypeTemplateArithmetic___convert_default_to_conv") != std::string::npos;
+    ok &= leaf.find("TypeTemplateArithmeticTypeTemplateConv16___convert_default_to_conv") != std::string::npos;
+    ok &= leaf.find("TypeTemplateArithmetic___convert_default_to_conv") == std::string::npos;
     ok &= parent.find("TypeTemplateModuleLeafTypeTemplateConv16") != std::string::npos;
     ok &= parent.find(") child (") != std::string::npos;
     if (!ok) {
@@ -235,14 +236,14 @@ public:
             value = logic<32>(((uint32_t)hi << 16) | lo);
             eval(false);
             uint32_t got = (uint32_t)output();
-            uint32_t expected = expected_convert(lo);
-            if ((got & 0xffffu) != expected) {
-                std::print("\ntype-template ERROR sample={}: got=0x{:08x} expected-low=0x{:04x}\n",
+            uint32_t expected = ((uint32_t)expected_convert(hi) << 16) | expected_convert(lo);
+            if (got != expected) {
+                std::print("\ntype-template ERROR sample={}: got=0x{:08x} expected=0x{:08x}\n",
                     i, got, expected);
                 error = true;
             }
             neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

@@ -8,6 +8,64 @@ include(CTest)
 set(TRIBE_RAM_BYTES_CONFIG "458752" CACHE STRING "Tribe RAM size in bytes")
 set(TRIBE_IO_REGION_SIZE_CONFIG "4194304" CACHE STRING "Tribe IO region size in bytes")
 
+set(TRIBE_BUILD_BAREMETAL_SCRIPT "${CMAKE_BINARY_DIR}/tribe_build_baremetal.sh")
+file(WRITE "${TRIBE_BUILD_BAREMETAL_SCRIPT}" [=[
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC_DIR="$1"
+OUT_DIR="$2"
+
+find_tool()
+{
+    local name="$1"
+
+    if [[ -n "${RISCV_HOME:-}" && -x "${RISCV_HOME}/bin/${name}" ]]; then
+        printf '%s\n' "${RISCV_HOME}/bin/${name}"
+        return 0
+    fi
+    if command -v "${name}" >/dev/null 2>&1; then
+        command -v "${name}"
+        return 0
+    fi
+    if [[ -n "${RISCV:-}" && -x "${RISCV}/bin/${name}" ]]; then
+        printf '%s\n' "${RISCV}/bin/${name}"
+        return 0
+    fi
+    if [[ -x "${HOME}/riscv/bin/${name}" ]]; then
+        printf '%s\n' "${HOME}/riscv/bin/${name}"
+        return 0
+    fi
+    return 1
+}
+
+GCC="$(find_tool riscv32-unknown-elf-gcc)" || {
+    echo "missing RISC-V compiler: riscv32-unknown-elf-gcc" >&2
+    exit 1
+}
+
+mkdir -p "${OUT_DIR}"
+
+"${GCC}" -march=rv32im_zicsr -mabi=ilp32 \
+    -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax \
+    -nostdlib -nostartfiles -Wl,-Ttext=0 \
+    -I "${SRC_DIR}/code" \
+    "${SRC_DIR}/code/rv32i.c" \
+    -o "${OUT_DIR}/rv32i.bin"
+
+"${GCC}" -march=rv32im_zicsr -mabi=ilp32 \
+    -nostdlib -nostartfiles -Wl,-Ttext=0 \
+    "${SRC_DIR}/code/uart.S" \
+    -o "${OUT_DIR}/uart.elf"
+
+cp "${SRC_DIR}/code/rv32i.c" "${OUT_DIR}/"
+cp "${SRC_DIR}/code/rv32i.log" "${OUT_DIR}/"
+cp "${SRC_DIR}/code/uart.S" "${OUT_DIR}/"
+cp "${SRC_DIR}/code/uart.log" "${OUT_DIR}/"
+]=])
+file(CHMOD "${TRIBE_BUILD_BAREMETAL_SCRIPT}"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
 function(add_tribe_target target_name l2_axi_width output_subdir)
     add_executable(${target_name} main.cpp)
 
@@ -37,13 +95,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
         COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.elf ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.bin ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.c ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.log ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.S ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.elf ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.log ${CMAKE_BINARY_DIR}/${output_subdir}/"
+        COMMAND "${TRIBE_BUILD_BAREMETAL_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/${output_subdir}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 
@@ -87,13 +139,7 @@ function(add_soc_target target_name l2_axi_width output_subdir)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
         COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/SoC/System.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR} -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/cache -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.elf ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.bin ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.c ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/rv32i.log ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.S ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.elf ${CMAKE_BINARY_DIR}/${output_subdir}/"
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/code/uart.log ${CMAKE_BINARY_DIR}/${output_subdir}/"
+        COMMAND "${TRIBE_BUILD_BAREMETAL_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/${output_subdir}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 

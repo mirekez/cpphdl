@@ -518,7 +518,7 @@ static bool check_writeback_mem_address_tags()
     dcache_read_valid = true;
     dcache_read_addr = 0x2000;
     dcache_read_data = 0xdeadbeef;
-    ++sys_clock;
+    ++_system_clock;
     if (wb.load_ready_out() || wb.wb_mem_data_out() != 0) {
         std::print("WritebackMem accepted wrong-address load response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.wb_mem_data_out());
@@ -528,7 +528,7 @@ static bool check_writeback_mem_address_tags()
     // A matching response should still complete normally.
     dcache_read_addr = alu_addr;
     dcache_read_data = 0x12345678;
-    ++sys_clock;
+    ++_system_clock;
     if (!wb.load_ready_out() || wb.load_result_out() != 0x12345678) {
         std::print("WritebackMem rejected matching load response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());
@@ -539,13 +539,13 @@ static bool check_writeback_mem_address_tags()
     hold = true;
     dcache_read_addr = 0x2000;
     dcache_read_data = 0xa5a5a5a5;
-    ++sys_clock;
+    ++_system_clock;
     wb._work(false);
     wb._strobe();
 
     hold = false;
     dcache_read_valid = false;
-    ++sys_clock;
+    ++_system_clock;
     if (wb.load_ready_out()) {
         std::print("WritebackMem latched wrong-address held response\n");
         return false;
@@ -555,13 +555,13 @@ static bool check_writeback_mem_address_tags()
     dcache_read_valid = true;
     dcache_read_addr = alu_addr;
     dcache_read_data = 0xcafef00d;
-    ++sys_clock;
+    ++_system_clock;
     wb._work(false);
     wb._strobe();
 
     hold = false;
     dcache_read_valid = false;
-    ++sys_clock;
+    ++_system_clock;
     if (!wb.load_ready_out() || wb.load_result_out() != 0xcafef00d) {
         std::print("WritebackMem failed held matching response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());

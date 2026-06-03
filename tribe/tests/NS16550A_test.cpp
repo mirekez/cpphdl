@@ -26,7 +26,7 @@ using namespace cpphdl;
 #if !defined(SYNTHESIS) || defined(NS16550A_DIRECT_VERILATOR)
 
 #if defined(NS16550A_DIRECT_VERILATOR)
-long sys_clock = -1;
+long _system_clock = -1;
 #endif
 
 static std::filesystem::path source_root_dir()
@@ -173,7 +173,7 @@ public:
         if (uart_valid()) {
             captured.push_back((char)uart_data());
         }
-        ++sys_clock;
+        ++_system_clock;
     }
 
     bool awready()

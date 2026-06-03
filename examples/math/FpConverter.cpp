@@ -197,7 +197,7 @@ template class FpConverter<FP<16,5>,FP<32,8>,8,0>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class TestFpConverter : public Module
@@ -344,7 +344,7 @@ public:
         int cycles = 100000;
         while (--cycles) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);

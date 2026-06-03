@@ -93,7 +93,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -233,7 +233,7 @@ public:
         second = second_value;
         eval(false);
         neg(false);
-        ++sys_clock;
+        ++_system_clock;
 
         u<32> expected = expected_value(early_value, first_value, second_value);
         u<32> expected_task = expected_task_value(early_value, first_value, second_value);

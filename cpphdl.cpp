@@ -443,7 +443,13 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CX
 
 void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl* RD, Helpers& hlp)
 {
-    const ClassTemplateDecl* CTD = RD ? RD->getDescribedClassTemplate() : nullptr;
+    const ClassTemplateDecl* CTD = nullptr;
+    if (const auto* CTSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(RD)) {
+        CTD = CTSD->getSpecializedTemplate();
+    }
+    else if (RD) {
+        CTD = RD->getDescribedClassTemplate();
+    }
     if (!CTD) {
         return;
     }
@@ -510,6 +516,8 @@ void fixAnonymousLocalMemberAccess(cpphdl::Expr& expr, std::unordered_map<std::s
 {
     if (expr.type == cpphdl::Expr::EXPR_MEMBER && expr.sub.size() == 1
         && !(expr.flags & cpphdl::Expr::FLAG_ANON)
+        && expr.value != "_"
+        && expr.value != ""
         && expr.sub[0].type == cpphdl::Expr::EXPR_VAR
         && localAnonTypes.contains(expr.sub[0].value)) {
         cpphdl::Expr base = std::move(expr.sub[0]);
@@ -1078,6 +1086,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
         else {
             parentName = genTypeName(MD->getParent()->getNameAsString());
+            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         }
         method.name = parentName + "___";

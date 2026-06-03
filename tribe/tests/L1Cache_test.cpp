@@ -23,7 +23,7 @@ using namespace cpphdl;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static constexpr size_t LINE_SIZE = 32;
 static constexpr size_t ADDR_BITS = 17;
@@ -233,7 +233,7 @@ public:
     void cycle(bool reset = false)
     {
         strobe();
-        ++sys_clock;
+        ++_system_clock;
         eval(reset);
         neg(reset);
     }
@@ -835,7 +835,7 @@ public:
     {
         cache._work(reset);
         cache._strobe();
-        ++sys_clock;
+        ++_system_clock;
     }
 
     void reset_cache()

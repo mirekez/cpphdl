@@ -66,7 +66,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -175,7 +175,7 @@ public:
         eval(reset);
         strobe();
         neg(reset);
-        ++sys_clock;
+        ++_system_clock;
     }
 
     bool run()

@@ -3,7 +3,7 @@
 
 using namespace cpphdl;
 
-extern long sys_clock;
+extern long _system_clock;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 

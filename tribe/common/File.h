@@ -1,9 +1,9 @@
 #pragma once
 #include "cpphdl.h"
 
-using namespace cpphdl;
+extern long _system_clock;
 
-extern long sys_clock;
+using namespace cpphdl;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
@@ -136,7 +136,7 @@ public:
         if (write_in()) {
 #ifndef SYNTHESIS
             if (write_addr_in() == 1 && std::getenv("TRIBE_TRACE_REGFILE_RA") != nullptr) {
-                std::print("trace-regfile-ra cycle={} value={:08x}\n", sys_clock, (uint32_t)write_data_in());
+                std::print("trace-regfile-ra cycle={} value={:08x}\n", _system_clock, (uint32_t)write_data_in());
             }
 #endif
             buffer[write_addr_in()] = write_data_in();

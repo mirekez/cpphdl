@@ -12,7 +12,28 @@ template<typename T, size_t S>
 struct array;
 
 template<size_t WIDTH>
+struct logic;
+
+template<size_t WIDTH>
 struct logic_bits;
+
+template<typename T>
+struct is_logic_bits : std::false_type {};
+
+template<size_t WIDTH>
+struct is_logic_bits<logic_bits<WIDTH>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_logic_bits_v = is_logic_bits<std::remove_cv_t<std::remove_reference_t<T>>>::value;
+
+template<typename T>
+struct is_logic : std::false_type {};
+
+template<size_t WIDTH>
+struct is_logic<logic<WIDTH>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_logic_v = is_logic<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
 template<size_t WIDTH>
 struct logic : public bitops<logic<WIDTH>>
@@ -24,6 +45,9 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr logic(const logic& other) = default;
 
     template<size_t WIDTH1>
+    constexpr logic(const logic<WIDTH1>& other);
+
+    template<size_t WIDTH1>
     constexpr logic(const logic_bits<WIDTH1>& other);
 
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
@@ -31,14 +55,14 @@ struct logic : public bitops<logic<WIDTH>>
     {
         uint64_t value = static_cast<uint64_t>(other);
         for (size_t i = 0; i < SIZE; ++i) {
-            bytes[i] = static_cast<uint8_t>((value >> (8 * i)) & 0xffu);
+            bytes[i] = i < sizeof(uint64_t) ? static_cast<uint8_t>((value >> (8 * i)) & 0xffu) : 0;
         }
         if constexpr ((WIDTH % 8) != 0) {
             bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
         }
     }
 
-    template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T>, int> = 0>
+    template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
     logic(const T& other) : bitops<logic<WIDTH>>(other) {}
 
     template<typename T>
@@ -65,7 +89,7 @@ struct logic : public bitops<logic<WIDTH>>
     {
         uint64_t value = static_cast<uint64_t>(other);
         for (size_t i = 0; i < SIZE; ++i) {
-            bytes[i] = static_cast<uint8_t>((value >> (8 * i)) & 0xffu);
+            bytes[i] = i < sizeof(uint64_t) ? static_cast<uint8_t>((value >> (8 * i)) & 0xffu) : 0;
         }
         if constexpr ((WIDTH % 8) != 0) {
             bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
@@ -73,7 +97,7 @@ struct logic : public bitops<logic<WIDTH>>
         return *this;
     }
 
-    template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T>, int> = 0>
+    template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
     logic& operator=(const T& other)
     {
         bitops<logic<WIDTH>>::operator=(other);
@@ -86,6 +110,9 @@ struct logic : public bitops<logic<WIDTH>>
         *this = logic(values);
         return *this;
     }
+
+    template<size_t WIDTH1>
+    constexpr logic& operator=(const logic<WIDTH1>& other);
 
     template<size_t WIDTH1>
     constexpr logic& operator=(const logic_bits<WIDTH1>& other);
@@ -227,16 +254,44 @@ struct logic : public bitops<logic<WIDTH>>
 
 template<size_t WIDTH>
 template<size_t WIDTH1>
+constexpr logic<WIDTH>::logic(const logic<WIDTH1>& other)
+{
+    *this = other;
+}
+
+template<size_t WIDTH>
+template<size_t WIDTH1>
 constexpr logic<WIDTH>::logic(const logic_bits<WIDTH1>& other)
 {
-    *this = static_cast<const logic<WIDTH1>&>(other);
+    *this = other;
+}
+
+template<size_t WIDTH>
+template<size_t WIDTH1>
+constexpr logic<WIDTH>& logic<WIDTH>::operator=(const logic<WIDTH1>& other)
+{
+    constexpr size_t SRC_SIZE = logic<WIDTH1>::SIZE;
+    for (size_t i = 0; i < SIZE; ++i) {
+        bytes[i] = i < SRC_SIZE ? other.bytes[i] : 0;
+    }
+    if constexpr ((WIDTH % 8) != 0) {
+        bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
+    }
+    return *this;
 }
 
 template<size_t WIDTH>
 template<size_t WIDTH1>
 constexpr logic<WIDTH>& logic<WIDTH>::operator=(const logic_bits<WIDTH1>& other)
 {
-    bitops<logic<WIDTH>>::operator=(static_cast<const logic<WIDTH1>&>(other));
+    constexpr size_t SRC_SIZE = logic<WIDTH1>::SIZE;
+    const auto& src = static_cast<const logic<WIDTH1>&>(other);
+    for (size_t i = 0; i < SIZE; ++i) {
+        bytes[i] = i < SRC_SIZE ? src.bytes[i] : 0;
+    }
+    if constexpr ((WIDTH % 8) != 0) {
+        bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
+    }
     return *this;
 }
 

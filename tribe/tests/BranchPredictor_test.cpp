@@ -22,7 +22,7 @@ using namespace cpphdl;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static constexpr size_t ENTRIES = 8;
 static constexpr size_t COUNTER_BITS = 2;
@@ -96,7 +96,7 @@ public:
         predictor._work(reset);
         predictor._strobe();
 #endif
-        ++sys_clock;
+        ++_system_clock;
     }
 
     bool predict_taken()
@@ -126,7 +126,7 @@ public:
         lookup_target = target;
         lookup_fallthrough = fallthrough;
         lookup_br_op = br_op;
-        ++sys_clock;
+        ++_system_clock;
         drive(false);
 #ifdef VERILATOR
         predictor.eval();

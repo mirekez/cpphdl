@@ -181,7 +181,7 @@ template class Axi4MuxToMaster<8,64,16,512>;
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t N, size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 class TestAxi4MuxToMaster : public Module
@@ -799,7 +799,7 @@ public:
         int cycles = 100000;
         while (--cycles) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             _work(0);
             _strobe_neg();
             _work_neg(0);

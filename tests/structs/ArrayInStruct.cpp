@@ -151,7 +151,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static ArrayPayload expected_payload(uint32_t seed)
 {
@@ -502,7 +502,7 @@ public:
         eval(true);
         neg(true);
         check_fields("reset_state", 0, state(), expected_payload(0));
-        ++sys_clock;
+        ++_system_clock;
 
         for (uint32_t i = 0; i < 256 && !error; ++i) {
             seed = i;
@@ -512,7 +512,7 @@ public:
             check_fields("direct", i, direct(), exp);
             neg(false);
             check_fields("state", i, state(), exp);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us, size={})\n", !error ? "PASSED" : "FAILED",

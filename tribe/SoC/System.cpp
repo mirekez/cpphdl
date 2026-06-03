@@ -618,7 +618,7 @@ public:
         checkpoint_value(checkpoint_fd, start_mem_addr);
         checkpoint_value(checkpoint_fd, ram_size);
         checkpoint_value(checkpoint_fd, tohost_done);
-        checkpoint_value(checkpoint_fd, sys_clock);
+        checkpoint_value(checkpoint_fd, _system_clock);
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
 #ifndef VERILATOR
@@ -730,7 +730,7 @@ public:
         __inst_name = "system_test";
         _assign();
         _strobe();
-        ++sys_clock;
+        ++_system_clock;
         _work(1);
         _work_neg(1);
 
@@ -739,7 +739,7 @@ public:
         int cycles = max_cycles;
         while (--cycles && !error && !tohost_done) {
             _strobe();
-            ++sys_clock;
+            ++_system_clock;
             perf_sample();
             if (SYSTEM_PORT_VALUE(system.uart_tx_valid_out)) {
                 FILE* uart_out = fopen("out.txt", "ab");

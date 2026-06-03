@@ -125,7 +125,7 @@ public:
         dma_mem._work(reset);
         dut._strobe();
         dma_mem._strobe();
-        ++sys_clock;
+        ++_system_clock;
     }
 
     void write32(uint32_t addr, uint32_t data)

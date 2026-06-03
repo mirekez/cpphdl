@@ -78,7 +78,7 @@ static constexpr size_t TRIBE_MEM_REGION2_SIZE = TRIBE_RAM_BYTES - TRIBE_MEM_REG
 
 #define L2_CACHE_ADDR_BITS cpphdl::clog2(MAX_RAM_SIZE)
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 #ifndef SYNTHESIS
 static volatile sig_atomic_t tribe_uart_stdin_sigint_pending = 0;
@@ -1286,7 +1286,7 @@ public:
                 return;
             }
             const long long from_cycle = std::strtoll(trace_pc_write_from_env, nullptr, 0);
-            if (sys_clock < from_cycle) {
+            if (_system_clock < from_cycle) {
                 return;
             }
             if (trace_pc_write_reason_env != nullptr && std::strstr(reason, trace_pc_write_reason_env) == nullptr) {
@@ -1319,7 +1319,7 @@ public:
             }
             FILE* trace_pc_write_out = trace_pc_write_file != nullptr ? trace_pc_write_file : stdout;
             std::print(trace_pc_write_out, "trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} hazard={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_wb={} state0_rd={} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x} state1_wb={} state1_rd={}",
-                sys_clock,
+                _system_clock,
                 reason,
                 old_pc,
                 next_pc,
@@ -1589,7 +1589,7 @@ public:
                     uint32_t target = branch_actual_next_comb_func();
                     if (target < 0x10000u || (target >= 0x80000000u && target < 0x80001000u)) {
                         std::print("trace-pc-select cycle={} state_pc={:08x} br_op={} rs1={:08x} imm={:08x} fallthrough={:08x} target={:08x} predicted={:08x} valid={}\n",
-                            sys_clock,
+                            _system_clock,
                             (uint32_t)state_reg[0].pc,
                             (uint32_t)state_reg[0].br_op,
                             (uint32_t)state_reg[0].rs1_val,
@@ -2124,7 +2124,8 @@ class TestTribe : public Module
 
             const uint32_t phys = elf_phys_override ? (phdr.vaddr + elf_phys_offset) : (phdr.paddr ? phdr.paddr : phdr.vaddr);
             if (phys < mem_base || phys - mem_base + phdr.filesz > mem_size_bytes) {
-                std::print("ELF segment outside test RAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, phdr.filesz);
+                const uint32_t filesz = phdr.filesz;
+                std::print("ELF segment outside test RAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, filesz);
                 return false;
             }
             const uint32_t base = phys - mem_base;
@@ -2681,7 +2682,7 @@ public:
         checkpoint_value(checkpoint_fd, start_mem_addr);
         checkpoint_value(checkpoint_fd, ram_size);
         checkpoint_value(checkpoint_fd, tohost_done);
-        checkpoint_value(checkpoint_fd, sys_clock);
+        checkpoint_value(checkpoint_fd, _system_clock);
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
         uart_script_pos_reg.strobe(checkpoint_fd);
@@ -2731,7 +2732,7 @@ public:
 #endif
 
         if (debugen_in) {
-            printf("----------- %ld\n", sys_clock);
+            printf("----------- %ld\n", _system_clock);
         }
     }
 
@@ -2970,7 +2971,7 @@ public:
         __inst_name = "tribe_test";
         _assign();
         _strobe();
-        ++sys_clock;
+        ++_system_clock;
         _work(1);
         _strobe_neg();
         _work_neg(1);
@@ -2994,11 +2995,11 @@ public:
             }
             _strobe(checkpoint_read_fd(checkpoint_in));
             fclose(checkpoint_in);
-            // Checkpoint loading restores sys_clock together with registers and
+            // Checkpoint loading restores _system_clock together with registers and
             // memories. Move to a fresh comb epoch before reading restored
             // UART/PLIC/MMU outputs; otherwise lazy comb caches can still carry
             // pre-load host-process values.
-            ++sys_clock;
+            ++_system_clock;
             checkpoint_loaded_pending_work = true;
             if (!scripted_uart_input.empty() && std::getenv("TRIBE_UART_INPUT_RESTART_ON_LOAD")) {
                 // Most checkpoint users need the serialized feeder registers
@@ -3291,7 +3292,7 @@ public:
             }
             runtime_checkpoint_ticks += tribe_runtime_tick() - section_time_start - (runtime_strobe_ticks - strobe_ticks_before);
             section_time_start = tribe_runtime_tick();
-            ++sys_clock;
+            ++_system_clock;
             perf_sample();
             if (capture_uart_output()) {
                 break;
@@ -4064,13 +4065,13 @@ public:
 {
     namespace fs = std::filesystem;
 
-    if (fs::exists("generated/Tribe.sv") || fs::exists("rv32i.elf") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
+    if (fs::exists("generated/Tribe.sv") || fs::exists("rv32i.bin") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
         return;
     }
 
     fs::path exe = fs::absolute(argv0);
     fs::path exe_dir = exe.parent_path();
-    if (!exe_dir.empty() && (fs::exists(exe_dir / "generated" / "Tribe.sv") || fs::exists(exe_dir / "rv32i.elf") || fs::exists(exe_dir / "uart.elf") || fs::exists(exe_dir / "rv32i.bin"))) {
+    if (!exe_dir.empty() && (fs::exists(exe_dir / "generated" / "Tribe.sv") || fs::exists(exe_dir / "rv32i.bin") || fs::exists(exe_dir / "uart.elf") || fs::exists(exe_dir / "rv32i.bin"))) {
         fs::current_path(exe_dir);
     }
 }
@@ -4082,7 +4083,7 @@ int main (int argc, char** argv)
     const std::filesystem::path original_cwd = std::filesystem::current_path();
     bool debug = false;
     bool noveril = false;
-    std::string program = "rv32i.elf";
+    std::string program = "rv32i.bin";
     std::string expected_log = "rv32i.log";
     bool program_arg = false;
     bool log_arg = false;

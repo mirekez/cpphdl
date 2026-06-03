@@ -36,16 +36,10 @@ This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-re
 
 This work is not subsidized or paid.
 
-# new features added
-
-0.9
-
-- VCD file dumping
-- Interfaces with  ports
-
 # development plan
 
 - asynchronous resets
 - CDC approach
-- comb. loops check
-- regs/luts estimation
+- comb. hierarchy checks
+- regs/luts usage estimation
+- timing estimation

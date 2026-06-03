@@ -3,6 +3,7 @@
 #include "IOUART.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -47,6 +48,29 @@ static std::filesystem::path build_root_dir()
         return cwd;
     }
     return cwd.parent_path().parent_path();
+}
+
+static std::filesystem::path riscv_home_dir()
+{
+    if (const char* env = std::getenv("RISCV_HOME")) {
+        return env;
+    }
+    if (const char* env = std::getenv("RISCV")) {
+        return env;
+    }
+    if (const char* home = std::getenv("HOME")) {
+        std::filesystem::path local = std::filesystem::path(home) / "riscv";
+        if (std::filesystem::exists(local)) {
+            return local;
+        }
+    }
+    if (std::filesystem::exists("/home/me/riscv")) {
+        return "/home/me/riscv";
+    }
+    if (std::filesystem::exists("/home/mike/riscv")) {
+        return "/home/mike/riscv";
+    }
+    return "/home/me/riscv";
 }
 
 static std::string shell_quote(const std::filesystem::path& path)
@@ -300,6 +324,32 @@ public:
 #endif
 
 #if !defined(IOUART_DIRECT_VERILATOR)
+static bool build_uart_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "uart.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -nostdlib -nostartfiles -Wl,-Ttext=0";
+    cmd += " " + shell_quote(code_dir / "uart.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building IOUART bare-metal ELF...\n");
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        std::print("IOUART ELF build failed with status {}\n", rc);
+        return false;
+    }
+    return true;
+}
+
 static bool generate_iouart_direct_sv()
 {
     const auto source_root = source_root_dir();
@@ -320,8 +370,9 @@ static bool generate_iouart_direct_sv()
 static bool run_uart_elf(bool debug = false)
 {
     const auto code_dir = tribe_code_dir();
+    const auto elf = std::filesystem::current_path() / "uart.elf";
     TestTribe test(debug);
-    return test.run((code_dir / "uart.elf").string(),
+    return test.run(elf.string(),
         0,
         (code_dir / "uart.log").string(),
         100000,
@@ -358,6 +409,7 @@ int main(int argc, char** argv)
 #if defined(IOUART_DIRECT_VERILATOR)
     return ok ? 0 : 1;
 #else
+    ok = ok && build_uart_elf();
     ok = ok && run_uart_elf(debug);
 
 #ifndef VERILATOR

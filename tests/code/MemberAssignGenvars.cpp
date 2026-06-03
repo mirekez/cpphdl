@@ -127,7 +127,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static uint32_t leaf_ref(uint32_t value)
 {
@@ -259,7 +259,7 @@ public:
                 error = true;
             }
             neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

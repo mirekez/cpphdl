@@ -89,7 +89,7 @@ static uint32_t port_word(logic<WIDTH> bits, size_t word)
 }
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static constexpr size_t LINE_SIZE = 32;
 static constexpr size_t WAIT_LIMIT = 128;
@@ -234,7 +234,7 @@ public:
             ram[i]._strobe();
         }
 #endif
-        ++sys_clock;
+        ++_system_clock;
     }
 
     void preload()

@@ -479,7 +479,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 static bool generated_sv_is_replacement(const std::filesystem::path& sv_path,
     const std::string& marker)
@@ -623,7 +623,7 @@ public:
                 error = true;
             }
             neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

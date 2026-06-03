@@ -7,7 +7,7 @@
 
 using namespace cpphdl;
 
-extern long sys_clock;
+extern long _system_clock;
 
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 256>
 class NS16550A : public Module
@@ -65,7 +65,7 @@ private:
     {
         const char* trace_from_env = std::getenv("TRIBE_TRACE_UART_FROM");
         long trace_from = trace_from_env ? std::strtol(trace_from_env, nullptr, 0) : 0;
-        return std::getenv("TRIBE_TRACE_UART") != nullptr && sys_clock >= trace_from;
+        return std::getenv("TRIBE_TRACE_UART") != nullptr && _system_clock >= trace_from;
     }
 #endif
 

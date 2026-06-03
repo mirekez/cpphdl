@@ -228,7 +228,7 @@ inline bool VerilatorCompileValidReady(std::string cpp_name, std::string top, st
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<size_t DATAWIDTH>
 class TestValidReady : Module
@@ -405,7 +405,7 @@ public:
         eval_pos(true);
         _strobe();
         eval_neg(true);
-        ++sys_clock;
+        ++_system_clock;
 
         int cycles = 10000;
         while (--cycles) {
@@ -425,7 +425,7 @@ public:
 #endif
             _strobe();
             eval_neg(false);
-            ++sys_clock;
+            ++_system_clock;
         }
 
 #if defined(VERILATOR) && defined(VERILATOR_RESPONDER)

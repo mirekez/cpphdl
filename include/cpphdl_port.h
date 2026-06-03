@@ -9,7 +9,7 @@
 #endif
 #endif
 
-extern long sys_clock;  // please declare sys_clock in main cpp
+extern long _system_clock;  // please declare _system_clock in main cpp
 
 namespace cpphdl {
 
@@ -38,14 +38,14 @@ public:
         return *this;
     }
 
-    long prev_call_sys_clock;
+    long prev_call__system_clock;
     R* cache = nullptr;
     R& operator()()
     {
-        if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
+        if (cache && prev_call__system_clock == _system_clock) {  // already calculated
             return *cache;
         }
-        prev_call_sys_clock = sys_clock;
+        prev_call__system_clock = _system_clock;
         cache = fn_();
         return *cache;
     }
@@ -131,10 +131,10 @@ public:
         return *this;
     }
 
-    long prev_call_sys_clock = -1;
+    long prev_call__system_clock = -1;
     A* cache = nullptr;
     A& operator()() {
-        if (cache && prev_call_sys_clock == sys_clock) {  // already calculated
+        if (cache && prev_call__system_clock == _system_clock) {  // already calculated
             return *cache;
         }
         if (!assigned) {
@@ -146,7 +146,7 @@ public:
 #endif
             *(volatile char*)0 = 0;
         }
-        prev_call_sys_clock = sys_clock;
+        prev_call__system_clock = _system_clock;
         cache = func1_();
         return *cache;
     }

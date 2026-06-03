@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-extern long sys_clock;
+extern long _system_clock;
 
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 256, size_t SOURCES = 32>
 class PLIC : public Module
@@ -152,7 +152,7 @@ public:
         uint32_t trace_signature;
         trace_from_env = std::getenv("TRIBE_TRACE_PLIC_FROM");
         trace_from = trace_from_env ? std::strtol(trace_from_env, nullptr, 0) : 0;
-        trace = std::getenv("TRIBE_TRACE_PLIC") != nullptr && sys_clock >= trace_from;
+        trace = std::getenv("TRIBE_TRACE_PLIC") != nullptr && _system_clock >= trace_from;
         if (!trace_file_checked) {
             trace_file_checked = true;
             trace_file_env = std::getenv("TRIBE_TRACE_PLIC_FILE");
@@ -190,7 +190,7 @@ public:
             if (trace_signature != last_trace_signature) {
                 last_trace_signature = trace_signature;
                 std::print(trace_out, "plic-status cycle={} pending={:08x} enable={:08x} threshold={} prio1={} prio2={} claim={} irq={} source={:08x} gateway={:08x}\n",
-                    sys_clock,
+                    _system_clock,
                     pending_bits_comb_func(), (uint32_t)enable_reg, (uint32_t)threshold_reg,
                     (uint32_t)priority_reg[1], (uint32_t)priority_reg[2],
                     claim_comb_func(), external_irq_comb_func(), source_bits, (uint32_t)gateway_busy_reg);
@@ -236,7 +236,7 @@ public:
 #ifndef SYNTHESIS
             if (trace) {
                 std::print(trace_out, "plic-read-addr cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
-                    sys_clock, addr, read_word, pending_work, (uint32_t)enable_reg,
+                    _system_clock, addr, read_word, pending_work, (uint32_t)enable_reg,
                     (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
                 std::fflush(trace_out);
             }
@@ -246,7 +246,7 @@ public:
 #ifndef SYNTHESIS
             if (trace) {
                 std::print(trace_out, "plic-read-data cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
-                    sys_clock, (uint32_t)read_addr_reg,
+                    _system_clock, (uint32_t)read_addr_reg,
                     (uint32_t)((logic<DATA_WIDTH>)read_data_reg).bits(((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8 + 31, ((uint32_t)read_addr_reg % (DATA_WIDTH / 8)) * 8),
                     pending_bits_comb_func(), (uint32_t)enable_reg,
                     (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
@@ -287,7 +287,7 @@ public:
 #ifndef SYNTHESIS
             if (trace) {
                 std::print(trace_out, "plic-write cycle={} addr={:x} data={:08x} pending={:08x} enable={:08x} gateway={:08x} source={:08x} claim={}\n",
-                    sys_clock, addr, data, pending_bits_comb_func(), (uint32_t)enable_reg,
+                    _system_clock, addr, data, pending_bits_comb_func(), (uint32_t)enable_reg,
                     (uint32_t)gateway_busy_reg, source_bits, claim_comb_func());
                 std::fflush(trace_out);
             }

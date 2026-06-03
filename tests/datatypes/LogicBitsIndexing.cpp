@@ -104,7 +104,7 @@ public:
 #include MAKE_HEADER(VERILATOR_MODEL)
 #endif
 
-long sys_clock = -1;
+long _system_clock = -1;
 
 template<typename T>
 static T verilator_read(const void* ptr)
@@ -245,7 +245,7 @@ public:
         seed = 0;
         eval(true);
         neg(true);
-        ++sys_clock;
+        ++_system_clock;
 
         for (uint32_t s = 0; s < 32 && !error; ++s) {
             seed = 0x12340000u + s * 0x1021u;
@@ -258,7 +258,7 @@ public:
                 check("byte", byte(), (logic<8>)src.bits(w * 8 + 7, w * 8));
                 check("edited", edited(), expected_edited((uint32_t)seed, w));
                 neg(false);
-                ++sys_clock;
+                ++_system_clock;
             }
         }
 

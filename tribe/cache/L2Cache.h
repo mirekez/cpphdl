@@ -1119,7 +1119,7 @@ public:
             if (active_read_comb_func() || active_write_comb_func()) {
                 if (trace_active_line) {
                     std::print("trace-l2 cycle={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
-                        sys_clock, active_addr_comb_func(), active_read_comb_func(), active_write_comb_func(),
+                        _system_clock, active_addr_comb_func(), active_read_comb_func(), active_write_comb_func(),
                         active_write_data_comb_func(), active_write_mask_comb_func(), active_is_slave_comb_func(),
                         active_is_d_comb_func(), (uint32_t)victim_reg);
                 }
@@ -1149,7 +1149,7 @@ public:
             if (!req_addr_in_memory_comb_func()) {
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-outside addr={:08x} rd={} wr={}\n",
-                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
+                        _system_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
                 }
                 if (req_from_slave_reg) {
                     for (i = 0; i < MEM_PORTS; ++i) {
@@ -1177,7 +1177,7 @@ public:
             else if (req_uncached_region_comb_func()) {
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-uncached addr={:08x} rd={} wr={}\n",
-                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
+                        _system_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg);
                 }
                 state_reg._next = req_read_reg ? ST_IO_AR : ST_IO_AW;
             }
@@ -1186,7 +1186,7 @@ public:
                     trace_word0 = (uint32_t)hit_beat_comb_func();
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(hit_beat_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} lookup-hit addr={:08x} rd={} wr={} way={} word={} hit_word={:08x} beat0={:08x} beat1={:08x} wdata={:08x} mask={:02x}\n",
-                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
+                        _system_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
                         (uint32_t)hit_way_comb_func(), (uint32_t)req_word_comb_func(), hit_word_comb_func(),
                         trace_word0, trace_word1, (uint32_t)req_write_data_reg, (uint32_t)req_write_mask_reg);
                 }
@@ -1233,7 +1233,7 @@ public:
             else {
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-miss addr={:08x} rd={} wr={} victim={} evict_valid={} evict_dirty={} evict_tag={:08x}\n",
-                        sys_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
+                        _system_clock, (uint32_t)req_addr_reg, (bool)req_read_reg, (bool)req_write_reg,
                         (uint32_t)victim_reg, evict_valid_comb_func(), evict_dirty_comb_func(), (uint32_t)evict_tag_comb_func());
                 }
                 fill_way_reg._next = victim_reg;
@@ -1290,7 +1290,7 @@ public:
                     trace_word0 = (uint32_t)evict_line_comb_func();
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(evict_line_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} evict addr={:08x} beat={} data0={:08x} data1={:08x} way={}\n",
-                        sys_clock, axi_awaddr_full_comb_func(), (uint32_t)evict_beat_reg,
+                        _system_clock, axi_awaddr_full_comb_func(), (uint32_t)evict_beat_reg,
                         trace_word0, trace_word1, (uint32_t)evict_way_comb_func());
                 }
                 state_reg._next = ST_EVICT_B;
@@ -1319,7 +1319,7 @@ public:
                     trace_word0 = (uint32_t)axi_rdata_selected_comb_func();
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_rdata_selected_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
-                        sys_clock, axi_araddr_full_comb_func(), (uint32_t)fill_beat_reg,
+                        _system_clock, axi_araddr_full_comb_func(), (uint32_t)fill_beat_reg,
                         trace_word0, trace_word1, (uint32_t)req_word_comb_func(), (uint32_t)req_beat_comb_func());
                 }
                 if (!req_from_slave_reg && req_read_reg && fill_beat_reg == req_beat_comb_func()) {
