@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 template<typename BASE>
 class bitops
@@ -176,6 +177,12 @@ public:
         return result;
     }
 
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<std::remove_cv_t<T>, size_t>, int> = 0>
+    BASE operator<<(T shift) const
+    {
+        return operator<<(static_cast<size_t>(shift));
+    }
+
     BASE operator>>(size_t shift) const
     {
         BASE result{};
@@ -238,6 +245,12 @@ public:
         }
 
         return result;
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<std::remove_cv_t<T>, size_t>, int> = 0>
+    BASE operator>>(T shift) const
+    {
+        return operator>>(static_cast<size_t>(shift));
     }
 
     template<typename T>
@@ -325,6 +338,18 @@ public:
         return !(*this == rhs);
     }
 
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator==(T rhs) const
+    {
+        return *this == BASE(rhs);
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator!=(T rhs) const
+    {
+        return !(*this == rhs);
+    }
+
     bool operator<(const BASE& rhs) const
     {
         constexpr size_t size = sizeof(BASE);
@@ -367,6 +392,30 @@ public:
     bool operator>=(const BASE& rhs) const
     {
         return !(*this < rhs);
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator<(T rhs) const
+    {
+        return *this < BASE(rhs);
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator<=(T rhs) const
+    {
+        return !(*this > BASE(rhs));
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator>(T rhs) const
+    {
+        return BASE(rhs) < static_cast<const BASE&>(*this);
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    bool operator>=(T rhs) const
+    {
+        return !(*this < BASE(rhs));
     }
 
     uint64_t to_ullong() const

@@ -29,6 +29,8 @@ constexpr unsigned clog2(unsigned x)
 }
 
 #include <type_traits>
+#include <array>
+#include <initializer_list>
 
 template<typename T>
 struct is_from_cpphdl_namespace : std::false_type {};
@@ -51,6 +53,163 @@ struct cpphdl_exception
 #include "cpphdl_memory.h"
 #include "cpphdl_module.h"
 #include "cpphdl_port.h"
+
+namespace cpphdl
+{
+
+
+
+
+
+template<size_t WIDTH>
+constexpr logic<WIDTH> byteswap(const logic<WIDTH>& value)
+{
+    logic<WIDTH> out = 0;
+    constexpr size_t byte_count = (WIDTH + 7) / 8;
+    for (size_t byte = 0; byte < byte_count; ++byte) {
+        for (size_t bit = 0; bit < 8; ++bit) {
+            size_t src = byte * 8 + bit;
+            size_t dst = (byte_count - 1 - byte) * 8 + bit;
+            if (src < WIDTH && dst < WIDTH) {
+                out.set(dst, value.get(src));
+            }
+        }
+    }
+    return out;
+}
+
+template<size_t WIDTH>
+constexpr logic<WIDTH> byteswap(const logic_bits<WIDTH>& value)
+{
+    return byteswap(static_cast<const logic<WIDTH>&>(value));
+}
+
+template<typename T, size_t WIDTH, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+constexpr T operator&(T lhs, const logic<WIDTH>& rhs)
+{
+    return static_cast<T>(static_cast<uint64_t>(lhs) & static_cast<uint64_t>(rhs));
+}
+
+template<typename T, size_t WIDTH, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+constexpr T operator|(T lhs, const logic<WIDTH>& rhs)
+{
+    return static_cast<T>(static_cast<uint64_t>(lhs) | static_cast<uint64_t>(rhs));
+}
+
+template<typename T, size_t WIDTH, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+constexpr T operator^(T lhs, const logic<WIDTH>& rhs)
+{
+    return static_cast<T>(static_cast<uint64_t>(lhs) ^ static_cast<uint64_t>(rhs));
+}
+
+template<typename T>
+struct type_width_value
+{
+    static constexpr size_t value = sizeof(T) * 8;
+};
+
+template<size_t WIDTH>
+struct type_width_value<logic<WIDTH>>
+{
+    static constexpr size_t value = WIDTH;
+};
+
+template<typename T, size_t N>
+struct type_width_value<array<T, N>>
+{
+    static constexpr size_t value = sizeof(T) * 8 * N;
+};
+
+template<typename T>
+constexpr size_t type_width()
+{
+    return type_width_value<std::remove_cvref_t<T>>::value;
+}
+
+template<size_t COUNT, size_t WIDTH>
+constexpr logic<COUNT * WIDTH> repeat(const logic<WIDTH>& value)
+{
+    logic<COUNT * WIDTH> out = 0;
+    for (size_t rep = 0; rep < COUNT; ++rep) {
+        for (size_t bit = 0; bit < WIDTH; ++bit) {
+            out.set(rep * WIDTH + bit, value.get(bit));
+        }
+    }
+    return out;
+}
+
+template<size_t WIDTH>
+constexpr logic<1> reduce_and(const logic<WIDTH>& value)
+{
+    for (size_t bit = 0; bit < WIDTH; ++bit) {
+        if (!value.get(bit)) {
+            return logic<1>(0);
+        }
+    }
+    return logic<1>(1);
+}
+
+template<typename T, size_t N>
+constexpr logic<1> reduce_and(const array<T, N>& value)
+{
+    for (size_t i = 0; i < N; ++i) {
+        if (!static_cast<bool>(value[i])) {
+            return logic<1>(0);
+        }
+    }
+    return logic<1>(1);
+}
+
+template<typename T, typename V>
+constexpr void sv_assign_field(T& dst, const V& value)
+{
+    if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<std::remove_cvref_t<V>>) {
+        dst = static_cast<T>(value);
+    }
+    else {
+        dst = value;
+    }
+}
+
+template<typename T, size_t N, typename V>
+constexpr void sv_assign_field(std::array<T, N>& dst, std::initializer_list<V> values)
+{
+    size_t i = 0;
+    for (const auto& value : values) {
+        if (i >= N) {
+            break;
+        }
+        sv_assign_field(dst[i++], value);
+    }
+}
+
+template<typename T, size_t N, typename V>
+constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
+{
+    if constexpr (std::is_same_v<std::remove_cvref_t<V>, std::array<T, N>>) {
+        dst = value;
+    }
+    else {
+        for (auto& item : dst) {
+            sv_assign_field(item, value);
+        }
+    }
+}
+
+template<typename T, size_t N, typename V>
+constexpr void sv_assign_field(array<T, N>& dst, const V& value)
+{
+    if constexpr (std::is_same_v<std::remove_cvref_t<V>, array<T, N>>) {
+        dst = value;
+    }
+    else {
+        for (size_t i = 0; i < N; ++i) {
+            sv_assign_field(dst[i], value);
+        }
+    }
+}
+
+}
 
 #ifndef CPPHDL_STATIC  // static version is faster but not used now
 

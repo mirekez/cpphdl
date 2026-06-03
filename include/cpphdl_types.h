@@ -55,6 +55,11 @@ struct u
     operator uint64_t () { return value; }
     operator uint64_t () const { return value; }
 
+    logic<1> operator[](size_t bit) const
+    {
+        return logic<1>((value >> bit) & 1u);
+    }
+
     logic<WIDTH> bits(size_t last, size_t first)
     {
         cpphdl_assert(first < WIDTH && last < WIDTH && first <= last, "wrong first or last bitnumber");
