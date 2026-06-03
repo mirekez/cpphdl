@@ -185,7 +185,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src}
+        COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src} ${CPPHDL_TOOLCHAIN_ARG_LIST}
                 ${cpphdl_extra_defines}
                 -I ${CMAKE_SOURCE_DIR}/include
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/..

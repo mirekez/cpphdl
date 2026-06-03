@@ -45,7 +45,7 @@ foreach(src ${EXAMPLE_SOURCES})
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I../../include"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.bin ${CMAKE_BINARY_DIR}/examples/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.log ${CMAKE_BINARY_DIR}/examples/"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples

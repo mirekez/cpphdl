@@ -1520,13 +1520,24 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    if (::getenv("CONDA_PREFIX")) {
+    const char* conda_prefix_env = ::getenv("CONDA_PREFIX");
+    std::filesystem::path conda_prefix = conda_prefix_env ? conda_prefix_env : "";
+    std::filesystem::path conda_cxx_include = conda_prefix / "include/c++/v1";
+    std::filesystem::path conda_clang_include = conda_prefix / "lib/clang/21/include";
+    std::filesystem::path conda_sysroot_include = conda_prefix / "x86_64-conda-linux-gnu/sysroot/usr/include";
+    bool conda_toolchain_headers =
+        conda_prefix_env
+        && std::filesystem::exists(conda_cxx_include)
+        && std::filesystem::exists(conda_clang_include)
+        && std::filesystem::exists(conda_sysroot_include);
+
+    if (conda_toolchain_headers) {
         Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
             {"-nostdinc",
              "-x", "c++",
-             "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/include/c++/v1").str(),
-             "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/lib/clang/21/include").str(),
-             "-isystem", (llvm::Twine(::getenv("CONDA_PREFIX")) + "/x86_64-conda-linux-gnu/sysroot/usr/include").str(),
+             "-isystem", conda_cxx_include.string(),
+             "-isystem", conda_clang_include.string(),
+             "-isystem", conda_sysroot_include.string(),
              "-std=c++26",
              "-DSYNTHESIS"},
             tooling::ArgumentInsertPosition::BEGIN));
