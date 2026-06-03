@@ -225,8 +225,20 @@ target_link_libraries(cpphdl PRIVATE
   clangRewrite
   LLVM
 )
-foreach(dependency clang-headers clang-tablegen-targets clangTooling clangBasic clangASTMatchers clangFrontend clangRewrite)
+foreach(dependency
+    ClangDeclNodes
+    ClangStmtNodes
+    ClangTypeNodes
+    clang-headers
+    clang-tablegen-targets
+    clangAST
+    clangBasic
+    clangTooling
+    clangASTMatchers
+    clangFrontend
+    clangRewrite)
   if(TARGET ${dependency})
+    message(STATUS "cpphdl depends on fetched Clang target ${dependency}")
     add_dependencies(cpphdl ${dependency})
   endif()
 endforeach()
