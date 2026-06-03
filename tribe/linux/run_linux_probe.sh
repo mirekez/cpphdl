@@ -256,7 +256,7 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || 
     rm -f "${TRIBE_BIN_TMP}"
     read -r -a CXX_CMD <<< "${CXX:-clang++}"
     "${CXX_CMD[@]}" "${ROOT_DIR}/tribe/main.cpp" \
-        -std=c++26 -O3 -g -mavx2 -fno-strict-aliasing \
+        -std=c++26 -O3 -g ${CPPHDL_HOST_OPT_FLAGS:-} -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
         -I"${ROOT_DIR}/include" \
         -I"${ROOT_DIR}/tribe" \

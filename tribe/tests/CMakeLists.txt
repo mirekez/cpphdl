@@ -107,8 +107,8 @@ foreach(src ${TRIBE_TEST_SOURCES})
         "${CMAKE_SOURCE_DIR}/examples/axi"
     )
 
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE
-        "-mavx2"
         "-fno-strict-aliasing"
     )
     set(tribe_main_smoke_tests

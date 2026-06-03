@@ -51,7 +51,7 @@ foreach(src ${EXAMPLE_SOURCES})
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
 
     add_dependencies(${target_name} cpphdl)

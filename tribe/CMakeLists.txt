@@ -99,7 +99,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     add_dependencies(${target_name} cpphdl)
     cpphdl_link_stdcxxexp_if_available(${target_name})
@@ -143,7 +143,7 @@ function(add_soc_target target_name l2_axi_width output_subdir)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     add_dependencies(${target_name} cpphdl)
     cpphdl_link_stdcxxexp_if_available(${target_name})

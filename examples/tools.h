@@ -1,6 +1,12 @@
 #pragma once
 
-const std::string compilerParams = " -mavx2 -g -O2 -std=c++26 -fno-strict-aliasing -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
+inline std::string HostOptCflags()
+{
+    const char* extra = std::getenv("CPPHDL_HOST_OPT_FLAGS");
+    return extra ? std::string(" ") + extra : std::string();
+}
+
+const std::string compilerParams = HostOptCflags() + " -g -O2 -std=c++26 -fno-strict-aliasing -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
 
 inline std::string VerilatorExtraCflags()
 {
