@@ -2939,7 +2939,7 @@ struct Converter : SyntaxVisitor<Converter> {
                     if (!init.empty() && init.front() == '=') {
                         init.erase(init.begin());
                     }
-                    init = trim(init);
+                    init = trim(stripLogicLiteralCasts(init));
                 }
                 if (!mod->types.count(name)) {
                     mod->constants.push_back({"unsigned", name + " = " + init});
@@ -3056,6 +3056,9 @@ struct Converter : SyntaxVisitor<Converter> {
                     cinit = "{}";
                 }
                 cinit = replaceLogicBraceCasts(std::move(cinit));
+                if (ctype == "unsigned" || ctype == "uint64_t") {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
+                }
                 if (mod->isPackage && cinit.find("{64{") != std::string::npos) {
                     cinit = "{}";
                 }
@@ -3068,6 +3071,9 @@ struct Converter : SyntaxVisitor<Converter> {
                 if ((ctype == "unsigned" || ctype == "uint64_t") && cinit.find("logic<") != std::string::npos &&
                     cinit.find('{') != std::string::npos) {
                     cinit = "0";
+                }
+                if (ctype.rfind("std::array<", 0) == 0 && cinit.find("logic<") != std::string::npos) {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
                 }
                 if (ctype.rfind("std::array<", 0) == 0 && !cinit.empty() && cinit.front() == '{') {
                     cinit = "{" + cinit + "}";
@@ -3135,8 +3141,9 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (!parsedEnumValue) {
                     ++nextEnumValue;
                 }
+                auto enumValue = trim(stripLogicLiteralCasts(value));
                 auto line = std::string(mod->isPackage ? "inline constexpr unsigned " : "static constexpr unsigned ") +
-                            memberName + " = " + value + ";";
+                            memberName + " = " + enumValue + ";";
                 mod->typeDecls.push_back(line);
                 if (mod->isPackage) {
                     mod->packageDecls.push_back(line);
@@ -5720,7 +5727,11 @@ struct Converter : SyntaxVisitor<Converter> {
             if (d->initializer) {
                 auto& init = *d->initializer;
                 if (init.expr) {
-                    line += " = " + emitExpr(*init.expr);
+                    auto rhs = emitExpr(*init.expr);
+                    if (type == "bool") {
+                        rhs = "static_cast<bool>(" + rhs + ")";
+                    }
+                    line += " = " + rhs;
                 }
                 else {
                     auto s = init.toString();
@@ -5729,7 +5740,11 @@ struct Converter : SyntaxVisitor<Converter> {
                         s.erase(s.begin());
                     }
                     s = trim(s);
-                    line += " = " + translateExpr(s);
+                    auto rhs = translateExpr(s);
+                    if (type == "bool") {
+                        rhs = "static_cast<bool>(" + rhs + ")";
+                    }
+                    line += " = " + rhs;
                 }
             }
             out.push_back(line + ";");
@@ -6883,7 +6898,12 @@ struct Converter : SyntaxVisitor<Converter> {
                 h << "    " << typeDeclLine << "\n";
             }
             for (auto& c : m.constants) {
-                h << "    " << postProcessCppLine("static constexpr " + constexprType(c.first) + " " + c.second + ";") << "\n";
+                auto constType = constexprType(c.first);
+                auto constInit = c.second;
+                if (constType.rfind("std::array<", 0) == 0 && constInit.find("logic<") != std::string::npos) {
+                    constInit = stripLogicLiteralCasts(constInit);
+                }
+                h << "    " << postProcessCppLine("static constexpr " + constType + " " + constInit + ";") << "\n";
             }
             auto combOutputInit = [&](const std::string& svName) -> std::string {
                 auto drivers = combDriversFor(m, svName);
@@ -7096,7 +7116,6 @@ struct Converter : SyntaxVisitor<Converter> {
             h << "public:\n";
             h << "    void _settle()\n    {\n";
             for (int settlePass = 0; settlePass < 2; ++settlePass) {
-                h << "        ++comb_epoch;\n";
                 if (hasRuntimeAssignLines(m)) {
                     h << "        assign_comb_func();\n";
                 }
@@ -7457,8 +7476,13 @@ struct Converter : SyntaxVisitor<Converter> {
                     m.bridgeAssignVars.insert(boundName);
                     rhs = m.assignExprByBase[boundName];
                 }
+                auto rawRhsBase = baseFromLValueText(rhs);
                 rhs = lateBindExpr(m, rhs, "");
                 auto wrapper = isSimpleCombRef(rhs) ? "_ASSIGN_COMB" : "_ASSIGN";
+                if (!rawRhsBase.empty() && m.combAssignedVars.count(rawRhsBase) && !m.seqAssignedVars.count(rawRhsBase) && !m.combMethodByBase.count(rawRhsBase) && hasRuntimeAssignLines(m)) {
+                    rhs = "(assign_comb_func(), " + rhs + ")";
+                    wrapper = "_ASSIGN_COMB";
+                }
                 m.assignLines.push_back(conn.instance + "." + portName + " = " + wrapper + "(" + rhs + ");");
             }
         }
