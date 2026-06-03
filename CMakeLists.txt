@@ -25,6 +25,17 @@ endif()
 if(CPPHDL_USE_LOCAL_CONDA AND NOT CPPHDL_FETCH_LLVM AND NOT DEFINED CMAKE_CXX_COMPILER AND EXISTS "${CMAKE_SOURCE_DIR}/.conda/bin/clang++")
   set(CMAKE_CXX_COMPILER "${CMAKE_SOURCE_DIR}/.conda/bin/clang++" CACHE FILEPATH "C++ compiler")
 endif()
+if(CPPHDL_FETCH_LLVM)
+  foreach(CPPHDL_COMPILER_VAR CMAKE_C_COMPILER CMAKE_CXX_COMPILER)
+    if(DEFINED ${CPPHDL_COMPILER_VAR}
+        AND "${${CPPHDL_COMPILER_VAR}}" MATCHES "^${CMAKE_SOURCE_DIR}/\\.conda/")
+      message(FATAL_ERROR
+        "CPPHDL_FETCH_LLVM is enabled, but ${CPPHDL_COMPILER_VAR} is cached as "
+        "${${CPPHDL_COMPILER_VAR}}. Remove the build directory or configure with "
+        "CC=/usr/bin/cc CXX=/usr/bin/c++ so fetched LLVM tools can run on this CPU.")
+    endif()
+  endforeach()
+endif()
 
 SET (CMAKE_C_FLAGS_DEBUG_INIT          "-g")
 SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG -g")
