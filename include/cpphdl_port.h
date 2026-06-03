@@ -3,7 +3,7 @@
 #include <exception>
 #include <functional>
 
-#if __cplusplus >= 202300L
+#if __cplusplus >= 202302L
 #if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in cpphdl
 #include <stacktrace>
 #endif
@@ -139,7 +139,7 @@ public:
         }
         if (!assigned) {
             std::print(stderr, "Port is not assigned, check backtrace in gdb\n");
-#if __cplusplus >= 202002L
+#if __cplusplus >= 202302L
 #if !defined(SYNTHESIS) && !defined(VERILATOR)
             std::print(stderr, "Backtrace: \n{}\n", std::stacktrace::current());
 #endif
