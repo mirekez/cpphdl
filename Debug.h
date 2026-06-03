@@ -1,13 +1,12 @@
 #pragma once
 
-#if __cplusplus >= 202002L
+#include <iostream>
+#if __cplusplus >= 202002L && __has_include(<stacktrace>)
+#include <stacktrace>
 #define STACKTRACE std::cout << std::stacktrace::current();
 #else
 #define STACKTRACE
 #endif
-
-#include <iostream>
-#include <stacktrace>
 #define DEBUG_AST(indent, a)   //(std::cout << "\n" << std::string().insert(0, (indent)*4, ' ') << a)
 #define DEBUG_AST1(a)          //(std::cout << a)
 #define DEBUG_EXPR(indent, a)  //(std::cout << "\n" << std::string().insert(0, (indent)*4, ' ') << a)

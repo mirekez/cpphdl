@@ -29,9 +29,7 @@ foreach(src ${EXAMPLE_SOURCES})
         endif()
     endforeach()
 
-    target_link_libraries(${target_name} PRIVATE
-      stdc++exp
-    )
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 
 #    target_compile_options(${target_name} PRIVATE "-O2")
 

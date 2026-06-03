@@ -1,25 +1,29 @@
-cmake_minimum_required(VERSION 3.26...3.30)
+cmake_minimum_required(VERSION 3.22...3.30)
 
-if(WIN32)
-set (CMAKE_LINKER "ld64.lld.exe")
-set (CMAKE_C_COMPILER "clang")
-set (CMAKE_CXX_COMPILER "clang++")
-set (CMAKE_GENERATOR "Unix Makefiles")
-set (CMAKE_MAKE_PROGRAM make)
-set (CMAKE_C_COMPILER_FORCED "TRUE")
-set (CMAKE_CXX_COMPILER_FORCED "TRUE")
-else()
-set (CMAKE_LINKER "x86_64-conda-linux-gnu-ld")
-set (CMAKE_C_COMPILER "clang")
-set (CMAKE_CXX_COMPILER "clang++")
-set (CMAKE_GENERATOR "Unix Makefiles")
-set (CMAKE_MAKE_PROGRAM make)
-set (CMAKE_C_COMPILER_FORCED "TRUE")
-set (CMAKE_CXX_COMPILER_FORCED "TRUE")
-endif()
+#good take for windows while not supported yet
+#if(WIN32)
+#set (CMAKE_LINKER "ld64.lld.exe")
+#set (CMAKE_C_COMPILER "clang")
+#set (CMAKE_CXX_COMPILER "clang++")
+#set (CMAKE_GENERATOR "Unix Makefiles")
+#set (CMAKE_MAKE_PROGRAM make)
+#set (CMAKE_C_COMPILER_FORCED "TRUE")
+#set (CMAKE_CXX_COMPILER_FORCED "TRUE")
+#endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
+
+set(CPPHDL_USE_LOCAL_CONDA ON CACHE BOOL "Use the repository .conda toolchain prefix when it exists")
+set(CPPHDL_FETCH_LLVM OFF CACHE BOOL "Fetch and build LLVM+Clang when no complete local/system Clang tooling install is available")
+set(CPPHDL_FETCH_LLVM_TAG "llvmorg-21.1.3" CACHE STRING "LLVM tag used by CPPHDL_FETCH_LLVM")
+
+if(CPPHDL_USE_LOCAL_CONDA AND NOT DEFINED CMAKE_C_COMPILER AND EXISTS "${CMAKE_SOURCE_DIR}/.conda/bin/clang")
+  set(CMAKE_C_COMPILER "${CMAKE_SOURCE_DIR}/.conda/bin/clang" CACHE FILEPATH "C compiler")
+endif()
+if(CPPHDL_USE_LOCAL_CONDA AND NOT DEFINED CMAKE_CXX_COMPILER AND EXISTS "${CMAKE_SOURCE_DIR}/.conda/bin/clang++")
+  set(CMAKE_CXX_COMPILER "${CMAKE_SOURCE_DIR}/.conda/bin/clang++" CACHE FILEPATH "C++ compiler")
+endif()
 
 SET (CMAKE_C_FLAGS_DEBUG_INIT          "-g")
 SET (CMAKE_C_FLAGS_MINSIZEREL_INIT     "-Os -DNDEBUG -g")
@@ -36,7 +40,7 @@ set(CMAKE_CXX_LINK_FLAGS "-static-libstdc++ -static-libgcc")
 
 project(cpphdl
   VERSION 0.8
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
 
@@ -82,10 +86,67 @@ file(CHMOD "${CPPHDL_TEST_ALL_SCRIPT}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_
 
 add_definitions(-DSTATIC_BUILD)
 
-find_package(LLVM REQUIRED CONFIG PATHS .conda/lib/cmake/llvm)
-find_package(Clang REQUIRED CONFIG PATHS .conda/lib/cmake/clang)
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${CLANG_INCLUDE_DIRS})
+find_library(CPPHDL_STDCXXEXP stdc++exp)
+if(NOT CPPHDL_STDCXXEXP)
+  file(GLOB CPPHDL_STDCXXEXP_CANDIDATES "${CMAKE_SOURCE_DIR}/.conda/lib/gcc/*/*/libstdc++exp.a")
+  if(CPPHDL_STDCXXEXP_CANDIDATES)
+    list(GET CPPHDL_STDCXXEXP_CANDIDATES 0 CPPHDL_STDCXXEXP)
+  endif()
+endif()
+
+function(cpphdl_link_stdcxxexp_if_available target)
+  if(CPPHDL_STDCXXEXP)
+    target_link_libraries(${target} PRIVATE ${CPPHDL_STDCXXEXP})
+  endif()
+endfunction()
+
+foreach(CPPHDL_LLVM_PREFIX
+    "${CMAKE_SOURCE_DIR}/.conda"
+    "/usr/lib/llvm-20"
+    "/usr/lib/llvm-19"
+    "/usr/lib/llvm-18"
+    "/usr/lib/llvm-17"
+    "/usr/lib/llvm-16"
+    "/usr/lib/llvm-15")
+  if((CPPHDL_USE_LOCAL_CONDA OR NOT CPPHDL_LLVM_PREFIX STREQUAL "${CMAKE_SOURCE_DIR}/.conda")
+      AND EXISTS "${CPPHDL_LLVM_PREFIX}/include/clang/Tooling/Tooling.h")
+    list(APPEND CMAKE_PREFIX_PATH "${CPPHDL_LLVM_PREFIX}")
+    list(APPEND CPPHDL_LLVM_PREFIXES "${CPPHDL_LLVM_PREFIX}")
+  endif()
+endforeach()
+if(CPPHDL_LLVM_PREFIXES)
+  find_package(LLVM REQUIRED CONFIG PATHS ${CPPHDL_LLVM_PREFIXES} NO_DEFAULT_PATH)
+  find_package(Clang REQUIRED CONFIG PATHS ${CPPHDL_LLVM_PREFIXES} NO_DEFAULT_PATH)
+  include_directories(${LLVM_INCLUDE_DIRS})
+  include_directories(${CLANG_INCLUDE_DIRS})
+elseif(CPPHDL_FETCH_LLVM)
+  include(FetchContent)
+  set(LLVM_ENABLE_PROJECTS clang CACHE STRING "" FORCE)
+  set(LLVM_TARGETS_TO_BUILD Native CACHE STRING "" FORCE)
+  set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_DOCS OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_TOOLS OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_UTILS OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_BINDINGS OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_ZLIB OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(cpphdl_llvm_project
+    GIT_REPOSITORY https://github.com/llvm/llvm-project.git
+    GIT_TAG ${CPPHDL_FETCH_LLVM_TAG}
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR llvm
+  )
+  FetchContent_MakeAvailable(cpphdl_llvm_project)
+else()
+  message(FATAL_ERROR
+    "No complete LLVM/Clang tooling install found. "
+    "Install clang development packages, enable CPPHDL_USE_LOCAL_CONDA, "
+    "or configure with -DCPPHDL_FETCH_LLVM=ON to fetch/build LLVM+Clang.")
+endif()
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp)
 
@@ -106,8 +167,8 @@ target_link_libraries(cpphdl PRIVATE
   clangFrontend
   clangRewrite
   LLVM
-  stdc++exp
 )
+cpphdl_link_stdcxxexp_if_available(cpphdl)
 
 add_subdirectory(examples)
 add_subdirectory(tests)

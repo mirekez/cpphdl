@@ -28,9 +28,7 @@ foreach(src ${TEST_SOURCES})
         endif()
     endforeach()
 
-    target_link_libraries(${target_name} PRIVATE
-      stdc++exp
-    )
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 
     set_target_properties(${target_name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests

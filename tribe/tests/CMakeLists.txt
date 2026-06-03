@@ -166,9 +166,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         )
     endif()
 
-    target_link_libraries(${target_name} PRIVATE
-        stdc++exp
-    )
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 
     add_dependencies(${target_name} cpphdl)
     if(target_name STREQUAL "Accelerator_test"
