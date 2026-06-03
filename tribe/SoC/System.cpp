@@ -461,23 +461,28 @@ class SystemTest : public Module
             if (fread(&phdr, 1, sizeof(phdr), fbin) != sizeof(phdr)) {
                 return false;
             }
-            if (phdr.type != PT_LOAD || phdr.filesz == 0) {
+            const uint32_t type = phdr.type;
+            const uint32_t offset = phdr.offset;
+            const uint32_t vaddr = phdr.vaddr;
+            const uint32_t paddr = phdr.paddr;
+            const uint32_t filesz = phdr.filesz;
+            if (type != PT_LOAD || filesz == 0) {
                 continue;
             }
-            const uint32_t phys = elf_phys_override ? (phdr.vaddr + elf_phys_offset) : (phdr.paddr ? phdr.paddr : phdr.vaddr);
-            if (phys < mem_base || phys - mem_base + phdr.filesz > mem_size_bytes) {
-                std::print("ELF segment outside SoC DRAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, phdr.filesz);
+            const uint32_t phys = elf_phys_override ? (vaddr + elf_phys_offset) : (paddr ? paddr : vaddr);
+            if (phys < mem_base || phys - mem_base + filesz > mem_size_bytes) {
+                std::print("ELF segment outside SoC DRAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, filesz);
                 return false;
             }
-            fseek(fbin, phdr.offset, SEEK_SET);
-            for (uint32_t byte = 0; byte < phdr.filesz; ++byte) {
+            fseek(fbin, offset, SEEK_SET);
+            for (uint32_t byte = 0; byte < filesz; ++byte) {
                 int c = fgetc(fbin);
                 if (c == EOF) {
                     return false;
                 }
                 set_ram_byte(ram, phys - mem_base + byte, (uint8_t)c);
             }
-            read_bytes += phdr.filesz;
+            read_bytes += filesz;
         }
         return read_bytes != 0;
     }
