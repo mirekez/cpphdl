@@ -123,7 +123,9 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr logic& operator=(const logic_bits<WIDTH1>& other);
 
     logic_bits<WIDTH> bits(size_t last, size_t first);
+    constexpr logic<WIDTH> bits(size_t last, size_t first) const;
     logic_bits<WIDTH> operator[](size_t bitnum);
+    constexpr logic<1> operator[](size_t bitnum) const;
 
     constexpr uint8_t get(size_t bitnum) const
     {
@@ -217,7 +219,7 @@ struct logic : public bitops<logic<WIDTH>>
         return value;
     }
 
-    explicit constexpr operator uint64_t() const
+    constexpr operator uint64_t() const
     {
         return to_uint64_constexpr();
     }
@@ -457,10 +459,29 @@ logic_bits<WIDTH> logic<WIDTH>::bits(size_t last, size_t first)
 }
 
 template<size_t WIDTH>
+constexpr logic<WIDTH> logic<WIDTH>::bits(size_t last, size_t first) const
+{
+    cpphdl_assert(first < WIDTH && last < WIDTH && first <= last, "wrong first or last bitnumber");
+    logic<WIDTH> ret = 0;
+    size_t dst = 0;
+    for (size_t src = first; src <= last; ++src) {
+        ret.set(dst++, get(src));
+    }
+    return ret;
+}
+
+template<size_t WIDTH>
 logic_bits<WIDTH> logic<WIDTH>::operator[](size_t bitnum)
 {
     cpphdl_assert(bitnum < WIDTH, "wrong bitnum");
     return logic_bits<WIDTH>(this, bitnum, bitnum);
+}
+
+template<size_t WIDTH>
+constexpr logic<1> logic<WIDTH>::operator[](size_t bitnum) const
+{
+    cpphdl_assert(bitnum < WIDTH, "wrong bitnum");
+    return logic<1>(get(bitnum));
 }
 
 
