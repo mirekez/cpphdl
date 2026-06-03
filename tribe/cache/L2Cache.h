@@ -114,7 +114,7 @@ private:
     reg<array<u<4>, MEM_PORTS>> slave_rid_reg;
     reg<array<logic<PORT_BITWIDTH>, MEM_PORTS>> slave_rdata_reg;
     reg<array<u1, MEM_PORTS>> slave_aw_pending_reg;
-    reg<array<u<MEM_ADDR_BITS>, MEM_PORTS>> slave_awaddr_reg;
+    reg<array<logic<MEM_ADDR_BITS>, MEM_PORTS>> slave_awaddr_reg;
     reg<array<u<4>, MEM_PORTS>> slave_awid_reg;
 
     // True when any external AXI master is offering a one-beat write.
