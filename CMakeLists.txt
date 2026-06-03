@@ -225,14 +225,11 @@ target_link_libraries(cpphdl PRIVATE
   clangRewrite
   LLVM
 )
-foreach(dependency clangTooling clangBasic clangASTMatchers clangFrontend clangRewrite)
+foreach(dependency clang-headers clang-tablegen-targets clangTooling clangBasic clangASTMatchers clangFrontend clangRewrite)
   if(TARGET ${dependency})
     add_dependencies(cpphdl ${dependency})
   endif()
 endforeach()
-if(TARGET clang-tablegen-targets)
-  add_dependencies(cpphdl clang-tablegen-targets)
-endif()
 cpphdl_link_stdcxxexp_if_available(cpphdl)
 
 add_subdirectory(examples)
