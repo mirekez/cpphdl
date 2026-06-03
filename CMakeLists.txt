@@ -192,6 +192,12 @@ elseif(CPPHDL_FETCH_LLVM)
     SOURCE_SUBDIR llvm
   )
   FetchContent_MakeAvailable(cpphdl_llvm_project)
+  include_directories(
+    "${cpphdl_llvm_project_SOURCE_DIR}/llvm/include"
+    "${cpphdl_llvm_project_BINARY_DIR}/include"
+    "${cpphdl_llvm_project_SOURCE_DIR}/clang/include"
+    "${cpphdl_llvm_project_BINARY_DIR}/tools/clang/include"
+  )
 else()
   message(FATAL_ERROR
     "No complete LLVM/Clang tooling install found. "
