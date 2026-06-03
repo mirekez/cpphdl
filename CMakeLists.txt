@@ -206,6 +206,9 @@ else()
 endif()
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp)
+if(TARGET clang-tablegen-targets)
+  add_dependencies(cpphdl clang-tablegen-targets)
+endif()
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c -std=c++23)
