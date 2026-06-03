@@ -34,11 +34,11 @@ struct std::formatter<cpphdl::reg<T>>: public std::formatter<T>
     }
 };
 
-template<typename T, size_t N>
-struct std::formatter<cpphdl::array<T,N>>: public std::formatter<T>
+template<typename T, size_t N, bool PACKED>
+struct std::formatter<cpphdl::array<T,N,PACKED>>: public std::formatter<T>
 {
     template <typename FormatContext>
-    auto format(const cpphdl::array<T,N> &arr, FormatContext& ctx) const {
+    auto format(const cpphdl::array<T,N,PACKED> &arr, FormatContext& ctx) const {
         auto out = ctx.out();
         *out++ = '[';
         for (size_t i = 0; i < N; ++i) {
@@ -68,11 +68,11 @@ struct std::formatter<cpphdl::u8[N]>: public std::formatter<cpphdl::u8>
     }
 };
 
-template<size_t N>
-struct std::formatter<cpphdl::array<cpphdl::u8,N>>: public std::formatter<cpphdl::u8>
+template<size_t N, bool PACKED>
+struct std::formatter<cpphdl::array<cpphdl::u8,N,PACKED>>: public std::formatter<cpphdl::u8>
 {
     template <typename FormatContext>
-    auto format(const cpphdl::array<cpphdl::u8,N> &arr, FormatContext& ctx) const {
+    auto format(const cpphdl::array<cpphdl::u8,N,PACKED> &arr, FormatContext& ctx) const {
         auto out = ctx.out();
         *out++ = '[';
         for (size_t i = 0; i < N; ++i) {

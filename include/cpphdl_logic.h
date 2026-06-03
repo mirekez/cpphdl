@@ -8,7 +8,7 @@ namespace cpphdl
 {
 
 
-template<typename T, size_t S>
+template<typename T, size_t S, bool PACKED = false>
 struct array;
 
 template<size_t WIDTH>
@@ -40,6 +40,11 @@ struct logic : public bitops<logic<WIDTH>>
 {
     constexpr static size_t SIZE = (WIDTH+7)/8;
     uint8_t bytes[SIZE];
+
+    constexpr static size_t _size_bits()
+    {
+        return WIDTH;
+    }
 
     constexpr logic() = default;
     constexpr logic(const logic& other) = default;
@@ -367,6 +372,14 @@ struct logic_bits : public logic<WIDTH>
     }
 
     logic_bits& operator=(uint64_t other)
+    {
+        *(logic<WIDTH>*)this = other;
+        updateParent();
+        return *this;
+    }
+
+    template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
+    logic_bits& operator=(const T& other)
     {
         *(logic<WIDTH>*)this = other;
         updateParent();

@@ -269,8 +269,12 @@ target_link_libraries(cpphdl PRIVATE
   clangASTMatchers
   clangFrontend
   clangRewrite
-  LLVM
 )
+if(TARGET LLVM)
+  target_link_libraries(cpphdl PRIVATE LLVM)
+elseif(NOT CPPHDL_USING_FETCHED_LLVM AND LLVM_LIBRARIES)
+  target_link_libraries(cpphdl PRIVATE ${LLVM_LIBRARIES})
+endif()
 foreach(dependency
     ClangDeclNodes
     ClangStmtNodes
