@@ -36,6 +36,11 @@ template <size_t WIDTH>
 struct u
 {
     uint64_t value:WIDTH;
+    constexpr static size_t _size_bits()
+    {
+        return WIDTH;
+    }
+
     u() = default;
     u(uint64_t v) : value(v) {}
     u& operator= (uint64_t v) { value = v; return *this; };

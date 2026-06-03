@@ -123,10 +123,10 @@ struct type_width_value<logic<WIDTH>>
     static constexpr size_t value = WIDTH;
 };
 
-template<typename T, size_t N>
-struct type_width_value<array<T, N>>
+template<typename T, size_t N, bool PACKED>
+struct type_width_value<array<T, N, PACKED>>
 {
-    static constexpr size_t value = sizeof(T) * 8 * N;
+    static constexpr size_t value = array<T, N, PACKED>::_size_bits();
 };
 
 template<typename T>
@@ -158,8 +158,8 @@ constexpr logic<1> reduce_and(const logic<WIDTH>& value)
     return logic<1>(1);
 }
 
-template<typename T, size_t N>
-constexpr logic<1> reduce_and(const array<T, N>& value)
+template<typename T, size_t N, bool PACKED>
+constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
 {
     for (size_t i = 0; i < N; ++i) {
         if (!static_cast<bool>(value[i])) {
@@ -205,10 +205,10 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
     }
 }
 
-template<typename T, size_t N, typename V>
-constexpr void sv_assign_field(array<T, N>& dst, const V& value)
+template<typename T, size_t N, bool PACKED, typename V>
+constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cvref_t<V>, array<T, N>>) {
+    if constexpr (std::is_same_v<std::remove_cvref_t<V>, array<T, N, PACKED>>) {
         dst = value;
     }
     else {

@@ -107,8 +107,8 @@ foreach(src ${TRIBE_TEST_SOURCES})
         "${CMAKE_SOURCE_DIR}/examples/axi"
     )
 
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE
-        "-mavx2"
         "-fno-strict-aliasing"
     )
     set(tribe_main_smoke_tests
@@ -166,9 +166,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         )
     endif()
 
-    target_link_libraries(${target_name} PRIVATE
-        stdc++exp
-    )
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 
     add_dependencies(${target_name} cpphdl)
     if(target_name STREQUAL "Accelerator_test"
@@ -187,7 +185,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src}
+        COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src} ${CPPHDL_TOOLCHAIN_ARG_LIST}
                 ${cpphdl_extra_defines}
                 -I ${CMAKE_SOURCE_DIR}/include
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/..

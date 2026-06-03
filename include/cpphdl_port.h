@@ -3,9 +3,10 @@
 #include <exception>
 #include <functional>
 
-#if __cplusplus >= 202300L
+#if __cplusplus >= 202302L && __has_include(<stacktrace>)
 #if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in cpphdl
 #include <stacktrace>
+#define CPPHDL_HAVE_STACKTRACE 1
 #endif
 #endif
 
@@ -139,10 +140,8 @@ public:
         }
         if (!assigned) {
             std::print(stderr, "Port is not assigned, check backtrace in gdb\n");
-#if __cplusplus >= 202002L
-#if !defined(SYNTHESIS) && !defined(VERILATOR)
+#if defined(CPPHDL_HAVE_STACKTRACE)
             std::print(stderr, "Backtrace: \n{}\n", std::stacktrace::current());
-#endif
 #endif
             *(volatile char*)0 = 0;
         }

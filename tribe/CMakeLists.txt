@@ -94,15 +94,15 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ${CMAKE_SOURCE_DIR}/include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND "${TRIBE_BUILD_BAREMETAL_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/${output_subdir}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     add_dependencies(${target_name} cpphdl)
-    target_link_libraries(${target_name} PRIVATE stdc++exp)
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 endfunction()
 
 add_tribe_target(tribe256 256 tribe256)
@@ -138,15 +138,15 @@ function(add_soc_target target_name l2_axi_width output_subdir)
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/SoC/System.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ../../include -I ${CMAKE_CURRENT_SOURCE_DIR} -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/cache -I ${CMAKE_CURRENT_SOURCE_DIR}/devices"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/SoC/System.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ${CMAKE_SOURCE_DIR}/include -I ${CMAKE_CURRENT_SOURCE_DIR} -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/cache -I ${CMAKE_CURRENT_SOURCE_DIR}/devices ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND "${TRIBE_BUILD_BAREMETAL_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/${output_subdir}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     add_dependencies(${target_name} cpphdl)
-    target_link_libraries(${target_name} PRIVATE stdc++exp)
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 endfunction()
 
 add_soc_target(SoC256 256 SoC256)

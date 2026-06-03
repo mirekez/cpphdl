@@ -29,9 +29,7 @@ foreach(src ${EXAMPLE_SOURCES})
         endif()
     endforeach()
 
-    target_link_libraries(${target_name} PRIVATE
-      stdc++exp
-    )
+    cpphdl_link_stdcxxexp_if_available(${target_name})
 
 #    target_compile_options(${target_name} PRIVATE "-O2")
 
@@ -47,13 +45,13 @@ foreach(src ${EXAMPLE_SOURCES})
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I../../include"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.bin ${CMAKE_BINARY_DIR}/examples/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.log ${CMAKE_BINARY_DIR}/examples/"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples
     )
 
-    target_compile_options(${target_name} PRIVATE "-mavx2")
+    cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
 
     add_dependencies(${target_name} cpphdl)

@@ -39,9 +39,9 @@ template<> struct cat_width<u16> { static constexpr size_t value = 16; };
 template<> struct cat_width<u32> { static constexpr size_t value = 32; };
 template<> struct cat_width<u64> { static constexpr size_t value = 64; };
 
-template<typename TYPE, size_t COUNT>
-struct cat_width<array<TYPE, COUNT>> {
-    static constexpr size_t value = COUNT * sizeof(TYPE) * 8;
+template<typename TYPE, size_t COUNT, bool PACKED>
+struct cat_width<array<TYPE, COUNT, PACKED>> {
+    static constexpr size_t value = array<TYPE, COUNT, PACKED>::_size_bits();
 };
 
 template<typename T>
@@ -76,10 +76,10 @@ inline logic<16> cat_to_logic(const u16& value) { return cat_to_logic(u<16>((uin
 inline logic<32> cat_to_logic(const u32& value) { return cat_to_logic(u<32>((uint64_t)value)); }
 inline logic<64> cat_to_logic(const u64& value) { return cat_to_logic(u<64>((uint64_t)value)); }
 
-template<typename TYPE, size_t COUNT>
-logic<COUNT * sizeof(TYPE) * 8> cat_to_logic(const array<TYPE, COUNT>& value)
+template<typename TYPE, size_t COUNT, bool PACKED>
+logic<array<TYPE, COUNT, PACKED>::_size_bits()> cat_to_logic(const array<TYPE, COUNT, PACKED>& value)
 {
-    return (logic<COUNT * sizeof(TYPE) * 8>)value;
+    return (logic<array<TYPE, COUNT, PACKED>::_size_bits()>)value;
 }
 
 template<typename T>

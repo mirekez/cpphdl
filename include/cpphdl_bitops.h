@@ -350,6 +350,48 @@ public:
         return !(*this == rhs);
     }
 
+    template<typename T, typename std::enable_if_t<
+        !std::is_integral_v<T> &&
+        !std::is_enum_v<T> &&
+        !std::is_same_v<std::remove_cvref_t<T>, BASE>, int> = 0>
+    bool operator==(const T& rhs) const
+    {
+        constexpr size_t lhs_size = bitops_value_size<BASE>::value;
+        constexpr size_t rhs_size = bitops_value_size<T>::value;
+        constexpr size_t min_size = lhs_size < rhs_size ? lhs_size : rhs_size;
+
+        const uint8_t* lhs_ptr = (const uint8_t*)this;
+        const uint8_t* rhs_ptr = (const uint8_t*)&rhs;
+
+        if (std::memcmp(lhs_ptr, rhs_ptr, min_size) != 0) {
+            return false;
+        }
+        if constexpr (lhs_size > rhs_size) {
+            for (size_t i = rhs_size; i < lhs_size; ++i) {
+                if (lhs_ptr[i] != 0) {
+                    return false;
+                }
+            }
+        }
+        else if constexpr (rhs_size > lhs_size) {
+            for (size_t i = lhs_size; i < rhs_size; ++i) {
+                if (rhs_ptr[i] != 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    template<typename T, typename std::enable_if_t<
+        !std::is_integral_v<T> &&
+        !std::is_enum_v<T> &&
+        !std::is_same_v<std::remove_cvref_t<T>, BASE>, int> = 0>
+    bool operator!=(const T& rhs) const
+    {
+        return !(*this == rhs);
+    }
+
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
     bool operator==(T rhs) const
     {
