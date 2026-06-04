@@ -38,6 +38,11 @@ struct TemplateMemberConv16 {
 
 template<typename CONV_TYPE = TemplateMemberNative16>
 struct TemplateMemberArithmeticHelper {
+    static constexpr uint16_t DEFAULT_EXP_MAX = (1u << TemplateMemberNative16::EXP_WIDTH) - 1u;
+    static constexpr uint16_t CONV_EXP_MAX = (1u << CONV_TYPE::EXP_WIDTH) - 1u;
+    static constexpr uint16_t DEFAULT_MANT_MAX = (1u << TemplateMemberNative16::MANT_WIDTH) - 1u;
+    static constexpr uint16_t CONV_MANT_MAX = (1u << CONV_TYPE::MANT_WIDTH) - 1u;
+
     CONV_TYPE convert_default_to_conv(TemplateMemberNative16 val)
     {
         CONV_TYPE res;
@@ -185,25 +190,29 @@ static bool check_generated_sv()
 {
     std::filesystem::path decoder_path = "generated/TemplateMemberDecoderTemplateMemberConv16.sv";
     std::filesystem::path arithmetic_path = "generated/TemplateMemberArithmeticTemplateMemberConv16.sv";
+    std::filesystem::path helper_pkg_path = "generated/TemplateMemberArithmeticHelperTemplateMemberConv16_pkg.sv";
     std::filesystem::path top_path = "generated/TemplateMemberTop.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(decoder_path)) {
         decoder_path = "TemplateMemberTop_1/TemplateMemberDecoderTemplateMemberConv16.sv";
         arithmetic_path = "TemplateMemberTop_1/TemplateMemberArithmeticTemplateMemberConv16.sv";
+        helper_pkg_path = "TemplateMemberTop_1/TemplateMemberArithmeticHelperTemplateMemberConv16_pkg.sv";
         top_path = "TemplateMemberTop_1/TemplateMemberTop.sv";
     }
 #endif
 
     std::ifstream decoder_in(decoder_path);
     std::ifstream arithmetic_in(arithmetic_path);
+    std::ifstream helper_pkg_in(helper_pkg_path);
     std::ifstream top_in(top_path);
-    if (!decoder_in || !arithmetic_in || !top_in) {
+    if (!decoder_in || !arithmetic_in || !helper_pkg_in || !top_in) {
         std::print("\nERROR: can't open generated TemplateMember SystemVerilog files\n");
         return false;
     }
 
     std::string decoder((std::istreambuf_iterator<char>(decoder_in)), std::istreambuf_iterator<char>());
     std::string arithmetic((std::istreambuf_iterator<char>(arithmetic_in)), std::istreambuf_iterator<char>());
+    std::string helper_pkg((std::istreambuf_iterator<char>(helper_pkg_in)), std::istreambuf_iterator<char>());
     std::string top((std::istreambuf_iterator<char>(top_in)), std::istreambuf_iterator<char>());
     bool ok = true;
     ok &= decoder.find("TemplateMemberArithmeticCONV_TYPE") == std::string::npos;
@@ -219,6 +228,9 @@ static bool check_generated_sv()
     ok &= arithmetic.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16___convert_default_to_conv") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper___convert_default_to_conv") == std::string::npos;
+    ok &= helper_pkg.find("CONV_TYPE") == std::string::npos;
+    ok &= helper_pkg.find("TemplateMemberConv16_pkg::EXP_WIDTH") != std::string::npos;
+    ok &= helper_pkg.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;
     ok &= top.find("TemplateMemberDecoderTemplateMemberConv16 #(") != std::string::npos;
     ok &= top.find(") decoder (") != std::string::npos;
     ok &= top.find("unknown(") == std::string::npos;
@@ -340,7 +352,6 @@ int main(int argc, char** argv)
             "Predef_pkg",
             "TemplateMemberNative16_pkg",
             "TemplateMemberConv16_pkg",
-            "TemplateMemberArithmeticHelper_pkg",
             "TemplateMemberArithmeticHelperTemplateMemberConv16_pkg",
             "TemplateMemberArithmeticTemplateMemberConv16",
             "TemplateMemberDecoderTemplateMemberConv16"

@@ -964,7 +964,6 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
             }
             if (method) {
-                importStructForStaticMethodOwner(method, *this);
                 auto newName = putMethod(method, *this, notThis);
                 DEBUG_AST1(" Called dependent method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);

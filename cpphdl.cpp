@@ -441,6 +441,32 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CX
     return result;
 }
 
+std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutionsForRecord(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    std::unordered_map<std::string, cpphdl::Expr> result;
+    const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
+    if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        return result;
+    }
+
+    const TemplateArgumentList& args = CTSD->getTemplateArgs();
+    const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+    const unsigned n = std::min<unsigned>(args.size(), params->size());
+    for (unsigned i = 0; i < n; ++i) {
+        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(params->getParam(i));
+        if (!typeParam || args[i].getKind() != TemplateArgument::Type) {
+            continue;
+        }
+
+        cpphdl::Expr tmp;
+        hlp.ArgToExpr(args[i], tmp, false);
+        if (!tmp.sub.empty()) {
+            result.emplace(typeParam->getNameAsString(), std::move(tmp.sub.front()));
+        }
+    }
+    return result;
+}
+
 void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl* RD, Helpers& hlp)
 {
     const ClassTemplateDecl* CTD = nullptr;
@@ -576,6 +602,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 {
     DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
     cpphdl::Struct st_obj = {};
+    const auto typeSubstitutions = templateTypeSubstitutionsForRecord(RD, hlp);
     if (!st) {
         std::string sname = genTypeName(RD->getQualifiedNameAsString());
 
@@ -597,6 +624,22 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
             exportStruct(BaseRD, hlp, st);
         }
     }
+
+    auto putStructConstexpr = [&](const VarDecl* VD) {
+        if (!VD->isStaticDataMember() || !VD->isConstexpr() || !VD->getInit()) {
+            return;
+        }
+        if (std::find_if(st->parameters.begin(), st->parameters.end(),
+                [&](auto& p){ return p.name == VD->getNameAsString(); }) != st->parameters.end()) {
+            return;
+        }
+
+        DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
+        cpphdl::Expr init = hlp.exprToExpr(VD->getInit());
+        applyTemplateTypeSubstitutions(init, typeSubstitutions);
+        st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), std::move(init)});
+        DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
+    };
 
     bool hasDecls = false;
     for (Decl* D : RD->decls()) {
@@ -656,6 +699,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                 arrayExpr.sub.emplace_back(std::move(expr));
                 expr = std::move(arrayExpr);
             }
+            applyTemplateTypeSubstitutions(expr, typeSubstitutions);
 
             if (!pointer) {
 
@@ -676,6 +720,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                         st->fields.back().bitwidth = cpphdl::Expr{std::to_string((size_t)ER.Val.getInt().getZExtValue()), cpphdl::Expr::EXPR_NUM};
                     } else {
                         st->fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
+                        applyTemplateTypeSubstitutions(st->fields.back().bitwidth, typeSubstitutions);
                     }
                     DEBUG_AST1("|");
                 }
@@ -711,10 +756,16 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
         }
 
         if (VarDecl* VD = dyn_cast<VarDecl>(D)) {  // constexprs from structs
-            if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
-                DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
-                st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
+            putStructConstexpr(VD);
+        }
+    }
+
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const CXXRecordDecl* primary = CTSD->getSpecializedTemplate()->getTemplatedDecl()) {
+            for (Decl* D : primary->decls()) {
+                if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
+                    putStructConstexpr(VD);
+                }
             }
         }
     }
@@ -1097,7 +1148,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             QualType QT = MD->getThisType()->getPointeeType();
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);  // this of method
-            if (CRD) {
+            if (CRD && externalThisTypeName.empty()) {
                 auto st = exportStruct(CRD, hlp);
                 if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
                     hlp.mod->imports.emplace_back(st.name);
