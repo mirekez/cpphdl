@@ -38,7 +38,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "devices/NS16550A.h"
 #include "devices/CLINT.h"
 #include "devices/PLIC.h"
-#include "devices/Accelerator.cpp"
+#include "devices/Accelerator.h"
 #include "devices/sd/SDController.h"
 #ifndef SYNTHESIS
 #include "verif/SDCardVerif.h"
@@ -1763,4 +1763,3 @@ public:
 
 
 };
-

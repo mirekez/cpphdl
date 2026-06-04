@@ -224,6 +224,48 @@ struct logic : public bitops<logic<WIDTH>>
         return to_uint64_constexpr();
     }
 
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
+    constexpr operator unsigned char() const
+    {
+        return static_cast<unsigned char>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
+    constexpr operator unsigned short() const
+    {
+        return static_cast<unsigned short>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
+    constexpr operator unsigned int() const
+    {
+        return static_cast<unsigned int>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
+    constexpr operator signed char() const
+    {
+        return static_cast<signed char>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
+    constexpr operator signed short() const
+    {
+        return static_cast<signed short>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
+    constexpr operator signed int() const
+    {
+        return static_cast<signed int>(to_uint64_constexpr());
+    }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 64, int> = 0>
+    constexpr operator signed long() const
+    {
+        return static_cast<signed long>(to_uint64_constexpr());
+    }
+
     explicit constexpr operator bool() const
     {
         return to_uint64_constexpr() != 0;

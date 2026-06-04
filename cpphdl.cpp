@@ -41,6 +41,23 @@ namespace
 
 using AnnotationVars = std::unordered_map<std::string, std::string>;
 
+bool evaluatedIntegerExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr& out)
+{
+    if (!expr) {
+        return false;
+    }
+
+    clang::Expr::EvalResult result;
+    if (!expr->EvaluateAsInt(result, ctx)) {
+        return false;
+    }
+
+    llvm::SmallString<32> str;
+    result.Val.getInt().toString(str, 16, result.Val.getInt().isSigned());
+    out = cpphdl::Expr{"'h" + str.str().str(), cpphdl::Expr::EXPR_NUM};
+    return true;
+}
+
 std::string stripAnnotationValue(std::string text, std::string_view prefix)
 {
     text.erase(0, prefix.size());
@@ -659,7 +676,10 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
         }
 
         DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
-        cpphdl::Expr init = hlp.exprToExpr(VD->getInit());
+        cpphdl::Expr init;
+        if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+            init = hlp.exprToExpr(VD->getInit());
+        }
         applyTemplateTypeSubstitutions(init, typeSubstitutions);
         st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), std::move(init)});
         DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
@@ -1172,7 +1192,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             QualType QT = MD->getThisType()->getPointeeType();
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);  // this of method
-            if (CRD && externalThisTypeName.empty()) {
+            if (CRD) {
                 auto st = exportStruct(CRD, hlp);
                 if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
                     hlp.mod->imports.emplace_back(st.name);
@@ -1193,6 +1213,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             if (MD->isStatic()) {
                 parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
                 hlp.followSpecialization(MD->getParent(), parentName);
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
             }
             else {
                 parentName = genTypeName(MD->getParent()->getNameAsString());
@@ -1327,7 +1348,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 return false;
             }
 
-            cpphdl::Expr init = hlp.exprToExpr(VD->getInit());
+            cpphdl::Expr init;
+            if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+                init = hlp.exprToExpr(VD->getInit());
+            }
             const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
             applyTemplateTypeSubstitutions(init, typeSubstitutions);
 

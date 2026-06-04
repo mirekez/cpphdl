@@ -846,6 +846,10 @@ public:
     command += " -I " + shell_quote_path(source_root / "tribe" / "spec");
     command += " -I " + shell_quote_path(source_root / "tribe" / "cache");
     command += " -I " + shell_quote_path(source_root / "tribe" / "devices");
+    if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
+        command += " ";
+        command += toolchain_args;
+    }
     return std::system(command.c_str()) == 0;
 }
 

@@ -41,8 +41,8 @@ struct u
         return WIDTH;
     }
 
-    u() = default;
-    u(uint64_t v) : value(v) {}
+    constexpr u() = default;
+    constexpr u(uint64_t v) : value(v) {}
     u& operator= (uint64_t v) { value = v; return *this; };
 //    u* operator&() { return (u*)this; }
     u& operator++() { value = value+1; return *this; }
@@ -57,8 +57,29 @@ struct u
     u& operator|=(const u& other) { value |= other.value; return *this; }
     u& operator>>=(const u& other) { value >>= other.value; return *this; }
     u& operator<<=(const u& other) { value <<= other.value; return *this; }
-    operator uint64_t () { return value; }
-    operator uint64_t () const { return value; }
+    constexpr operator uint64_t () { return value; }
+    constexpr operator uint64_t () const { return value; }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
+    constexpr operator unsigned char() const { return static_cast<unsigned char>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
+    constexpr operator unsigned short() const { return static_cast<unsigned short>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
+    constexpr operator unsigned int() const { return static_cast<unsigned int>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
+    constexpr operator signed char() const { return static_cast<signed char>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
+    constexpr operator signed short() const { return static_cast<signed short>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
+    constexpr operator signed int() const { return static_cast<signed int>(value); }
+
+    template<size_t W = WIDTH, typename std::enable_if_t<W == 64, int> = 0>
+    constexpr operator signed long() const { return static_cast<signed long>(value); }
 
     logic<1> operator[](size_t bit) const
     {
@@ -71,10 +92,9 @@ struct u
         return logic<WIDTH>((logic<WIDTH>*)this, first, last);
     }
 
-    operator logic<WIDTH>() const
+    constexpr operator logic<WIDTH>() const
     {
-        logic<WIDTH> bs;
-        memcpy(&bs, value, sizeof(bs));
+        return logic<WIDTH>(value);
     }
 
 } __PACKED;
@@ -128,11 +148,11 @@ namespace cpphdl \
 { \
 struct class : public u<size> \
 { \
-    class() = default; \
-    class(type v) : u(v) {}  \
-    template<size_t W> class(u<W> v) : u((uint64_t)v) {}  \
+    constexpr class() = default; \
+    constexpr class(type v) : u(v) {}  \
+    template<size_t W> constexpr class(u<W> v) : u((uint64_t)v) {}  \
     type* operator&() { return (type*)this; } \
-    template<size_t W> explicit operator u<W>() { return value; }  \
+    template<size_t W> explicit constexpr operator u<W>() { return value; }  \
 }; \
 } \
 template<> \

@@ -27,7 +27,7 @@ CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedN
 
 static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helpers& hlp)
 {
-    if (!method || !method->isStatic() || !hlp.mod) {
+    if (!method || !hlp.mod) {
         return;
     }
 
@@ -36,6 +36,12 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
         parent->getQualifiedNameAsString().find("cpphdl::") == 0 ||
         parent->getQualifiedNameAsString().find("std::") == 0) {
         return;
+    }
+
+    if (auto* moduleClass = hlp.lookupQualifiedRecord("cpphdl::Module")) {
+        if (parent->isDerivedFrom(moduleClass)) {
+            return;
+        }
     }
 
     auto importRecord = [&](CXXRecordDecl* record) {
@@ -52,6 +58,10 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
         }
     };
 
+    if (!method->isStatic()) {
+        importRecord(parent);
+    }
+
     if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(parent)) {
         for (const auto& arg : spec->getTemplateArgs().asArray()) {
             if (arg.getKind() != TemplateArgument::Type) {
@@ -62,7 +72,9 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
         }
     }
 
-    importRecord(parent);
+    // Static helper methods are emitted into the caller module by putMethod().
+    // Importing the helper owner package is unnecessary and can make Verilator
+    // compile lists depend on an otherwise unused package.
 }
 
 static bool isCombFuncName(const std::string& name)

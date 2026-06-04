@@ -3,6 +3,7 @@
 #include "Method.h"
 #include "Field.h"
 #include "Expr.h"
+#include "Enum.h"
 #include "Optimizer.h"
 
 #include <fstream>
@@ -116,6 +117,15 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
             }
         }
         std::string name = genTypeName(imp.name);
+        const bool hasStructPackage = std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](auto& s) {
+            return s.name == name;
+        }) != currProject->structs.end();
+        const bool hasEnumPackage = std::find_if(currProject->enums.begin(), currProject->enums.end(), [&](auto& e) {
+            return e.name == name;
+        }) != currProject->enums.end();
+        if (name == genTypeName(this->name) && !hasStructPackage && !hasEnumPackage) {
+            continue;
+        }
         if (importsSet->find(name) == importsSet->end()) {
             importsSet->insert(name);
             out << "import " << name << "_pkg::*;\n";

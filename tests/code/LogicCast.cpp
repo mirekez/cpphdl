@@ -48,6 +48,15 @@ logic<8> primitive_arg_overload(logic<8> value)
     return value ^ logic<8>(0xff);
 }
 
+constexpr unsigned char exact_unsigned8_arg(unsigned char value) { return (unsigned char)(value + 1u); }
+constexpr unsigned short exact_unsigned16_arg(unsigned short value) { return (unsigned short)(value + 3u); }
+constexpr unsigned int exact_unsigned32_arg(unsigned int value) { return value + 5u; }
+constexpr unsigned long exact_unsigned64_arg(unsigned long value) { return value + 7u; }
+constexpr signed char exact_signed8_arg(signed char value) { return (signed char)(value - 1); }
+constexpr signed short exact_signed16_arg(signed short value) { return (signed short)(value - 3); }
+constexpr signed int exact_signed32_arg(signed int value) { return value - 5; }
+constexpr signed long exact_signed64_arg(signed long value) { return value - 7; }
+
 struct LogicCastConfig
 {
     static constexpr logic<1> enable = 1;
@@ -65,6 +74,22 @@ static_assert(constexpr_primitive_arg(LogicCastConfig::enable) == 0x13);
 static_assert((uint64_t)LogicCastConfig::pattern == 0xa5);
 static_assert((uint64_t)LogicCastConfig::pattern.bits(5, 2) == 0x9);
 static_assert((bool)LogicCastConfig::top_bit);
+static_assert(exact_unsigned8_arg(logic<8>(0x12)) == 0x13);
+static_assert(exact_unsigned16_arg(logic<16>(0x1234)) == 0x1237);
+static_assert(exact_unsigned32_arg(logic<32>(0x12345678)) == 0x1234567d);
+static_assert(exact_unsigned64_arg(logic<64>(0x123456789abcdef0ULL)) == 0x123456789abcdef7UL);
+static_assert(exact_signed8_arg(logic<8>(0x12)) == (signed char)0x11);
+static_assert(exact_signed16_arg(logic<16>(0x1234)) == (signed short)0x1231);
+static_assert(exact_signed32_arg(logic<32>(0x12345678)) == (signed int)0x12345673);
+static_assert(exact_signed64_arg(logic<64>(0x123456789abcdef0ULL)) == (signed long)0x123456789abcdee9L);
+static_assert(exact_unsigned8_arg(u8(0x12)) == 0x13);
+static_assert(exact_unsigned16_arg(u16(0x1234)) == 0x1237);
+static_assert(exact_unsigned32_arg(u32(0x12345678)) == 0x1234567d);
+static_assert(exact_unsigned64_arg(u64(0x123456789abcdef0ULL)) == 0x123456789abcdef7UL);
+static_assert(exact_signed8_arg(u<8>(0x12)) == (signed char)0x11);
+static_assert(exact_signed16_arg(u<16>(0x1234)) == (signed short)0x1231);
+static_assert(exact_signed32_arg(u<32>(0x12345678)) == (signed int)0x12345673);
+static_assert(exact_signed64_arg(u<64>(0x123456789abcdef0ULL)) == (signed long)0x123456789abcdee9L);
 
 uint64_t runtime_primitive_arg(logic<8> value)
 {
@@ -104,6 +129,29 @@ uint64_t runtime_logic_bits_multiply(logic<16>& value)
 logic<8> runtime_logic_overload(logic<8> value)
 {
     return primitive_arg_overload(value);
+}
+
+uint64_t runtime_exact_primitive_sum(logic<8> l8, logic<16> l16, logic<32> l32, logic<64> l64,
+    u8 a8, u16 a16, u32 a32, u64 a64)
+{
+    uint64_t sum = 0;
+    sum += exact_unsigned8_arg(l8);
+    sum += exact_unsigned16_arg(l16);
+    sum += exact_unsigned32_arg(l32);
+    sum += exact_unsigned64_arg(l64);
+    sum += (uint8_t)exact_signed8_arg(l8);
+    sum += (uint16_t)exact_signed16_arg(l16);
+    sum += (uint32_t)exact_signed32_arg(l32);
+    sum += (uint64_t)exact_signed64_arg(l64);
+    sum += exact_unsigned8_arg(a8);
+    sum += exact_unsigned16_arg(a16);
+    sum += exact_unsigned32_arg(a32);
+    sum += exact_unsigned64_arg(a64);
+    sum += (uint8_t)exact_signed8_arg(a8);
+    sum += (uint16_t)exact_signed16_arg(a16);
+    sum += (uint32_t)exact_signed32_arg(a32);
+    sum += (uint64_t)exact_signed64_arg(a64);
+    return sum;
 }
 
 class LogicCast : public Module
@@ -293,6 +341,32 @@ public:
             if (logic_overload_got != logic_overload_expected) {
                 std::print("\nERROR: logic overload sample=0x{:04x} got=0x{:02x} expected=0x{:02x}\n",
                     sample, logic_overload_got, logic_overload_expected);
+                error = true;
+            }
+
+            logic<8> exact_l8 = logic<8>(sample);
+            logic<16> exact_l16 = logic<16>(sample);
+            logic<32> exact_l32 = logic<32>(0x12340000u | sample);
+            logic<64> exact_l64 = logic<64>(0x1234567800000000ULL | sample);
+            u8 exact_a8 = u8((uint8_t)sample);
+            u16 exact_a16 = u16(sample);
+            u32 exact_a32 = u32(0x12340000u | sample);
+            u64 exact_a64 = u64(0x1234567800000000ULL | sample);
+            uint64_t exact_expected = 0;
+            exact_expected += exact_unsigned8_arg((unsigned char)(uint8_t)sample);
+            exact_expected += exact_unsigned16_arg((unsigned short)(uint16_t)sample);
+            exact_expected += exact_unsigned32_arg((unsigned int)(0x12340000u | sample));
+            exact_expected += exact_unsigned64_arg((unsigned long)(0x1234567800000000ULL | sample));
+            exact_expected += (uint8_t)exact_signed8_arg((signed char)(uint8_t)sample);
+            exact_expected += (uint16_t)exact_signed16_arg((signed short)(uint16_t)sample);
+            exact_expected += (uint32_t)exact_signed32_arg((signed int)(0x12340000u | sample));
+            exact_expected += (uint64_t)exact_signed64_arg((signed long)(0x1234567800000000ULL | sample));
+            exact_expected *= 2;
+            uint64_t exact_got = runtime_exact_primitive_sum(exact_l8, exact_l16, exact_l32, exact_l64,
+                exact_a8, exact_a16, exact_a32, exact_a64);
+            if (exact_got != exact_expected) {
+                std::print("\nERROR: exact primitive conversions sample=0x{:04x} got=0x{:x} expected=0x{:x}\n",
+                    sample, exact_got, exact_expected);
                 error = true;
             }
 
