@@ -66,11 +66,6 @@ template<typename T, typename V>
 constexpr T sv_cast(const V& value)
 {
     T out{};
-    if constexpr (std::is_integral_v<V> || std::is_enum_v<V>) {
-        if (value == 0) {
-            return out;
-        }
-    }
     out = value;
     return out;
 }

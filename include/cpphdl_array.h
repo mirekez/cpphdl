@@ -217,23 +217,6 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT*sizeof(TYPE)*8>>
     }
 };
 
-
-template<size_t COUNT, typename T, size_t N, bool PACKED>
-array<T, COUNT, PACKED> array_slice(const array<T, N, PACKED>& src, size_t low)
-{
-    array<T, COUNT, PACKED> out;
-    for (size_t i = 0; i < COUNT; ++i) {
-        out[i] = src[low + i];
-    }
-    return out;
-}
-
-template<size_t COUNT, typename T, size_t N, bool PACKED, typename I>
-array<T, COUNT, PACKED> array_slice(const array<T, N, PACKED>& src, const I& low)
-{
-    return array_slice<COUNT>(src, static_cast<size_t>(static_cast<uint64_t>(low)));
-}
-
 template<typename TYPE, size_t COUNT>
 struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
 {
