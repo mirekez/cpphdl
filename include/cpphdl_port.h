@@ -3,10 +3,9 @@
 #include <exception>
 #include <functional>
 
-#if __cplusplus >= 202302L && __has_include(<stacktrace>)
-#if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in cpphdl
+#if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>)
+#if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in generated/verilated code
 #include <stacktrace>
-#define CPPHDL_HAVE_STACKTRACE 1
 #endif
 #endif
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <iostream>
-#if __cplusplus >= 202002L && __has_include(<stacktrace>)
+#if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202002L && __has_include(<stacktrace>)
 #include <stacktrace>
 #define STACKTRACE std::cout << std::stacktrace::current();
 #else

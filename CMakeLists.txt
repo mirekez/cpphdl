@@ -106,6 +106,29 @@ if(NOT CPPHDL_STDCXXEXP)
   endif()
 endif()
 
+include(CheckCXXSourceCompiles)
+set(CPPHDL_STACKTRACE_TEST_SOURCE [=[
+#include <stacktrace>
+int main()
+{
+    auto trace = std::stacktrace::current();
+    return trace.size() == 0 ? 0 : 0;
+}
+]=])
+check_cxx_source_compiles("${CPPHDL_STACKTRACE_TEST_SOURCE}" CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS)
+if(NOT CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS AND CPPHDL_STDCXXEXP)
+  set(CMAKE_REQUIRED_LIBRARIES_SAVE "${CMAKE_REQUIRED_LIBRARIES}")
+  set(CMAKE_REQUIRED_LIBRARIES "${CPPHDL_STDCXXEXP}")
+  check_cxx_source_compiles("${CPPHDL_STACKTRACE_TEST_SOURCE}" CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP)
+  set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES_SAVE}")
+endif()
+if(CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS OR CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP)
+  message(STATUS "CppHDL stacktrace support enabled")
+  add_compile_definitions(CPPHDL_HAVE_STACKTRACE=1)
+else()
+  message(STATUS "CppHDL stacktrace support disabled: <stacktrace> did not link")
+endif()
+
 function(cpphdl_link_stdcxxexp_if_available target)
   if(CPPHDL_STDCXXEXP)
     target_link_libraries(${target} PRIVATE ${CPPHDL_STDCXXEXP})
