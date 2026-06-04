@@ -25,6 +25,46 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 //const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
+static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helpers& hlp)
+{
+    if (!method || !method->isStatic() || !hlp.mod) {
+        return;
+    }
+
+    CXXRecordDecl* parent = const_cast<CXXRecordDecl*>(method->getParent());
+    if (!parent || !parent->hasDefinition() ||
+        parent->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+        parent->getQualifiedNameAsString().find("std::") == 0) {
+        return;
+    }
+
+    auto importRecord = [&](CXXRecordDecl* record) {
+        if (!record || !record->hasDefinition() ||
+            record->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+            record->getQualifiedNameAsString().find("std::") == 0) {
+            return;
+        }
+        auto st = exportStruct(record, hlp);
+        if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(),
+                [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
+            hlp.mod->imports.emplace_back(st.name);
+            currProject->structs.emplace_back(std::move(st));
+        }
+    };
+
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(parent)) {
+        for (const auto& arg : spec->getTemplateArgs().asArray()) {
+            if (arg.getKind() != TemplateArgument::Type) {
+                continue;
+            }
+            QualType qt = arg.getAsType().getNonReferenceType();
+            importRecord(hlp.resolveCXXRecordDecl(qt));
+        }
+    }
+
+    importRecord(parent);
+}
+
 static bool isCombFuncName(const std::string& name)
 {
     return str_ending(name, "_comb_func");
@@ -691,6 +731,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             DEBUG_AST1(" DRE(" << function->getQualifiedNameAsString() << ")");
             call.value = function->getNameAsString();
             if (const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(function)) {
+                importStructForStaticMethodOwner(method, *this);
                 auto newName = putMethod(method, *this);
                 DEBUG_AST1(" Called static method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);
@@ -825,6 +866,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            if (call.sub.size()  // we need not call members - they are accessible through ports wires
 //                && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
             if (method) {
+                importStructForStaticMethodOwner(method, *this);
                 auto newName = putMethod(method, *this);
                 DEBUG_AST1(" Called method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);
@@ -878,6 +920,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            member.type = cpphdl::Expr::EXPR_MEMBER;
             call.sub.emplace_back(member);
             if (const auto* method = llvm::dyn_cast_or_null<clang::CXXMethodDecl>(CE->getDirectCallee())) {
+                importStructForStaticMethodOwner(method, *this);
                 auto newName = putMethod(method, *this);
                 DEBUG_AST1(" Called dependent method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);

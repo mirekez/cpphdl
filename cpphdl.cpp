@@ -819,6 +819,12 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         }
     }
 
+    const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    applyTemplateTypeSubstitutions(expr, typeSubstitutions);
+    for (auto& dim : array_dim) {
+        applyTemplateTypeSubstitutions(dim, typeSubstitutions);
+    }
+
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
         DEBUG_AST1(" {port " << fieldName << "} ");
 
@@ -886,6 +892,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (initializer) {
                 DEBUG_AST1(", <initializer ");
                 field->initializer = hlp.exprToExpr(initializer);
+                applyTemplateTypeSubstitutions(field->initializer, typeSubstitutions);
                 DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
                 DEBUG_AST1(">");
             }
@@ -1104,8 +1111,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             DEBUG_EXPR(debugIndent, " param Expr: " << method.arguments.back().expr.debug(debugIndent));
         }
         else {
-            parentName = genTypeName(MD->getParent()->getNameAsString());
-            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            if (MD->isStatic()) {
+                parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
+                hlp.followSpecialization(MD->getParent(), parentName);
+            }
+            else {
+                parentName = genTypeName(MD->getParent()->getNameAsString());
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            }
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         }
         method.name = parentName + "___";

@@ -1,4 +1,5 @@
-// Tribe RTL model extracted from main.cpp.
+#pragma once
+
 #include "File.h"
 
 #include "Config.h"
