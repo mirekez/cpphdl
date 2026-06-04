@@ -55,6 +55,9 @@ project(cpphdl
   LANGUAGES C CXX)
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
+option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
+option(CPPHDL_BUILD_TESTS "Build CppHDL standalone tests" ON)
+option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
 
 include(CTest)
 
@@ -325,9 +328,15 @@ if(CPPHDL_USING_FETCHED_LLVM)
 endif()
 cpphdl_link_stdcxxexp_if_available(cpphdl)
 
-add_subdirectory(examples)
-add_subdirectory(tests)
-add_subdirectory(tribe)
+if(CPPHDL_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+if(CPPHDL_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
+if(CPPHDL_BUILD_TRIBE)
+  add_subdirectory(tribe)
+endif()
 if(CPPHDL_BUILD_HDLCPP)
   add_subdirectory(hdlcpp)
 endif()
