@@ -600,6 +600,14 @@ void fixAnonymousLocalMemberAccesses(cpphdl::Method& method, const std::unordere
     }
 
     std::unordered_map<std::string, bool> localAnonTypes;
+    for (auto& arg : method.arguments) {
+        if (arg.expr.type == cpphdl::Expr::EXPR_TYPE
+            && substitutedTypeNames.contains(arg.expr.value)
+            && structHasAnonymousAggregateWrapper(arg.expr.value)) {
+            localAnonTypes.emplace(arg.name, true);
+        }
+    }
+
     for (auto& statement : method.statements) {
         statement.traverseIf([&](cpphdl::Expr& expr) {
             if (expr.type == cpphdl::Expr::EXPR_DECL && expr.sub.size()
