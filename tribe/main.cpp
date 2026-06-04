@@ -213,6 +213,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        eth_loopback_enabled = std::getenv("TRIBE_ETH_LOOPBACK") != nullptr;
         const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
         const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
         std::string scripted_uart_input = uart_input_env ? uart_input_env : "";

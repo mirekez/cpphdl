@@ -30,7 +30,7 @@ class [[clang::annotate(
     "\n"
     "import Predef_pkg::*;\n"
     "\n"
-    "module ArithmeticFP16E5 #(parameter int PIPE_DEPTH_MUL = $(PIPE_DEPTH_MUL), parameter int PIPE_DEPTH_SUM = $(PIPE_DEPTH_SUM))\n"
+    "module Arithmetic_FP16E5 #(parameter int PIPE_DEPTH_MUL = $(PIPE_DEPTH_MUL), parameter int PIPE_DEPTH_SUM = $(PIPE_DEPTH_SUM))\n"
     " (\n"
     "    input wire clk,\n"
     "    input wire reset,\n"

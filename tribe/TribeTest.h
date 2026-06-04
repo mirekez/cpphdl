@@ -1,6 +1,11 @@
 #pragma once
 
 #include "Tribe.h"
+#include "devices/net/ethgig/ethgig_dma.h"
+#include "devices/net/ethgig/ethgig_mac.h"
+#include "devices/net/ethgig/ethgig_pcs.h"
+#include "devices/net/ethgig/ethgig_phy.h"
+#include "verif/RGMIIVerif.h"
 #include <chrono>
 #include <cstdlib>
 #include <csignal>
@@ -131,13 +136,18 @@ class TestTribe : public Module
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
     Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
-    Axi4RegionMux<5,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    Axi4RegionMux<6,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
     CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
     PLIC<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> plic;
     Accelerator<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> accelerator;
     SDController<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> sdcard;
     SDCardVerifFrontend sdcard_verif;
+    EthGigDMA<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> ethgig_dma;
+    EthGigMAC<256> ethgig_mac;
+    EthGigPCS<256> ethgig_pcs;
+    EthGigPHY ethgig_phy;
+    RGMIIVerifFrontend ethgig_verif;
 
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
@@ -186,6 +196,8 @@ class TestTribe : public Module
     reg<u1> uart_script_enabled_reg;
     reg<u1> uart_script_reported_reg;
     reg<u1> sd_dma_cache_invalidate_reg;
+    reg<u1> eth_dma_cache_invalidate_reg;
+    bool eth_loopback_enabled = false;
     bool tohost_done = false;
 
     class StdinRawMode
@@ -473,10 +485,10 @@ public:
         tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
-            _ASSIGN((bool)sd_dma_cache_invalidate_reg &&
+            _ASSIGN(((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
                 !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
 #else
-            _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg);
 #endif
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
@@ -519,6 +531,17 @@ public:
         tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
         tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
         tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
+        tribe.axi_in[2].awvalid_in = _ASSIGN(ethgig_dma.dma_out.awvalid_in());
+        tribe.axi_in[2].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)ethgig_dma.dma_out.awaddr_in());
+        tribe.axi_in[2].awid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.awid_in());
+        tribe.axi_in[2].wvalid_in = _ASSIGN(ethgig_dma.dma_out.wvalid_in());
+        tribe.axi_in[2].wdata_in = _ASSIGN(ethgig_dma.dma_out.wdata_in());
+        tribe.axi_in[2].wlast_in = _ASSIGN(ethgig_dma.dma_out.wlast_in());
+        tribe.axi_in[2].bready_in = _ASSIGN(ethgig_dma.dma_out.bready_in());
+        tribe.axi_in[2].arvalid_in = _ASSIGN(ethgig_dma.dma_out.arvalid_in());
+        tribe.axi_in[2].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)ethgig_dma.dma_out.araddr_in());
+        tribe.axi_in[2].arid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.arid_in());
+        tribe.axi_in[2].rready_in = _ASSIGN(ethgig_dma.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -547,17 +570,51 @@ public:
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
         iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
-        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
-        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE100);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[5] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[5] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
         AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
-        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
+        AXI4_DRIVER_FROM(ethgig_dma.axi_in, iospace.masters_out[4]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[5]);
         AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
         AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
+        AXI4_RESPONDER_FROM(ethgig_dma.dma_out, tribe.axi_in[2]);
+        ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
+        ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
+        ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
+        ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
+        ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
+        ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
+        ethgig_dma.mac_rx_last_in = ethgig_mac.rx_last_out;
+        ethgig_mac.rx_ready_in = ethgig_dma.mac_rx_ready_out;
+        ethgig_pcs.tx_valid_in = ethgig_mac.pcs_tx_valid_out;
+        ethgig_pcs.tx_data_in = ethgig_mac.pcs_tx_data_out;
+        ethgig_pcs.tx_last_in = ethgig_mac.pcs_tx_last_out;
+        ethgig_mac.pcs_tx_ready_in = ethgig_pcs.tx_ready_out;
+        ethgig_phy.tx_valid_in = ethgig_pcs.tx_valid_out;
+        ethgig_phy.tx_data_in = ethgig_pcs.tx_data_out;
+        ethgig_phy.tx_last_in = ethgig_pcs.tx_last_out;
+        ethgig_pcs.tx_ready_in = ethgig_phy.tx_ready_out;
+        ethgig_pcs.rx_valid_in = ethgig_phy.rx_valid_out;
+        ethgig_pcs.rx_data_in = ethgig_phy.rx_data_out;
+        ethgig_pcs.rx_last_in = ethgig_phy.rx_last_out;
+        ethgig_phy.rx_ready_in = ethgig_pcs.rx_ready_out;
+        ethgig_mac.pcs_rx_valid_in = ethgig_pcs.rx_valid_out;
+        ethgig_mac.pcs_rx_data_in = ethgig_pcs.rx_data_out;
+        ethgig_mac.pcs_rx_last_in = ethgig_pcs.rx_last_out;
+        ethgig_pcs.rx_ready_in = ethgig_mac.pcs_rx_ready_out;
+        ethgig_verif.rgmii_tx_ctl_in = ethgig_phy.rgmii_tx_ctl_out;
+        ethgig_verif.rgmii_txd_in = ethgig_phy.rgmii_txd_out;
+        ethgig_verif.rgmii_tx_last_in = ethgig_phy.rgmii_tx_last_out;
+        ethgig_phy.rgmii_rx_ctl_in = ethgig_verif.rgmii_rx_ctl_out;
+        ethgig_phy.rgmii_rxd_in = ethgig_verif.rgmii_rxd_out;
+        ethgig_phy.rgmii_rx_last_in = ethgig_verif.rgmii_rx_last_out;
         sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
         sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
         sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
@@ -576,12 +633,18 @@ public:
         }
         plic.source_irq_in[1] = uart.irq_out;
         plic.source_irq_in[2] = sdcard.irq_out;
+        plic.source_irq_in[3] = _ASSIGN(ethgig_dma.tx_irq_out() || ethgig_dma.rx_irq_out());
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
         sdcard.__inst_name = __inst_name + "/sdcard";
         sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
+        ethgig_dma.__inst_name = __inst_name + "/ethgig_dma";
+        ethgig_mac.__inst_name = __inst_name + "/ethgig_mac";
+        ethgig_pcs.__inst_name = __inst_name + "/ethgig_pcs";
+        ethgig_phy.__inst_name = __inst_name + "/ethgig_phy";
+        ethgig_verif.__inst_name = __inst_name + "/ethgig_verif";
         mem0._assign();
         mem1._assign();
         mem2._assign();
@@ -591,6 +654,11 @@ public:
         accelerator._assign();
         sdcard._assign();
         sdcard_verif._assign();
+        ethgig_dma._assign();
+        ethgig_mac._assign();
+        ethgig_pcs._assign();
+        ethgig_phy._assign();
+        ethgig_verif._assign();
 
         AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
@@ -599,7 +667,8 @@ public:
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
-        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], ethgig_dma.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[5], plic.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
 	#else  // connecting Verilator to CppHDL
         tribe.reset_pc_in = reset_pc;
@@ -608,10 +677,10 @@ public:
         tribe.boot_priv_in = boot_priv;
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
-            (bool)sd_dma_cache_invalidate_reg &&
+            ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
                 !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
 #else
-            (bool)sd_dma_cache_invalidate_reg;
+            (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
 #endif
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
@@ -657,15 +726,18 @@ public:
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
         iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
-        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
-        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE100);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[5] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[5] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
         iospace._assign();
         AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
         AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
         AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
         AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
-        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
+        AXI4_DRIVER_FROM(ethgig_dma.axi_in, iospace.masters_out[4]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[5]);
         uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
         clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
@@ -676,6 +748,7 @@ public:
         }
         plic.source_irq_in[1] = uart.irq_out;
         plic.source_irq_in[2] = sdcard.irq_out;
+        plic.source_irq_in[3] = _ASSIGN(ethgig_dma.tx_irq_out() || ethgig_dma.rx_irq_out());
         sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
         sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
         sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
@@ -702,12 +775,56 @@ public:
         sdcard.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[1]));
         sdcard.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[1]);
         sdcard.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[1]);
+        ethgig_dma.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[2]);
+        ethgig_dma.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[2]);
+        ethgig_dma.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[2]);
+        ethgig_dma.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[2]);
+        ethgig_dma.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[2]);
+        ethgig_dma.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[2]);
+        ethgig_dma.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[2]));
+        ethgig_dma.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[2]);
+        ethgig_dma.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[2]);
+        ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
+        ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
+        ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
+        ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
+        ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
+        ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
+        ethgig_dma.mac_rx_last_in = ethgig_mac.rx_last_out;
+        ethgig_mac.rx_ready_in = ethgig_dma.mac_rx_ready_out;
+        ethgig_pcs.tx_valid_in = ethgig_mac.pcs_tx_valid_out;
+        ethgig_pcs.tx_data_in = ethgig_mac.pcs_tx_data_out;
+        ethgig_pcs.tx_last_in = ethgig_mac.pcs_tx_last_out;
+        ethgig_mac.pcs_tx_ready_in = ethgig_pcs.tx_ready_out;
+        ethgig_phy.tx_valid_in = ethgig_pcs.tx_valid_out;
+        ethgig_phy.tx_data_in = ethgig_pcs.tx_data_out;
+        ethgig_phy.tx_last_in = ethgig_pcs.tx_last_out;
+        ethgig_pcs.tx_ready_in = ethgig_phy.tx_ready_out;
+        ethgig_pcs.rx_valid_in = ethgig_phy.rx_valid_out;
+        ethgig_pcs.rx_data_in = ethgig_phy.rx_data_out;
+        ethgig_pcs.rx_last_in = ethgig_phy.rx_last_out;
+        ethgig_phy.rx_ready_in = ethgig_pcs.rx_ready_out;
+        ethgig_mac.pcs_rx_valid_in = ethgig_pcs.rx_valid_out;
+        ethgig_mac.pcs_rx_data_in = ethgig_pcs.rx_data_out;
+        ethgig_mac.pcs_rx_last_in = ethgig_pcs.rx_last_out;
+        ethgig_pcs.rx_ready_in = ethgig_mac.pcs_rx_ready_out;
+        ethgig_verif.rgmii_tx_ctl_in = ethgig_phy.rgmii_tx_ctl_out;
+        ethgig_verif.rgmii_txd_in = ethgig_phy.rgmii_txd_out;
+        ethgig_verif.rgmii_tx_last_in = ethgig_phy.rgmii_tx_last_out;
+        ethgig_phy.rgmii_rx_ctl_in = ethgig_verif.rgmii_rx_ctl_out;
+        ethgig_phy.rgmii_rxd_in = ethgig_verif.rgmii_rxd_out;
+        ethgig_phy.rgmii_rx_last_in = ethgig_verif.rgmii_rx_last_out;
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";
         accelerator.__inst_name = __inst_name + "/accelerator";
         sdcard.__inst_name = __inst_name + "/sdcard";
         sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
+        ethgig_dma.__inst_name = __inst_name + "/ethgig_dma";
+        ethgig_mac.__inst_name = __inst_name + "/ethgig_mac";
+        ethgig_pcs.__inst_name = __inst_name + "/ethgig_pcs";
+        ethgig_phy.__inst_name = __inst_name + "/ethgig_phy";
+        ethgig_verif.__inst_name = __inst_name + "/ethgig_verif";
         mem0._assign();
         mem1._assign();
         mem2._assign();
@@ -717,18 +834,26 @@ public:
         accelerator._assign();
         sdcard._assign();
         sdcard_verif._assign();
+        ethgig_dma._assign();
+        ethgig_mac._assign();
+        ethgig_pcs._assign();
+        ethgig_phy._assign();
+        ethgig_verif._assign();
         AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
-        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], ethgig_dma.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[5], plic.axi_in);
 #endif
     }
 
     void _work(bool reset)
     {
         bool sd_dma_cache_invalidate_ready;
+        bool eth_dma_cache_invalidate_ready;
         sd_dma_cache_invalidate_ready = true;
+        eth_dma_cache_invalidate_ready = true;
 #ifndef VERILATOR
         uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe._work(reset);
@@ -744,10 +869,10 @@ public:
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
-            (bool)sd_dma_cache_invalidate_reg &&
+            ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
                 !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
 #else
-            (bool)sd_dma_cache_invalidate_reg;
+            (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
 #endif
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
@@ -775,6 +900,17 @@ public:
         tribe.axi_in___05Faraddr_in[1] = (uint32_t)sdcard.dma_out.araddr_in();
         tribe.axi_in___05Farid_in[1] = (uint32_t)sdcard.dma_out.arid_in();
         tribe.axi_in___05Frready_in[1] = sdcard.dma_out.rready_in();
+        tribe.axi_in___05Fawvalid_in[2] = ethgig_dma.dma_out.awvalid_in();
+        tribe.axi_in___05Fawaddr_in[2] = (uint32_t)ethgig_dma.dma_out.awaddr_in();
+        tribe.axi_in___05Fawid_in[2] = (uint32_t)ethgig_dma.dma_out.awid_in();
+        tribe.axi_in___05Fwvalid_in[2] = ethgig_dma.dma_out.wvalid_in();
+        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[2], ethgig_dma.dma_out.wdata_in());
+        tribe.axi_in___05Fwlast_in[2] = ethgig_dma.dma_out.wlast_in();
+        tribe.axi_in___05Fbready_in[2] = ethgig_dma.dma_out.bready_in();
+        tribe.axi_in___05Farvalid_in[2] = ethgig_dma.dma_out.arvalid_in();
+        tribe.axi_in___05Faraddr_in[2] = (uint32_t)ethgig_dma.dma_out.araddr_in();
+        tribe.axi_in___05Farid_in[2] = (uint32_t)ethgig_dma.dma_out.arid_in();
+        tribe.axi_in___05Frready_in[2] = ethgig_dma.dma_out.rready_in();
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
@@ -796,13 +932,20 @@ public:
         plic._work(reset);
         accelerator._work(reset);
         sdcard._work(reset);
+        ethgig_dma._work(reset);
+        ethgig_mac._work(reset);
+        ethgig_pcs._work(reset);
+        ethgig_phy._work(reset);
+        ethgig_verif._work(reset);
 #ifdef ENABLE_MMU_TLB
 #ifdef VERILATOR
         sd_dma_cache_invalidate_ready =
             !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+        eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
 #else
         sd_dma_cache_invalidate_ready =
             !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+        eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
 #endif
 #endif
         if (sdcard.dma_write_complete_out()) {
@@ -813,6 +956,15 @@ public:
         }
         else {
             sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
+        }
+        if (ethgig_dma.tx_irq_out() || ethgig_dma.rx_irq_out()) {
+            eth_dma_cache_invalidate_reg._next = true;
+        }
+        else if (eth_dma_cache_invalidate_reg && eth_dma_cache_invalidate_ready) {
+            eth_dma_cache_invalidate_reg._next = false;
+        }
+        else {
+            eth_dma_cache_invalidate_reg._next = eth_dma_cache_invalidate_reg;
         }
 #ifdef VERILATOR
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
@@ -829,6 +981,7 @@ public:
         if (reset) {
             error = false;
             sd_dma_cache_invalidate_reg.clr();
+            eth_dma_cache_invalidate_reg.clr();
             return;
         }
     }
@@ -871,6 +1024,7 @@ public:
         uart_script_enabled_reg.strobe(checkpoint_fd);
         uart_script_reported_reg.strobe(checkpoint_fd);
         sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
+        eth_dma_cache_invalidate_reg.strobe();
 #ifndef VERILATOR
         uint64_t tribe_strobe_time_start = tribe_runtime_tick();
         tribe._strobe(checkpoint_fd);
@@ -885,6 +1039,15 @@ public:
         plic._strobe(checkpoint_fd);
         accelerator._strobe(checkpoint_fd);
         sdcard._strobe(checkpoint_fd);
+        ethgig_dma._strobe();
+        ethgig_mac._strobe();
+        ethgig_pcs._strobe();
+        ethgig_phy._strobe();
+        ethgig_verif._strobe();
+        if (eth_loopback_enabled && ethgig_verif.has_tx_packet()) {
+            auto packet = ethgig_verif.pop_tx_packet();
+            ethgig_verif.push_rx_packet(packet);
+        }
         if (checkpoint_fd && checkpoint_reading(checkpoint_fd)) {
             sdcard_verif._strobe(checkpoint_fd);
         }

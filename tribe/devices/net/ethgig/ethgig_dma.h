@@ -2,8 +2,16 @@
 
 #include "cpphdl.h"
 #include "Axi4.h"
+#ifndef SYNTHESIS
+#include <cstdlib>
+#include <print>
+#endif
 
 using namespace cpphdl;
+
+#ifndef SYNTHESIS
+extern long _system_clock;
+#endif
 
 template<size_t ADDR_WIDTH = 32, size_t ID_WIDTH = 4, size_t DATA_WIDTH = 64>
 class EthGigDMA : public Module
@@ -52,6 +60,8 @@ public:
     _PORT(bool) tx_irq_out = _ASSIGN((bool)((tx_sr_reg & XAXIDMA_IRQ_IOC_MASK) && (tx_cr_reg & XAXIDMA_IRQ_IOC_MASK)));
     _PORT(bool) rx_irq_out = _ASSIGN((bool)((rx_sr_reg & XAXIDMA_IRQ_IOC_MASK) && (rx_cr_reg & XAXIDMA_IRQ_IOC_MASK)));
     _PORT(uint32_t) debug_state_out = _ASSIGN((uint32_t)state_reg);
+    _PORT(uint32_t) debug_tx_sr_out = _ASSIGN((uint32_t)tx_sr_reg);
+    _PORT(uint32_t) debug_rx_sr_out = _ASSIGN((uint32_t)rx_sr_reg);
 
 private:
     static constexpr uint32_t DATA_BYTES = DATA_WIDTH / 8;
@@ -162,6 +172,46 @@ private:
         return mmio_read_data_comb;
     }
 
+    logic<DATA_WIDTH> mmio_read_data_from_addr(uint32_t full_addr)
+    {
+        uint32_t addr;
+        uint32_t lane;
+        uint32_t word;
+        logic<DATA_WIDTH> data;
+
+        addr = full_addr & 0xffu;
+        word = 0;
+        if (addr == XAXIDMA_TX_CR_OFFSET) {
+            word = tx_cr_reg;
+        }
+        else if (addr == XAXIDMA_TX_SR_OFFSET) {
+            word = tx_sr_reg | (tx_run_comb_func() ? 0u : XAXIDMA_SR_HALT_MASK);
+        }
+        else if (addr == XAXIDMA_TX_CDESC_OFFSET) {
+            word = tx_cdesc_reg;
+        }
+        else if (addr == XAXIDMA_TX_TDESC_OFFSET) {
+            word = tx_tdesc_reg;
+        }
+        else if (addr == XAXIDMA_RX_CR_OFFSET) {
+            word = rx_cr_reg;
+        }
+        else if (addr == XAXIDMA_RX_SR_OFFSET) {
+            word = rx_sr_reg | (rx_run_comb_func() ? 0u : XAXIDMA_SR_HALT_MASK);
+        }
+        else if (addr == XAXIDMA_RX_CDESC_OFFSET) {
+            word = rx_cdesc_reg;
+        }
+        else if (addr == XAXIDMA_RX_TDESC_OFFSET) {
+            word = rx_tdesc_reg;
+        }
+
+        lane = (full_addr % DATA_BYTES) / 4u;
+        data = 0;
+        data.bits(lane * 32 + 31, lane * 32) = word;
+        return data;
+    }
+
     _LAZY_COMB(mmio_write_word_comb, uint32_t)
         uint32_t lane;
         lane = ((uint32_t)axi_write_addr_reg % DATA_BYTES) / 4u;
@@ -177,7 +227,10 @@ private:
     _LAZY_COMB(status_write_beat_comb, logic<DATA_WIDTH>)
         uint32_t lane;
         uint32_t word;
-        lane = (((uint32_t)desc_addr_reg + XAXIDMA_BD_STS_OFFSET) % DATA_BYTES) / 4u;
+        uint32_t desc_addr;
+        desc_addr = (state_reg == ST_RX_STATUS_AW || state_reg == ST_RX_STATUS_W || state_reg == ST_RX_STATUS_B) ?
+            (uint32_t)rx_cdesc_reg : (uint32_t)tx_cdesc_reg;
+        lane = ((desc_addr + XAXIDMA_BD_STS_OFFSET) % DATA_BYTES) / 4u;
         word = XAXIDMA_BD_STS_COMPLETE_MASK | ((uint32_t)len_reg & XAXIDMA_BD_STS_ACTUAL_LEN_MASK);
         if (state_reg == ST_RX_STATUS_AW || state_reg == ST_RX_STATUS_W || state_reg == ST_RX_STATUS_B) {
             word |= XAXIDMA_BD_STS_RXSOF_MASK | XAXIDMA_BD_STS_RXEOF_MASK;
@@ -222,14 +275,23 @@ public:
         uint32_t limit;
         uint32_t lane;
         uint32_t byte_value;
+        logic<DATA_WIDTH> rx_beat;
+        bool tx_ioc_clear;
+        bool rx_ioc_clear;
+#ifndef SYNTHESIS
+        bool trace_eth;
+        trace_eth = std::getenv("TRIBE_TRACE_ETH_DMA") != nullptr;
+#endif
 
         mac_tx_valid_reg._next = false;
         mac_tx_last_reg._next = false;
+        tx_ioc_clear = false;
+        rx_ioc_clear = false;
 
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
             axi_read_addr_reg._next = axi_in.araddr_in();
             axi_read_id_reg._next = axi_in.arid_in();
-            axi_read_data_reg._next = mmio_read_data_comb_func();
+            axi_read_data_reg._next = mmio_read_data_from_addr((uint32_t)axi_in.araddr_in());
             axi_read_valid_reg._next = true;
         }
         else if (axi_read_valid_reg && axi_in.rready_in()) {
@@ -256,6 +318,13 @@ public:
             }
             else if (addr == XAXIDMA_TX_SR_OFFSET) {
                 tx_sr_reg._next = tx_sr_reg & ~word;
+                tx_ioc_clear = (word & XAXIDMA_IRQ_IOC_MASK) != 0;
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print("ethdma-mmio cycle={} write TX_SR word={:08x} old={:08x} next={:08x}\n",
+                        _system_clock, word, (uint32_t)tx_sr_reg, (uint32_t)((uint32_t)tx_sr_reg & ~word));
+                }
+#endif
             }
             else if (addr == XAXIDMA_TX_CDESC_OFFSET) {
                 tx_cdesc_reg._next = word;
@@ -276,6 +345,13 @@ public:
             }
             else if (addr == XAXIDMA_RX_SR_OFFSET) {
                 rx_sr_reg._next = rx_sr_reg & ~word;
+                rx_ioc_clear = (word & XAXIDMA_IRQ_IOC_MASK) != 0;
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print("ethdma-mmio cycle={} write RX_SR word={:08x} old={:08x} next={:08x}\n",
+                        _system_clock, word, (uint32_t)rx_sr_reg, (uint32_t)((uint32_t)rx_sr_reg & ~word));
+                }
+#endif
             }
             else if (addr == XAXIDMA_RX_CDESC_OFFSET) {
                 rx_cdesc_reg._next = word;
@@ -329,11 +405,31 @@ public:
             write_resp_wait_reg._next = false;
             write_addr_valid_reg._next = false;
             if (state_reg == ST_TX_STATUS_B) {
-                tx_sr_reg._next = tx_sr_reg | XAXIDMA_IRQ_IOC_MASK;
+                if (!tx_ioc_clear) {
+                    tx_sr_reg._next = tx_sr_reg | XAXIDMA_IRQ_IOC_MASK;
+                }
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print("ethdma-event cycle={} TX_STATUS_B desc={:08x} data={} old={:08x} clear={} next={:08x}\n",
+                        _system_clock, (uint32_t)desc_addr_reg, write_data_reg, (uint32_t)tx_sr_reg, tx_ioc_clear,
+                        tx_ioc_clear ? (uint32_t)tx_sr_reg : (uint32_t)((uint32_t)tx_sr_reg | XAXIDMA_IRQ_IOC_MASK));
+                }
+#endif
                 tx_cdesc_reg._next = 0;
+                buffer_addr_reg._next = 0;
+                offset_reg._next = 0;
+                beat_reg._next = 0;
+                beat_valid_bytes_reg._next = 0;
+                byte_index_reg._next = 0;
                 state_reg._next = ST_IDLE;
             }
             else if (state_reg == ST_RX_WRITE_B) {
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print("ethdma-event cycle={} RX_WRITE_B addr={:08x} bytes={} data={}\n",
+                        _system_clock, (uint32_t)write_addr_reg, (uint32_t)beat_valid_bytes_reg, write_data_reg);
+                }
+#endif
                 offset_reg._next = offset_reg + beat_valid_bytes_reg;
                 len_reg._next = len_reg + beat_valid_bytes_reg;
                 beat_reg._next = 0;
@@ -346,7 +442,16 @@ public:
                 }
             }
             else if (state_reg == ST_RX_STATUS_B) {
-                rx_sr_reg._next = rx_sr_reg | XAXIDMA_IRQ_IOC_MASK;
+                if (!rx_ioc_clear) {
+                    rx_sr_reg._next = rx_sr_reg | XAXIDMA_IRQ_IOC_MASK;
+                }
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print("ethdma-event cycle={} RX_STATUS_B desc={:08x} len={} data={} old={:08x} clear={} next={:08x}\n",
+                        _system_clock, (uint32_t)desc_addr_reg, (uint32_t)len_reg, write_data_reg, (uint32_t)rx_sr_reg, rx_ioc_clear,
+                        rx_ioc_clear ? (uint32_t)rx_sr_reg : (uint32_t)((uint32_t)rx_sr_reg | XAXIDMA_IRQ_IOC_MASK));
+                }
+#endif
                 rx_desc_ready_reg._next = false;
                 state_reg._next = ST_IDLE;
             }
@@ -423,12 +528,13 @@ public:
 
         if (state_reg == ST_IDLE && rx_run_comb_func() && rx_desc_ready_reg && mac_rx_valid_in() && (uint32_t)buffer_addr_reg != 0) {
             lane = (uint32_t)beat_valid_bytes_reg;
-            beat_reg._next.bits(lane * 8 + 7, lane * 8) = mac_rx_data_in();
+            rx_beat = beat_reg;
+            rx_beat.bits(lane * 8 + 7, lane * 8) = mac_rx_data_in();
+            beat_reg._next = rx_beat;
             beat_valid_bytes_reg._next = beat_valid_bytes_reg + 1;
             if (lane + 1u >= DATA_BYTES || mac_rx_last_in()) {
                 write_addr_reg._next = buffer_addr_reg + offset_reg;
-                write_data_reg._next = beat_reg;
-                write_data_reg._next.bits(lane * 8 + 7, lane * 8) = mac_rx_data_in();
+                write_data_reg._next = rx_beat;
                 write_addr_valid_reg._next = true;
                 write_resp_wait_reg._next = true;
                 rx_write_last_reg._next = mac_rx_last_in();
@@ -442,7 +548,8 @@ public:
             state_reg._next = ST_RX_WRITE_B;
         }
         else if (state_reg == ST_RX_STATUS_AW) {
-            write_addr_reg._next = desc_addr_reg + XAXIDMA_BD_STS_OFFSET;
+            desc_addr_reg._next = rx_cdesc_reg;
+            write_addr_reg._next = rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET;
             write_data_reg._next = status_write_beat_comb_func();
             write_addr_valid_reg._next = true;
             write_resp_wait_reg._next = true;

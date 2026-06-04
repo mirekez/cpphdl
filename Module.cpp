@@ -6,8 +6,10 @@
 #include "Enum.h"
 #include "Optimizer.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 using namespace cpphdl;
 
@@ -98,6 +100,56 @@ Expr portWireExpr(const Field& port, const Module& mod, const Field& member)
     return expr;
 }
 
+const Struct* findStructPackage(const std::string& name)
+{
+    auto it = std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](const auto& st) {
+        return st.name == name;
+    });
+    return it == currProject->structs.end() ? nullptr : &*it;
+}
+
+bool isSpecializationOf(const Struct& candidate, const Struct& primary)
+{
+    if (candidate.name == primary.name || primary.origName.empty()) {
+        return false;
+    }
+    const std::string prefix = primary.origName + "<";
+    if (candidate.origName.rfind(prefix, 0) == 0) {
+        return true;
+    }
+    return candidate.origName == primary.origName
+        && candidate.name.rfind(primary.name, 0) == 0
+        && candidate.name.size() > primary.name.size();
+}
+
+bool hasImportedSpecialization(const std::string& name, const std::unordered_set<std::string>& availablePackages)
+{
+    const Struct* primary = findStructPackage(name);
+    if (!primary || primary->origName.find('<') != std::string::npos) {
+        return false;
+    }
+
+    return std::any_of(availablePackages.begin(), availablePackages.end(), [&](const std::string& package) {
+        const Struct* candidate = findStructPackage(package);
+        return candidate && isSpecializationOf(*candidate, *primary);
+    });
+}
+
+std::unordered_set<std::string> ModuleAvailableImportPackages(const Module& mod)
+{
+    std::unordered_set<std::string> packages;
+    for (const auto& imp : mod.imports) {
+        std::string name = genTypeName(imp.name);
+        packages.insert(name);
+        if (const Struct* st = findStructPackage(name)) {
+            for (const auto& subImport : collectStructPackageImports(*st)) {
+                packages.insert(subImport);
+            }
+        }
+    }
+    return packages;
+}
+
 }
 
 void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* importsSet)
@@ -106,6 +158,7 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
     if (!importsSet) {
         importsSet = &importsRoot;
     }
+    const std::unordered_set<std::string> availablePackages = ModuleAvailableImportPackages(*this);
     for (auto& imp : imports) {
         for (auto& member : members) {
             auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){
@@ -126,6 +179,9 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
         if (name == genTypeName(this->name) && !hasStructPackage && !hasEnumPackage) {
             continue;
         }
+        if (hasImportedSpecialization(name, availablePackages)) {
+            continue;
+        }
         if (importsSet->find(name) == importsSet->end()) {
             importsSet->insert(name);
             out << "import " << name << "_pkg::*;\n";
@@ -135,6 +191,9 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
         });
         if (st != currProject->structs.end()) {
             for (const auto& subImport : collectStructPackageImports(*st)) {
+                if (hasImportedSpecialization(subImport, availablePackages)) {
+                    continue;
+                }
                 if (importsSet->find(subImport) == importsSet->end()) {
                     importsSet->insert(subImport);
                     out << "import " << subImport << "_pkg::*;\n";
