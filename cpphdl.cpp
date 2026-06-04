@@ -1229,6 +1229,33 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             definition = RD;
         }
 
+        auto putStaticConstexpr = [&](const VarDecl* VD) {
+            if (!VD->isStaticDataMember() || !VD->isConstexpr() || !VD->getInit()) {
+                return false;
+            }
+
+            cpphdl::Expr init = hlp.exprToExpr(VD->getInit());
+            const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+            applyTemplateTypeSubstitutions(init, typeSubstitutions);
+
+            auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(),
+                [&](auto& c){ return c.name == VD->getNameAsString(); } );
+            if (it != hlp.mod->consts.end()) {
+                if (it->expr.sub.empty()) {
+                    it->expr.sub.emplace_back(std::move(init));
+                }
+                else {
+                    updateExpr(it->expr.sub[0], init);
+                }
+            }
+            else {
+                hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(),
+                    cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {std::move(init)}}});
+                DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+            }
+            return true;
+        };
+
         for (Decl* D : definition->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
 
@@ -1267,17 +1294,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
             } else
             if (auto* VD = dyn_cast<VarDecl>(D)) {
-                if (VD->isStaticDataMember() && VD->isConstexpr()) {
-                    if (VD->getInit()) {
-                        auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
-                        if (it != hlp.mod->consts.end()) {
-                            updateExpr((*it).initializer, hlp.exprToExpr(VD->getInit()));
-                        }
-                        else {
-                            hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {hlp.exprToExpr(VD->getInit())}}});
-                            DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
-                        }
-                    }
+                if (putStaticConstexpr(VD)) {
                     continue;
                 }
 
@@ -1351,6 +1368,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         hlp.flags &= ~Helpers::FLAG_ABSTRACT;
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
+                        if (putStaticConstexpr(VD)) {
+                            continue;
+                        }
                         if (VD->isStaticDataMember() && !VD->isConstexpr()) {
                             hlp.flags |= Helpers::FLAG_ABSTRACT;
                             putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);
