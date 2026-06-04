@@ -496,7 +496,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
             }
         } else
-        if (owner && Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
+        if (owner && Var && Var->isConstexpr()
+            && (flags&FLAG_EXTERNAL_THIS
+                || (mod && mod->origName.find(owner->getQualifiedNameAsString()) != 0
+                    && owner->getQualifiedNameAsString().find("cpphdl::") != 0
+                    && owner->getQualifiedNameAsString().find("std::") != 0))) {  // make name for pkg constexpr parameter access
             std::string sname = owner->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
             // extracting parameters of the template
@@ -1146,6 +1150,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" SizeOfPackExpr: " << -1);
         return cpphdl::Expr{"-1", cpphdl::Expr::EXPR_NUM};
     }
+    if (auto* DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
+        DEBUG_AST1(" DependentScopeDeclRefExpr");
+        const std::string qualifier = dependentQualifierText(DSDRE, ctx->getPrintingPolicy());
+        if (!qualifier.empty()) {
+            return cpphdl::Expr{genTypeName(qualifier) + "_pkg::" + DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
+        }
+        return cpphdl::Expr{DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
+    }
 /*
     if (auto* FL = dyn_cast<FloatingLiteral>(E)) {
         DEBUG_AST1(" FloatingLiteral");
@@ -1168,12 +1180,6 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* DIE = dyn_cast<DesignatedInitExpr>(E)) {
         DEBUG_AST1(" DesignatedInitExpr");
-    }
-    if (auto* DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
-        DEBUG_AST1(" DependentScopeDeclRefExpr");
-    }
-    if (auto* DDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
-        DEBUG_AST1(" DependentScopeDeclRefExpr");
     }
     if (auto* OOE = dyn_cast<OffsetOfExpr>(E)) {
         DEBUG_AST1(" OffsetOfExpr");

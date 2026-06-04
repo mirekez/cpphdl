@@ -112,9 +112,9 @@ private:
     reg<array<u<4>, MEM_PORTS>> slave_bid_reg;
     reg<array<u1, MEM_PORTS>> slave_rvalid_reg;
     reg<array<u<4>, MEM_PORTS>> slave_rid_reg;
-    reg<array<logic<PORT_BITWIDTH>, MEM_PORTS>> slave_rdata_reg;
+    reg<array<logic<PORT_BITWIDTH>, MEM_PORTS, true>> slave_rdata_reg;
     reg<array<u1, MEM_PORTS>> slave_aw_pending_reg;
-    reg<array<logic<MEM_ADDR_BITS>, MEM_PORTS>> slave_awaddr_reg;
+    reg<array<logic<MEM_ADDR_BITS>, MEM_PORTS, true>> slave_awaddr_reg;
     reg<array<u<4>, MEM_PORTS>> slave_awid_reg;
 
     // True when any external AXI master is offering a one-beat write.
@@ -1042,7 +1042,7 @@ public:
             axi_in[i].arready_out = _ASSIGN_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
                 !slave_write_pending_comb_func() && slave_read_pending_comb_func() && active_slave_index_comb_func() == i);
             axi_in[i].rvalid_out = _ASSIGN_REG_I(slave_rvalid_reg[i]);
-            axi_in[i].rdata_out = _ASSIGN_REG_I(slave_rdata_reg[i]);
+            axi_in[i].rdata_out = _ASSIGN_I(slave_rdata_reg[i]);
             axi_in[i].rlast_out = _ASSIGN_REG_I(slave_rvalid_reg[i]);
             axi_in[i].rid_out = _ASSIGN_REG_I(slave_rid_reg[i]);
 

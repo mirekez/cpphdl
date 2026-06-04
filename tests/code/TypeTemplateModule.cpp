@@ -9,6 +9,9 @@
 using namespace cpphdl;
 
 struct TypeTemplateNative16 {
+    static constexpr uint8_t MANT_WIDTH = 10;
+    static constexpr uint8_t EXP_WIDTH = 5;
+
     union {
         uint16_t raw;
         struct {
@@ -20,6 +23,9 @@ struct TypeTemplateNative16 {
 };
 
 struct TypeTemplateConv16 {
+    static constexpr uint8_t MANT_WIDTH = 7;
+    static constexpr uint8_t EXP_WIDTH = 8;
+
     union {
         uint16_t raw;
         struct {
@@ -37,8 +43,18 @@ struct TypeTemplateArithmetic {
         CONV_TYPE res;
         res.raw = 0;
         res.data.sign = val.data.sign;
-        res.data.exponent = val.data.exponent;
-        res.data.mantissa = val.data.mantissa;
+        if (TypeTemplateNative16::EXP_WIDTH < CONV_TYPE::EXP_WIDTH) {
+            res.data.exponent = val.data.exponent & ((1u << CONV_TYPE::EXP_WIDTH) - 1u);
+        }
+        else {
+            res.data.exponent = val.data.exponent & ((1u << TypeTemplateNative16::EXP_WIDTH) - 1u);
+        }
+        if (TypeTemplateNative16::MANT_WIDTH > CONV_TYPE::MANT_WIDTH) {
+            res.data.mantissa = val.data.mantissa & ((1u << CONV_TYPE::MANT_WIDTH) - 1u);
+        }
+        else {
+            res.data.mantissa = val.data.mantissa & ((1u << TypeTemplateNative16::MANT_WIDTH) - 1u);
+        }
         return res;
     }
 };
@@ -154,6 +170,12 @@ static bool check_generated_sv()
     bool ok = true;
     ok &= leaf.find("CONV_TYPE") == std::string::npos;
     ok &= leaf.find("unknown(") == std::string::npos;
+    ok &= leaf.find("DependentScopeDeclRefExpr") == std::string::npos;
+    ok &= leaf.find("unknown:") == std::string::npos;
+    ok &= leaf.find("TypeTemplateNative16_pkg::MANT_WIDTH") != std::string::npos;
+    ok &= leaf.find("TypeTemplateConv16_pkg::MANT_WIDTH") != std::string::npos;
+    ok &= leaf.find("TypeTemplateNative16_pkg::EXP_WIDTH") != std::string::npos;
+    ok &= leaf.find("TypeTemplateConv16_pkg::EXP_WIDTH") != std::string::npos;
     ok &= leaf.find("TypeTemplateArithmeticTypeTemplateConv16___convert_default_to_conv") != std::string::npos;
     ok &= leaf.find("TypeTemplateArithmetic___convert_default_to_conv") == std::string::npos;
     ok &= parent.find("TypeTemplateModuleLeafTypeTemplateConv16") != std::string::npos;

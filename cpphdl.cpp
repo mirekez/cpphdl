@@ -488,6 +488,25 @@ void applyTemplateTypeSubstitutions(cpphdl::Expr& expr, const std::unordered_map
         && substitutions.contains(expr.value)) {
         expr = substitutions.at(expr.value);
     }
+    else if (expr.type == cpphdl::Expr::EXPR_VAR) {
+        for (const auto& [name, replacement] : substitutions) {
+            if (replacement.type != cpphdl::Expr::EXPR_TYPE) {
+                continue;
+            }
+            cpphdl::Expr concreteExpr = replacement;
+            const std::string concrete = concreteExpr.str();
+            const std::string pkgPrefix = name + "_pkg::";
+            const std::string scopePrefix = name + "::";
+            if (expr.value.rfind(pkgPrefix, 0) == 0) {
+                expr.value = concrete + "_pkg::" + expr.value.substr(pkgPrefix.size());
+                break;
+            }
+            if (expr.value.rfind(scopePrefix, 0) == 0) {
+                expr.value = concrete + "_pkg::" + expr.value.substr(scopePrefix.size());
+                break;
+            }
+        }
+    }
     else if (expr.type == cpphdl::Expr::EXPR_TEMPLATE) {
         if (auto it = substitutions.find(expr.value); it != substitutions.end()) {
             expr = it->second;
