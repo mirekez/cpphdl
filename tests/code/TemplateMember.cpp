@@ -49,8 +49,14 @@ struct TemplateMemberArithmeticHelper {
 
         res.raw = 0;
         res.data.sign = val.data.sign;
-        res.data.exponent = val.data.exponent & ((1u << CONV_TYPE::EXP_WIDTH) - 1u);
-        res.data.mantissa = val.data.mantissa & ((1u << CONV_TYPE::MANT_WIDTH) - 1u);
+        if (val.data.exponent == DEFAULT_EXP_MAX) {
+            res.data.exponent = CONV_EXP_MAX;
+            res.data.mantissa = val.data.mantissa ? 1 : 0;
+        }
+        else {
+            res.data.exponent = val.data.exponent & CONV_EXP_MAX;
+            res.data.mantissa = val.data.mantissa & CONV_MANT_MAX;
+        }
         return res;
     }
 };
@@ -183,7 +189,13 @@ long _system_clock = -1;
 
 static uint16_t expected_convert(uint16_t in)
 {
-    return (in & 0x8000u) | ((((uint32_t)in >> 10) & 0x1fu) << 7) | (in & 0x7fu);
+    uint16_t sign = in & 0x8000u;
+    uint16_t exponent = (in >> 10) & 0x1fu;
+    uint16_t mantissa = in & 0x03ffu;
+    if (exponent == 0x1fu) {
+        return sign | (0xffu << 7) | (mantissa ? 1u : 0u);
+    }
+    return sign | (exponent << 7) | (mantissa & 0x7fu);
 }
 
 static bool check_generated_sv()
@@ -224,10 +236,12 @@ static bool check_generated_sv()
     ok &= decoder.find("TemplateMemberArithmeticTemplateMemberConv16 #(") != std::string::npos;
     ok &= decoder.find(") arithm (") != std::string::npos;
     ok &= arithmetic.find("CONV_TYPE") == std::string::npos;
-    ok &= arithmetic.find("TemplateMemberConv16_pkg::EXP_WIDTH") != std::string::npos;
-    ok &= arithmetic.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16___convert_default_to_conv") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper___convert_default_to_conv") == std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::DEFAULT_EXP_MAX") != std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::CONV_EXP_MAX") != std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::DEFAULT_EXP_MAX") == std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::CONV_EXP_MAX") == std::string::npos;
     ok &= helper_pkg.find("CONV_TYPE") == std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::EXP_WIDTH") != std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;

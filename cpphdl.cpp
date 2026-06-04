@@ -544,6 +544,22 @@ void applyTemplateTypeSubstitutions(cpphdl::Expr& expr, const std::unordered_map
     }
 }
 
+void replacePackageOwner(cpphdl::Expr& expr, const std::string& from, const std::string& to)
+{
+    if (from.empty() || to.empty() || from == to) {
+        return;
+    }
+
+    const std::string fromPrefix = from + "_pkg::";
+    const std::string toPrefix = to + "_pkg::";
+    expr.traverseIf([&](cpphdl::Expr& e) {
+        if (e.type == cpphdl::Expr::EXPR_VAR && e.value.rfind(fromPrefix, 0) == 0) {
+            e.value = toPrefix + e.value.substr(fromPrefix.size());
+        }
+        return false;
+    });
+}
+
 bool structHasAnonymousAggregateWrapper(const std::string& typeName)
 {
     auto it = std::find_if(currProject->structs.begin(), currProject->structs.end(),
@@ -1219,6 +1235,20 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     }
     for (auto& statement : method.statements) {
         applyTemplateTypeSubstitutions(statement, typeSubstitutions);
+    }
+    if (!externalThisTypeName.empty()) {
+        const std::string primaryThisTypeName = genTypeName(MD->getParent()->getQualifiedNameAsString());
+        for (auto& ret : method.ret) {
+            replacePackageOwner(ret, primaryThisTypeName, externalThisTypeName);
+        }
+        for (auto& arg : method.arguments) {
+            replacePackageOwner(arg.expr, primaryThisTypeName, externalThisTypeName);
+            replacePackageOwner(arg.initializer, primaryThisTypeName, externalThisTypeName);
+            replacePackageOwner(arg.bitwidth, primaryThisTypeName, externalThisTypeName);
+        }
+        for (auto& statement : method.statements) {
+            replacePackageOwner(statement, primaryThisTypeName, externalThisTypeName);
+        }
     }
     fixAnonymousLocalMemberAccesses(method, typeSubstitutions);
 
