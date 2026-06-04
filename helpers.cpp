@@ -25,6 +25,58 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 //const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
+static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helpers& hlp)
+{
+    if (!method || !hlp.mod) {
+        return;
+    }
+
+    CXXRecordDecl* parent = const_cast<CXXRecordDecl*>(method->getParent());
+    if (!parent || !parent->hasDefinition() ||
+        parent->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+        parent->getQualifiedNameAsString().find("std::") == 0) {
+        return;
+    }
+
+    if (auto* moduleClass = hlp.lookupQualifiedRecord("cpphdl::Module")) {
+        if (parent->isDerivedFrom(moduleClass)) {
+            return;
+        }
+    }
+
+    auto importRecord = [&](CXXRecordDecl* record) {
+        if (!record || !record->hasDefinition() ||
+            record->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+            record->getQualifiedNameAsString().find("std::") == 0) {
+            return;
+        }
+        auto st = exportStruct(record, hlp);
+        if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(),
+                [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
+            hlp.mod->imports.emplace_back(st.name);
+            currProject->structs.emplace_back(std::move(st));
+        }
+    };
+
+    if (!method->isStatic()) {
+        importRecord(parent);
+    }
+
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(parent)) {
+        for (const auto& arg : spec->getTemplateArgs().asArray()) {
+            if (arg.getKind() != TemplateArgument::Type) {
+                continue;
+            }
+            QualType qt = arg.getAsType().getNonReferenceType();
+            importRecord(hlp.resolveCXXRecordDecl(qt));
+        }
+    }
+
+    // Static helper methods are emitted into the caller module by putMethod().
+    // Importing the helper owner package is unnecessary and can make Verilator
+    // compile lists depend on an otherwise unused package.
+}
+
 static bool isCombFuncName(const std::string& name)
 {
     return str_ending(name, "_comb_func");
@@ -496,7 +548,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
             }
         } else
-        if (owner && Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
+        if (owner && Var && Var->isConstexpr()
+            && (flags&FLAG_EXTERNAL_THIS
+                || (mod && mod->origName.find(owner->getQualifiedNameAsString()) != 0
+                    && owner->getQualifiedNameAsString().find("cpphdl::") != 0
+                    && owner->getQualifiedNameAsString().find("std::") != 0))) {  // make name for pkg constexpr parameter access
             std::string sname = owner->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
             // extracting parameters of the template
@@ -566,7 +622,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             call.sub.push_back(exprToExpr(MCE->getArg(i)));
         }
 
-        if (auto *MD = MCE->getMethodDecl()) {
+        const CXXMethodDecl* MD = MCE->getMethodDecl();
+        if (!MD) {
+            MD = dyn_cast_or_null<CXXMethodDecl>(MCE->getDirectCallee());
+        }
+        if (MD) {
             if (call.sub.size()  // we need not call members - they are accessible through ports wires
                 && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
                 auto newName = putMethod(MD, *this, notThis);
@@ -687,6 +747,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             DEBUG_AST1(" DRE(" << function->getQualifiedNameAsString() << ")");
             call.value = function->getNameAsString();
             if (const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(function)) {
+                importStructForStaticMethodOwner(method, *this);
                 auto newName = putMethod(method, *this);
                 DEBUG_AST1(" Called static method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);
@@ -805,6 +866,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (const auto* ME = llvm::dyn_cast<clang::MemberExpr>(callee)) {
             const ValueDecl *VD = ME->getMemberDecl();
             const clang::CXXMethodDecl* method = llvm::dyn_cast<clang::CXXMethodDecl>(ME->getMemberDecl());
+            cpphdl::Expr baseExpr{"", cpphdl::Expr::EXPR_NONE};
+            bool notThis = false;
+            if (method && !ME->isImplicitAccess()) {
+                baseExpr = exprToExpr(ME->getBase());
+                if (baseExpr.type != cpphdl::Expr::EXPR_NONE
+                    && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == baseExpr.value; }) == mod->members.end()) {
+                    notThis = true;
+                }
+            }
             if (method) {
                 DEBUG_AST1(" ME(" << method->getQualifiedNameAsString() << ")");
                 call.value = method->getNameAsString();
@@ -821,7 +891,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 //            if (call.sub.size()  // we need not call members - they are accessible through ports wires
 //                && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
             if (method) {
-                auto newName = putMethod(method, *this);
+                importStructForStaticMethodOwner(method, *this);
+                auto newName = putMethod(method, *this, notThis);
                 DEBUG_AST1(" Called method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);
                 if (combSignal.empty()) {
@@ -843,7 +914,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
 
             call.type = cpphdl::Expr::EXPR_MEMBERCALL;
-            call.sub.emplace_back(cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE});
+            call.sub.emplace_back(std::move(baseExpr));
         }
 
         if (const auto* UME = llvm::dyn_cast<clang::UnresolvedMemberExpr>(callee)) {
@@ -872,9 +943,40 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             auto member = exprToExpr(DSME->getBase());
 //            member.sub.emplace_back(cpphdl::Expr{"_this", cpphdl::Expr::EXPR_VAR});
 //            member.type = cpphdl::Expr::EXPR_MEMBER;
+            bool notThis = member.type != cpphdl::Expr::EXPR_NONE
+                && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& m){ return m.name == member.value; }) == mod->members.end();
             call.sub.emplace_back(member);
-            if (const auto* method = llvm::dyn_cast_or_null<clang::CXXMethodDecl>(CE->getDirectCallee())) {
-                auto newName = putMethod(method, *this);
+            const auto* method = llvm::dyn_cast_or_null<clang::CXXMethodDecl>(CE->getDirectCallee());
+            if (!method) {
+                QualType baseQT = DSME->getBase()->getType().getNonReferenceType();
+                CXXRecordDecl* baseRD = resolveCXXRecordDecl(baseQT);
+                if (const auto* TSD = dyn_cast_or_null<ClassTemplateSpecializationDecl>(baseRD)) {
+                    baseRD = TSD->getSpecializedTemplate()->getTemplatedDecl();
+                }
+                if (!baseRD) {
+                    std::string baseTypeName = baseQT.getAsString(ctx->getPrintingPolicy());
+                    if (size_t pos = baseTypeName.find('<'); pos != std::string::npos) {
+                        baseTypeName.resize(pos);
+                    }
+                    if (size_t pos = baseTypeName.rfind("::"); pos != std::string::npos) {
+                        baseTypeName.erase(0, pos + 2);
+                    }
+                    if (const ClassTemplateDecl* ctd = findClassTemplateDecl(ctx->getTranslationUnitDecl(), baseTypeName)) {
+                        baseRD = ctd->getTemplatedDecl();
+                    }
+                }
+                if (baseRD) {
+                    const std::string methodName = DSME->getMemberNameInfo().getAsString();
+                    for (const CXXMethodDecl* candidate : baseRD->methods()) {
+                        if (candidate->getNameAsString() == methodName) {
+                            method = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (method) {
+                auto newName = putMethod(method, *this, notThis);
                 DEBUG_AST1(" Called dependent method( " << method->getQualifiedNameAsString() << " => " << newName << ")");
                 std::string combSignal = flattenedCombSignalName(mod, call.value);
                 if (combSignal.empty()) {
@@ -1146,6 +1248,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" SizeOfPackExpr: " << -1);
         return cpphdl::Expr{"-1", cpphdl::Expr::EXPR_NUM};
     }
+    if (auto* DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
+        DEBUG_AST1(" DependentScopeDeclRefExpr");
+        const std::string qualifier = dependentQualifierText(DSDRE, ctx->getPrintingPolicy());
+        if (!qualifier.empty()) {
+            return cpphdl::Expr{genTypeName(qualifier) + "_pkg::" + DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
+        }
+        return cpphdl::Expr{DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
+    }
 /*
     if (auto* FL = dyn_cast<FloatingLiteral>(E)) {
         DEBUG_AST1(" FloatingLiteral");
@@ -1168,12 +1278,6 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* DIE = dyn_cast<DesignatedInitExpr>(E)) {
         DEBUG_AST1(" DesignatedInitExpr");
-    }
-    if (auto* DSDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
-        DEBUG_AST1(" DependentScopeDeclRefExpr");
-    }
-    if (auto* DDRE = dyn_cast<DependentScopeDeclRefExpr>(E)) {
-        DEBUG_AST1(" DependentScopeDeclRefExpr");
     }
     if (auto* OOE = dyn_cast<OffsetOfExpr>(E)) {
         DEBUG_AST1(" OffsetOfExpr");

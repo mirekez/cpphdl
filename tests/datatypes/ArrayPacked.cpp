@@ -1,0 +1,347 @@
+#ifdef MAIN_FILE_INCLUDED
+#define NO_MAINFILE
+#endif
+#define MAIN_FILE_INCLUDED
+
+#include "cpphdl.h"
+#include <print>
+
+using namespace cpphdl;
+
+struct PackedStruct
+{
+    logic<3> lo;
+    logic<5> hi;
+
+    constexpr static size_t _size_bits()
+    {
+        return 8;
+    }
+
+    explicit operator uint64_t() const
+    {
+        logic<8> out = 0;
+        out.bits(2, 0) = lo;
+        out.bits(7, 3) = hi;
+        return (uint64_t)out;
+    }
+};
+
+class ArrayPacked : public Module
+{
+public:
+    _PORT(u<8>) seed_in;
+    _PORT(logic<27>) dense_logic_out = _ASSIGN_COMB(dense_logic_comb_func());
+    _PORT(logic<9>) dense_logic_index_out = _ASSIGN_COMB(dense_logic_index_comb_func());
+    _PORT(logic<15>) dense_u_out = _ASSIGN_COMB(dense_u_comb_func());
+    _PORT(u<3>) dense_u_index_out = _ASSIGN_COMB(dense_u_index_comb_func());
+
+private:
+    logic<27> dense_logic_comb;
+    logic<9> dense_logic_index_comb;
+    logic<15> dense_u_comb;
+    u<3> dense_u_index_comb;
+
+    logic<27>& dense_logic_comb_func()
+    {
+        array<logic<9>, 3, true> dense_logic;
+        logic<9> word0;
+        logic<9> word1;
+        logic<9> word2;
+        dense_logic = 0;
+        dense_logic[0] = logic<9>(0x101);
+        dense_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
+        dense_logic[2] = logic<9>(0x1aa);
+        word0 = dense_logic[0];
+        word1 = dense_logic[1];
+        word2 = dense_logic[2];
+        dense_logic_comb = (logic<27>(word2) << 18) | (logic<27>(word1) << 9) | logic<27>(word0);
+        return dense_logic_comb;
+    }
+
+    logic<9>& dense_logic_index_comb_func()
+    {
+        array<logic<9>, 3, true> dense_logic;
+        dense_logic = 0;
+        dense_logic[0] = logic<9>(0x101);
+        dense_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
+        dense_logic[2] = logic<9>(0x1aa);
+        dense_logic_index_comb = dense_logic[1];
+        return dense_logic_index_comb;
+    }
+
+    logic<15>& dense_u_comb_func()
+    {
+        array<u<3>, 5, true> dense_u;
+        logic<3> word0;
+        logic<3> word1;
+        logic<3> word2;
+        logic<3> word3;
+        logic<3> word4;
+        dense_u = 0;
+        dense_u[0] = 1;
+        dense_u[1] = 2;
+        dense_u[2] = 3;
+        dense_u[3] = 4;
+        dense_u[4] = (uint64_t)seed_in() & 0x7;
+        word0 = dense_u[0];
+        word1 = dense_u[1];
+        word2 = dense_u[2];
+        word3 = dense_u[3];
+        word4 = dense_u[4];
+        dense_u_comb = (logic<15>(word4) << 12) | (logic<15>(word3) << 9) | (logic<15>(word2) << 6) | (logic<15>(word1) << 3) | logic<15>(word0);
+        return dense_u_comb;
+    }
+
+    u<3>& dense_u_index_comb_func()
+    {
+        array<u<3>, 5, true> dense_u;
+        dense_u = 0;
+        dense_u[0] = 1;
+        dense_u[1] = 2;
+        dense_u[2] = 3;
+        dense_u[3] = 4;
+        dense_u[4] = (uint64_t)seed_in() & 0x7;
+        dense_u_index_comb = (uint64_t)dense_u[2];
+        return dense_u_index_comb;
+    }
+
+public:
+    void _work(bool reset) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
+
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include "../../examples/tools.h"
+
+#ifdef VERILATOR
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
+#endif
+
+long _system_clock = -1;
+
+template<typename T>
+static T verilator_read(const void* ptr)
+{
+    T value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+}
+
+static bool check(bool condition, const char* text)
+{
+    if (!condition) {
+        std::print("\nERROR: {}\n", text);
+        return false;
+    }
+    return true;
+}
+
+static bool check_direct_arrays()
+{
+    bool ok = true;
+
+    array<logic<9>, 3, true> dense_logic;
+    dense_logic = 0;
+    dense_logic[0] = logic<9>(0x101);
+    dense_logic[1] = logic<9>(0x055);
+    dense_logic[2] = logic<9>(0x1aa);
+
+    ok &= check(array<logic<9>, 3, true>::_size_bits() == 27, "packed logic array width");
+    ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[0]) == 0x101, "packed logic index 0");
+    ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x055, "packed logic index 1");
+    ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[2]) == 0x1aa, "packed logic index 2");
+    ok &= check((uint64_t)logic<9>(dense_logic.bits(8, 0)) == 0x101, "packed logic bits first word");
+    ok &= check((uint64_t)logic<9>(dense_logic.bits(17, 9)) == 0x055, "packed logic bits second word");
+    ok &= check((uint64_t)logic<9>(dense_logic.bits(26, 18)) == 0x1aa, "packed logic bits third word");
+
+    dense_logic.bits(13, 9) = 0x1f;
+    ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x05f, "packed bits write through");
+
+    array<u<3>, 5, true> dense_u;
+    dense_u = 0;
+    dense_u[0] = 1;
+    dense_u[1] = 2;
+    dense_u[2] = 3;
+    dense_u[3] = 4;
+    dense_u[4] = 5;
+
+    ok &= check(array<u<3>, 5, true>::_size_bits() == 15, "packed u array width");
+    ok &= check((uint64_t)(u<3>)dense_u[2] == 3, "packed u direct index conversion");
+    ok &= check((uint64_t)static_cast<logic<3>>(dense_u[0]) == 1, "packed u index 0");
+    ok &= check((uint64_t)static_cast<logic<3>>(dense_u[4]) == 5, "packed u index 4");
+    ok &= check((uint64_t)static_cast<const logic<15>&>(dense_u) == ((5u << 12) | (4u << 9) | (3u << 6) | (2u << 3) | 1u), "packed u full bits");
+
+    PackedStruct item{};
+    item.lo = 0x5;
+    item.hi = 0x12;
+
+    array<PackedStruct, 2, true> dense_struct;
+    dense_struct = 0;
+    dense_struct[1] = item;
+    ok &= check(array<PackedStruct, 2, true>::_size_bits() == 16, "packed struct width");
+    ok &= check((uint64_t)logic<8>(dense_struct.bits(15, 8)) == (uint64_t)item, "packed struct write through");
+
+    return ok;
+}
+
+class TestArrayPacked : public Module
+{
+#ifdef VERILATOR
+    VERILATOR_MODEL dut;
+#else
+    ArrayPacked dut;
+#endif
+
+    u<8> seed;
+    bool error = false;
+
+public:
+    void _assign()
+    {
+#ifndef VERILATOR
+        dut.seed_in = _ASSIGN_REG(seed);
+        dut.__inst_name = __inst_name + "/dut";
+        dut._assign();
+#endif
+    }
+
+    void eval(bool reset)
+    {
+#ifdef VERILATOR
+        dut.seed_in = seed;
+        dut.clk = 1;
+        dut.reset = reset;
+        dut.eval();
+#else
+        (void)reset;
+        dut._work(reset);
+#endif
+    }
+
+    void neg(bool reset)
+    {
+#ifdef VERILATOR
+        dut.clk = 0;
+        dut.reset = reset;
+        dut.eval();
+#else
+        (void)reset;
+#endif
+    }
+
+    logic<27> dense_logic()
+    {
+#ifdef VERILATOR
+        return verilator_read<logic<27>>(&dut.dense_logic_out);
+#else
+        return dut.dense_logic_out();
+#endif
+    }
+
+    logic<9> dense_logic_index()
+    {
+#ifdef VERILATOR
+        return verilator_read<logic<9>>(&dut.dense_logic_index_out);
+#else
+        return dut.dense_logic_index_out();
+#endif
+    }
+
+    logic<15> dense_u()
+    {
+#ifdef VERILATOR
+        return verilator_read<logic<15>>(&dut.dense_u_out);
+#else
+        return dut.dense_u_out();
+#endif
+    }
+
+    u<3> dense_u_index()
+    {
+#ifdef VERILATOR
+        return u<3>(verilator_read<uint8_t>(&dut.dense_u_index_out));
+#else
+        return dut.dense_u_index_out();
+#endif
+    }
+
+    bool run()
+    {
+#ifdef VERILATOR
+        std::print("VERILATOR TestArrayPacked...");
+#else
+        std::print("CppHDL TestArrayPacked...");
+#endif
+        auto start = std::chrono::high_resolution_clock::now();
+        __inst_name = "array_packed_test";
+        _assign();
+
+#ifndef VERILATOR
+        error |= !check_direct_arrays();
+#endif
+
+        for (uint32_t i = 0; i < 8; ++i) {
+            seed = i;
+            eval(false);
+
+            const uint64_t expected_logic1 = 0x040 | (i & 0x1f);
+            const uint64_t expected_logic = (0x1aaull << 18) | (expected_logic1 << 9) | 0x101ull;
+            const uint64_t expected_u = ((i & 0x7) << 12) | (4u << 9) | (3u << 6) | (2u << 3) | 1u;
+            error |= !check((uint64_t)dense_logic() == expected_logic, "module packed logic full bits");
+            error |= !check((uint64_t)dense_logic_index() == expected_logic1, "module packed logic index");
+            error |= !check((uint64_t)dense_u() == expected_u, "module packed u full bits");
+            error |= !check((uint64_t)dense_u_index() == 3, "module packed u index");
+
+            neg(false);
+            ++_system_clock;
+        }
+
+        std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
+            (std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::high_resolution_clock::now() - start)).count());
+        return !error;
+    }
+};
+
+int main(int argc, char** argv)
+{
+    bool noveril = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--noveril") == 0) {
+            noveril = true;
+        }
+    }
+
+    bool ok = true;
+#ifndef VERILATOR
+    if (!noveril) {
+        std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
+        ok &= VerilatorCompile(__FILE__, "ArrayPacked", {"Predef_pkg"}, {"../../../../include"}, 1);
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - start)).count());
+        std::cout << "Executing tests... ===========================================================================\n";
+        ok = ok && std::system("ArrayPacked_1/obj_dir/VArrayPacked") == 0;
+        std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
+    }
+#else
+    Verilated::commandArgs(argc, argv);
+#endif
+
+    return !(ok && TestArrayPacked().run());
+}
+
+#endif
+
+#ifdef MAIN_FILE_INCLUDED
+#undef NO_MAINFILE
+#endif

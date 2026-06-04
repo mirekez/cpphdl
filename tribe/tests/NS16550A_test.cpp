@@ -539,6 +539,10 @@ static bool generate_ns16550a_direct_sv()
     cmd += " -I " + shell_quote(source_root / "tribe");
     cmd += " -I " + shell_quote(source_root / "tribe" / "common");
     cmd += " -I " + shell_quote(source_root / "tribe" / "devices");
+    if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
+        cmd += " ";
+        cmd += toolchain_args;
+    }
     return std::system(cmd.c_str()) == 0;
 }
 

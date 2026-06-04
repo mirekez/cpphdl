@@ -364,6 +364,10 @@ static bool generate_iouart_direct_sv()
     cmd += " -I " + shell_quote(source_root / "tribe" / "common");
     cmd += " -I " + shell_quote(source_root / "tribe" / "devices");
     cmd += " -I " + shell_quote(source_root / "examples" / "axi");
+    if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
+        cmd += " ";
+        cmd += toolchain_args;
+    }
     return std::system(cmd.c_str()) == 0;
 }
 

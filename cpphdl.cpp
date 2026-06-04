@@ -41,6 +41,23 @@ namespace
 
 using AnnotationVars = std::unordered_map<std::string, std::string>;
 
+bool evaluatedIntegerExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr& out)
+{
+    if (!expr) {
+        return false;
+    }
+
+    clang::Expr::EvalResult result;
+    if (!expr->EvaluateAsInt(result, ctx)) {
+        return false;
+    }
+
+    llvm::SmallString<32> str;
+    result.Val.getInt().toString(str, 16, result.Val.getInt().isSigned());
+    out = cpphdl::Expr{"'h" + str.str().str(), cpphdl::Expr::EXPR_NUM};
+    return true;
+}
+
 std::string stripAnnotationValue(std::string text, std::string_view prefix)
 {
     text.erase(0, prefix.size());
@@ -441,6 +458,32 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CX
     return result;
 }
 
+std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutionsForRecord(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    std::unordered_map<std::string, cpphdl::Expr> result;
+    const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
+    if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        return result;
+    }
+
+    const TemplateArgumentList& args = CTSD->getTemplateArgs();
+    const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+    const unsigned n = std::min<unsigned>(args.size(), params->size());
+    for (unsigned i = 0; i < n; ++i) {
+        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(params->getParam(i));
+        if (!typeParam || args[i].getKind() != TemplateArgument::Type) {
+            continue;
+        }
+
+        cpphdl::Expr tmp;
+        hlp.ArgToExpr(args[i], tmp, false);
+        if (!tmp.sub.empty()) {
+            result.emplace(typeParam->getNameAsString(), std::move(tmp.sub.front()));
+        }
+    }
+    return result;
+}
+
 void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl* RD, Helpers& hlp)
 {
     const ClassTemplateDecl* CTD = nullptr;
@@ -488,6 +531,25 @@ void applyTemplateTypeSubstitutions(cpphdl::Expr& expr, const std::unordered_map
         && substitutions.contains(expr.value)) {
         expr = substitutions.at(expr.value);
     }
+    else if (expr.type == cpphdl::Expr::EXPR_VAR) {
+        for (const auto& [name, replacement] : substitutions) {
+            if (replacement.type != cpphdl::Expr::EXPR_TYPE) {
+                continue;
+            }
+            cpphdl::Expr concreteExpr = replacement;
+            const std::string concrete = concreteExpr.str();
+            const std::string pkgPrefix = name + "_pkg::";
+            const std::string scopePrefix = name + "::";
+            if (expr.value.rfind(pkgPrefix, 0) == 0) {
+                expr.value = concrete + "_pkg::" + expr.value.substr(pkgPrefix.size());
+                break;
+            }
+            if (expr.value.rfind(scopePrefix, 0) == 0) {
+                expr.value = concrete + "_pkg::" + expr.value.substr(scopePrefix.size());
+                break;
+            }
+        }
+    }
     else if (expr.type == cpphdl::Expr::EXPR_TEMPLATE) {
         if (auto it = substitutions.find(expr.value); it != substitutions.end()) {
             expr = it->second;
@@ -497,6 +559,22 @@ void applyTemplateTypeSubstitutions(cpphdl::Expr& expr, const std::unordered_map
     for (auto& sub : expr.sub) {
         applyTemplateTypeSubstitutions(sub, substitutions);
     }
+}
+
+void replacePackageOwner(cpphdl::Expr& expr, const std::string& from, const std::string& to)
+{
+    if (from.empty() || to.empty() || from == to) {
+        return;
+    }
+
+    const std::string fromPrefix = from + "_pkg::";
+    const std::string toPrefix = to + "_pkg::";
+    expr.traverseIf([&](cpphdl::Expr& e) {
+        if (e.type == cpphdl::Expr::EXPR_VAR && e.value.rfind(fromPrefix, 0) == 0) {
+            e.value = toPrefix + e.value.substr(fromPrefix.size());
+        }
+        return false;
+    });
 }
 
 bool structHasAnonymousAggregateWrapper(const std::string& typeName)
@@ -539,6 +617,14 @@ void fixAnonymousLocalMemberAccesses(cpphdl::Method& method, const std::unordere
     }
 
     std::unordered_map<std::string, bool> localAnonTypes;
+    for (auto& arg : method.arguments) {
+        if (arg.expr.type == cpphdl::Expr::EXPR_TYPE
+            && substitutedTypeNames.contains(arg.expr.value)
+            && structHasAnonymousAggregateWrapper(arg.expr.value)) {
+            localAnonTypes.emplace(arg.name, true);
+        }
+    }
+
     for (auto& statement : method.statements) {
         statement.traverseIf([&](cpphdl::Expr& expr) {
             if (expr.type == cpphdl::Expr::EXPR_DECL && expr.sub.size()
@@ -557,6 +643,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 {
     DEBUG_AST(debugIndent++, "@ exportStruct " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
     cpphdl::Struct st_obj = {};
+    const auto typeSubstitutions = templateTypeSubstitutionsForRecord(RD, hlp);
     if (!st) {
         std::string sname = genTypeName(RD->getQualifiedNameAsString());
 
@@ -578,6 +665,25 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
             exportStruct(BaseRD, hlp, st);
         }
     }
+
+    auto putStructConstexpr = [&](const VarDecl* VD) {
+        if (!VD->isStaticDataMember() || !VD->isConstexpr() || !VD->getInit()) {
+            return;
+        }
+        if (std::find_if(st->parameters.begin(), st->parameters.end(),
+                [&](auto& p){ return p.name == VD->getNameAsString(); }) != st->parameters.end()) {
+            return;
+        }
+
+        DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
+        cpphdl::Expr init;
+        if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+            init = hlp.exprToExpr(VD->getInit());
+        }
+        applyTemplateTypeSubstitutions(init, typeSubstitutions);
+        st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), std::move(init)});
+        DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
+    };
 
     bool hasDecls = false;
     for (Decl* D : RD->decls()) {
@@ -637,6 +743,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                 arrayExpr.sub.emplace_back(std::move(expr));
                 expr = std::move(arrayExpr);
             }
+            applyTemplateTypeSubstitutions(expr, typeSubstitutions);
 
             if (!pointer) {
 
@@ -657,6 +764,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                         st->fields.back().bitwidth = cpphdl::Expr{std::to_string((size_t)ER.Val.getInt().getZExtValue()), cpphdl::Expr::EXPR_NUM};
                     } else {
                         st->fields.back().bitwidth = hlp.exprToExpr(FD->getBitWidth());
+                        applyTemplateTypeSubstitutions(st->fields.back().bitwidth, typeSubstitutions);
                     }
                     DEBUG_AST1("|");
                 }
@@ -692,10 +800,16 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
         }
 
         if (VarDecl* VD = dyn_cast<VarDecl>(D)) {  // constexprs from structs
-            if (VD->isStaticDataMember() && VD->isConstexpr() && VD->getInit()) {
-                DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
-                st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), hlp.exprToExpr(VD->getInit())});
-                DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
+            putStructConstexpr(VD);
+        }
+    }
+
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const CXXRecordDecl* primary = CTSD->getSpecializedTemplate()->getTemplatedDecl()) {
+            for (Decl* D : primary->decls()) {
+                if (VarDecl* VD = dyn_cast<VarDecl>(D)) {
+                    putStructConstexpr(VD);
+                }
             }
         }
     }
@@ -800,6 +914,12 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         }
     }
 
+    const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    applyTemplateTypeSubstitutions(expr, typeSubstitutions);
+    for (auto& dim : array_dim) {
+        applyTemplateTypeSubstitutions(dim, typeSubstitutions);
+    }
+
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
         DEBUG_AST1(" {port " << fieldName << "} ");
 
@@ -867,6 +987,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             if (initializer) {
                 DEBUG_AST1(", <initializer ");
                 field->initializer = hlp.exprToExpr(initializer);
+                applyTemplateTypeSubstitutions(field->initializer, typeSubstitutions);
                 DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
                 DEBUG_AST1(">");
             }
@@ -1048,6 +1169,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     }
 
     unsigned savedFlags = hlp.flags;
+    std::string externalThisTypeName;
     // three types of methods:
     // - module object's methods
     // - base module object's methods
@@ -1063,6 +1185,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), parentName, &params);
             appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            externalThisTypeName = parentName;
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
@@ -1077,7 +1200,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
                 }
             }
 
-            cpphdl::Expr expr = hlp.digQT(QT);
+            cpphdl::Expr expr = externalThisTypeName.empty()
+                ? hlp.digQT(QT)
+                : cpphdl::Expr{externalThisTypeName, cpphdl::Expr::EXPR_TYPE};
             QT = QT.getDesugaredType(*hlp.ctx); // remove typedefs, aliases, etc.
 //?            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
             DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
@@ -1085,8 +1210,15 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             DEBUG_EXPR(debugIndent, " param Expr: " << method.arguments.back().expr.debug(debugIndent));
         }
         else {
-            parentName = genTypeName(MD->getParent()->getNameAsString());
-            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            if (MD->isStatic()) {
+                parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
+                hlp.followSpecialization(MD->getParent(), parentName);
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            }
+            else {
+                parentName = genTypeName(MD->getParent()->getNameAsString());
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            }
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         }
         method.name = parentName + "___";
@@ -1132,6 +1264,20 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     }
     for (auto& statement : method.statements) {
         applyTemplateTypeSubstitutions(statement, typeSubstitutions);
+    }
+    if (!externalThisTypeName.empty()) {
+        const std::string primaryThisTypeName = genTypeName(MD->getParent()->getQualifiedNameAsString());
+        for (auto& ret : method.ret) {
+            replacePackageOwner(ret, primaryThisTypeName, externalThisTypeName);
+        }
+        for (auto& arg : method.arguments) {
+            replacePackageOwner(arg.expr, primaryThisTypeName, externalThisTypeName);
+            replacePackageOwner(arg.initializer, primaryThisTypeName, externalThisTypeName);
+            replacePackageOwner(arg.bitwidth, primaryThisTypeName, externalThisTypeName);
+        }
+        for (auto& statement : method.statements) {
+            replacePackageOwner(statement, primaryThisTypeName, externalThisTypeName);
+        }
     }
     fixAnonymousLocalMemberAccesses(method, typeSubstitutions);
 
@@ -1197,6 +1343,36 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             definition = RD;
         }
 
+        auto putStaticConstexpr = [&](const VarDecl* VD) {
+            if (!VD->isStaticDataMember() || !VD->isConstexpr() || !VD->getInit()) {
+                return false;
+            }
+
+            cpphdl::Expr init;
+            if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+                init = hlp.exprToExpr(VD->getInit());
+            }
+            const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+            applyTemplateTypeSubstitutions(init, typeSubstitutions);
+
+            auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(),
+                [&](auto& c){ return c.name == VD->getNameAsString(); } );
+            if (it != hlp.mod->consts.end()) {
+                if (it->expr.sub.empty()) {
+                    it->expr.sub.emplace_back(std::move(init));
+                }
+                else {
+                    updateExpr(it->expr.sub[0], init);
+                }
+            }
+            else {
+                hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(),
+                    cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {std::move(init)}}});
+                DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
+            }
+            return true;
+        };
+
         for (Decl* D : definition->decls()) {
             if (auto* FD = dyn_cast<FieldDecl>(D)) {
 
@@ -1235,17 +1411,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
             } else
             if (auto* VD = dyn_cast<VarDecl>(D)) {
+                if (putStaticConstexpr(VD)) {
+                    continue;
+                }
                 if (VD->isStaticDataMember() && VD->isConstexpr()) {
-                    if (VD->getInit()) {
-                        auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(), [&](auto& c){ return c.name == VD->getNameAsString(); } );
-                        if (it != hlp.mod->consts.end()) {
-                            updateExpr((*it).initializer, hlp.exprToExpr(VD->getInit()));
-                        }
-                        else {
-                            hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(), cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {hlp.exprToExpr(VD->getInit())}}});
-                            DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
-                        }
-                    }
                     continue;
                 }
 
@@ -1319,6 +1488,12 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         hlp.flags &= ~Helpers::FLAG_ABSTRACT;
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
+                        if (putStaticConstexpr(VD)) {
+                            continue;
+                        }
+                        if (VD->isStaticDataMember() && VD->isConstexpr()) {
+                            continue;
+                        }
                         if (VD->isStaticDataMember() && !VD->isConstexpr()) {
                             hlp.flags |= Helpers::FLAG_ABSTRACT;
                             putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);

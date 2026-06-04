@@ -1,0 +1,1021 @@
+#pragma once
+
+#include "Tribe.h"
+#include <chrono>
+#include <cstdlib>
+#include <csignal>
+#include <vector>
+#include <deque>
+#include <cerrno>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include "../examples/tools.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#if defined(__i386__) || defined(__x86_64__)
+#include <x86intrin.h>
+#endif
+
+#include "Ram.h"
+#include "Axi4Ram.h"
+
+#include <tuple>
+#include <utility>
+
+
+static volatile sig_atomic_t tribe_uart_stdin_sigint_pending = 0;
+
+static void tribe_uart_stdin_sigint_handler(int)
+{
+    tribe_uart_stdin_sigint_pending = 1;
+}
+
+static bool normalize_interactive_uart_byte(unsigned char in, bool& previous_cr, unsigned char& out)
+{
+    if (in == '\r') {
+        previous_cr = true;
+        out = '\n';
+        return true;
+    }
+    if (in == '\n' && previous_cr) {
+        previous_cr = false;
+        return false;
+    }
+    previous_cr = false;
+    out = in;
+    return true;
+}
+
+static inline uint64_t tribe_runtime_tick()
+{
+#if defined(__i386__) || defined(__x86_64__)
+    unsigned aux;
+    return __rdtscp(&aux);
+#else
+    return (uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#endif
+}
+
+#ifdef VERILATOR
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
+static TribePerf verilator_tribe_perf(uint64_t bits)
+{
+    uint64_t storage = bits;
+    return *reinterpret_cast<TribePerf*>(&storage);
+}
+
+template<size_t WORDS>
+static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
+{
+    logic<WORDS * 32> out = 0;
+    memcpy(out.bytes, bits.m_storage, sizeof(out.bytes));
+    return out;
+}
+
+template<size_t WORDS>
+static logic<WORDS * 32> verilator_wide_to_logic(const WData (&bits)[WORDS])
+{
+    logic<WORDS * 32> out = 0;
+    memcpy(out.bytes, bits, sizeof(out.bytes));
+    return out;
+}
+
+static logic<64> verilator_wide_to_logic(const QData& bits)
+{
+    return (uint64_t)bits;
+}
+
+template<size_t WIDTH, size_t WORDS>
+static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits)
+{
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out.m_storage, 0, sizeof(out.m_storage));
+    memcpy(out.m_storage, bits.bytes, sizeof(bits.bytes));
+}
+
+template<size_t WIDTH, size_t WORDS>
+static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+{
+    static_assert(WIDTH <= WORDS * 32);
+    memset(out, 0, sizeof(out));
+    memcpy(out, bits.bytes, sizeof(bits.bytes));
+}
+
+static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
+{
+    out = (uint64_t)bits;
+}
+
+#define PORT_VALUE(port) (port)
+#define PERF_VALUE(port) verilator_tribe_perf((uint64_t)(port))
+#else
+#define PORT_VALUE(port) (port())
+#define PERF_VALUE(port) (port())
+#endif
+
+class TestTribe : public Module
+{
+    static constexpr size_t AXI_RAM0_DEPTH = TRIBE_MEM_REGION0_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    static constexpr size_t AXI_RAM1_DEPTH = TRIBE_MEM_REGION1_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    static constexpr size_t AXI_RAM2_DEPTH = TRIBE_MEM_REGION2_SIZE / (TRIBE_L2_AXI_WIDTH/8);
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM0_DEPTH> mem0;
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM1_DEPTH> mem1;
+    Axi4Ram<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH,AXI_RAM2_DEPTH> mem2;
+    Axi4RegionMux<5,clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> iospace;
+    NS16550A<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> uart;
+    CLINT<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> clint;
+    PLIC<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> plic;
+    Accelerator<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> accelerator;
+    SDController<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> sdcard;
+    SDCardVerifFrontend sdcard_verif;
+
+#ifdef VERILATOR
+    VERILATOR_MODEL tribe;
+#else
+    Tribe tribe;
+#endif
+
+    bool error;
+
+    uint64_t perf_clocks = 0;
+    uint64_t perf_stall = 0;
+    uint64_t perf_hazard = 0;
+    uint64_t perf_dcache_wait = 0;
+    uint64_t perf_icache_wait = 0;
+    uint64_t perf_branch = 0;
+    uint64_t perf_icache_issue_wait_cycles = 0;
+    uint64_t perf_icache_lookup_wait_cycles = 0;
+    uint64_t perf_icache_refill_wait_cycles = 0;
+    uint64_t perf_icache_init_wait_cycles = 0;
+    uint64_t perf_icache_hit_lookup_cycles = 0;
+    uint64_t runtime_strobe_ticks = 0;
+    uint64_t runtime_tribe_strobe_ticks = 0;
+    uint64_t runtime_checkpoint_ticks = 0;
+    uint64_t runtime_perf_ticks = 0;
+    uint64_t runtime_work_ticks = 0;
+    uint64_t runtime_tribe_work_ticks = 0;
+    uint64_t runtime_uart_ticks = 0;
+    uint64_t runtime_trace_ticks = 0;
+    uint64_t runtime_negedge_ticks = 0;
+    uint64_t runtime_total_ticks = 0;
+    uint32_t tohost_addr = 0;
+    uint32_t tohost_value = 0;
+    uint32_t reset_pc = 0;
+    uint32_t boot_hartid = 0;
+    uint32_t boot_dtb_addr = 0;
+    uint32_t boot_priv = 3;
+    uint32_t start_mem_addr = 0;
+    uint32_t ram_size = DEFAULT_RAM_SIZE;
+    // Testbench-driven UART RX is part of the simulated machine state.
+    // Keep it in CppHDL registers so checkpoints capture the pin level
+    // instead of hiding it in ordinary C++ variables.
+    reg<u1> uart_rx_valid_reg;
+    reg<u8> uart_rx_data_reg;
+    reg<u32> uart_script_pos_reg;
+    reg<u32> uart_script_delay_reg;
+    reg<u1> uart_script_enabled_reg;
+    reg<u1> uart_script_reported_reg;
+    reg<u1> sd_dma_cache_invalidate_reg;
+    bool tohost_done = false;
+
+    class StdinRawMode
+    {
+        bool active = false;
+        bool flags_active = false;
+        bool sigint_active = false;
+        int old_flags = 0;
+        termios old_term = {};
+        struct sigaction old_sigint = {};
+
+    public:
+        explicit StdinRawMode(bool enable)
+        {
+            if (!enable) {
+                return;
+            }
+            tribe_uart_stdin_sigint_pending = 0;
+            struct sigaction next_sigint = {};
+            next_sigint.sa_handler = tribe_uart_stdin_sigint_handler;
+            sigemptyset(&next_sigint.sa_mask);
+            if (sigaction(SIGINT, &next_sigint, &old_sigint) == 0) {
+                sigint_active = true;
+            }
+            old_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+            if (old_flags >= 0 && fcntl(STDIN_FILENO, F_SETFL, old_flags | O_NONBLOCK) == 0) {
+                flags_active = true;
+            }
+            if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &old_term) == 0) {
+                termios raw = old_term;
+                cfmakeraw(&raw);
+                if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
+                    active = true;
+                }
+            }
+        }
+
+        ~StdinRawMode()
+        {
+            if (active) {
+                tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            }
+            if (flags_active) {
+                fcntl(STDIN_FILENO, F_SETFL, old_flags);
+            }
+            if (sigint_active) {
+                sigaction(SIGINT, &old_sigint, nullptr);
+            }
+        }
+    };
+
+    struct Elf32Header
+    {
+        unsigned char ident[16];
+        uint16_t type;
+        uint16_t machine;
+        uint32_t version;
+        uint32_t entry;
+        uint32_t phoff;
+        uint32_t shoff;
+        uint32_t flags;
+        uint16_t ehsize;
+        uint16_t phentsize;
+        uint16_t phnum;
+        uint16_t shentsize;
+        uint16_t shnum;
+        uint16_t shstrndx;
+    } __PACKED;
+
+    struct Elf32ProgramHeader
+    {
+        uint32_t type;
+        uint32_t offset;
+        uint32_t vaddr;
+        uint32_t paddr;
+        uint32_t filesz;
+        uint32_t memsz;
+        uint32_t flags;
+        uint32_t align;
+    } __PACKED;
+
+    bool load_elf(FILE* fbin, std::vector<uint32_t>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry, bool elf_phys_override, uint32_t elf_phys_offset)
+    {
+        static constexpr uint32_t PT_LOAD = 1;
+        Elf32Header ehdr = {};
+        fseek(fbin, 0, SEEK_SET);
+        if (fread(&ehdr, 1, sizeof(ehdr), fbin) != sizeof(ehdr)) {
+            return false;
+        }
+        if (ehdr.ident[0] != 0x7f || ehdr.ident[1] != 'E' || ehdr.ident[2] != 'L' || ehdr.ident[3] != 'F' ||
+            ehdr.ident[4] != 1 || ehdr.ident[5] != 1 || ehdr.phentsize != sizeof(Elf32ProgramHeader)) {
+            return false;
+        }
+        entry = elf_phys_override ? ehdr.entry + elf_phys_offset : ehdr.entry;
+
+        for (uint16_t i = 0; i < ehdr.phnum; ++i) {
+            Elf32ProgramHeader phdr = {};
+            fseek(fbin, ehdr.phoff + i * sizeof(phdr), SEEK_SET);
+            if (fread(&phdr, 1, sizeof(phdr), fbin) != sizeof(phdr)) {
+                return false;
+            }
+            const uint32_t type = phdr.type;
+            const uint32_t offset = phdr.offset;
+            const uint32_t vaddr = phdr.vaddr;
+            const uint32_t paddr = phdr.paddr;
+            const uint32_t filesz = phdr.filesz;
+            if (type != PT_LOAD || filesz == 0) {
+                continue;
+            }
+
+            const uint32_t phys = elf_phys_override ? (vaddr + elf_phys_offset) : (paddr ? paddr : vaddr);
+            if (phys < mem_base || phys - mem_base + filesz > mem_size_bytes) {
+                std::print("ELF segment outside test RAM window: paddr={:08x}, mem_base={:08x}, size={}\n", phys, mem_base, filesz);
+                return false;
+            }
+            const uint32_t base = phys - mem_base;
+
+            fseek(fbin, offset, SEEK_SET);
+            for (uint32_t byte = 0; byte < filesz; ++byte) {
+                int c = fgetc(fbin);
+                if (c == EOF) {
+                    return false;
+                }
+                const uint32_t addr = base + byte;
+                const uint32_t shift = (addr & 3u) * 8u;
+                ram[addr / 4] = (ram[addr / 4] & ~(0xffu << shift)) | (uint32_t(uint8_t(c)) << shift);
+            }
+            read_bytes += filesz;
+        }
+        return read_bytes != 0;
+    }
+
+    bool load_blob(const std::string& filename, std::vector<uint32_t>& ram, uint32_t addr, uint32_t mem_base, uint32_t mem_size_bytes, size_t& read_bytes)
+    {
+        FILE* f = fopen(filename.c_str(), "rb");
+        if (!f) {
+            std::print("can't open blob '{}'\n", filename);
+            return false;
+        }
+        if (addr < mem_base) {
+            std::print("blob outside test RAM window: addr={:08x}, mem_base={:08x}\n", addr, mem_base);
+            fclose(f);
+            return false;
+        }
+        uint32_t offset = addr - mem_base;
+        if (offset >= mem_size_bytes) {
+            std::print("blob outside test RAM window: addr={:08x}, mem_base={:08x}, mem_size={}\n", addr, mem_base, mem_size_bytes);
+            fclose(f);
+            return false;
+        }
+        uint32_t byte = offset;
+        int c;
+        while ((c = fgetc(f)) != EOF) {
+            if (byte >= mem_size_bytes) {
+                std::print("blob '{}' does not fit RAM window\n", filename);
+                fclose(f);
+                return false;
+            }
+            const uint32_t shift = (byte & 3u) * 8u;
+            ram[byte / 4] = (ram[byte / 4] & ~(0xffu << shift)) | (uint32_t(uint8_t(c)) << shift);
+            ++byte;
+            ++read_bytes;
+        }
+        fclose(f);
+        return true;
+    }
+
+    uint8_t ram_byte(const std::vector<uint32_t>& ram, uint32_t byte_addr)
+    {
+        return (uint8_t)((ram[byte_addr / 4] >> ((byte_addr & 3u) * 8u)) & 0xffu);
+    }
+
+    void set_ram_byte(std::vector<uint32_t>& ram, uint32_t byte_addr, uint8_t value)
+    {
+        const uint32_t shift = (byte_addr & 3u) * 8u;
+        ram[byte_addr / 4] = (ram[byte_addr / 4] & ~(0xffu << shift)) | ((uint32_t)value << shift);
+    }
+
+    bool patch_dtb_bootargs(std::vector<uint32_t>& ram, uint32_t dtb_addr, uint32_t dtb_bytes,
+                            uint32_t mem_base, uint32_t mem_size_bytes, const std::string& bootargs)
+    {
+        if (dtb_addr < mem_base || dtb_addr - mem_base + dtb_bytes > mem_size_bytes) {
+            std::print("DTB bootargs patch outside test RAM window\n");
+            return false;
+        }
+
+        static constexpr std::string_view prefix = "console=";
+        const uint32_t base = dtb_addr - mem_base;
+        for (uint32_t off = 0; off + prefix.size() < dtb_bytes; ++off) {
+            bool match = true;
+            for (uint32_t i = 0; i < prefix.size(); ++i) {
+                if (ram_byte(ram, base + off + i) != (uint8_t)prefix[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) {
+                continue;
+            }
+
+            uint32_t old_len = 0;
+            while (off + old_len < dtb_bytes && ram_byte(ram, base + off + old_len) != 0) {
+                ++old_len;
+            }
+            if (bootargs.size() > old_len) {
+                std::print("new --bootargs is longer than DTB bootargs slot ({} > {})\n", bootargs.size(), old_len);
+                return false;
+            }
+            for (uint32_t i = 0; i < old_len; ++i) {
+                set_ram_byte(ram, base + off + i, i < bootargs.size() ? (uint8_t)bootargs[i] : 0);
+            }
+            std::print("Patched DTB bootargs: {}\n", bootargs);
+            return true;
+        }
+
+        std::print("can't find DTB bootargs string to patch\n");
+        return false;
+    }
+
+//    size_t i;
+
+public:
+
+    bool      debugen_in;
+
+    TestTribe(bool debug)
+    {
+        debugen_in = debug;
+        drive_uart_rx(false);
+        init_uart_script_state(true);
+        sdcard_verif.fill_prbs();
+    }
+
+    ~TestTribe()
+    {
+    }
+
+    void drive_uart_rx(bool valid, uint8_t data = 0)
+    {
+        uart_rx_valid_reg = (u1)valid;
+        uart_rx_valid_reg._next = (u1)false;
+        if (valid) {
+            uart_rx_data_reg = (u8)data;
+            uart_rx_data_reg._next = (u8)data;
+        }
+    }
+
+    void init_uart_script_state(bool enabled, uint32_t delay = 0)
+    {
+        uart_script_pos_reg.set((u32)0);
+        uart_script_delay_reg.set((u32)delay);
+        uart_script_enabled_reg.set((u1)enabled);
+        uart_script_reported_reg.set((u1)enabled);
+    }
+
+    void enable_uart_script(uint32_t delay = 0)
+    {
+        uart_script_delay_reg.set((u32)delay);
+        uart_script_enabled_reg.set((u1)true);
+    }
+
+    void mark_uart_script_reported()
+    {
+        uart_script_reported_reg.set((u1)true);
+    }
+
+    void advance_uart_script()
+    {
+        uart_script_pos_reg.set((u32)((uint32_t)uart_script_pos_reg + 1u));
+    }
+
+    void set_uart_script_delay(uint32_t delay)
+    {
+        uart_script_delay_reg.set((u32)delay);
+    }
+
+    void _assign()
+    {
+        size_t i = 0;
+	#ifndef VERILATOR
+        tribe.debugen_in = debugen_in;
+        tribe.reset_pc_in = _ASSIGN(reset_pc);
+        tribe.boot_hartid_in = _ASSIGN(boot_hartid);
+        tribe.boot_dtb_addr_in = _ASSIGN(boot_dtb_addr);
+        tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg &&
+                !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
+#else
+            _ASSIGN((bool)sd_dma_cache_invalidate_reg);
+#endif
+        tribe.memory_base_in = _ASSIGN(start_mem_addr);
+        tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
+        tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
+        tribe.mem_region_size_in[1] = _ASSIGN((uint32_t)TRIBE_MEM_REGION1_SIZE);
+        tribe.mem_region_size_in[2] = _ASSIGN((uint32_t)TRIBE_MEM_REGION2_SIZE);
+        tribe.mem_region_size_in[3] = _ASSIGN((uint32_t)TRIBE_IO_REGION_SIZE);
+        for (i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_in[i].awvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
+            tribe.axi_in[i].wvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in[i].wlast_in = _ASSIGN(false);
+            tribe.axi_in[i].bready_in = _ASSIGN(false);
+            tribe.axi_in[i].arvalid_in = _ASSIGN(false);
+            tribe.axi_in[i].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
+            tribe.axi_in[i].rready_in = _ASSIGN(false);
+        }
+        tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
+        tribe.axi_in[0].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
+        tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
+        tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
+        tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
+        tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
+        tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
+        tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
+        tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
+        tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
+        tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
+        tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
+        tribe.axi_in[1].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.awaddr_in());
+        tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
+        tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
+        tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
+        tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
+        tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
+        tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
+        tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
+        tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
+        tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out;
+        tribe.clint_mtip_in = clint.mtip_out;
+        tribe.time_lo_in = clint.debug_mtime_lo_out;
+        tribe.time_hi_in = clint.debug_mtime_hi_out;
+        tribe.external_irq_in = plic.external_irq_out;
+#endif
+        tribe.__inst_name = __inst_name + "/tribe";
+        tribe._assign();
+
+        AXI4_DRIVER_FROM(mem0.axi_in, tribe.axi_out[0]);
+        AXI4_DRIVER_FROM(mem1.axi_in, tribe.axi_out[1]);
+        AXI4_DRIVER_FROM(mem2.axi_in, tribe.axi_out[2]);
+        AXI4_DRIVER_FROM(iospace.slave_in, tribe.axi_out[3]);
+        mem0.debugen_in = debugen_in;
+        mem1.debugen_in = debugen_in;
+        mem2.debugen_in = debugen_in;
+        mem0.__inst_name = __inst_name + "/mem0";
+        mem1.__inst_name = __inst_name + "/mem1";
+        mem2.__inst_name = __inst_name + "/mem2";
+        iospace.region_base_in[0] = _ASSIGN((uint32_t)0);
+        iospace.region_size_in[0] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[1] = _ASSIGN((uint32_t)0x100);
+        iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
+        iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
+        iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
+        iospace.__inst_name = __inst_name + "/iospace";
+        iospace._assign();
+        AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
+        AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
+        AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
+        AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
+        sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
+        sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
+        sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
+        sdcard.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out;
+        sdcard_verif.sd_cmd_valid_in = sdcard.sd_cmd_valid_out;
+        sdcard_verif.sd_cmd_data_in = sdcard.sd_cmd_data_out;
+        sdcard_verif.sd_cmd_last_in = sdcard.sd_cmd_last_out;
+        sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
+        uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
+        uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
+        clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
+        clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
+        clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
+        for (i = 0; i < 32; ++i) {
+            plic.source_irq_in[i] = _ASSIGN(false);
+        }
+        plic.source_irq_in[1] = uart.irq_out;
+        plic.source_irq_in[2] = sdcard.irq_out;
+        uart.__inst_name = __inst_name + "/uart";
+        clint.__inst_name = __inst_name + "/clint";
+        plic.__inst_name = __inst_name + "/plic";
+        accelerator.__inst_name = __inst_name + "/accelerator";
+        sdcard.__inst_name = __inst_name + "/sdcard";
+        sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
+        mem0._assign();
+        mem1._assign();
+        mem2._assign();
+        uart._assign();
+        clint._assign();
+        plic._assign();
+        accelerator._assign();
+        sdcard._assign();
+        sdcard_verif._assign();
+
+        AXI4_RESPONDER_FROM(tribe.axi_out[0], mem0.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[1], mem1.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[2], mem2.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
+        AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
+	#else  // connecting Verilator to CppHDL
+        tribe.reset_pc_in = reset_pc;
+        tribe.boot_hartid_in = boot_hartid;
+        tribe.boot_dtb_addr_in = boot_dtb_addr;
+        tribe.boot_priv_in = boot_priv;
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            (bool)sd_dma_cache_invalidate_reg &&
+                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+            (bool)sd_dma_cache_invalidate_reg;
+#endif
+        tribe.memory_base_in = start_mem_addr;
+        tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
+        tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
+        tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
+        tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+        for (size_t i = 0; i < L2_MEM_PORTS; ++i) {
+            tribe.axi_in___05Fawvalid_in[i] = false;
+            tribe.axi_in___05Fawaddr_in[i] = 0;
+            tribe.axi_in___05Fawid_in[i] = 0;
+            tribe.axi_in___05Fwvalid_in[i] = false;
+            verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[i], (logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in___05Fwlast_in[i] = false;
+            tribe.axi_in___05Fbready_in[i] = false;
+            tribe.axi_in___05Farvalid_in[i] = false;
+            tribe.axi_in___05Faraddr_in[i] = 0;
+            tribe.axi_in___05Farid_in[i] = 0;
+            tribe.axi_in___05Frready_in[i] = false;
+        }
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out();
+        tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
+        tribe.external_irq_in = plic.external_irq_out();
+#endif
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(mem2.axi_in, tribe, 2, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        AXI4_DRIVER_FROM_VERILATOR_CONST(iospace.slave_in, tribe, 3, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
+        mem0.debugen_in = debugen_in;
+        mem1.debugen_in = debugen_in;
+        mem2.debugen_in = debugen_in;
+        mem0.__inst_name = __inst_name + "/mem0";
+        mem1.__inst_name = __inst_name + "/mem1";
+        mem2.__inst_name = __inst_name + "/mem2";
+        iospace.region_base_in[0] = _ASSIGN((uint32_t)0);
+        iospace.region_size_in[0] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[1] = _ASSIGN((uint32_t)0x100);
+        iospace.region_size_in[1] = _ASSIGN((uint32_t)0xC000);
+        iospace.region_base_in[2] = _ASSIGN((uint32_t)0xC100);
+        iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
+        iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
+        iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0x10000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x210000);
+        iospace.__inst_name = __inst_name + "/iospace";
+        iospace._assign();
+        AXI4_DRIVER_FROM(uart.axi_in, iospace.masters_out[0]);
+        AXI4_DRIVER_FROM(clint.axi_in, iospace.masters_out[1]);
+        AXI4_DRIVER_FROM(accelerator.axi_in, iospace.masters_out[2]);
+        AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
+        AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[4]);
+        uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
+        uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
+        clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
+        clint.set_mtimecmp_lo_in = _ASSIGN((uint32_t)tribe.sbi_timer_lo_out);
+        clint.set_mtimecmp_hi_in = _ASSIGN((uint32_t)tribe.sbi_timer_hi_out);
+        for (i = 0; i < 32; ++i) {
+            plic.source_irq_in[i] = _ASSIGN(false);
+        }
+        plic.source_irq_in[1] = uart.irq_out;
+        plic.source_irq_in[2] = sdcard.irq_out;
+        sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
+        sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
+        sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
+        sdcard.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out;
+        sdcard_verif.sd_cmd_valid_in = sdcard.sd_cmd_valid_out;
+        sdcard_verif.sd_cmd_data_in = sdcard.sd_cmd_data_out;
+        sdcard_verif.sd_cmd_last_in = sdcard.sd_cmd_last_out;
+        sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
+        accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
+        accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
+        accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
+        accelerator.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[0]);
+        accelerator.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[0]);
+        accelerator.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[0]);
+        accelerator.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
+        accelerator.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[0]);
+        accelerator.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
+        sdcard.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[1]);
+        sdcard.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[1]);
+        sdcard.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[1]);
+        sdcard.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[1]);
+        sdcard.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[1]);
+        sdcard.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[1]);
+        sdcard.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[1]));
+        sdcard.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[1]);
+        sdcard.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[1]);
+        uart.__inst_name = __inst_name + "/uart";
+        clint.__inst_name = __inst_name + "/clint";
+        plic.__inst_name = __inst_name + "/plic";
+        accelerator.__inst_name = __inst_name + "/accelerator";
+        sdcard.__inst_name = __inst_name + "/sdcard";
+        sdcard_verif.__inst_name = __inst_name + "/sdcard_verif";
+        mem0._assign();
+        mem1._assign();
+        mem2._assign();
+        uart._assign();
+        clint._assign();
+        plic._assign();
+        accelerator._assign();
+        sdcard._assign();
+        sdcard_verif._assign();
+        AXI4_RESPONDER_FROM(iospace.masters_out[0], uart.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[1], clint.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[2], accelerator.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[3], sdcard.axi_in);
+        AXI4_RESPONDER_FROM(iospace.masters_out[4], plic.axi_in);
+#endif
+    }
+
+    void _work(bool reset)
+    {
+        bool sd_dma_cache_invalidate_ready;
+        sd_dma_cache_invalidate_ready = true;
+#ifndef VERILATOR
+        uint64_t tribe_work_time_start = tribe_runtime_tick();
+        tribe._work(reset);
+        runtime_tribe_work_ticks += tribe_runtime_tick() - tribe_work_time_start;
+#else
+//        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
+        tribe.debugen_in    = debugen_in;
+        tribe.reset_pc_in = reset_pc;
+        tribe.boot_hartid_in = boot_hartid;
+        tribe.boot_dtb_addr_in = boot_dtb_addr;
+        tribe.boot_priv_in = boot_priv;
+        tribe.memory_base_in = start_mem_addr;
+        tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.external_cache_invalidate_in =
+#ifdef ENABLE_MMU_TLB
+            (bool)sd_dma_cache_invalidate_reg &&
+                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+            (bool)sd_dma_cache_invalidate_reg;
+#endif
+        tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
+        tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
+        tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
+        tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
+        tribe.axi_in___05Fawvalid_in[0] = accelerator.dma_out.awvalid_in();
+        tribe.axi_in___05Fawaddr_in[0] = (uint32_t)accelerator.dma_out.awaddr_in();
+        tribe.axi_in___05Fawid_in[0] = (uint32_t)accelerator.dma_out.awid_in();
+        tribe.axi_in___05Fwvalid_in[0] = accelerator.dma_out.wvalid_in();
+        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[0], accelerator.dma_out.wdata_in());
+        tribe.axi_in___05Fwlast_in[0] = accelerator.dma_out.wlast_in();
+        tribe.axi_in___05Fbready_in[0] = accelerator.dma_out.bready_in();
+        tribe.axi_in___05Farvalid_in[0] = accelerator.dma_out.arvalid_in();
+        tribe.axi_in___05Faraddr_in[0] = (uint32_t)accelerator.dma_out.araddr_in();
+        tribe.axi_in___05Farid_in[0] = (uint32_t)accelerator.dma_out.arid_in();
+        tribe.axi_in___05Frready_in[0] = accelerator.dma_out.rready_in();
+        tribe.axi_in___05Fawvalid_in[1] = sdcard.dma_out.awvalid_in();
+        tribe.axi_in___05Fawaddr_in[1] = (uint32_t)sdcard.dma_out.awaddr_in();
+        tribe.axi_in___05Fawid_in[1] = (uint32_t)sdcard.dma_out.awid_in();
+        tribe.axi_in___05Fwvalid_in[1] = sdcard.dma_out.wvalid_in();
+        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[1], sdcard.dma_out.wdata_in());
+        tribe.axi_in___05Fwlast_in[1] = sdcard.dma_out.wlast_in();
+        tribe.axi_in___05Fbready_in[1] = sdcard.dma_out.bready_in();
+        tribe.axi_in___05Farvalid_in[1] = sdcard.dma_out.arvalid_in();
+        tribe.axi_in___05Faraddr_in[1] = (uint32_t)sdcard.dma_out.araddr_in();
+        tribe.axi_in___05Farid_in[1] = (uint32_t)sdcard.dma_out.arid_in();
+        tribe.axi_in___05Frready_in[1] = sdcard.dma_out.rready_in();
+#if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+        tribe.clint_msip_in = clint.msip_out();
+        tribe.clint_mtip_in = clint.mtip_out();
+        tribe.time_lo_in = clint.debug_mtime_lo_out();
+        tribe.time_hi_in = clint.debug_mtime_hi_out();
+        tribe.external_irq_in = plic.external_irq_out();
+#endif
+
+        tribe.clk = 0;
+        tribe.reset = reset;
+        tribe.eval();
+#endif
+        mem0._work(reset);
+        mem1._work(reset);
+        mem2._work(reset);
+        iospace._work(reset);
+        uart._work(reset);
+        clint._work(reset);
+        plic._work(reset);
+        accelerator._work(reset);
+        sdcard._work(reset);
+#ifdef ENABLE_MMU_TLB
+#ifdef VERILATOR
+        sd_dma_cache_invalidate_ready =
+            !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+#else
+        sd_dma_cache_invalidate_ready =
+            !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+#endif
+#endif
+        if (sdcard.dma_write_complete_out()) {
+            sd_dma_cache_invalidate_reg._next = true;
+        }
+        else if (sd_dma_cache_invalidate_reg && sd_dma_cache_invalidate_ready) {
+            sd_dma_cache_invalidate_reg._next = false;
+        }
+        else {
+            sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
+        }
+#ifdef VERILATOR
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, mem2.axi_in, 2);
+        AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
+        tribe.clk = 1;
+        tribe.reset = reset;
+        uint64_t tribe_work_time_start = tribe_runtime_tick();
+        tribe.eval();  // eval of verilator should be in the end
+        runtime_tribe_work_ticks += tribe_runtime_tick() - tribe_work_time_start;
+#endif
+
+        if (reset) {
+            error = false;
+            sd_dma_cache_invalidate_reg.clr();
+            return;
+        }
+    }
+
+    void _strobe(FILE* checkpoint_fd = nullptr)
+    {
+        checkpoint_value(checkpoint_fd, perf_clocks);
+        checkpoint_value(checkpoint_fd, perf_stall);
+        checkpoint_value(checkpoint_fd, perf_hazard);
+        checkpoint_value(checkpoint_fd, perf_dcache_wait);
+        checkpoint_value(checkpoint_fd, perf_icache_wait);
+        checkpoint_value(checkpoint_fd, perf_branch);
+        checkpoint_value(checkpoint_fd, perf_icache_issue_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_lookup_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_refill_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_init_wait_cycles);
+        checkpoint_value(checkpoint_fd, perf_icache_hit_lookup_cycles);
+        checkpoint_value(checkpoint_fd, tohost_addr);
+        checkpoint_value(checkpoint_fd, tohost_value);
+        checkpoint_value(checkpoint_fd, reset_pc);
+        checkpoint_value(checkpoint_fd, boot_hartid);
+        checkpoint_value(checkpoint_fd, boot_dtb_addr);
+        checkpoint_value(checkpoint_fd, boot_priv);
+        checkpoint_value(checkpoint_fd, start_mem_addr);
+        checkpoint_value(checkpoint_fd, ram_size);
+        checkpoint_value(checkpoint_fd, tohost_done);
+        checkpoint_value(checkpoint_fd, _system_clock);
+        uart_rx_valid_reg.strobe(checkpoint_fd);
+        uart_rx_data_reg.strobe(checkpoint_fd);
+        uart_script_pos_reg.strobe(checkpoint_fd);
+        // Keep the default checkpoint format compatible with existing Linux
+        // checkpoints. Tests that need exact scripted UART pacing across
+        // save/restore opt in explicitly.
+        if (std::getenv("TRIBE_CHECKPOINT_UART_SCRIPT_DELAY")) {
+            uart_script_delay_reg.strobe(checkpoint_fd);
+        }
+        else {
+            uart_script_delay_reg.strobe();
+        }
+        uart_script_enabled_reg.strobe(checkpoint_fd);
+        uart_script_reported_reg.strobe(checkpoint_fd);
+        sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
+#ifndef VERILATOR
+        uint64_t tribe_strobe_time_start = tribe_runtime_tick();
+        tribe._strobe(checkpoint_fd);
+        runtime_tribe_strobe_ticks += tribe_runtime_tick() - tribe_strobe_time_start;
+#endif
+        mem0._strobe(checkpoint_fd);  // we use these modules in Verilator test
+        mem1._strobe(checkpoint_fd);
+        mem2._strobe(checkpoint_fd);
+        iospace._strobe(checkpoint_fd);
+        uart._strobe(checkpoint_fd);
+        clint._strobe(checkpoint_fd);
+        plic._strobe(checkpoint_fd);
+        accelerator._strobe(checkpoint_fd);
+        sdcard._strobe(checkpoint_fd);
+        if (checkpoint_fd && checkpoint_reading(checkpoint_fd)) {
+            sdcard_verif._strobe(checkpoint_fd);
+        }
+        else {
+            sdcard_verif._work(false);
+            sdcard_verif._strobe(checkpoint_fd);
+        }
+    }
+
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        tribe.clk = 0;
+        tribe.reset = reset;
+        tribe.eval();  // eval of verilator should be in the end
+#else
+        tribe._work_neg(reset);
+#endif
+
+        if (debugen_in) {
+            printf("----------- %ld\n", _system_clock);
+        }
+    }
+
+    void _strobe_neg()
+    {
+    }
+
+    void perf_reset()
+    {
+        perf_clocks = 0;
+        perf_stall = 0;
+        perf_hazard = 0;
+        perf_dcache_wait = 0;
+        perf_icache_wait = 0;
+        perf_branch = 0;
+        perf_icache_issue_wait_cycles = 0;
+        perf_icache_lookup_wait_cycles = 0;
+        perf_icache_refill_wait_cycles = 0;
+        perf_icache_init_wait_cycles = 0;
+        perf_icache_hit_lookup_cycles = 0;
+        runtime_strobe_ticks = 0;
+        runtime_tribe_strobe_ticks = 0;
+        runtime_checkpoint_ticks = 0;
+        runtime_perf_ticks = 0;
+        runtime_work_ticks = 0;
+        runtime_tribe_work_ticks = 0;
+        runtime_uart_ticks = 0;
+        runtime_trace_ticks = 0;
+        runtime_negedge_ticks = 0;
+        runtime_total_ticks = 0;
+    }
+
+    void perf_sample()
+    {
+        auto perf = PERF_VALUE(tribe.perf_out);
+        bool hazard = perf.hazard_stall;
+        bool branch = perf.branch_stall;
+        bool dcache_wait = perf.dcache_wait;
+        bool icache_wait = perf.icache_wait;
+
+        ++perf_clocks;
+        perf_hazard += hazard;
+        perf_branch += branch;
+        perf_dcache_wait += dcache_wait;
+        perf_icache_wait += icache_wait;
+        perf_icache_issue_wait_cycles += perf.icache.issue_wait;
+        perf_icache_lookup_wait_cycles += perf.icache.lookup_wait;
+        perf_icache_refill_wait_cycles += perf.icache.refill_wait;
+        perf_icache_init_wait_cycles += perf.icache.init_wait;
+        perf_icache_hit_lookup_cycles += perf.icache.hit && perf.icache.lookup_wait;
+        perf_stall += hazard || branch || dcache_wait || icache_wait;
+    }
+
+    void debug_perf_counters_print()
+    {
+        std::print(" perf[c{:04x} s{:04x} h{:04x} b{:04x} dc{:04x} ic{:04x} ii{:04x} il{:04x} ih{:04x} ir{:04x} in{:04x}]\n",
+            (uint16_t)perf_clocks,
+            (uint16_t)perf_stall,
+            (uint16_t)perf_hazard,
+            (uint16_t)perf_branch,
+            (uint16_t)perf_dcache_wait,
+            (uint16_t)perf_icache_wait,
+            (uint16_t)perf_icache_issue_wait_cycles,
+            (uint16_t)perf_icache_lookup_wait_cycles,
+            (uint16_t)perf_icache_hit_lookup_cycles,
+            (uint16_t)perf_icache_refill_wait_cycles,
+            (uint16_t)perf_icache_init_wait_cycles);
+    }
+
+    void perf_print()
+    {
+        auto percent = [&](uint64_t value) {
+            return perf_clocks ? (100.0 * (double)value / (double)perf_clocks) : 0.0;
+        };
+        auto runtime_part_percent = [&](uint64_t ticks) {
+            return runtime_total_ticks ? (100.0 * (double)ticks / (double)runtime_total_ticks) : 0.0;
+        };
+
+        std::print("Performance: clocks={}, stalled={:.2f}% ({})"
+                   ", hazards={:.2f}% ({})"
+                   ", dcache_wait={:.2f}% ({})"
+                   ", icache_wait={:.2f}% ({})"
+                   ", branching={:.2f}% ({})\n",
+            perf_clocks,
+            percent(perf_stall), perf_stall,
+            percent(perf_hazard), perf_hazard,
+            percent(perf_dcache_wait), perf_dcache_wait,
+            percent(perf_icache_wait), perf_icache_wait,
+            percent(perf_branch), perf_branch);
+        std::print("I-cache wait detail: issue={:.2f}% ({})"
+                   ", lookup={:.2f}% ({})"
+                   ", lookup_hit={:.2f}% ({})"
+                   ", refill={:.2f}% ({})"
+                   ", init={:.2f}% ({})\n",
+            percent(perf_icache_issue_wait_cycles), perf_icache_issue_wait_cycles,
+            percent(perf_icache_lookup_wait_cycles), perf_icache_lookup_wait_cycles,
+            percent(perf_icache_hit_lookup_cycles), perf_icache_hit_lookup_cycles,
+            percent(perf_icache_refill_wait_cycles), perf_icache_refill_wait_cycles,
+            percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
+        std::print("Runtime detail: checkpoint={:.2f}% strobe={:.2f}% tribe_strobe={:.2f}% perf={:.2f}% work={:.2f}% tribe_work={:.2f}% uart={:.2f}% trace_probe={:.2f}% negedge={:.2f}%\n",
+            runtime_part_percent(runtime_checkpoint_ticks),
+            runtime_part_percent(runtime_strobe_ticks),
+            runtime_part_percent(runtime_tribe_strobe_ticks),
+            runtime_part_percent(runtime_perf_ticks),
+            runtime_part_percent(runtime_work_ticks),
+            runtime_part_percent(runtime_tribe_work_ticks),
+            runtime_part_percent(runtime_uart_ticks),
+            runtime_part_percent(runtime_trace_ticks),
+            runtime_part_percent(runtime_negedge_ticks));
+    }
+
+    bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", uint64_t max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "", const std::string& sd_image_file = "");
+};
