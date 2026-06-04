@@ -1297,6 +1297,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 if (putStaticConstexpr(VD)) {
                     continue;
                 }
+                if (VD->isStaticDataMember() && VD->isConstexpr()) {
+                    continue;
+                }
 
                 DEBUG_AST(debugIndent++, "# putFieldStatic: "); on_return ret_debug([](){ --debugIndent; });
 
@@ -1369,6 +1372,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
                         if (putStaticConstexpr(VD)) {
+                            continue;
+                        }
+                        if (VD->isStaticDataMember() && VD->isConstexpr()) {
                             continue;
                         }
                         if (VD->isStaticDataMember() && !VD->isConstexpr()) {

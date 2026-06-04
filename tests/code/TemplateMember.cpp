@@ -198,6 +198,8 @@ static bool check_generated_sv()
     ok &= decoder.find("CONV_TYPE") == std::string::npos;
     ok &= decoder.find("parameter  VALUE_BITS") != std::string::npos;
     ok &= decoder.find("parameter  VALUES_IN_WORD") != std::string::npos;
+    ok &= decoder.find("logic[31:0] VALUE_BITS") == std::string::npos;
+    ok &= decoder.find("logic[31:0] VALUES_IN_WORD") == std::string::npos;
     ok &= decoder.find("TemplateMemberArithmeticTemplateMemberConv16 #(") != std::string::npos;
     ok &= decoder.find(") arithm (") != std::string::npos;
     ok &= arithmetic.find("CONV_TYPE") == std::string::npos;
