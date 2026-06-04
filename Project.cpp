@@ -6,8 +6,6 @@
 #include "Struct.h"
 #include "Enum.h"
 
-#include <cctype>
-#include <cstring>
 #include <unordered_set>
 
 using namespace cpphdl;
@@ -66,47 +64,6 @@ void collectStructImports(const Struct& st, std::vector<std::string>& imports, s
     }
 }
 
-bool isSvIdentChar(char ch)
-{
-    return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '$';
-}
-
-std::string normalizeReplacementModuleName(std::string text, const std::string& moduleName)
-{
-    if (moduleName.empty()) {
-        return text;
-    }
-
-    for (size_t pos = 0; (pos = text.find("module", pos)) != std::string::npos; ++pos) {
-        const bool leftOk = pos == 0 || !isSvIdentChar(text[pos - 1]);
-        const size_t afterModule = pos + strlen("module");
-        const bool rightOk = afterModule >= text.size() || !isSvIdentChar(text[afterModule]);
-        if (!leftOk || !rightOk) {
-            continue;
-        }
-
-        size_t nameStart = text.find_first_not_of(" \t\r\n", afterModule);
-        if (nameStart == std::string::npos || nameStart >= text.size()) {
-            return text;
-        }
-        if (!(std::isalpha(static_cast<unsigned char>(text[nameStart])) || text[nameStart] == '_' || text[nameStart] == '$')) {
-            continue;
-        }
-
-        size_t nameEnd = nameStart + 1;
-        while (nameEnd < text.size() && isSvIdentChar(text[nameEnd])) {
-            ++nameEnd;
-        }
-        const std::string found = text.substr(nameStart, nameEnd - nameStart);
-        if (found != moduleName) {
-            text.replace(nameStart, nameEnd - nameStart, moduleName);
-        }
-        return text;
-    }
-
-    return text;
-}
-
 }
 
 std::vector<std::string> cpphdl::collectStructPackageImports(const Struct& st)
@@ -138,9 +95,8 @@ void Project::generate(const std::string& outDir)
         }
 
         if (!mod.replacement.empty()) {
-            std::string replacement = normalizeReplacementModuleName(mod.replacement, mod.name);
-            out << replacement;
-            if (replacement.back() != '\n') {
+            out << mod.replacement;
+            if (mod.replacement.back() != '\n') {
                 out << "\n";
             }
         } else {
