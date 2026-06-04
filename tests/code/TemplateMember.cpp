@@ -37,6 +37,20 @@ struct TemplateMemberConv16 {
 };
 
 template<typename CONV_TYPE = TemplateMemberNative16>
+struct TemplateMemberArithmeticHelper {
+    CONV_TYPE convert_default_to_conv(TemplateMemberNative16 val)
+    {
+        CONV_TYPE res;
+
+        res.raw = 0;
+        res.data.sign = val.data.sign;
+        res.data.exponent = val.data.exponent & ((1u << CONV_TYPE::EXP_WIDTH) - 1u);
+        res.data.mantissa = val.data.mantissa & ((1u << CONV_TYPE::MANT_WIDTH) - 1u);
+        return res;
+    }
+};
+
+template<typename CONV_TYPE = TemplateMemberNative16>
 class TemplateMemberArithmetic : public Module
 {
 public:
@@ -44,6 +58,7 @@ public:
     _PORT(logic<16>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
+    TemplateMemberArithmeticHelper<CONV_TYPE> helper;
     logic<16> value_comb;
 
     logic<16>& value_comb_func()
@@ -52,10 +67,7 @@ private:
         CONV_TYPE conv;
 
         native.raw = (uint16_t)value_in();
-        conv.raw = 0;
-        conv.data.sign = native.data.sign;
-        conv.data.exponent = native.data.exponent & ((1u << CONV_TYPE::EXP_WIDTH) - 1u);
-        conv.data.mantissa = native.data.mantissa & ((1u << CONV_TYPE::MANT_WIDTH) - 1u);
+        conv = helper.convert_default_to_conv(native);
         value_comb = conv.raw;
         return value_comb;
     }
@@ -205,6 +217,8 @@ static bool check_generated_sv()
     ok &= arithmetic.find("CONV_TYPE") == std::string::npos;
     ok &= arithmetic.find("TemplateMemberConv16_pkg::EXP_WIDTH") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16___convert_default_to_conv") != std::string::npos;
+    ok &= arithmetic.find("TemplateMemberArithmeticHelper___convert_default_to_conv") == std::string::npos;
     ok &= top.find("TemplateMemberDecoderTemplateMemberConv16 #(") != std::string::npos;
     ok &= top.find(") decoder (") != std::string::npos;
     ok &= top.find("unknown(") == std::string::npos;
@@ -326,6 +340,8 @@ int main(int argc, char** argv)
             "Predef_pkg",
             "TemplateMemberNative16_pkg",
             "TemplateMemberConv16_pkg",
+            "TemplateMemberArithmeticHelper_pkg",
+            "TemplateMemberArithmeticHelperTemplateMemberConv16_pkg",
             "TemplateMemberArithmeticTemplateMemberConv16",
             "TemplateMemberDecoderTemplateMemberConv16"
         }, {"../../../../include"}, 1);

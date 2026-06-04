@@ -1074,6 +1074,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     }
 
     unsigned savedFlags = hlp.flags;
+    std::string externalThisTypeName;
     // three types of methods:
     // - module object's methods
     // - base module object's methods
@@ -1089,6 +1090,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), parentName, &params);
             appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            externalThisTypeName = parentName;
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
 
@@ -1103,7 +1105,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
                 }
             }
 
-            cpphdl::Expr expr = hlp.digQT(QT);
+            cpphdl::Expr expr = externalThisTypeName.empty()
+                ? hlp.digQT(QT)
+                : cpphdl::Expr{externalThisTypeName, cpphdl::Expr::EXPR_TYPE};
             QT = QT.getDesugaredType(*hlp.ctx); // remove typedefs, aliases, etc.
 //?            QT = QT.getCanonicalType();        // ensure you have the actual canonical form
             DEBUG_AST(debugIndent, "Param this (" << QT.getAsString() << ")");
