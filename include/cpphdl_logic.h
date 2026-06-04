@@ -138,10 +138,82 @@ struct logic : public bitops<logic<WIDTH>>
         bytes[bitnum/8] = (bytes[bitnum/8]&~(1<<(bitnum%8)))|(in<<(bitnum%8));
     }
 
+    template<size_t WIDTH1>
+    constexpr logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> operator|(const logic<WIDTH1>& rhs) const
+    {
+        logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> result{};
+        for (size_t i = 0; i < result._size_bits(); ++i) {
+            const uint8_t lhsBit = i < WIDTH ? get(i) : 0;
+            const uint8_t rhsBit = i < WIDTH1 ? rhs.get(i) : 0;
+            result.set(i, lhsBit | rhsBit);
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> operator&(const logic<WIDTH1>& rhs) const
+    {
+        logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> result{};
+        for (size_t i = 0; i < result._size_bits(); ++i) {
+            const uint8_t lhsBit = i < WIDTH ? get(i) : 0;
+            const uint8_t rhsBit = i < WIDTH1 ? rhs.get(i) : 0;
+            result.set(i, lhsBit & rhsBit);
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> operator^(const logic<WIDTH1>& rhs) const
+    {
+        logic<(WIDTH > WIDTH1 ? WIDTH : WIDTH1)> result{};
+        for (size_t i = 0; i < result._size_bits(); ++i) {
+            const uint8_t lhsBit = i < WIDTH ? get(i) : 0;
+            const uint8_t rhsBit = i < WIDTH1 ? rhs.get(i) : 0;
+            result.set(i, lhsBit ^ rhsBit);
+        }
+        return result;
+    }
+
+    constexpr logic<WIDTH> operator~() const
+    {
+        logic<WIDTH> result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) ^ 1u);
+        }
+        return result;
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    constexpr logic<WIDTH> operator<<(T shift) const
+    {
+        logic<WIDTH> result{};
+        const size_t sh = static_cast<size_t>(shift);
+        if (sh >= WIDTH) {
+            return result;
+        }
+        for (size_t i = sh; i < WIDTH; ++i) {
+            result.set(i, get(i - sh));
+        }
+        return result;
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+    constexpr logic<WIDTH> operator>>(T shift) const
+    {
+        logic<WIDTH> result{};
+        const size_t sh = static_cast<size_t>(shift);
+        if (sh >= WIDTH) {
+            return result;
+        }
+        for (size_t i = 0; i + sh < WIDTH; ++i) {
+            result.set(i, get(i + sh));
+        }
+        return result;
+    }
+
     using bitops<logic<WIDTH>>::operator&;
     using bitops<logic<WIDTH>>::operator|;
     using bitops<logic<WIDTH>>::operator^;
-    using bitops<logic<WIDTH>>::operator~;
     using bitops<logic<WIDTH>>::operator<<;
     using bitops<logic<WIDTH>>::operator>>;
     using bitops<logic<WIDTH>>::operator+;
