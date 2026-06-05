@@ -588,6 +588,10 @@ public:
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
+        ethgig_mac.local_mac_in = _ASSIGN(logic<48>(0x110000000002ull));
+        ethgig_mac.local_ip_in = _ASSIGN((uint32_t)0);
+        ethgig_mac.local_mask_in = _ASSIGN((uint32_t)0);
+        ethgig_mac.promisc_in = _ASSIGN(false);
         ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
         ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
         ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
@@ -615,6 +619,9 @@ public:
         ethgig_phy.rgmii_rx_ctl_in = ethgig_verif.rgmii_rx_ctl_out;
         ethgig_phy.rgmii_rxd_in = ethgig_verif.rgmii_rxd_out;
         ethgig_phy.rgmii_rx_last_in = ethgig_verif.rgmii_rx_last_out;
+        ethgig_phy.mdio_mdc_in = _ASSIGN(false);
+        ethgig_phy.mdio_host_oe_in = _ASSIGN(false);
+        ethgig_phy.mdio_host_data_in = _ASSIGN(true);
         sdcard.sd_cmd_ready_in = sdcard_verif.sd_cmd_ready_out;
         sdcard.sd_rsp_valid_in = sdcard_verif.sd_rsp_valid_out;
         sdcard.sd_rsp_data_in = sdcard_verif.sd_rsp_data_out;
@@ -787,6 +794,10 @@ public:
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
+        ethgig_mac.local_mac_in = _ASSIGN(logic<48>(0x110000000002ull));
+        ethgig_mac.local_ip_in = _ASSIGN((uint32_t)0);
+        ethgig_mac.local_mask_in = _ASSIGN((uint32_t)0);
+        ethgig_mac.promisc_in = _ASSIGN(false);
         ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
         ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
         ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
@@ -814,6 +825,9 @@ public:
         ethgig_phy.rgmii_rx_ctl_in = ethgig_verif.rgmii_rx_ctl_out;
         ethgig_phy.rgmii_rxd_in = ethgig_verif.rgmii_rxd_out;
         ethgig_phy.rgmii_rx_last_in = ethgig_verif.rgmii_rx_last_out;
+        ethgig_phy.mdio_mdc_in = _ASSIGN(false);
+        ethgig_phy.mdio_host_oe_in = _ASSIGN(false);
+        ethgig_phy.mdio_host_data_in = _ASSIGN(true);
         uart.__inst_name = __inst_name + "/uart";
         clint.__inst_name = __inst_name + "/clint";
         plic.__inst_name = __inst_name + "/plic";

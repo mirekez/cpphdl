@@ -50,6 +50,10 @@ public:
         mac.tx_valid_in = dma.mac_tx_valid_out;
         mac.tx_data_in = dma.mac_tx_data_out;
         mac.tx_last_in = dma.mac_tx_last_out;
+        mac.local_mac_in = _ASSIGN(logic<48>(0x020000000002ull));
+        mac.local_ip_in = _ASSIGN((uint32_t)0xc0a8012au);
+        mac.local_mask_in = _ASSIGN((uint32_t)0xffffff00u);
+        mac.promisc_in = _ASSIGN(false);
         dma.mac_tx_ready_in = mac.tx_ready_out;
 
         dma.mac_rx_valid_in = mac.rx_valid_out;
@@ -83,6 +87,9 @@ public:
         phy.rgmii_rx_ctl_in = rgmii_rx_ctl_in;
         phy.rgmii_rxd_in = rgmii_rxd_in;
         phy.rgmii_rx_last_in = rgmii_rx_last_in;
+        phy.mdio_mdc_in = _ASSIGN(false);
+        phy.mdio_host_oe_in = _ASSIGN(false);
+        phy.mdio_host_data_in = _ASSIGN(true);
         tx_irq_out = _ASSIGN(dma.tx_irq_out());
         rx_irq_out = _ASSIGN(dma.rx_irq_out());
         debug_state_out = _ASSIGN(dma.debug_state_out());
@@ -333,6 +340,52 @@ public:
         return false;
     }
 
+    static uint32_t crc32_next(uint32_t crc, uint8_t data)
+    {
+        uint32_t value = crc ^ data;
+        for (uint32_t i = 0; i < 8; ++i) {
+            value = (value & 1u) ? ((value >> 1) ^ 0xedb88320u) : (value >> 1);
+        }
+        return value;
+    }
+
+    static std::vector<uint8_t> make_wire_frame(const std::vector<uint8_t>& packet)
+    {
+        std::vector<uint8_t> payload = packet;
+        uint32_t crc = 0xffffffffu;
+        uint32_t fcs;
+        while (payload.size() < 60) {
+            payload.push_back(0);
+        }
+        for (uint8_t value : payload) {
+            crc = crc32_next(crc, value);
+        }
+        fcs = ~crc;
+        std::vector<uint8_t> wire;
+        for (uint32_t i = 0; i < 7; ++i) {
+            wire.push_back(0x55);
+        }
+        wire.push_back(0xd5);
+        wire.insert(wire.end(), payload.begin(), payload.end());
+        for (uint32_t i = 0; i < 4; ++i) {
+            wire.push_back((uint8_t)((fcs >> (i * 8u)) & 0xffu));
+        }
+        return wire;
+    }
+
+    static bool prefix_matches(const std::vector<uint8_t>& got, const std::vector<uint8_t>& expected)
+    {
+        if (got.size() < expected.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < expected.size(); ++i) {
+            if (got[i] != expected[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool run()
     {
         std::print("CppHDL TestEthGigDMA...");
@@ -362,7 +415,7 @@ public:
         for (int i = 0; i < 200 && !verif.has_tx_packet(); ++i) {
             cycle(false);
         }
-        if (!verif.has_tx_packet() || verif.pop_tx_packet() != tx) {
+        if (!verif.has_tx_packet() || verif.pop_tx_packet() != make_wire_frame(tx)) {
             std::print("\nERROR: TX DMA frame did not reach RGMII verifier\n");
             error = true;
         }
@@ -386,15 +439,15 @@ public:
         for (int i = 0; i < 100; ++i) {
             cycle(false);
         }
-        verif.push_rx_packet(rx);
+        verif.push_rx_packet(make_wire_frame(rx));
         if (!wait_for(true)) {
             std::print("\nERROR: RX DMA did not interrupt, state={}, rx_ready={}\n",
                 dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
             error = true;
         }
-        auto rx_got = mem_read_packet(RX_BUF, rx.size());
-        if (rx_got != rx) {
-            std::print("\nERROR: RX DMA packet mismatch got={} expected={}\n", rx_got.size(), rx.size());
+        auto rx_got = mem_read_packet(RX_BUF, 60);
+        if (!prefix_matches(rx_got, rx)) {
+            std::print("\nERROR: RX DMA packet mismatch got={} expected-prefix={}\n", rx_got.size(), rx.size());
             std::print("got:");
             for (uint8_t value : rx_got) {
                 std::print(" {:02x}", value);
