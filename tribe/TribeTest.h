@@ -570,8 +570,8 @@ public:
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
         iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
-        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE100);
-        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[5] = _ASSIGN((uint32_t)0x10000);
         iospace.region_size_in[5] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
@@ -588,10 +588,10 @@ public:
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
-        ethgig_mac.local_mac_in = _ASSIGN(logic<48>(0x110000000002ull));
+        ethgig_mac.local_mac_in = ethgig_dma.local_mac_out;
         ethgig_mac.local_ip_in = _ASSIGN((uint32_t)0);
         ethgig_mac.local_mask_in = _ASSIGN((uint32_t)0);
-        ethgig_mac.promisc_in = _ASSIGN(false);
+        ethgig_mac.promisc_in = ethgig_dma.promisc_out;
         ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
         ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
         ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
@@ -733,8 +733,8 @@ public:
         iospace.region_size_in[2] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[3] = _ASSIGN((uint32_t)0xD100);
         iospace.region_size_in[3] = _ASSIGN((uint32_t)0x100);
-        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE100);
-        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x100);
+        iospace.region_base_in[4] = _ASSIGN((uint32_t)0xE000);
+        iospace.region_size_in[4] = _ASSIGN((uint32_t)0x1000);
         iospace.region_base_in[5] = _ASSIGN((uint32_t)0x10000);
         iospace.region_size_in[5] = _ASSIGN((uint32_t)0x210000);
         iospace.__inst_name = __inst_name + "/iospace";
@@ -794,10 +794,10 @@ public:
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
-        ethgig_mac.local_mac_in = _ASSIGN(logic<48>(0x110000000002ull));
+        ethgig_mac.local_mac_in = ethgig_dma.local_mac_out;
         ethgig_mac.local_ip_in = _ASSIGN((uint32_t)0);
         ethgig_mac.local_mask_in = _ASSIGN((uint32_t)0);
-        ethgig_mac.promisc_in = _ASSIGN(false);
+        ethgig_mac.promisc_in = ethgig_dma.promisc_out;
         ethgig_dma.mac_tx_ready_in = ethgig_mac.tx_ready_out;
         ethgig_dma.mac_rx_valid_in = ethgig_mac.rx_valid_out;
         ethgig_dma.mac_rx_data_in = ethgig_mac.rx_data_out;
