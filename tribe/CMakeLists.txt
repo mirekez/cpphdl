@@ -8,6 +8,13 @@ include(CTest)
 set(TRIBE_RAM_BYTES_CONFIG "458752" CACHE STRING "Tribe RAM size in bytes")
 set(TRIBE_IO_REGION_SIZE_CONFIG "4194304" CACHE STRING "Tribe IO region size in bytes")
 
+add_executable(ethgig_tap linux/net/ethgig_tap.cpp)
+set_target_properties(ethgig_tap PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tribe_linux/net
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/tribe_linux/net
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/tribe_linux/net
+)
+
 set(TRIBE_BUILD_BAREMETAL_SCRIPT "${CMAKE_BINARY_DIR}/tribe_build_baremetal.sh")
 file(WRITE "${TRIBE_BUILD_BAREMETAL_SCRIPT}" [=[
 #!/usr/bin/env bash
