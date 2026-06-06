@@ -79,7 +79,7 @@ public:
     }
 };
 
-bool TestTribe::run(std::string filename, size_t start_offset, std::string expected_log, uint64_t max_cycles, uint32_t tohost, uint32_t mem_base, uint32_t ram_words, bool raw_program, uint32_t boot_hartid_arg, uint32_t boot_dtb_addr_arg, uint32_t boot_priv_arg, bool elf_phys_override, uint32_t elf_phys_offset, const std::string& dtb_file, bool linux_earlycon_mapbase, const std::string& initramfs_file, uint32_t initramfs_addr, const std::string& checkpoint_load_file, const std::string& checkpoint_save_file, uint64_t checkpoint_save_cycle, bool append_output, const std::string& bootargs, bool checkpoint_save_only_success, const std::string& expected_output_contains, const std::string& test_label, bool mirror_uart_output, bool interactive_uart_input, const std::string& checkpoint_save_after, const std::string& sd_image_file)
+bool TestTribe::run(std::string filename, size_t start_offset, std::string expected_log, uint64_t max_cycles, uint32_t tohost, uint32_t mem_base, uint32_t ram_words, bool raw_program, uint32_t boot_hartid_arg, uint32_t boot_dtb_addr_arg, uint32_t boot_priv_arg, bool elf_phys_override, uint32_t elf_phys_offset, const std::string& dtb_file, bool linux_earlycon_mapbase, const std::string& initramfs_file, uint32_t initramfs_addr, const std::string& checkpoint_load_file, const std::string& checkpoint_save_file, uint64_t checkpoint_save_cycle, bool append_output, const std::string& bootargs, bool checkpoint_save_only_success, const std::string& expected_output_contains, const std::string& test_label, bool mirror_uart_output, bool interactive_uart_input, const std::string& checkpoint_save_after, const std::string& sd_image_file, const std::string& eth_tap_socket_path)
     {
         std::string label = test_label.empty() ? std::filesystem::path(filename).filename().string() : test_label;
         if (label.empty()) {
@@ -213,6 +213,10 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
+        eth_loopback_enabled = std::getenv("TRIBE_ETH_LOOPBACK") != nullptr;
+        if (!eth_tap_socket_path.empty() && !eth_tap_socket.open(eth_tap_socket_path)) {
+            return false;
+        }
         const char* uart_input_env = std::getenv("TRIBE_UART_INPUT");
         const char* uart_input_after_env = std::getenv("TRIBE_UART_INPUT_AFTER");
         std::string scripted_uart_input = uart_input_env ? uart_input_env : "";
@@ -358,6 +362,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
             return trace_uart_rx_file ? trace_uart_rx_file : stdout;
         };
         const bool uart_ctrl_c_to_guest = std::getenv("TRIBE_UART_CTRL_C_TO_GUEST") != nullptr;
+        const bool uart_ctrl_z_to_guest = std::getenv("TRIBE_UART_CTRL_Z_TO_GUEST") != nullptr;
         const char* trace_after_env = std::getenv("TRIBE_TRACE_AFTER");
         std::string trace_after = trace_after_env ? trace_after_env : "";
         bool trace_after_seen = trace_after.empty();
@@ -543,6 +548,16 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                         host_interrupt = true;
                     }
                 }
+                if (tribe_uart_stdin_sigtstp_pending) {
+                    tribe_uart_stdin_sigtstp_pending = 0;
+                    if (uart_ctrl_z_to_guest) {
+                        interactive_uart_queue.push_back(0x1a);
+                    }
+                    else {
+                        std::print("\n*** Suspended by Ctrl+Z; use 'fg' to resume ***\n");
+                        stdin_raw.suspend_to_shell();
+                    }
+                }
                 for (size_t stdin_reads = 0; stdin_reads < 64 && !host_interrupt; ++stdin_reads) {
                     unsigned char ch = 0;
                     ssize_t got = read(STDIN_FILENO, &ch, 1);
@@ -550,6 +565,11 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                         if (ch == 0x03 && !uart_ctrl_c_to_guest) {
                             host_interrupt = true;
                             std::print("\n*** Interrupted by Ctrl+C ***\n");
+                            break;
+                        }
+                        if (ch == 0x1a && !uart_ctrl_z_to_guest) {
+                            std::print("\n*** Suspended by Ctrl+Z; use 'fg' to resume ***\n");
+                            stdin_raw.suspend_to_shell();
                             break;
                         }
                         if (!normalize_interactive_uart_byte(ch, interactive_uart_previous_cr, ch)) {
@@ -606,6 +626,10 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 if (ch == 0x03 && !uart_ctrl_c_to_guest) {
                     host_interrupt = true;
                     std::print("\n*** Interrupted by Ctrl+C ***\n");
+                }
+                else if (ch == 0x1a && !uart_ctrl_z_to_guest) {
+                    std::print("\n*** Suspended by Ctrl+Z; use 'fg' to resume ***\n");
+                    stdin_raw.suspend_to_shell();
                 }
                 else {
                     drive_uart_rx(true, ch);
@@ -1339,6 +1363,7 @@ int main (int argc, char** argv)
     std::string dtb_file;
     std::string initramfs_file;
     std::string sd_image_file;
+    std::string eth_tap_socket_path;
     uint32_t initramfs_addr = 0;
     std::string checkpoint_load_file;
     std::string checkpoint_save_file;
@@ -1437,6 +1462,10 @@ int main (int argc, char** argv)
             sd_image_file = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--eth-tap-socket") == 0 && i + 1 < argc) {
+            eth_tap_socket_path = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--checkpoint-load") == 0 && i + 1 < argc) {
             checkpoint_load_file = argv[++i];
             continue;
@@ -1513,6 +1542,9 @@ int main (int argc, char** argv)
     if (!sd_image_file.empty()) {
         sd_image_file = absolute_from(original_cwd, sd_image_file).string();
     }
+    if (!eth_tap_socket_path.empty() && eth_tap_socket_path[0] != '/') {
+        eth_tap_socket_path = absolute_from(original_cwd, eth_tap_socket_path).string();
+    }
     if (!checkpoint_load_file.empty()) {
         checkpoint_load_file = absolute_from(original_cwd, checkpoint_load_file).string();
     }
@@ -1582,7 +1614,7 @@ int main (int argc, char** argv)
 #endif
 
     return !( ok
-        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, expected_output_contains, "", mirror_uart_output, interactive_uart_input, checkpoint_save_after, sd_image_file))
+        && ((only != -1 && only != 0) || TestTribe(debug).run(program, start_offset, expected_log, max_cycles, tohost, start_mem_addr, ram_size, raw_program, boot_hartid, boot_dtb_addr, boot_priv, elf_phys_override, elf_phys_offset, dtb_file, linux_earlycon_mapbase, initramfs_file, initramfs_addr, checkpoint_load_file, checkpoint_save_file, checkpoint_save_cycle, append_output, bootargs, false, expected_output_contains, "", mirror_uart_output, interactive_uart_input, checkpoint_save_after, sd_image_file, eth_tap_socket_path))
     );
 }
 

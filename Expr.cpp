@@ -66,6 +66,109 @@ std::string sizedCpphdlWidth(const std::string& name, const char* prefix)
     return width;
 }
 
+std::string templateWidth(const std::string& value, const char* prefix)
+{
+    size_t pos = value.find(prefix);
+    if (pos == std::string::npos) {
+        return "";
+    }
+    pos += strlen(prefix);
+    size_t end = value.find('>', pos);
+    if (end == std::string::npos) {
+        return "";
+    }
+    return value.substr(pos, end - pos);
+}
+
+size_t numericWidth(const std::string& width)
+{
+    if (width.empty()) {
+        return 0;
+    }
+    if (width.size() > 2 && width[0] == '\'' && (width[1] == 'h' || width[1] == 'H')) {
+        return std::stoull(width.substr(2), nullptr, 16);
+    }
+    if (width.size() > 2 && width[0] == '\'' && (width[1] == 'd' || width[1] == 'D')) {
+        return std::stoull(width.substr(2), nullptr, 10);
+    }
+    for (char c : width) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) {
+            return 0;
+        }
+    }
+    return std::stoull(width);
+}
+
+bool knownWidth(size_t width)
+{
+    return width != 0 && width != (size_t)-1;
+}
+
+std::string trim(std::string text)
+{
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
+        text.erase(text.begin());
+    }
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
+        text.pop_back();
+    }
+    return text;
+}
+
+size_t inferExprWidth(const std::string& text)
+{
+    size_t select = text.rfind("+:");
+    if (select != std::string::npos) {
+        select += 2;
+        size_t end = text.find(']', select);
+        if (end != std::string::npos) {
+            return numericWidth(trim(text.substr(select, end - select)));
+        }
+    }
+
+    size_t cast = text.find("'(");
+    if (cast != std::string::npos) {
+        size_t start = cast;
+        while (start > 0 && std::isdigit(static_cast<unsigned char>(text[start - 1]))) {
+            --start;
+        }
+        if (start != cast) {
+            return numericWidth(text.substr(start, cast - start));
+        }
+    }
+
+    return 0;
+}
+
+std::string sizedCast(const std::string& text, size_t width)
+{
+    return std::to_string(width) + "'(" + text + ")";
+}
+
+size_t multiplyWidth(const std::string& left, size_t left_width, const std::string& right, size_t right_width)
+{
+    if (!knownWidth(left_width)) {
+        left_width = inferExprWidth(left);
+    }
+    if (!knownWidth(right_width)) {
+        right_width = inferExprWidth(right);
+    }
+    if (knownWidth(left_width) && knownWidth(right_width)) {
+        return left_width + right_width;
+    }
+    return 0;
+}
+
+std::string multiplyExpr(std::string left, size_t left_width, std::string right, size_t right_width)
+{
+    size_t product_width = multiplyWidth(left, left_width, right, right_width);
+    if (knownWidth(product_width)) {
+        left = sizedCast(left, product_width);
+        right = sizedCast(right, product_width);
+    }
+    return left + "*" + right;
+}
+
 std::string memberArrayPortRef(Expr indexed, std::string member, const std::string& suffix, bool allowInterface)
 {
     std::string root;
@@ -251,6 +354,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     e.flags |= FLAG_BRACKETS;
                 }
             }
+            if (value == "*") {
+                std::string mul_left = sub[0].str();
+                size_t left_width = sub[0].declSize;
+                std::string mul_right = sub[1].str();
+                size_t right_width = sub[1].declSize;
+                declSize = multiplyWidth(mul_left, left_width, mul_right, right_width);
+                std::string mul = multiplyExpr(mul_left, left_width, mul_right, right_width);
+                if ((flags&FLAG_BRACKETS)) {
+                    return indent_str + prefix + "(" + mul + ")";
+                }
+                return indent_str + prefix + mul;
+            }
             if ((flags&FLAG_BRACKETS)) {
                 return indent_str + prefix + "(" + sub[0].str() + (value=="*" || value=="/" ? value : " " + value + " ") + sub[1].str() + ")";
             } else {
@@ -367,6 +482,20 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.length() && (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '*' || value[0] == '/'
                 || value[0] == '!' || value[0] == '<' || value[0] == '>')) {  // all operators
                 ASSERT(sub.size() >= 2);
+                if (value == "*") {
+                    sub[0].flags |= FLAG_BRACKETS;
+                    sub[1].flags |= FLAG_BRACKETS;
+                    std::string mul_left = sub[0].str();
+                    size_t left_width = sub[0].declSize;
+                    std::string mul_right = sub[1].str();
+                    size_t right_width = sub[1].declSize;
+                    declSize = multiplyWidth(mul_left, left_width, mul_right, right_width);
+                    std::string mul = multiplyExpr(mul_left, left_width, mul_right, right_width);
+                    if ((flags&FLAG_BRACKETS)) {
+                        return indent_str + prefix + "(" + mul + ")";
+                    }
+                    return indent_str + prefix + mul;
+                }
                 if ((flags&FLAG_BRACKETS)) {
                     return indent_str + prefix + "(" + sub[0].str() + " " + value + " " + sub[1].str() + ")";
                 } else {
@@ -447,6 +576,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (sub.size() >= 3 && value == "bits" && sub[0].value != "_this") {
                 Expr width = Expr{"+", EXPR_OPERATORCALL, {Expr{"-", EXPR_OPERATORCALL, {sub[1],sub[2]}}, Expr{"1", EXPR_NUM}}}.simplify();
+                declSize = numericWidth(width.str());
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:" + width.str() + "]";
             }
             if (str_ending(value, "_comb_func")) {
@@ -585,9 +715,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_CAST:
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
-            str_replace(value, "cpphdl_logic", "");
+            if (value.find("cpphdl_logic") == 0) {
+                std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
+                declSize = numericWidth(width);
+                return indent_str + sub[0].str(prefix, suffix);
+            }
             // considering casting names as special case since Verilog cant cast using logic[31:0]'val  (what a strange language)
             if (value.find("logic") == 0) {
+                declSize = numericWidth(templateWidth(value, "logic<"));
                 return indent_str + sub[0].str(prefix, suffix);
             } else
             if (value == "signedchar") {
@@ -619,6 +754,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 if (width.empty()) {
                     return indent_str + sub[0].str(prefix, suffix);
                 }
+                declSize = numericWidth(width);
                 return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
             } else
             if (value.find("cpphdl_i") == 0) {
@@ -626,6 +762,17 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 if (width.empty()) {
                     return indent_str + sub[0].str(prefix, suffix);
                 }
+                declSize = numericWidth(width);
+                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+            }
+            if (value.find("u<") == 0) {
+                std::string width = templateWidth(value, "u<");
+                declSize = numericWidth(width);
+                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+            } else
+            if (value.find("i<") == 0) {
+                std::string width = templateWidth(value, "i<");
+                declSize = numericWidth(width);
                 return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
             }
             return indent_str + /*typeToSV(value) + "'(" + */sub[0].str(prefix, suffix);// + ")";  // cast only simple types
@@ -853,18 +1000,6 @@ std::string Expr::typeToSV(std::string type, std::string size)
     std::string logic = (flags&FLAG_WIRE) ? "wire" : ((flags&FLAG_REG)&&!(flags&FLAG_NOTREG) ? "reg" : "logic");
 
     std::string str = type;//genTypeName(type);
-    auto templateWidth = [](const std::string& value, const char* prefix) -> std::string {
-        size_t pos = value.find(prefix);
-        if (pos == std::string::npos) {
-            return "";
-        }
-        pos += strlen(prefix);
-        size_t end = value.find('>', pos);
-        if (end == std::string::npos) {
-            return "";
-        }
-        return value.substr(pos, end - pos);
-    };
     if (type.compare(0, 5, "const") == 0) {
         type = type.substr(5);
     }
@@ -882,15 +1017,15 @@ std::string Expr::typeToSV(std::string type, std::string size)
     std::string logic_width = templateWidth(type, "logic<");
     if (!u_width.empty()) {
         str = logic + size + "[" + u_width + "-1:0]";
-        declSize = 8;
+        declSize = numericWidth(u_width);
     } else
     if (!i_width.empty()) {
         str = logic + " signed" + size + "[" + i_width + "-1:0]";
-        declSize = 8;
+        declSize = numericWidth(i_width);
     } else
     if (!logic_width.empty()) {
         str = logic + size + "[" + logic_width + "-1:0]";
-        declSize = 8;
+        declSize = numericWidth(logic_width);
     } else
     if (type == "cpphdl_logic") {
         str = logic + size;
@@ -911,12 +1046,12 @@ std::string Expr::typeToSV(std::string type, std::string size)
     if (type.find("cpphdl_u") == 0) {
         std::string width = sizedCpphdlWidth(type, "cpphdl_u");
         str = logic + size + "[" + width + "-1:0]";
-        declSize = 8;
+        declSize = numericWidth(width);
     } else
     if (type.find("cpphdl_i") == 0) {
         std::string width = sizedCpphdlWidth(type, "cpphdl_i");
         str = logic + " signed" + size + "[" + width + "-1:0]";
-        declSize = 8;
+        declSize = numericWidth(width);
     } else
     if (type == "bool") {
         str = logic + size;

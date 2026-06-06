@@ -159,9 +159,13 @@ class LogicCast : public Module
 public:
     _PORT(logic<16>) value_in;
     _PORT(logic<16>) value_out = _ASSIGN_COMB(value_out_comb_func());
+    _PORT(logic<16>) product_out = _ASSIGN_COMB(product_out_comb_func());
+    _PORT(logic<20>) product_mixed_out = _ASSIGN_COMB(product_mixed_out_comb_func());
 
 private:
     logic<16> value_out_comb;
+    logic<16> product_out_comb;
+    logic<20> product_mixed_out_comb;
 
     logic<16>& value_out_comb_func()
     {
@@ -170,6 +174,18 @@ private:
         value_out_comb.bits(7, 4) = logic<4>(0xa);
         value_out_comb[8] = 1;
         return value_out_comb;
+    }
+
+    logic<16>& product_out_comb_func()
+    {
+        product_out_comb = logic<8>(value_in().bits(7, 0)) * logic<8>(value_in().bits(15, 8));
+        return product_out_comb;
+    }
+
+    logic<20>& product_mixed_out_comb_func()
+    {
+        product_mixed_out_comb = logic<12>(value_in().bits(11, 0)) * logic<8>(value_in().bits(15, 8));
+        return product_mixed_out_comb;
     }
 
 public:
@@ -248,6 +264,24 @@ public:
 #endif
     }
 
+    logic<16> product_output()
+    {
+#ifdef VERILATOR
+        return logic<16>((uint16_t)dut.product_out);
+#else
+        return dut.product_out();
+#endif
+    }
+
+    logic<20> product_mixed_output()
+    {
+#ifdef VERILATOR
+        return logic<20>((uint32_t)dut.product_mixed_out);
+#else
+        return dut.product_mixed_out();
+#endif
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -276,6 +310,22 @@ public:
             uint16_t got = (uint16_t)output();
             if (got != expected) {
                 std::print("\nERROR: sample=0x{:04x} got=0x{:04x} expected=0x{:04x}\n", sample, got, expected);
+                error = true;
+            }
+
+            uint16_t product_expected = (uint16_t)((sample & 0xffu) * ((sample >> 8) & 0xffu));
+            uint16_t product_got = (uint16_t)product_output();
+            if (product_got != product_expected) {
+                std::print("\nERROR: logic product sample=0x{:04x} got=0x{:04x} expected=0x{:04x}\n",
+                    sample, product_got, product_expected);
+                error = true;
+            }
+
+            uint32_t product_mixed_expected = (sample & 0xfffu) * ((sample >> 8) & 0xffu);
+            uint32_t product_mixed_got = (uint32_t)product_mixed_output();
+            if (product_mixed_got != product_mixed_expected) {
+                std::print("\nERROR: mixed logic product sample=0x{:04x} got=0x{:05x} expected=0x{:05x}\n",
+                    sample, product_mixed_got, product_mixed_expected);
                 error = true;
             }
 

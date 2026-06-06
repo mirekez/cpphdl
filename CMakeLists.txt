@@ -55,6 +55,9 @@ project(cpphdl
   LANGUAGES C CXX)
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
+option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
+option(CPPHDL_BUILD_TESTS "Build CppHDL standalone tests" ON)
+option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
 
 include(CTest)
 
@@ -104,6 +107,29 @@ if(NOT CPPHDL_STDCXXEXP)
   if(CPPHDL_STDCXXEXP_CANDIDATES)
     list(GET CPPHDL_STDCXXEXP_CANDIDATES 0 CPPHDL_STDCXXEXP)
   endif()
+endif()
+
+include(CheckCXXSourceCompiles)
+set(CPPHDL_STACKTRACE_TEST_SOURCE [=[
+#include <stacktrace>
+int main()
+{
+    auto trace = std::stacktrace::current();
+    return trace.size() == 0 ? 0 : 0;
+}
+]=])
+check_cxx_source_compiles("${CPPHDL_STACKTRACE_TEST_SOURCE}" CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS)
+if(NOT CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS AND CPPHDL_STDCXXEXP)
+  set(CMAKE_REQUIRED_LIBRARIES_SAVE "${CMAKE_REQUIRED_LIBRARIES}")
+  set(CMAKE_REQUIRED_LIBRARIES "${CPPHDL_STDCXXEXP}")
+  check_cxx_source_compiles("${CPPHDL_STACKTRACE_TEST_SOURCE}" CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP)
+  set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES_SAVE}")
+endif()
+if(CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS OR CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP)
+  message(STATUS "CppHDL stacktrace support enabled")
+  add_compile_definitions(CPPHDL_HAVE_STACKTRACE=1)
+else()
+  message(STATUS "CppHDL stacktrace support disabled: <stacktrace> did not link")
 endif()
 
 function(cpphdl_link_stdcxxexp_if_available target)
@@ -302,9 +328,15 @@ if(CPPHDL_USING_FETCHED_LLVM)
 endif()
 cpphdl_link_stdcxxexp_if_available(cpphdl)
 
-add_subdirectory(examples)
-add_subdirectory(tests)
-add_subdirectory(tribe)
+if(CPPHDL_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+if(CPPHDL_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
+if(CPPHDL_BUILD_TRIBE)
+  add_subdirectory(tribe)
+endif()
 if(CPPHDL_BUILD_HDLCPP)
   add_subdirectory(hdlcpp)
 endif()

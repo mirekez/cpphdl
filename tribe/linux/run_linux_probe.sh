@@ -25,6 +25,7 @@ TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 TRIBE_LINUX_BAUD="${TRIBE_LINUX_BAUD:-1000000}"
 TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon=uart,mmio,0x82000000 unaligned_scalar_speed=slow}"
 TRIBE_LINUX_SD_IMAGE="${TRIBE_LINUX_SD_IMAGE:-}"
+TRIBE_LINUX_ETH_TAP_SOCKET="${TRIBE_LINUX_ETH_TAP_SOCKET:-}"
 TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-50000000}"
 TRIBE_TIMEBASE_HZ="${TRIBE_TIMEBASE_HZ:-$((TRIBE_CPU_CLOCK_HZ / TRIBE_CLINT_TICK_DIV))}"
 
@@ -41,6 +42,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             TRIBE_LINUX_SD_IMAGE="$2"
+            shift 2
+            ;;
+        --eth-tap-socket)
+            if [[ $# -lt 2 ]]; then
+                echo "--eth-tap-socket requires a socket path" >&2
+                exit 1
+            fi
+            TRIBE_LINUX_ETH_TAP_SOCKET="$2"
             shift 2
             ;;
         *)
@@ -299,6 +308,9 @@ if [[ "${TRIBE_LINUX_MIRROR_UART:-0}" == "1" ]]; then
 fi
 if [[ -n "${TRIBE_LINUX_SD_IMAGE}" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--sd-image "${TRIBE_LINUX_SD_IMAGE}")
+fi
+if [[ -n "${TRIBE_LINUX_ETH_TAP_SOCKET}" ]]; then
+    TRIBE_CHECKPOINT_ARGS+=(--eth-tap-socket "${TRIBE_LINUX_ETH_TAP_SOCKET}")
 fi
 if [[ -n "${TRIBE_EXPECTED_OUTPUT_CONTAINS:-}" ]]; then
     TRIBE_CHECKPOINT_ARGS+=(--expected-output-contains "${TRIBE_EXPECTED_OUTPUT_CONTAINS}")

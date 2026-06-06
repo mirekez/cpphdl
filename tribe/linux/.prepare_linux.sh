@@ -218,6 +218,24 @@ path.write_text(f"""/dts-v1/;
 \t\t\tstatus = "okay";
 \t\t}};
 
+\t\teth0: ethernet@8200e000 {{
+\t\t\tcompatible = "xlnx,axi-ethernet-2.01.a";
+\t\t\treg = <0x8200e000 0x100>, <0x8200e100 0x100>;
+\t\t\tinterrupt-parent = <&plic0>;
+\t\t\tinterrupts = <3 3 3>;
+\t\t\tphy-mode = "rgmii";
+\t\t\tmac-address = [02 00 00 00 00 02];
+\t\t\tlocal-mac-address = [02 00 00 00 00 02];
+\t\t\txlnx,rxmem = <0x800>;
+\t\t\txlnx,txcsum = <0>;
+\t\t\txlnx,rxcsum = <0>;
+\t\t\tstatus = "okay";
+\t\t\tfixed-link {{
+\t\t\t\tspeed = <1000>;
+\t\t\t\tfull-duplex;
+\t\t\t}};
+\t\t}};
+
 \t\tplic0: interrupt-controller@82010000 {{
 \t\t\t#interrupt-cells = <1>;
 \t\t\tinterrupt-controller;
@@ -288,8 +306,18 @@ prepare_config()
     if [[ -x "${KERNEL_SRC}/scripts/config" ]]; then
         "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e BLK_DEV_TRIBE_SD
         "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e EXT2_FS
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e NET
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e INET
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e NETDEVICES
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e ETHERNET
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e NET_VENDOR_XILINX
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e DMADEVICES
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e XILINX_DMA
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e XILINX_AXI_EMAC
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e PHYLINK
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e FIXED_PHY
     else
-        for option in BLK_DEV_TRIBE_SD EXT2_FS; do
+        for option in BLK_DEV_TRIBE_SD EXT2_FS NET INET NETDEVICES ETHERNET NET_VENDOR_XILINX DMADEVICES XILINX_DMA XILINX_AXI_EMAC PHYLINK FIXED_PHY; do
             if grep -q "^CONFIG_${option}=" "${dst_config}"; then
                 sed -i "s/^CONFIG_${option}=.*/CONFIG_${option}=y/" "${dst_config}"
             elif grep -q "^# CONFIG_${option} is not set" "${dst_config}"; then

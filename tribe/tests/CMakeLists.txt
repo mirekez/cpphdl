@@ -118,6 +118,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         Checkpoint_test
         Cpp_test
         EthGigDMA_test
+        EthGigCPU_test
         EthGigMac_test
         IOUART_test
         MMU_TLB_Test
@@ -176,6 +177,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         OR target_name STREQUAL "CLINT_test"
         OR target_name STREQUAL "CPU_test"
         OR target_name STREQUAL "Cpp_test"
+        OR target_name STREQUAL "EthGigCPU_test"
         OR target_name STREQUAL "IOUART_test"
         OR target_name STREQUAL "Linux_test"
         OR target_name STREQUAL "MMU_TLB_Test"
@@ -217,6 +219,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         CPU_test
         Checkpoint_test
         Cpp_test
+        EthGigCPU_test
         EthGigMac_test
         IOUART_test
         L1Cache_test

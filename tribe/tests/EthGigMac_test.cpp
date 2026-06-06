@@ -58,12 +58,22 @@ public:
     _PORT(bool) host_rx_last_out;
     _PORT(bool) host_rx_ready_in;
 
+    _PORT(logic<48>) local_mac_in;
+    _PORT(uint32_t) local_ip_in;
+    _PORT(uint32_t) local_mask_in;
+    _PORT(bool) promisc_in;
+
     _PORT(bool) rgmii_tx_ctl_out;
     _PORT(u<4>) rgmii_txd_out;
     _PORT(bool) rgmii_tx_last_out;
     _PORT(bool) rgmii_rx_ctl_in;
     _PORT(u<4>) rgmii_rxd_in;
     _PORT(bool) rgmii_rx_last_in;
+    _PORT(bool) mdio_mdc_in;
+    _PORT(bool) mdio_host_oe_in;
+    _PORT(bool) mdio_host_data_in;
+    _PORT(bool) mdio_data_out;
+    _PORT(bool) mdio_drive_out;
 
     _PORT(uint32_t) tx_frames_out;
     _PORT(uint32_t) rx_frames_out;
@@ -80,6 +90,10 @@ public:
         mac.tx_data_in = host_tx_data_in;
         mac.tx_last_in = host_tx_last_in;
         host_tx_ready_out = _ASSIGN(mac.tx_ready_out());
+        mac.local_mac_in = local_mac_in;
+        mac.local_ip_in = local_ip_in;
+        mac.local_mask_in = local_mask_in;
+        mac.promisc_in = promisc_in;
 
         host_rx_valid_out = _ASSIGN(mac.rx_valid_out());
         host_rx_data_out = _ASSIGN(mac.rx_data_out());
@@ -112,6 +126,11 @@ public:
         phy.rgmii_rx_ctl_in = rgmii_rx_ctl_in;
         phy.rgmii_rxd_in = rgmii_rxd_in;
         phy.rgmii_rx_last_in = rgmii_rx_last_in;
+        phy.mdio_mdc_in = mdio_mdc_in;
+        phy.mdio_host_oe_in = mdio_host_oe_in;
+        phy.mdio_host_data_in = mdio_host_data_in;
+        mdio_data_out = _ASSIGN(phy.mdio_data_out());
+        mdio_drive_out = _ASSIGN(phy.mdio_drive_out());
 
         tx_frames_out = _ASSIGN(mac.tx_frames_out());
         rx_frames_out = _ASSIGN(mac.rx_frames_out());
@@ -155,6 +174,13 @@ class TestEthGigMac : public Module
     u<8> host_tx_data = 0;
     bool host_tx_last = false;
     bool host_rx_ready = true;
+    logic<48> local_mac = 0;
+    uint32_t local_ip = 0;
+    uint32_t local_mask = 0;
+    bool promisc = false;
+    bool mdio_mdc = false;
+    bool mdio_host_oe = false;
+    bool mdio_host_data = true;
     bool error = false;
 
 public:
@@ -165,12 +191,19 @@ public:
         dut.host_tx_data_in = _ASSIGN_REG(host_tx_data);
         dut.host_tx_last_in = _ASSIGN_REG(host_tx_last);
         dut.host_rx_ready_in = _ASSIGN_REG(host_rx_ready);
+        dut.local_mac_in = _ASSIGN_REG(local_mac);
+        dut.local_ip_in = _ASSIGN_REG(local_ip);
+        dut.local_mask_in = _ASSIGN_REG(local_mask);
+        dut.promisc_in = _ASSIGN_REG(promisc);
         verif.rgmii_tx_ctl_in = _ASSIGN(dut.rgmii_tx_ctl_out());
         verif.rgmii_txd_in = _ASSIGN(dut.rgmii_txd_out());
         verif.rgmii_tx_last_in = _ASSIGN(dut.rgmii_tx_last_out());
         dut.rgmii_rx_ctl_in = _ASSIGN(verif.rgmii_rx_ctl_out());
         dut.rgmii_rxd_in = _ASSIGN(verif.rgmii_rxd_out());
         dut.rgmii_rx_last_in = _ASSIGN(verif.rgmii_rx_last_out());
+        dut.mdio_mdc_in = _ASSIGN_REG(mdio_mdc);
+        dut.mdio_host_oe_in = _ASSIGN_REG(mdio_host_oe);
+        dut.mdio_host_data_in = _ASSIGN_REG(mdio_host_data);
         dut.__inst_name = "ethgig_mac_chain";
         verif.__inst_name = "rgmii_verif";
         dut._assign();
@@ -186,6 +219,13 @@ public:
         dut.host_tx_data_in = host_tx_data;
         dut.host_tx_last_in = host_tx_last;
         dut.host_rx_ready_in = host_rx_ready;
+        dut.local_mac_in = local_mac;
+        dut.local_ip_in = local_ip;
+        dut.local_mask_in = local_mask;
+        dut.promisc_in = promisc;
+        dut.mdio_mdc_in = mdio_mdc;
+        dut.mdio_host_oe_in = mdio_host_oe;
+        dut.mdio_host_data_in = mdio_host_data;
         dut.rgmii_rx_ctl_in = verif.rgmii_rx_ctl_out();
         dut.rgmii_rxd_in = (uint8_t)verif.rgmii_rxd_out();
         dut.rgmii_rx_last_in = verif.rgmii_rx_last_out();
@@ -253,6 +293,76 @@ public:
 #endif
     }
 
+    bool mdio_data()
+    {
+#ifdef VERILATOR
+        return dut.mdio_data_out;
+#else
+        return dut.mdio_data_out();
+#endif
+    }
+
+    static uint32_t crc32_next(uint32_t crc, uint8_t data)
+    {
+        uint32_t value = crc ^ data;
+        for (uint32_t i = 0; i < 8; ++i) {
+            value = (value & 1u) ? ((value >> 1) ^ 0xedb88320u) : (value >> 1);
+        }
+        return value;
+    }
+
+    static uint32_t fcs_for_payload(const std::vector<uint8_t>& payload)
+    {
+        uint32_t crc = 0xffffffffu;
+        for (uint8_t value : payload) {
+            crc = crc32_next(crc, value);
+        }
+        return ~crc;
+    }
+
+    static std::vector<uint8_t> make_wire_frame(const std::vector<uint8_t>& packet)
+    {
+        std::vector<uint8_t> payload = packet;
+        while (payload.size() < 60) {
+            payload.push_back(0);
+        }
+        uint32_t fcs = fcs_for_payload(payload);
+        std::vector<uint8_t> wire;
+        for (int i = 0; i < 7; ++i) {
+            wire.push_back(0x55);
+        }
+        wire.push_back(0xd5);
+        wire.insert(wire.end(), payload.begin(), payload.end());
+        for (uint32_t i = 0; i < 4; ++i) {
+            wire.push_back((uint8_t)((fcs >> (i * 8u)) & 0xffu));
+        }
+        return wire;
+    }
+
+    static logic<48> mac_value(std::initializer_list<uint8_t> bytes)
+    {
+        logic<48> value = 0;
+        uint32_t i = 0;
+        for (uint8_t byte : bytes) {
+            value.bits(i * 8 + 7, i * 8) = byte;
+            ++i;
+        }
+        return value;
+    }
+
+    static bool vector_prefix_matches(const std::vector<uint8_t>& got, const std::vector<uint8_t>& expected)
+    {
+        if (got.size() < expected.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < expected.size(); ++i) {
+            if (got[i] != expected[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool send_packet(const std::vector<uint8_t>& packet)
     {
         size_t index = 0;
@@ -288,6 +398,74 @@ public:
         return packet;
     }
 
+    void mdio_clock()
+    {
+        mdio_mdc = false;
+        cycle(false);
+        mdio_mdc = true;
+        cycle(false);
+    }
+
+    void mdio_send_bit(bool bit)
+    {
+        mdio_host_oe = true;
+        mdio_host_data = bit;
+        mdio_clock();
+    }
+
+    bool mdio_read_bit()
+    {
+        bool bit;
+        mdio_host_oe = false;
+        mdio_host_data = true;
+        mdio_mdc = false;
+        cycle(false);
+        bit = mdio_data();
+        mdio_mdc = true;
+        cycle(false);
+        return bit;
+    }
+
+    void mdio_send_bits(uint32_t value, uint32_t bits)
+    {
+        for (int32_t i = (int32_t)bits - 1; i >= 0; --i) {
+            mdio_send_bit(((value >> (uint32_t)i) & 1u) != 0u);
+        }
+    }
+
+    void mdio_write(uint32_t reg, uint16_t value)
+    {
+        for (uint32_t i = 0; i < 32; ++i) {
+            mdio_send_bit(true);
+        }
+        mdio_send_bits(0x5u, 4);
+        mdio_send_bits(0u, 5);
+        mdio_send_bits(reg & 0x1fu, 5);
+        mdio_send_bits(0x2u, 2);
+        mdio_send_bits(value, 16);
+        mdio_host_oe = false;
+        cycle(false);
+    }
+
+    uint16_t mdio_read(uint32_t reg)
+    {
+        uint16_t value = 0;
+        for (uint32_t i = 0; i < 32; ++i) {
+            mdio_send_bit(true);
+        }
+        mdio_send_bits(0x6u, 4);
+        mdio_send_bits(0u, 5);
+        mdio_send_bits(reg & 0x1fu, 5);
+        mdio_read_bit();
+        mdio_read_bit();
+        for (uint32_t i = 0; i < 16; ++i) {
+            value = (uint16_t)((value << 1) | (mdio_read_bit() ? 1u : 0u));
+        }
+        mdio_host_oe = false;
+        cycle(false);
+        return value;
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -301,13 +479,19 @@ public:
         for (int i = 0; i < 6; ++i) {
             cycle(true);
         }
+        local_mac = mac_value({0x02, 0x00, 0x00, 0x00, 0x00, 0x11});
+        local_ip = 0xc0a8012au;
+        local_mask = 0xffffff00u;
 
-        std::vector<uint8_t> tx = {0x55, 0x44, 0x33, 0x22, 0x11, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef};
+        std::vector<uint8_t> tx = {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x11,
+            0x08, 0x00, 0xde, 0xad, 0xbe, 0xef};
         if (!send_packet(tx)) {
             std::print("\nERROR: timed out sending host TX packet\n");
             error = true;
         }
-        for (int i = 0; i < 200 && !verif.has_tx_packet(); ++i) {
+        for (int i = 0; i < 3000 && !verif.has_tx_packet(); ++i) {
             cycle(false);
         }
         if (!verif.has_tx_packet()) {
@@ -316,17 +500,51 @@ public:
         }
         else {
             auto got = verif.pop_tx_packet();
-            if (got != tx) {
-                std::print("\nERROR: TX packet mismatch got={} expected={}\n", got.size(), tx.size());
+            auto expected = make_wire_frame(tx);
+            if (got != expected) {
+                std::print("\nERROR: TX wire frame mismatch got={} expected={}\n", got.size(), expected.size());
                 error = true;
             }
         }
 
-        std::vector<uint8_t> rx = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x88, 0x47, 0x01, 0x02, 0x03, 0x04};
-        verif.push_rx_packet(rx);
+        std::vector<uint8_t> rx = {
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x11,
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x22,
+            0x08, 0x00,
+            0x45, 0x00, 0x00, 0x2e, 0x00, 0x00, 0x00, 0x00,
+            0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8, 0x01, 0x01,
+            0xc0, 0xa8, 0x01, 0x7b, 0x12, 0x34};
+        verif.push_rx_packet(make_wire_frame(rx));
         auto got_rx = receive_packet();
-        if (got_rx != rx) {
-            std::print("\nERROR: RX packet mismatch got={} expected={}\n", got_rx.size(), rx.size());
+        if (got_rx.size() != 60 || !vector_prefix_matches(got_rx, rx)) {
+            std::print("\nERROR: RX packet mismatch got={} expected-prefix={}\n", got_rx.size(), rx.size());
+            error = true;
+        }
+
+        std::vector<uint8_t> rejected = rx;
+        rejected[0] = 0x02;
+        rejected[5] = 0x99;
+        verif.push_rx_packet(make_wire_frame(rejected));
+        auto should_drop = receive_packet();
+        if (!should_drop.empty()) {
+            std::print("\nERROR: RX accepted wrong destination MAC\n");
+            error = true;
+        }
+
+        rejected = rx;
+        rejected[33] = 0x7b;
+        rejected[30] = 0x0a;
+        verif.push_rx_packet(make_wire_frame(rejected));
+        should_drop = receive_packet();
+        if (!should_drop.empty()) {
+            std::print("\nERROR: RX accepted packet outside configured IPv4 mask\n");
+            error = true;
+        }
+
+        mdio_write(4, 0x01e1);
+        uint16_t mdio_value = mdio_read(4);
+        if (mdio_value != 0x01e1) {
+            std::print("\nERROR: MDIO readback mismatch got=0x{:04x}\n", mdio_value);
             error = true;
         }
 

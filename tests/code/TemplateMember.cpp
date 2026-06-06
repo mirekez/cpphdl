@@ -242,6 +242,12 @@ static bool check_generated_sv()
     ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::CONV_EXP_MAX") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::DEFAULT_EXP_MAX") == std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::CONV_EXP_MAX") == std::string::npos;
+    ok &= decoder.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
+    ok &= arithmetic.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
+    ok &= top.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
+    ok &= decoder.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
+    ok &= arithmetic.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
+    ok &= top.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
     ok &= helper_pkg.find("CONV_TYPE") == std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::EXP_WIDTH") != std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::MANT_WIDTH") != std::string::npos;

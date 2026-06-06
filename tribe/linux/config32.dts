@@ -78,6 +78,24 @@
 			status = "okay";
 		};
 
+		eth0: ethernet@8200e000 {
+			compatible = "xlnx,axi-ethernet-2.01.a";
+			reg = <0x8200e000 0x100>, <0x8200e100 0x100>;
+			interrupt-parent = <&plic0>;
+			interrupts = <3 3 3>;
+			phy-mode = "rgmii";
+			mac-address = [02 00 00 00 00 02];
+			local-mac-address = [02 00 00 00 00 02];
+			xlnx,rxmem = <0x800>;
+			xlnx,txcsum = <0>;
+			xlnx,rxcsum = <0>;
+			status = "okay";
+			fixed-link {
+				speed = <1000>;
+				full-duplex;
+			};
+		};
+
 		plic0: interrupt-controller@82010000 {
 			#interrupt-cells = <1>;
 			interrupt-controller;
