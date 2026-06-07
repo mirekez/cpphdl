@@ -92,6 +92,28 @@ static bool run_ethgig_cpu(bool debug)
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "EthGig CPU loopback");
 }
 
+static bool check_eth_dma_cache_invalidate_policy()
+{
+    bool ok = true;
+    if (TestTribe::eth_dma_needs_cache_invalidate(true, false)) {
+        std::print("EthGig cache invalidate ERROR: TX completion must not invalidate CPU cache\n");
+        ok = false;
+    }
+    if (!TestTribe::eth_dma_needs_cache_invalidate(false, true)) {
+        std::print("EthGig cache invalidate ERROR: RX completion must invalidate CPU cache\n");
+        ok = false;
+    }
+    if (!TestTribe::eth_dma_needs_cache_invalidate(true, true)) {
+        std::print("EthGig cache invalidate ERROR: RX must win when TX and RX IRQs are both pending\n");
+        ok = false;
+    }
+    if (TestTribe::eth_dma_needs_cache_invalidate(false, false)) {
+        std::print("EthGig cache invalidate ERROR: idle DMA must not invalidate CPU cache\n");
+        ok = false;
+    }
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     bool noveril = false;
@@ -105,7 +127,8 @@ int main(int argc, char** argv)
         }
     }
 
-    bool ok = build_ethgig_elf();
+    bool ok = check_eth_dma_cache_invalidate_policy();
+    ok = ok && build_ethgig_elf();
     ok = ok && run_ethgig_cpu(debug);
 
 #ifndef VERILATOR

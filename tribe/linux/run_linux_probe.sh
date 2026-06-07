@@ -255,7 +255,7 @@ fi
 
 newer_tribe_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
-    newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 3 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
+    newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 6 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
 fi
 TRIBE_BIN_CONFIG="${TRIBE_BIN}.config"
 TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=64 TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"

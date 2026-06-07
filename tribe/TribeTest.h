@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #if defined(__linux__)
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -87,9 +88,12 @@ class EthGigTapSocket
     std::string local_path;
     bool send_warning_printed = false;
     bool recv_warning_printed = false;
+    bool trace_enabled = false;
+    std::ofstream trace_file;
 
     static constexpr uint8_t MSG_HELLO = 1;
     static constexpr uint8_t MSG_FRAME = 2;
+    static constexpr size_t ETHERNET_MIN_FRAME_BYTES = 60;
 
     static bool sockaddr_from_path(const std::string& path, sockaddr_un& addr)
     {
@@ -100,6 +104,89 @@ class EthGigTapSocket
         addr.sun_family = AF_UNIX;
         std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
         return true;
+    }
+
+    static uint32_t crc32_next(uint32_t crc, uint8_t data)
+    {
+        uint32_t value = crc ^ data;
+        for (uint32_t i = 0; i < 8; ++i) {
+            value = (value & 1u) ? ((value >> 1) ^ 0xedb88320u) : (value >> 1);
+        }
+        return value;
+    }
+
+    static uint32_t fcs_for_frame(const std::vector<uint8_t>& frame)
+    {
+        uint32_t crc = 0xffffffffu;
+        for (uint8_t value : frame) {
+            crc = crc32_next(crc, value);
+        }
+        return ~crc;
+    }
+
+    static std::vector<uint8_t> tap_frame_to_wire(std::vector<uint8_t> frame)
+    {
+        while (frame.size() < ETHERNET_MIN_FRAME_BYTES) {
+            frame.push_back(0);
+        }
+
+        uint32_t fcs = fcs_for_frame(frame);
+        std::vector<uint8_t> wire;
+        wire.reserve(frame.size() + 12);
+        for (uint32_t i = 0; i < 7; ++i) {
+            wire.push_back(0x55);
+        }
+        wire.push_back(0xd5);
+        wire.insert(wire.end(), frame.begin(), frame.end());
+        for (uint32_t i = 0; i < 4; ++i) {
+            wire.push_back((uint8_t)((fcs >> (i * 8u)) & 0xffu));
+        }
+        return wire;
+    }
+
+    static bool wire_frame_to_tap(const std::vector<uint8_t>& wire, std::vector<uint8_t>& frame)
+    {
+        if (wire.size() < 12) {
+            return false;
+        }
+        for (uint32_t i = 0; i < 7; ++i) {
+            if (wire[i] != 0x55u) {
+                return false;
+            }
+        }
+        if (wire[7] != 0xd5u) {
+            return false;
+        }
+
+        frame.assign(wire.begin() + 8, wire.end() - 4);
+        return frame.size() >= 14;
+    }
+
+    static std::string frame_prefix(const std::vector<uint8_t>& frame)
+    {
+        std::ostringstream out;
+        size_t limit = std::min<size_t>(frame.size(), 32);
+        for (size_t i = 0; i < limit; ++i) {
+            if (i != 0) {
+                out << ' ';
+            }
+            out << std::hex << std::setw(2) << std::setfill('0') << (uint32_t)frame[i];
+        }
+        if (frame.size() > limit) {
+            out << " ...";
+        }
+        return out.str();
+    }
+
+    void trace(const char* direction, const std::vector<uint8_t>& frame)
+    {
+        if (!trace_enabled) {
+            return;
+        }
+        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
+        out << "ethtap cycle=" << _system_clock << ' ' << direction
+            << " len=" << frame.size() << " data=" << frame_prefix(frame) << '\n';
+        out.flush();
     }
 
     bool send_frame(const std::vector<uint8_t>& frame)
@@ -140,6 +227,14 @@ public:
             return false;
         }
 
+        trace_enabled = std::getenv("TRIBE_TRACE_ETH") != nullptr;
+        if (const char* path = std::getenv("TRIBE_TRACE_ETH_FILE")) {
+            trace_file.open(path, std::ios::out | std::ios::app);
+            if (!trace_file.is_open()) {
+                std::print("can't open TRIBE_TRACE_ETH_FILE '{}'\n", path);
+            }
+        }
+
         fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0) {
             std::print("can't create eth tap socket: {}\n", std::strerror(errno));
@@ -178,6 +273,9 @@ public:
             ::unlink(local_path.c_str());
             local_path.clear();
         }
+        if (trace_file.is_open()) {
+            trace_file.close();
+        }
 #endif
     }
 
@@ -213,14 +311,23 @@ public:
             if (got >= 3 && msg[0] == MSG_FRAME) {
                 size_t len = (size_t(msg[1]) << 8) | msg[2];
                 if (len <= (size_t)got - 3) {
-                    rgmii.push_rx_packet(std::vector<uint8_t>(msg.begin() + 3, msg.begin() + 3 + len));
+                    std::vector<uint8_t> tap_frame(msg.begin() + 3, msg.begin() + 3 + len);
+                    std::vector<uint8_t> wire_frame = tap_frame_to_wire(tap_frame);
+                    trace("tap->wire", tap_frame);
+                    rgmii.push_rx_packet(wire_frame);
                 }
             }
         }
 
         while (rgmii.has_tx_packet()) {
-            std::vector<uint8_t> packet = rgmii.pop_tx_packet();
-            if (!send_frame(packet)) {
+            std::vector<uint8_t> wire_frame = rgmii.pop_tx_packet();
+            std::vector<uint8_t> tap_frame;
+            if (!wire_frame_to_tap(wire_frame, tap_frame)) {
+                trace("drop-bad-wire", wire_frame);
+                continue;
+            }
+            trace("wire->tap", tap_frame);
+            if (!send_frame(tap_frame)) {
                 break;
             }
         }
@@ -682,6 +789,12 @@ public:
     void advance_uart_script()
     {
         uart_script_pos_reg.set((u32)((uint32_t)uart_script_pos_reg + 1u));
+    }
+
+    static constexpr bool eth_dma_needs_cache_invalidate(bool tx_irq, bool rx_irq)
+    {
+        (void)tx_irq;
+        return rx_irq;
     }
 
     void set_uart_script_delay(uint32_t delay)
@@ -1186,7 +1299,7 @@ public:
         else {
             sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
         }
-        if (ethgig_dma.tx_irq_out() || ethgig_dma.rx_irq_out()) {
+        if (eth_dma_needs_cache_invalidate(ethgig_dma.tx_irq_out(), ethgig_dma.rx_irq_out())) {
             eth_dma_cache_invalidate_reg._next = true;
         }
         else if (eth_dma_cache_invalidate_reg && eth_dma_cache_invalidate_ready) {
