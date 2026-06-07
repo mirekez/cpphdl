@@ -306,6 +306,49 @@ static std::string templateParamDefault(const std::string& param)
     return trim(param.substr(eq + 1));
 }
 
+static std::string templateParamValueType(const std::string& param)
+{
+    auto text = trim(param);
+    if (text.rfind("typename ", 0) == 0 || text.rfind("class ", 0) == 0) {
+        return "";
+    }
+    auto eq = text.find('=');
+    if (eq != std::string::npos) {
+        text = trim(text.substr(0, eq));
+    }
+    auto pos = text.rfind(' ');
+    if (pos == std::string::npos) {
+        return "";
+    }
+    auto type = trim(text.substr(0, pos));
+    if (type == "unsigned" || type == "uint64_t" || type == "uint32_t" || type == "uint16_t" ||
+        type == "uint8_t" || type == "int" || type == "bool") {
+        return type;
+    }
+    return "";
+}
+
+static std::string castTemplateParamValue(const std::string& declared, const std::string& value)
+{
+    auto type = templateParamValueType(declared);
+    if (type.empty()) {
+        return value;
+    }
+    auto v = trim(value);
+    if (v.rfind("static_cast<", 0) == 0 || v.rfind("(uint64_t)(", 0) == 0 || v.rfind("((uint64_t)(", 0) == 0) {
+        return value;
+    }
+    bool expressionLike = v.find('.') != std::string::npos || v.find("logic<") != std::string::npos ||
+                          v.find('(') != std::string::npos || v.find('?') != std::string::npos ||
+                          v.find('&') != std::string::npos || v.find('|') != std::string::npos ||
+                          v.find('+') != std::string::npos || v.find('-') != std::string::npos ||
+                          v.find('*') != std::string::npos || v.find('/') != std::string::npos;
+    if (!expressionLike) {
+        return value;
+    }
+    return "static_cast<" + type + ">(" + value + ")";
+}
+
 static std::vector<std::string> configuredModuleParams(const std::string& type)
 {
     static bool loaded = false;
@@ -656,6 +699,8 @@ static std::string bridgeBoundName(const ModuleGen& m, const std::string& expr)
     return "";
 }
 
+static std::string repairDottedLogicWidthCasts(std::string s);
+
 static void replaceAll(std::string& s, const std::string& from, const std::string& to)
 {
     for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size()) {
@@ -930,8 +975,32 @@ static std::string normalizeSvLiterals(const std::string& s)
     return out;
 }
 
+static bool isExprBoundary(char c);
+static size_t matchingOpenBefore(const std::string& s, size_t close, char openCh, char closeCh);
+static size_t selectedExprStartBefore(const std::string& s, size_t endExclusive);
+static std::string numericizeSelectedArithmetic(std::string s);
+
+static std::string valueAssignCombFunctionPorts(std::string line)
+{
+    auto assign = line.find(" = _ASSIGN_COMB(");
+    if (assign == std::string::npos) {
+        return line;
+    }
+    auto argStart = assign + std::string(" = _ASSIGN_COMB(").size();
+    auto argEnd = line.find(");", argStart);
+    if (argEnd == std::string::npos) {
+        return line;
+    }
+    auto arg = trim(line.substr(argStart, argEnd - argStart));
+    if (hasSuffix(arg, "_comb_func()")) {
+        line.replace(assign + 3, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
+    }
+    return line;
+}
+
 static std::string postProcessCppLine(std::string line)
 {
+    line = valueAssignCombFunctionPorts(std::move(line));
     for (size_t pos = 0; pos < line.size();) {
         if (!std::isdigit(static_cast<unsigned char>(line[pos]))) {
             ++pos;
@@ -950,6 +1019,7 @@ static std::string postProcessCppLine(std::string line)
     }
     replaceAll(line, "<<<", "<<");
     replaceAll(line, ">>>", ">>");
+    line = repairDottedLogicWidthCasts(std::move(line));
     applyConfiguredLinePatches(line);
     replaceAll(line, "empty_o_out = _ASSIGN( ~push_i_in() );", "empty_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~push_i_in()) : logic<1>((status_cnt_q == 0) & ~(logic<1>(FALL_THROUGH) & push_i_in())) );");
     replaceAll(line, "full_o_out = _ASSIGN( ~pop_i_in() );", "full_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~pop_i_in()) : logic<1>(status_cnt_q == FifoDepth) );");
@@ -1301,6 +1371,7 @@ static std::string postProcessCppLine(std::string line)
             pos = close + 1;
         }
     }
+    line = numericizeSelectedArithmetic(line);
     auto trimmedForResult = trim(line);
     if (trimmedForResult.rfind("case ((uint64_t)(", 0) == 0) {
         auto mask = line.find(") & ((1ull << ");
@@ -1430,6 +1501,89 @@ static std::string postProcessCppLine(std::string line)
             auto left = trim(expr.substr(qpos + 1, cpos - qpos - 1));
             auto right = trim(expr.substr(cpos + 1));
             auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
+            auto bitsPos = lhsTrim.rfind(".bits(");
+            if (bitsPos != std::string::npos) {
+                auto argsStart = bitsPos + 6;
+                int depth = 1;
+                size_t comma = std::string::npos;
+                size_t close = std::string::npos;
+                for (size_t i = argsStart; i < lhsTrim.size(); ++i) {
+                    char c = lhsTrim[i];
+                    if (c == '(' || c == '[' || c == '{') {
+                        ++depth;
+                    }
+                    else if (c == ')' || c == ']' || c == '}') {
+                        --depth;
+                        if (depth == 0) {
+                            close = i;
+                            break;
+                        }
+                    }
+                    else if (c == ',' && depth == 1) {
+                        comma = i;
+                    }
+                }
+                if (comma != std::string::npos && close != std::string::npos) {
+                    auto last = trim(lhsTrim.substr(argsStart, comma - argsStart));
+                    auto first = trim(lhsTrim.substr(comma + 1, close - comma - 1));
+                    auto topLevelPlusRangeWidth = [](const std::string& value) -> std::string {
+                        auto v = trim(value);
+                        size_t plus = std::string::npos;
+                        int depth = 0;
+                        for (size_t i = 0; i < v.size(); ++i) {
+                            char c = v[i];
+                            if (c == '(' || c == '[' || c == '{') {
+                                ++depth;
+                            }
+                            else if (c == ')' || c == ']' || c == '}') {
+                                if (depth > 0) {
+                                    --depth;
+                                }
+                            }
+                            else if (c == '+' && depth == 0) {
+                                plus = i;
+                            }
+                        }
+                        if (plus == std::string::npos) {
+                            return {};
+                        }
+                        auto rhs = trim(v.substr(plus + 1));
+                        depth = 0;
+                        for (size_t i = rhs.size(); i-- > 0;) {
+                            char c = rhs[i];
+                            if (c == ')' || c == ']' || c == '}') {
+                                ++depth;
+                            }
+                            else if (c == '(' || c == '[' || c == '{') {
+                                if (depth > 0) {
+                                    --depth;
+                                }
+                            }
+                            else if (c == '-' && depth == 0 && trim(rhs.substr(i + 1)) == "1") {
+                                return trim(rhs.substr(0, i));
+                            }
+                            if (i == 0) {
+                                break;
+                            }
+                        }
+                        return {};
+                    };
+                    if (trim(last) == trim(first)) {
+                        target = "logic<1>";
+                    }
+                    else if (auto rangeWidth = topLevelPlusRangeWidth(last); !rangeWidth.empty()) {
+                        target = "logic<" + rangeWidth + ">";
+                    }
+                    else {
+                        target = "logic<((uint64_t)(" + last + "))-((uint64_t)(" + first + "))+1>";
+                    }
+                }
+            }
+            else if (lhsTrim.find('[') != std::string::npos &&
+                (lhsTrim.find("][") != std::string::npos ||
+                 (left.find("logic<1>") != std::string::npos && right.find("logic<1>") != std::string::npos))) {
+                target = "logic<1>";
+            }
             line = lhs + " " + pred + " ? " + target + "(" + left + ") : " + target + "(" + right + " );";
             replaceAll(line, " )", ")");
             return line;
@@ -1806,6 +1960,89 @@ static std::string replacePowerOps(std::string s)
     return s;
 }
 
+static bool isExprBoundary(char c)
+{
+    return std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == '?' || c == ':' ||
+           c == '{' || c == '}' || c == ';' || c == '=' || c == '&' || c == '|' || c == '^' ||
+           c == '<' || c == '>' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%';
+}
+
+static size_t matchingOpenBefore(const std::string& s, size_t close, char openCh, char closeCh)
+{
+    int depth = 0;
+    for (size_t i = close + 1; i-- > 0;) {
+        if (s[i] == closeCh) {
+            ++depth;
+        }
+        else if (s[i] == openCh) {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+        if (i == 0) {
+            break;
+        }
+    }
+    return std::string::npos;
+}
+
+static size_t selectedExprStartBefore(const std::string& s, size_t endExclusive)
+{
+    if (endExclusive == 0) {
+        return std::string::npos;
+    }
+    size_t end = endExclusive - 1;
+    while (end > 0 && std::isspace(static_cast<unsigned char>(s[end]))) {
+        --end;
+    }
+    size_t selectOpen = std::string::npos;
+    if (s[end] == ']') {
+        selectOpen = matchingOpenBefore(s, end, '[', ']');
+    }
+    else if (s[end] == ')') {
+        auto open = matchingOpenBefore(s, end, '(', ')');
+        if (open != std::string::npos && open >= 5 && s.compare(open - 5, 5, ".bits") == 0) {
+            selectOpen = open - 5;
+        }
+    }
+    if (selectOpen == std::string::npos) {
+        return std::string::npos;
+    }
+    size_t start = selectOpen;
+    while (start > 0 && !isExprBoundary(s[start - 1]) && s[start - 1] != '(') {
+        --start;
+    }
+    if (start >= 11 && s.compare(start - 11, 11, "(uint64_t)(") == 0) {
+        return std::string::npos;
+    }
+    return start;
+}
+
+static std::string numericizeSelectedArithmetic(std::string s)
+{
+    for (size_t op = 0; op < s.size(); ++op) {
+        if (s[op] != '*' && s[op] != '/' && s[op] != '%' && s[op] != '+' && s[op] != '-') {
+            continue;
+        }
+        if ((s[op] == '+' || s[op] == '-') && op + 1 < s.size() && s[op + 1] == s[op]) {
+            continue;
+        }
+        auto start = selectedExprStartBefore(s, op);
+        if (start == std::string::npos) {
+            continue;
+        }
+        auto operand = trim(s.substr(start, op - start));
+        if (operand.empty()) {
+            continue;
+        }
+        auto repl = "(uint64_t)(" + operand + ")";
+        s.replace(start, op - start, repl);
+        op = start + repl.size();
+    }
+    return s;
+}
+
 static std::string replaceRawRangeSelects(std::string s)
 {
     for (size_t pos = 0; (pos = s.find('[', pos)) != std::string::npos;) {
@@ -1845,6 +2082,44 @@ static std::string replaceRawRangeSelects(std::string s)
         }
         s.replace(pos, close - pos + 1, ".bits(" + left + "," + right + ")");
         pos += left.size() + right.size() + 8;
+    }
+    return numericizeSelectedArithmetic(s);
+}
+
+static std::string repairDottedLogicWidthCasts(std::string s)
+{
+    for (size_t pos = 0; (pos = s.find(".logic<", pos)) != std::string::npos;) {
+        size_t objEnd = pos;
+        size_t objStart = objEnd;
+        while (objStart > 0 && (std::isalnum(static_cast<unsigned char>(s[objStart - 1])) || s[objStart - 1] == '_' || s[objStart - 1] == ':')) {
+            --objStart;
+        }
+        if (objStart == objEnd) {
+            pos += 7;
+            continue;
+        }
+        size_t widthStart = pos + 7;
+        size_t widthEnd = s.find('>', widthStart);
+        if (widthEnd == std::string::npos || widthEnd + 1 >= s.size() || s[widthEnd + 1] != '(') {
+            pos += 7;
+            continue;
+        }
+        auto object = s.substr(objStart, objEnd - objStart);
+        auto width = s.substr(widthStart, widthEnd - widthStart);
+        bool simpleWidth = !width.empty();
+        for (char c : width) {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':')) {
+                simpleWidth = false;
+                break;
+            }
+        }
+        if (!simpleWidth) {
+            pos = widthEnd + 1;
+            continue;
+        }
+        auto repl = "logic<" + object + "." + width + ">";
+        s.replace(objStart, widthEnd + 1 - objStart, repl);
+        pos = objStart + repl.size();
     }
     return s;
 }
@@ -2159,6 +2434,7 @@ static std::string cppExprText(std::string s)
     replaceAll(s, "operation_e'(", "static_cast<operation_e>(");
     replaceAll(s, "roundmode_e'(", "static_cast<roundmode_e>(");
     s = replaceGenericSvCasts(std::move(s));
+    s = repairDottedLogicWidthCasts(std::move(s));
     s = replaceSvCastBraced(std::move(s));
     s = replaceRawRangeSelects(std::move(s));
     s = replaceMultipleConcatPattern(std::move(s));
@@ -2214,6 +2490,13 @@ static std::string stripLogicLiteralCasts(std::string s)
 
 static std::vector<std::string> memoryArgs(const std::string& type);
 
+static bool isPrimitiveWrapperType(const std::string& type)
+{
+    return type == "u8" || type == "u16" || type == "u32" || type == "u64" ||
+           type == "unsigned" || type == "uint8_t" || type == "uint16_t" ||
+           type == "uint32_t" || type == "uint64_t";
+}
+
 static std::string constexprType(std::string type)
 {
     if (type == "u32" || type == "u16" || type == "u8" || type == "bool") {
@@ -2239,13 +2522,40 @@ static std::string constexprType(std::string type)
     return type;
 }
 
+static size_t findRangeColon(const std::string& range)
+{
+    int paren = 0;
+    int bracket = 0;
+    int brace = 0;
+    int ternary = 0;
+    for (size_t i = 0; i < range.size(); ++i) {
+        char c = range[i];
+        if (c == '(') ++paren;
+        else if (c == ')' && paren > 0) --paren;
+        else if (c == '[') ++bracket;
+        else if (c == ']' && bracket > 0) --bracket;
+        else if (c == '{') ++brace;
+        else if (c == '}' && brace > 0) --brace;
+        else if (paren == 0 && bracket == 0 && brace == 0) {
+            if (c == '?') {
+                ++ternary;
+            }
+            else if (c == ':') {
+                if (ternary > 0) --ternary;
+                else return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
 static std::string textRangeWidth(std::string range)
 {
     range = trim(range);
     if (range.size() >= 2 && range.front() == '[' && range.back() == ']') {
         range = range.substr(1, range.size() - 2);
     }
-    auto colon = range.find(':');
+    auto colon = findRangeColon(range);
     if (colon == std::string::npos) {
         return cppExprText(range);
     }
@@ -2261,7 +2571,9 @@ static std::string textRangeWidth(std::string range)
     if ((compactLeft == "0" || compactLeft == "0x0") && compactRight.size() > 2 && compactRight.substr(compactRight.size() - 2) == "-1") {
         return trim(right.substr(0, right.rfind('-')));
     }
-    return "(" + cppExprText(left) + ")-(" + cppExprText(right) + ")+1";
+    auto l = cppExprText(left);
+    auto r = cppExprText(right);
+    return "(((uint64_t)(" + l + ") >= (uint64_t)(" + r + ") ? ((uint64_t)(" + l + ") - (uint64_t)(" + r + ")) : ((uint64_t)(" + r + ") - (uint64_t)(" + l + "))) + 1)";
 }
 
 static std::vector<std::string> bracketWidths(std::string raw)
@@ -2586,6 +2898,18 @@ struct Converter : SyntaxVisitor<Converter> {
     std::vector<ModuleGen> modules;
     ModuleGen* mod = nullptr;
     std::set<std::string> loopVars;
+    std::vector<std::map<std::string, std::string>> localTypeScopes;
+
+    std::string lookupLocalType(const std::string& name) const
+    {
+        for (auto it = localTypeScopes.rbegin(); it != localTypeScopes.rend(); ++it) {
+            auto found = it->find(name);
+            if (found != it->end()) {
+                return found->second;
+            }
+        }
+        return {};
+    }
 
     ModuleGen* findModule(const std::string& name)
     {
@@ -3075,6 +3399,11 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (ctype.rfind("std::array<", 0) == 0 && cinit.find("logic<") != std::string::npos) {
                     cinit = trim(stripLogicLiteralCasts(cinit));
                 }
+                if (ctype.find("::") == std::string::npos && ctype.rfind("std::array<", 0) != 0 &&
+                    cinit.find("logic<") != std::string::npos && cinit.find('{') == std::string::npos &&
+                    cinit.find("cat{") == std::string::npos) {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
+                }
                 if (ctype.rfind("std::array<", 0) == 0 && !cinit.empty() && cinit.front() == '{') {
                     cinit = "{" + cinit + "}";
                 }
@@ -3306,7 +3635,7 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 if (b.right->kind == SyntaxKind::ConditionalExpression && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
                     lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
-                    rhs = emitConditionalAsDecltype(b.right->as<ConditionalExpressionSyntax>(), lhs);
+                    rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
                 }
                 for (auto& p : mod->ports) {
                     if (p.name == lhs && needsTypedZero(p.type) && isZeroLiteralText(rhs)) {
@@ -3435,26 +3764,24 @@ struct Converter : SyntaxVisitor<Converter> {
         }
         std::string params;
         if (node.parameters) {
+            std::vector<std::string> orderedParams;
             std::map<std::string, std::string> namedParams;
             std::map<std::string, std::string> namedParamRaw;
             std::vector<std::pair<std::string, std::string>> namedParamOrder;
             for (auto p : node.parameters->parameters) {
                 if (p->kind == SyntaxKind::OrderedParamAssignment) {
-                    if (!params.empty()) {
-                        params += ",";
-                    }
-                    params += stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr));
+                    orderedParams.push_back(stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr)));
                 }
                 else if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
                     auto& np = p->as<NamedParamAssignmentSyntax>();
                     auto name = tok(np.name);
-                    auto value = stripLogicLiteralCasts(emitExpr(*np.expr));
+                    auto value = DataTypeSyntax::isKind(np.expr->kind) ? typeText(np.expr->as<DataTypeSyntax>()) : stripLogicLiteralCasts(emitExpr(*np.expr));
                     namedParams[name] = value;
                     namedParamRaw[name] = exprText(np.expr->toString());
                     namedParamOrder.push_back({name, value});
                 }
             }
-            if (!namedParams.empty()) {
+            if (!orderedParams.empty() || !namedParams.empty()) {
                 auto appendParam = [&](const std::string& value) {
                     if (!params.empty()) {
                         params += ",";
@@ -3463,26 +3790,30 @@ struct Converter : SyntaxVisitor<Converter> {
                 };
                 auto type = tok(node.type);
                 auto* child = findModule(type);
-                auto configuredParams = child ? std::vector<std::string>{} : configuredModuleParams(type);
-                auto& declParams = child ? child->params : configuredParams;
+                auto configuredParams = configuredModuleParams(type);
+                auto& declParams = (child && !child->params.empty()) ? child->params : configuredParams;
                 if (!declParams.empty()) {
                     std::vector<std::string> paramNames;
                     for (auto& declared : declParams) {
                         paramNames.push_back(templateParamName(declared));
                     }
-                    int lastNeeded = -1;
+                    int lastNeeded = static_cast<int>(orderedParams.size()) - 1;
                     for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
                         if (namedParams.count(paramNames[i])) {
-                            lastNeeded = i;
+                            lastNeeded = std::max(lastNeeded, i);
                         }
                     }
+                    lastNeeded = std::min(lastNeeded, static_cast<int>(declParams.size()) - 1);
                     std::map<std::string, std::string> emittedParams;
                     for (int i = 0; i <= lastNeeded; ++i) {
                         auto& declared = declParams[i];
                         auto& pname = paramNames[i];
-                        auto it = namedParams.find(pname);
-                        if (it != namedParams.end()) {
-                            auto value = it->second;
+                        std::string value;
+                        bool hasValue = false;
+                        auto namedIt = namedParams.find(pname);
+                        if (namedIt != namedParams.end()) {
+                            value = namedIt->second;
+                            hasValue = true;
                             if (declared.rfind("typename ", 0) == 0) {
                                 auto raw = namedParamRaw.find(pname);
                                 if (raw != namedParamRaw.end()) {
@@ -3498,6 +3829,13 @@ struct Converter : SyntaxVisitor<Converter> {
                                     }
                                 }
                             }
+                        }
+                        else if (i < static_cast<int>(orderedParams.size())) {
+                            value = orderedParams[i];
+                            hasValue = true;
+                        }
+                        if (hasValue) {
+                            value = castTemplateParamValue(declared, value);
                             appendParam(value);
                             emittedParams[pname] = value;
                         }
@@ -3514,6 +3852,9 @@ struct Converter : SyntaxVisitor<Converter> {
                     }
                 }
                 else {
+                    for (auto& item : orderedParams) {
+                        appendParam(item);
+                    }
                     for (auto& item : namedParamOrder) {
                         appendParam(item.second);
                     }
@@ -3782,15 +4123,25 @@ struct Converter : SyntaxVisitor<Converter> {
             auto& instNode = node.as<HierarchyInstantiationSyntax>();
             auto type = tok(instNode.type);
             std::string params;
-            std::vector<std::pair<std::string, std::string>> namedParamOrder;
             if (instNode.parameters) {
+                std::vector<std::string> orderedParams;
                 std::map<std::string, std::string> namedParams;
+                std::map<std::string, std::string> namedParamRaw;
+                std::vector<std::pair<std::string, std::string>> namedParamOrder;
                 for (auto p : instNode.parameters->parameters) {
-                    if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
-                        auto& np = p->as<NamedParamAssignmentSyntax>();
-                        auto value = stripLogicLiteralCasts(emitExpr(*np.expr));
+                    if (p->kind == SyntaxKind::OrderedParamAssignment) {
+                        auto value = stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr));
                         replaceIdentifierAll(value, index, "i");
+                        orderedParams.push_back(value);
+                    }
+                    else if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
+                        auto& np = p->as<NamedParamAssignmentSyntax>();
+                        auto value = DataTypeSyntax::isKind(np.expr->kind) ? typeText(np.expr->as<DataTypeSyntax>()) : stripLogicLiteralCasts(emitExpr(*np.expr));
+                        replaceIdentifierAll(value, index, "i");
+                        auto rawValue = exprText(np.expr->toString());
+                        replaceIdentifierAll(rawValue, index, "i");
                         namedParams[tok(np.name)] = value;
+                        namedParamRaw[tok(np.name)] = rawValue;
                         namedParamOrder.push_back({tok(np.name), value});
                     }
                 }
@@ -3800,62 +4151,76 @@ struct Converter : SyntaxVisitor<Converter> {
                     }
                     params += value;
                 };
-                if (auto order = configuredTextMap("HDLCPP_NAMED_PARAM_ORDER"); order.count(type)) {
-                    std::stringstream ss(order[type]);
-                    std::string spec;
-                    while (std::getline(ss, spec, ',')) {
-                        auto eq = spec.find('=');
-                        auto paramName = trim(eq == std::string::npos ? spec : spec.substr(0, eq));
-                        auto defaultValue = trim(eq == std::string::npos ? std::string() : spec.substr(eq + 1));
-                        if (defaultValue.find("@DATA_WIDTH@") != std::string::npos) {
-                            auto dataWidth = namedParams.count("DATA_WIDTH") ? namedParams["DATA_WIDTH"] : "32";
-                            replaceAll(defaultValue, "@DATA_WIDTH@", dataWidth);
-                        }
-                        appendParam(namedParams.count(paramName) ? namedParams[paramName] : defaultValue);
+                auto* child = findModule(type);
+                auto configuredParams = configuredModuleParams(type);
+                auto& declParams = (child && !child->params.empty()) ? child->params : configuredParams;
+                if (!declParams.empty()) {
+                    std::vector<std::string> paramNames;
+                    for (auto& declared : declParams) {
+                        paramNames.push_back(templateParamName(declared));
                     }
-	                }
-	                else {
-	                    auto* child = findModule(type);
-	                    auto configuredParams = child ? std::vector<std::string>{} : configuredModuleParams(type);
-	                    auto& declParams = child ? child->params : configuredParams;
-	                    if (!declParams.empty()) {
-	                        std::vector<std::string> paramNames;
-	                        for (auto& declared : declParams) {
-	                            paramNames.push_back(templateParamName(declared));
-	                        }
-	                        int lastNeeded = -1;
-	                        for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
-	                            if (namedParams.count(paramNames[i])) {
-	                                lastNeeded = i;
-	                            }
-	                        }
-	                        std::map<std::string, std::string> emittedParams;
-	                        for (int i = 0; i <= lastNeeded; ++i) {
-	                            auto& declared = declParams[i];
-	                            auto& pname = paramNames[i];
-	                            auto it = namedParams.find(pname);
-	                            if (it != namedParams.end()) {
-	                                appendParam(it->second);
-	                                emittedParams[pname] = it->second;
-	                            }
-	                            else {
-	                                auto def = templateParamDefault(declared);
-	                                if (!def.empty()) {
-	                                    for (auto& prior : emittedParams) {
-	                                        replaceIdentifierAll(def, prior.first, prior.second);
-	                                    }
-	                                    appendParam(def);
-	                                    emittedParams[pname] = def;
-	                                }
-	                            }
-	                        }
-	                    }
-	                    else {
-	                        for (auto& item : namedParamOrder) {
-	                            appendParam(item.second);
-	                        }
-	                    }
-	                }
+                    int lastNeeded = static_cast<int>(orderedParams.size()) - 1;
+                    for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
+                        if (namedParams.count(paramNames[i])) {
+                            lastNeeded = std::max(lastNeeded, i);
+                        }
+                    }
+                    lastNeeded = std::min(lastNeeded, static_cast<int>(declParams.size()) - 1);
+                    std::map<std::string, std::string> emittedParams;
+                    for (int i = 0; i <= lastNeeded; ++i) {
+                        auto& declared = declParams[i];
+                        auto& pname = paramNames[i];
+                        std::string value;
+                        bool hasValue = false;
+                        auto namedIt = namedParams.find(pname);
+                        if (namedIt != namedParams.end()) {
+                            value = namedIt->second;
+                            hasValue = true;
+                            if (declared.rfind("typename ", 0) == 0) {
+                                auto raw = namedParamRaw.find(pname);
+                                if (raw != namedParamRaw.end()) {
+                                    auto rawType = raw->second;
+                                    for (auto& item : mod->types) {
+                                        auto w = typeWidth(item.second);
+                                        replaceAll(rawType, "$bits(" + item.first + ")",
+                                                   !w.empty() ? w : "(sizeof(" + item.second + ")*8)");
+                                    }
+                                    auto recoveredType = cppTypeFromSvText(rawType);
+                                    if (!recoveredType.empty() && recoveredType != "logic") {
+                                        value = recoveredType;
+                                    }
+                                }
+                            }
+                        }
+                        else if (i < static_cast<int>(orderedParams.size())) {
+                            value = orderedParams[i];
+                            hasValue = true;
+                        }
+                        if (hasValue) {
+                            value = castTemplateParamValue(declared, value);
+                            appendParam(value);
+                            emittedParams[pname] = value;
+                        }
+                        else {
+                            auto def = templateParamDefault(declared);
+                            if (!def.empty()) {
+                                for (auto& prior : emittedParams) {
+                                    replaceIdentifierAll(def, prior.first, prior.second);
+                                }
+                                appendParam(def);
+                                emittedParams[pname] = def;
+                            }
+                        }
+                    }
+                }
+                else {
+                    for (auto& item : orderedParams) {
+                        appendParam(item);
+                    }
+                    for (auto& item : namedParamOrder) {
+                        appendParam(item.second);
+                    }
+                }
             }
             for (auto inst : instNode.instances) {
                 if (!inst->decl) {
@@ -3863,7 +4228,9 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 auto name = tok(inst->decl->name);
                 auto* childForType = findModule(type);
-                auto memberType = type + (params.empty() ? (childForType && !childForType->params.empty() ? "<>" : "") : "<" + params + ">");
+                auto configuredForType = configuredModuleParams(type);
+                auto hasTemplateParams = (childForType && !childForType->params.empty()) || !configuredForType.empty();
+                auto memberType = type + (params.empty() ? (hasTemplateParams ? "<>" : "") : "<" + params + ">");
                 if (!mod->memberArraySizes.count(name)) {
                     mod->members.push_back("array<" + memberType + "," + indexLimit + "> " + name + ";");
                     mod->memberTypes.push_back(type);
@@ -3947,6 +4314,19 @@ struct Converter : SyntaxVisitor<Converter> {
                         addCombAssignment(*mod, baseFromLValueText(lhs), lhs, outExpr, methodLoopHeaders);
                     }
                     else {
+                        auto sourceTypeBeforeLateBind = expressionStorageType(*mod, rhs);
+                        if (sourceTypeBeforeLateBind.rfind("array<", 0) == 0 || sourceTypeBeforeLateBind.rfind("std::array<", 0) == 0) {
+                            auto target = trim(portType);
+                            if (target.rfind("logic<", 0) == 0 && target.back() == '>') {
+                                rhs = target + "(" + rhs + ")";
+                            }
+                            else {
+                                rhs = adaptInputPortRhs(*mod, portType, rhs);
+                            }
+                        }
+                        else {
+                            rhs = adaptInputPortRhs(*mod, portType, rhs);
+                        }
                         mod->assignLines.push_back("    " + elem + "." + portName + " = " + assignWrapper(rhs, "i") + ";");
                     }
                 }
@@ -4022,6 +4402,7 @@ struct Converter : SyntaxVisitor<Converter> {
                     type = "array<" + type + "," + w + ">";
                 }
                 mod->assignLines.push_back("    " + type + " " + name + ";");
+                mod->types[name] = type;
             }
         }
         else if (node.kind == SyntaxKind::ContinuousAssign) {
@@ -4032,7 +4413,7 @@ struct Converter : SyntaxVisitor<Converter> {
                     auto rhs = emitExpr(*b.right);
                     if (b.right->kind == SyntaxKind::ConditionalExpression &&
                         lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
-                        rhs = emitConditionalAsDecltype(b.right->as<ConditionalExpressionSyntax>(), lhs);
+                        rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
                     }
                     applyGenerateReplacements(lhs);
                     applyGenerateReplacements(rhs);
@@ -4572,7 +4953,7 @@ struct Converter : SyntaxVisitor<Converter> {
                 auto rv = std::stoul(right);
                 return std::to_string((lv > rv ? lv - rv : rv - lv) + 1);
             }
-            return "(" + l + ")-(" + right + ")+1";
+            return "(((uint64_t)(" + l + ") >= (uint64_t)(" + right + ") ? ((uint64_t)(" + l + ") - (uint64_t)(" + right + ")) : ((uint64_t)(" + right + ") - (uint64_t)(" + l + "))) + 1)";
         }
         return exprText(range.selector->toString());
     }
@@ -4593,21 +4974,42 @@ struct Converter : SyntaxVisitor<Converter> {
         return ret;
     }
 
+    bool textMentionsIdentifier(const std::string& text, const std::string& ident) const
+    {
+        if (ident.empty()) {
+            return false;
+        }
+        for (size_t pos = text.find(ident); pos != std::string::npos; pos = text.find(ident, pos + ident.size())) {
+            bool leftOk = pos == 0 || !(std::isalnum(static_cast<unsigned char>(text[pos - 1])) || text[pos - 1] == '_');
+            auto end = pos + ident.size();
+            bool rightOk = end >= text.size() || !(std::isalnum(static_cast<unsigned char>(text[end])) || text[end] == '_');
+            if (leftOk && rightOk) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool textMentionsRuntimeIndex(const std::string& text) const
+    {
+        for (auto& name : loopVars) {
+            if (textMentionsIdentifier(text, name)) {
+                return true;
+            }
+        }
+        static const char* commonLoopNames[] = {"i", "j", "k", "m", "n", "x_gen", "y_gen", "z_gen", "w_gen"};
+        for (auto name : commonLoopNames) {
+            if (textMentionsIdentifier(text, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::string selectWidth(const ElementSelectSyntax& select)
     {
-        auto hasLoopVar = [](const std::string& w) {
-            return w.find("(uint64_t)(i)") != std::string::npos ||
-                   w.find("(uint64_t)(j)") != std::string::npos ||
-                   w.find("(uint64_t)(k)") != std::string::npos ||
-                   w.find("(i") != std::string::npos ||
-                   w.find("(j") != std::string::npos ||
-                   w.find("(k") != std::string::npos ||
-                   w.find("* i") != std::string::npos ||
-                   w.find("* j") != std::string::npos ||
-                   w.find("* k") != std::string::npos ||
-                   w.find(" i ") != std::string::npos ||
-                   w.find(" j ") != std::string::npos ||
-                   w.find(" k ") != std::string::npos;
+        auto hasLoopVar = [&](const std::string& w) {
+            return textMentionsRuntimeIndex(w);
         };
         if (!select.selector) {
             return "";
@@ -4709,28 +5111,11 @@ struct Converter : SyntaxVisitor<Converter> {
     std::string selectTemplateWidth(const ElementSelectSyntax& select)
     {
         auto raw = select.toString();
-        if ((loopVars.count("i") && raw.find("i") != std::string::npos) ||
-            (loopVars.count("j") && raw.find("j") != std::string::npos) ||
-            (loopVars.count("k") && raw.find("k") != std::string::npos) ||
-            (loopVars.count("z_gen") && raw.find("z_gen") != std::string::npos) ||
-            (loopVars.count("w_gen") && raw.find("w_gen") != std::string::npos)) {
+        if (textMentionsRuntimeIndex(raw)) {
             return "64";
         }
         auto w = selectWidth(select);
-        if (w.find("(uint64_t)(i)") != std::string::npos ||
-            w.find("(uint64_t)(j)") != std::string::npos ||
-            w.find("(uint64_t)(k)") != std::string::npos ||
-            w.find("(uint64_t)(z_gen)") != std::string::npos ||
-            w.find("(uint64_t)(w_gen)") != std::string::npos ||
-            w.find("(i") != std::string::npos ||
-            w.find("(j") != std::string::npos ||
-            w.find("(k") != std::string::npos ||
-            w.find("* i") != std::string::npos ||
-            w.find("* j") != std::string::npos ||
-            w.find("* k") != std::string::npos ||
-            w.find(" i ") != std::string::npos ||
-            w.find(" j ") != std::string::npos ||
-            w.find(" k ") != std::string::npos) {
+        if (textMentionsRuntimeIndex(w)) {
             return "64";
         }
         return w;
@@ -4897,6 +5282,146 @@ struct Converter : SyntaxVisitor<Converter> {
             }
         }
         return "";
+    }
+
+
+    std::string expressionStorageType(const ModuleGen& m, std::string expr)
+    {
+        expr = trim(expr);
+        if (expr.empty()) {
+            return "";
+        }
+        if (expr.size() >= 2 && expr.front() == '(' && expr.back() == ')') {
+            return expressionStorageType(m, expr.substr(1, expr.size() - 2));
+        }
+        if (hasSuffix(expr, "_func()")) {
+            auto returnName = expr.substr(0, expr.size() - 7);
+            auto typeIt = m.combReturnTypes.find(returnName);
+            if (typeIt != m.combReturnTypes.end()) {
+                return typeIt->second;
+            }
+        }
+        auto base = baseFromLValueText(expr);
+        if (!base.empty()) {
+            if (auto typeIt = m.types.find(base); typeIt != m.types.end()) {
+                return typeIt->second;
+            }
+            if (auto combIt = m.combMethodByBase.find(base); combIt != m.combMethodByBase.end() && combIt->second < m.methods.size()) {
+                auto returnName = m.methods[combIt->second].returnName;
+                auto typeIt = m.combReturnTypes.find(returnName);
+                if (typeIt != m.combReturnTypes.end()) {
+                    return typeIt->second;
+                }
+            }
+        }
+        return "";
+    }
+
+    std::string adaptInputPortRhs(const ModuleGen& m, const std::string& portType, const std::string& rhs)
+    {
+        auto target = trim(portType);
+        if (target.rfind("logic<", 0) != 0 || target.back() != '>') {
+            return rhs;
+        }
+        auto sourceType = expressionStorageType(m, rhs);
+        if (sourceType.rfind("array<", 0) == 0 || sourceType.rfind("std::array<", 0) == 0) {
+            return target + "(" + rhs + ")";
+        }
+        return rhs;
+    }
+
+
+    std::string finalAdaptStructuralAssignLine(const ModuleGen& m, std::string line)
+    {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            return line;
+        }
+        auto lhs = trim(line.substr(0, eq));
+        auto dot = lhs.rfind('.');
+        if (dot == std::string::npos) {
+            return line;
+        }
+        auto instance = trim(lhs.substr(0, dot));
+        auto portName = trim(lhs.substr(dot + 1));
+        auto bracket = instance.find('[');
+        if (bracket != std::string::npos) {
+            instance = trim(instance.substr(0, bracket));
+        }
+        auto paren = portName.find('(');
+        if (paren != std::string::npos) {
+            portName = trim(portName.substr(0, paren));
+        }
+        std::string childType;
+        for (size_t i = 0; i < m.memberNames.size() && i < m.memberTypes.size(); ++i) {
+            if (m.memberNames[i] == instance) {
+                childType = m.memberTypes[i];
+                break;
+            }
+        }
+        if (childType.empty()) {
+            return line;
+        }
+        auto* child = findModule(childType);
+        if (!child) {
+            return line;
+        }
+        std::string portType;
+        bool inputPort = false;
+        for (auto& p : child->ports) {
+            if (p.name == portName) {
+                portType = p.type;
+                inputPort = p.direction != "output";
+                break;
+            }
+        }
+        if (!inputPort || portType.rfind("logic<", 0) != 0 || portType.back() != '>') {
+            return line;
+        }
+        auto wrap = line.find("_ASSIGN_COMB(", eq);
+        size_t argStart = std::string::npos;
+        if (wrap != std::string::npos) {
+            argStart = wrap + std::string("_ASSIGN_COMB(").size();
+        }
+        else {
+            wrap = line.find("_ASSIGN(", eq);
+            if (wrap == std::string::npos) {
+                return line;
+            }
+            argStart = wrap + std::string("_ASSIGN(").size();
+        }
+        int depth = 1;
+        size_t argEnd = std::string::npos;
+        for (size_t i = argStart; i < line.size(); ++i) {
+            if (line[i] == '(') {
+                ++depth;
+            }
+            else if (line[i] == ')') {
+                if (--depth == 0) {
+                    argEnd = i;
+                    break;
+                }
+            }
+        }
+        if (argEnd == std::string::npos) {
+            return line;
+        }
+        auto arg = trim(line.substr(argStart, argEnd - argStart));
+        auto sourceType = expressionStorageType(m, arg);
+        bool aggregateSource = sourceType.rfind("array<", 0) == 0 || sourceType.rfind("std::array<", 0) == 0;
+        bool combFunctionSource = arg.find("_func()") != std::string::npos;
+        if (!aggregateSource && !combFunctionSource) {
+            return line;
+        }
+        if (arg.rfind(portType + "(", 0) == 0) {
+            return line;
+        }
+        line.replace(argStart, argEnd - argStart, portType + "(" + arg + ")");
+        auto combWrap = line.find("_ASSIGN_COMB(", eq);
+        if (combWrap != std::string::npos && combWrap < argStart) {
+            line.replace(combWrap, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
+        }
+        return line;
     }
 
     std::string exprType(const ExpressionSyntax& expr)
@@ -5182,6 +5707,15 @@ struct Converter : SyntaxVisitor<Converter> {
         if (expr.kind == SyntaxKind::ElementSelectExpression) {
             auto& e = expr.as<ElementSelectExpressionSyntax>();
             if (e.select) {
+                if (e.left->kind == SyntaxKind::IdentifierName) {
+                    auto baseName = tok(e.left->as<IdentifierNameSyntax>().identifier);
+                    if (loopVars.count(baseName)) {
+                        auto w = foldWidth(selectWidth(*e.select));
+                        if (!w.empty()) {
+                            return w;
+                        }
+                    }
+                }
                 auto rawSelect = e.select->toString();
                 if ((loopVars.count("i") && rawSelect.find("i") != std::string::npos) ||
                     (loopVars.count("j") && rawSelect.find("j") != std::string::npos) ||
@@ -5194,6 +5728,12 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (rawWidth.find("(i") != std::string::npos ||
                     rawWidth.find("(j") != std::string::npos ||
                     rawWidth.find("(k") != std::string::npos ||
+                    rawWidth.find("(uint64_t)(i)") != std::string::npos ||
+                    rawWidth.find("(uint64_t)(j)") != std::string::npos ||
+                    rawWidth.find("(uint64_t)(k)") != std::string::npos ||
+                    rawWidth.find("(uint64_t)((uint64_t)(i))") != std::string::npos ||
+                    rawWidth.find("(uint64_t)((uint64_t)(j))") != std::string::npos ||
+                    rawWidth.find("(uint64_t)((uint64_t)(k))") != std::string::npos ||
                     rawWidth.find("* i") != std::string::npos ||
                     rawWidth.find("* j") != std::string::npos ||
                     rawWidth.find("* k") != std::string::npos ||
@@ -5207,6 +5747,9 @@ struct Converter : SyntaxVisitor<Converter> {
                     return width;
                 }
             }
+        }
+        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            return emitNumericExpr(expr, emitExpr(expr));
         }
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
@@ -5589,9 +6132,49 @@ struct Converter : SyntaxVisitor<Converter> {
         }
         else if (st.kind == SyntaxKind::ForLoopStatement) {
             auto& f = st.as<ForLoopStatementSyntax>();
+            auto savedLoopVars = loopVars;
+            for (auto init : f.initializers) {
+                if (init->kind == SyntaxKind::ForVariableDeclaration) {
+                    loopVars.insert(tok(init->as<ForVariableDeclarationSyntax>().declarator->name));
+                }
+                else if (ExpressionSyntax::isKind(init->kind)) {
+                    auto& e = init->as<ExpressionSyntax>();
+                    if (BinaryExpressionSyntax::isKind(e.kind)) {
+                        auto name = assignedBase(*e.as<BinaryExpressionSyntax>().left);
+                        if (!name.empty()) {
+                            loopVars.insert(name);
+                        }
+                    }
+                    else {
+                        auto name = assignedBase(e);
+                        if (!name.empty()) {
+                            loopVars.insert(name);
+                        }
+                    }
+                }
+            }
+            for (auto step : f.steps) {
+                std::string name;
+                if (BinaryExpressionSyntax::isKind(step->kind)) {
+                    name = assignedBase(*step->as<BinaryExpressionSyntax>().left);
+                }
+                else if (PostfixUnaryExpressionSyntax::isKind(step->kind)) {
+                    name = assignedBase(*step->as<PostfixUnaryExpressionSyntax>().operand);
+                }
+                else if (PrefixUnaryExpressionSyntax::isKind(step->kind)) {
+                    name = assignedBase(*step->as<PrefixUnaryExpressionSyntax>().operand);
+                }
+                else {
+                    name = assignedBase(*step);
+                }
+                if (!name.empty()) {
+                    loopVars.insert(name);
+                }
+            }
             out.push_back(pre + "for (" + emitForInit(f) + ";" + (f.stopExpr ? emitExpr(*f.stopExpr) : "") + ";" + emitExprList(f.steps) + ") {");
             emitStatementBody(*f.statement, out, comb, indent + 1);
             out.push_back(pre + "}");
+            loopVars = savedLoopVars;
         }
         else if (st.kind == SyntaxKind::CaseStatement) {
             auto& c = st.as<CaseStatementSyntax>();
@@ -5705,9 +6288,11 @@ struct Converter : SyntaxVisitor<Converter> {
     void emitStatementBody(const StatementSyntax& st, std::vector<std::string>& out, bool comb, int indent)
     {
         if (st.kind == SyntaxKind::SequentialBlockStatement || st.kind == SyntaxKind::ParallelBlockStatement) {
+            localTypeScopes.push_back({});
             for (auto item : st.as<BlockStatementSyntax>().items) {
                 emitNode(*item, out, comb, indent);
             }
+            localTypeScopes.pop_back();
         }
         else {
             emitStatement(st, out, comb, indent);
@@ -5723,13 +6308,23 @@ struct Converter : SyntaxVisitor<Converter> {
             if (type == "bool") {
                 type = "u1";
             }
+            if (!localTypeScopes.empty()) {
+                localTypeScopes.back()[name] = type;
+            }
             auto line = pre + type + " " + name;
             if (d->initializer) {
                 auto& init = *d->initializer;
                 if (init.expr) {
                     auto rhs = emitExpr(*init.expr);
+                    auto ctype = constexprType(type);
                     if (type == "bool") {
                         rhs = "static_cast<bool>(" + rhs + ")";
+                    }
+                    else if (ctype == "unsigned" || ctype == "uint64_t") {
+                        rhs = "static_cast<" + ctype + ">(" + emitNumericExpr(*init.expr, rhs) + ")";
+                    }
+                    else if (type.find("::") != std::string::npos && !foldWidth(exprWidth(*init.expr)).empty()) {
+                        rhs = "static_cast<" + type + ">(" + emitNumericExpr(*init.expr, rhs) + ")";
                     }
                     line += " = " + rhs;
                 }
@@ -5844,9 +6439,111 @@ struct Converter : SyntaxVisitor<Converter> {
         return s;
     }
 
+    bool isBlockingAssignmentKind(SyntaxKind kind) const
+    {
+        return kind == SyntaxKind::AssignmentExpression;
+    }
+
+    bool isNonblockingAssignmentKind(SyntaxKind kind) const
+    {
+        return kind == SyntaxKind::NonblockingAssignmentExpression;
+    }
+
+    bool isCompoundAssignmentKind(SyntaxKind kind) const
+    {
+        return kind == SyntaxKind::AddAssignmentExpression ||
+               kind == SyntaxKind::SubtractAssignmentExpression ||
+               kind == SyntaxKind::AndAssignmentExpression ||
+               kind == SyntaxKind::OrAssignmentExpression ||
+               kind == SyntaxKind::XorAssignmentExpression ||
+               kind == SyntaxKind::LogicalLeftShiftAssignmentExpression ||
+               kind == SyntaxKind::LogicalRightShiftAssignmentExpression ||
+               kind == SyntaxKind::ArithmeticLeftShiftAssignmentExpression ||
+               kind == SyntaxKind::ArithmeticRightShiftAssignmentExpression ||
+               kind == SyntaxKind::MultiplyAssignmentExpression ||
+               kind == SyntaxKind::DivideAssignmentExpression ||
+               kind == SyntaxKind::ModAssignmentExpression;
+    }
+
+    bool isAssignmentLikeKind(SyntaxKind kind) const
+    {
+        return isBlockingAssignmentKind(kind) || isNonblockingAssignmentKind(kind) || isCompoundAssignmentKind(kind);
+    }
+
+    std::string compoundOperatorForKind(SyntaxKind kind, const std::string& tokenText) const
+    {
+        if (!tokenText.empty()) {
+            return tokenText;
+        }
+        switch (kind) {
+            case SyntaxKind::AddAssignmentExpression: return "+=";
+            case SyntaxKind::SubtractAssignmentExpression: return "-=";
+            case SyntaxKind::AndAssignmentExpression: return "&=";
+            case SyntaxKind::OrAssignmentExpression: return "|=";
+            case SyntaxKind::XorAssignmentExpression: return "^=";
+            case SyntaxKind::LogicalLeftShiftAssignmentExpression:
+            case SyntaxKind::ArithmeticLeftShiftAssignmentExpression: return "<<=";
+            case SyntaxKind::LogicalRightShiftAssignmentExpression:
+            case SyntaxKind::ArithmeticRightShiftAssignmentExpression: return ">>=";
+            case SyntaxKind::MultiplyAssignmentExpression: return "*=";
+            case SyntaxKind::DivideAssignmentExpression: return "/=";
+            case SyntaxKind::ModAssignmentExpression: return "%=";
+            default: return tokenText;
+        }
+    }
+
+    std::string emitCompoundAssignment(const BinaryExpressionSyntax& b, const std::string& op)
+    {
+        auto lhs = emitLValue(*b.left);
+        auto rhs = emitExpr(*b.right);
+        auto base = assignedBase(*b.left);
+        if (!base.empty() && !mod->types.count(base) && (op == "&=" || op == "|=" || op == "^=")) {
+            auto boolOp = op == "&=" ? "&&" : (op == "|=" ? "||" : "!=");
+            if (op == "^=") {
+                return lhs + " = ((bool)(" + lhs + ") != " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
+            }
+            return lhs + " = ((bool)(" + lhs + ") " + boolOp + " " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
+        }
+        if ((op == "&=" || op == "|=" || op == "^=") &&
+            b.right->kind == SyntaxKind::ConditionalExpression) {
+            rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
+        }
+        if (op == "<<=" || op == ">>=") {
+            auto shiftOp = op == "<<=" ? "<<" : ">>";
+            auto lhsWidth = foldWidth(exprWidth(*b.left));
+            if (isNumber(lhsWidth)) {
+                return lhs + " = logic<" + lhsWidth + ">(" + emitNumericExpr(*b.left) + " " + shiftOp + " (unsigned)(" + emitNumericExpr(*b.right, rhs) + "))";
+            }
+            return lhs + " = " + lhs + " " + shiftOp + " (unsigned)(" + emitNumericExpr(*b.right, rhs) + ")";
+        }
+        auto lhsWidth = foldWidth(exprWidth(*b.left));
+        if (op == "+=" || op == "-=" || op == "|=" || op == "&=" || op == "^=") {
+            std::string binop = op.substr(0, 1);
+            if (lhsWidth == "1" || lhs.find("logic<1>") != std::string::npos) {
+                if (binop == "|") {
+                    return lhs + " = logic<1>(" + truthyExpr(lhs, "1") + " || " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
+                }
+                if (binop == "&") {
+                    return lhs + " = logic<1>(" + truthyExpr(lhs, "1") + " && " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
+                }
+                if (binop == "^") {
+                    return lhs + " = logic<1>((uint64_t)(" + lhs + ") ^ (" + emitNumericExpr(*b.right, rhs) + " & 1ull))";
+                }
+            }
+            if (!lhsWidth.empty()) {
+                return lhs + " = logic<" + lhsWidth + ">(" + emitNumericExpr(*b.left) + " " + binop + " " + emitNumericExpr(*b.right, rhs) + ")";
+            }
+        }
+        return lhs + " " + op + " " + rhs;
+    }
+
     std::string emitStatementExpr(const ExpressionSyntax& expr, bool comb)
     {
-        if (expr.kind == SyntaxKind::AssignmentExpression || expr.kind == SyntaxKind::NonblockingAssignmentExpression) {
+        if (isCompoundAssignmentKind(expr.kind)) {
+            auto& b = expr.as<BinaryExpressionSyntax>();
+            return emitCompoundAssignment(b, compoundOperatorForKind(expr.kind, tok(b.operatorToken)));
+        }
+        if (isBlockingAssignmentKind(expr.kind) || isNonblockingAssignmentKind(expr.kind)) {
             auto& b = expr.as<BinaryExpressionSyntax>();
             auto base = assignedBase(*b.left);
             auto lhs = emitLValue(*b.left);
@@ -5862,10 +6559,22 @@ struct Converter : SyntaxVisitor<Converter> {
                         rhsConditionalSized = true;
                     }
                 }
+                else if (selExpr.select && selExpr.select->selector &&
+                    selExpr.select->selector->kind == SyntaxKind::BitSelect) {
+                    rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), "logic<1>");
+                    rhsConditionalSized = true;
+                }
+            }
+            if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression) {
+                auto lhsWidth = foldWidth(exprWidth(*b.left));
+                if (lhsWidth == "1") {
+                    rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), "logic<1>");
+                    rhsConditionalSized = true;
+                }
             }
             if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression &&
                 lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
-                rhs = emitConditionalAsDecltype(b.right->as<ConditionalExpressionSyntax>(), lhs);
+                rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
             }
             if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression && mod->types.count(base) &&
                 mod->types[base] != "bool" && mod->types[base] != "u1" && mod->types[base] != "reg<u1>") {
@@ -5880,9 +6589,9 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
             }
             if (mod->types.count(base) &&
-                (expr.kind == SyntaxKind::NonblockingAssignmentExpression ||
+                (isNonblockingAssignmentKind(expr.kind) ||
                  mod->types[base].rfind("reg<", 0) == 0 || mod->outputPortCppNames.count(base))) {
-                if (comb && expr.kind != SyntaxKind::NonblockingAssignmentExpression) {
+                if (comb && !isNonblockingAssignmentKind(expr.kind)) {
                     mod->combAssignedVars.insert(base);
                 }
                 else {
@@ -5895,11 +6604,11 @@ struct Converter : SyntaxVisitor<Converter> {
             if (mod->types.count(base) && (mod->types[base] == "bool" || mod->types[base] == "u1" || mod->types[base] == "reg<u1>")) {
                 rhs = truthyExpr(rhs, exprWidth(*b.right));
             }
-            auto sequentialStorageType = mod->types.count(base) ? mod->types[base] : std::string();
+            auto sequentialStorageType = mod->types.count(base) ? mod->types[base] : lookupLocalType(base);
             if (mod->outputPortCppNames.count(base)) {
                 sequentialStorageType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
             }
-            if (expr.kind == SyntaxKind::NonblockingAssignmentExpression && mod->types.count(base)) {
+            if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
                 sequentialStorageType = regTypeFor(sequentialStorageType);
             }
             auto targetStorageType = unwrapRegType(sequentialStorageType);
@@ -5923,11 +6632,17 @@ struct Converter : SyntaxVisitor<Converter> {
                     rhs = emitPredicate(*c.predicate) + " ? " + primitiveCast(prim, emitNumericExpr(*c.left)) + " : " + primitiveCast(prim, emitNumericExpr(*c.right));
                 }
             }
+            if (isPrimitiveWrapperType(targetStorageType)) {
+                auto targetWidth = foldWidth(typeWidth(targetStorageType));
+                if (isNumber(targetWidth)) {
+                    rhs = primitiveCast(primitiveForWidth(targetWidth), emitNumericExpr(*b.right, rhs));
+                }
+            }
             auto trimmedRhs = trim(rhs);
             if (!targetStorageType.empty() && trimmedRhs.rfind("{.", 0) == 0) {
                 rhs = targetStorageType + trimmedRhs;
             }
-            if ((expr.kind == SyntaxKind::NonblockingAssignmentExpression || (!comb && mod->varNames.count(base))) &&
+            if ((isNonblockingAssignmentKind(expr.kind) || (!comb && mod->varNames.count(base))) &&
                 sequentialStorageType.rfind("reg<", 0) == 0 &&
                 !memoryLikeType(sequentialStorageType)) {
                 if (b.left->kind == SyntaxKind::ElementSelectExpression || lhs.find('[') != std::string::npos ||
@@ -5994,6 +6709,23 @@ struct Converter : SyntaxVisitor<Converter> {
             auto& e = expr.as<ElementSelectExpressionSyntax>();
             if (e.left->kind == SyntaxKind::IdentifierName) {
                 auto baseName = tok(e.left->as<IdentifierNameSyntax>().identifier);
+                if (e.select && e.select->selector && RangeSelectSyntax::isKind(e.select->selector->kind) &&
+                    (loopVars.count(baseName) || (mod && mod->types.count(baseName) &&
+                     (mod->types[baseName] == "unsigned" || mod->types[baseName] == "u32" ||
+                      mod->types[baseName] == "uint32_t" || mod->types[baseName] == "u64" ||
+                      mod->types[baseName] == "uint64_t")))) {
+                    auto& r = e.select->selector->as<RangeSelectSyntax>();
+                    auto width = foldWidth(selectWidth(*e.select));
+                    if (width.empty()) {
+                        width = "64";
+                    }
+                    auto first = emitNumericExpr(*r.right);
+                    auto value = "((" + emitNumericExpr(*e.left) + ") >> (unsigned)(" + first + "))";
+                    if (isNumber(width) && std::stoul(width) < 64) {
+                        value = "(" + value + " & ((1ull << " + width + ") - 1ull))";
+                    }
+                    return "logic<" + width + ">(" + value + ")";
+                }
                 auto ctype = constantType(baseName);
                 auto width = foldWidth(typeWidth(ctype));
                 if (!width.empty() && ctype.rfind("logic<", 0) == 0) {
@@ -6038,17 +6770,22 @@ struct Converter : SyntaxVisitor<Converter> {
                 }
                 return "pow(" + left + ", " + right + ")";
             }
-            auto rhs = emitUntypedNumericExpr(*b.right);
+            auto left = emitNumericExpr(*b.left);
+            auto rhs = emitNumericExpr(*b.right);
             if (op == "<<" || op == ">>") {
                 rhs = "(unsigned)(" + rhs + ")";
             }
-            return emitUntypedNumericExpr(*b.left) + " " + op + " " + rhs;
+            return left + " " + op + " " + rhs;
         }
         if (PrefixUnaryExpressionSyntax::isKind(expr.kind)) {
             auto& u = expr.as<PrefixUnaryExpressionSyntax>();
             auto op = tok(u.operatorToken);
             if (op == "|" || op == "~|" || op == "&" || op == "~&" || op == "^" || op == "~^" || op == "^~") {
                 return emitExpr(expr);
+            }
+            auto operand = emitNumericExpr(*u.operand);
+            if (op == "+" || op == "-") {
+                return op + "(" + operand + ")";
             }
             return op + emitUntypedNumericExpr(*u.operand);
         }
@@ -6090,7 +6827,12 @@ struct Converter : SyntaxVisitor<Converter> {
             args += ")";
             return callee + args;
         }
-        return emitExpr(expr);
+        auto emitted = emitExpr(expr);
+        auto width = foldWidth(exprWidth(expr));
+        if (!width.empty()) {
+            return emitNumericExpr(expr, emitted);
+        }
+        return emitted;
     }
 
     std::string emitIndexExpr(const ExpressionSyntax& expr)
@@ -6181,6 +6923,28 @@ struct Converter : SyntaxVisitor<Converter> {
         return text == "0" || text == "0b0" || text == "0x0";
     }
 
+    std::string emitConditionalForLValue(const ConditionalExpressionSyntax& c, const ExpressionSyntax& lhsExpr, const std::string& lhs)
+    {
+        if (lhs.find("][") != std::string::npos) {
+            return emitConditionalAsType(c, "logic<1>");
+        }
+        auto base = assignedBase(lhsExpr);
+        if (base.empty() && lhs.find('[') != std::string::npos) {
+            base = trim(lhs.substr(0, lhs.find('[')));
+        }
+        if (!base.empty() && mod && mod->types.count(base) && lhs.find('[') != std::string::npos) {
+            auto baseType = unwrapRegType(mod->types[base]);
+            if (baseType.rfind("logic<", 0) == 0 || baseType.rfind("u<", 0) == 0) {
+                return emitConditionalAsType(c, "logic<1>");
+            }
+        }
+        auto width = foldWidth(exprWidth(lhsExpr));
+        if (isNumber(width)) {
+            return emitConditionalAsType(c, "logic<" + width + ">");
+        }
+        return emitConditionalAsDecltype(c, lhs);
+    }
+
     std::string emitConditionalAsDecltype(const ConditionalExpressionSyntax& c, const std::string& lhs)
     {
         auto targetType = "std::remove_cvref_t<decltype(" + lhs + ")>";
@@ -6215,11 +6979,101 @@ struct Converter : SyntaxVisitor<Converter> {
         return emitPredicate(*c.predicate) + " ? " + emitBranch(*c.left) + " : " + emitBranch(*c.right);
     }
 
+    std::string emitNumericIdentifierSelectExpr(const IdentifierSelectNameSyntax& n)
+    {
+        if (n.selectors.empty()) {
+            return "";
+        }
+        auto last = n.selectors.back();
+        if (!last || !last->selector) {
+            return "";
+        }
+        auto base = tok(n.identifier);
+        auto s = mod->outputPortCppNames.count(base) ?
+            (isAssignOnlyOutput(*mod, base) ? mod->outputPortCppNames[base] + "()" : outputStorageName(*mod, base)) :
+            (mod->portCppNames.count(base) ? mod->portCppNames[base] + "()" : (isAssignDrivenVar(*mod, base) ? base + "()" : base));
+        auto currentType = mod->types.count(base) ? mod->types[base] : std::string();
+        auto memorySelect = !currentType.empty() && memoryLikeType(currentType);
+        auto memoryScalar = memorySelect && scalarMemory(currentType);
+        for (size_t idx = 0; idx + 1 < n.selectors.size(); ++idx) {
+            auto sel = n.selectors[idx];
+            s = emitSelectOn(s, *sel, false, memorySelect, memoryScalar);
+            if (currentType.rfind("array<", 0) == 0 && sel->selector && sel->selector->kind == SyntaxKind::BitSelect) {
+                auto args = memoryArgs("memory<" + currentType.substr(6, currentType.size() - 7) + ">");
+                currentType = args.size() == 2 ? args[0] : std::string();
+            }
+            else {
+                currentType.clear();
+            }
+            memorySelect = !currentType.empty() && memoryLikeType(currentType);
+            memoryScalar = memorySelect && scalarMemory(currentType);
+        }
+        if (last->selector->kind == SyntaxKind::BitSelect) {
+            auto index = emitNumericExpr(*last->selector->as<BitSelectSyntax>().expr);
+            if (loopVars.count(base) || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t") {
+                return "(((uint64_t)(" + s + ") >> (unsigned)(" + index + ")) & 1ull)";
+            }
+            return "(uint64_t)(logic<1>(" + s + "[" + bitIndexArg(index) + "]))";
+        }
+        if (RangeSelectSyntax::isKind(last->selector->kind)) {
+            auto& r = last->selector->as<RangeSelectSyntax>();
+            auto bounds = indexedRangeBounds(r);
+            if (loopVars.count(base) || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t") {
+                auto value = "(((uint64_t)(" + s + ")) >> (unsigned)(" + bounds.second + "))";
+                auto width = foldWidth(selectWidth(*last));
+                if (isNumber(width) && std::stoul(width) < 64) {
+                    value = "(" + value + " & ((1ull << " + width + ") - 1ull))";
+                }
+                return value;
+            }
+            return "(uint64_t)(" + s + ".bits(" + bounds.first + "," + bounds.second + "))";
+        }
+        return "";
+    }
+
+    std::string emitNumericRangeSelectExpr(const ElementSelectExpressionSyntax& e)
+    {
+        if (!e.select || !e.select->selector || !RangeSelectSyntax::isKind(e.select->selector->kind)) {
+            return "";
+        }
+        auto& r = e.select->selector->as<RangeSelectSyntax>();
+        auto base = assignedBase(*e.left);
+        bool integralBase = false;
+        if (!base.empty()) {
+            integralBase = loopVars.count(base) || (mod && mod->types.count(base) &&
+                (mod->types[base] == "unsigned" || mod->types[base] == "u32" ||
+                 mod->types[base] == "uint32_t" || mod->types[base] == "u64" ||
+                 mod->types[base] == "uint64_t"));
+        }
+        auto bounds = indexedRangeBounds(r);
+        if (integralBase) {
+            auto value = "(((uint64_t)(" + emitNumericExpr(*e.left) + ")) >> (unsigned)(" + bounds.second + "))";
+            auto width = foldWidth(selectWidth(*e.select));
+            if (isNumber(width) && std::stoul(width) < 64) {
+                value = "(" + value + " & ((1ull << " + width + ") - 1ull))";
+            }
+            return value;
+        }
+        return "(uint64_t)(" + emitExpr(*e.left) + ".bits(" + bounds.first + "," + bounds.second + "))";
+    }
+
     std::string emitNumericExpr(const ExpressionSyntax& expr, const std::string& emitted = "")
     {
+        if (expr.kind == SyntaxKind::IdentifierSelectName) {
+            auto numericSelect = emitNumericIdentifierSelectExpr(expr.as<IdentifierSelectNameSyntax>());
+            if (!numericSelect.empty()) {
+                return numericSelect;
+            }
+        }
+        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            auto numericRange = emitNumericRangeSelectExpr(expr.as<ElementSelectExpressionSyntax>());
+            if (!numericRange.empty()) {
+                return numericRange;
+            }
+        }
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             auto& p = expr.as<ParenthesizedExpressionSyntax>();
-            if (p.expression && p.expression->kind == SyntaxKind::ConditionalExpression) {
+            if (p.expression) {
                 return "(" + emitNumericExpr(*p.expression) + ")";
             }
         }
@@ -6229,6 +7083,22 @@ struct Converter : SyntaxVisitor<Converter> {
             auto prim = primitiveForWidth(width);
             return "(" + emitPredicate(*c.predicate) + " ? " + primitiveCast(prim, emitNumericExpr(*c.left)) +
                    " : " + primitiveCast(prim, emitNumericExpr(*c.right)) + ")";
+        }
+        if (BinaryExpressionSyntax::isKind(expr.kind)) {
+            auto& b = expr.as<BinaryExpressionSyntax>();
+            auto op = tok(b.operatorToken);
+            if (op == "<<<") {
+                op = "<<";
+            }
+            else if (op == ">>>") {
+                op = ">>";
+            }
+            if (op == "|" || op == "&" || op == "^") {
+                return "(" + emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right) + ")";
+            }
+            if (op == "<<" || op == ">>") {
+                return "(" + emitNumericExpr(*b.left) + " " + op + " (unsigned)(" + emitNumericExpr(*b.right) + "))";
+            }
         }
         auto text = emitted.empty() ? emitExpr(expr) : emitted;
         auto width = foldWidth(exprWidth(expr));
@@ -6363,6 +7233,24 @@ struct Converter : SyntaxVisitor<Converter> {
             auto memorySelect = !currentType.empty() && memoryLikeType(currentType);
             auto memoryScalar = memorySelect && scalarMemory(currentType);
             for (auto sel : n.selectors) {
+                if (loopVars.count(base) && sel->selector && RangeSelectSyntax::isKind(sel->selector->kind)) {
+                    auto& r = sel->selector->as<RangeSelectSyntax>();
+                    auto width = foldWidth(selectWidth(*sel));
+                    if (width.empty()) {
+                        width = "64";
+                    }
+                    auto first = emitNumericExpr(*r.right);
+                    auto value = "((uint64_t)(" + s + ") >> (unsigned)(" + first + "))";
+                    if (isNumber(width) && std::stoul(width) < 64) {
+                        value = "(" + value + " & ((1ull << " + width + ") - 1ull))";
+                    }
+                    s = "logic<" + width + ">(" + value + ")";
+                    key = emitSelectOn(key, *sel, true);
+                    currentType.clear();
+                    memorySelect = false;
+                    memoryScalar = false;
+                    continue;
+                }
                 if (currentType.rfind("array<", 0) == 0 && sel->selector && RangeSelectSyntax::isKind(sel->selector->kind)) {
                     auto& r = sel->selector->as<RangeSelectSyntax>();
                     s = "array_slice<" + selectTemplateWidth(*sel) + ">(" + s + ", " + emitNumericExpr(*r.right) + ")";
@@ -6449,22 +7337,11 @@ struct Converter : SyntaxVisitor<Converter> {
             }
             auto rhs = emitExpr(*b.right);
             if (op == "&=" || op == "|=" || op == "^=" || op == "+=" || op == "-=" || op == "<<=" || op == ">>=") {
-                auto lhs = emitLValue(*b.left);
-                auto base = assignedBase(*b.left);
-                if (!base.empty() && !mod->types.count(base) && (op == "&=" || op == "|=" || op == "^=")) {
-                    auto boolOp = op == "&=" ? "&&" : (op == "|=" ? "||" : "!=");
-                    if (op == "^=") {
-                        return lhs + " = ((bool)(" + lhs + ") != " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
-                    }
-                    return lhs + " = ((bool)(" + lhs + ") " + boolOp + " " + truthyExpr(rhs, exprWidth(*b.right)) + ")";
-                }
-                if (op == "<<=" || op == ">>=") {
-                    rhs = "(unsigned)(" + emitNumericExpr(*b.right, rhs) + ")";
-                }
-                return lhs + " " + op + " " + rhs;
+                return emitCompoundAssignment(b, op);
             }
             if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
-                op == "<" || op == "<=" || op == ">" || op == ">=") {
+                op == "<" || op == "<=" || op == ">" || op == ">=" ||
+                ((op == "==" || op == "!=") && (!foldWidth(exprWidth(*b.left)).empty() || !foldWidth(exprWidth(*b.right)).empty()))) {
                 return emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right, rhs);
             }
             if (op == "**") {
@@ -6479,6 +7356,16 @@ struct Converter : SyntaxVisitor<Converter> {
             }
             if (op == "<<" || op == ">>") {
                 rhs = "(unsigned)(" + emitNumericExpr(*b.right, rhs) + ")";
+                auto width = foldWidth(exprWidth(expr));
+                if (isNumber(width) && std::stoul(width) <= 64) {
+                    return "logic<" + width + ">(" + emitNumericExpr(expr) + ")";
+                }
+            }
+            if (op == "|" || op == "&" || op == "^") {
+                auto width = foldWidth(exprWidth(expr));
+                if (isNumber(width) && std::stoul(width) <= 64) {
+                    return "logic<" + width + ">(" + emitNumericExpr(expr) + ")";
+                }
             }
             return emitExpr(*b.left) + " " + op + " " + rhs;
         }
@@ -6502,6 +7389,9 @@ struct Converter : SyntaxVisitor<Converter> {
             }
             if (op == "~^" || op == "^~") {
                 return "!cpphdl::reduce_xor(" + emitExpr(*u.operand) + ")";
+            }
+            if (op == "+" || op == "-") {
+                return op + "(" + emitNumericExpr(*u.operand) + ")";
             }
             return op + emitExpr(*u.operand);
         }
@@ -6698,12 +7588,34 @@ struct Converter : SyntaxVisitor<Converter> {
         return base + ".bits(" + left + "," + right + ")";
     }
 
-    std::string emitPlusBitsCall(const std::string& base, const std::string& left, const std::string& width)
+    std::string emitIndexedBitsCall(const std::string& base, const std::string& start, const std::string& width, bool ascending)
     {
         if (isOneExpr(width)) {
-            return base + "[" + bitIndexArg(left) + "]";
+            return base + "[" + bitIndexArg(start) + "]";
         }
-        return base + ".bits((" + left + ")+(" + width + ")-1," + left + ")";
+        if (ascending) {
+            return base + ".bits((" + start + ")+(" + width + ")-1," + start + ")";
+        }
+        return base + ".bits(" + start + ",(" + start + ")-(" + width + ")+1)";
+    }
+
+    std::string emitPlusBitsCall(const std::string& base, const std::string& left, const std::string& width)
+    {
+        return emitIndexedBitsCall(base, left, width, true);
+    }
+
+    std::pair<std::string, std::string> indexedRangeBounds(const RangeSelectSyntax& r)
+    {
+        auto rangeOp = tok(r.range);
+        auto start = emitNumericExpr(*r.left);
+        auto width = emitNumericExpr(*r.right);
+        if (rangeOp == "+:" || rangeOp == "+") {
+            return {"(" + start + ")+(" + width + ")-1", start};
+        }
+        if (rangeOp == "-:" || rangeOp == "-") {
+            return {start, "(" + start + ")-(" + width + ")+1"};
+        }
+        return {emitNumericExpr(*r.left), emitNumericExpr(*r.right)};
     }
 
     std::string emitSelect(const ElementSelectSyntax& select, bool lvalue = false)
@@ -6719,10 +7631,10 @@ struct Converter : SyntaxVisitor<Converter> {
         if (RangeSelectSyntax::isKind(select.selector->kind)) {
             auto& r = select.selector->as<RangeSelectSyntax>();
             auto rangeOp = tok(r.range);
-            if (rangeOp == "+:" || rangeOp == "+") {
+            if (rangeOp == "+:" || rangeOp == "+" || rangeOp == "-:" || rangeOp == "-") {
                 auto left = emitIndexExpr(*r.left);
                 auto width = emitIndexExpr(*r.right);
-                auto bits = emitPlusBitsCall("", left, width);
+                auto bits = emitIndexedBitsCall("", left, width, rangeOp == "+:" || rangeOp == "+");
                 return lvalue ? bits : "logic<" + selectTemplateWidth(select) + ">(" + bits + ")";
             }
             auto bits = emitBitsCall("", emitIndexExpr(*r.left), emitIndexExpr(*r.right));
@@ -6753,10 +7665,10 @@ struct Converter : SyntaxVisitor<Converter> {
             auto& r = select.selector->as<RangeSelectSyntax>();
             std::string bits;
             auto rangeOp = tok(r.range);
-            if (rangeOp == "+:" || rangeOp == "+") {
+            if (rangeOp == "+:" || rangeOp == "+" || rangeOp == "-:" || rangeOp == "-") {
                 auto left = emitIndexExpr(*r.left);
                 auto width = emitIndexExpr(*r.right);
-                bits = emitPlusBitsCall(base, left, width);
+                bits = emitIndexedBitsCall(base, left, width, rangeOp == "+:" || rangeOp == "+");
             }
             else {
                 bits = emitBitsCall(base, emitIndexExpr(*r.left), emitIndexExpr(*r.right));
@@ -7257,6 +8169,22 @@ struct Converter : SyntaxVisitor<Converter> {
 			            MethodGen assignMethod;
 			            std::map<std::string, std::string> assignLocalExprs;
 			            std::map<std::string, std::string> assignLocalTypes;
+			            auto findAssignLocalDeclType = [&](const std::string& name) -> std::string {
+			                for (auto& candidateLine : m.assignLines) {
+			                    auto decl = trim(candidateLine);
+			                    if (decl.find('=') != std::string::npos) {
+			                        continue;
+			                    }
+			                    if (!decl.empty() && decl.back() == ';') {
+			                        decl.pop_back();
+			                    }
+			                    auto suffix = " " + name;
+			                    if (decl.size() > suffix.size() && decl.compare(decl.size() - suffix.size(), suffix.size(), suffix) == 0) {
+			                        return trim(decl.substr(0, decl.size() - suffix.size()));
+			                    }
+			                }
+			                return "";
+			            };
 			            for (auto& localLine : m.assignLines) {
 			                auto t = trim(localLine);
 			                auto eq = t.find('=');
@@ -7297,6 +8225,9 @@ struct Converter : SyntaxVisitor<Converter> {
 			                    if (auto typeIt = assignLocalTypes.find(lhs); typeIt != assignLocalTypes.end()) {
 			                        lhsType = typeIt->second;
 			                    }
+			                    if (lhsType.empty()) {
+			                        lhsType = findAssignLocalDeclType(lhs);
+			                    }
 			                }
 			                if (!lhsType.empty()) {
 			                    replaceAll(rhs, "decltype(" + lhs + ")", lhsType);
@@ -7326,7 +8257,11 @@ struct Converter : SyntaxVisitor<Converter> {
 		                    for (auto& typeKv : assignLocalTypes) {
 		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
 		                    }
-		                    auto arraySize = directMemberBindingArraySize(line);
+		                    for (auto& typeKv : m.types) {
+		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
+		                    }
+		                    emittedAssignLine = finalAdaptStructuralAssignLine(m, emittedAssignLine);
+                    auto arraySize = directMemberBindingArraySize(line);
 		                    if (!arraySize.empty()) {
 		                        const std::string generatedLoopAliases[] = {"j", "k", "m", "z_gen", "w_gen"};
 		                        for (auto& alias : generatedLoopAliases) {
@@ -7367,7 +8302,11 @@ struct Converter : SyntaxVisitor<Converter> {
 		                    for (auto& typeKv : assignLocalTypes) {
 		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
 		                    }
-		                    if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(' ')))) {
+		                    for (auto& typeKv : m.types) {
+		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
+		                    }
+		                    emittedAssignLine = finalAdaptStructuralAssignLine(m, emittedAssignLine);
+                    if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(' ')))) {
 		                        continue;
 		                    }
 		                    if (auto patches = configuredTextMap("HDLCPP_ASSIGN_LINE_PATCHES"); patches.count(m.name + "|" + trim(emittedAssignLine))) {
@@ -7469,6 +8408,7 @@ struct Converter : SyntaxVisitor<Converter> {
             }
             else {
                 auto rhs = conn.connected ? conn.rhs : (portType == "bool" ? "false" : portType + "(0)");
+                auto sourceTypeBeforeLateBind = expressionStorageType(m, rhs);
                 auto boundName = bridgeBoundName(m, rhs);
                 auto bridge = !boundName.empty() && m.assignExprByBase.count(boundName) &&
                               isAssignDrivenVar(m, boundName);
@@ -7482,6 +8422,16 @@ struct Converter : SyntaxVisitor<Converter> {
                 if (!rawRhsBase.empty() && m.combAssignedVars.count(rawRhsBase) && !m.seqAssignedVars.count(rawRhsBase) && !m.combMethodByBase.count(rawRhsBase) && hasRuntimeAssignLines(m)) {
                     rhs = "(assign_comb_func(), " + rhs + ")";
                     wrapper = "_ASSIGN_COMB";
+                }
+                auto target = trim(portType);
+                if (target.rfind("logic<", 0) == 0 && target.back() == '>' &&
+                    ((sourceTypeBeforeLateBind.rfind("array<", 0) == 0 || sourceTypeBeforeLateBind.rfind("std::array<", 0) == 0) ||
+                     rhs.find("_func()") != std::string::npos)) {
+                    rhs = target + "(" + rhs + ")";
+                    wrapper = "_ASSIGN";
+                }
+                else {
+                    rhs = adaptInputPortRhs(m, portType, rhs);
                 }
                 m.assignLines.push_back(conn.instance + "." + portName + " = " + wrapper + "(" + rhs + ");");
             }

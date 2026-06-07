@@ -61,6 +61,15 @@ namespace cpphdl
 
 
 
+
+template<typename T, typename V>
+constexpr T sv_cast(const V& value)
+{
+    T out{};
+    out = value;
+    return out;
+}
+
 template<size_t WIDTH>
 constexpr logic<WIDTH> byteswap(const logic<WIDTH>& value)
 {
