@@ -1,3 +1,7 @@
+ - Tribe cpu has SD(H) device and ethgig device, ping works from Linux
+ - several bugs in C++ templates conversion are fixed
+ - several bugs in L2 Cache are fixed
+
 # 1.1
 
  - more tests and examples: code/TemplateStaticCall.cpp, code/TypeTemplateModule.cpp
