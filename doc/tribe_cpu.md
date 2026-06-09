@@ -8,7 +8,7 @@ The base implementation targets 32-bit integer software. Build-time configuratio
 
 ## Structure
 
-The top-level CPU is the `Tribe` module in `tribe/main.cpp`. It instantiates these core blocks:
+The top-level CPU is the `Tribe` module in `tribe/Tribe.h`. It instantiates these core blocks:
 
 | Block | Source | Role |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ The top-level CPU is the `Tribe` module in `tribe/main.cpp`. It instantiates the
 | `L2Cache` | `tribe/cache/L2Cache.h` | Shared coherent L2 cache, AXI memory/device master ports, and external AXI slave ports. |
 | `BranchPredictor` | `tribe/BranchPredictor.h` | Small direct-mapped branch predictor. |
 
-The executable test wrapper in `tribe/main.cpp` instantiates three RAM regions, an IO region mux, NS16550A UART, CLINT, PLIC, and Accelerator. `tribe/SoC/System.cpp` packages the same CPU and devices into a synthesizable-style `System` module where the first two DRAM regions remain outside the DUT and the third RAM/device region is inside the SoC.
+The executable test wrapper is `TestTribe` in `tribe/TribeTest.h`, driven by `tribe/main.cpp`. It instantiates three RAM regions, an IO region mux, NS16550A UART, CLINT, PLIC, Accelerator, SD controller plus SD verification card, and the ethgig DMA/MAC/PCS/PHY chain plus optional TAP-backed RGMII verification link. `tribe/SoC/System.cpp` packages the same CPU with UART, CLINT, PLIC, Accelerator, SD controller, and the third RAM region into a synthesizable-style `System` module where the first two DRAM regions remain outside the DUT.
 
 ## Main (Core)
 
@@ -48,10 +48,30 @@ Top-level `Tribe` ports:
 | `debug_immu_paddr_out` | `uint32_t` | MMU debug: current IMMU translated physical address. |
 | `debug_icache_read_valid_out` | `bool` | I-cache debug: read response valid. |
 | `debug_icache_read_addr_out` | `uint32_t` | I-cache debug: response address tag. |
+| `debug_dcache_read_valid_out` | `bool` | D-cache debug: read response valid. |
+| `debug_dcache_read_addr_out` | `uint32_t` | D-cache debug: response address tag. |
+| `debug_dcache_read_data_out` | `uint32_t` | D-cache debug: response data. |
+| `debug_dcache_cpu_read_out` | `bool` | D-cache debug: CPU-side read request. |
+| `debug_dcache_cpu_write_out` | `bool` | D-cache debug: CPU-side write request. |
+| `debug_dcache_cpu_addr_out` | `uint32_t` | D-cache debug: CPU-side request address. |
+| `debug_dcache_cpu_wdata_out` | `uint32_t` | D-cache debug: CPU-side write data. |
+| `debug_dcache_cpu_wmask_out` | `uint8_t` | D-cache debug: CPU-side write byte mask. |
 | `debug_fetch_valid_out` | `bool` | Fetch path has a valid instruction for decode. |
 | `debug_memory_wait_out` | `bool` | Core memory path is stalling the pipeline. |
 | `debug_wb_load_ready_out` | `bool` | Writeback memory stage has a completed load. |
 | `debug_wb_mem_wait_out` | `bool` | Writeback-stage memory operation is still waiting. |
+| `debug_wb_load_data_valid_out` | `bool` | Writeback memory debug: load data has been captured. |
+| `debug_wb_load_addr_out` | `uint32_t` | Writeback memory debug: active load address. |
+| `debug_wb_split_low_valid_out` | `bool` | Writeback memory debug: low half of split load captured. |
+| `debug_wb_split_high_valid_out` | `bool` | Writeback memory debug: high half of split load captured. |
+| `debug_wb_held_load_valid_out` | `bool` | Writeback memory debug: held load response is valid. |
+| `debug_wb_split_load_in_out` | `bool` | Writeback memory debug: current writeback state expects split load assembly. |
+| `debug_wb_alu_addr_out` | `uint32_t` | Writeback memory debug: expected load address from ALU result. |
+| `debug_wb_state_pc_out` | `uint32_t` | Writeback memory debug: PC of writeback-stage instruction. |
+| `debug_wb_state_wb_op_out` | `uint8_t` | Writeback memory debug: writeback operation code. |
+| `debug_wb_state_mem_op_out` | `uint8_t` | Writeback memory debug: memory operation code. |
+| `debug_wb_state_rd_out` | `uint8_t` | Writeback memory debug: destination register. |
+| `debug_wb_state_funct3_out` | `uint8_t` | Writeback memory debug: memory instruction `funct3`. |
 | `debug_icache_read_in_out` | `bool` | I-cache read request debug mirror. |
 | `debug_icache_stall_in_out` | `bool` | I-cache stall input debug mirror. |
 | `debug_immu_last_addr_out` | `uint32_t` | MMU debug: last IMMU PTE address. |
@@ -93,15 +113,25 @@ Top-level `Tribe` ports:
 | `sbi_set_timer_out` | `bool` | Local emulation of legacy SBI `set_timer` ECALL. |
 | `sbi_timer_lo_out` | `uint32_t` | Low 32 bits of the requested SBI timer compare value. |
 | `sbi_timer_hi_out` | `uint32_t` | High 32 bits of the requested SBI timer compare value. |
+| `debug_sbi_ecall_out` | `bool` | SBI debug: current trap is an SBI ECALL. |
+| `debug_sbi_a7_out` | `uint32_t` | SBI debug: extension/function selector in `a7`. |
+| `debug_sbi_a6_out` | `uint32_t` | SBI debug: secondary selector in `a6`. |
+| `debug_sbi_a0_out` | `uint32_t` | SBI debug: first argument/result register. |
+| `debug_sbi_base_out` | `bool` | SBI debug: base extension request recognized. |
+| `debug_sbi_noop_out` | `bool` | SBI debug: no-op/handled compatibility call recognized. |
+| `debug_sbi_handled_out` | `bool` | SBI debug: ECALL is handled locally rather than trapped onward. |
 | `reset_pc_in` | `uint32_t` | Reset PC. |
 | `boot_hartid_in` | `uint32_t` | Reset value for `a0`, conventionally hart id. |
 | `boot_dtb_addr_in` | `uint32_t` | Reset value for `a1`, conventionally device-tree address. |
 | `boot_priv_in` | `u<2>` | Initial privilege mode when CSR support is enabled. |
+| `external_cache_invalidate_in` | `bool` | External request to invalidate L1 caches after coherent DMA writes when a wrapper needs software-visible freshness. |
 | `memory_base_in` | `uint32_t` | Physical base address of the attached memory map. |
 | `memory_size_in` | `uint32_t` | Total byte size of RAM plus IO region visible to L2. |
-| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Cumulative sizes of the four L2 memory/device regions. |
+| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Per-region byte sizes for the four contiguous L2 memory/device regions. |
 | `clint_msip_in` | `bool` | CLINT machine software interrupt pending input, when interrupts are enabled. |
 | `clint_mtip_in` | `bool` | CLINT machine timer interrupt pending input, when interrupts are enabled. |
+| `time_lo_in` | `uint32_t` | Low 32 bits of platform time for CSR/time reads, normally driven by CLINT. |
+| `time_hi_in` | `uint32_t` | High 32 bits of platform time for CSR/time reads, normally driven by CLINT. |
 | `external_irq_in` | `bool` | External interrupt input, normally driven by PLIC when interrupts are enabled. |
 | `axi_in` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | External coherent AXI master access into L2. Used by DMA-style devices. |
 | `axi_out` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[L2_MEM_PORTS]` | L2 master ports toward RAM and device regions. |
@@ -110,7 +140,7 @@ Top-level `Tribe` ports:
 
 The main combinational control in `Tribe` handles pipeline hazards, branch redirects, global memory wait, MMU page-table-walk arbitration, trap redirection, SBI timer emulation, I-cache/TLB invalidation, and late load forwarding. The DMMU and IMMU page-table walkers share the L2 data-side port with normal data-cache traffic; DMMU requests have priority over IMMU requests after normal data-cache reads/writes. The data MMU has a direct physical window for the IO region so MMIO is not translated by Sv32.
 
-`Tribe` itself does not contain the UART, CLINT, PLIC, DRAM, or accelerator. It exposes the L2 AXI master/slave ports and interrupt inputs needed by wrappers. The default simulation wrapper and the SoC wrapper connect those ports to concrete devices.
+`Tribe` itself does not contain DRAM or memory-mapped devices. It exposes the L2 AXI master/slave ports, interrupt inputs, timer inputs, and cache-invalidate input needed by wrappers. The default simulation wrapper and the SoC wrapper connect those ports to concrete memories and devices.
 
 ### Decode
 
@@ -387,7 +417,7 @@ Ports:
 
 ## SoC
 
-`tribe/SoC/System.cpp` defines a `System` DUT and a `SystemTest` wrapper. `System` integrates the `Tribe` core with the on-chip IO space, NS16550A UART, CLINT, PLIC, Accelerator, and the third internal AXI RAM region. `SystemTest` provides external `dram0` and `dram1` RAMs and converts realistic hardware configuration values into `System` input ports before running the same program modes as the corresponding Tribe targets.
+`tribe/SoC/System.cpp` defines a `System` DUT and a `SystemTest` wrapper. `System` integrates the `Tribe` core with the on-chip IO space, NS16550A UART, CLINT, PLIC, Accelerator, SD controller, and the third internal AXI RAM region. `SystemTest` provides external `dram0` and `dram1` RAMs and converts realistic hardware configuration values into `System` input ports before running the same program modes as the corresponding Tribe targets. The full native Linux test wrapper in `TribeTest.h` additionally connects the ethgig network device chain and optional TAP socket bridge.
 
 `System` ports:
 
@@ -399,12 +429,20 @@ Ports:
 | `boot_priv_in` | `u<2>` | Initial privilege mode. |
 | `memory_base_in` | `uint32_t` | Physical base of the memory map. |
 | `memory_size_in` | `uint32_t` | Total visible memory-map size. |
-| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Region sizes forwarded to L2. |
+| `mem_region_size_in` | `uint32_t[L2_MEM_PORTS]` | Per-region byte sizes forwarded to L2. |
 | `uart_rx_valid_in` | `bool` | External UART RX byte valid. |
 | `uart_rx_data_in` | `uint8_t` | External UART RX byte. |
 | `uart_rx_ready_out` | `bool` | UART can accept another RX byte. |
 | `uart_tx_valid_out` | `bool` | UART transmitted a byte this cycle. |
 | `uart_tx_data_out` | `uint8_t` | UART transmitted byte. |
+| `sd_cmd_valid_out` | `bool` | SD physical command/data byte stream valid. |
+| `sd_cmd_data_out` | `u<8>` | SD physical command/data byte. |
+| `sd_cmd_last_out` | `bool` | Last byte of the current SD command/data frame. |
+| `sd_cmd_ready_in` | `bool` | External SD card model can accept another command/data byte. |
+| `sd_rsp_valid_in` | `bool` | External SD card model response byte valid. |
+| `sd_rsp_data_in` | `u<8>` | External SD card model response byte. |
+| `sd_rsp_last_in` | `bool` | Last response byte from SD card model. |
+| `sd_rsp_ready_out` | `bool` | SD controller can accept another response byte. |
 | `perf_out` | `TribePerf` | CPU performance snapshot. |
 | `dmem_write_out` | `bool` | CPU debug data-memory write indication. |
 | `dmem_write_data_out` | `uint32_t` | CPU debug data-memory write data. |
@@ -457,11 +495,11 @@ Ports:
 | `debug_decode_imm_out` | `uint32_t` | Optional decode immediate mirror. |
 | `axi_out` | `Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH>[2]` | External AXI master ports for `dram0` and `dram1` in `SystemTest`. |
 
-The SoC memory map mirrors the default Tribe executable wrapper: two external DRAM regions, one internal RAM region, and one uncached IO region. Inside IO, `Axi4RegionMux` maps UART at offset `0x0`, CLINT at offset `0x100`, Accelerator at offset `0xC100`, and PLIC at offset `0x10000`. PLIC source 1 is driven by the NS16550A UART IRQ and then routed back to `Tribe.external_irq_in`.
+The SoC memory map mirrors the default Tribe executable wrapper for CPU-visible RAM: two external DRAM regions, one internal RAM region, and one uncached IO region. Inside `System` IO, `Axi4RegionMux` maps UART at offset `0x0`, CLINT at offset `0x100`, Accelerator at offset `0xC100`, SD controller at offset `0xD100`, and PLIC at offset `0x10000`. PLIC source 1 is driven by the NS16550A UART IRQ and source 2 is driven by the SD controller IRQ. The native `TestTribe` wrapper uses a six-device IO mux and adds ethgig at offset `0xE000`; its PLIC also carries Ethernet interrupt sources.
 
 ## Devices
 
-Device modules live in `tribe/devices`. They are memory-mapped AXI responders, except `Accelerator`, which also owns an AXI master DMA port. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
+Device modules live in `tribe/devices`. They are memory-mapped AXI responders; devices with DMA (`Accelerator`, `SDController`, and `EthGigDMA`) also own AXI master ports that connect to L2 coherent slave ports. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
 
 ### IOUART
 
@@ -503,6 +541,10 @@ Ports:
 | `set_mtimecmp_hi_in` | `uint32_t` | High 32 bits for direct `mtimecmp` update. |
 | `msip_out` | `bool` | Machine software interrupt pending. |
 | `mtip_out` | `bool` | Machine timer interrupt pending. |
+| `debug_mtime_lo_out` | `uint32_t` | Low 32 bits of current `mtime`, also forwarded to `Tribe.time_lo_in`. |
+| `debug_mtime_hi_out` | `uint32_t` | High 32 bits of current `mtime`, also forwarded to `Tribe.time_hi_in`. |
+| `debug_mtimecmp_lo_out` | `uint32_t` | Low 32 bits of current `mtimecmp`. |
+| `debug_mtimecmp_hi_out` | `uint32_t` | High 32 bits of current `mtimecmp`. |
 
 `CLINT` implements the basic RISC-V local interrupt timer registers used by Tribe: `msip`, `mtimecmp`, and `mtime`. The timer increments according to `TRIBE_CLINT_TICK_DIV_CONFIG`, which lets Linux runs slow the timer relative to CPU model cycles. `mtip_out` is asserted when `mtime >= mtimecmp`; `msip_out` follows bit 0 of the `msip` register. The direct `set_mtimecmp_*` inputs let the core emulate legacy SBI timer calls without requiring firmware support.
 
@@ -516,7 +558,7 @@ Ports:
 | `source_irq_in` | `bool[SOURCES]` | Level-sensitive interrupt source inputs. Source 0 is unused by convention. |
 | `external_irq_out` | `bool` | External interrupt line to the CPU interrupt controller. |
 
-`PLIC` is a compact one-context platform interrupt controller. It implements source priority registers, a pending register, one enable register, one threshold register, and a claim/complete register at the standard PLIC-style offsets. Device source levels are latched by small gateway state so a request remains claimable until the CPU reads the claim register. Writing the claimed source ID to the complete register releases the gateway, allowing a still-asserted device level to pend again on a later cycle. In the current wrappers, source 1 is connected to `NS16550A.irq_out`, and `external_irq_out` drives `Tribe.external_irq_in`.
+`PLIC` is a compact one-context platform interrupt controller. It implements source priority registers, a pending register, one enable register, one threshold register, and a claim/complete register at the standard PLIC-style offsets. Device source levels are latched by small gateway state so a request remains claimable until the CPU reads the claim register. Writing the claimed source ID to the complete register releases the gateway, allowing a still-asserted device level to pend again on a later cycle. In the current wrappers, source 1 is connected to `NS16550A.irq_out`, source 2 is connected to `SDController.irq_out`, and the native `TestTribe` wrapper also connects Ethernet IRQ sources. `external_irq_out` drives `Tribe.external_irq_in`.
 
 ### Accelerator
 
@@ -528,3 +570,154 @@ Ports:
 | `dma_out` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | DMA memory access through an L2 coherent slave port. |
 
 `Accelerator` is a test device with a small local word memory, a PRBS generator, and a DMA engine. Its control registers include source address, destination address, transfer length, control, status, and PRBS seed. The DMA path is a real AXI master port and is intended to connect to an L2 slave/coherency port, not to a private CPU shortcut. It can copy main memory into accelerator memory, copy accelerator memory back to main memory, and fill its local memory from a PRBS sequence for software-visible data movement tests.
+
+### SDController
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | CPU MMIO register access. |
+| `dma_out` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | DMA master port connected to an L2 coherent slave port. |
+| `sd_cmd_valid_out` | `bool` | Command/data byte stream valid toward the SD physical/card model. |
+| `sd_cmd_data_out` | `u<8>` | Command/data byte toward the SD physical/card model. |
+| `sd_cmd_last_out` | `bool` | Last byte of the current command/data frame. |
+| `sd_cmd_ready_in` | `bool` | SD physical/card model can accept the next byte. |
+| `sd_rsp_valid_in` | `bool` | Response/data byte from SD physical/card model is valid. |
+| `sd_rsp_data_in` | `u<8>` | Response/data byte from SD physical/card model. |
+| `sd_rsp_last_in` | `bool` | Last byte of the response/data frame. |
+| `sd_rsp_ready_out` | `bool` | Controller can accept another response byte. |
+| `irq_out` | `bool` | Done interrupt when enabled and pending. |
+| `dma_write_complete_out` | `bool` | Pulse/debug indication that a DMA write-to-card path completed. |
+| `debug_status_out` | `uint32_t` | Current synthesized SD status register. |
+| `debug_state_out` | `uint32_t` | Current SD controller state. |
+| `debug_count_out` | `uint32_t` | Current byte counter. |
+| `debug_len_out` | `uint32_t` | Current requested transfer length. |
+
+`SDController` implements a byte-stream SD command/data front end and a CPU-visible MMIO/DMA control block. The implemented card commands are single-block read (`CMD17`) and single-block write (`CMD24`) using the local simple frame format in `SDTypes.h`. Software programs command, argument, length, DMA address, optional descriptor entries, and control bits through registers at offsets `0x00` through `0x34`.
+
+PIO mode moves payload bytes through `TXDATA` and `RXDATA`. DMA mode uses `dma_out` to read or write main memory through L2. The controller supports direct `DMA_ADDR`/`LEN` transfers and a FIFO of page/list descriptors via `DMA_DESC_ADDR`, `DMA_DESC_LEN`, `DMA_DESC_PUSH`, and `DMA_DESC_STATUS`. Status bits report busy, done, error, RX valid, TX ready, IRQ pending, and descriptor readiness. In the wrappers, the SD IRQ is PLIC source 2 and DMA completion can request an external cache invalidation so CPU reads see data written by the DMA engine.
+
+### SDPhysical, SDFifo, and SDCardVerif
+
+`SDPhysical` and `SDFifo` are small SD-layer helpers under `tribe/devices/sd`. `SDPhysical` handles the byte-level command/response stream between controller logic and card-facing ports, while `SDFifo` provides small byte FIFOs used by SD tests and layering. `SDTypes.h` is the shared register, status, control, IRQ, and command constant header.
+
+`tribe/verif/SDCardVerif.h` provides a C++ SD card verification model plus `SDCardVerifFrontend`, an RTL-facing wrapper that connects to `SDController` physical ports. The verification model stores a byte vector, can load/save an SD image file, supports checkpointing, and responds to the controller's `CMD17`/`CMD24` frames. The native Linux wrapper uses this model for `TRIBE_LINUX_SD_IMAGE` and can override or restore SD image state across checkpoints.
+
+### EthGigDMA
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | CPU MMIO access to Xilinx AXI Ethernet MAC and AXI DMA compatible registers. |
+| `dma_out` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | DMA master port connected to an L2 coherent slave port. |
+| `mac_tx_valid_out` | `bool` | TX payload byte valid toward `EthGigMAC`. |
+| `mac_tx_data_out` | `u<8>` | TX payload byte toward `EthGigMAC`. |
+| `mac_tx_last_out` | `bool` | Last TX payload byte. |
+| `mac_tx_ready_in` | `bool` | MAC can accept another TX byte. |
+| `mac_rx_valid_in` | `bool` | RX payload byte from `EthGigMAC` is valid. |
+| `mac_rx_data_in` | `u<8>` | RX payload byte from `EthGigMAC`. |
+| `mac_rx_last_in` | `bool` | Last RX payload byte. |
+| `mac_rx_ready_out` | `bool` | DMA can accept another RX byte for the current descriptor. |
+| `tx_irq_out` | `bool` | TX IOC interrupt after enabled descriptor completion. |
+| `rx_irq_out` | `bool` | RX IOC interrupt after enabled descriptor completion. |
+| `debug_state_out` | `uint32_t` | Current DMA state. |
+| `debug_tx_sr_out` | `uint32_t` | Current TX DMA status register. |
+| `debug_rx_sr_out` | `uint32_t` | Current RX DMA status register. |
+| `local_mac_out` | `logic<48>` | MAC address programmed through Xilinx AXI Ethernet address registers. |
+| `promisc_out` | `bool` | Promiscuous receive mode from the frame match register. |
+
+`EthGigDMA` is the CPU-facing network device block. Its register map is intentionally compatible with the Linux Xilinx AXI Ethernet driver family: AXI DMA TX/RX control, status, current descriptor, and tail descriptor registers are at the standard DMA offsets, while the MAC register window implements the AXI Ethernet RAF, interrupt, address, receive/transmit control, flow control, EMMC/PHYC, MDIO, and filter registers used by the driver. The hardware supports descriptor-based TX and RX, reads TX descriptors and payload through `dma_out`, streams TX bytes into the MAC, writes RX payloads into descriptor buffers, and updates descriptor status/app words before raising IOC interrupts.
+
+### EthGigMAC
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `local_mac_in` | `logic<48>` | Local MAC address used for RX filtering. |
+| `local_ip_in` | `uint32_t` | Local IPv4 address used with `local_mask_in` for optional RX filtering. |
+| `local_mask_in` | `uint32_t` | IPv4 subnet mask for RX filtering; zero disables the IP check. |
+| `promisc_in` | `bool` | Accept all destination MAC addresses. |
+| `tx_valid_in` | `bool` | TX payload byte from DMA is valid. |
+| `tx_data_in` | `u<8>` | TX payload byte from DMA. |
+| `tx_last_in` | `bool` | Last TX payload byte from DMA. |
+| `tx_ready_out` | `bool` | MAC TX FIFO can accept another payload byte. |
+| `rx_valid_out` | `bool` | RX payload byte toward DMA is valid. |
+| `rx_data_out` | `u<8>` | RX payload byte toward DMA. |
+| `rx_last_out` | `bool` | Last RX payload byte toward DMA. |
+| `rx_ready_in` | `bool` | DMA can accept another RX payload byte. |
+| `pcs_tx_valid_out` | `bool` | Framed TX byte toward PCS is valid. |
+| `pcs_tx_data_out` | `u<8>` | Framed TX byte toward PCS. |
+| `pcs_tx_last_out` | `bool` | Last framed TX byte toward PCS. |
+| `pcs_tx_ready_in` | `bool` | PCS can accept another framed TX byte. |
+| `pcs_rx_valid_in` | `bool` | Framed RX byte from PCS is valid. |
+| `pcs_rx_data_in` | `u<8>` | Framed RX byte from PCS. |
+| `pcs_rx_last_in` | `bool` | Last framed RX byte from PCS. |
+| `pcs_rx_ready_out` | `bool` | MAC can accept another framed RX byte. |
+| `tx_frames_out` | `uint32_t` | Transmitted frame counter. |
+| `rx_frames_out` | `uint32_t` | Received frame counter. |
+| `tx_bytes_out` | `uint32_t` | Transmitted payload byte counter. |
+| `rx_bytes_out` | `uint32_t` | Received payload byte counter. |
+
+`EthGigMAC` builds and checks Ethernet framing around DMA payload streams. TX inserts seven preamble bytes, SFD, payload, minimum-frame padding to 60 payload bytes, CRC/FCS, and inter-packet gap. RX seeks preamble/SFD, collects a frame, checks the Ethernet CRC residue, filters by broadcast/local MAC/promiscuous mode and optional IPv4 subnet, strips FCS, and emits only payload bytes to DMA.
+
+### EthGigPCS
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `tx_valid_in` | `bool` | TX byte from MAC is valid. |
+| `tx_data_in` | `u<8>` | TX byte from MAC. |
+| `tx_last_in` | `bool` | Last TX byte from MAC. |
+| `tx_ready_out` | `bool` | PCS TX FIFO can accept another byte. |
+| `tx_valid_out` | `bool` | TX byte toward PHY is valid. |
+| `tx_data_out` | `u<8>` | TX byte toward PHY. |
+| `tx_last_out` | `bool` | Last TX byte toward PHY. |
+| `tx_ready_in` | `bool` | PHY can accept another TX byte. |
+| `rx_valid_in` | `bool` | RX byte from PHY is valid. |
+| `rx_data_in` | `u<8>` | RX byte from PHY. |
+| `rx_last_in` | `bool` | Last RX byte from PHY. |
+| `rx_ready_out` | `bool` | PCS RX FIFO can accept another byte. |
+| `rx_valid_out` | `bool` | RX byte toward MAC is valid. |
+| `rx_data_out` | `u<8>` | RX byte toward MAC. |
+| `rx_last_out` | `bool` | Last RX byte toward MAC. |
+| `rx_ready_in` | `bool` | MAC can accept another RX byte. |
+
+`EthGigPCS` is currently a buffering layer rather than a full 8b/10b PCS. It preserves byte/last streams in both directions and provides backpressure decoupling between MAC and PHY.
+
+### EthGigPHY
+
+Ports:
+
+| Port | Type | Description |
+| --- | --- | --- |
+| `tx_valid_in` | `bool` | TX byte from PCS is valid. |
+| `tx_data_in` | `u<8>` | TX byte from PCS. |
+| `tx_last_in` | `bool` | Last TX byte from PCS. |
+| `tx_ready_out` | `bool` | PHY can accept another TX byte. |
+| `rx_valid_out` | `bool` | RX byte toward PCS is valid. |
+| `rx_data_out` | `u<8>` | RX byte toward PCS. |
+| `rx_last_out` | `bool` | Last RX byte toward PCS. |
+| `rx_ready_in` | `bool` | PCS can accept another RX byte. |
+| `rgmii_tx_ctl_out` | `bool` | TX nibble control/valid toward RGMII media. |
+| `rgmii_txd_out` | `u<4>` | TX RGMII nibble. |
+| `rgmii_tx_last_out` | `bool` | Last TX nibble of the current frame. |
+| `rgmii_rx_ctl_in` | `bool` | RX nibble control/valid from RGMII media. |
+| `rgmii_rxd_in` | `u<4>` | RX RGMII nibble. |
+| `rgmii_rx_last_in` | `bool` | Last RX nibble of the current frame. |
+| `mdio_mdc_in` | `bool` | MDIO management clock from host MAC side. |
+| `mdio_host_oe_in` | `bool` | Host drives MDIO data when asserted. |
+| `mdio_host_data_in` | `bool` | Host-driven MDIO data bit. |
+| `mdio_data_out` | `bool` | PHY MDIO data output or pull-up value. |
+| `mdio_drive_out` | `bool` | PHY is actively driving MDIO data. |
+
+`EthGigPHY` converts bytes into low/high RGMII nibbles and reconstructs RX bytes from nibbles. It also implements a small MDIO register file and management state machine sufficient for driver probing and fixed 1G link behavior in simulation.
+
+### RGMIIVerif and ethgig_tap
+
+`tribe/verif/RGMIIVerif.h` contains a C++ packet-level RGMII verification model and `RGMIIVerifFrontend`, an RTL-facing module with RGMII nibble ports. Tests can push RX packets into the model and pop packets transmitted by the DUT. The native Linux wrapper can also connect the RGMII verification link to a host TAP process through `TRIBE_LINUX_ETH_TAP_SOCKET`.
+
+`tribe/linux/net/ethgig_tap.cpp` is the host-side bridge. It creates or uses a TAP interface, exchanges packet frames over a Unix-domain socket, and lets Linux running inside Tribe communicate with the host network namespace as `eth0`. The helper script under `tribe/linux/net` configures the TAP side; the simulator side connects by passing `TRIBE_LINUX_ETH_TAP_SOCKET=/tmp/tribe-ethgig.sock` to `run_linux_probe.sh`.

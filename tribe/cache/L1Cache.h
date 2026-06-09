@@ -15,6 +15,175 @@ struct L1CachePerf
     u<3> state;
 } __PACKED;
 
+/*
+L1Cache behavior map
+
+Request-facing actions that can directly answer or retire a CPU request:
+
+1. Accept a CPU read in ST_IDLE so the cache can start a lookup, achieved by
+   latching addr_in() and request attributes into req_* registers and issuing
+   tag/data RAM reads.
+   1.1. Reject stalled input so the CPU does not lose a request; only accept
+        read_in() when stall_in() is false.
+   1.2. Classify the address so L1 uses the right path; write
+        req_cacheable_reg from input_cacheable_comb_func() and
+        req_cache_disable_reg from cache_disable_in().
+   1.3. Latch req_addr_reg and req_read_reg so ST_LOOKUP works from stable
+        request state instead of the live CPU inputs.
+   1.4. Start tag/data RAM reads for cacheable requests so the next cycle has
+        lookup data; issue_read_comb_func() drives rd_in and
+        input_set_comb_func() drives tag_ram[]/even_ram[]/odd_ram[] addresses.
+
+2. Service a cached read hit in ST_LOOKUP so the CPU gets data without an L2
+   access, achieved by tag comparison and even/odd RAM word assembly.
+   2.1. Find the matching way so cached data can be trusted;
+        hit_comb_func() compares valid tag_ram[] entries against
+        req_tag_comb_func().
+   2.2. Assemble the requested 32-bit word so aligned and supported unaligned
+        reads return the same format; cache_data_comb_func() combines
+        even_ram[] and odd_ram[] half-line data using req_word_comb_func() and
+        the low address bits.
+   2.3. Present the hit immediately when downstream is ready so no extra state
+        is needed; read_valid_comb_func() asserts and read_data_comb_func()
+        selects cache_data_comb_func().
+   2.4. Hold a hit result when downstream stalls so read data remains stable;
+        write last_addr_reg, last_data_reg, and last_valid_reg, then enter
+        ST_DONE.
+   2.5. Chain a different incoming read after a hit so sequential fetch/load
+        traffic can continue; start_read_comb_func() accepts addr_in() when it
+        differs from req_addr_reg and keeps state_reg in ST_LOOKUP.
+   2.6. Retire the request after an accepted hit so the cache becomes idle;
+        clear req_read_reg, req_cacheable_reg, and last_valid_reg when no new
+        read is started.
+
+3. Complete a held CPU response in ST_DONE so downstream backpressure can be
+   removed without recomputing the lookup, achieved by replaying last_* regs.
+   3.1. Drive the held data so the CPU sees the same response until accepted;
+        read_data_comb_func() returns last_data_reg and read_addr_comb_func()
+        returns last_addr_reg while last_valid_reg is true.
+   3.2. Release the held response when stall_in() deasserts so the cache can
+        accept more work; clear last_valid_reg.
+   3.3. Accept a following read immediately after the held response so no bubble
+        is forced; start_read_comb_func() reloads req_addr_reg,
+        req_cacheable_reg, and req_cache_disable_reg and returns to ST_LOOKUP.
+   3.4. Return to ST_IDLE when no following read is available so the next CPU
+        request can be accepted normally.
+
+4. Bypass a non-cacheable or disabled-cache read so unsupported accesses still
+   complete, achieved by ST_REFILL issuing one direct backing-memory read and
+   ST_DONE returning direct_data_comb_func().
+   4.1. Mark odd-byte data reads, final-word line-crossing reads, explicit
+        cache-disable reads, and selected I-side line-crossing reads as
+        non-cacheable with input_cacheable_comb_func().
+   4.2. Send the backing-memory address directly so L2 can handle alignment and
+        coherency; mem_addr_comb_func() uses req_addr_reg or a containing beat
+        address depending on DCACHE, req_cache_disable_reg, and
+        direct_cross_beat_read_comb_func().
+   4.3. Wait for mem_wait_in() to deassert so the returned beat is valid.
+   4.4. Assemble the direct 32-bit result so unaligned words inside or across a
+        PORT_BITWIDTH beat are correct; direct_data_comb_func() selects and
+        shifts mem_read_data_in().
+   4.5. Store the direct result in last_addr_reg/last_data_reg/last_valid_reg
+        and enter ST_DONE so the CPU response protocol matches cached misses.
+
+5. Retire a CPU write as a write-through/no-write-allocate operation, achieved
+   by forwarding the write to memory and invalidating the matching L1 set.
+   5.1. Forward every CPU write so L2 receives the store; mem_write_out,
+        mem_write_data_out, and mem_write_mask_out directly follow write_in(),
+        write_data_in(), and write_mask_in().
+   5.2. Invalidate possible stale L1 hits for that set so later reads refetch
+        coherent data; tag_ram[].wr_in is asserted on write_in() and
+        tag_ram[].data_in writes zero.
+   5.3. Clear last_valid_reg on any write so an older held read cannot be
+        replayed after a store changes memory ordering.
+
+Background and delayed activities:
+
+1. Reset or invalidate initiates full tag invalidation, with the goal of
+   preventing stale L1 hits, achieved by ST_INIT walking init_set_reg.
+   1.1. Enter ST_INIT on reset or invalidate_in() so all tags are cleared
+        before normal operation resumes.
+   1.2. Clear request and held-response state so no old transaction survives
+        invalidation; reset req_read_reg, last_valid_reg, and
+        refill_req_data_valid_reg.
+   1.3. Clear one set per cycle so every way becomes invalid; tag_ram[].addr_in
+        uses init_set_reg, tag_ram[].wr_in is asserted, and tag_ram[].data_in
+        writes zero.
+   1.4. Return to ST_IDLE after init_set_reg reaches SETS - 1 so normal
+        request acceptance can restart.
+
+2. Flush initiates an immediate redirect lookup, with the goal of discarding
+   stale in-flight read state and following the new CPU address, achieved by
+   reloading req_* from addr_in()/read_in().
+   2.1. Drop the held response so redirected control flow cannot consume old
+        data; clear last_valid_reg and refill_req_data_valid_reg.
+   2.2. Capture the redirected request so the next state reflects the flush
+        target; write req_addr_reg, req_read_reg, req_cacheable_reg, and
+        req_cache_disable_reg from current inputs.
+   2.3. Move to ST_LOOKUP only when read_in() is active; otherwise return to
+        ST_IDLE with no pending request.
+
+3. A cache miss initiates line refill, with the goal of installing a complete
+   32-byte line and eventually answering the stalled read, achieved by streaming
+   PORT_BITWIDTH beats through ST_REFILL.
+   3.1. Clear partial refill state so the new line starts from a known image;
+        reset refill_beat_reg, refill_even_line_reg, refill_odd_line_reg, and
+        refill_req_data_valid_reg.
+   3.2. Drive mem_read_out while ST_REFILL is active so backing memory supplies
+        refill beats for the registered request.
+   3.3. Generate the refill beat address so each memory beat maps into the
+        cache line; mem_addr_comb_func() adds refill_beat_reg * PORT_BYTES to
+        the line-aligned req_addr_reg.
+   3.4. Wait while mem_wait_in() is true so partial line registers only update
+        from accepted memory data.
+
+4. Each accepted cacheable refill beat updates the pending line image, with the
+   goal of reconstructing the split even/odd RAM format, achieved by
+   refill_even_line_reg and refill_odd_line_reg accumulation.
+   4.1. Store low 16-bit halves into the even image so even_ram[] receives its
+        final line format; refill_even_line_comb_func() copies bits [15:0] from
+        each 32-bit word in mem_read_data_in().
+   4.2. Store high 16-bit halves into the odd image so odd_ram[] receives its
+        final line format; refill_odd_line_comb_func() copies bits [31:16] from
+        each 32-bit word in mem_read_data_in().
+   4.3. Preserve an early aligned requested beat so later refill beats cannot
+        overwrite the response value; update refill_req_data_reg and
+        refill_req_data_valid_reg when refill_beat_reg matches
+        req_refill_beat_comb_func().
+   4.4. Advance refill_beat_reg after non-final accepted beats so the next
+        memory read fetches the next PORT_BITWIDTH part of the line.
+
+5. The final cacheable refill beat installs the line and prepares the CPU
+   response, achieved by writing the victim way and updating last_* registers.
+   5.1. Write the completed split line into the selected victim way so later
+        lookups can hit; even_ram[] and odd_ram[] write when refill_beat_reg is
+        REFILL_BEATS - 1 and victim_reg selects the way.
+   5.2. Install the valid tag so the new line is visible to hit_comb_func();
+        tag_ram[victim_reg] writes refill_tag_comb_func().
+   5.3. Prepare the CPU response from the requested word so the miss completes
+        without another lookup; choose direct_data_comb_func(),
+        refill_req_data_reg, or refill_data_comb_func() into last_data_reg.
+   5.4. Mark the response valid and advance replacement state so the next miss
+        uses a different way; set last_valid_reg and update victim_reg
+        round-robin.
+   5.5. Enter ST_DONE so downstream stall handling is identical for hits,
+        cacheable misses, and direct reads.
+
+6. RAM and performance outputs update continuously, with the goal of keeping
+   memory ports and debug state consistent with the active state.
+   6.1. Drive even_ram[]/odd_ram[]/tag_ram[] addresses from input_set_comb_func()
+        for new lookup issue, from req_set_comb_func() for held lookup/refill,
+        or from init_set_reg during initialization.
+   6.2. Report cache availability to the CPU so upstream can stall correctly;
+        busy_comb_func() asserts during ST_INIT, ST_REFILL, and unresolved
+        ST_LOOKUP misses.
+   6.3. Report read response identity and data so downstream can match the
+        completed access; read_addr_comb_func(), read_data_comb_func(), and
+        read_valid_comb_func() select between live hit and held last_* state.
+   6.4. Publish perf_out so tests and profiling can identify hit, lookup wait,
+        refill wait, init wait, issue wait, and state_reg.
+*/
+
 template<size_t TOTAL_CACHE_SIZE = 1024, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 2, int DCACHE = 0, size_t ADDR_BITS = 32, size_t PORT_BITWIDTH = 32>
 class L1Cache : public Module
 {
