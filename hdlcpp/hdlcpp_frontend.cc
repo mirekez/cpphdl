@@ -1,0 +1,2726 @@
+    Project project;
+    std::vector<ModuleGen> modules;
+    ModuleGen* mod = nullptr;
+    std::set<std::string> loopVars;
+    std::vector<std::map<std::string, std::string>> localTypeScopes;
+
+    std::string lookupLocalType(const std::string& name) const
+    {
+        for (auto it = localTypeScopes.rbegin(); it != localTypeScopes.rend(); ++it) {
+            auto found = it->find(name);
+            if (found != it->end()) {
+                return found->second;
+            }
+        }
+        return {};
+    }
+
+    ModuleGen* findModule(const std::string& name)
+    {
+        for (auto& candidate : modules) {
+            if (candidate.name == name) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    }
+
+    void registerTypeField(const std::string& typeName, const std::string& fieldName, const std::string& fieldType)
+    {
+        if (!mod || typeName.empty() || fieldName.empty() || fieldType.empty()) {
+            return;
+        }
+        mod->typeFields[typeName][fieldName] = fieldType;
+        if (mod->isPackage) {
+            mod->typeFields[mod->name + "::" + typeName][fieldName] = fieldType;
+        }
+    }
+
+    std::string unwrappedValueType(std::string type)
+    {
+        type = trim(std::move(type));
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
+                type = trim(type.substr(4, type.size() - 5));
+                changed = true;
+                continue;
+            }
+            auto arrayArgs = templateArgsFor(type, "array");
+            if (arrayArgs.size() == 2) {
+                type = arrayArgs[0];
+                changed = true;
+                continue;
+            }
+        }
+        return type;
+    }
+
+    std::string fieldTypeFor(std::string parentType, const std::string& field)
+    {
+        parentType = unwrappedValueType(std::move(parentType));
+        if (parentType.empty()) {
+            return "";
+        }
+        auto findInModule = [&](ModuleGen& m, const std::string& type) -> std::string {
+            auto it = m.typeFields.find(type);
+            if (it != m.typeFields.end()) {
+                auto fit = it->second.find(field);
+                if (fit != it->second.end()) {
+                    return fit->second;
+                }
+            }
+            auto alias = m.types.find(type);
+            if (alias != m.types.end() && alias->second != type) {
+                auto ait = m.typeFields.find(alias->second);
+                if (ait != m.typeFields.end()) {
+                    auto fit = ait->second.find(field);
+                    if (fit != ait->second.end()) {
+                        return fit->second;
+                    }
+                }
+            }
+            return "";
+        };
+        auto sep = parentType.rfind("::");
+        if (sep != std::string::npos) {
+            auto pkg = parentType.substr(0, sep);
+            if (auto* m = findModule(pkg)) {
+                auto found = findInModule(*m, parentType);
+                if (!found.empty()) {
+                    return found;
+                }
+                return findInModule(*m, parentType.substr(sep + 2));
+            }
+        }
+        if (mod) {
+            auto found = findInModule(*mod, parentType);
+            if (!found.empty()) {
+                return found;
+            }
+            for (auto& import : mod->imports) {
+                if (auto* m = findModule(import)) {
+                    found = findInModule(*m, parentType);
+                    if (!found.empty()) {
+                        return found;
+                    }
+                    found = findInModule(*m, import + "::" + parentType);
+                    if (!found.empty()) {
+                        return found;
+                    }
+                }
+            }
+        }
+        for (auto& candidate : modules) {
+            auto found = findInModule(candidate, parentType);
+            if (!found.empty()) {
+                return found;
+            }
+        }
+        return "";
+    }
+
+    const ExpressionSyntax* propertyExpr(const PropertyExprSyntax& prop)
+    {
+        if (prop.kind == SyntaxKind::ParenthesizedPropertyExpr) {
+            auto& paren = prop.as<ParenthesizedPropertyExprSyntax>();
+            return propertyExpr(*paren.expr);
+        }
+        if (prop.kind == SyntaxKind::SimplePropertyExpr) {
+            auto& simpleProp = prop.as<SimplePropertyExprSyntax>();
+            const SequenceExprSyntax* seq = simpleProp.expr;
+            while (seq && seq->kind == SyntaxKind::ParenthesizedSequenceExpr) {
+                seq = seq->as<ParenthesizedSequenceExprSyntax>().expr;
+            }
+            if (seq && seq->kind == SyntaxKind::SimpleSequenceExpr) {
+                return seq->as<SimpleSequenceExprSyntax>().expr;
+            }
+        }
+        return nullptr;
+    }
+
+    void handle(const ModuleDeclarationSyntax& node)
+    {
+        modules.push_back({});
+        mod = &modules.back();
+        mod->name = tok(node.header->name);
+        mod->isPackage = node.kind == SyntaxKind::PackageDeclaration;
+        for (auto import : node.header->imports) {
+            for (auto item : import->items) {
+                auto pkg = tok(item->package);
+                if (!pkg.empty()) {
+                    mod->imports.push_back(pkg);
+                }
+            }
+        }
+
+        project.modules.push_back({});
+        project.modules.back().name = mod->name;
+
+        if (node.header->parameters) {
+            for (auto p : node.header->parameters->declarations) {
+                if (p->kind == SyntaxKind::ParameterDeclaration) {
+                    auto& pd = p->as<ParameterDeclarationSyntax>();
+                    for (auto d : pd.declarators) {
+                        auto name = tok(d->name);
+                        auto init = d->initializer ? cppExprText(d->initializer->toString()).substr(1) : "";
+                        if (!init.empty() && trim(init).front() == '"') {
+                            init = "0";
+                        }
+                        auto type = constexprType(varType(*pd.type, *d));
+                        if (type == "unsigned" || type == "uint64_t") {
+                            init = stripLogicLiteralCasts(std::move(init));
+                        }
+                        if (name == "INTERRUPTS") {
+                            init = type + "{}";
+                        }
+                        if (configuredNameEquals("HDLCPP_SKIP_PARAMS", mod->name + "." + name)) {
+                            continue;
+                        }
+                        mod->params.push_back(type + " " + name + (init.empty() ? "" : " = " + trim(init)));
+                    }
+                }
+                else if (p->kind == SyntaxKind::TypeParameterDeclaration) {
+                    auto& td = p->as<TypeParameterDeclarationSyntax>();
+                    auto localTypeModules = configuredNameSet("HDLCPP_LOCAL_TYPE_MODULES");
+                    auto localTypeNames = configuredNameSet("HDLCPP_LOCAL_TYPE_NAMES");
+                    auto typeDeclOverrides = configuredTextMap("HDLCPP_TYPE_DECL_OVERRIDES");
+                    auto typeParamDefaults = configuredTextMap("HDLCPP_TYPE_PARAM_DEFAULTS");
+                    for (auto d : td.declarators) {
+                        auto name = tok(d->name);
+                        auto overrideIt = typeDeclOverrides.find(mod->name + "." + name);
+                        if (overrideIt != typeDeclOverrides.end() && d->assignment) {
+                            auto decl = overrideIt->second;
+                            replaceAll(decl, "@PACKED@", packedAggregateHelpers(name));
+                            mod->types[name] = name;
+                            mod->typeDecls.push_back(decl);
+                            continue;
+                        }
+                        bool localparamType = p->toString().find("localparam") != std::string::npos;
+                        bool makeLocalType = (localparamType ||
+                                              (localTypeModules.count(mod->name) && localTypeNames.count(name))) &&
+                                             d->assignment;
+                        if (makeLocalType) {
+                            mod->types[name] = name;
+	                            if (d->assignment->type->kind == SyntaxKind::StructType ||
+	                                d->assignment->type->kind == SyntaxKind::UnionType) {
+	                                auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
+	                                std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+	                                std::vector<PackedFieldInfo> fieldWidths;
+	                                std::vector<std::string> fieldLines;
+	                                for (auto member : st.members) {
+	                                    for (auto md : member->declarators) {
+	                                        if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
+	                                auto& nested = member->type->as<StructUnionTypeSyntax>();
+	                                line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
+                                for (auto nestedMember : nested.members) {
+                                    for (auto nd : nestedMember->declarators) {
+                                        line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
+                                    }
+                                }
+                                line += "} " + cppIdent(tok(md->name)) + ";\n";
+	                            }
+	                            else {
+	                                auto fieldType = varType(*member->type, *md);
+	                                registerTypeField(name, tok(md->name), fieldType);
+	                                auto fieldWidth = typeWidth(fieldType);
+	                                if (!fieldWidth.empty()) {
+	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth});
+	                                }
+	                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
+	                            }
+	                        }
+	                    }
+	                                auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	                                if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                                    (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+	                                    std::reverse(fieldLines.begin(), fieldLines.end());
+	                                    std::reverse(fieldWidths.begin(), fieldWidths.end());
+	                                }
+	                                auto packedWidth = joinedPackedWidth(fieldWidths);
+	                                for (auto& fieldLine : fieldLines) {
+	                                    line += fieldLine;
+	                                }
+	                                line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+	                                line += "};";
+	                                if (!packedWidth.empty()) {
+	                                    mod->typeWidths[name] = packedWidth;
+	                                }
+	                                mod->typeDecls.push_back(line);
+	                            }
+                            else {
+                                auto initType = cppTypeFromSvText(d->assignment->toString());
+                                if (initType == "logic") {
+                                    initType = "bool";
+                                }
+                                mod->typeDecls.push_back("using " + name + " = " + initType + ";");
+                                if (configuredNameEquals("HDLCPP_FALSE_CONSTANT_TYPES", mod->name + "." + name)) {
+                                    mod->constants.push_back({"acc_cfg_t", "AccCfg = false"});
+                                }
+                            }
+                            continue;
+                        }
+                        auto init = d->assignment ? trim(cppTypeFromSvText(d->assignment->toString())) : "bool";
+                        auto assignmentText = d->assignment ? d->assignment->toString() : std::string();
+                        auto defaultIt = typeParamDefaults.find(name);
+                        if (defaultIt != typeParamDefaults.end() &&
+                            (assignmentText.empty() || assignmentText.find("struct") != std::string::npos || init == "bool")) {
+                            init = defaultIt->second;
+                        }
+                        else if (init == "logic") {
+                            init = "bool";
+                        }
+                        mod->params.push_back("typename " + name + " = " + init);
+                        mod->typeParamNames.insert(name);
+                        mod->types[name] = name;
+                    }
+                }
+            }
+        }
+
+        if (node.header->ports && node.header->ports->kind == SyntaxKind::AnsiPortList) {
+            auto& ports = node.header->ports->as<AnsiPortListSyntax>();
+            for (auto p : ports.ports) {
+                p->visit(*this);
+            }
+        }
+
+        for (auto member : node.members) {
+            member->visit(*this);
+        }
+
+        mod = nullptr;
+    }
+
+    void handle(const PackageImportDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        for (auto item : node.items) {
+            auto pkg = tok(item->package);
+            if (!pkg.empty() &&
+                std::find(mod->imports.begin(), mod->imports.end(), pkg) == mod->imports.end()) {
+                mod->imports.push_back(pkg);
+            }
+        }
+    }
+
+    void handle(const ImplicitAnsiPortSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        PortGen port;
+        port.name = tok(node.declarator->name);
+        port.array = listText(node.declarator->dimensions);
+        if (node.header->kind == SyntaxKind::NetPortHeader) {
+            auto& h = node.header->as<NetPortHeaderSyntax>();
+            port.direction = tok(h.direction);
+            port.type = typeText(*h.dataType);
+        }
+        else if (node.header->kind == SyntaxKind::VariablePortHeader) {
+            auto& h = node.header->as<VariablePortHeaderSyntax>();
+            port.direction = tok(h.direction);
+            port.type = typeText(*h.dataType);
+        }
+        auto svName = port.name;
+        if (isClockPortName(svName) || svName == "reset") {
+            return;
+        }
+        auto cppName = svName;
+        if (port.direction == "output") {
+            if (!hasSuffix(cppName, "_out")) {
+                cppName += "_out";
+            }
+        }
+        else if (port.direction == "input") {
+            if (!hasSuffix(cppName, "_in")) {
+                cppName += "_in";
+            }
+        }
+        port.name = cppName;
+        if (port.direction == "output") {
+            auto backingType = port.type;
+            if (port.type.rfind("reg<", 0) == 0 && port.type.back() == '>') {
+                port.type = port.type.substr(4, port.type.size() - 5);
+                if (port.type == "u1") {
+                    port.type = "bool";
+                }
+            }
+            mod->outputRegTypes[cppName] = backingType;
+            mod->outputPortCppNames[svName] = cppName;
+        }
+        mod->portNames.insert(svName);
+        mod->portCppNames[svName] = cppName;
+        mod->types[svName] = port.type;
+        mod->types[cppName] = port.type;
+        mod->ports.push_back(port);
+    }
+
+    void handle(const DataDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        if (node.type && node.type->kind == SyntaxKind::EnumType) {
+            unsigned value = 0;
+            for (auto member : node.type->as<EnumTypeSyntax>().members) {
+                auto name = tok(member->name);
+                auto init = std::to_string(value);
+                if (member->initializer) {
+                    init = cppExprText(member->initializer->toString());
+                    if (!init.empty() && init.front() == '=') {
+                        init.erase(init.begin());
+                    }
+                    init = trim(stripLogicLiteralCasts(init));
+                }
+                if (!mod->types.count(name)) {
+                    mod->constants.push_back({"unsigned", name + " = " + init});
+                    mod->types[name] = "unsigned";
+                }
+                ++value;
+            }
+        }
+        std::string anonymousStructType;
+        if ((node.type->kind == SyntaxKind::StructType || node.type->kind == SyntaxKind::UnionType) && !node.declarators.empty()) {
+            auto& st = node.type->as<StructUnionTypeSyntax>();
+            auto firstName = tok(node.declarators[0]->name);
+            anonymousStructType = firstName + "_t";
+            std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + anonymousStructType + " {\n";
+	            std::vector<PackedFieldInfo> fieldWidths;
+	            std::vector<std::string> fieldLines;
+	            for (auto member : st.members) {
+                for (auto d : member->declarators) {
+                    if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
+                        auto& nested = member->type->as<StructUnionTypeSyntax>();
+                        line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
+                        for (auto nestedMember : nested.members) {
+                            for (auto nd : nestedMember->declarators) {
+                                line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
+                            }
+                        }
+                        line += "} " + cppIdent(tok(d->name)) + ";\n";
+                    }
+	                    else {
+	                        auto fieldType = varType(*member->type, *d);
+	                        registerTypeField(anonymousStructType, tok(d->name), fieldType);
+	                        auto fieldWidth = typeWidth(fieldType);
+	                        if (!fieldWidth.empty()) {
+	                            fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth});
+	                        }
+		                        fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
+		                    }
+		                }
+		            }
+	            auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	            if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                (reversePackedTypes.count(anonymousStructType) || reversePackedTypes.count(mod->name + "." + anonymousStructType))) {
+	                std::reverse(fieldLines.begin(), fieldLines.end());
+	                std::reverse(fieldWidths.begin(), fieldWidths.end());
+	            }
+	            auto packedWidth = joinedPackedWidth(fieldWidths);
+	            for (auto& fieldLine : fieldLines) {
+	                line += fieldLine;
+	            }
+	            line += packedAggregateHelpers(anonymousStructType, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+            line += "};";
+            mod->typeDecls.push_back(line);
+            mod->types[anonymousStructType] = anonymousStructType;
+        }
+        for (auto d : node.declarators) {
+            auto name = tok(d->name);
+            auto type = anonymousStructType.empty() ? varType(*node.type, *d) : anonymousStructType;
+            if (!anonymousStructType.empty()) {
+                auto& st = node.type->as<StructUnionTypeSyntax>();
+                auto structDims = dimensionWidths(st.dimensions);
+                for (auto it = structDims.rbegin(); it != structDims.rend(); ++it) {
+                    type = "array<" + type + "," + *it + ">";
+                }
+                auto declDims = dimensionWidths(d->dimensions);
+                for (auto it = declDims.rbegin(); it != declDims.rend(); ++it) {
+                    type = "array<" + type + "," + *it + ">";
+                }
+            }
+            mod->vars.push_back({type, name});
+            mod->varNames.insert(name);
+            mod->types[name] = type;
+        }
+    }
+
+    void handle(const NetDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        for (auto d : node.declarators) {
+            auto name = tok(d->name);
+            auto type = varType(*node.type, *d);
+            if (node.type->kind == SyntaxKind::ImplicitType) {
+                auto& implicit = node.type->as<ImplicitTypeSyntax>();
+                if (dimensionWidths(implicit.dimensions).empty()) {
+                    type = "unsigned";
+                }
+            }
+            mod->vars.push_back({type, name});
+            mod->varNames.insert(name);
+            mod->types[name] = type;
+        }
+    }
+
+    void handle(const ParameterDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        for (auto d : node.declarators) {
+            auto name = tok(d->name);
+            auto init = d->initializer ? cppExprText(d->initializer->toString()).substr(1) : "{}";
+            if (!init.empty() && trim(init).front() == '"') {
+                init = "0";
+            }
+            for (auto& item : mod->types) {
+                auto w = typeWidth(item.second);
+                replaceAll(init, "$bits(" + item.first + ")", w.empty() ? "(sizeof(" + item.second + ")*8)" : w);
+            }
+            auto type = varType(*node.type, *d);
+            auto initCount = braceElementCount(trim(init));
+            if (initCount > 1 && constexprType(type) == "uint64_t" && type.rfind("logic<", 0) != 0) {
+                type = "array<uint64_t," + std::to_string(initCount) + ">";
+            }
+            mod->constants.push_back({type, name + " = " + trim(init)});
+            if (mod->isPackage) {
+                auto ctype = constexprType(type);
+                auto cinit = trim(init);
+                if (mod->isPackage && cinit.find("'(") != std::string::npos) {
+                    cinit = "{}";
+                }
+                cinit = replaceLogicBraceCasts(std::move(cinit));
+                if (ctype == "unsigned" || ctype == "uint64_t") {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
+                }
+                if (mod->isPackage && cinit.find("{64{") != std::string::npos) {
+                    cinit = "{}";
+                }
+                if (cinit == "static_cast<" + ctype + ">(0)" || cinit == "static_cast<" + type + ">(0)") {
+                    cinit = "{}";
+                }
+                if ((ctype == "unsigned" || ctype == "uint64_t") && !cinit.empty() && cinit.front() == '{') {
+                    cinit = "0";
+                }
+                if ((ctype == "unsigned" || ctype == "uint64_t") && cinit.find("logic<") != std::string::npos &&
+                    cinit.find('{') != std::string::npos) {
+                    cinit = "0";
+                }
+                if (ctype.rfind("std::array<", 0) == 0 && cinit.find("logic<") != std::string::npos) {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
+                }
+                if (ctype.find("::") == std::string::npos && ctype.rfind("std::array<", 0) != 0 &&
+                    cinit.find("logic<") != std::string::npos && cinit.find('{') == std::string::npos &&
+                    cinit.find("cat{") == std::string::npos) {
+                    cinit = trim(stripLogicLiteralCasts(cinit));
+                }
+                if (ctype.rfind("std::array<", 0) == 0 && !cinit.empty() && cinit.front() == '{') {
+                    cinit = "{" + cinit + "}";
+                }
+                if (cinit.find(".{") == std::string::npos && cinit.find(".") != std::string::npos && cinit.find(" = ") != std::string::npos &&
+                    cinit.find("{") != std::string::npos && cinit.find("}") != std::string::npos &&
+                    ctype != "unsigned" && ctype != "uint64_t" && ctype.rfind("std::array<", 0) != 0) {
+                    cinit = namedAggregateToConstexprLambda(ctype, cinit);
+                }
+                mod->packageDecls.push_back("inline constexpr " + ctype + " " + name + " = " + cinit + ";");
+            }
+            mod->types[name] = type;
+        }
+    }
+
+    void handle(const TypedefDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        auto name = tok(node.name);
+        mod->types[name] = name;
+        if (node.type->kind == SyntaxKind::EnumType) {
+            auto& e = node.type->as<EnumTypeSyntax>();
+            std::string width = "32";
+            if (e.baseType) {
+                auto baseWidth = foldWidth(typeWidth(typeText(*e.baseType)));
+                if (!baseWidth.empty()) {
+                    width = baseWidth;
+                }
+            }
+            auto dimWidth = foldWidth(dimensionsWidth(e.dimensions));
+            if (!dimWidth.empty()) {
+                width = dimWidth;
+            }
+            auto alias = "using " + name + " = logic<" + width + ">;";
+            mod->types[name] = "logic<" + width + ">";
+            mod->typeDecls.push_back(alias);
+            if (mod->isPackage) {
+                mod->packageDecls.push_back(alias);
+            }
+            uint64_t nextEnumValue = 0;
+            for (auto m : e.members) {
+                auto memberName = tok(m->name);
+                std::string value = std::to_string(nextEnumValue);
+                if (m->initializer) {
+                    auto init = cppExprText(m->initializer->toString());
+                    if (!init.empty() && init.front() == '=') {
+                        init.erase(init.begin());
+                    }
+                    value = trim(init);
+                }
+                auto valueTrim = trim(value);
+                bool parsedEnumValue = false;
+                try {
+                    size_t parsedLen = 0;
+                    auto parsed = std::stoull(valueTrim, &parsedLen, 0);
+                    if (parsedLen == valueTrim.size()) {
+                        nextEnumValue = parsed + 1;
+                        parsedEnumValue = true;
+                    }
+                }
+                catch (...) {
+                }
+                if (!parsedEnumValue) {
+                    ++nextEnumValue;
+                }
+                auto enumValue = trim(stripLogicLiteralCasts(value));
+                auto line = std::string(mod->isPackage ? "inline constexpr unsigned " : "static constexpr unsigned ") +
+                            memberName + " = " + enumValue + ";";
+                mod->typeDecls.push_back(line);
+                if (mod->isPackage) {
+                    mod->packageDecls.push_back(line);
+                }
+            }
+            return;
+        }
+        if (node.type->kind == SyntaxKind::StructType || node.type->kind == SyntaxKind::UnionType) {
+            auto& st = node.type->as<StructUnionTypeSyntax>();
+            std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+	            std::vector<PackedFieldInfo> fieldWidths;
+	            std::vector<std::string> fieldLines;
+            for (auto member : st.members) {
+	                for (auto d : member->declarators) {
+	                    auto fieldType = varType(*member->type, *d);
+	                    registerTypeField(name, tok(d->name), fieldType);
+	                    auto fieldWidth = typeWidth(fieldType);
+	                    if (!fieldWidth.empty()) {
+	                        fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth});
+                    }
+                    if (mod->isPackage) {
+                        fieldType = constexprStructFieldType(fieldType);
+                    }
+	                    fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
+	                }
+	            }
+	            auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+	            if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+	                (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+	                std::reverse(fieldLines.begin(), fieldLines.end());
+	                std::reverse(fieldWidths.begin(), fieldWidths.end());
+	            }
+	            auto packedWidth = joinedPackedWidth(fieldWidths);
+	            for (auto& fieldLine : fieldLines) {
+	                line += fieldLine;
+	            }
+	            line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+            line += "};";
+            mod->typeDecls.push_back(line);
+            if (!packedWidth.empty()) {
+                mod->typeWidths[name] = packedWidth;
+            }
+            if (mod->isPackage) {
+                mod->packageDecls.push_back(line);
+            }
+            return;
+        }
+        auto type = typeText(*node.type);
+        auto dims = dimensionWidths(node.dimensions);
+        for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+            type = "array<" + type + "," + *it + ">";
+        }
+        auto aliasType = mod->isPackage && type.rfind("logic<", 0) != 0 && type.rfind("u<", 0) != 0
+            ? constexprType(type)
+            : type;
+        auto line = "using " + name + " = " + aliasType + ";";
+        mod->typeDecls.push_back(line);
+        if (mod->isPackage) {
+            mod->packageDecls.push_back(line);
+        }
+    }
+
+    void handle(const ParameterDeclarationStatementSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        if (node.parameter->kind == SyntaxKind::ParameterDeclaration) {
+            handle(node.parameter->as<ParameterDeclarationSyntax>());
+            return;
+        }
+        if (node.parameter->kind == SyntaxKind::TypeParameterDeclaration) {
+            auto& td = node.parameter->as<TypeParameterDeclarationSyntax>();
+            for (auto d : td.declarators) {
+                auto name = tok(d->name);
+                mod->types[name] = name;
+                if (d->assignment && (d->assignment->type->kind == SyntaxKind::StructType ||
+                                      d->assignment->type->kind == SyntaxKind::UnionType)) {
+	                    auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
+	                    std::string line = std::string(tok(st.keyword) == "union" ? "union " : "struct ") + name + " {\n";
+		                    std::vector<PackedFieldInfo> fieldWidths;
+		                    std::vector<std::string> fieldLines;
+	                    for (auto member : st.members) {
+	                        for (auto md : member->declarators) {
+	                            if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
+                                auto& nested = member->type->as<StructUnionTypeSyntax>();
+                                line += std::string("    ") + (tok(nested.keyword) == "union" ? "union" : "struct") + " { ";
+                                for (auto nestedMember : nested.members) {
+                                    for (auto nd : nestedMember->declarators) {
+                                        line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
+                                    }
+                                }
+	                                line += "} " + cppIdent(tok(md->name)) + ";\n";
+	                            }
+	                            else {
+	                                auto fieldType = varType(*member->type, *md);
+	                                registerTypeField(name, tok(md->name), fieldType);
+	                                auto fieldWidth = typeWidth(fieldType);
+	                                if (!fieldWidth.empty()) {
+	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth});
+	                                }
+		                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
+		                            }
+		                        }
+		                    }
+		                    auto reversePackedTypes = configuredNameSet("HDLCPP_REVERSE_PACKED_TYPES");
+		                    if (st.toString().find("packed") != std::string::npos && tok(st.keyword) != "union" &&
+		                        (reversePackedTypes.count(name) || reversePackedTypes.count(mod->name + "." + name))) {
+		                        std::reverse(fieldLines.begin(), fieldLines.end());
+		                        std::reverse(fieldWidths.begin(), fieldWidths.end());
+		                    }
+		                    auto packedWidth = joinedPackedWidth(fieldWidths);
+		                    for (auto& fieldLine : fieldLines) {
+		                        line += fieldLine;
+		                    }
+		                    line += packedAggregateHelpers(name, packedWidth, mod->isPackage ? std::vector<PackedFieldInfo>{} : fieldWidths);
+	                    line += "};";
+	                    if (!packedWidth.empty()) {
+	                        mod->typeWidths[name] = packedWidth;
+	                    }
+	                    mod->typeDecls.push_back(line);
+	                }
+                else if (d->assignment) {
+                    auto aliasOverrides = configuredTextMap("HDLCPP_TYPE_ALIAS_OVERRIDES");
+                    auto aliasIt = aliasOverrides.find(name);
+                    if (aliasIt != aliasOverrides.end()) {
+                        mod->typeDecls.push_back("using " + name + " = " + aliasIt->second + ";");
+                    }
+                    else {
+                        mod->typeDecls.push_back("using " + name + " = " + typeText(*d->assignment->type) + ";");
+                    }
+                }
+            }
+        }
+    }
+
+    void handle(const ContinuousAssignSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        for (auto a : node.assignments) {
+            if (a->kind == SyntaxKind::AssignmentExpression) {
+                auto& b = a->as<BinaryExpressionSyntax>();
+                auto base = assignedBase(*b.left);
+                auto wholeNetAssign = b.left->kind == SyntaxKind::IdentifierName || isWholeObjectSelect(*b.left, base);
+                auto lhs = mod->outputPortCppNames.count(base) ? mod->outputPortCppNames[base] :
+                    (wholeNetAssign && !base.empty() ? base : emitLValue(*b.left));
+                auto internalWholeNet = !base.empty() && mod->varNames.count(base) && wholeNetAssign &&
+                                        !mod->outputPortCppNames.count(base);
+                if (!base.empty() && mod->varNames.count(base) && !wholeNetAssign) {
+                    mod->partialAssignDrivenVars.insert(base);
+                }
+                auto rhs = emitExpr(*b.right);
+                if (b.right->kind == SyntaxKind::ConditionalExpression && !base.empty() && mod->types.count(base)) {
+                    auto targetType = unwrapRegType(mod->types[base]);
+                    auto& c = b.right->as<ConditionalExpressionSyntax>();
+                    if ((targetType.rfind("logic<", 0) == 0 || targetType.rfind("u<", 0) == 0 ||
+                        (targetType.find("::") != std::string::npos && targetType.rfind("array<", 0) != 0))) {
+                        rhs = emitConditionalAsType(c, targetType);
+                    }
+                }
+                if (b.right->kind == SyntaxKind::ConditionalExpression && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
+                    lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
+                    rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
+                }
+                for (auto& p : mod->ports) {
+                    if (p.name == lhs && needsTypedZero(p.type) && isZeroLiteralText(rhs)) {
+                        rhs = p.type + "{}";
+                        break;
+                    }
+                }
+                if (!base.empty() && wholeNetAssign) {
+                    mod->assignExprByBase[base] = rhs;
+                }
+                mod->assigns.push_back({lhs, rhs});
+                if (!base.empty() && mod->outputPortCppNames.count(base) &&
+                    b.left->kind != SyntaxKind::IdentifierName &&
+                    !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", mod->name)) {
+                    addCombAssignment(*mod, base, emitLValue(*b.left), rhs);
+                    continue;
+                }
+                if (internalWholeNet || (!base.empty() && mod->varNames.count(base) && !wholeNetAssign &&
+                                         !mod->outputPortCppNames.count(base))) {
+                    addCombAssignment(*mod, base, lhs, rhs);
+                    continue;
+                }
+                mod->assignLines.push_back(lhs + " = " + ((lhs.find('.') != std::string::npos && lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) ? rhs : assignWrapper(rhs, "")) + ";");
+            }
+        }
+    }
+
+    bool isWholeObjectSelect(const ExpressionSyntax& expr, const std::string& base)
+    {
+        if (base.empty() || !mod || !mod->types.count(base)) {
+            return false;
+        }
+        if (expr.kind != SyntaxKind::ElementSelectExpression &&
+            expr.kind != SyntaxKind::IdentifierSelectName) {
+            return false;
+        }
+        auto lhsWidth = foldWidth(exprWidth(expr));
+        auto baseWidth = foldWidth(typeWidth(mod->types[base]));
+        return !lhsWidth.empty() && lhsWidth == baseWidth;
+    }
+
+    void handle(const LoopGenerateSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        auto id = tok(node.identifier);
+        auto stop = emitExpr(*node.stopExpr);
+        auto iter = emitExpr(*node.iterationExpr);
+        replaceIdentifierAll(stop, id, "i");
+        replaceIdentifierAll(iter, id, "i");
+        auto limit = stop;
+        auto lt = limit.find('<');
+        if (lt != std::string::npos) {
+            limit = trim(limit.substr(lt + 1));
+        }
+        auto init = emitExpr(*node.initialExpr);
+        replaceIdentifierAll(init, id, "i");
+        std::vector<std::string> methodLoopHeaders = {
+            "for (unsigned i = " + init + ";" + stop + ";" + iter + ") {"
+        };
+        mod->assignLines.push_back(methodLoopHeaders.back());
+        emitGenerateMember(*node.block, id, limit, {{id, "i"}}, methodLoopHeaders);
+        mod->assignLines.push_back("}");
+    }
+
+    void handle(const GenerateRegionSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        for (auto member : node.members) {
+            member->visit(*this);
+        }
+    }
+
+    void handle(const IfGenerateSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        auto visitGenerateClause = [&](const MemberSyntax& member) {
+            if (member.kind == SyntaxKind::GenerateBlock) {
+                for (auto child : member.as<GenerateBlockSyntax>().members) {
+                    child->visit(*this);
+                }
+            }
+            else {
+                member.visit(*this);
+            }
+        };
+        if (auto decision = evalConfiguredGenerateCondition(*mod, emitExpr(*node.condition))) {
+            if (*decision) {
+                visitGenerateClause(*node.block);
+            }
+            else if (node.elseClause && node.elseClause->clause) {
+                visitGenerateClause(node.elseClause->clause->as<MemberSyntax>());
+            }
+            return;
+        }
+        if (configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
+            mod->assignLines.push_back("if constexpr (" + emitExpr(*node.condition) + ") {");
+            emitGenerateMember(*node.block, "");
+            if (node.elseClause) {
+                mod->assignLines.push_back("}");
+                mod->assignLines.push_back("else {");
+                if (node.elseClause->clause) {
+                    auto* clause = node.elseClause->clause.get();
+                    if (clause->kind == SyntaxKind::IfGenerate || clause->kind == SyntaxKind::GenerateBlock ||
+                        clause->kind == SyntaxKind::DataDeclaration || clause->kind == SyntaxKind::ContinuousAssign) {
+                        emitGenerateMember(clause->as<MemberSyntax>(), "");
+                    }
+                }
+            }
+            mod->assignLines.push_back("}");
+        }
+        else {
+            node.block->visit(*this);
+        }
+    }
+
+    void handle(const HierarchyInstantiationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        std::string params;
+        if (node.parameters) {
+            std::vector<std::string> orderedParams;
+            std::map<std::string, std::string> namedParams;
+            std::map<std::string, std::string> namedParamRaw;
+            std::vector<std::pair<std::string, std::string>> namedParamOrder;
+            for (auto p : node.parameters->parameters) {
+                if (p->kind == SyntaxKind::OrderedParamAssignment) {
+                    orderedParams.push_back(stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr)));
+                }
+                else if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
+                    auto& np = p->as<NamedParamAssignmentSyntax>();
+                    auto name = tok(np.name);
+                    auto value = DataTypeSyntax::isKind(np.expr->kind) ? typeText(np.expr->as<DataTypeSyntax>()) : stripLogicLiteralCasts(emitExpr(*np.expr));
+                    namedParams[name] = value;
+                    namedParamRaw[name] = exprText(np.expr->toString());
+                    namedParamOrder.push_back({name, value});
+                }
+            }
+            if (!orderedParams.empty() || !namedParams.empty()) {
+                auto appendParam = [&](const std::string& value) {
+                    if (!params.empty()) {
+                        params += ",";
+                    }
+                    params += value;
+                };
+                auto type = tok(node.type);
+                auto* child = findModule(type);
+                auto configuredParams = configuredModuleParams(type);
+                auto& declParams = (child && !child->params.empty()) ? child->params : configuredParams;
+                if (!declParams.empty()) {
+                    std::vector<std::string> paramNames;
+                    for (auto& declared : declParams) {
+                        paramNames.push_back(templateParamName(declared));
+                    }
+                    int lastNeeded = static_cast<int>(orderedParams.size()) - 1;
+                    for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
+                        if (namedParams.count(paramNames[i])) {
+                            lastNeeded = std::max(lastNeeded, i);
+                        }
+                    }
+                    lastNeeded = std::min(lastNeeded, static_cast<int>(declParams.size()) - 1);
+                    std::map<std::string, std::string> emittedParams;
+                    for (int i = 0; i <= lastNeeded; ++i) {
+                        auto& declared = declParams[i];
+                        auto& pname = paramNames[i];
+                        std::string value;
+                        bool hasValue = false;
+                        auto namedIt = namedParams.find(pname);
+                        if (namedIt != namedParams.end()) {
+                            value = namedIt->second;
+                            hasValue = true;
+                            if (declared.rfind("typename ", 0) == 0) {
+                                auto raw = namedParamRaw.find(pname);
+                                if (raw != namedParamRaw.end()) {
+                                    auto rawType = raw->second;
+                                    for (auto& item : mod->types) {
+                                        auto w = typeWidth(item.second);
+                                        replaceAll(rawType, "$bits(" + item.first + ")",
+                                                   !w.empty() ? w : "(sizeof(" + item.second + ")*8)");
+                                    }
+                                    auto typeText = cppTypeFromSvText(rawType);
+                                    if (!typeText.empty() && typeText != "logic") {
+                                        value = typeText;
+                                    }
+                                }
+                            }
+                        }
+                        else if (i < static_cast<int>(orderedParams.size())) {
+                            value = orderedParams[i];
+                            hasValue = true;
+                        }
+                        if (hasValue) {
+                            value = castTemplateParamValue(declared, value);
+                            appendParam(value);
+                            emittedParams[pname] = value;
+                        }
+                        else {
+                            auto def = templateParamDefault(declared);
+                            if (!def.empty()) {
+                                for (auto& prior : emittedParams) {
+                                    replaceIdentifierAll(def, prior.first, prior.second);
+                                }
+                                appendParam(def);
+                                emittedParams[pname] = def;
+                            }
+                        }
+                    }
+                }
+                else {
+                    for (auto& item : orderedParams) {
+                        appendParam(item);
+                    }
+                    for (auto& item : namedParamOrder) {
+                        appendParam(item.second);
+                    }
+                }
+            }
+        }
+        for (auto inst : node.instances) {
+            if (!inst->decl) {
+                continue;
+            }
+            auto name = tok(inst->decl->name);
+            auto type = tok(node.type);
+            mod->members.push_back(type + (params.empty() ? "" : "<" + params + ">") + " " + name + ";");
+            mod->memberTypes.push_back(type);
+            mod->memberNames.push_back(name);
+            for (auto conn : inst->connections) {
+                if (conn->kind == SyntaxKind::NamedPortConnection) {
+                    auto& c = conn->as<NamedPortConnectionSyntax>();
+                    auto port = tok(c.name);
+                    auto expr = c.expr ? propertyExpr(*c.expr) : nullptr;
+                    if (expr) {
+                        auto rhs = emitExpr(*expr);
+                        auto lhs = emitLValue(*expr);
+                        mod->instanceConns.push_back(InstanceConnGen{name, type, port, rhs, lhs, true});
+                    }
+                    else {
+                        auto mapped = mod->wireMap.count(port) ? mod->wireMap[port] : port;
+                        mod->instanceConns.push_back(InstanceConnGen{name, type, port, mapped, mapped, true});
+                    }
+                }
+            }
+        }
+    }
+
+    void handle(const ProceduralBlockSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        if (node.kind == SyntaxKind::InitialBlock || node.kind == SyntaxKind::FinalBlock) {
+            return;
+        }
+        auto comb = tok(node.keyword).find("comb") != std::string::npos;
+        if (node.statement->kind == SyntaxKind::TimingControlStatement) {
+            auto& t = node.statement->as<TimingControlStatementSyntax>();
+            comb = comb || t.timingControl->kind == SyntaxKind::ImplicitEventControl;
+        }
+        if (!comb && statementCallsWork(*node.statement)) {
+            return;
+        }
+        MethodGen m;
+        auto assigned = firstAssigned(*node.statement);
+        auto existingCombIt = mod->combMethodByBase.find(assigned);
+        auto hasExistingComb = comb && !assigned.empty() && existingCombIt != mod->combMethodByBase.end() &&
+                               existingCombIt->second < mod->methods.size();
+        if (comb) {
+            m.name = assigned.empty() ? "always_" + std::to_string(mod->alwaysNo) + "_comb_func" : assigned + "_comb_func";
+            if (!assigned.empty() && mod->types.count(assigned)) {
+                auto retType = unwrapRegType(mod->types[assigned]);
+                m.returnName = combStorageName(*mod, assigned);
+                m.returnBase = assigned;
+                if (mod->outputPortCppNames.count(assigned)) {
+                    auto cppName = mod->outputPortCppNames[assigned];
+                    auto storageType = mod->types.count(assigned) ? mod->types[assigned] :
+                        outputStorageType(*mod, assigned, cppName);
+                    if (!storageType.empty()) {
+                        retType = storageType;
+                    }
+                }
+                m.ret = retType + "&";
+                mod->combReturnTypes[m.returnName] = retType;
+                if (!hasExistingComb) {
+                    mod->wireMap[assigned] = m.name;
+                    mod->combMethodByBase[assigned] = mod->methods.size();
+                }
+            }
+            else {
+                m.ret = "void";
+            }
+        }
+        else {
+            m.name = "always_" + std::to_string(mod->alwaysNo);
+            m.args = "bool reset";
+        }
+        mod->alwaysNo++;
+        loopVars.clear();
+        collectLoopVars(*node.statement);
+        emitStatement(*node.statement, m.body, comb, 0);
+        if (hasExistingComb) {
+            auto& existing = mod->methods[existingCombIt->second];
+            existing.body.insert(existing.body.end(), m.body.begin(), m.body.end());
+            if (!m.returnName.empty()) {
+                existing.returnName = m.returnName;
+                existing.returnBase = m.returnBase;
+                existing.ret = m.ret;
+            }
+            return;
+        }
+        mod->methods.push_back(m);
+    }
+
+    void handle(const FunctionDeclarationSyntax& node)
+    {
+        if (!mod) {
+            return;
+        }
+        MethodGen m;
+        auto kw = tok(node.prototype->keyword);
+        m.name = trim(node.prototype->name->toString());
+        if (m.name == "_work") {
+            mod->hasWorkTask = true;
+        }
+        m.ret = kw == "task" ? "void" : typeText(*node.prototype->returnType);
+        if (mod->isPackage) {
+            m.ret = constexprType(m.ret);
+            if (m.ret == "string") {
+                m.ret = "std::string";
+            }
+        }
+        if (node.prototype->portList) {
+            bool first = true;
+            for (auto p : node.prototype->portList->ports) {
+                if (p->kind == SyntaxKind::FunctionPort) {
+                    auto& fp = p->as<FunctionPortSyntax>();
+                    if (!first) {
+                        m.args += ", ";
+                    }
+                    first = false;
+                    auto type = fp.dataType ? typeText(*fp.dataType) : "bool";
+                    if (mod->isPackage) {
+                        if (type.rfind("logic<", 0) != 0 && type.rfind("u<", 0) != 0) {
+                            type = constexprType(type);
+                        }
+                    }
+                    m.args += type + " " + tok(fp.declarator->name);
+                }
+            }
+        }
+        if (mod->isPackage) {
+            if (auto body = configuredTextMap("HDLCPP_METHOD_BODY_OVERRIDES"); body.count(m.name + "|" + m.ret)) {
+                std::stringstream ss(body[m.name + "|" + m.ret]);
+                std::string bodyLine;
+                while (std::getline(ss, bodyLine)) {
+                    if (!bodyLine.empty()) {
+                        m.body.push_back(bodyLine);
+                    }
+                }
+            }
+            else if (m.name == "minimum" && m.args.find(',') != std::string::npos) {
+                m.body.push_back("return a < b ? a : b;");
+            }
+            else if (m.name == "maximum" && m.args.find(',') != std::string::npos) {
+                m.body.push_back("return a > b ? a : b;");
+            }
+            else if (m.ret == "std::string") {
+                m.body.push_back("return {};");
+            }
+            else {
+                bool hasExplicitReturn = false;
+                for (auto item : node.items) {
+                    if (item->toString().find("return") != std::string::npos) {
+                        hasExplicitReturn = true;
+                        break;
+                    }
+                }
+                if (hasExplicitReturn) {
+                    auto savedLoopVars = loopVars;
+                    loopVars.clear();
+                    for (auto item : node.items) {
+                        collectLoopVars(*item);
+                    }
+                    for (auto item : node.items) {
+                        emitNode(*item, m.body, false, 0);
+                    }
+                    loopVars = savedLoopVars;
+                }
+                else if (m.ret != "void") {
+                    m.body.push_back("return {};");
+                }
+            }
+            mod->methods.push_back(m);
+            return;
+        }
+        loopVars.clear();
+        for (auto item : node.items) {
+            collectLoopVars(*item);
+        }
+        for (auto item : node.items) {
+            emitNode(*item, m.body, false, 0);
+        }
+        mod->methods.push_back(m);
+    }
+
+    void handle(const StructUnionTypeSyntax& node)
+    {
+        Struct st;
+        st.type = tok(node.keyword) == "union" ? Struct::STRUCT_UNION : Struct::STRUCT_STRUCT;
+        project.structs.push_back(st);
+        visitDefault(node);
+    }
+
+    void emitGenerateMember(const MemberSyntax& node, const std::string& index, const std::string& indexLimit = "",
+                            const std::vector<std::pair<std::string, std::string>>& replacements = {},
+                            const std::vector<std::string>& methodLoopHeaders = {})
+    {
+        auto applyGenerateReplacements = [&](std::string& text) {
+            if (!replacements.empty()) {
+                for (auto& repl : replacements) {
+                    replaceIdentifierAll(text, repl.first, repl.second);
+                }
+            }
+            else if (!index.empty()) {
+                replaceIdentifierAll(text, index, "i");
+            }
+        };
+        if (node.kind == SyntaxKind::GenerateBlock) {
+            for (auto member : node.as<GenerateBlockSyntax>().members) {
+                emitGenerateMember(*member, index, indexLimit, replacements, methodLoopHeaders);
+            }
+        }
+        else if (node.kind == SyntaxKind::LoopGenerate) {
+            auto& loop = node.as<LoopGenerateSyntax>();
+            auto loopId = tok(loop.identifier);
+            std::string loopVar = replacements.empty() ? "i" : (replacements.size() == 1 ? "k" : "m");
+            auto stop = emitExpr(*loop.stopExpr);
+            auto iter = emitExpr(*loop.iterationExpr);
+            applyGenerateReplacements(stop);
+            applyGenerateReplacements(iter);
+            replaceIdentifierAll(stop, loopId, loopVar);
+            replaceIdentifierAll(iter, loopId, loopVar);
+            auto limit = stop;
+            auto lt = limit.find('<');
+            if (lt != std::string::npos) {
+                limit = trim(limit.substr(lt + 1));
+            }
+            auto init = emitExpr(*loop.initialExpr);
+            applyGenerateReplacements(init);
+            replaceIdentifierAll(init, loopId, loopVar);
+            auto loopHeader = "for (unsigned " + loopVar + " = " + init + ";" + stop + ";" + iter + ") {";
+            mod->assignLines.push_back(loopHeader);
+            auto nestedReplacements = replacements;
+            if (nestedReplacements.empty() && !index.empty()) {
+                nestedReplacements.push_back({index, "i"});
+            }
+            nestedReplacements.push_back({loopId, loopVar});
+            auto nestedMethodLoopHeaders = methodLoopHeaders;
+            nestedMethodLoopHeaders.push_back(loopHeader);
+            emitGenerateMember(*loop.block, loopId, limit, nestedReplacements, nestedMethodLoopHeaders);
+            mod->assignLines.push_back("}");
+        }
+        else if (node.kind == SyntaxKind::IfGenerate) {
+            auto& ifGen = node.as<IfGenerateSyntax>();
+            auto condForEval = emitExpr(*ifGen.condition);
+            applyGenerateReplacements(condForEval);
+            if (auto decision = evalConfiguredGenerateCondition(*mod, condForEval)) {
+                if (*decision) {
+                    emitGenerateMember(*ifGen.block, index, indexLimit, replacements, methodLoopHeaders);
+                }
+                else if (ifGen.elseClause && ifGen.elseClause->clause) {
+                    auto* clause = ifGen.elseClause->clause.get();
+                    if (clause->kind == SyntaxKind::IfGenerate || clause->kind == SyntaxKind::GenerateBlock ||
+                        clause->kind == SyntaxKind::DataDeclaration || clause->kind == SyntaxKind::ContinuousAssign ||
+                        clause->kind == SyntaxKind::HierarchyInstantiation) {
+                        emitGenerateMember(clause->as<MemberSyntax>(), index, indexLimit, replacements, methodLoopHeaders);
+                    }
+                }
+                return;
+            }
+            if (mod && configuredNameEquals("HDLCPP_CONSTEXPR_GENERATE_MODULES", mod->name)) {
+                auto cond = emitExpr(*ifGen.condition);
+                applyGenerateReplacements(cond);
+                mod->assignLines.push_back("if constexpr (" + cond + ") {");
+                emitGenerateMember(*ifGen.block, index, indexLimit, replacements, methodLoopHeaders);
+                if (ifGen.elseClause) {
+                    mod->assignLines.push_back("}");
+                    mod->assignLines.push_back("else {");
+                    if (ifGen.elseClause->clause) {
+                        auto* clause = ifGen.elseClause->clause.get();
+                        if (clause->kind == SyntaxKind::IfGenerate || clause->kind == SyntaxKind::GenerateBlock ||
+                            clause->kind == SyntaxKind::DataDeclaration || clause->kind == SyntaxKind::ContinuousAssign ||
+                            clause->kind == SyntaxKind::HierarchyInstantiation) {
+                            emitGenerateMember(clause->as<MemberSyntax>(), index, indexLimit, replacements, methodLoopHeaders);
+                        }
+                    }
+                }
+                mod->assignLines.push_back("}");
+            }
+            else {
+                emitGenerateMember(*ifGen.block, index, indexLimit, replacements, methodLoopHeaders);
+            }
+        }
+        else if (node.kind == SyntaxKind::HierarchyInstantiation && !index.empty() && !indexLimit.empty()) {
+            auto& instNode = node.as<HierarchyInstantiationSyntax>();
+            auto type = tok(instNode.type);
+            std::string params;
+            if (instNode.parameters) {
+                std::vector<std::string> orderedParams;
+                std::map<std::string, std::string> namedParams;
+                std::map<std::string, std::string> namedParamRaw;
+                std::vector<std::pair<std::string, std::string>> namedParamOrder;
+                for (auto p : instNode.parameters->parameters) {
+                    if (p->kind == SyntaxKind::OrderedParamAssignment) {
+                        auto value = stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr));
+                        replaceIdentifierAll(value, index, "i");
+                        orderedParams.push_back(value);
+                    }
+                    else if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
+                        auto& np = p->as<NamedParamAssignmentSyntax>();
+                        auto value = DataTypeSyntax::isKind(np.expr->kind) ? typeText(np.expr->as<DataTypeSyntax>()) : stripLogicLiteralCasts(emitExpr(*np.expr));
+                        replaceIdentifierAll(value, index, "i");
+                        auto rawValue = exprText(np.expr->toString());
+                        replaceIdentifierAll(rawValue, index, "i");
+                        namedParams[tok(np.name)] = value;
+                        namedParamRaw[tok(np.name)] = rawValue;
+                        namedParamOrder.push_back({tok(np.name), value});
+                    }
+                }
+                auto appendParam = [&](const std::string& value) {
+                    if (!params.empty()) {
+                        params += ",";
+                    }
+                    params += value;
+                };
+                auto* child = findModule(type);
+                auto configuredParams = configuredModuleParams(type);
+                auto& declParams = (child && !child->params.empty()) ? child->params : configuredParams;
+                if (!declParams.empty()) {
+                    std::vector<std::string> paramNames;
+                    for (auto& declared : declParams) {
+                        paramNames.push_back(templateParamName(declared));
+                    }
+                    int lastNeeded = static_cast<int>(orderedParams.size()) - 1;
+                    for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
+                        if (namedParams.count(paramNames[i])) {
+                            lastNeeded = std::max(lastNeeded, i);
+                        }
+                    }
+                    lastNeeded = std::min(lastNeeded, static_cast<int>(declParams.size()) - 1);
+                    std::map<std::string, std::string> emittedParams;
+                    for (int i = 0; i <= lastNeeded; ++i) {
+                        auto& declared = declParams[i];
+                        auto& pname = paramNames[i];
+                        std::string value;
+                        bool hasValue = false;
+                        auto namedIt = namedParams.find(pname);
+                        if (namedIt != namedParams.end()) {
+                            value = namedIt->second;
+                            hasValue = true;
+                            if (declared.rfind("typename ", 0) == 0) {
+                                auto raw = namedParamRaw.find(pname);
+                                if (raw != namedParamRaw.end()) {
+                                    auto rawType = raw->second;
+                                    for (auto& item : mod->types) {
+                                        auto w = typeWidth(item.second);
+                                        replaceAll(rawType, "$bits(" + item.first + ")",
+                                                   !w.empty() ? w : "(sizeof(" + item.second + ")*8)");
+                                    }
+                                    auto recoveredType = cppTypeFromSvText(rawType);
+                                    if (!recoveredType.empty() && recoveredType != "logic") {
+                                        value = recoveredType;
+                                    }
+                                }
+                            }
+                        }
+                        else if (i < static_cast<int>(orderedParams.size())) {
+                            value = orderedParams[i];
+                            hasValue = true;
+                        }
+                        if (hasValue) {
+                            value = castTemplateParamValue(declared, value);
+                            appendParam(value);
+                            emittedParams[pname] = value;
+                        }
+                        else {
+                            auto def = templateParamDefault(declared);
+                            if (!def.empty()) {
+                                for (auto& prior : emittedParams) {
+                                    replaceIdentifierAll(def, prior.first, prior.second);
+                                }
+                                appendParam(def);
+                                emittedParams[pname] = def;
+                            }
+                        }
+                    }
+                }
+                else {
+                    for (auto& item : orderedParams) {
+                        appendParam(item);
+                    }
+                    for (auto& item : namedParamOrder) {
+                        appendParam(item.second);
+                    }
+                }
+            }
+            for (auto inst : instNode.instances) {
+                if (!inst->decl) {
+                    continue;
+                }
+                auto name = tok(inst->decl->name);
+                auto* childForType = findModule(type);
+                auto configuredForType = configuredModuleParams(type);
+                auto hasTemplateParams = (childForType && !childForType->params.empty()) || !configuredForType.empty();
+                auto memberType = type + (params.empty() ? (hasTemplateParams ? "<>" : "") : "<" + params + ">");
+                if (!mod->memberArraySizes.count(name)) {
+                    mod->members.push_back("array<" + memberType + "," + indexLimit + "> " + name + ";");
+                    mod->memberTypes.push_back(type);
+                    mod->memberNames.push_back(name);
+                    mod->memberArraySizes[name] = indexLimit;
+                }
+                auto elem = name + "[(unsigned)(uint64_t)((uint64_t)(i))]";
+                for (auto conn : inst->connections) {
+                    if (conn->kind != SyntaxKind::NamedPortConnection) {
+                        continue;
+                    }
+                    auto& c = conn->as<NamedPortConnectionSyntax>();
+                    auto port = tok(c.name);
+                    auto* child = findModule(type);
+                    auto portName = port;
+                    bool isOutput = false;
+                    std::string portType = "bool";
+                    if (child) {
+                        if (child->portCppNames.count(port)) {
+                            portName = child->portCppNames[port];
+                        }
+                        bool knownPort = false;
+                        for (auto& p : child->ports) {
+                            if (p.name == portName) {
+                                knownPort = true;
+                                portType = p.type;
+                                isOutput = p.direction == "output";
+                                break;
+                            }
+                        }
+                        if (!knownPort) {
+                            continue;
+                        }
+                        isOutput = isOutput || child->outputPortCppNames.count(port) != 0;
+                    }
+	                    else {
+	                        isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos;
+	                        portName += isOutput ? "_out" : "_in";
+	                    }
+	                    if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); portTypes.count(type + "." + port)) {
+	                        auto spec = portTypes[type + "." + port];
+	                        auto sep = spec.find(':');
+	                        auto direction = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
+	                        auto configuredType = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+	                        if (direction == "output") {
+	                            isOutput = true;
+	                            if (!hasSuffix(portName, "_out")) {
+	                                portName = port + "_out";
+	                            }
+	                        }
+	                        else if (direction == "input") {
+	                            isOutput = false;
+	                            if (!hasSuffix(portName, "_in")) {
+	                                portName = port + "_in";
+	                            }
+	                        }
+	                        if (!configuredType.empty()) {
+	                            portType = configuredType;
+	                        }
+	                    }
+                    if (!c.expr) {
+                        continue;
+                    }
+                    auto expr = propertyExpr(*c.expr);
+                    if (!expr) {
+                        continue;
+                    }
+                    if (isClockPortName(port)) {
+                        continue;
+                    }
+                    auto rhs = emitExpr(*expr);
+                    auto lhs = emitLValue(*expr);
+                    applyGenerateReplacements(rhs);
+                    applyGenerateReplacements(lhs);
+                    if (isOutput) {
+                        auto outExpr = elem + "." + portName + "()";
+                        if (portType.rfind("array<", 0) == 0 &&
+                            (lhs.find(".bits(") != std::string::npos || lhs.find(".get(") != std::string::npos)) {
+                            outExpr += "[0]";
+                        }
+                        if (addConcatOutputAssignments(*mod, lhs, outExpr, methodLoopHeaders)) {
+                            continue;
+                        }
+                        addCombAssignment(*mod, baseFromLValueText(lhs), lhs, outExpr, methodLoopHeaders);
+                    }
+                    else {
+                        auto sourceTypeBeforeLateBind = expressionStorageType(*mod, rhs);
+                        if (sourceTypeBeforeLateBind.rfind("array<", 0) == 0 || sourceTypeBeforeLateBind.rfind("std::array<", 0) == 0) {
+                            auto target = trim(portType);
+                            if (target.rfind("logic<", 0) == 0 && target.back() == '>') {
+                                rhs = target + "(" + rhs + ")";
+                            }
+                            else {
+                                rhs = adaptInputPortRhs(*mod, portType, rhs);
+                            }
+                        }
+                        else {
+                            rhs = adaptInputPortRhs(*mod, portType, rhs);
+                        }
+                        mod->assignLines.push_back("    " + elem + "." + portName + " = " + assignWrapper(rhs, "i") + ";");
+                    }
+                }
+            }
+        }
+        else if (node.kind == SyntaxKind::AlwaysBlock ||
+                 node.kind == SyntaxKind::AlwaysCombBlock ||
+                 node.kind == SyntaxKind::AlwaysFFBlock ||
+                 node.kind == SyntaxKind::AlwaysLatchBlock ||
+                 node.kind == SyntaxKind::InitialBlock ||
+                 node.kind == SyntaxKind::FinalBlock) {
+            auto& proc = node.as<ProceduralBlockSyntax>();
+            bool comb = tok(proc.keyword).find("comb") != std::string::npos;
+            if (proc.statement->kind == SyntaxKind::TimingControlStatement) {
+                auto& t = proc.statement->as<TimingControlStatementSyntax>();
+                comb = comb || t.timingControl->kind == SyntaxKind::ImplicitEventControl;
+            }
+            if (comb) {
+                auto savedLoopVars = loopVars;
+                loopVars.clear();
+                if (!index.empty()) {
+                    loopVars.insert(index);
+                }
+                collectLoopVars(*proc.statement);
+                std::vector<std::string> lines;
+                emitStatement(*proc.statement, lines, true, 0);
+                for (auto line : lines) {
+                    applyGenerateReplacements(line);
+                    mod->assignLines.push_back("    " + line);
+                }
+                loopVars = savedLoopVars;
+            }
+            else if (node.kind != SyntaxKind::InitialBlock && node.kind != SyntaxKind::FinalBlock) {
+                auto savedLoopVars = loopVars;
+                loopVars.clear();
+                if (!index.empty()) {
+                    loopVars.insert(index);
+                }
+                collectLoopVars(*proc.statement);
+                MethodGen m;
+                m.name = "always_" + std::to_string(mod->alwaysNo++);
+                m.args = "bool reset";
+                for (auto& header : methodLoopHeaders) {
+                    m.body.push_back(header);
+                }
+                if (methodLoopHeaders.empty() && !index.empty() && !indexLimit.empty()) {
+                    m.body.push_back("for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(" + indexLimit + ");i++) {");
+                }
+                std::vector<std::string> lines;
+                emitStatement(*proc.statement, lines, false, 0);
+                for (auto line : lines) {
+                    applyGenerateReplacements(line);
+                    m.body.push_back(((!methodLoopHeaders.empty() || (!index.empty() && !indexLimit.empty())) ? "    " : "") + line);
+                }
+                if (methodLoopHeaders.empty() && !index.empty() && !indexLimit.empty()) {
+                    m.body.push_back("}");
+                }
+                else {
+                    for (size_t n = 0; n < methodLoopHeaders.size(); ++n) {
+                        m.body.push_back("}");
+                    }
+                }
+                mod->methods.push_back(m);
+                loopVars = savedLoopVars;
+            }
+        }
+        else if (node.kind == SyntaxKind::DataDeclaration) {
+            auto& data = node.as<DataDeclarationSyntax>();
+            for (auto d : data.declarators) {
+                auto name = tok(d->name);
+                auto type = typeText(*data.type);
+                for (auto w : dimensionWidths(d->dimensions)) {
+                    type = "array<" + type + "," + w + ">";
+                }
+                mod->assignLines.push_back("    " + type + " " + name + ";");
+                mod->types[name] = type;
+            }
+        }
+        else if (node.kind == SyntaxKind::ContinuousAssign) {
+            for (auto a : node.as<ContinuousAssignSyntax>().assignments) {
+                if (a->kind == SyntaxKind::AssignmentExpression) {
+                    auto& b = a->as<BinaryExpressionSyntax>();
+                    auto base = assignedBase(*b.left);
+                    auto lhs = emitLValue(*b.left);
+                    auto rhs = emitExpr(*b.right);
+                    if (b.right->kind == SyntaxKind::ConditionalExpression &&
+                        lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
+                        rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
+                    }
+                    applyGenerateReplacements(lhs);
+                    applyGenerateReplacements(rhs);
+                    if (!base.empty() && mod->outputPortCppNames.count(base) &&
+                        !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", mod->name)) {
+                        addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders);
+                        continue;
+                    }
+                    if (!base.empty() && mod->varNames.count(base) &&
+                        (lhs.find('[') != std::string::npos || lhs.find('.') != std::string::npos)) {
+                        addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders);
+                        continue;
+                    }
+                    // Dotted lhs here is a struct member/value assignment, not a port binding.
+                    mod->assignLines.push_back("    " + lhs + " = " + rhs + ";");
+                }
+            }
+        }
+    }
+
+    std::string assignWrapper(const std::string& rhs, const std::string& index)
+    {
+        std::vector<std::string> captures;
+        auto addCapture = [&](const std::string& name) {
+            if (!name.empty() && std::find(captures.begin(), captures.end(), name) == captures.end()) {
+                captures.push_back(name);
+            }
+        };
+        addCapture(index);
+        const std::string names[] = {"i", "j", "k", "m", "z_gen", "w_gen"};
+        for (auto& name : names) {
+            if (rhs.find(name) != std::string::npos && isIdentifierUsed(rhs, name)) {
+                addCapture(name);
+            }
+        }
+        auto comb = isSimpleCombRef(rhs);
+        if (captures.empty()) {
+            return std::string(comb ? "_ASSIGN_COMB" : "_ASSIGN") + "( " + rhs + " )";
+        }
+        if (captures.size() == 1 && captures[0] == "i") {
+            return std::string(comb ? "_ASSIGN_COMB_I" : "_ASSIGN_I") + "( " + rhs + " )";
+        }
+        if (captures.size() == 1 && captures[0] == "j") {
+            return std::string(comb ? "_ASSIGN_COMB_J" : "_ASSIGN_J") + "( " + rhs + " )";
+        }
+        if (captures.size() == 2 && captures[0] == "i" && captures[1] == "j") {
+            return std::string(comb ? "_ASSIGN_COMB_IJ" : "_ASSIGN_IJ") + "( " + rhs + " )";
+        }
+        std::string capList;
+        for (size_t n = 0; n < captures.size(); ++n) {
+            if (n) {
+                capList += ",";
+            }
+            capList += captures[n];
+        }
+        return std::string(comb ? "_ASSIGN_COMB_INDEXED" : "_ASSIGN_INDEXED") + "((" + capList + "), " + rhs + " )";
+    }
+
+    std::string baseFromLValueText(const std::string& lhs)
+    {
+        auto s = trim(lhs);
+        auto end = s.find_first_of("[.");
+        if (end != std::string::npos) {
+            s = s.substr(0, end);
+        }
+        return trim(s);
+    }
+
+    std::vector<std::string> splitTopLevelCommaList(const std::string& text)
+    {
+        std::vector<std::string> out;
+        std::string cur;
+        int paren = 0;
+        int bracket = 0;
+        int brace = 0;
+        int angle = 0;
+        for (char c : text) {
+            if (c == '(') {
+                ++paren;
+            }
+            else if (c == ')' && paren > 0) {
+                --paren;
+            }
+            else if (c == '[') {
+                ++bracket;
+            }
+            else if (c == ']' && bracket > 0) {
+                --bracket;
+            }
+            else if (c == '{') {
+                ++brace;
+            }
+            else if (c == '}' && brace > 0) {
+                --brace;
+            }
+            else if (c == '<') {
+                ++angle;
+            }
+            else if (c == '>' && angle > 0) {
+                --angle;
+            }
+
+            if (c == ',' && paren == 0 && bracket == 0 && brace == 0 && angle == 0) {
+                auto item = trim(cur);
+                if (!item.empty()) {
+                    out.push_back(item);
+                }
+                cur.clear();
+            }
+            else {
+                cur.push_back(c);
+            }
+        }
+        auto item = trim(cur);
+        if (!item.empty()) {
+            out.push_back(item);
+        }
+        return out;
+    }
+
+    std::vector<std::string> splitConcatLValueArgs(const std::string& lhs)
+    {
+        auto s = trim(lhs);
+        if (s.rfind("cat{", 0) == 0 && s.size() >= 5 && s.back() == '}') {
+            return splitTopLevelCommaList(s.substr(4, s.size() - 5));
+        }
+        if (s.size() >= 2 && s.front() == '{' && s.back() == '}') {
+            return splitTopLevelCommaList(s.substr(1, s.size() - 2));
+        }
+        else {
+            return {};
+        }
+    }
+
+    bool addConcatOutputAssignments(ModuleGen& target, const std::string& lhs, const std::string& rhs,
+                                    const std::vector<std::string>& loopHeaders = {})
+    {
+        auto args = splitConcatLValueArgs(lhs);
+        if (args.empty()) {
+            return false;
+        }
+
+        std::string offset = "0";
+        for (auto it = args.rbegin(); it != args.rend(); ++it) {
+            auto elem = trim(*it);
+            auto base = baseFromLValueText(elem);
+            if (base.empty() || !target.types.count(base)) {
+                return false;
+            }
+            auto elemType = expressionStorageType(target, elem);
+            if (elemType.empty()) {
+                elemType = target.types[base];
+            }
+            auto width = typeWidth(elemType);
+            if (width.empty()) {
+                width = "sizeof(" + elemType + ")*8";
+            }
+            width = foldWidth(width);
+            auto hi = offset == "0" ? "((" + width + ") - 1)" : "((" + offset + ") + (" + width + ") - 1)";
+            auto slice = "logic<" + width + ">(" + rhs + ".bits((uint64_t)(" + hi + "),(uint64_t)(" + offset + ")))";
+            addCombAssignment(target, base, elem, slice, loopHeaders);
+            offset = "((" + offset + ") + (" + width + "))";
+        }
+        return true;
+    }
+
+    bool methodHasExternallyVisibleCombSideEffects(const ModuleGen& mod, const MethodGen& method)
+    {
+        if (method.name.find("_comb_func") == std::string::npos || method.returnName.empty()) {
+            return false;
+        }
+        for (auto& line : method.body) {
+            auto t = trim(line);
+            if (t.rfind("if ", 0) == 0 || t.rfind("if(", 0) == 0 ||
+                t.rfind("for ", 0) == 0 || t.rfind("for(", 0) == 0 ||
+                t.rfind("switch ", 0) == 0 || t.rfind("switch(", 0) == 0 ||
+                t.rfind("case ", 0) == 0 || t.rfind("default:", 0) == 0) {
+                continue;
+            }
+            auto eq = t.find('=');
+            if (eq == std::string::npos) {
+                continue;
+            }
+            auto base = baseFromLValueText(t.substr(0, eq));
+            if (base.empty() || base == method.returnBase || base == method.returnName) {
+                continue;
+            }
+            if (mod.outputPortCppNames.count(base)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool emitPlainCombMethod(const ModuleGen& mod, const MethodGen& method)
+    {
+        return methodHasExternallyVisibleCombSideEffects(mod, method);
+    }
+
+    bool isPlainCombDriver(const ModuleGen& mod, const std::string& driver)
+    {
+        for (auto& method : mod.methods) {
+            if (method.name == driver) {
+                return emitPlainCombMethod(mod, method);
+            }
+        }
+        return false;
+    }
+
+    std::vector<std::string> sideEffectCombCalls(const ModuleGen& mod)
+    {
+        std::vector<std::string> calls;
+        for (auto& method : mod.methods) {
+            if (methodHasExternallyVisibleCombSideEffects(mod, method)) {
+                calls.push_back(method.name + "();");
+            }
+        }
+        return calls;
+    }
+
+    bool isControlOrScopeLine(const std::string& line)
+    {
+        auto t = trim(line);
+        return t.empty() || t == "{" || t == "}" || t == "};" || t == "else {" ||
+               t.rfind("for ", 0) == 0 || t.rfind("for(", 0) == 0 ||
+               t.rfind("if ", 0) == 0 || t.rfind("if(", 0) == 0 ||
+               t.rfind("if constexpr", 0) == 0 || t.rfind("else", 0) == 0 ||
+               t.rfind("switch ", 0) == 0 || t.rfind("switch(", 0) == 0 ||
+               t.rfind("case ", 0) == 0 || t.rfind("default:", 0) == 0 ||
+               t == "break;" || t == "continue;";
+    }
+
+    bool isStructuralAssignLine(const std::string& line)
+    {
+        auto t = trim(line);
+        if (t.find("._assign(") != std::string::npos) {
+            return true;
+        }
+        auto eq = t.find("=");
+        if (eq == std::string::npos) {
+            return false;
+        }
+        auto rhs = trim(t.substr(eq + 1));
+        return rhs.rfind("_ASSIGN", 0) == 0;
+    }
+
+    bool isRuntimeAssignLine(const std::string& line)
+    {
+        return !isControlOrScopeLine(line) && !isStructuralAssignLine(line);
+    }
+
+    bool hasRuntimeAssignLines(const ModuleGen& mod)
+    {
+        for (auto& line : mod.assignLines) {
+            if (isRuntimeAssignLine(line)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void movePartialOutputAssignLinesToComb(ModuleGen& target)
+    {
+        std::vector<std::string> kept;
+        for (auto& line : target.assignLines) {
+            auto t = trim(line);
+            auto eq = t.find('=');
+            if (eq == std::string::npos) {
+                kept.push_back(line);
+                continue;
+            }
+            auto lhs = trim(t.substr(0, eq));
+            auto rhs = trim(t.substr(eq + 1));
+            if (!rhs.empty() && rhs.back() == ';') {
+                rhs.pop_back();
+                rhs = trim(rhs);
+            }
+            auto base = baseFromLValueText(lhs);
+            auto containsIdentifier = [](const std::string& text, const std::string& id) {
+                for (size_t pos = 0; (pos = text.find(id, pos)) != std::string::npos; ++pos) {
+                    auto before = pos == 0 ? '\0' : text[pos - 1];
+                    auto after = pos + id.size() >= text.size() ? '\0' : text[pos + id.size()];
+                    if (!std::isalnum(static_cast<unsigned char>(before)) && before != '_' &&
+                        !std::isalnum(static_cast<unsigned char>(after)) && after != '_') {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            auto loopScoped = containsIdentifier(lhs, "i") || containsIdentifier(rhs, "i") ||
+                              containsIdentifier(lhs, "j") || containsIdentifier(rhs, "j") ||
+                              containsIdentifier(lhs, "k") || containsIdentifier(rhs, "k") ||
+                              containsIdentifier(lhs, "m") || containsIdentifier(rhs, "m");
+            if (!base.empty() && target.outputPortCppNames.count(base) && lhs != target.outputPortCppNames[base] &&
+                !loopScoped && !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", target.name)) {
+                addCombAssignment(target, base, lhs, rhs);
+                continue;
+            }
+            kept.push_back(line);
+        }
+        target.assignLines.swap(kept);
+    }
+
+    void addCombAssignment(ModuleGen& target, const std::string& svBase, const std::string& lhs, const std::string& rhs,
+                           const std::vector<std::string>& loopHeaders = {})
+    {
+        auto base = !svBase.empty() ? svBase : baseFromLValueText(lhs);
+        if (base.empty() || !target.types.count(base)) {
+            return;
+        }
+
+        auto retType = unwrapRegType(target.types[base]);
+        auto returnName = combStorageName(target, base);
+        if (target.outputPortCppNames.count(base)) {
+            auto cppName = target.outputPortCppNames[base];
+            auto storageType = target.types.count(base) ? target.types[base] :
+                outputStorageType(target, base, cppName);
+            if (!storageType.empty()) {
+                retType = storageType;
+            }
+        }
+
+        auto methodName = base + "_comb_func";
+        MethodGen* method = nullptr;
+        auto it = target.combMethodByBase.find(base);
+        if (it != target.combMethodByBase.end()) {
+            method = &target.methods[it->second];
+            target.combReturnTypes[method->returnName] = retType;
+        }
+        else {
+            MethodGen m;
+            m.name = methodName;
+            m.ret = retType + "&";
+            m.returnName = returnName;
+            m.returnBase = base;
+            target.combReturnTypes[returnName] = retType;
+            target.combMethodByBase[base] = target.methods.size();
+            target.wireMap[base] = methodName;
+            target.combAssignedVars.insert(base);
+            target.methods.push_back(m);
+            method = &target.methods.back();
+        }
+        target.combAssignedVars.insert(base);
+
+        auto finalRhs = rhs;
+        if (retType == "bool" || retType == "u1") {
+            finalRhs = truthyExpr(finalRhs, typeWidth(target.types[base]));
+        }
+
+        // Procedural assignments to fields are value updates. Port/function_ref binding is
+        // handled when emitting port initializers and instance connections.
+        if (!loopHeaders.empty()) {
+            for (auto& header : loopHeaders) {
+                method->body.push_back(header);
+            }
+            method->body.push_back("    " + lhs + " = " + finalRhs + ";");
+            for (size_t n = 0; n < loopHeaders.size(); ++n) {
+                method->body.push_back("}");
+            }
+        }
+        else {
+            method->body.push_back(lhs + " = " + finalRhs + ";");
+        }
+    }
+
+    std::string translateExpr(std::string s)
+    {
+        s = cppExprText(s);
+        if (!mod) {
+            return s;
+        }
+        for (auto& item : mod->types) {
+            auto w = typeWidth(item.second);
+            replaceAll(s, "$bits(" + item.first + ")", w.empty() ? "(sizeof(" + item.second + ")*8)" : w);
+        }
+        for (auto& p : mod->portNames) {
+            for (size_t pos = 0; (pos = s.find(p, pos)) != std::string::npos; ) {
+                auto before = pos == 0 ? '\0' : s[pos - 1];
+                auto after = pos + p.size() >= s.size() ? '\0' : s[pos + p.size()];
+                auto next = pos + p.size();
+                while (next < s.size() && std::isspace((unsigned char)s[next])) {
+                    ++next;
+                }
+                bool leftOk = !std::isalnum((unsigned char)before) && before != '_';
+                bool rightOk = !std::isalnum((unsigned char)after) && after != '_';
+                if (leftOk && rightOk && (next >= s.size() || s[next] != '(')) {
+                    auto cppName = mod->portCppNames.count(p) ? mod->portCppNames[p] : p;
+                    auto replacement = cppName + "()";
+                    s.replace(pos, p.size(), replacement);
+                    pos += replacement.size();
+                }
+                else {
+                    pos += p.size();
+                }
+            }
+        }
+        return s;
+    }
+
+    std::string typeText(const DataTypeSyntax& type)
+    {
+        auto qualifyImportedType = [&](const std::string& name) -> std::string {
+            if (!mod || name.find("::") != std::string::npos || name.find('<') != std::string::npos ||
+                name == "bool" || name == "unsigned" || name == "u1" || name == "u8" ||
+                name == "u16" || name == "u32" || name == "u64" || name == "uint64_t" ||
+                name == "std::string") {
+                return name;
+            }
+            if (mod->types.count(name) || mod->typeParamNames.count(name)) {
+                return name;
+            }
+            for (auto& import : mod->imports) {
+                auto* package = findModule(import);
+                if (package && package->isPackage && package->types.count(name)) {
+                    return import + "::" + name;
+                }
+                if (configuredNameEquals("HDLCPP_QUALIFY_IMPORTED_TYPE_PACKAGES", import) && name.size() >= 2 &&
+                    name.substr(name.size() - 2) == "_t") {
+                    return import + "::" + name;
+                }
+            }
+            return name;
+        };
+
+        auto rawTypeText = trim(exprText(type.toString()));
+        if (rawTypeText == "string") {
+            return "std::string";
+        }
+        if (IntegerTypeSyntax::isKind(type.kind)) {
+            auto& t = type.as<IntegerTypeSyntax>();
+            auto keyword = tok(t.keyword);
+            auto packedWidths = dimensionWidths(t.dimensions);
+            if (packedWidths.size() > 1 && (keyword == "logic" || keyword == "wire" || keyword == "bit")) {
+                auto elemType = "logic<" + packedWidths.back() + ">";
+                for (auto it = packedWidths.rbegin() + 1; it != packedWidths.rend(); ++it) {
+                    elemType = "array<" + elemType + "," + *it + ">";
+                }
+                return elemType;
+            }
+            auto width = dimensionsWidth(t.dimensions);
+            if (width.empty()) {
+                if (keyword == "reg") {
+                    return "reg<u1>";
+                }
+                if (keyword == "logic" || keyword == "wire" || keyword == "bit") {
+                    return "logic<1>";
+                }
+                if (keyword == "byte") {
+                    return "u8";
+                }
+                if (keyword == "int" || keyword == "integer") {
+                    return "u32";
+                }
+                if (keyword == "shortint") {
+                    return "int16_t";
+                }
+                if (keyword == "longint" || keyword == "time") {
+                    return "u64";
+                }
+                if (keyword == "string") {
+                    return "std::string";
+                }
+                return keyword;
+            }
+            return width.rfind("clog2(", 0) == 0 ? "u<" + width + ">" : "logic<" + width + ">";
+        }
+        if (type.kind == SyntaxKind::ImplicitType) {
+            auto& t = type.as<ImplicitTypeSyntax>();
+            auto width = dimensionsWidth(t.dimensions);
+            return width.empty() ? "bool" : "logic<" + width + ">";
+        }
+        if (type.kind == SyntaxKind::EnumType) {
+            return "logic<32>";
+        }
+        if (type.kind == SyntaxKind::NamedType) {
+            auto raw = exprText(type.toString());
+            if (raw == "string") {
+                return "std::string";
+            }
+            auto bracket = raw.find('[');
+            if (bracket != std::string::npos) {
+                auto base = trim(raw.substr(0, bracket));
+                base = qualifyImportedType(base);
+                while (bracket != std::string::npos) {
+                    auto end = raw.find(']', bracket);
+                    if (end == std::string::npos) {
+                        break;
+                    }
+                    base = "array<" + base + "," + textRangeWidth(raw.substr(bracket, end - bracket + 1)) + ">";
+                    bracket = raw.find('[', end + 1);
+                }
+                return base;
+            }
+            auto& name = *type.as<NamedTypeSyntax>().name;
+            if (name.kind == SyntaxKind::IdentifierSelectName) {
+                auto& n = name.as<IdentifierSelectNameSyntax>();
+                auto width = selectsWidth(n.selectors);
+                if (!width.empty()) {
+                    return "array<" + qualifyImportedType(tok(n.identifier)) + "," + width + ">";
+                }
+            }
+            return qualifyImportedType(exprText(type.as<NamedTypeSyntax>().name->toString()));
+        }
+        return exprText(type.toString());
+    }
+
+    std::string varType(const DataTypeSyntax& type, const DeclaratorSyntax& decl)
+    {
+        if (IntegerTypeSyntax::isKind(type.kind)) {
+            auto& t = type.as<IntegerTypeSyntax>();
+            auto packed = dimensionWidths(t.dimensions);
+            auto unpacked = dimensionWidths(decl.dimensions);
+            auto keyword = tok(t.keyword);
+            if (packed.empty() && unpacked.empty() && (keyword == "logic" || keyword == "wire" || keyword == "bit")) {
+                return "logic<1>";
+            }
+            if (packed.size() > 1 && unpacked.empty() && (keyword == "logic" || keyword == "wire" || keyword == "bit")) {
+                auto elemType = "logic<" + packed.back() + ">";
+                for (auto it = packed.rbegin() + 1; it != packed.rend(); ++it) {
+                    elemType = "array<" + elemType + "," + *it + ">";
+                }
+                return elemType;
+            }
+            if (packed.size() == 2 && unpacked.size() == 1 && packed[1] == "8") {
+                return "memory<u8," + packed[0] + "," + unpacked[0] + ">";
+            }
+            if (unpacked.size() == 1) {
+                auto elemType = (packed.empty() && (keyword == "logic" || keyword == "wire" || keyword == "bit")) ? "logic<1>" : typeText(type);
+                return "array<" + elemType + "," + unpacked[0] + ">";
+            }
+        }
+        auto text = typeText(type);
+        auto unpacked = dimensionWidths(decl.dimensions);
+        for (auto it = unpacked.rbegin(); it != unpacked.rend(); ++it) {
+            text = "array<" + text + "," + *it + ">";
+        }
+        if (type.kind == SyntaxKind::RegType && text.rfind("reg<", 0) != 0) {
+            return text == "bool" ? "reg<u1>" : "reg<" + text + ">";
+        }
+        return text;
+    }
+
+    template<typename T>
+    std::vector<std::string> dimensionWidths(const T& dimensions)
+    {
+        std::vector<std::string> widths;
+        for (auto d : dimensions) {
+            auto w = dimensionWidth(*d);
+            if (!w.empty()) {
+                widths.push_back(w);
+            }
+        }
+        return widths;
+    }
+
+    template<typename T>
+    std::string dimensionsWidth(const T& dimensions)
+    {
+        auto widths = dimensionWidths(dimensions);
+        if (widths.empty()) {
+            return "";
+        }
+        std::string ret;
+        for (auto& w : widths) {
+            if (!ret.empty()) {
+                ret += "*";
+            }
+            ret += w;
+        }
+        return ret;
+    }
+
+    std::string dimensionWidth(const VariableDimensionSyntax& dim)
+    {
+        if (!dim.specifier || dim.specifier->kind != SyntaxKind::RangeDimensionSpecifier) {
+            return "";
+        }
+        auto& range = dim.specifier->as<RangeDimensionSpecifierSyntax>();
+        if (range.selector->kind == SyntaxKind::BitSelect) {
+            return emitExpr(*range.selector->as<BitSelectSyntax>().expr);
+        }
+        if (RangeSelectSyntax::isKind(range.selector->kind)) {
+            auto& r = range.selector->as<RangeSelectSyntax>();
+            auto& left = *r.left;
+            uint64_t rawLeft = 0;
+            uint64_t rawRight = 0;
+            if (parseCppIntegralLiteral(exprText(r.left->toString()), rawLeft) &&
+                parseCppIntegralLiteral(exprText(r.right->toString()), rawRight)) {
+                return std::to_string((rawLeft > rawRight ? rawLeft - rawRight : rawRight - rawLeft) + 1);
+            }
+            auto rawLeftText = trim(exprText(r.left->toString()));
+            auto rawRightText = trim(exprText(r.right->toString()));
+            auto isConstValue = [](const std::string& text, uint64_t expected) {
+                if (auto value = parseConfiguredUint(text)) {
+                    return *value == expected;
+                }
+                return false;
+            };
+            if (isConstValue(rawLeftText, 0)) {
+                if (BinaryExpressionSyntax::isKind(r.right->kind)) {
+                    auto& b = r.right->as<BinaryExpressionSyntax>();
+                    auto bright = trim(emitUntypedNumericExpr(*b.right));
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+            }
+            if (isConstValue(rawRightText, 0)) {
+                if (BinaryExpressionSyntax::isKind(r.left->kind)) {
+                    auto& b = r.left->as<BinaryExpressionSyntax>();
+                    auto bright = trim(emitUntypedNumericExpr(*b.right));
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+                return rangeUpperPlusOneWidth(*r.left);
+            }
+            auto right = emitIndexExpr(*r.right);
+            if (isConstValue(right, 0)) {
+                if (BinaryExpressionSyntax::isKind(left.kind)) {
+                    auto& b = left.as<BinaryExpressionSyntax>();
+                    auto bright = trim(emitUntypedNumericExpr(*b.right));
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+                return rangeUpperPlusOneWidth(left);
+                auto e = foldWidth(emitExpr(left));
+                if (isNumber(e)) {
+                    return std::to_string(std::stoul(e) + 1);
+                }
+                return "(" + e + ")+1";
+            }
+            auto leftExpr = emitIndexExpr(left);
+            if (isConstValue(leftExpr, 0)) {
+                if (BinaryExpressionSyntax::isKind(r.right->kind)) {
+                    auto& b = r.right->as<BinaryExpressionSyntax>();
+                    auto bright = trim(emitUntypedNumericExpr(*b.right));
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+                auto e = foldWidth(right);
+                if (isNumber(e)) {
+                    return std::to_string(std::stoul(e) + 1);
+                }
+                return "(" + e + ")+1";
+            }
+            auto l = foldWidth(emitIndexExpr(left));
+            right = foldWidth(right);
+            if (isNumber(l) && isNumber(right)) {
+                auto lv = std::stoul(l);
+                auto rv = std::stoul(right);
+                return std::to_string((lv > rv ? lv - rv : rv - lv) + 1);
+            }
+            return "(((uint64_t)(" + l + ") >= (uint64_t)(" + right + ") ? ((uint64_t)(" + l + ") - (uint64_t)(" + right + ")) : ((uint64_t)(" + right + ") - (uint64_t)(" + l + "))) + 1)";
+        }
+        return exprText(range.selector->toString());
+    }
+
+    std::string rangeUpperPlusOneWidth(const ExpressionSyntax& expr)
+    {
+        uint64_t literal = 0;
+        if (parseCppIntegralLiteral(exprText(expr.toString()), literal)) {
+            return std::to_string(literal + 1);
+        }
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            return rangeUpperPlusOneWidth(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        }
+        if (BinaryExpressionSyntax::isKind(expr.kind)) {
+            auto& b = expr.as<BinaryExpressionSyntax>();
+            auto right = trim(emitUntypedNumericExpr(*b.right));
+            if (tok(b.operatorToken) == "-" && parseConfiguredUint(right) && *parseConfiguredUint(right) == 1) {
+                return emitIndexExpr(*b.left);
+            }
+        }
+        if (ConditionalExpressionSyntax::isKind(expr.kind)) {
+            auto& c = expr.as<ConditionalExpressionSyntax>();
+            return "(" + emitPredicate(*c.predicate) + " ? " + rangeUpperPlusOneWidth(*c.left) + " : " +
+                   rangeUpperPlusOneWidth(*c.right) + ")";
+        }
+        auto emitted = foldWidth(emitIndexExpr(expr));
+        if (isNumber(emitted)) {
+            return std::to_string(std::stoul(emitted) + 1);
+        }
+        return "(" + emitted + ")+1";
+    }
+
+    template<typename T>
+    std::string selectsWidth(const T& selectors)
+    {
+        std::string ret;
+        for (auto s : selectors) {
+            auto w = selectWidth(*s);
+            if (!w.empty()) {
+                if (!ret.empty()) {
+                    ret += "*";
+                }
+                ret += w;
+            }
+        }
+        return ret;
+    }
+
+    bool textMentionsIdentifier(const std::string& text, const std::string& ident) const
+    {
+        if (ident.empty()) {
+            return false;
+        }
+        for (size_t pos = text.find(ident); pos != std::string::npos; pos = text.find(ident, pos + ident.size())) {
+            bool leftOk = pos == 0 || !(std::isalnum(static_cast<unsigned char>(text[pos - 1])) || text[pos - 1] == '_');
+            auto end = pos + ident.size();
+            bool rightOk = end >= text.size() || !(std::isalnum(static_cast<unsigned char>(text[end])) || text[end] == '_');
+            if (leftOk && rightOk) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool textMentionsRuntimeIndex(const std::string& text) const
+    {
+        for (auto& name : loopVars) {
+            if (textMentionsIdentifier(text, name)) {
+                return true;
+            }
+        }
+        static const char* commonLoopNames[] = {"i", "j", "k", "m", "n", "x_gen", "y_gen", "z_gen", "w_gen"};
+        for (auto name : commonLoopNames) {
+            if (textMentionsIdentifier(text, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string selectWidth(const ElementSelectSyntax& select)
+    {
+        auto hasLoopVar = [&](const std::string& w) {
+            return textMentionsRuntimeIndex(w);
+        };
+        if (!select.selector) {
+            return "";
+        }
+        if (select.selector->kind == SyntaxKind::BitSelect) {
+            return "1";
+        }
+        if (RangeSelectSyntax::isKind(select.selector->kind)) {
+            auto& r = select.selector->as<RangeSelectSyntax>();
+            if (tok(r.range) == "+:" || tok(r.range) == "-:") {
+                return foldWidth(emitNumericExpr(*r.right));
+            }
+            auto parseBound = [](std::string s, uint64_t& value) {
+                s = trim(exprText(std::move(s)));
+                s.erase(std::remove(s.begin(), s.end(), '_'), s.end());
+                int base = 10;
+                size_t start = 0;
+                if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+                    base = 16;
+                    start = 2;
+                }
+                else if (s.size() > 2 && s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) {
+                    base = 2;
+                    start = 2;
+                }
+                if (start >= s.size()) {
+                    return false;
+                }
+                value = 0;
+                for (size_t i = start; i < s.size(); ++i) {
+                    unsigned digit = 0;
+                    if (s[i] >= '0' && s[i] <= '9') {
+                        digit = unsigned(s[i] - '0');
+                    }
+                    else if (s[i] >= 'a' && s[i] <= 'f') {
+                        digit = unsigned(s[i] - 'a' + 10);
+                    }
+                    else if (s[i] >= 'A' && s[i] <= 'F') {
+                        digit = unsigned(s[i] - 'A' + 10);
+                    }
+                    else {
+                        return false;
+                    }
+                    if (digit >= unsigned(base)) {
+                        return false;
+                    }
+                    value = value * unsigned(base) + digit;
+                }
+                return true;
+            };
+            uint64_t rawLeft = 0;
+            uint64_t rawRight = 0;
+            if (parseBound(r.left->toString(), rawLeft) && parseBound(r.right->toString(), rawRight)) {
+                return std::to_string((rawLeft > rawRight ? rawLeft - rawRight : rawRight - rawLeft) + 1);
+            }
+            auto right = emitIndexExpr(*r.right);
+            auto isConstValue = [](const std::string& text, uint64_t expected) {
+                if (auto value = parseConfiguredUint(text)) {
+                    return *value == expected;
+                }
+                return false;
+            };
+            if (isConstValue(right, 0)) {
+                if (BinaryExpressionSyntax::isKind(r.left->kind)) {
+                    auto& b = r.left->as<BinaryExpressionSyntax>();
+                    auto bright = emitIndexExpr(*b.right);
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+                return rangeUpperPlusOneWidth(*r.left);
+                auto left = foldWidth(emitIndexExpr(*r.left));
+                if (isNumber(left)) {
+                    return std::to_string(std::stoul(left) + 1);
+                }
+                return "(" + left + ")+1";
+            }
+            auto leftExpr = emitIndexExpr(*r.left);
+            if (isConstValue(leftExpr, 0)) {
+                if (BinaryExpressionSyntax::isKind(r.right->kind)) {
+                    auto& b = r.right->as<BinaryExpressionSyntax>();
+                    auto bright = emitIndexExpr(*b.right);
+                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
+                        return emitIndexExpr(*b.left);
+                    }
+                }
+                auto folded = foldWidth(right);
+                if (isNumber(folded)) {
+                    return std::to_string(std::stoul(folded) + 1);
+                }
+                return "(" + folded + ")+1";
+            }
+            auto l = foldWidth(emitIndexExpr(*r.left));
+            right = foldWidth(right);
+            if (isNumber(l) && isNumber(right)) {
+                auto lv = std::stoul(l);
+                auto rv = std::stoul(right);
+                return std::to_string((lv > rv ? lv - rv : rv - lv) + 1);
+            }
+            auto width = "(" + l + ")-(" + right + ")+1";
+            return hasLoopVar(width) ? "64" : width;
+        }
+        return "";
+    }
+
+    std::string selectTemplateWidth(const ElementSelectSyntax& select)
+    {
+        auto raw = select.toString();
+        if (textMentionsRuntimeIndex(raw)) {
+            return "64";
+        }
+        auto w = selectWidth(select);
+        if (textMentionsRuntimeIndex(w)) {
+            return "64";
+        }
+        return w;
+    }
+
+    std::string firstAssigned(const SyntaxNode& node)
+    {
+        std::string found;
+        findAssigned(node, found);
+        return found;
+    }
+
+    void findAssigned(const SyntaxNode& node, std::string& found)
+    {
+        if (node.kind == SyntaxKind::ExpressionStatement) {
+            auto& st = node.as<ExpressionStatementSyntax>();
+            if (st.expr->kind == SyntaxKind::AssignmentExpression || st.expr->kind == SyntaxKind::NonblockingAssignmentExpression) {
+                auto& b = st.expr->as<BinaryExpressionSyntax>();
+                auto name = assignedBase(*b.left);
+                if (mod->types.count(name)) {
+                    found = name;
+                }
+            }
+        }
+        else if (node.kind == SyntaxKind::TimingControlStatement) {
+            findAssigned(*node.as<TimingControlStatementSyntax>().statement, found);
+        }
+        else if (node.kind == SyntaxKind::ConditionalStatement) {
+            auto& st = node.as<ConditionalStatementSyntax>();
+            findAssigned(*st.statement, found);
+            if (st.elseClause) {
+                findAssigned(*st.elseClause->clause, found);
+            }
+        }
+        else if (node.kind == SyntaxKind::ForLoopStatement) {
+            findAssigned(*node.as<ForLoopStatementSyntax>().statement, found);
+        }
+        else if (node.kind == SyntaxKind::CaseStatement) {
+            for (auto item : node.as<CaseStatementSyntax>().items) {
+                if (item->kind == SyntaxKind::StandardCaseItem) {
+                    findAssigned(*item->as<StandardCaseItemSyntax>().clause, found);
+                }
+                else if (item->kind == SyntaxKind::DefaultCaseItem) {
+                    findAssigned(*item->as<DefaultCaseItemSyntax>().clause, found);
+                }
+            }
+        }
+        else if (node.kind == SyntaxKind::SequentialBlockStatement || node.kind == SyntaxKind::ParallelBlockStatement) {
+            for (auto item : node.as<BlockStatementSyntax>().items) {
+                findAssigned(*item, found);
+            }
+        }
+    }
+
+    std::string assignedBase(const ExpressionSyntax& expr)
+    {
+        if (expr.kind == SyntaxKind::IdentifierName) {
+            return tok(expr.as<IdentifierNameSyntax>().identifier);
+        }
+        if (expr.kind == SyntaxKind::IdentifierSelectName) {
+            return tok(expr.as<IdentifierSelectNameSyntax>().identifier);
+        }
+        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            return assignedBase(*expr.as<ElementSelectExpressionSyntax>().left);
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            return assignedBase(*expr.as<MemberAccessExpressionSyntax>().left);
+        }
+        return "";
+    }
+
+	    std::string typeWidth(const std::string& type)
+	    {
+	        auto between = [&](const std::string& prefix) -> std::string {
+	            if (type.rfind(prefix, 0) != 0 || type.back() != '>') {
+	                return "";
+            }
+            return type.substr(prefix.size(), type.size() - prefix.size() - 1);
+        };
+        auto w = between("logic<");
+        if (!w.empty()) {
+            return foldWidth(w);
+        }
+        w = between("u<");
+        if (!w.empty()) {
+            return foldWidth(w);
+        }
+        if (type == "bool" || type == "u1" || type == "reg<u1>") {
+            return "1";
+        }
+        if (type == "u8") {
+            return "8";
+        }
+        if (type == "u16") {
+            return "16";
+        }
+        if (type == "u32") {
+            return "32";
+        }
+        if (type == "unsigned" || type == "uint32_t") {
+            return "32";
+        }
+        if (type == "u64") {
+            return "64";
+        }
+        if (type == "uint64_t") {
+            return "64";
+        }
+	        if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
+	            return typeWidth(type.substr(4, type.size() - 5));
+	        }
+	        if (type.rfind("array<", 0) == 0 && type.back() == '>') {
+	            std::vector<std::string> args;
+	            std::string cur;
+	            int depth = 0;
+	            auto body = type.substr(6, type.size() - 7);
+	            for (char c : body) {
+	                if (c == '<') {
+	                    depth++;
+	                }
+	                else if (c == '>') {
+	                    depth--;
+	                }
+	                if (c == ',' && depth == 0) {
+	                    args.push_back(trim(cur));
+	                    cur.clear();
+	                }
+	                else {
+	                    cur.push_back(c);
+	                }
+	            }
+	            if (!cur.empty()) {
+	                args.push_back(trim(cur));
+	            }
+	            if (args.size() == 2) {
+	                auto elemWidth = typeWidth(args[0]);
+	                if (!elemWidth.empty()) {
+	                    return foldWidth("(" + elemWidth + ") * (" + args[1] + ")");
+	                }
+	            }
+	        }
+	        if (mod) {
+	            auto it = mod->typeWidths.find(type);
+	            if (it != mod->typeWidths.end()) {
+	                return it->second;
+	            }
+	        }
+	        return "";
+	    }
+
+    std::string resolvedTypeWidth(const std::string& type)
+    {
+        auto w = typeWidth(type);
+        if (!w.empty()) {
+            return w;
+        }
+        if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
+            return resolvedTypeWidth(type.substr(4, type.size() - 5));
+        }
+        if (mod) {
+            auto it = mod->types.find(type);
+            if (it != mod->types.end() && it->second != type) {
+                return resolvedTypeWidth(it->second);
+            }
+        }
+        return "";
+    }
+
+
+    std::string expressionStorageType(const ModuleGen& m, std::string expr)
+    {
+        expr = trim(expr);
+        if (expr.empty()) {
+            return "";
+        }
+        if (expr.size() >= 2 && expr.front() == '(' && expr.back() == ')') {
+            return expressionStorageType(m, expr.substr(1, expr.size() - 2));
+        }
+        if (hasSuffix(expr, "_func()")) {
+            auto returnName = expr.substr(0, expr.size() - 7);
+            auto typeIt = m.combReturnTypes.find(returnName);
+            if (typeIt != m.combReturnTypes.end()) {
+                return typeIt->second;
+            }
+        }
+        auto base = baseFromLValueText(expr);
+        if (!base.empty()) {
+            if (auto typeIt = m.types.find(base); typeIt != m.types.end()) {
+                return typeIt->second;
+            }
+            if (auto combIt = m.combMethodByBase.find(base); combIt != m.combMethodByBase.end() && combIt->second < m.methods.size()) {
+                auto returnName = m.methods[combIt->second].returnName;
+                auto typeIt = m.combReturnTypes.find(returnName);
+                if (typeIt != m.combReturnTypes.end()) {
+                    return typeIt->second;
+                }
+            }
+        }
+        return "";
+    }
+
+    std::string adaptInputPortRhs(const ModuleGen& m, const std::string& portType, const std::string& rhs)
+    {
+        auto target = trim(portType);
+        if (target.rfind("logic<", 0) != 0 || target.back() != '>') {
+            return rhs;
+        }
+        auto sourceType = expressionStorageType(m, rhs);
+        if (sourceType.rfind("array<", 0) == 0 || sourceType.rfind("std::array<", 0) == 0) {
+            return target + "(" + rhs + ")";
+        }
+        return rhs;
+    }
+
+
+    std::string finalAdaptStructuralAssignLine(const ModuleGen& m, std::string line)
+    {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            return line;
+        }
+        auto lhs = trim(line.substr(0, eq));
+        auto dot = lhs.rfind('.');
+        if (dot == std::string::npos) {
+            return line;
+        }
+        auto instance = trim(lhs.substr(0, dot));
+        auto portName = trim(lhs.substr(dot + 1));
+        auto bracket = instance.find('[');
+        if (bracket != std::string::npos) {
+            instance = trim(instance.substr(0, bracket));
+        }
+        auto paren = portName.find('(');
+        if (paren != std::string::npos) {
+            portName = trim(portName.substr(0, paren));
+        }
+        std::string childType;
+        for (size_t i = 0; i < m.memberNames.size() && i < m.memberTypes.size(); ++i) {
+            if (m.memberNames[i] == instance) {
+                childType = m.memberTypes[i];
+                break;
+            }
+        }
+        if (childType.empty()) {
+            return line;
+        }
+        auto* child = findModule(childType);
+        if (!child) {
+            return line;
+        }
+        std::string portType;
+        bool inputPort = false;
+        for (auto& p : child->ports) {
+            if (p.name == portName) {
+                portType = p.type;
+                inputPort = p.direction != "output";
+                break;
+            }
+        }
+        if (!inputPort || portType.rfind("logic<", 0) != 0 || portType.back() != '>') {
+            return line;
+        }
+        auto wrap = line.find("_ASSIGN_COMB(", eq);
+        size_t argStart = std::string::npos;
+        if (wrap != std::string::npos) {
+            argStart = wrap + std::string("_ASSIGN_COMB(").size();
+        }
+        else {
+            wrap = line.find("_ASSIGN(", eq);
+            if (wrap == std::string::npos) {
+                return line;
+            }
+            argStart = wrap + std::string("_ASSIGN(").size();
+        }
+        int depth = 1;
+        size_t argEnd = std::string::npos;
+        for (size_t i = argStart; i < line.size(); ++i) {
+            if (line[i] == '(') {
+                ++depth;
+            }
+            else if (line[i] == ')') {
+                if (--depth == 0) {
+                    argEnd = i;
+                    break;
+                }
+            }
+        }
+        if (argEnd == std::string::npos) {
+            return line;
+        }
+        auto arg = trim(line.substr(argStart, argEnd - argStart));
+        auto sourceType = expressionStorageType(m, arg);
+        bool aggregateSource = sourceType.rfind("array<", 0) == 0 || sourceType.rfind("std::array<", 0) == 0;
+        bool combFunctionSource = arg.find("_func()") != std::string::npos;
+        if (!aggregateSource && !combFunctionSource) {
+            return line;
+        }
+        if (arg.rfind(portType + "(", 0) == 0) {
+            return line;
+        }
+        line.replace(argStart, argEnd - argStart, portType + "(" + arg + ")");
+        auto combWrap = line.find("_ASSIGN_COMB(", eq);
+        if (combWrap != std::string::npos && combWrap < argStart) {
+            line.replace(combWrap, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
+        }
+        return line;
+    }
