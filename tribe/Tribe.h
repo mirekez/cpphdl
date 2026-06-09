@@ -745,6 +745,8 @@ private:
             (data_mem_access && !dmmu_faulted_access && dcache.mem_read_out() && l2cache.d_wait_out()) ||
             (data_mem_access && !dmmu_faulted_access &&
                 (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && l2cache.d_wait_out()) ||
+            (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCE &&
+                (dcache.busy_out() || l2cache.d_wait_out() || l2cache.i_wait_out())) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !dmmu_faulted_access &&
             !wb_mem.load_ready_out());

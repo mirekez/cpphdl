@@ -134,17 +134,23 @@ private:
     static constexpr uint32_t ST_RX_STATUS_AW = 26;
     static constexpr uint32_t ST_RX_STATUS_W = 27;
     static constexpr uint32_t ST_RX_STATUS_B = 28;
+    static constexpr uint32_t ST_RX_APP4_RMW_AR = 29;
+    static constexpr uint32_t ST_RX_APP4_RMW_R = 30;
+    static constexpr uint32_t ST_RX_APP4_AW = 31;
+    static constexpr uint32_t ST_RX_APP4_W = 32;
+    static constexpr uint32_t ST_RX_APP4_B = 33;
 
     reg<u32> tx_cr_reg;
     reg<u32> tx_sr_reg;
     reg<u32> tx_cdesc_reg;
     reg<u32> tx_tdesc_reg;
+    reg<u1> tx_tail_done_reg;
     reg<u32> rx_cr_reg;
     reg<u32> rx_sr_reg;
     reg<u32> rx_cdesc_reg;
     reg<u32> rx_tdesc_reg;
 
-    reg<u<5>> state_reg;
+    reg<u<6>> state_reg;
     reg<u32> desc_addr_reg;
     reg<u32> rx_desc_addr_reg;
     reg<u32> tx_next_desc_reg;
@@ -210,6 +216,16 @@ private:
 
     _LAZY_COMB(rx_next_desc_valid_comb, bool)
         return rx_next_desc_valid_comb = (uint32_t)rx_next_desc_reg != 0u && (((uint32_t)rx_next_desc_reg & 0x3fu) == 0u);
+    }
+
+    _LAZY_COMB(rx_desc_posted_comb, bool)
+        uint32_t current;
+        uint32_t tail;
+        current = (uint32_t)rx_cdesc_reg;
+        tail = (uint32_t)rx_tdesc_reg;
+        // RX descriptors are a ring. TDESC behind CDESC is a valid wrapped
+        // posted segment, so address order must not be used as ownership.
+        return rx_desc_posted_comb = current != 0u && tail != 0u;
     }
 
     _LAZY_COMB(local_mac_comb, logic<48>)
@@ -361,6 +377,59 @@ private:
         return status_write_beat_comb;
     }
 
+    _LAZY_COMB(rx_app4_write_beat_comb, logic<DATA_WIDTH>)
+        uint32_t lane;
+        logic<DATA_WIDTH> data;
+        lane = (((uint32_t)rx_cdesc_reg + XAXIDMA_BD_USR4_OFFSET) % DATA_BYTES) / 4u;
+        data = 0;
+        data.bits(lane * 32 + 31, lane * 32) = (uint32_t)len_reg & 0xffffu;
+        return rx_app4_write_beat_comb = data;
+    }
+
+    logic<DATA_BYTES> word_write_strb(uint32_t addr)
+    {
+        size_t i;
+        uint32_t byte;
+        logic<DATA_BYTES> strb;
+        strb = 0;
+        byte = addr % DATA_BYTES;
+        for (i = 0; i < 4; ++i) {
+            strb[byte + i] = 1;
+        }
+        return strb;
+    }
+
+    logic<DATA_BYTES> rx_payload_write_strb(void)
+    {
+        size_t i;
+        logic<DATA_BYTES> strb;
+        strb = 0;
+        for (i = 0; i < DATA_BYTES; ++i) {
+            if (i >= (uint32_t)byte_index_reg && i < (uint32_t)byte_index_reg + (uint32_t)beat_valid_bytes_reg) {
+                strb[i] = 1;
+            }
+        }
+        return strb;
+    }
+
+    _LAZY_COMB(write_strb_comb, logic<DATA_BYTES>)
+        // Keep write strobes derived from existing state so old checkpoints
+        // remain loadable after adding byte-precise AXI DMA writes.
+        if (state_reg == ST_RX_WRITE_W) {
+            return write_strb_comb = rx_payload_write_strb();
+        }
+        if (state_reg == ST_RX_STATUS_W) {
+            return write_strb_comb = word_write_strb((uint32_t)rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET);
+        }
+        if (state_reg == ST_TX_STATUS_W) {
+            return write_strb_comb = word_write_strb((uint32_t)tx_cdesc_reg + XAXIDMA_BD_STS_OFFSET);
+        }
+        if (state_reg == ST_RX_APP4_W) {
+            return write_strb_comb = word_write_strb((uint32_t)rx_cdesc_reg + XAXIDMA_BD_USR4_OFFSET);
+        }
+        return write_strb_comb = (logic<DATA_BYTES>)0;
+    }
+
 public:
     void _assign()
     {
@@ -382,10 +451,13 @@ public:
         dma_out.awaddr_in = _ASSIGN_REG(write_addr_reg);
         dma_out.awid_in = _ASSIGN((u<ID_WIDTH>)0);
         dma_out.wvalid_in = _ASSIGN(write_addr_valid_reg &&
-            (state_reg == ST_TX_STATUS_W || state_reg == ST_RX_WRITE_W || state_reg == ST_RX_STATUS_W));
+            (state_reg == ST_TX_STATUS_W || state_reg == ST_RX_WRITE_W ||
+             state_reg == ST_RX_STATUS_W || state_reg == ST_RX_APP4_W));
         dma_out.wdata_in = _ASSIGN_REG(write_data_reg);
+        dma_out.wstrb_in = _ASSIGN(write_strb_comb_func());
         dma_out.wlast_in = _ASSIGN(write_addr_valid_reg &&
-            (state_reg == ST_TX_STATUS_W || state_reg == ST_RX_WRITE_W || state_reg == ST_RX_STATUS_W));
+            (state_reg == ST_TX_STATUS_W || state_reg == ST_RX_WRITE_W ||
+             state_reg == ST_RX_STATUS_W || state_reg == ST_RX_APP4_W));
         dma_out.bready_in = _ASSIGN_REG(write_resp_wait_reg);
     }
 
@@ -406,8 +478,13 @@ public:
 #ifndef SYNTHESIS
         bool trace_eth;
         FILE* trace_eth_file;
+        uint32_t rx_block_code;
+        bool rx_dma_accept;
         static FILE* trace_eth_file_cached = nullptr;
         static bool trace_eth_file_checked = false;
+        static uint32_t last_rx_block_code = 0xffffffffu;
+        static bool last_rx_valid = false;
+        static bool last_rx_ready = false;
         trace_eth = std::getenv("TRIBE_TRACE_ETH_DMA") != nullptr;
         if (!trace_eth_file_checked) {
             trace_eth_file_checked = true;
@@ -490,9 +567,14 @@ public:
             }
             else if ((addr & 0xffu) == XAXIDMA_TX_CDESC_OFFSET) {
                 tx_cdesc_reg._next = word;
+                tx_tail_done_reg._next = false;
             }
             else if ((addr & 0xffu) == XAXIDMA_TX_TDESC_OFFSET) {
                 tx_tdesc_reg._next = word;
+                if (tx_tail_done_reg) {
+                    tx_cdesc_reg._next = word;
+                }
+                tx_tail_done_reg._next = false;
             }
             else if ((addr & 0xffu) == XAXIDMA_RX_CR_OFFSET) {
                 if (word & XAXIDMA_CR_RESET_MASK) {
@@ -530,7 +612,10 @@ public:
             }
             else if ((addr & 0xffu) == XAXIDMA_RX_TDESC_OFFSET) {
                 rx_tdesc_reg._next = word;
-                rx_desc_ready_reg._next = true;
+                // Linux may publish a wrapped segment, for example CDESC is
+                // already 0x...0040 and TDESC moves to 0x...0000. Any nonzero
+                // CDESC/TDESC pair arms the ring; completion stops at TDESC.
+                rx_desc_ready_reg._next = (uint32_t)rx_cdesc_reg != 0u && word != 0u;
 #ifndef SYNTHESIS
                 if (trace_eth) {
                     std::print(trace_eth_file, "ethdma-mmio cycle={} write RX_TDESC word={:08x} cdesc={:08x} buffer={:08x}\n",
@@ -662,6 +747,15 @@ public:
                     state_reg._next = ST_TX_STATUS_AW;
                 }
             }
+            else if (state_reg == ST_RX_APP4_RMW_R) {
+                merged_beat = dma_out.rdata_out();
+                lane = (((uint32_t)rx_cdesc_reg + XAXIDMA_BD_USR4_OFFSET) % DATA_BYTES) / 4u;
+                merged_beat.bits(lane * 32 + 31, lane * 32) = rx_app4_write_beat_comb_func().bits(lane * 32 + 31, lane * 32);
+                write_data_reg._next = merged_beat;
+                write_addr_valid_reg._next = true;
+                write_resp_wait_reg._next = true;
+                state_reg._next = ST_RX_APP4_AW;
+            }
         }
 
         if (write_resp_wait_reg && dma_out.bvalid_out()) {
@@ -680,6 +774,9 @@ public:
                 }
 #endif
                 tx_cdesc_reg._next = tx_next_desc_reg;
+                if ((uint32_t)desc_addr_reg == (uint32_t)tx_tdesc_reg) {
+                    tx_tail_done_reg._next = true;
+                }
                 buffer_addr_reg._next = 0;
                 len_reg._next = 0;
                 offset_reg._next = 0;
@@ -702,14 +799,27 @@ public:
                 beat_valid_bytes_reg._next = 0;
                 byte_index_reg._next = 0;
                 if (rx_write_last_reg) {
-                    read_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET) & ~(DATA_BYTES - 1u);
-                    write_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET) & ~(DATA_BYTES - 1u);
+                    read_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_USR4_OFFSET) & ~(DATA_BYTES - 1u);
+                    write_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_USR4_OFFSET) & ~(DATA_BYTES - 1u);
                     read_valid_reg._next = true;
-                    state_reg._next = ST_RX_STATUS_RMW_AR;
+                    state_reg._next = ST_RX_APP4_RMW_AR;
                 }
                 else {
                     state_reg._next = ST_IDLE;
                 }
+            }
+            else if (state_reg == ST_RX_APP4_B) {
+#ifndef SYNTHESIS
+                if (trace_eth) {
+                    std::print(trace_eth_file, "ethdma-event cycle={} RX_APP4_B desc={:08x} len={} data={}\n",
+                        _system_clock, (uint32_t)rx_cdesc_reg, (uint32_t)len_reg, write_data_reg);
+                    std::fflush(trace_eth_file);
+                }
+#endif
+                read_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET) & ~(DATA_BYTES - 1u);
+                write_addr_reg._next = ((uint32_t)rx_cdesc_reg + XAXIDMA_BD_STS_OFFSET) & ~(DATA_BYTES - 1u);
+                read_valid_reg._next = true;
+                state_reg._next = ST_RX_STATUS_RMW_AR;
             }
             else if (state_reg == ST_RX_STATUS_B) {
                 if (!rx_ioc_clear) {
@@ -727,6 +837,9 @@ public:
                 if (rx_next_desc_valid_comb_func()) {
                     rx_cdesc_reg._next = rx_next_desc_reg;
                 }
+                // Continue until the descriptor just completed is TDESC. If
+                // TDESC itself completed, CDESC may still advance to the next
+                // descriptor, but RX stays stopped until software posts TDESC.
                 if (rx_next_desc_valid_comb_func() && (uint32_t)rx_cdesc_reg != (uint32_t)rx_tdesc_reg) {
                     rx_desc_ready_reg._next = true;
                 }
@@ -751,13 +864,13 @@ public:
         }
 
         if (state_reg == ST_IDLE) {
-            if (tx_run_comb_func() && (uint32_t)tx_cdesc_reg != 0 && (uint32_t)tx_tdesc_reg != 0 && (uint32_t)tx_cdesc_reg <= (uint32_t)tx_tdesc_reg) {
+            if (tx_run_comb_func() && !tx_tail_done_reg && (uint32_t)tx_cdesc_reg != 0 && (uint32_t)tx_tdesc_reg != 0 && (uint32_t)tx_cdesc_reg <= (uint32_t)tx_tdesc_reg) {
                 desc_addr_reg._next = tx_cdesc_reg;
                 read_addr_reg._next = tx_cdesc_reg + XAXIDMA_BD_NDESC_OFFSET;
                 read_valid_reg._next = true;
                 state_reg._next = ST_TX_NDESC_AR;
             }
-            else if (rx_run_comb_func() && rx_desc_ready_reg && (uint32_t)rx_buffer_addr_reg == 0) {
+            else if (rx_run_comb_func() && rx_desc_ready_reg && rx_desc_posted_comb_func() && (uint32_t)rx_buffer_addr_reg == 0) {
                 rx_desc_addr_reg._next = rx_cdesc_reg;
                 read_addr_reg._next = rx_cdesc_reg + XAXIDMA_BD_NDESC_OFFSET;
                 read_valid_reg._next = true;
@@ -823,6 +936,15 @@ public:
         else if (state_reg == ST_TX_STATUS_RMW_AR && dma_out.arready_out()) {
             state_reg._next = ST_TX_STATUS_RMW_R;
         }
+        else if (state_reg == ST_RX_APP4_AW && dma_out.awready_out()) {
+            state_reg._next = ST_RX_APP4_W;
+        }
+        else if (state_reg == ST_RX_APP4_W && dma_out.wready_out()) {
+            state_reg._next = ST_RX_APP4_B;
+        }
+        else if (state_reg == ST_RX_APP4_RMW_AR && dma_out.arready_out()) {
+            state_reg._next = ST_RX_APP4_RMW_R;
+        }
         else if (state_reg == ST_RX_NDESC_AR && dma_out.arready_out()) {
             state_reg._next = ST_RX_NDESC_R;
         }
@@ -836,6 +958,35 @@ public:
         else if (state_reg == ST_IDLE && mac_rx_valid_in() && rx_desc_ready_reg) {
             // handled by the idle branch above after the descriptor buffer address is loaded
         }
+
+#ifndef SYNTHESIS
+        if (trace_eth) {
+            rx_dma_accept = state_reg == ST_IDLE && rx_run_comb_func() && rx_desc_ready_reg &&
+                mac_rx_valid_in() && (uint32_t)rx_buffer_addr_reg != 0;
+            rx_block_code = 0;
+            if (!rx_run_comb_func()) rx_block_code = 1;
+            else if (state_reg != ST_IDLE) rx_block_code = 2;
+            else if (!rx_desc_ready_reg) rx_block_code = 3;
+            else if (!rx_desc_posted_comb_func()) rx_block_code = 4;
+            else if ((uint32_t)rx_buffer_addr_reg == 0) rx_block_code = 5;
+            // Incoming frames can be silently back-pressured at this boundary;
+            // log only transitions so long ARP bursts do not swamp the trace.
+            if (mac_rx_valid_in() && (!last_rx_valid || rx_block_code != last_rx_block_code ||
+                (bool)mac_rx_ready_out() != last_rx_ready)) {
+                std::print(trace_eth_file,
+                    "ethdma-rx-ready cycle={} accept={} ready={} block={} state={} run={} desc_ready={} posted={} cdesc={:08x} tdesc={:08x} buffer={:08x} offset={} beat_bytes={} data={:02x} last={}\n",
+                    _system_clock, rx_dma_accept, (bool)mac_rx_ready_out(), rx_block_code,
+                    (uint32_t)state_reg, rx_run_comb_func(), (bool)rx_desc_ready_reg,
+                    rx_desc_posted_comb_func(), (uint32_t)rx_cdesc_reg, (uint32_t)rx_tdesc_reg,
+                    (uint32_t)rx_buffer_addr_reg, (uint32_t)offset_reg, (uint32_t)beat_valid_bytes_reg,
+                    (uint32_t)mac_rx_data_in(), (bool)mac_rx_last_in());
+                std::fflush(trace_eth_file);
+            }
+            last_rx_block_code = rx_block_code;
+            last_rx_valid = mac_rx_valid_in();
+            last_rx_ready = mac_rx_ready_out();
+        }
+#endif
 
         if (state_reg == ST_IDLE && rx_run_comb_func() && rx_desc_ready_reg && mac_rx_valid_in() && (uint32_t)rx_buffer_addr_reg != 0) {
             start_lane = (uint32_t)byte_index_reg;
@@ -885,6 +1036,7 @@ public:
             tx_sr_reg._next = XAXIDMA_SR_HALT_MASK;
             tx_cdesc_reg._next = 0;
             tx_tdesc_reg._next = 0;
+            tx_tail_done_reg._next = false;
             rx_cr_reg._next = 0;
             rx_sr_reg._next = XAXIDMA_SR_HALT_MASK;
             rx_cdesc_reg._next = 0;
@@ -945,6 +1097,7 @@ public:
         tx_sr_reg.strobe();
         tx_cdesc_reg.strobe();
         tx_tdesc_reg.strobe();
+        tx_tail_done_reg.strobe();
         rx_cr_reg.strobe();
         rx_sr_reg.strobe();
         rx_cdesc_reg.strobe();

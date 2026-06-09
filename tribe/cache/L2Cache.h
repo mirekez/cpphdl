@@ -94,6 +94,8 @@ private:
     reg<u32> req_write_data_reg;
     reg<logic<PORT_BITWIDTH>> req_write_beat_reg;
     reg<u8> req_write_mask_reg;
+    reg<logic<PORT_BYTES>> req_write_strobe_reg;
+    reg<logic<PORT_WORDS>> req_write_word_mask_reg;
     reg<u1> req_read_reg;
     reg<u1> req_write_reg;
     reg<u1> req_port_reg;
@@ -104,10 +106,15 @@ private:
     reg<u<WAY_BITS>> fill_way_reg;
     reg<u<SET_BITS>> init_set_reg;
     reg<logic<PORT_BITWIDTH>> last_data_reg;
+    // External AXI reads can request an early fill beat; latch it until the
+    // complete line is installed and the slave response is emitted.
+    reg<logic<PORT_BITWIDTH>> slave_fill_data_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
     reg<u<LINE_BEAT_BITS>> fill_beat_reg;
     reg<u<LINE_BEAT_BITS>> evict_beat_reg;
+    reg<u<TAG_BITS>> evict_tag_reg;
+    reg<logic<CACHE_LINE_SIZE * 8>> evict_line_reg;
     reg<array<u1, MEM_PORTS>> slave_bvalid_reg;
     reg<array<u<4>, MEM_PORTS>> slave_bid_reg;
     reg<array<u1, MEM_PORTS>> slave_rvalid_reg;
@@ -235,6 +242,46 @@ private:
     _LAZY_COMB(active_write_mask_comb, uint8_t)
         return active_write_mask_comb = active_is_slave_comb_func() ? (uint8_t)0xf :
             (active_is_d_comb_func() ? d_write_mask_in() : i_write_mask_in());
+    }
+
+    _LAZY_COMB(active_write_strobe_comb, logic<PORT_BYTES>)
+        size_t i;
+        uint32_t byte;
+        uint32_t word;
+        active_write_strobe_comb = 0;
+        byte = 0;
+        word = 0;
+        if (active_is_slave_comb_func()) {
+            for (i = 0; i < MEM_PORTS; ++i) {
+                if (slave_write_pending_comb_func() && active_slave_index_comb_func() == i) {
+                    active_write_strobe_comb = axi_in[i].wstrb_in();
+                }
+            }
+        }
+        else {
+            byte = active_addr_comb_func() % 4u;
+            word = (active_addr_comb_func() % PORT_BYTES) / 4u;
+            for (i = 0; i < 4; ++i) {
+                if ((active_write_mask_comb_func() & (1u << i)) != 0 && word * 4u + byte + i < PORT_BYTES) {
+                    active_write_strobe_comb[word * 4u + byte + i] = 1;
+                }
+            }
+        }
+        return active_write_strobe_comb;
+    }
+
+    _LAZY_COMB(active_write_word_mask_comb, logic<PORT_WORDS>)
+        size_t i;
+        size_t word;
+        active_write_word_mask_comb = 0;
+        for (word = 0; word < PORT_WORDS; ++word) {
+            for (i = 0; i < 4; ++i) {
+                if (active_write_strobe_comb_func()[word * 4 + i]) {
+                    active_write_word_mask_comb[word] = 1;
+                }
+            }
+        }
+        return active_write_word_mask_comb;
     }
 
     // Set index of the registered request.
@@ -497,7 +544,7 @@ private:
     // Full AXI writeback address for the current evicted PORT_BITWIDTH beat or MMIO store.
     _LAZY_COMB(axi_awaddr_full_comb, uint32_t)
         uint32_t addr;
-        addr = (((uint32_t)evict_tag_comb_func() << (SET_BITS + LINE_BITS)) |
+        addr = (((uint32_t)evict_tag_reg << (SET_BITS + LINE_BITS)) |
             ((uint32_t)req_set_comb_func() << LINE_BITS)) + ((uint32_t)evict_beat_reg * PORT_BYTES);
         if (state_reg == ST_IO_AW || state_reg == ST_IO_W || state_reg == ST_IO_B) {
             addr = req_addr_reg;
@@ -593,26 +640,37 @@ private:
         return axi_bvalid_selected_comb;
     }
 
-    // Pack the evicted cache way into the current PORT_BITWIDTH AXI write beat.
-    _LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
+    // Snapshot the candidate eviction line at the miss lookup cycle.
+    _LAZY_COMB(evict_line_snapshot_comb, logic<CACHE_LINE_SIZE * 8>)
         size_t i;
         size_t way;
         size_t word;
-        size_t beat_word;
         way = 0;
         word = 0;
-        beat_word = 0;
-        evict_line_comb = 0;
+        evict_line_snapshot_comb = 0;
         for (i = 0; i < DATA_BANKS; ++i) {
             way = i / LINE_WORDS;
             word = i % LINE_WORDS;
-            if (evict_way_comb_func() == way &&
-                word >= (uint32_t)evict_beat_reg * PORT_WORDS &&
-                word < ((uint32_t)evict_beat_reg + 1u) * PORT_WORDS) {
-                beat_word = word - (uint32_t)evict_beat_reg * PORT_WORDS;
-                // Map the selected 32-bit cache word into its position inside this AXI beat.
-                evict_line_comb.bits(beat_word * 32 + 31, beat_word * 32) = data_ram[i].q_out();
+            if (evict_way_comb_func() == way) {
+                evict_line_snapshot_comb.bits(word * 32 + 31, word * 32) = data_ram[i].q_out();
             }
+        }
+        return evict_line_snapshot_comb;
+    }
+
+    // Pack the evicted cache way snapshot into the current PORT_BITWIDTH AXI write beat.
+    _LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
+        size_t word;
+        size_t beat_word;
+        word = 0;
+        beat_word = 0;
+        evict_line_comb = 0;
+        for (word = (uint32_t)evict_beat_reg * PORT_WORDS;
+             word < ((uint32_t)evict_beat_reg + 1u) * PORT_WORDS && word < LINE_WORDS;
+             ++word) {
+            beat_word = word - (uint32_t)evict_beat_reg * PORT_WORDS;
+            evict_line_comb.bits(beat_word * 32 + 31, beat_word * 32) =
+                evict_line_reg.bits(word * 32 + 31, word * 32);
         }
         return evict_line_comb;
     }
@@ -650,9 +708,31 @@ private:
         return io_write_beat_comb;
     }
 
+    _LAZY_COMB(io_write_strobe_comb, logic<PORT_BYTES>)
+        uint32_t byte;
+        uint32_t word;
+        size_t i;
+        io_write_strobe_comb = 0;
+        if (req_from_slave_reg) {
+            return io_write_strobe_comb = req_write_strobe_reg;
+        }
+        byte = (uint32_t)req_addr_reg & 3u;
+        word = ((uint32_t)req_addr_reg % PORT_BYTES) / 4u;
+        for (i = 0; i < 4; ++i) {
+            if ((req_write_mask_reg & (1u << i)) != 0 && word * 4u + byte + i < PORT_BYTES) {
+                io_write_strobe_comb[word * 4u + byte + i] = 1;
+            }
+        }
+        return io_write_strobe_comb;
+    }
+
     // Select cache-line eviction data or the single MMIO write beat for AXI W.
     _LAZY_COMB(axi_wdata_comb, logic<PORT_BITWIDTH>)
         return axi_wdata_comb = state_reg == ST_IO_W ? io_write_beat_comb_func() : evict_line_comb_func();
+    }
+
+    _LAZY_COMB(axi_wstrb_comb, logic<PORT_BYTES>)
+        return axi_wstrb_comb = state_reg == ST_IO_W ? io_write_strobe_comb_func() : ~logic<PORT_BYTES>(0);
     }
 
     // Associative tag compare for the registered request.
@@ -998,7 +1078,8 @@ public:
                 (state_reg == ST_LOOKUP && req_from_slave_reg && req_write_reg && hit_comb_func() &&
                     hit_way_comb_func() == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)req_beat_comb_func() * PORT_WORDS &&
-                    (i % LINE_WORDS) < ((uint32_t)req_beat_comb_func() + 1u) * PORT_WORDS) ||
+                    (i % LINE_WORDS) < ((uint32_t)req_beat_comb_func() + 1u) * PORT_WORDS &&
+                    req_write_word_mask_reg[(i % LINE_WORDS) % PORT_WORDS]) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_write_reg && hit_comb_func() &&
                     !req_from_slave_reg &&
                     hit_way_comb_func() == (i / LINE_WORDS) &&
@@ -1013,7 +1094,9 @@ public:
                 ((req_from_slave_reg && req_write_reg && req_beat_comb_func() == fill_beat_reg &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
-                    (uint32_t)(req_write_beat_reg >> (((i % PORT_WORDS) * 32))) :
+                    (req_write_word_mask_reg[(i % LINE_WORDS) % PORT_WORDS] ?
+                        (uint32_t)(req_write_beat_reg >> (((i % PORT_WORDS) * 32))) :
+                        (uint32_t)(axi_rdata_selected_comb_func() >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
                  (req_write_reg && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_write_reg && ((uint32_t)req_addr_reg & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
                     (uint32_t)(axi_rdata_selected_comb_func() >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))));
@@ -1051,6 +1134,7 @@ public:
             axi_out[i].awid_in = _ASSIGN((u<4>)0);
             axi_out[i].wvalid_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
             axi_out[i].wdata_in = _ASSIGN_COMB(axi_wdata_comb_func());
+            axi_out[i].wstrb_in = _ASSIGN_COMB(axi_wstrb_comb_func());
             axi_out[i].wlast_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
             axi_out[i].bready_in = _ASSIGN_I(axi_aw_sel_comb_func() == i);
             axi_out[i].arvalid_in = _ASSIGN_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
@@ -1127,6 +1211,8 @@ public:
                 req_write_data_reg._next = active_write_data_comb_func();
                 req_write_beat_reg._next = active_write_beat_comb_func();
                 req_write_mask_reg._next = active_write_mask_comb_func();
+                req_write_strobe_reg._next = active_write_strobe_comb_func();
+                req_write_word_mask_reg._next = active_write_word_mask_comb_func();
                 req_read_reg._next = active_read_comb_func();
                 req_write_reg._next = active_write_comb_func();
                 req_port_reg._next = active_is_d_comb_func();
@@ -1222,6 +1308,7 @@ public:
                     req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
                     req_write_data_reg._next = cross_write_data_comb_func();
                     req_write_mask_reg._next = cross_write_mask_comb_func();
+                    req_write_strobe_reg._next = active_write_strobe_comb_func();
                     state_reg._next = ST_CROSS_WRITE_LOOKUP;
                 }
                 else {
@@ -1239,6 +1326,8 @@ public:
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
+                evict_tag_reg._next = evict_tag_comb_func();
+                evict_line_reg._next = evict_line_snapshot_comb_func();
                 state_reg._next = (!req_from_slave_reg && req_cross_beat_read_comb_func()) ? ST_CROSS_AR0 :
                     ((evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR);
             }
@@ -1276,6 +1365,8 @@ public:
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
+                evict_tag_reg._next = evict_tag_comb_func();
+                evict_line_reg._next = evict_line_snapshot_comb_func();
                 state_reg._next = (evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR;
             }
         }
@@ -1325,6 +1416,11 @@ public:
                 if (!req_from_slave_reg && req_read_reg && fill_beat_reg == req_beat_comb_func()) {
                     last_data_reg._next = axi_rdata_selected_comb_func();
                 }
+                if (req_from_slave_reg && req_read_reg && fill_beat_reg == req_beat_comb_func()) {
+                    // Do not answer from hit_beat_comb_func() after the final fill beat:
+                    // that path can observe stale RAM output for the requested beat.
+                    slave_fill_data_reg._next = axi_rdata_selected_comb_func();
+                }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
                     victim_reg._next = (victim_reg == WAYS - 1) ? u<WAY_BITS>(0) : u<WAY_BITS>(victim_reg + 1);
@@ -1332,6 +1428,7 @@ public:
                         req_addr_reg._next = ((uint32_t)req_addr_reg & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
                         req_write_data_reg._next = cross_write_data_comb_func();
                         req_write_mask_reg._next = cross_write_mask_comb_func();
+                        req_write_strobe_reg._next = active_write_strobe_comb_func();
                         state_reg._next = ST_CROSS_WRITE_LOOKUP;
                     }
                     else {
@@ -1341,8 +1438,10 @@ public:
                                     if (req_read_reg) {
                                         slave_rvalid_reg._next[i] = true;
                                         slave_rid_reg._next[i] = req_slave_id_reg;
+                                        // If the requested beat arrived before the final
+                                        // fill beat, return the latched refill data.
                                         slave_rdata_reg._next[i] = (fill_beat_reg == req_beat_comb_func()) ?
-                                            axi_rdata_selected_comb_func() : hit_beat_comb_func();
+                                            axi_rdata_selected_comb_func() : slave_fill_data_reg;
                                     }
                                     if (req_write_reg) {
                                         slave_bvalid_reg._next[i] = true;
@@ -1478,6 +1577,8 @@ public:
             req_write_data_reg.clr();
             req_write_beat_reg.clr();
             req_write_mask_reg.clr();
+            req_write_strobe_reg.clr();
+            req_write_word_mask_reg.clr();
             req_read_reg.clr();
             req_write_reg.clr();
             req_port_reg.clr();
@@ -1488,10 +1589,13 @@ public:
             fill_way_reg.clr();
             init_set_reg.clr();
             last_data_reg.clr();
+            slave_fill_data_reg.clr();
             cross_low_reg.clr();
             cross_high_reg.clr();
             fill_beat_reg.clr();
             evict_beat_reg.clr();
+            evict_tag_reg.clr();
+            evict_line_reg.clr();
             slave_bvalid_reg.clr();
             slave_bid_reg.clr();
             slave_rvalid_reg.clr();
@@ -1519,6 +1623,8 @@ public:
         req_write_data_reg.strobe(checkpoint_fd);
         req_write_beat_reg.strobe(checkpoint_fd);
         req_write_mask_reg.strobe(checkpoint_fd);
+        req_write_strobe_reg.strobe(checkpoint_fd);
+        req_write_word_mask_reg.strobe(checkpoint_fd);
         req_read_reg.strobe(checkpoint_fd);
         req_write_reg.strobe(checkpoint_fd);
         req_port_reg.strobe(checkpoint_fd);
@@ -1529,10 +1635,17 @@ public:
         fill_way_reg.strobe(checkpoint_fd);
         init_set_reg.strobe(checkpoint_fd);
         last_data_reg.strobe(checkpoint_fd);
+        // Transient refill response data is omitted from checkpoints; old
+        // checkpoint streams remain load-compatible.
+        slave_fill_data_reg.strobe();
         cross_low_reg.strobe(checkpoint_fd);
         cross_high_reg.strobe(checkpoint_fd);
         fill_beat_reg.strobe(checkpoint_fd);
         evict_beat_reg.strobe(checkpoint_fd);
+        // Transient eviction metadata is intentionally omitted from the
+        // checkpoint stream to keep existing checkpoint files compatible.
+        evict_tag_reg.strobe();
+        evict_line_reg.strobe();
         slave_bvalid_reg.strobe(checkpoint_fd);
         slave_bid_reg.strobe(checkpoint_fd);
         slave_rvalid_reg.strobe(checkpoint_fd);

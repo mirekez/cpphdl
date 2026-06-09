@@ -19,6 +19,7 @@ struct Axi4WriteData
 {
     bool valid;
     logic<DATA_WIDTH> data;
+    logic<DATA_WIDTH / 8> strb = ~logic<DATA_WIDTH / 8>(0);
     bool last;
 };
 
@@ -102,6 +103,7 @@ struct Axi4If : Interface
     _PORT(bool)               wvalid_in;
     _PORT(bool)               wready_out;
     _PORT(logic<DATA_WIDTH>)  wdata_in;
+    _PORT(logic<DATA_WIDTH / 8>) wstrb_in;
     _PORT(bool)               wlast_in;
 
     _PORT(bool)               bvalid_out;
@@ -128,6 +130,7 @@ struct Axi4If : Interface
 
         wvalid_in = [p]() { return &p->w.valid; };
         wdata_in = [p]() { return &p->w.data; };
+        wstrb_in = [p]() { return &p->w.strb; };
         wlast_in = [p]() { return &p->w.last; };
 
         bready_in = [p]() { return &p->b.ready; };
@@ -165,6 +168,7 @@ struct Axi4If : Interface
     (dst).awid_in = (src).awid_in; \
     (dst).wvalid_in = (src).wvalid_in; \
     (dst).wdata_in = (src).wdata_in; \
+    (dst).wstrb_in = (src).wstrb_in; \
     (dst).wlast_in = (src).wlast_in; \
     (dst).bready_in = (src).bready_in; \
     (dst).arvalid_in = (src).arvalid_in; \
@@ -200,6 +204,7 @@ struct Axi4If : Interface
     (dst).awid_in = awid_in; \
     (dst).wvalid_in = wvalid_in; \
     (dst).wdata_in = wdata_in; \
+    (dst).wstrb_in = _ASSIGN(~std::remove_reference_t<decltype((dst).wstrb_in())>(0)); \
     (dst).wlast_in = wlast_in; \
     (dst).bready_in = bready_in; \
     (dst).arvalid_in = arvalid_in; \
@@ -224,6 +229,7 @@ struct Axi4If : Interface
     (dst).awid_in = _ASSIGN_I((src).awid_in()); \
     (dst).wvalid_in = _ASSIGN_I((src).wvalid_in()); \
     (dst).wdata_in = _ASSIGN_I((src).wdata_in()); \
+    (dst).wstrb_in = _ASSIGN_I((src).wstrb_in()); \
     (dst).wlast_in = _ASSIGN_I((src).wlast_in()); \
     (dst).bready_in = _ASSIGN_I((src).bready_in()); \
     (dst).arvalid_in = _ASSIGN_I((src).arvalid_in()); \
@@ -248,6 +254,7 @@ struct Axi4If : Interface
     (dst).awid_in = _ASSIGN_REG(awid); \
     (dst).wvalid_in = _ASSIGN_REG(wvalid); \
     (dst).wdata_in = _ASSIGN_REG(wdata); \
+    (dst).wstrb_in = _ASSIGN(~std::remove_reference_t<decltype((dst).wstrb_in())>(0)); \
     (dst).wlast_in = _ASSIGN_REG(wlast); \
     (dst).bready_in = _ASSIGN_REG(bready); \
     (dst).arvalid_in = _ASSIGN_REG(arvalid); \
@@ -261,6 +268,7 @@ struct Axi4If : Interface
     (dst).awid_in = _ASSIGN_REG_I(awid); \
     (dst).wvalid_in = _ASSIGN_REG_I(wvalid); \
     (dst).wdata_in = _ASSIGN_REG_I(wdata); \
+    (dst).wstrb_in = _ASSIGN_I(~std::remove_reference_t<decltype((dst).wstrb_in())>(0)); \
     (dst).wlast_in = _ASSIGN_REG_I(wlast); \
     (dst).bready_in = _ASSIGN_REG_I(bready); \
     (dst).arvalid_in = _ASSIGN_REG_I(arvalid); \
@@ -274,6 +282,7 @@ struct Axi4If : Interface
     (dst).awid_in = _ASSIGN_REG((src).aw.id); \
     (dst).wvalid_in = _ASSIGN_REG((src).w.valid); \
     (dst).wdata_in = _ASSIGN_REG((src).w.data); \
+    (dst).wstrb_in = _ASSIGN_REG((src).w.strb); \
     (dst).wlast_in = _ASSIGN_REG((src).w.last); \
     (dst).bready_in = _ASSIGN_REG((src).b.ready); \
     (dst).arvalid_in = _ASSIGN_REG((src).ar.valid); \
@@ -287,6 +296,7 @@ struct Axi4If : Interface
     (dst).awid_in = _ASSIGN_REG_I((src).aw.id); \
     (dst).wvalid_in = _ASSIGN_REG_I((src).w.valid); \
     (dst).wdata_in = _ASSIGN_REG_I((src).w.data); \
+    (dst).wstrb_in = _ASSIGN_REG_I((src).w.strb); \
     (dst).wlast_in = _ASSIGN_REG_I((src).w.last); \
     (dst).bready_in = _ASSIGN_REG_I((src).b.ready); \
     (dst).arvalid_in = _ASSIGN_REG_I((src).ar.valid); \
@@ -300,6 +310,7 @@ struct Axi4If : Interface
     (dst).awid_in = awid; \
     (dst).wvalid_in = wvalid; \
     (dst).wdata_in = wdata; \
+    (dst).wstrb_in = ~std::remove_reference_t<decltype((dst).wstrb_in())>(0); \
     (dst).wlast_in = wlast; \
     (dst).bready_in = bready; \
     (dst).arvalid_in = arvalid; \
@@ -313,6 +324,7 @@ struct Axi4If : Interface
     (dst).if_name##___05Fawid_in = awid; \
     (dst).if_name##___05Fwvalid_in = wvalid; \
     (dst).if_name##___05Fwdata_in = wdata; \
+    (dst).if_name##___05Fwstrb_in = ~0u; \
     (dst).if_name##___05Fwlast_in = wlast; \
     (dst).if_name##___05Fbready_in = bready; \
     (dst).if_name##___05Farvalid_in = arvalid; \
@@ -326,6 +338,7 @@ struct Axi4If : Interface
     (dst).awid_in = (uint32_t)(src).aw.id; \
     (dst).wvalid_in = (src).w.valid; \
     (dst).wdata_in = (uint32_t)(src).w.data; \
+    (dst).wstrb_in = (uint32_t)(src).w.strb; \
     (dst).wlast_in = (src).w.last; \
     (dst).bready_in = (src).b.ready; \
     (dst).arvalid_in = (src).ar.valid; \
@@ -339,6 +352,7 @@ struct Axi4If : Interface
     (dst).if_name##___05Fawid_in = (uint32_t)(src).aw.id; \
     (dst).if_name##___05Fwvalid_in = (src).w.valid; \
     (dst).if_name##___05Fwdata_in = (uint32_t)(src).w.data; \
+    (dst).if_name##___05Fwstrb_in = (uint32_t)(src).w.strb; \
     (dst).if_name##___05Fwlast_in = (src).w.last; \
     (dst).if_name##___05Fbready_in = (src).b.ready; \
     (dst).if_name##___05Farvalid_in = (src).ar.valid; \
@@ -352,6 +366,7 @@ struct Axi4If : Interface
     (dst).if_name##___05Fawid_in[index] = (src).aw.id; \
     (dst).if_name##___05Fwvalid_in[index] = (src).w.valid; \
     verilator_logic_to_wide((dst).if_name##___05Fwdata_in[index], (src).w.data); \
+    (dst).if_name##___05Fwstrb_in[index] = (uint32_t)(src).w.strb; \
     (dst).if_name##___05Fwlast_in[index] = (src).w.last; \
     (dst).if_name##___05Fbready_in[index] = (src).b.ready; \
     (dst).if_name##___05Farvalid_in[index] = (src).ar.valid; \
@@ -366,6 +381,7 @@ struct Axi4If : Interface
         (dst).awid_in = _ASSIGN_I((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
         (dst).wvalid_in = _ASSIGN_I((bool)(src).axi_out___05Fwvalid_out[index]); \
         (dst).wdata_in = _ASSIGN_I(data_func((src).axi_out___05Fwdata_out[index])); \
+        (dst).wstrb_in = _ASSIGN_I((std::remove_reference_t<decltype((dst).wstrb_in())>)(uint32_t)(src).axi_out___05Fwstrb_out[index]); \
         (dst).wlast_in = _ASSIGN_I((bool)(src).axi_out___05Fwlast_out[index]); \
         (dst).bready_in = _ASSIGN_I((bool)(src).axi_out___05Fbready_out[index]); \
         (dst).arvalid_in = _ASSIGN_I((bool)(src).axi_out___05Farvalid_out[index]); \
@@ -381,6 +397,7 @@ struct Axi4If : Interface
         (dst).awid_in = _ASSIGN((u<4>)(uint32_t)(src).axi_out___05Fawid_out[index]); \
         (dst).wvalid_in = _ASSIGN((bool)(src).axi_out___05Fwvalid_out[index]); \
         (dst).wdata_in = _ASSIGN(data_func((src).axi_out___05Fwdata_out[index])); \
+        (dst).wstrb_in = _ASSIGN((std::remove_reference_t<decltype((dst).wstrb_in())>)(uint32_t)(src).axi_out___05Fwstrb_out[index]); \
         (dst).wlast_in = _ASSIGN((bool)(src).axi_out___05Fwlast_out[index]); \
         (dst).bready_in = _ASSIGN((bool)(src).axi_out___05Fbready_out[index]); \
         (dst).arvalid_in = _ASSIGN((bool)(src).axi_out___05Farvalid_out[index]); \

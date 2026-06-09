@@ -441,6 +441,9 @@ static bool check_system_decode_has_no_decode_branch()
         {0x00000073, Sys::ECALL, "ecall"},
         {0x00100073, Sys::EBREAK, "ebreak"},
         {0x10500073, Sys::WFI, "wfi"},
+        {0x0000000f, Sys::FENCE, "fence"},
+        {0x0ff0000f, Sys::FENCE, "fence iorw,iorw"},
+        {0x0440000f, Sys::FENCE, "fence w,o"},
         {0x0000100f, Sys::FENCEI, "fence.i"},
         {0xffffffff, Sys::TRAP, "illegal"},
     };

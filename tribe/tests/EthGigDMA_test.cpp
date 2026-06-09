@@ -168,6 +168,7 @@ public:
         ram.axi_in.awid_in = _ASSIGN(dut.axi_out[0].awid_in());
         ram.axi_in.wvalid_in = _ASSIGN(dut.axi_out[0].wvalid_in());
         ram.axi_in.wdata_in = _ASSIGN(dut.axi_out[0].wdata_in());
+        ram.axi_in.wstrb_in = _ASSIGN(dut.axi_out[0].wstrb_in());
         ram.axi_in.wlast_in = _ASSIGN(dut.axi_out[0].wlast_in());
         ram.axi_in.bready_in = _ASSIGN(dut.axi_out[0].bready_in());
         ram.axi_in.arvalid_in = _ASSIGN(dut.axi_out[0].arvalid_in());
@@ -416,6 +417,7 @@ public:
             0x00, 0x00, 0x00, 0x02, 0x08, 0x00, 0x45, 0x46, 0x47, 0x48};
         mem_write_packet(TX_BUF, tx);
         mem_write32(TX_DESC + EthGigDMA<>::XAXIDMA_BD_NDESC_OFFSET, TX_DESC2);
+        mem_write32(TX_DESC2 + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET, 0);
         mem_write32(TX_DESC + EthGigDMA<>::XAXIDMA_BD_BUFA_OFFSET, TX_BUF);
         mem_write32(TX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET,
             (uint32_t)tx.size() | 0x0c000000u);
@@ -446,6 +448,11 @@ public:
         }
         if ((mem_read32(TX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET) & EthGigDMA<>::XAXIDMA_BD_CTRL_LENGTH_MASK) != tx.size()) {
             std::print("\nERROR: TX status write corrupted control length\n");
+            error = true;
+        }
+        if (mem_read32(TX_DESC2 + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET) != 0) {
+            std::print("\nERROR: TX DMA followed next descriptor after completing tail, next status={:08x}\n",
+                mem_read32(TX_DESC2 + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET));
             error = true;
         }
 
@@ -525,6 +532,7 @@ public:
             0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0xaa, 0xbb, 0xcc, 0xdd};
         mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_BUFA_OFFSET, RX_BUF);
         mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET, 1536);
+        mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET + 4, 0xc081d690u);
         mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_CDESC_OFFSET), RX_DESC);
         mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_CR_OFFSET),
             EthGigDMA<>::XAXIDMA_CR_RUNSTOP_MASK | EthGigDMA<>::XAXIDMA_IRQ_IOC_MASK);
@@ -589,6 +597,16 @@ public:
         if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET) & EthGigDMA<>::XAXIDMA_BD_STS_ACTUAL_LEN_MASK) != 60) {
             std::print("\nERROR: RX descriptor length after TX interleave is {}, expected 60\n",
                 mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET) & EthGigDMA<>::XAXIDMA_BD_STS_ACTUAL_LEN_MASK);
+            error = true;
+        }
+        if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu) != 60) {
+            std::print("\nERROR: RX descriptor app4 length after TX interleave is {}, expected 60\n",
+                mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu);
+            error = true;
+        }
+        if (mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET + 4) != 0xc081d690u) {
+            std::print("\nERROR: RX app4 write corrupted adjacent skb field: {:08x}\n",
+                mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET + 4));
             error = true;
         }
         if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET) & EthGigDMA<>::XAXIDMA_BD_CTRL_LENGTH_MASK) != 1536) {
@@ -656,6 +674,71 @@ public:
                 mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET) & EthGigDMA<>::XAXIDMA_BD_STS_ACTUAL_LEN_MASK);
             error = true;
         }
+        if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu) != 60) {
+            std::print("\nERROR: invalid-next RX descriptor app4 length is {}, expected 60\n",
+                mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu);
+            error = true;
+        }
+
+        std::vector<uint8_t> rx_tail_gate0 = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00,
+            0x00, 0x00, 0x00, 0x0f, 0x08, 0x06, 0x50, 0x51, 0x52, 0x53};
+        std::vector<uint8_t> rx_tail_gate1 = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00,
+            0x00, 0x00, 0x00, 0x10, 0x08, 0x06, 0x60, 0x61, 0x62, 0x63};
+        mem_write_packet(RX_BUF, std::vector<uint8_t>(96, 0));
+        mem_write_packet(RX_BUF2, std::vector<uint8_t>(96, 0));
+        mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_NDESC_OFFSET, RX_DESC2);
+        mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET, 0);
+        mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_BUFA_OFFSET, RX_BUF);
+        mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET, 1536);
+        mem_write32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_NDESC_OFFSET, 0);
+        mem_write32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET, 0);
+        mem_write32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_BUFA_OFFSET, RX_BUF2);
+        mem_write32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET, 1536);
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_SR_OFFSET), EthGigDMA<>::XAXIDMA_IRQ_IOC_MASK);
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_CDESC_OFFSET), RX_DESC);
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_TDESC_OFFSET), RX_DESC);
+        for (int i = 0; i < 100; ++i) {
+            cycle(false);
+        }
+        verif.push_rx_packet(make_wire_frame(rx_tail_gate0));
+        if (!wait_for(true)) {
+            std::print("\nERROR: first tail-gated RX descriptor did not interrupt, state={}, rx_ready={}\n",
+                dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
+            error = true;
+        }
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_SR_OFFSET), EthGigDMA<>::XAXIDMA_IRQ_IOC_MASK);
+        for (int i = 0; i < 200; ++i) {
+            cycle(false);
+        }
+        if (dut.debug_rx_ready_out()) {
+            std::print("\nERROR: RX consumed beyond TDESC before software posted the next descriptor\n");
+            error = true;
+        }
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_TDESC_OFFSET), RX_DESC2);
+        for (int i = 0; i < 100; ++i) {
+            cycle(false);
+        }
+        if (!dut.debug_rx_ready_out()) {
+            std::print("\nERROR: RX did not rearm after software advanced TDESC to next descriptor\n");
+            error = true;
+        }
+        verif.push_rx_packet(make_wire_frame(rx_tail_gate1));
+        if (!wait_for(true)) {
+            std::print("\nERROR: second tail-gated RX descriptor did not interrupt, state={}, rx_ready={}\n",
+                dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
+            error = true;
+        }
+        auto rx_tail_gate0_got = mem_read_packet(RX_BUF, 60);
+        auto rx_tail_gate1_got = mem_read_packet(RX_BUF2, 60);
+        if (!prefix_matches(rx_tail_gate0_got, rx_tail_gate0)) {
+            std::print("\nERROR: first tail-gated RX packet mismatch\n");
+            error = true;
+        }
+        if (!prefix_matches(rx_tail_gate1_got, rx_tail_gate1)) {
+            std::print("\nERROR: second tail-gated RX packet mismatch\n");
+            error = true;
+        }
+
         mem_write_packet(RX_BUF, std::vector<uint8_t>(96, 0));
         mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_NDESC_OFFSET, 0);
         mem_write32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET, 0);
@@ -667,7 +750,7 @@ public:
             cycle(false);
         }
         if (!dut.debug_rx_ready_out()) {
-            std::print("\nERROR: RX descriptor did not rearm after invalid next descriptor, state={}\n", dut.debug_state_out());
+            std::print("\nERROR: RX descriptor did not rearm after wrapped TDESC update, state={}\n", dut.debug_state_out());
             error = true;
         }
 
@@ -720,6 +803,13 @@ public:
             std::print("\nERROR: RX ring descriptors were not both completed\n");
             error = true;
         }
+        if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu) != 60 ||
+            (mem_read32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu) != 60) {
+            std::print("\nERROR: RX ring descriptor app4 lengths are {} and {}, expected 60\n",
+                mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu,
+                mem_read32(RX_DESC2 + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu);
+            error = true;
+        }
 
         std::vector<uint8_t> rx_unaligned = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00,
             0x00, 0x00, 0x00, 0x08, 0x08, 0x06, 0xde, 0xad, 0xbe, 0xef, 0x11, 0x22, 0x33};
@@ -763,6 +853,11 @@ public:
         }
         if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET) & EthGigDMA<>::XAXIDMA_BD_STS_COMPLETE_MASK) == 0) {
             std::print("\nERROR: unaligned RX descriptor was not completed\n");
+            error = true;
+        }
+        if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu) != 60) {
+            std::print("\nERROR: unaligned RX descriptor app4 length is {}, expected 60\n",
+                mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_USR4_OFFSET) & 0xffffu);
             error = true;
         }
         if ((mem_read32(RX_DESC + EthGigDMA<>::XAXIDMA_BD_CTRL_LEN_OFFSET) & EthGigDMA<>::XAXIDMA_BD_CTRL_LENGTH_MASK) != 1536) {

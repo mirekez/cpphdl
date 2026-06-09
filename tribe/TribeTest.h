@@ -90,10 +90,20 @@ class EthGigTapSocket
     bool recv_warning_printed = false;
     bool trace_enabled = false;
     std::ofstream trace_file;
+    uint64_t rx_backlog_drop_count = 0;
+    uint64_t rx_backlog_last_report_cycle = 0;
+    uint64_t host_control_drop_count = 0;
+    uint64_t host_control_last_report_cycle = 0;
+    uint64_t last_host_arp_request_cycle = 0;
+    uint64_t last_host_icmp_echo_cycle = 0;
 
     static constexpr uint8_t MSG_HELLO = 1;
     static constexpr uint8_t MSG_FRAME = 2;
     static constexpr size_t ETHERNET_MIN_FRAME_BYTES = 60;
+    static constexpr size_t MAX_RX_BACKLOG_PACKETS = 2;
+    static constexpr size_t MAX_RX_DGRAMS_PER_PUMP = 16;
+    static constexpr uint64_t RX_BACKLOG_REPORT_PERIOD = 1000000;
+    static constexpr uint64_t HOST_CONTROL_MIN_CYCLES = 195312;
 
     static bool sockaddr_from_path(const std::string& path, sockaddr_un& addr)
     {
@@ -178,6 +188,46 @@ class EthGigTapSocket
         return out.str();
     }
 
+    static bool is_host_arp_request(const std::vector<uint8_t>& frame)
+    {
+        return frame.size() >= 42 &&
+            frame[12] == 0x08u && frame[13] == 0x06u &&
+            frame[20] == 0x00u && frame[21] == 0x01u;
+    }
+
+    static bool is_host_icmp_echo_request(const std::vector<uint8_t>& frame)
+    {
+        if (frame.size() < 34 || frame[12] != 0x08u || frame[13] != 0x00u) {
+            return false;
+        }
+        uint8_t ihl = (uint8_t)((frame[14] & 0x0fu) * 4u);
+        size_t icmp = 14u + ihl;
+        return ihl >= 20u && frame.size() > icmp &&
+            frame[23] == 0x01u && frame[icmp] == 0x08u;
+    }
+
+    bool should_drop_host_control_frame(const std::vector<uint8_t>& frame)
+    {
+        uint64_t now = _system_clock;
+        uint64_t* last_cycle = nullptr;
+        if (is_host_arp_request(frame)) {
+            last_cycle = &last_host_arp_request_cycle;
+        }
+        else if (is_host_icmp_echo_request(frame)) {
+            last_cycle = &last_host_icmp_echo_cycle;
+        }
+        else {
+            return false;
+        }
+
+        if (*last_cycle != 0 && now - *last_cycle < HOST_CONTROL_MIN_CYCLES) {
+            ++host_control_drop_count;
+            return true;
+        }
+        *last_cycle = now;
+        return false;
+    }
+
     void trace(const char* direction, const std::vector<uint8_t>& frame)
     {
         if (!trace_enabled) {
@@ -187,6 +237,40 @@ class EthGigTapSocket
         out << "ethtap cycle=" << _system_clock << ' ' << direction
             << " len=" << frame.size() << " data=" << frame_prefix(frame) << '\n';
         out.flush();
+    }
+
+    void trace_rx_backlog_drops(size_t pending_rx_packets)
+    {
+        if (!trace_enabled || rx_backlog_drop_count == 0) {
+            return;
+        }
+        uint64_t now = _system_clock;
+        if (now - rx_backlog_last_report_cycle < RX_BACKLOG_REPORT_PERIOD) {
+            return;
+        }
+        rx_backlog_last_report_cycle = now;
+        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
+        out << "ethtap cycle=" << now << " drop-rx-backlog count="
+            << rx_backlog_drop_count << " pending=" << pending_rx_packets << '\n';
+        out.flush();
+        rx_backlog_drop_count = 0;
+    }
+
+    void trace_host_control_drops()
+    {
+        if (!trace_enabled || host_control_drop_count == 0) {
+            return;
+        }
+        uint64_t now = _system_clock;
+        if (now - host_control_last_report_cycle < RX_BACKLOG_REPORT_PERIOD) {
+            return;
+        }
+        host_control_last_report_cycle = now;
+        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
+        out << "ethtap cycle=" << now << " drop-host-control-rate count="
+            << host_control_drop_count << '\n';
+        out.flush();
+        host_control_drop_count = 0;
     }
 
     bool send_frame(const std::vector<uint8_t>& frame)
@@ -295,7 +379,8 @@ public:
             return;
         }
 
-        for (;;) {
+        size_t rx_dgrams = 0;
+        for (; rx_dgrams < MAX_RX_DGRAMS_PER_PUMP; ++rx_dgrams) {
             std::array<uint8_t, 4096> msg{};
             ssize_t got = ::recv(fd, msg.data(), msg.size(), MSG_DONTWAIT);
             if (got < 0) {
@@ -312,12 +397,34 @@ public:
                 size_t len = (size_t(msg[1]) << 8) | msg[2];
                 if (len <= (size_t)got - 3) {
                     std::vector<uint8_t> tap_frame(msg.begin() + 3, msg.begin() + 3 + len);
+                    // Host ping/ARP runs against real wall clock, but the
+                    // simulated Linux clock advances much more slowly. Drop
+                    // repeated control frames in simulated time so old echo
+                    // requests do not become delayed replies with growing RTT.
+                    if (should_drop_host_control_frame(tap_frame)) {
+                        continue;
+                    }
+                    // The host TAP runs in real time while Tribe simulation is
+                    // much slower. Bound ingress buffering so stale host frames
+                    // are drained and dropped instead of turning into seconds
+                    // of latency. Keep the drop trace summarized because ARP
+                    // storms can otherwise dominate simulator runtime.
+                    if (rgmii.pending_rx_packets() >= MAX_RX_BACKLOG_PACKETS) {
+                        ++rx_backlog_drop_count;
+                        continue;
+                    }
                     std::vector<uint8_t> wire_frame = tap_frame_to_wire(tap_frame);
-                    trace("tap->wire", tap_frame);
-                    rgmii.push_rx_packet(wire_frame);
+                    if (rgmii.push_rx_packet_limited(wire_frame, MAX_RX_BACKLOG_PACKETS)) {
+                        trace("tap->wire", tap_frame);
+                    }
+                    else {
+                        ++rx_backlog_drop_count;
+                    }
                 }
             }
         }
+        trace_rx_backlog_drops(rgmii.pending_rx_packets());
+        trace_host_control_drops();
 
         while (rgmii.has_tx_packet()) {
             std::vector<uint8_t> wire_frame = rgmii.pop_tx_packet();
@@ -830,6 +937,7 @@ public:
             tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].wvalid_in = _ASSIGN(false);
             tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in[i].wstrb_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH / 8>)0);
             tribe.axi_in[i].wlast_in = _ASSIGN(false);
             tribe.axi_in[i].bready_in = _ASSIGN(false);
             tribe.axi_in[i].arvalid_in = _ASSIGN(false);
@@ -842,6 +950,7 @@ public:
         tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
         tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
         tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
+        tribe.axi_in[0].wstrb_in = _ASSIGN(accelerator.dma_out.wstrb_in());
         tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
         tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
         tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
@@ -853,6 +962,7 @@ public:
         tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
         tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
         tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
+        tribe.axi_in[1].wstrb_in = _ASSIGN(sdcard.dma_out.wstrb_in());
         tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
         tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
         tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
@@ -864,6 +974,7 @@ public:
         tribe.axi_in[2].awid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.awid_in());
         tribe.axi_in[2].wvalid_in = _ASSIGN(ethgig_dma.dma_out.wvalid_in());
         tribe.axi_in[2].wdata_in = _ASSIGN(ethgig_dma.dma_out.wdata_in());
+        tribe.axi_in[2].wstrb_in = _ASSIGN(ethgig_dma.dma_out.wstrb_in());
         tribe.axi_in[2].wlast_in = _ASSIGN(ethgig_dma.dma_out.wlast_in());
         tribe.axi_in[2].bready_in = _ASSIGN(ethgig_dma.dma_out.bready_in());
         tribe.axi_in[2].arvalid_in = _ASSIGN(ethgig_dma.dma_out.arvalid_in());
@@ -1029,6 +1140,7 @@ public:
             tribe.axi_in___05Fawid_in[i] = 0;
             tribe.axi_in___05Fwvalid_in[i] = false;
             verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[i], (logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in___05Fwstrb_in[i] = 0;
             tribe.axi_in___05Fwlast_in[i] = false;
             tribe.axi_in___05Fbready_in[i] = false;
             tribe.axi_in___05Farvalid_in[i] = false;
@@ -1225,6 +1337,7 @@ public:
         tribe.axi_in___05Fawid_in[0] = (uint32_t)accelerator.dma_out.awid_in();
         tribe.axi_in___05Fwvalid_in[0] = accelerator.dma_out.wvalid_in();
         verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[0], accelerator.dma_out.wdata_in());
+        tribe.axi_in___05Fwstrb_in[0] = (uint32_t)accelerator.dma_out.wstrb_in();
         tribe.axi_in___05Fwlast_in[0] = accelerator.dma_out.wlast_in();
         tribe.axi_in___05Fbready_in[0] = accelerator.dma_out.bready_in();
         tribe.axi_in___05Farvalid_in[0] = accelerator.dma_out.arvalid_in();
@@ -1236,6 +1349,7 @@ public:
         tribe.axi_in___05Fawid_in[1] = (uint32_t)sdcard.dma_out.awid_in();
         tribe.axi_in___05Fwvalid_in[1] = sdcard.dma_out.wvalid_in();
         verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[1], sdcard.dma_out.wdata_in());
+        tribe.axi_in___05Fwstrb_in[1] = (uint32_t)sdcard.dma_out.wstrb_in();
         tribe.axi_in___05Fwlast_in[1] = sdcard.dma_out.wlast_in();
         tribe.axi_in___05Fbready_in[1] = sdcard.dma_out.bready_in();
         tribe.axi_in___05Farvalid_in[1] = sdcard.dma_out.arvalid_in();
@@ -1247,6 +1361,7 @@ public:
         tribe.axi_in___05Fawid_in[2] = (uint32_t)ethgig_dma.dma_out.awid_in();
         tribe.axi_in___05Fwvalid_in[2] = ethgig_dma.dma_out.wvalid_in();
         verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[2], ethgig_dma.dma_out.wdata_in());
+        tribe.axi_in___05Fwstrb_in[2] = (uint32_t)ethgig_dma.dma_out.wstrb_in();
         tribe.axi_in___05Fwlast_in[2] = ethgig_dma.dma_out.wlast_in();
         tribe.axi_in___05Fbready_in[2] = ethgig_dma.dma_out.bready_in();
         tribe.axi_in___05Farvalid_in[2] = ethgig_dma.dma_out.arvalid_in();

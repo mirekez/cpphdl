@@ -181,6 +181,7 @@ public:
         dma_drv.aw.id = (u<4>)(uint32_t)dut.dma_out___05Fawid_out;
         dma_drv.w.valid = dut.dma_out___05Fwvalid_out;
         dma_drv.w.data = (logic<SD_TEST_DATA_WIDTH>)(uint64_t)dut.dma_out___05Fwdata_out;
+        dma_drv.w.strb = (logic<SD_TEST_DATA_WIDTH / 8>)(uint32_t)dut.dma_out___05Fwstrb_out;
         dma_drv.w.last = dut.dma_out___05Fwlast_out;
         dma_drv.b.ready = dut.dma_out___05Fbready_out;
         dma_drv.ar.valid = dut.dma_out___05Farvalid_out;

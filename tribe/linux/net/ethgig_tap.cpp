@@ -262,14 +262,15 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    int tap_fd = open_tap(tap_name);
-    if (tap_fd < 0) {
+    int sock_fd = open_socket(socket_path);
+    if (sock_fd < 0) {
         return 1;
     }
 
-    int sock_fd = open_socket(socket_path);
-    if (sock_fd < 0) {
-        ::close(tap_fd);
+    int tap_fd = open_tap(tap_name);
+    if (tap_fd < 0) {
+        ::close(sock_fd);
+        ::unlink(socket_path.c_str());
         return 1;
     }
 

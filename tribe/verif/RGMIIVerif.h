@@ -32,6 +32,20 @@ public:
         ++rx_packet_count;
     }
 
+    bool push_rx_packet_limited(const std::vector<uint8_t>& packet, size_t max_packets)
+    {
+        if (max_packets != 0 && rx_packets.size() >= max_packets) {
+            return false;
+        }
+        push_rx_packet(packet);
+        return true;
+    }
+
+    size_t pending_rx_packets() const
+    {
+        return rx_packets.size();
+    }
+
     bool has_tx_packet() const
     {
         return !tx_packets.empty();
@@ -116,6 +130,16 @@ public:
     void push_rx_packet(const std::vector<uint8_t>& packet)
     {
         verif.push_rx_packet(packet);
+    }
+
+    bool push_rx_packet_limited(const std::vector<uint8_t>& packet, size_t max_packets)
+    {
+        return verif.push_rx_packet_limited(packet, max_packets);
+    }
+
+    size_t pending_rx_packets() const
+    {
+        return verif.pending_rx_packets();
     }
 
     bool has_tx_packet() const

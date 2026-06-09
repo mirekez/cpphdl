@@ -38,10 +38,10 @@ enum Csr
 };
 
 constexpr const char* SOPS[] =
-  {"SNONE", "ECALL", "EBREAK", "MRET", "SRET", "WFI", "FENCEI", "SFENCE_VMA", "TRAP"};
+  {"SNONE", "ECALL", "EBREAK", "MRET", "SRET", "WFI", "FENCEI", "SFENCE_VMA", "TRAP", "FENCE"};
 enum Sys
 {
-    SNONE,   ECALL,   EBREAK,   MRET,   SRET,   WFI,   FENCEI,   SFENCE_VMA,   TRAP
+    SNONE,   ECALL,   EBREAK,   MRET,   SRET,   WFI,   FENCEI,   SFENCE_VMA,   TRAP,   FENCE
 };
 
 constexpr const char* TOPS[] =

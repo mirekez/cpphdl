@@ -178,7 +178,8 @@ struct Rv32i
                 state_out.br_op = Br::BNONE;
             }
             else if (i.funct3 == 0b000) {
-                state_out.sys_op = Sys::SNONE;
+                state_out.sys_op = Sys::FENCE;
+                state_out.br_op = Br::BNONE;
             }
             else {
                 state_out.sys_op = Sys::TRAP;

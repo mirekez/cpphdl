@@ -206,6 +206,7 @@ public:
             tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].wvalid_in = _ASSIGN(false);
             tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
+            tribe.axi_in[i].wstrb_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH / 8>)0);
             tribe.axi_in[i].wlast_in = _ASSIGN(false);
             tribe.axi_in[i].bready_in = _ASSIGN(false);
             tribe.axi_in[i].arvalid_in = _ASSIGN(false);
@@ -218,6 +219,7 @@ public:
         tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
         tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
         tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
+        tribe.axi_in[0].wstrb_in = _ASSIGN(accelerator.dma_out.wstrb_in());
         tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
         tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
         tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
@@ -229,6 +231,7 @@ public:
         tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
         tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
         tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
+        tribe.axi_in[1].wstrb_in = _ASSIGN(sdcard.dma_out.wstrb_in());
         tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
         tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
         tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
