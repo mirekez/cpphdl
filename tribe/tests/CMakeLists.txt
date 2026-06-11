@@ -123,6 +123,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         IOUART_test
         MMU_TLB_Test
         NS16550A_test
+        Perf_test
     )
     set(test_ram_bytes ${TRIBE_RAM_BYTES_CONFIG})
     set(test_io_region_size ${TRIBE_IO_REGION_SIZE_CONFIG})
@@ -181,7 +182,8 @@ foreach(src ${TRIBE_TEST_SOURCES})
         OR target_name STREQUAL "IOUART_test"
         OR target_name STREQUAL "Linux_test"
         OR target_name STREQUAL "MMU_TLB_Test"
-        OR target_name STREQUAL "NS16550A_test")
+        OR target_name STREQUAL "NS16550A_test"
+        OR target_name STREQUAL "Perf_test")
         add_dependencies(${target_name} tribe64)
     endif()
 
@@ -227,6 +229,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         Linux_test
         MMU_TLB_Test
         NS16550A_test
+        Perf_test
         PLIC_test
         SD_test
     )
