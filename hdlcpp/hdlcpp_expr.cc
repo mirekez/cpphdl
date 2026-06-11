@@ -745,7 +745,7 @@
                     loopVars.insert(name);
                 }
             }
-            out.push_back(pre + "for (" + emitForInit(f) + ";" + (f.stopExpr ? emitExpr(*f.stopExpr) : "") + ";" + emitExprList(f.steps) + ") {");
+            out.push_back(pre + "for (" + emitForInit(f) + ";" + (f.stopExpr ? emitExpr(*f.stopExpr) : "") + ";" + emitForStepList(f.steps) + ") {");
             emitStatementBody(*f.statement, out, comb, indent + 1);
             out.push_back(pre + "}");
             loopVars = savedLoopVars;
@@ -964,6 +964,55 @@
                 s += ",";
             }
             s += emitExpr(*e);
+        }
+        return s;
+    }
+
+    std::string emitForStep(const ExpressionSyntax& expr)
+    {
+        if (BinaryExpressionSyntax::isKind(expr.kind)) {
+            auto& b = expr.as<BinaryExpressionSyntax>();
+            auto base = assignedBase(*b.left);
+            if (!base.empty() && loopVars.count(base) &&
+                (isBlockingAssignmentKind(expr.kind) || isCompoundAssignmentKind(expr.kind))) {
+                auto lhs = emitLValue(*b.left);
+                auto op = isCompoundAssignmentKind(expr.kind) ? compoundOperatorForKind(expr.kind, tok(b.operatorToken)) : "=";
+                if (op == "<<=" || op == ">>=") {
+                    auto shiftOp = op == "<<=" ? "<<" : ">>";
+                    return lhs + " = " + emitUntypedNumericExpr(*b.left) + " " + shiftOp + " (unsigned)(" + emitUntypedNumericExpr(*b.right) + ")";
+                }
+                if (op == "=") {
+                    return lhs + " = " + emitUntypedNumericExpr(*b.right);
+                }
+                return lhs + " " + op + " " + emitUntypedNumericExpr(*b.right);
+            }
+        }
+        if (PostfixUnaryExpressionSyntax::isKind(expr.kind)) {
+            auto& u = expr.as<PostfixUnaryExpressionSyntax>();
+            auto base = assignedBase(*u.operand);
+            if (!base.empty() && loopVars.count(base)) {
+                return emitLValue(*u.operand) + tok(u.operatorToken);
+            }
+        }
+        if (PrefixUnaryExpressionSyntax::isKind(expr.kind)) {
+            auto& u = expr.as<PrefixUnaryExpressionSyntax>();
+            auto base = assignedBase(*u.operand);
+            if (!base.empty() && loopVars.count(base)) {
+                return tok(u.operatorToken) + emitLValue(*u.operand);
+            }
+        }
+        return emitExpr(expr);
+    }
+
+    template<typename T>
+    std::string emitForStepList(const T& list)
+    {
+        std::string s;
+        for (auto e : list) {
+            if (!s.empty()) {
+                s += ",";
+            }
+            s += emitForStep(*e);
         }
         return s;
     }
