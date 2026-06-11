@@ -78,6 +78,49 @@ inline std::string ToolShellQuote(const std::filesystem::path& path)
     return quoted;
 }
 
+inline std::string ToolShellQuoteString(const std::string& text)
+{
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+inline bool ToolExecutableWorks(const std::string& executable)
+{
+    return std::system((ToolShellQuoteString(executable) + " --version >/dev/null 2>&1").c_str()) == 0;
+}
+
+inline std::string VerilatorCxx()
+{
+    if (const char* cxx = std::getenv("CPPHDL_VERILATOR_CXX")) {
+        if (ToolExecutableWorks(cxx)) {
+            return cxx;
+        }
+    }
+#ifdef CPPHDL_CMAKE_CXX_COMPILER
+    if (ToolExecutableWorks(CPPHDL_CMAKE_CXX_COMPILER)) {
+        return CPPHDL_CMAKE_CXX_COMPILER;
+    }
+#endif
+    if (const char* cxx = std::getenv("CXX")) {
+        if (ToolExecutableWorks(cxx)) {
+            return cxx;
+        }
+    }
+    if (ToolExecutableWorks("clang++")) {
+        return "clang++";
+    }
+    return "c++";
+}
+
 #if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES) && defined(TRIBE_IO_REGION_SIZE)
 inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_root)
 {
@@ -156,8 +199,9 @@ inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string fold
     SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
         " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compilerParams + VerilatorExtraCflags() + "\"").c_str());
+    const std::string verilator_cxx = ToolShellQuoteString(VerilatorCxx());
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
-        "; make -j4 -f V" + top_name + ".mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
+        "; make -j4 -f V" + top_name + ".mk CXX=" + verilator_cxx + " LINK=\"" + verilator_cxx + " -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };
 
 inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string folder_base, const std::filesystem::path& source_root)

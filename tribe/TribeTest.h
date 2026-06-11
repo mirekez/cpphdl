@@ -849,6 +849,21 @@ class TestTribe : public Module
 //    size_t i;
 
 public:
+    struct PerfSnapshot
+    {
+        uint64_t clocks = 0;
+        uint64_t stall = 0;
+        uint64_t hazard = 0;
+        uint64_t dcache_wait = 0;
+        uint64_t icache_wait = 0;
+        uint64_t branch = 0;
+        uint64_t icache_issue_wait = 0;
+        uint64_t icache_lookup_wait = 0;
+        uint64_t icache_refill_wait = 0;
+        uint64_t icache_init_wait = 0;
+        uint64_t icache_hit_lookup = 0;
+        uint64_t runtime_total_ticks = 0;
+    };
 
     bool      debugen_in;
 
@@ -862,6 +877,24 @@ public:
 
     ~TestTribe()
     {
+    }
+
+    PerfSnapshot perf_snapshot() const
+    {
+        return {
+            perf_clocks,
+            perf_stall,
+            perf_hazard,
+            perf_dcache_wait,
+            perf_icache_wait,
+            perf_branch,
+            perf_icache_issue_wait_cycles,
+            perf_icache_lookup_wait_cycles,
+            perf_icache_refill_wait_cycles,
+            perf_icache_init_wait_cycles,
+            perf_icache_hit_lookup_cycles,
+            runtime_total_ticks
+        };
     }
 
     void drive_uart_rx(bool valid, uint8_t data = 0)
