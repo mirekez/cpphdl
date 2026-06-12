@@ -14,6 +14,7 @@ struct Field
     std::vector<Expr> array;
     Expr bitwidth;
     Struct definition;
+    std::vector<std::string> annotations;
     bool packedArray = false;
     size_t packedArrayDims = 0;
 

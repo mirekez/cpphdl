@@ -55,6 +55,16 @@ std::vector<Expr> sliceDims(const std::vector<Expr>& dims, size_t begin, size_t 
     return out;
 }
 
+void printAnnotations(std::ofstream& out, const Field& field)
+{
+    for (const auto& annotation : field.annotations) {
+        for (int i = 0; i < field.indent; ++i) {
+            out << "    ";
+        }
+        out << annotation << "\n";
+    }
+}
+
 struct ArrayShape
 {
     Expr base;
@@ -118,6 +128,18 @@ bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& 
 bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
 {
     currField = this;
+
+    if (nameSuffix.empty()) {
+        printAnnotations(out, *this);
+        if (!annotations.empty()) {
+            expr.traverseIf([](Expr& e) {
+                if (e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg" && !e.sub.empty()) {
+                    e.sub[0].flags |= Expr::FLAG_NOTREG;
+                }
+                return false;
+            });
+        }
+    }
 
     if (inStruct && printStructFieldArray(out, *this, nameSuffix)) {
         return true;

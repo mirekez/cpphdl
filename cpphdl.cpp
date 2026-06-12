@@ -213,6 +213,83 @@ std::string replaceAnnotationVariables(const std::string& text, const Annotation
     return out;
 }
 
+std::string trimText(std::string text)
+{
+    const size_t begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    const size_t end = text.find_last_not_of(" \t\r\n");
+    return text.substr(begin, end - begin + 1);
+}
+
+std::vector<std::string> fieldInlineAnnotations(const FieldDecl* FD, const ASTContext& ctx)
+{
+    std::vector<std::string> annotations;
+    if (!FD) {
+        return annotations;
+    }
+
+    const SourceManager& sm = ctx.getSourceManager();
+    SourceLocation loc = sm.getSpellingLoc(FD->getBeginLoc());
+    if (!loc.isValid()) {
+        return annotations;
+    }
+
+    bool invalid = false;
+    llvm::StringRef buffer = sm.getBufferData(sm.getFileID(loc), &invalid);
+    if (invalid) {
+        return annotations;
+    }
+
+    const unsigned targetLine = sm.getSpellingLineNumber(loc);
+    if (targetLine <= 1) {
+        return annotations;
+    }
+
+    std::vector<std::string> lines;
+    size_t begin = 0;
+    while (begin <= buffer.size()) {
+        size_t end = buffer.find('\n', begin);
+        if (end == llvm::StringRef::npos) {
+            end = buffer.size();
+        }
+        lines.emplace_back(buffer.substr(begin, end - begin).str());
+        if (end == buffer.size()) {
+            break;
+        }
+        begin = end + 1;
+    }
+
+    for (int line = (int)targetLine - 2; line >= 0 && line < (int)lines.size(); --line) {
+        std::string text = trimText(lines[(size_t)line]);
+        if (text.rfind("//", 0) != 0) {
+            break;
+        }
+
+        text = trimText(text.substr(2));
+        if (text.rfind("(*", 0) != 0 || text.size() < 4 || text.find("*)") == std::string::npos) {
+            break;
+        }
+        annotations.push_back(text);
+    }
+
+    std::reverse(annotations.begin(), annotations.end());
+    return annotations;
+}
+
+void appendFieldAnnotations(cpphdl::Field* field, const std::vector<std::string>& annotations)
+{
+    if (!field) {
+        return;
+    }
+    for (const auto& annotation : annotations) {
+        if (std::find(field->annotations.begin(), field->annotations.end(), annotation) == field->annotations.end()) {
+            field->annotations.push_back(annotation);
+        }
+    }
+}
+
 std::vector<const CXXRecordDecl*> annotationRecordsFor(const CXXRecordDecl* RD)
 {
     std::vector<const CXXRecordDecl*> records;
@@ -829,7 +906,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
     return *st;
 }
 
-void putField(QualType fieldType, std::string fieldName, const Expr* initializer, Helpers& hlp)
+void putField(QualType fieldType, std::string fieldName, const Expr* initializer, Helpers& hlp, const FieldDecl* sourceField = nullptr)
 {
     DEBUG_AST(debugIndent++, "# putField: "); on_return ret_debug([](){ --debugIndent; });
     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
@@ -924,6 +1001,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     for (auto& dim : array_dim) {
         applyTemplateTypeSubstitutions(dim, typeSubstitutions);
     }
+    const auto inlineAnnotations = fieldInlineAnnotations(sourceField, *hlp.ctx);
 
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
         DEBUG_AST1(" {port " << fieldName << "} ");
@@ -1103,6 +1181,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 if (!(hlp.flags&Helpers::FLAG_ABSTRACT)) {
                     field->packedArray = field->packedArray || packedArray;
                     field->packedArrayDims = std::max(field->packedArrayDims, packedArrayDims);
+                    appendFieldAnnotations(field, inlineAnnotations);
                 }
             }
 
@@ -1413,7 +1492,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     }
                 }
 
-                putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
+                putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp, FD);
             } else
             if (auto* VD = dyn_cast<VarDecl>(D)) {
                 if (putStaticConstexpr(VD)) {
@@ -1489,7 +1568,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 for (Decl* D : aRD->decls()) {  // need fields from abstract class to get its port width parametrict expressions (not numbers)
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {
                         hlp.flags |= Helpers::FLAG_ABSTRACT;
-                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp);
+                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp, FD);
                         hlp.flags &= ~Helpers::FLAG_ABSTRACT;
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
