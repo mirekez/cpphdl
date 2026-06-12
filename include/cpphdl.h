@@ -32,6 +32,8 @@ constexpr unsigned clog2(unsigned x)
 #include <array>
 #include <initializer_list>
 
+#include "cpphdl_type_traits.h"
+
 template<typename T>
 struct is_from_cpphdl_namespace : std::false_type {};
 
@@ -132,7 +134,7 @@ struct type_width_value<array<T, N, PACKED>>
 template<typename T>
 constexpr size_t type_width()
 {
-    return type_width_value<std::remove_cvref_t<T>>::value;
+    return type_width_value<cpphdl::remove_cvref_t<T>>::value;
 }
 
 template<size_t COUNT, size_t WIDTH>
@@ -172,7 +174,7 @@ constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
 template<typename T, typename V>
 constexpr void sv_assign_field(T& dst, const V& value)
 {
-    if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<std::remove_cvref_t<V>>) {
+    if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<cpphdl::remove_cvref_t<V>>) {
         dst = static_cast<T>(value);
     }
     else {
@@ -195,7 +197,7 @@ constexpr void sv_assign_field(std::array<T, N>& dst, std::initializer_list<V> v
 template<typename T, size_t N, typename V>
 constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cvref_t<V>, std::array<T, N>>) {
+    if constexpr (std::is_same_v<cpphdl::remove_cvref_t<V>, std::array<T, N>>) {
         dst = value;
     }
     else {
@@ -208,7 +210,7 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 template<typename T, size_t N, bool PACKED, typename V>
 constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cvref_t<V>, array<T, N, PACKED>>) {
+    if constexpr (std::is_same_v<cpphdl::remove_cvref_t<V>, array<T, N, PACKED>>) {
         dst = value;
     }
     else {

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <type_traits>
 
+#include "cpphdl_type_traits.h"
 #include "cpphdl_logic.h"
 #include "cpphdl_types.h"
 
@@ -50,7 +51,7 @@ struct cat_width<reg<T>> {
 };
 
 template<typename T>
-constexpr size_t cat_width_v = cat_width<std::remove_cvref_t<T>>::value;
+constexpr size_t cat_width_v = cat_width<cpphdl::remove_cvref_t<T>>::value;
 
 template<size_t WIDTH>
 logic<WIDTH> cat_to_logic(const logic<WIDTH>& value)

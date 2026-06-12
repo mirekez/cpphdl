@@ -6,6 +6,7 @@
 #include <string>
 #include <type_traits>
 
+#include "cpphdl_type_traits.h"
 #include "cpphdl_logic.h"
 
 namespace cpphdl
@@ -21,9 +22,9 @@ struct array_packed_size_bits
 };
 
 template<typename TYPE>
-struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cvref_t<TYPE>::_size_bits())>>
+struct array_packed_size_bits<TYPE, std::void_t<decltype(cpphdl::remove_cvref_t<TYPE>::_size_bits())>>
 {
-    constexpr static size_t value = std::remove_cvref_t<TYPE>::_size_bits();
+    constexpr static size_t value = cpphdl::remove_cvref_t<TYPE>::_size_bits();
 };
 
 template<typename TYPE, size_t TOTAL_BITS, size_t ELEMENT_BITS>
