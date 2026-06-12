@@ -237,6 +237,25 @@ static void print_bytes(const char* name, const T& sample)
     std::print("\n");
 }
 
+static void print_fields(const char* name, const ArrayPayload& sample)
+{
+    std::print("{}: prefix={} bytes={:02x},{:02x},{:02x}"
+        " items={:x}{:x},{:x}{:x} mid={} half={:04x}"
+        " choices=({},{})({},{}) bus={:x}{:x},{:x}{:x} tail={}\n",
+        name,
+        sample.prefix,
+        (uint8_t)sample.bytes[0], (uint8_t)sample.bytes[1], (uint8_t)sample.bytes[2],
+        sample.items[0].hi, sample.items[0].lo,
+        sample.items[1].hi, sample.items[1].lo,
+        sample.mid,
+        (uint16_t)sample.halfs[0],
+        sample.choices[0].s.tag, sample.choices[0].s.value,
+        sample.choices[1].s.tag, sample.choices[1].s.value,
+        sample.bus_data.values[0].hi, sample.bus_data.values[0].lo,
+        sample.bus_data.values[1].hi, sample.bus_data.values[1].lo,
+        sample.tail);
+}
+
 static std::filesystem::path generated_sv_path(const std::string& file)
 {
     std::filesystem::path copied = std::filesystem::path("ArrayInStruct_1") / file;
@@ -429,9 +448,11 @@ public:
 #ifdef VERILATOR
         dut.seed_in = seed;
         write_verilated_payload(dut.payload_in, payload);
-        dut.clk = 1;
+        dut.clk = 0;
         dut.reset = reset;
         dut.eval();
+        dut.clk = 1;
+        dut.reset = reset;
         dut.eval();
 #else
         dut._work(reset);
@@ -443,7 +464,6 @@ public:
 #ifdef VERILATOR
         dut.clk = 0;
         dut.reset = reset;
-        dut.eval();
         dut.eval();
 #else
         (void)reset;
@@ -475,6 +495,8 @@ public:
             std::print("\nseed {} {} field mismatch\n", value, name);
             print_bytes("got     ", got);
             print_bytes("expected", exp);
+            print_fields("got fields     ", got);
+            print_fields("expected fields", exp);
             error = true;
         }
     }

@@ -251,6 +251,7 @@ int main(int argc, char** argv)
             "Predef_pkg",
             "Native16_pkg",
             "Conv16_pkg",
+            "ArithmeticMiniConv16_pkg",
             "EncoderMiniConv16"
         }, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(

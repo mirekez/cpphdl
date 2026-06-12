@@ -19,6 +19,7 @@
 #include <iostream>
 
 unsigned debugIndent = 0;
+bool cpphdlDebugEnabled = false;
 
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
 std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = false);
@@ -58,9 +59,7 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
         }
     };
 
-    if (!method->isStatic()) {
-        importRecord(parent);
-    }
+    importRecord(parent);
 
     if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(parent)) {
         for (const auto& arg : spec->getTemplateArgs().asArray()) {
@@ -72,9 +71,9 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
         }
     }
 
-    // Static helper methods are emitted into the caller module by putMethod().
-    // Importing the helper owner package is unnecessary and can make Verilator
-    // compile lists depend on an otherwise unused package.
+    // Static helper methods are emitted into the caller module by putMethod(),
+    // but their bodies can still reference static constexpr fields through the
+    // owner package, for example Helper_pkg::OFFSET.
 }
 
 static bool isCombFuncName(const std::string& name)
@@ -574,9 +573,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* IL = dyn_cast<IntegerLiteral>(E)) {
         llvm::SmallString<32> Str;
-        IL->getValue().toString(Str, 16, !IL->getType()->isUnsignedIntegerType())
-        DEBUG_AST1(" IntegerLiteral(" << ("'h"+Str.str().str()) << ")");
-        return cpphdl::Expr{("'h"+Str.str().str()), cpphdl::Expr::EXPR_NUM};
+        const auto& value = IL->getValue();
+        value.toString(Str, 16, !IL->getType()->isUnsignedIntegerType());
+        std::string literal = "'h" + Str.str().str();
+        if (value.getBitWidth() > 32) {
+            literal = std::to_string(value.getBitWidth()) + literal;
+        }
+        DEBUG_AST1(" IntegerLiteral(" << literal << ")");
+        return cpphdl::Expr{literal, cpphdl::Expr::EXPR_NUM};
     }
     if (auto* OCE = dyn_cast<CXXOperatorCallExpr>(E)) {
         DEBUG_AST1(" CXXOperatorCallExpr");

@@ -53,8 +53,13 @@ bool evaluatedIntegerExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr
     }
 
     llvm::SmallString<32> str;
-    result.Val.getInt().toString(str, 16, result.Val.getInt().isSigned());
-    out = cpphdl::Expr{"'h" + str.str().str(), cpphdl::Expr::EXPR_NUM};
+    const auto& value = result.Val.getInt();
+    value.toString(str, 16, value.isSigned());
+    std::string literal = "'h" + str.str().str();
+    if (value.getBitWidth() > 32) {
+        literal = std::to_string(value.getBitWidth()) + literal;
+    }
+    out = cpphdl::Expr{literal, cpphdl::Expr::EXPR_NUM};
     return true;
 }
 
@@ -1642,6 +1647,11 @@ int main(int argc, const char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
+
+        if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
+            cpphdlDebugEnabled = true;
+            continue;
+        }
 
         if (!saw_double_dash && std::strcmp(arg, "--generated-dir") == 0) {
             if (i + 1 >= argc) {

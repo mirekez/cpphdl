@@ -99,17 +99,21 @@ Request-facing actions that can directly answer or retire a CPU request:
 
 Background and delayed activities:
 
-1. Reset or invalidate initiates full tag invalidation, with the goal of
-   preventing stale L1 hits, achieved by ST_INIT walking init_set_reg.
-   1.1. Enter ST_INIT on reset or invalidate_in() so all tags are cleared
-        before normal operation resumes.
+1. Reset or runtime invalidate removes stale tag visibility, with the goal of
+   preventing stale L1 hits. Reset uses ST_INIT to clear all tag RAM entries;
+   runtime invalidate_in() flips tag_epoch_reg so old entries stop matching
+   without walking every set.
+   1.1. Enter ST_INIT on reset so all tags are cleared before normal operation
+        resumes.
    1.2. Clear request and held-response state so no old transaction survives
         invalidation; reset req_read_reg, last_valid_reg, and
         refill_req_data_valid_reg.
    1.3. Clear one set per cycle so every way becomes invalid; tag_ram[].addr_in
         uses init_set_reg, tag_ram[].wr_in is asserted, and tag_ram[].data_in
         writes zero.
-   1.4. Return to ST_IDLE after init_set_reg reaches SETS - 1 so normal
+   1.4. Flip tag_epoch_reg on runtime invalidate_in() and return to ST_IDLE so
+        Linux fence-heavy paths do not pay one cycle per cache set.
+   1.5. Return to ST_IDLE after init_set_reg reaches SETS - 1 so normal
         request acceptance can restart.
 
 2. Flush initiates an immediate redirect lookup, with the goal of discarding
@@ -173,7 +177,7 @@ Background and delayed activities:
    memory ports and debug state consistent with the active state.
    6.1. Drive even_ram[]/odd_ram[]/tag_ram[] addresses from input_set_comb_func()
         for new lookup issue, from req_set_comb_func() for held lookup/refill,
-        or from init_set_reg during initialization.
+        or from init_set_reg during reset initialization.
    6.2. Report cache availability to the CPU so upstream can stall correctly;
         busy_comb_func() asserts during ST_INIT, ST_REFILL, and unresolved
         ST_LOOKUP misses.
@@ -259,7 +263,7 @@ public:
             tag_ram[i].addr_in = _ASSIGN((state_reg == ST_INIT) ? init_set_reg :
                                         (write_in() ? input_set_comb_func() :
                                          ((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func())));
-            tag_ram[i].data_in = _ASSIGN((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 1>(0));
+            tag_ram[i].data_in = _ASSIGN((state_reg == ST_REFILL) ? refill_tag_comb_func() : logic<TAG_BITS + 2>(0));
             tag_ram[i].wr_in = _ASSIGN_I((state_reg == ST_INIT) ||
                                         ((state_reg == ST_REFILL) && req_read_reg && req_cacheable_reg && refill_beat_reg == REFILL_BEATS - 1 && victim_reg == i) ||
                                         write_in());
@@ -271,13 +275,14 @@ public:
 private:
     RAM1PORT<HALF_LINE_BITS, SETS> even_ram[WAYS];
     RAM1PORT<HALF_LINE_BITS, SETS> odd_ram[WAYS];
-    RAM1PORT<TAG_BITS + 1, SETS> tag_ram[WAYS];
+    RAM1PORT<TAG_BITS + 2, SETS> tag_ram[WAYS];
 
     reg<u<3>> state_reg;
     reg<u32> req_addr_reg;
     reg<u1> req_read_reg;
     reg<u1> req_cacheable_reg;
     reg<u1> req_cache_disable_reg;
+    reg<u1> tag_epoch_reg;
     reg<u<REFILL_BEAT_BITS>> refill_beat_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<SET_BITS>> init_set_reg;
@@ -356,9 +361,15 @@ private:
         return issue_read_comb = (flush_in() && read_in()) || start_read_comb_func();
     }
 
-    // Tag RAM payload written at the end of a refill: valid bit plus tag.
-    _LAZY_COMB(refill_tag_comb, logic<TAG_BITS + 1>)
-        return refill_tag_comb = (logic<TAG_BITS + 1>)(((uint64_t)1 << TAG_BITS) | (uint64_t)req_tag_comb_func());
+    // Tag RAM payload written at the end of a refill: valid bit, epoch bit, and tag.
+    _LAZY_COMB(refill_tag_comb, logic<TAG_BITS + 2>)
+        // Write the epoch bit explicitly instead of packing it through an
+        // integer cast from reg<u1>; after an invalidate the cast can describe
+        // the old epoch and make every new line miss.
+        refill_tag_comb = req_tag_comb_func();
+        refill_tag_comb[TAG_BITS] = (bool)tag_epoch_reg;
+        refill_tag_comb[TAG_BITS + 1] = true;
+        return refill_tag_comb;
     }
 
     // Next even-half line image while streaming refill words from memory.
@@ -461,7 +472,8 @@ private:
         hit_comb = false;
         if (state_reg == ST_LOOKUP && req_read_reg && req_cacheable_reg) {
             for (i = 0; i < WAYS; ++i) {
-                if (tag_ram[i].q_out()[TAG_BITS] &&
+                if ((bool)tag_ram[i].q_out()[TAG_BITS + 1] &&
+                    (bool)tag_ram[i].q_out()[TAG_BITS] == (bool)tag_epoch_reg &&
                     tag_ram[i].q_out().bits(TAG_BITS - 1, 0) == req_tag_comb_func()) {
                     hit_comb = true;
                 }
@@ -487,7 +499,8 @@ private:
         even_half = 0;
         odd_half = 0;
         for (i = 0; i < WAYS; ++i) {
-            if (tag_ram[i].q_out()[TAG_BITS] &&
+            if ((bool)tag_ram[i].q_out()[TAG_BITS + 1] &&
+                (bool)tag_ram[i].q_out()[TAG_BITS] == (bool)tag_epoch_reg &&
                 tag_ram[i].q_out().bits(TAG_BITS - 1, 0) == req_tag_comb_func()) {
                 even_half = (uint32_t)even_ram[i].q_out().bits(word * 16 + 15, word * 16);
                 odd_half = (uint32_t)odd_ram[i].q_out().bits(word * 16 + 15, word * 16);
@@ -596,8 +609,8 @@ public:
             req_read_reg._next = false;
             last_valid_reg._next = false;
             refill_req_data_valid_reg._next = false;
-            init_set_reg._next = 0;
-            state_reg._next = ST_INIT;
+            tag_epoch_reg._next = !tag_epoch_reg;
+            state_reg._next = ST_IDLE;
         }
         else if (flush_in()) {
             req_addr_reg._next = addr_in();
@@ -728,6 +741,7 @@ public:
             req_read_reg.clr();
             req_cacheable_reg.clr();
             req_cache_disable_reg.clr();
+            tag_epoch_reg.clr();
             refill_beat_reg.clr();
             victim_reg.clr();
             init_set_reg.clr();
@@ -749,6 +763,7 @@ public:
         req_read_reg.strobe(checkpoint_fd);
         req_cacheable_reg.strobe(checkpoint_fd);
         req_cache_disable_reg.strobe(checkpoint_fd);
+        tag_epoch_reg.strobe(checkpoint_fd);
         refill_beat_reg.strobe(checkpoint_fd);
         victim_reg.strobe(checkpoint_fd);
         init_set_reg.strobe(checkpoint_fd);

@@ -7,6 +7,11 @@ description: Use when writing or debugging CppHDL tests that mix C++ testbench m
 
 Use this skill when editing CppHDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
 
+## RULE NUMBER 1:
+
+- Never try to explicitly evaluate ports or combs values! They calculated implicitly by calling comb-functions chain. Combs and ports are lambdas in cpphdl and can refresh all chain on demand. Value is cached until next clock start
+- Never call _assign() in work cycle - this function only binds lambdas to ports, it does not calculate anything!
+
 ## Hard Rules
 
 - Put `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()`.

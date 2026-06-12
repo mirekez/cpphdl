@@ -191,31 +191,33 @@ static bool run_perf_test(bool debug)
 
     bool ok = true;
 #ifdef VERILATOR
-    constexpr uint64_t expected_clocks = 4626979;
-    constexpr uint64_t expected_wall_us = 32318844;
-    constexpr double expected_stall_pct = 51.08;
-    constexpr double expected_issue_pct = 22.90;
-    constexpr double expected_total_stall_pct = 73.97;
-    constexpr double expected_dcache_wait_pct = 12.62;
-    constexpr double expected_icache_wait_pct = 36.84;
-    constexpr double expected_branch_pct = 1.62;
-    constexpr double expected_icache_refill_pct = 35.29;
+    constexpr uint64_t expected_clocks = 4585435;
+    constexpr uint64_t expected_wall_us = 33587140;
+    constexpr double expected_stall_pct = 50.62;
+    constexpr double expected_issue_pct = 23.10;
+    constexpr double expected_total_stall_pct = 73.72;
+    constexpr double expected_dcache_wait_pct = 12.72;
+    constexpr double expected_icache_wait_pct = 36.26;
+    constexpr double expected_branch_pct = 1.64;
+    constexpr double expected_icache_refill_pct = 34.76;
 #else
-    constexpr uint64_t expected_clocks = 4284023;
-    constexpr uint64_t expected_wall_us = 39487501;
-    constexpr double expected_stall_pct = 47.66;
-    constexpr double expected_issue_pct = 24.73;
-    constexpr double expected_total_stall_pct = 72.39;
-    constexpr double expected_dcache_wait_pct = 12.16;
-    constexpr double expected_icache_wait_pct = 33.75;
-    constexpr double expected_branch_pct = 1.75;
-    constexpr double expected_icache_refill_pct = 32.08;
+    constexpr uint64_t expected_clocks = 4245891;
+    constexpr uint64_t expected_wall_us = 38374253;
+    constexpr double expected_stall_pct = 47.18;
+    constexpr double expected_issue_pct = 24.95;
+    constexpr double expected_total_stall_pct = 72.13;
+    constexpr double expected_dcache_wait_pct = 12.27;
+    constexpr double expected_icache_wait_pct = 33.15;
+    constexpr double expected_branch_pct = 1.77;
+    constexpr double expected_icache_refill_pct = 31.52;
 #endif
 
     // Baselines are calibrated to a deterministic supervisor-mode workload
     // that deliberately walks a Linux-sized text footprint. The hard stall
-    // counter is the important Linux-like guard: a 5M-cycle Linux boot slice
-    // currently reports about 52% stalled, and this ELF stays within 10%.
+    // counter is the important Linux-like guard: after 4 KiB I-cache, 1 KiB
+    // D-cache, and epoch I-cache invalidation, a 5M-cycle Linux boot slice
+    // reports about 29% stalled while this broader text/data/MMU ELF holds
+    // around 47%.
     ok = ok && check_metric_u64("clocks", perf.clocks, expected_clocks, 10.0);
     ok = ok && check_metric_u64("wall_us", wall_us, expected_wall_us, 15.0);
     ok = ok && check_metric("stall_pct", stall_pct, expected_stall_pct, 10.0);

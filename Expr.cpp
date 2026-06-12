@@ -302,8 +302,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (!first) {
                         typeSpec += "_";
                     }
-                    if (sub[i].type == EXPR_NUM && sub[i].value.length() > 2 && sub[i].value[0] == '\'' && sub[i].value[1] == 'h') {
-                        typeSpec += std::to_string(std::stoul(sub[i].value.substr(2).c_str(), nullptr, 16));  // we store numbers in hex
+                    const size_t hexPos = sub[i].value.find("'h");
+                    if (sub[i].type == EXPR_NUM && hexPos != std::string::npos) {
+                        typeSpec += std::to_string(std::stoul(sub[i].value.substr(hexPos + 2).c_str(), nullptr, 16));  // we store numbers in hex
                     }
                     else {
                         typeSpec += sub[i].str();
