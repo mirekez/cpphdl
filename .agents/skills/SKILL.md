@@ -7,10 +7,12 @@ description: Use when writing or debugging CppHDL tests that mix C++ testbench m
 
 Use this skill when editing CppHDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
 
-## RULE NUMBER 1:
+## MAIN RULES:
 
 - Never try to explicitly evaluate ports or combs values! They calculated implicitly by calling comb-functions chain. Combs and ports are lambdas in cpphdl and can refresh all chain on demand. Value is cached until next clock start
-- Never call _assign() in work cycle - this function only binds lambdas to ports, it does not calculate anything!
+- Never call \_assign() in work cycle - this function only binds lambdas to ports, it does not calculate anything!
+- Define variables only in the beginning of methods (this is not our requirement, this is requirements of verilator and yosys_slang)
+- Try to not use `return` in `_work()` method, better put `if (reset)` in the end of `_work()` method or use `if (reset) { ... } else { ... }`. Slang does not support `disable` in always blocks
 
 ## Hard Rules
 

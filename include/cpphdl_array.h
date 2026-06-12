@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "cpphdl_logic.h"
 
@@ -26,6 +27,18 @@ struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cv_t<std::r
     constexpr static size_t value = std::remove_cv_t<std::remove_reference_t<TYPE>>::_size_bits();
 };
 
+template<typename TYPE, typename = void>
+struct array_can_static_cast_uint64
+{
+    constexpr static bool value = false;
+};
+
+template<typename TYPE>
+struct array_can_static_cast_uint64<TYPE, std::void_t<decltype(static_cast<uint64_t>(std::declval<const TYPE&>()))>>
+{
+    constexpr static bool value = true;
+};
+
 template<typename TYPE, size_t TOTAL_BITS, size_t ELEMENT_BITS>
 struct array_packed_ref
 {
@@ -39,7 +52,7 @@ struct array_packed_ref
     template<typename T>
     array_packed_ref& operator=(const T& value)
     {
-        if constexpr (requires { static_cast<uint64_t>(value); } && !is_logic_v<T> && !is_logic_bits_v<T>) {
+        if constexpr (array_can_static_cast_uint64<T>::value && !is_logic_v<T> && !is_logic_bits_v<T>) {
             ref = static_cast<uint64_t>(value);
         }
         else {
