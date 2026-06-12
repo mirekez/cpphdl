@@ -3,8 +3,6 @@
 #include <cstring>
 #include <type_traits>
 
-#include "cpphdl_type_traits.h"
-
 template<typename T, typename = void>
 struct bitops_value_size
 {
@@ -355,7 +353,7 @@ public:
     template<typename T, typename std::enable_if_t<
         !std::is_integral_v<T> &&
         !std::is_enum_v<T> &&
-        !std::is_same_v<cpphdl::remove_cvref_t<T>, BASE>, int> = 0>
+        !std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, BASE>, int> = 0>
     bool operator==(const T& rhs) const
     {
         constexpr size_t lhs_size = bitops_value_size<BASE>::value;
@@ -388,7 +386,7 @@ public:
     template<typename T, typename std::enable_if_t<
         !std::is_integral_v<T> &&
         !std::is_enum_v<T> &&
-        !std::is_same_v<cpphdl::remove_cvref_t<T>, BASE>, int> = 0>
+        !std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, BASE>, int> = 0>
     bool operator!=(const T& rhs) const
     {
         return !(*this == rhs);
