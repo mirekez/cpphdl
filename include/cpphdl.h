@@ -272,31 +272,4 @@ constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 
 #endif
 
-// std::format stub
-
-#if __has_include(<format>)
-    #include <format>
-
-    #if defined(__cpp_lib_format) && (__cpp_lib_format >= 201907L)
-        #define HAS_STD_FORMAT 1
-    #endif
-#endif
-
-#ifndef HAS_STD_FORMAT
-
-#include <string>
-#include <string_view>
-
-namespace std {
-
-template <typename... Args>
-std::string format(std::string_view fmt, Args&&...)
-{
-    // Stub implementation:
-    // ignores arguments and returns the format string unchanged.
-    return std::string(fmt);
-}
-
-} // namespace std
-
-#endif
+#include <print>

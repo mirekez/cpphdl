@@ -4,28 +4,7 @@
 
 #define __PACKED __attribute__((packed))
 
-#if __cplusplus >= 202302L
-#define USE_FORMAT_H  // for c++26
-#endif
-
-#ifdef USE_FORMAT_H
 #include <format>
-#include <print>
-#else
-namespace std {
-
-
-template<typename T>
-struct formatter {};
-struct format_parse_context { constexpr bool begin() { return true; } };
-template<typename T>
-bool format_to(bool, const char*, T& t)
-{
-    return false;
-}
-
-}
-#endif
 
 //     u& operator= (const u& v) = default;
 
@@ -105,6 +84,7 @@ struct u
 template<size_t W>
 struct is_from_cpphdl_namespace<cpphdl::u<W>> : std::true_type {};
 
+#ifdef CPPHDL_HAS_STD_FORMAT
 template<size_t WIDTH>
 struct std::formatter<cpphdl::u<WIDTH>>
 {
@@ -139,9 +119,27 @@ struct std::formatter<cpphdl::u<WIDTH>>
         return out;
     }
 };
+#endif
 
 //    class& operator= (type v) { value = v; return *this; };
 //    class& operator= (const class& v) = default;
+
+#ifdef CPPHDL_HAS_STD_FORMAT
+#define DEFINE_REGULAR_TYPE_FORMATTER(type, class, text) \
+template<> \
+struct std::formatter<cpphdl::class> \
+{ \
+    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); } \
+    template <typename FormatContext> \
+    auto format(const cpphdl::class &val, FormatContext& ctx) const { \
+        auto out = ctx.out(); \
+        out = std::format_to(out, text, (type)val.value); \
+        return out; \
+    } \
+};
+#else
+#define DEFINE_REGULAR_TYPE_FORMATTER(type, class, text)
+#endif
 
 #define DEFINE_REGULAR_TYPE_CLASS(type, class, size, text) \
 namespace cpphdl \
@@ -157,17 +155,7 @@ struct class : public u<size> \
 } \
 template<> \
 struct is_from_cpphdl_namespace<cpphdl::class> : std::true_type {}; \
-template<> \
-struct std::formatter<cpphdl::class> \
-{ \
-    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); } \
-    template <typename FormatContext> \
-    auto format(const cpphdl::class &val, FormatContext& ctx) const { \
-        auto out = ctx.out(); \
-        out = std::format_to(out, text, (type)val.value); \
-        return out; \
-    } \
-}; \
+DEFINE_REGULAR_TYPE_FORMATTER(type, class, text) \
 static_assert (sizeof(cpphdl::class) == (size+7)/8, "struct " #class " size is not correct");
 
 DEFINE_REGULAR_TYPE_CLASS(bool, u1, 8, "{:1x}");

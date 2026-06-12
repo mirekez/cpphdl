@@ -4,7 +4,8 @@
 #include "cpphdl_array.h"
 #include "cpphdl_memory.h"
 
-#ifdef USE_FORMAT_H
+#ifdef CPPHDL_HAS_STD_FORMAT
+
 //////////////////////////////////////// just to print pretty
 
 template<typename T>
