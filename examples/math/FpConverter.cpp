@@ -3,6 +3,7 @@
 #endif
 #define MAIN_FILE_INCLUDED
 
+#define CPPHDL_DISABLE_RAW_FIELD_FORMATTER
 #include "cpphdl.h"
 #include <print>
 

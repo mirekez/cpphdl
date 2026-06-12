@@ -1,5 +1,8 @@
 #pragma once
 
+#include <type_traits>
+#include <utility>
+
 #include "cpphdl_logic.h"
 #include "cpphdl_array.h"
 #include "cpphdl_memory.h"
@@ -7,6 +10,49 @@
 #ifdef CPPHDL_HAS_STD_FORMAT
 
 //////////////////////////////////////// just to print pretty
+
+#ifndef CPPHDL_DISABLE_RAW_FIELD_FORMATTER
+
+template<typename T, typename = void>
+struct cpphdl_has_raw_field : std::false_type {};
+
+template<typename T>
+struct cpphdl_has_raw_field<T, std::void_t<decltype(std::declval<const T&>().raw)>> : std::true_type {};
+
+template<typename T>
+struct cpphdl_raw_field_formatter_enabled
+{
+    constexpr static bool value = (std::is_class<T>::value || std::is_union<T>::value)
+        && cpphdl_has_raw_field<T>::value
+        && !is_from_cpphdl_namespace<T>::value;
+};
+
+template<typename T>
+struct std::formatter<T, std::enable_if_t<cpphdl_raw_field_formatter_enabled<T>::value, char>>
+{
+    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); }
+
+    template <typename FormatContext>
+    auto format(const T& val, FormatContext& ctx) const
+    {
+        auto out = ctx.out();
+        if constexpr (sizeof(T) <= 1) {
+            out = std::format_to(out, "{:02x}", (uint64_t)val.raw);
+        }
+        else if constexpr (sizeof(T) <= 2) {
+            out = std::format_to(out, "{:04x}", (uint64_t)val.raw);
+        }
+        else if constexpr (sizeof(T) <= 4) {
+            out = std::format_to(out, "{:08x}", (uint64_t)val.raw);
+        }
+        else {
+            out = std::format_to(out, "{:016x}", (uint64_t)val.raw);
+        }
+        return out;
+    }
+};
+
+#endif
 
 template<typename T>
 concept OnlyCppHdlClass = is_from_cpphdl_namespace<T>::value;
