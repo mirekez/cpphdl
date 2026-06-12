@@ -272,4 +272,17 @@ constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 
 #endif
 
+#if defined(__has_include)
+#if __has_include(<format>)
+#include <format>
+#endif
+#if __has_include(<print>)
 #include <print>
+#endif
+#else
+#include <format>
+#include <print>
+#endif
+
+#define CPPHDL_WANT_STD_PRINT_STUBS 1
+#include "cpphdl_std_format.h"
