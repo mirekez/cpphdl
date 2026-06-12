@@ -11,16 +11,16 @@ using namespace cpphdl;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
-template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
+template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true, bool OUTPUT_REG = false>
 class Fifo : public Module
 {
-    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
+    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,OUTPUT_REG ? true : SHOWAHEAD> mem;
 public:
     _PORT(bool)                         write_in;
     _PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
 
     _PORT(bool)                         read_in;
-    _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = _ASSIGN( mem.read_data_out() );
+    _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = _ASSIGN_COMB( read_data_comb_func() );
 
     _PORT(bool)                         empty_out      = _ASSIGN_COMB( empty_comb_func() );
     _PORT(bool)                         full_out       = _ASSIGN_COMB( full_comb_func() );
@@ -34,28 +34,89 @@ private:
     reg<u<clog2(FIFO_DEPTH)>> rp_reg;
     reg<u1> full_reg;
     reg<u1> afull_reg;
+    reg<u1> read_valid_reg;
+    reg<logic<FIFO_WIDTH_BYTES*8>> read_data_reg;
 
     bool full_comb;
     bool& full_comb_func()
     {
-        full_comb = (wp_reg == rp_reg) && full_reg;
+        if (OUTPUT_REG) {
+            full_comb = (wp_reg == rp_reg) && full_reg && read_valid_reg;
+        }
+        else {
+            full_comb = (wp_reg == rp_reg) && full_reg;
+        }
         return full_comb;
     }
 
     bool empty_comb;
     bool& empty_comb_func()
     {
-        empty_comb = (wp_reg == rp_reg) && !full_reg;
+        if (OUTPUT_REG) {
+            empty_comb = !read_valid_reg;
+        }
+        else {
+            empty_comb = (wp_reg == rp_reg) && !full_reg;
+        }
         return empty_comb;
+    }
+
+    logic<FIFO_WIDTH_BYTES*8> read_data_comb;
+    logic<FIFO_WIDTH_BYTES*8>& read_data_comb_func()
+    {
+        if (OUTPUT_REG) {
+            read_data_comb = read_data_reg;
+        }
+        else {
+            read_data_comb = mem.read_data_out();
+        }
+        return read_data_comb;
+    }
+
+    bool mem_read_comb;
+    bool& mem_read_comb_func()
+    {
+        if (OUTPUT_REG) {
+            bool mem_empty;
+            bool output_needs_word;
+            mem_empty = (wp_reg == rp_reg) && !full_reg;
+            output_needs_word = !read_valid_reg || read_in();
+            mem_read_comb = output_needs_word && !mem_empty;
+        }
+        else {
+            mem_read_comb = read_in();
+        }
+        return mem_read_comb;
+    }
+
+    bool mem_write_comb;
+    bool& mem_write_comb_func()
+    {
+        if (OUTPUT_REG) {
+            bool mem_full;
+            mem_full = (wp_reg == rp_reg) && full_reg;
+            mem_write_comb = write_in() && (!mem_full || mem_read_comb_func());
+        }
+        else {
+            mem_write_comb = write_in();
+        }
+        return mem_write_comb;
     }
 
 public:
 
     void _work(bool reset)
     {
+        bool mem_read;
+        bool mem_write;
+        bool output_read;
+        u<clog2(FIFO_DEPTH)> wp_next_value;
+        size_t mem_count;
+
         if (debugen_in) {
-            std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
-                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_reg, (int)empty_out(), reset);
+            std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, out_valid: {}, reset: {}\n", __inst_name,
+                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg,
+                (int)full_reg, (int)empty_out(), (int)read_valid_reg, reset);
         }
 
         mem._work(reset);
@@ -65,44 +126,86 @@ public:
             rp_reg.clr();
             full_reg.clr();
             afull_reg.clr();
+            read_valid_reg.clr();
+            read_data_reg.clr();
             return;
         }
 
-        if (write_in()) {
+        if (OUTPUT_REG) {
+            mem_read = mem_read_comb_func();
+            mem_write = mem_write_comb_func();
+            output_read = read_in() && read_valid_reg;
+            wp_next_value = wp_reg + 1;
 
-            if (full_out() && !read_in()) {
+            if (write_in() && !mem_write) {
                 std::print("{:s}: writing to a full fifo\n", __inst_name);
                 exit(1);
             }
-            if (!full_out() || read_in()) {
-                wp_reg._next = wp_reg + 1;
-            }
-            if (wp_reg._next == rp_reg) {
-                full_reg._next = 1;
-            }
-        }
-
-        if (read_in()) {
-
-            if (empty_out()) {
+            if (read_in() && !read_valid_reg) {
                 std::print("{:s}: reading from an empty fifo\n", __inst_name);
                 exit(1);
             }
-            if (!empty_out()) {
-                rp_reg._next = rp_reg + 1;
+
+            if (mem_write) {
+                wp_reg._next = wp_reg + 1;
             }
-            if (!write_in()) {
+            if (mem_read) {
+                rp_reg._next = rp_reg + 1;
+                read_data_reg._next = mem.read_data_out();
+                read_valid_reg._next = 1;
+            }
+            else if (output_read) {
+                read_valid_reg._next = 0;
+            }
+
+            if (mem_write && !mem_read && wp_next_value == rp_reg) {
+                full_reg._next = 1;
+            }
+            if (mem_read && !mem_write) {
                 full_reg._next = 0;
             }
+
+            mem_count = full_reg ? FIFO_DEPTH : (wp_reg >= rp_reg ? (size_t)(wp_reg - rp_reg) : FIFO_DEPTH - (size_t)rp_reg + (size_t)wp_reg);
+            afull_reg._next = (mem_count + (read_valid_reg ? 1 : 0)) >= FIFO_DEPTH/2;
+        }
+        else {
+            if (write_in()) {
+
+                if (full_out() && !read_in()) {
+                    std::print("{:s}: writing to a full fifo\n", __inst_name);
+                    exit(1);
+                }
+                if (!full_out() || read_in()) {
+                    wp_reg._next = wp_reg + 1;
+                }
+                if (wp_reg._next == rp_reg) {
+                    full_reg._next = 1;
+                }
+            }
+
+            if (read_in()) {
+
+                if (empty_out()) {
+                    std::print("{:s}: reading from an empty fifo\n", __inst_name);
+                    exit(1);
+                }
+                if (!empty_out()) {
+                    rp_reg._next = rp_reg + 1;
+                }
+                if (!write_in()) {
+                    full_reg._next = 0;
+                }
+            }
+
+            afull_reg._next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
         }
 
         if (clear_in()) {
             wp_reg._next = 0;
             rp_reg._next = 0;
             full_reg._next = 0;
+            read_valid_reg._next = 0;
         }
-
-        afull_reg._next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
     }
 
     void _strobe()
@@ -112,6 +215,8 @@ public:
         rp_reg.strobe();
         full_reg.strobe();
         afull_reg.strobe();
+        read_valid_reg.strobe();
+        read_data_reg.strobe();
     }
 
 
@@ -119,10 +224,10 @@ public:
     {
         mem.write_data_in = write_data_in;
         mem.write_data_in = write_data_in;
-        mem.write_in      = write_in;
+        mem.write_in      = _ASSIGN_COMB( mem_write_comb_func() );
         mem.write_mask_in = _ASSIGN( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
         mem.write_addr_in = _ASSIGN_REG( wp_reg );
-        mem.read_in       = read_in;
+        mem.read_in       = _ASSIGN_COMB( mem_read_comb_func() );
         mem.read_addr_in  = _ASSIGN_REG( rp_reg );
         mem.__inst_name = __inst_name + "/mem";
         mem.debugen_in  = debugen_in;
@@ -136,6 +241,8 @@ public:
         vcd.signals.push_back({prefix + "rp_reg", clog2(FIFO_DEPTH), &rp_reg});
         vcd.signals.push_back({prefix + "full_reg", 1, &full_reg});
         vcd.signals.push_back({prefix + "afull_reg", 1, &afull_reg});
+        vcd.signals.push_back({prefix + "read_valid_reg", 1, &read_valid_reg});
+        vcd.signals.push_back({prefix + "read_data_reg", FIFO_WIDTH_BYTES * 8, &read_data_reg});
         mem.add_vcd_signals(vcd, prefix + "mem.");
     }
 #endif
@@ -144,8 +251,10 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Fifo<64,65536,1>;
-template class Fifo<64,65536,0>;
+template class Fifo<64,65536,1,0>;
+template class Fifo<64,65536,0,0>;
+template class Fifo<64,65536,1,1>;
+template class Fifo<64,65536,0,1>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -164,15 +273,16 @@ template class Fifo<64,65536,0>;
 
 long _system_clock = -1;
 
-template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD>
+template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD, bool OUTPUT_REG = false>
 class TestFifo : public Module
 {
     static constexpr long VCD_MAX_SAMPLES = 4096;
+    static constexpr bool DATA_VISIBLE_ON_READ = SHOWAHEAD || OUTPUT_REG;
 
 #ifdef VERILATOR
     VERILATOR_MODEL fifo;
 #else
-    Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> fifo;
+    Fifo<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD,OUTPUT_REG> fifo;
 #endif
 
     reg<u<clog2(FIFO_DEPTH)>>       read_addr;
@@ -187,6 +297,8 @@ class TestFifo : public Module
     bool        error = false;
 
     logic<FIFO_WIDTH_BYTES*8> fifo_read_data;  // to support Verilator
+    bool fifo_empty;
+    bool fifo_full;
     VcdFile vcd;
 
     std::array<uint8_t,FIFO_WIDTH_BYTES>* mem_ref;
@@ -223,6 +335,8 @@ public:
     {
 #ifndef VERILATOR
         fifo_read_data = fifo.read_data_out();
+        fifo_empty = fifo.empty_out();
+        fifo_full = fifo.full_out();
         fifo._work(reset);
 #else
         fifo.write_in      = write_reg;
@@ -231,7 +345,12 @@ public:
         fifo.clear_in      = clear_reg;
         fifo.debugen_in    = debugen_in;
 
+        fifo.clk = 0;
+        fifo.reset = reset;
+        fifo.eval();
         fifo_read_data = *(logic<FIFO_WIDTH_BYTES*8>*)&fifo.read_data_out;
+        fifo_empty = fifo.empty_out;
+        fifo_full = fifo.full_out;
 
         fifo.clk = 1;
         fifo.reset = reset;
@@ -251,7 +370,7 @@ public:
 
         // check result
         if (!reset && to_read_cnt && memcmp(&fifo_read_data, &mem_ref[read_addr], sizeof(fifo_read_data)) != 0
-            && ((SHOWAHEAD && read_reg) || (!SHOWAHEAD && was_read))) {
+            && ((DATA_VISIBLE_ON_READ && read_reg) || (!DATA_VISIBLE_ON_READ && was_read))) {
             std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
                 __inst_name,
                 fifo_read_data,
@@ -261,7 +380,7 @@ public:
         }
 
         write_reg._next = 0;
-        if (to_write_cnt) {
+        if (to_write_cnt && !fifo_full) {
             write_addr._next = write_addr + 1;
             write_reg._next = 1;
             data_reg._next = *(logic<FIFO_WIDTH_BYTES*8>*)&mem_ref[write_addr];
@@ -270,7 +389,7 @@ public:
             to_read_cnt._next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
         }
         read_reg._next = 0;
-        if (to_read_cnt) {
+        if (to_read_cnt && !fifo_empty) {
             to_read_cnt._next = to_read_cnt - 1;
             read_reg._next = 1;
         }
@@ -278,10 +397,10 @@ public:
             to_write_cnt._next = random()%100;
         }
         was_read._next = 0;
-        if (read_reg && !SHOWAHEAD) {
+        if (read_reg && !DATA_VISIBLE_ON_READ) {
             was_read._next = 1;
         }
-        if ((read_reg && SHOWAHEAD) || (was_read && !SHOWAHEAD)) {
+        if ((read_reg && DATA_VISIBLE_ON_READ) || (was_read && !DATA_VISIBLE_ON_READ)) {
             read_addr._next = read_addr + 1;
         }
     }
@@ -325,6 +444,8 @@ public:
         vcd.signals.push_back({"write_reg", 1, &write_reg});
         vcd.signals.push_back({"read_reg", 1, &read_reg});
         vcd.signals.push_back({"was_read", 1, &was_read});
+        vcd.signals.push_back({"fifo_empty", 1, &fifo_empty});
+        vcd.signals.push_back({"fifo_full", 1, &fifo_full});
         vcd.signals.push_back({"clear_reg", 1, &clear_reg});
         vcd.signals.push_back({"to_write_cnt", 16, &to_write_cnt});
         vcd.signals.push_back({"to_read_cnt", 16, &to_read_cnt});
@@ -343,9 +464,9 @@ public:
             }
         }
 #ifdef VERILATOR
-        std::print("VERILATOR TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+        std::print("VERILATOR TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}, OUTPUT_REG: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD, OUTPUT_REG);
 #else
-        std::print("CppHDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD);
+        std::print("CppHDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}, OUTPUT_REG: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD, OUTPUT_REG);
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -353,6 +474,8 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "fifo_test";
         _assign();
+        fifo_empty = true;
+        fifo_full = false;
         _work(1);
         _work_neg(1);
         setup_vcd();
@@ -400,15 +523,19 @@ int main (int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 1);
-        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 0);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 1, 0);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 0, 0);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 1, 1);
+        ok &= VerilatorCompile(__FILE__, "Fifo", {"Predef_pkg","Memory"}, {"../../../../include"}, 64, 65536, 0, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ( ok
-            && std::system((std::string("Fifo_64_65536_1/obj_dir/VFifo 64 65536 1") + (debug?" --debug":"")).c_str()) == 0
-            && std::system((std::string("Fifo_64_65536_0/obj_dir/VFifo 64 65536 0") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Fifo_64_65536_1_0/obj_dir/VFifo 64 65536 1 0") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Fifo_64_65536_0_0/obj_dir/VFifo 64 65536 0 0") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Fifo_64_65536_1_1/obj_dir/VFifo 64 65536 1 1") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Fifo_64_65536_0_1/obj_dir/VFifo 64 65536 0 1") + (debug?" --debug":"")).c_str()) == 0
         );
-        std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
+        std::cout << "Verilator compilation time: " << compile_us/4 << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
@@ -418,18 +545,27 @@ int main (int argc, char** argv)
         size_t width = std::stoull(positional[0]);
         size_t depth = std::stoull(positional[1]);
         size_t showahead = std::stoull(positional[2]);
-        if (width == 64 && depth == 65536 && showahead == 1) {
-            return !(ok && TestFifo<64,65536,1>(debug).run());
+        size_t output_reg = positional.size() >= 4 ? std::stoull(positional[3]) : 0;
+        if (width == 64 && depth == 65536 && showahead == 1 && output_reg == 0) {
+            return !(ok && TestFifo<64,65536,1,0>(debug).run());
         }
-        if (width == 64 && depth == 65536 && showahead == 0) {
-            return !(ok && TestFifo<64,65536,0>(debug).run());
+        if (width == 64 && depth == 65536 && showahead == 0 && output_reg == 0) {
+            return !(ok && TestFifo<64,65536,0,0>(debug).run());
         }
-        std::print("Unsupported Fifo test parameters: WIDTH={} DEPTH={} SHOWAHEAD={}\n", width, depth, showahead);
+        if (width == 64 && depth == 65536 && showahead == 1 && output_reg == 1) {
+            return !(ok && TestFifo<64,65536,1,1>(debug).run());
+        }
+        if (width == 64 && depth == 65536 && showahead == 0 && output_reg == 1) {
+            return !(ok && TestFifo<64,65536,0,1>(debug).run());
+        }
+        std::print("Unsupported Fifo test parameters: WIDTH={} DEPTH={} SHOWAHEAD={} OUTPUT_REG={}\n", width, depth, showahead, output_reg);
         return 1;
     }
 
-    ok = ok && TestFifo<64,65536,1>(debug).run();
-    ok = ok && TestFifo<64,65536,0>(debug).run();
+    ok = ok && TestFifo<64,65536,1,0>(debug).run();
+    ok = ok && TestFifo<64,65536,0,0>(debug).run();
+    ok = ok && TestFifo<64,65536,1,1>(debug).run();
+    ok = ok && TestFifo<64,65536,0,1>(debug).run();
     return !ok;
 }
 
