@@ -1,9 +1,0 @@
-#pragma once
-
-#if defined(__has_include_next)
-#if __has_include_next(<format>)
-#include_next <format>
-#endif
-#endif
-
-#include "cpphdl_std_format.h"

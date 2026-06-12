@@ -278,10 +278,12 @@ constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 #endif
 #if __has_include(<print>)
 #include <print>
+#define CPPHDL_HAS_STD_PRINT 1
 #endif
 #else
 #include <format>
 #include <print>
+#define CPPHDL_HAS_STD_PRINT 1
 #endif
 
 #define CPPHDL_WANT_STD_PRINT_STUBS 1

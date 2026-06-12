@@ -223,7 +223,6 @@ public:
     void _assign()
     {
         mem.write_data_in = write_data_in;
-        mem.write_data_in = write_data_in;
         mem.write_in      = _ASSIGN_COMB( mem_write_comb_func() );
         mem.write_mask_in = _ASSIGN( logic<FIFO_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
         mem.write_addr_in = _ASSIGN_REG( wp_reg );

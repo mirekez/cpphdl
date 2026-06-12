@@ -4,7 +4,14 @@
 
 #define __PACKED __attribute__((packed))
 
+#if defined(__has_include)
+#if __has_include(<format>)
 #include <format>
+#endif
+#else
+#include <format>
+#endif
+#include "cpphdl_std_format.h"
 
 //     u& operator= (const u& v) = default;
 
