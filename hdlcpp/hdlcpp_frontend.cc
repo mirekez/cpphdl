@@ -836,22 +836,17 @@
         if (!mod) {
             return;
         }
-        auto visitGenerateClause = [&](const MemberSyntax& member) {
-            if (member.kind == SyntaxKind::GenerateBlock) {
-                for (auto child : member.as<GenerateBlockSyntax>().members) {
-                    child->visit(*this);
-                }
-            }
-            else {
-                member.visit(*this);
-            }
-        };
         if (auto decision = evalConfiguredGenerateCondition(*mod, emitExpr(*node.condition))) {
             if (*decision) {
-                visitGenerateClause(*node.block);
+                emitGenerateMember(*node.block, "");
             }
             else if (node.elseClause && node.elseClause->clause) {
-                visitGenerateClause(node.elseClause->clause->as<MemberSyntax>());
+                auto* clause = node.elseClause->clause.get();
+                if (clause->kind == SyntaxKind::IfGenerate || clause->kind == SyntaxKind::GenerateBlock ||
+                    clause->kind == SyntaxKind::DataDeclaration || clause->kind == SyntaxKind::ContinuousAssign ||
+                    clause->kind == SyntaxKind::HierarchyInstantiation) {
+                    emitGenerateMember(clause->as<MemberSyntax>(), "");
+                }
             }
             return;
         }
@@ -1481,6 +1476,143 @@
                 }
             }
         }
+        else if (node.kind == SyntaxKind::HierarchyInstantiation) {
+            auto& instNode = node.as<HierarchyInstantiationSyntax>();
+            std::string params;
+            if (instNode.parameters) {
+                std::vector<std::string> orderedParams;
+                std::map<std::string, std::string> namedParams;
+                std::map<std::string, std::string> namedParamRaw;
+                std::vector<std::pair<std::string, std::string>> namedParamOrder;
+                for (auto p : instNode.parameters->parameters) {
+                    if (p->kind == SyntaxKind::OrderedParamAssignment) {
+                        auto value = stripLogicLiteralCasts(emitExpr(*p->as<OrderedParamAssignmentSyntax>().expr));
+                        applyGenerateReplacements(value);
+                        orderedParams.push_back(value);
+                    }
+                    else if (p->kind == SyntaxKind::NamedParamAssignment && p->as<NamedParamAssignmentSyntax>().expr) {
+                        auto& np = p->as<NamedParamAssignmentSyntax>();
+                        auto name = tok(np.name);
+                        auto value = DataTypeSyntax::isKind(np.expr->kind) ? typeText(np.expr->as<DataTypeSyntax>()) : stripLogicLiteralCasts(emitExpr(*np.expr));
+                        applyGenerateReplacements(value);
+                        auto rawValue = exprText(np.expr->toString());
+                        applyGenerateReplacements(rawValue);
+                        namedParams[name] = value;
+                        namedParamRaw[name] = rawValue;
+                        namedParamOrder.push_back({name, value});
+                    }
+                }
+                if (!orderedParams.empty() || !namedParams.empty()) {
+                    auto appendParam = [&](const std::string& value) {
+                        if (!params.empty()) {
+                            params += ",";
+                        }
+                        params += value;
+                    };
+                    auto type = tok(instNode.type);
+                    auto* child = findModule(type);
+                    auto configuredParams = configuredModuleParams(type);
+                    auto& declParams = (child && !child->params.empty()) ? child->params : configuredParams;
+                    if (!declParams.empty()) {
+                        std::vector<std::string> paramNames;
+                        for (auto& declared : declParams) {
+                            paramNames.push_back(templateParamName(declared));
+                        }
+                        int lastNeeded = static_cast<int>(orderedParams.size()) - 1;
+                        for (int i = 0; i < static_cast<int>(paramNames.size()); ++i) {
+                            if (namedParams.count(paramNames[i])) {
+                                lastNeeded = std::max(lastNeeded, i);
+                            }
+                        }
+                        lastNeeded = std::min(lastNeeded, static_cast<int>(declParams.size()) - 1);
+                        std::map<std::string, std::string> emittedParams;
+                        for (int i = 0; i <= lastNeeded; ++i) {
+                            auto& declared = declParams[i];
+                            auto& pname = paramNames[i];
+                            std::string value;
+                            bool hasValue = false;
+                            auto namedIt = namedParams.find(pname);
+                            if (namedIt != namedParams.end()) {
+                                value = namedIt->second;
+                                hasValue = true;
+                                if (declared.rfind("typename ", 0) == 0) {
+                                    auto raw = namedParamRaw.find(pname);
+                                    if (raw != namedParamRaw.end()) {
+                                        auto rawType = raw->second;
+                                        for (auto& item : mod->types) {
+                                            auto w = typeWidth(item.second);
+                                            replaceAll(rawType, "$bits(" + item.first + ")",
+                                                       !w.empty() ? w : "(sizeof(" + item.second + ")*8)");
+                                        }
+                                        auto typeText = cppTypeFromSvText(rawType);
+                                        if (!typeText.empty() && typeText != "logic") {
+                                            value = typeText;
+                                        }
+                                    }
+                                }
+                            }
+                            else if (i < static_cast<int>(orderedParams.size())) {
+                                value = orderedParams[i];
+                                hasValue = true;
+                            }
+                            if (hasValue) {
+                                value = castTemplateParamValue(declared, value);
+                                appendParam(value);
+                                emittedParams[pname] = value;
+                            }
+                            else {
+                                auto def = templateParamDefault(declared);
+                                if (!def.empty()) {
+                                    for (auto& prior : emittedParams) {
+                                        replaceIdentifierAll(def, prior.first, prior.second);
+                                    }
+                                    appendParam(def);
+                                    emittedParams[pname] = def;
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        for (auto& item : orderedParams) {
+                            appendParam(item);
+                        }
+                        for (auto& item : namedParamOrder) {
+                            appendParam(item.second);
+                        }
+                    }
+                }
+            }
+            for (auto inst : instNode.instances) {
+                if (!inst->decl) {
+                    continue;
+                }
+                auto name = tok(inst->decl->name);
+                auto type = tok(instNode.type);
+                mod->members.push_back(type + (params.empty() ? "" : "<" + params + ">") + " " + name + ";");
+                mod->memberTypes.push_back(type);
+                mod->memberNames.push_back(name);
+                for (auto conn : inst->connections) {
+                    if (conn->kind != SyntaxKind::NamedPortConnection) {
+                        continue;
+                    }
+                    auto& c = conn->as<NamedPortConnectionSyntax>();
+                    auto port = tok(c.name);
+                    auto expr = c.expr ? propertyExpr(*c.expr) : nullptr;
+                    if (expr) {
+                        auto rhs = emitExpr(*expr);
+                        auto lhs = emitLValue(*expr);
+                        applyGenerateReplacements(rhs);
+                        applyGenerateReplacements(lhs);
+                        mod->instanceConns.push_back(InstanceConnGen{name, type, port, rhs, lhs, true});
+                    }
+                    else {
+                        auto mapped = mod->wireMap.count(port) ? mod->wireMap[port] : port;
+                        applyGenerateReplacements(mapped);
+                        mod->instanceConns.push_back(InstanceConnGen{name, type, port, mapped, mapped, true});
+                    }
+                }
+            }
+        }
         else if (node.kind == SyntaxKind::AlwaysBlock ||
                  node.kind == SyntaxKind::AlwaysCombBlock ||
                  node.kind == SyntaxKind::AlwaysFFBlock ||
@@ -1550,8 +1682,16 @@
                 for (auto w : dimensionWidths(d->dimensions)) {
                     type = "array<" + type + "," + w + ">";
                 }
-                mod->assignLines.push_back("    " + type + " " + name + ";");
                 mod->types[name] = type;
+                if (methodLoopHeaders.empty()) {
+                    if (!mod->varNames.count(name)) {
+                        mod->vars.push_back({type, name});
+                        mod->varNames.insert(name);
+                    }
+                }
+                else {
+                    mod->assignLines.push_back("    " + type + " " + name + ";");
+                }
             }
         }
         else if (node.kind == SyntaxKind::ContinuousAssign) {
@@ -1559,7 +1699,11 @@
                 if (a->kind == SyntaxKind::AssignmentExpression) {
                     auto& b = a->as<BinaryExpressionSyntax>();
                     auto base = assignedBase(*b.left);
-                    auto lhs = emitLValue(*b.left);
+                    auto wholeNetAssign = b.left->kind == SyntaxKind::IdentifierName || isWholeObjectSelect(*b.left, base);
+                    auto lhs = mod->outputPortCppNames.count(base) ? mod->outputPortCppNames[base] :
+                        (wholeNetAssign && !base.empty() ? base : emitLValue(*b.left));
+                    auto internalWholeNet = !base.empty() && mod->varNames.count(base) && wholeNetAssign &&
+                                            !mod->outputPortCppNames.count(base);
                     auto rhs = emitExpr(*b.right);
                     if (b.right->kind == SyntaxKind::ConditionalExpression &&
                         lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
@@ -1572,8 +1716,8 @@
                         addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders);
                         continue;
                     }
-                    if (!base.empty() && mod->varNames.count(base) &&
-                        (lhs.find('[') != std::string::npos || lhs.find('.') != std::string::npos)) {
+                    if (internalWholeNet || (!base.empty() && mod->varNames.count(base) &&
+                        (lhs.find('[') != std::string::npos || lhs.find('.') != std::string::npos))) {
                         addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders);
                         continue;
                     }

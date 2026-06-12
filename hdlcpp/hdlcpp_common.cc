@@ -2715,7 +2715,9 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         std::string offset = "0";
         for (auto& field : fields) {
             auto next = addWidthExpr(offset, field.width);
-            line += "        this->" + field.name + " = logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")));\n";
+            line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
+            line += "            this->" + field.name + " = logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")));\n";
+            line += "        }\n";
             offset = next;
         }
         line += "        return *this; }\n";
@@ -2724,7 +2726,9 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         offset = "0";
         for (auto& field : fields) {
             auto next = addWidthExpr(offset, field.width);
-            line += "        packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = logic<" + field.width + ">((uint64_t)(this->" + field.name + "));\n";
+            line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
+            line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = logic<" + field.width + ">((uint64_t)(this->" + field.name + "));\n";
+            line += "        }\n";
             offset = next;
         }
         line += "        return packed; }\n";
