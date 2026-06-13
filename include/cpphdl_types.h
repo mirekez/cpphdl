@@ -27,7 +27,7 @@ struct u
         return WIDTH;
     }
 
-    constexpr u() = default;
+    constexpr u() : value(0) {}
     constexpr u(uint64_t v) : value(v) {}
     u& operator= (uint64_t v) { value = v; return *this; };
 //    u* operator&() { return (u*)this; }
