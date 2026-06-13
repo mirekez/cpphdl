@@ -27,7 +27,7 @@ struct u
         return WIDTH;
     }
 
-    constexpr u() : value(0) {}
+    u() = default;
     constexpr u(uint64_t v) : value(v) {}
     u& operator= (uint64_t v) { value = v; return *this; };
 //    u* operator&() { return (u*)this; }
@@ -153,7 +153,7 @@ namespace cpphdl \
 { \
 struct class : public u<size> \
 { \
-    constexpr class() = default; \
+    class() = default; \
     constexpr class(type v) : u(v) {}  \
     template<size_t W> constexpr class(u<W> v) : u((uint64_t)v) {}  \
     type* operator&() { return (type*)this; } \
