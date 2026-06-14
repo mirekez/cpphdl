@@ -68,7 +68,15 @@ struct logic : public bitops<logic<WIDTH>>
     }
 
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
-    logic(const T& other) : bitops<logic<WIDTH>>(other) {}
+    logic(const T& other) : bytes{}
+    {
+        if constexpr (requires { other.pack(); }) {
+            *this = other.pack();
+        }
+        else {
+            bitops<logic<WIDTH>>::operator=(other);
+        }
+    }
 
     template<typename T>
     constexpr logic(std::initializer_list<T> values) : bytes{}
@@ -105,7 +113,12 @@ struct logic : public bitops<logic<WIDTH>>
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
     logic& operator=(const T& other)
     {
-        bitops<logic<WIDTH>>::operator=(other);
+        if constexpr (requires { other.pack(); }) {
+            *this = other.pack();
+        }
+        else {
+            bitops<logic<WIDTH>>::operator=(other);
+        }
         return *this;
     }
 

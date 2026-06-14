@@ -111,20 +111,26 @@ constexpr T operator^(T lhs, const logic<WIDTH>& rhs)
     return static_cast<T>(static_cast<uint64_t>(lhs) ^ static_cast<uint64_t>(rhs));
 }
 
-template<typename T>
+template<typename T, typename = void>
 struct type_width_value
 {
     static constexpr size_t value = sizeof(T) * 8;
 };
 
+template<typename T>
+struct type_width_value<T, std::void_t<decltype(T::_size_bits())>>
+{
+    static constexpr size_t value = T::_size_bits();
+};
+
 template<size_t WIDTH>
-struct type_width_value<logic<WIDTH>>
+struct type_width_value<logic<WIDTH>, void>
 {
     static constexpr size_t value = WIDTH;
 };
 
 template<typename T, size_t N, bool PACKED>
-struct type_width_value<array<T, N, PACKED>>
+struct type_width_value<array<T, N, PACKED>, void>
 {
     static constexpr size_t value = array<T, N, PACKED>::_size_bits();
 };
@@ -133,6 +139,39 @@ template<typename T>
 constexpr size_t type_width()
 {
     return type_width_value<std::remove_cv_t<std::remove_reference_t<T>>>::value;
+}
+
+template<size_t WIDTH, typename T>
+constexpr logic<WIDTH> pack_value(const T& value)
+{
+    if constexpr (requires { value.pack(); }) {
+        return logic<WIDTH>(value.pack());
+    }
+    else if constexpr (requires { static_cast<uint64_t>(value); }) {
+        return logic<WIDTH>(static_cast<uint64_t>(value));
+    }
+    else {
+        return logic<WIDTH>(0);
+    }
+}
+
+template<typename T, size_t WIDTH>
+constexpr T unpack_value(const logic<WIDTH>& value)
+{
+    T out{};
+    if constexpr (std::is_assignable_v<T&, logic<WIDTH>>) {
+        out = value;
+    }
+    else if constexpr (std::is_constructible_v<T, logic<WIDTH>>) {
+        out = T(value);
+    }
+    else if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
+        out = static_cast<T>(static_cast<uint64_t>(value));
+    }
+    else if constexpr (requires(T v) { v = 0; }) {
+        out = 0;
+    }
+    return out;
 }
 
 template<size_t COUNT, size_t WIDTH>
@@ -156,6 +195,12 @@ constexpr logic<1> reduce_and(const logic<WIDTH>& value)
         }
     }
     return logic<1>(1);
+}
+
+template<typename T, size_t TOTAL_BITS, size_t ELEMENT_BITS>
+constexpr logic<1> reduce_and(const detail::array_packed_ref<T, TOTAL_BITS, ELEMENT_BITS>& value)
+{
+    return reduce_and(logic<ELEMENT_BITS>(value));
 }
 
 template<typename T, size_t N, bool PACKED>
