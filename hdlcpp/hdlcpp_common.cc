@@ -24,6 +24,7 @@ struct InstanceConnGen {
     std::string rhs;
     std::string lhs;
     bool connected = true;
+    std::string params;
 };
 
 struct ModuleGen {
@@ -32,6 +33,7 @@ struct ModuleGen {
     std::vector<std::string> params;
     std::vector<PortGen> ports;
     std::vector<std::string> typeDecls;
+    std::vector<std::string> preClassDecls;
     std::vector<std::string> packageDecls;
     std::vector<std::string> imports;
     std::vector<std::pair<std::string, std::string>> vars;
@@ -56,12 +58,14 @@ struct ModuleGen {
     std::map<std::string, std::string> portCppNames;
     std::map<std::string, std::string> outputPortCppNames;
     std::map<std::string, std::string> wireMap;
+    std::map<std::string, std::string> combSideEffectDriver;
     std::map<std::string, size_t> combMethodByBase;
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
     std::map<std::string, std::string> types;
     std::map<std::string, std::string> typeWidths;
     std::map<std::string, std::map<std::string, std::string>> typeFields;
+    std::map<std::string, std::vector<std::string>> arrayLowerBounds;
     int alwaysNo = 0;
     bool hasWorkTask = false;
 };
@@ -170,6 +174,17 @@ static bool isSimpleCombRef(std::string rhs)
     return true;
 }
 
+static bool isSideEffectReadExpr(std::string rhs)
+{
+    auto begin = rhs.find_first_not_of(" \t\r\n");
+    auto end = rhs.find_last_not_of(" \t\r\n");
+    rhs = begin == std::string::npos ? std::string() : rhs.substr(begin, end - begin + 1);
+    return rhs.size() >= 6 && rhs.rfind("((", 0) == 0 &&
+           rhs.substr(rhs.size() - 2) == "))" &&
+           rhs.find("_active ?") == std::string::npos &&
+           rhs.find("(), ") != std::string::npos;
+}
+
 template<typename T>
 static std::string tok(const T& token)
 {
@@ -234,6 +249,7 @@ static bool isIdentifierUsed(const std::string& text, const std::string& name)
 }
 
 static void replaceAll(std::string& s, const std::string& from, const std::string& to);
+static bool isNumericValueType(const std::string& type);
 
 static bool isZeroLiteralText(const std::string& expr)
 {
@@ -272,6 +288,64 @@ static std::string templateParamDefault(const std::string& param)
         return "";
     }
     return trim(param.substr(eq + 1));
+}
+
+static std::vector<std::string> splitTopLevelArgs(const std::string& text)
+{
+    std::vector<std::string> args;
+    std::string current;
+    int paren = 0;
+    int angle = 0;
+    int brace = 0;
+    int bracket = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == '(') {
+            ++paren;
+        }
+        else if (c == ')' && paren > 0) {
+            --paren;
+        }
+        else if (c == '<' && i + 1 < text.size() && text[i + 1] == '<') {
+            current += c;
+            current += text[++i];
+            continue;
+        }
+        else if (c == '<') {
+            ++angle;
+        }
+        else if (c == '>' && angle > 0) {
+            --angle;
+            if (i + 1 < text.size() && text[i + 1] == '>' && angle > 0) {
+                current += c;
+                c = text[++i];
+                --angle;
+            }
+        }
+        else if (c == '{') {
+            ++brace;
+        }
+        else if (c == '}' && brace > 0) {
+            --brace;
+        }
+        else if (c == '[') {
+            ++bracket;
+        }
+        else if (c == ']' && bracket > 0) {
+            --bracket;
+        }
+        if (c == ',' && paren == 0 && angle == 0 && brace == 0 && bracket == 0) {
+            args.push_back(trim(current));
+            current.clear();
+        }
+        else {
+            current += c;
+        }
+    }
+    if (!current.empty() || !text.empty()) {
+        args.push_back(trim(current));
+    }
+    return args;
 }
 
 static std::string templateParamValueType(const std::string& param)
@@ -671,7 +745,27 @@ static std::optional<bool> evalConfiguredGenerateCondition(const ModuleGen& m, s
     return std::nullopt;
 }
 
-static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::string& base)
+static bool lhsAssignsField(const std::string& lhs, const std::string& base, const std::string& field)
+{
+    if (field.empty()) {
+        return true;
+    }
+    if (lhs == base) {
+        return true;
+    }
+    if (lhs.rfind(base + ".", 0) != 0) {
+        return false;
+    }
+    auto pos = base.size() + 1;
+    if (lhs.compare(pos, field.size(), field) != 0) {
+        return false;
+    }
+    auto next = pos + field.size();
+    return next >= lhs.size() || lhs[next] == '.' || lhs[next] == '[';
+}
+
+static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::string& base,
+                                               const std::string& field = "")
 {
     std::vector<std::string> drivers;
     auto addDriver = [&](const std::string& name) {
@@ -680,12 +774,19 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
         }
     };
 
-    auto direct = m.wireMap.find(base);
-    if (direct != m.wireMap.end()) {
-        addDriver(direct->second);
+    if (field.empty()) {
+        auto direct = m.wireMap.find(base);
+        if (direct != m.wireMap.end()) {
+            addDriver(direct->second);
+        }
+        auto side = m.combSideEffectDriver.find(base);
+        if (side != m.combSideEffectDriver.end()) {
+            addDriver(side->second);
+        }
     }
 
     auto storage = combStorageName(m, base);
+    auto outputStorage = outputStorageName(m, base);
     for (auto& method : m.methods) {
         if (method.name.find("_comb_func") == std::string::npos) {
             continue;
@@ -698,7 +799,11 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
             auto lhs = trim(line.substr(0, eq));
             auto lhsBaseEnd = lhs.find_first_of("[.");
             auto lhsBase = trim(lhsBaseEnd == std::string::npos ? lhs : lhs.substr(0, lhsBaseEnd));
-            if (lhs == storage || lhsBase == storage || lhs == base || lhsBase == base) {
+            if ((lhs == storage || lhsBase == storage || lhs == base || lhsBase == base ||
+                 lhs == outputStorage || lhsBase == outputStorage) &&
+                (lhsAssignsField(lhs, storage, field) ||
+                 lhsAssignsField(lhs, outputStorage, field) ||
+                 lhsAssignsField(lhs, base, field))) {
                 addDriver(method.name);
                 break;
             }
@@ -1035,19 +1140,6 @@ static std::string numericizeSelectedArithmetic(std::string s);
 
 static std::string valueAssignCombFunctionPorts(std::string line)
 {
-    auto assign = line.find(" = _ASSIGN_COMB(");
-    if (assign == std::string::npos) {
-        return line;
-    }
-    auto argStart = assign + std::string(" = _ASSIGN_COMB(").size();
-    auto argEnd = line.find(");", argStart);
-    if (argEnd == std::string::npos) {
-        return line;
-    }
-    auto arg = trim(line.substr(argStart, argEnd - argStart));
-    if (hasSuffix(arg, "_comb_func()")) {
-        line.replace(assign + 3, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
-    }
     return line;
 }
 
@@ -1074,8 +1166,6 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, ">>>", ">>");
     line = repairDottedLogicWidthCasts(std::move(line));
     applyConfiguredLinePatches(line);
-    replaceAll(line, "empty_o_out = _ASSIGN( ~push_i_in() );", "empty_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~push_i_in()) : logic<1>((status_cnt_q == 0) & ~(logic<1>(FALL_THROUGH) & push_i_in())) );");
-    replaceAll(line, "full_o_out = _ASSIGN( ~pop_i_in() );", "full_o_out = _ASSIGN( (DEPTH == 0) ? logic<1>(~pop_i_in()) : logic<1>(status_cnt_q == FifoDepth) );");
     auto repairRuntimeLogicWidths = [&]() {
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
@@ -1439,6 +1529,10 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, "case ((uint64_t)(\"ones\")):", "case 1:");
     replaceAll(line, "case ((uint64_t)(\"random\")):", "case 2:");
     replaceAll(line, "$urandom()", "random()");
+    auto aggregateConstexpr = trim(line);
+    if (aggregateConstexpr.rfind("static constexpr", 0) == 0 && aggregateConstexpr.find(" = { .") != std::string::npos) {
+        replaceAll(line, " } };", " };");
+    }
     if (trimmedForResult.rfind("result = ", 0) == 0 && trimmedForResult.find("logic<") != std::string::npos &&
         trimmedForResult.back() == ';') {
         auto indent = line.substr(0, line.find_first_not_of(" \t"));
@@ -1500,6 +1594,46 @@ static std::string postProcessCppLine(std::string line)
     auto rhs = line.substr(eq + 1);
     auto lhsTrim = trim(lhs.substr(0, lhs.size() - 1));
 
+    auto unwrapTypedTargetConstructors = [&](std::string text) {
+        auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
+        bool changed = false;
+        for (size_t pos = 0; (pos = text.find(target + "(", pos)) != std::string::npos; ) {
+            auto innerStart = pos + target.size() + 1;
+            auto rest = trim(text.substr(innerStart));
+            if (rest.rfind("logic<", 0) != 0 && rest.rfind("u<", 0) != 0 && rest.rfind("array<", 0) != 0) {
+                pos = innerStart;
+                continue;
+            }
+            int depth = 1;
+            size_t close = std::string::npos;
+            for (size_t i = innerStart; i < text.size(); ++i) {
+                char c = text[i];
+                if (c == '(' || c == '[' || c == '{') {
+                    ++depth;
+                }
+                else if (c == ')' || c == ']' || c == '}') {
+                    --depth;
+                    if (depth == 0) {
+                        close = i;
+                        break;
+                    }
+                }
+            }
+            if (close == std::string::npos) {
+                break;
+            }
+            auto inner = text.substr(innerStart, close - innerStart);
+            text.replace(pos, close - pos + 1, inner);
+            pos += inner.size();
+            changed = true;
+        }
+        return std::pair<std::string, bool>{text, changed};
+    };
+    if (auto cleaned = unwrapTypedTargetConstructors(rhs); cleaned.second) {
+        rhs = cleaned.first;
+        line = lhs + rhs;
+    }
+
     auto findTopLevelTernary = [&](const std::string& text, size_t& qpos, size_t& cpos) {
         int depth = 0;
         qpos = std::string::npos;
@@ -1554,6 +1688,54 @@ static std::string postProcessCppLine(std::string line)
             auto left = trim(expr.substr(qpos + 1, cpos - qpos - 1));
             auto right = trim(expr.substr(cpos + 1));
             auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
+            auto leadingTemplateCallType = [](const std::string& value) -> std::string {
+                auto v = trim(value);
+                auto findTypeStart = [&](const std::string& prefix) -> size_t {
+                    for (size_t pos = 0; (pos = v.find(prefix, pos)) != std::string::npos; ++pos) {
+                        auto topLevelCtor = true;
+                        for (size_t i = 0; i < pos; ++i) {
+                            if (!std::isspace(static_cast<unsigned char>(v[i])) && v[i] != '(') {
+                                topLevelCtor = false;
+                                break;
+                            }
+                        }
+                        if (topLevelCtor && (pos == 0 || (!std::isalnum(static_cast<unsigned char>(v[pos - 1])) && v[pos - 1] != '_' && v[pos - 1] != ':'))) {
+                            return pos;
+                        }
+                    }
+                    return std::string::npos;
+                };
+                auto start = std::min({findTypeStart("logic<"), findTypeStart("u<"), findTypeStart("array<")});
+                if (start == std::string::npos) {
+                    return {};
+                }
+                v = v.substr(start);
+                auto open = v.find('<');
+                int depth = 0;
+                for (size_t i = open; i < v.size(); ++i) {
+                    if (v[i] == '<' && i + 1 < v.size() && v[i + 1] == '<') {
+                        ++i;
+                    }
+                    else if (v[i] == '>' && i + 1 < v.size() && v[i + 1] == '>') {
+                        ++i;
+                    }
+                    else if (v[i] == '<') {
+                        ++depth;
+                    }
+                    else if (v[i] == '>') {
+                        --depth;
+                        if (depth == 0) {
+                            auto type = v.substr(0, i + 1);
+                            auto rest = trim(v.substr(i + 1));
+                            return !rest.empty() && rest.front() == '(' ? type : std::string();
+                        }
+                    }
+                }
+                return {};
+            };
+            if (auto explicitType = leadingTemplateCallType(left); !explicitType.empty()) {
+                target = explicitType;
+            }
             auto bitsPos = lhsTrim.rfind(".bits(");
             if (bitsPos != std::string::npos) {
                 auto argsStart = bitsPos + 6;
@@ -1637,7 +1819,13 @@ static std::string postProcessCppLine(std::string line)
                  (left.find("logic<1>") != std::string::npos && right.find("logic<1>") != std::string::npos))) {
                 target = "logic<1>";
             }
-            line = lhs + " " + pred + " ? " + target + "(" + left + ") : " + target + "(" + right + " );";
+            auto wrapBranch = [&](const std::string& branch) {
+                if (isNumericValueType(target)) {
+                    return target + "(" + branch + ")";
+                }
+                return "cpphdl::sv_cast<" + target + ">(" + branch + ")";
+            };
+            line = lhs + " " + pred + " ? " + wrapBranch(left) + " : " + wrapBranch(right) + ";";
             replaceAll(line, " )", ")");
             return line;
         }
@@ -2439,6 +2627,44 @@ static bool parseNamedAggregateEntries(const std::string& s, std::vector<std::pa
     return !entries.empty();
 }
 
+static std::string wrapLogicCastsForConstexprNumeric(std::string s)
+{
+    for (size_t pos = 0; (pos = s.find("logic<", pos)) != std::string::npos;) {
+        if (pos >= 10 && s.compare(pos - 10, 10, "(uint64_t)") == 0) {
+            pos += 6;
+            continue;
+        }
+        auto widthStart = pos + 6;
+        auto widthEnd = s.find('>', widthStart);
+        if (widthEnd == std::string::npos || widthEnd + 1 >= s.size() || s[widthEnd + 1] != '(') {
+            pos += 6;
+            continue;
+        }
+        auto valueStart = widthEnd + 2;
+        int depth = 1;
+        size_t valueEnd = valueStart;
+        for (; valueEnd < s.size(); ++valueEnd) {
+            if (s[valueEnd] == '(') {
+                ++depth;
+            }
+            else if (s[valueEnd] == ')') {
+                --depth;
+                if (depth == 0) {
+                    break;
+                }
+            }
+        }
+        if (valueEnd >= s.size()) {
+            break;
+        }
+        auto original = s.substr(pos, valueEnd - pos + 1);
+        auto replacement = "(uint64_t)(" + original + ")";
+        s.replace(pos, original.size(), replacement);
+        pos += replacement.size();
+    }
+    return s;
+}
+
 static std::string namedAggregateToConstexprLambda(const std::string& type, const std::string& init)
 {
     std::vector<std::pair<std::string, std::string>> entries;
@@ -2545,9 +2771,23 @@ static std::vector<std::string> memoryArgs(const std::string& type);
 
 static bool isPrimitiveWrapperType(const std::string& type)
 {
-    return type == "u8" || type == "u16" || type == "u32" || type == "u64" ||
-           type == "unsigned" || type == "uint8_t" || type == "uint16_t" ||
-           type == "uint32_t" || type == "uint64_t";
+    auto t = trim(type);
+    if (t.rfind("reg<", 0) == 0 && t.back() == '>') {
+        t = t.substr(4, t.size() - 5);
+    }
+    return t == "u8" || t == "u16" || t == "u32" || t == "u64" ||
+           t == "unsigned" || t == "uint8_t" || t == "uint16_t" ||
+           t == "uint32_t" || t == "uint64_t";
+}
+
+static bool isNumericValueType(const std::string& type)
+{
+    auto t = trim(type);
+    if (t.rfind("reg<", 0) == 0 && t.back() == '>') {
+        t = t.substr(4, t.size() - 5);
+    }
+    return t == "bool" || t.rfind("logic<", 0) == 0 || t.rfind("u<", 0) == 0 ||
+           isPrimitiveWrapperType(t);
 }
 
 static std::string constexprType(std::string type)
@@ -2566,7 +2806,7 @@ static std::string constexprType(std::string type)
     }
     if (type.rfind("array<", 0) == 0) {
         auto args = memoryArgs("memory<" + type.substr(6, type.size() - 7) + ">");
-        if (args.size() == 2) {
+        if (args.size() >= 2) {
             return "std::array<" + constexprType(args[0]) + "," + args[1] + ">";
         }
         type.replace(0, 5, "std::array");
@@ -2682,6 +2922,7 @@ static std::string constexprStructFieldType(std::string type)
 struct PackedFieldInfo {
     std::string name;
     std::string width;
+    bool usePack = false;
 };
 
 static std::string joinedPackedWidth(const std::vector<PackedFieldInfo>& fields)
@@ -2711,12 +2952,13 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
     }
     std::string line;
     if (!fields.empty()) {
+        line += "    static constexpr size_t _size_bits() { return " + width + "; }\n";
         line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
         for (auto& field : fields) {
             auto next = addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
-            line += "            this->" + field.name + " = logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")));\n";
+            line += "            this->" + field.name + " = cpphdl::unpack_value<std::remove_reference_t<decltype(this->" + field.name + ")>, " + field.width + ">(logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + "))));\n";
             line += "        }\n";
             offset = next;
         }
@@ -2727,7 +2969,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         for (auto& field : fields) {
             auto next = addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
-            line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = logic<" + field.width + ">((uint64_t)(this->" + field.name + "));\n";
+            line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
             line += "        }\n";
             offset = next;
         }
@@ -2784,7 +3026,7 @@ static std::string memoryDepth(const std::string& type)
     if (isMemory) {
         return args.size() == 3 ? args[2] : "";
     }
-    return args.size() == 2 ? args[1] : "";
+    return args.size() >= 2 ? args[1] : "";
 }
 
 static std::vector<std::string> memoryArgs(const std::string& type)
@@ -2797,10 +3039,12 @@ static std::vector<std::string> memoryArgs(const std::string& type)
     std::string current;
     for (size_t i = 7; i + 1 < type.size(); ++i) {
         char c = type[i];
-        if (c == '<') {
+        char prev = i > 0 ? type[i - 1] : '\0';
+        char next = i + 1 < type.size() ? type[i + 1] : '\0';
+        if (c == '<' && prev != '<' && next != '<' && next != '=') {
             ++nested;
         }
-        else if (c == '>') {
+        else if (c == '>' && prev != '>' && prev != '=' && next != '>') {
             --nested;
         }
         if (c == ',' && nested == 0) {
@@ -2826,10 +3070,12 @@ static std::vector<std::string> templateArgsFor(const std::string& type, const s
     auto start = prefix.size() + 1;
     for (size_t i = start; i + 1 < type.size(); ++i) {
         char c = type[i];
-        if (c == '<') {
+        char prev = i > 0 ? type[i - 1] : '\0';
+        char next = i + 1 < type.size() ? type[i + 1] : '\0';
+        if (c == '<' && prev != '<' && next != '<' && next != '=') {
             ++depth;
         }
-        else if (c == '>') {
+        else if (c == '>' && prev != '>' && prev != '=' && next != '>') {
             --depth;
         }
         if (c == ',' && depth == 0) {
