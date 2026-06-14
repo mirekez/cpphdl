@@ -131,6 +131,19 @@ static bool check_metric_u64(const char* name, uint64_t value, uint64_t expected
     return true;
 }
 
+static bool check_metric_u64_max_ratio(const char* name, uint64_t value, uint64_t expected, double max_ratio)
+{
+    const double hi = (double)expected * max_ratio;
+    if ((double)value > hi) {
+        std::print("PERF regression: {}={} expected at most {:.1f}x baseline {} [{:.0f}]\n",
+            name, value, max_ratio, expected, hi);
+        return false;
+    }
+    std::print("PERF metric: {}={} baseline {} max {:.1f}x\n",
+        name, value, expected, max_ratio);
+    return true;
+}
+
 static bool run_perf_test(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "perf_kernel_slice.elf";
@@ -219,7 +232,7 @@ static bool run_perf_test(bool debug)
     // reports about 29% stalled while this broader text/data/MMU ELF holds
     // around 47%.
     ok = ok && check_metric_u64("clocks", perf.clocks, expected_clocks, 10.0);
-    ok = ok && check_metric_u64("wall_us", wall_us, expected_wall_us, 15.0);
+    ok = ok && check_metric_u64_max_ratio("wall_us", wall_us, expected_wall_us, 3.0);
     ok = ok && check_metric("stall_pct", stall_pct, expected_stall_pct, 10.0);
     ok = ok && check_metric("issue_wait_pct", issue_pct, expected_issue_pct, 10.0);
     ok = ok && check_metric("total_stall_pct", total_stall_pct, expected_total_stall_pct, 10.0);
