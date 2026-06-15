@@ -205,7 +205,16 @@ int main()
   endif()
 endfunction()
 
+set(CPPHDL_LOCAL_CONDA_PREFIX "" CACHE PATH "Explicit conda prefix that contains LLVM/Clang tooling")
+if(NOT CPPHDL_LOCAL_CONDA_PREFIX AND CPPHDL_USE_LOCAL_CONDA)
+  set(CPPHDL_LOCAL_CONDA_PREFIX "${CMAKE_SOURCE_DIR}/.conda")
+endif()
+if(CPPHDL_LOCAL_CONDA_PREFIX)
+  file(TO_CMAKE_PATH "${CPPHDL_LOCAL_CONDA_PREFIX}" CPPHDL_LOCAL_CONDA_PREFIX)
+endif()
+
 foreach(CPPHDL_LLVM_PREFIX
+    "${CPPHDL_LOCAL_CONDA_PREFIX}"
     "${CMAKE_SOURCE_DIR}/.conda"
     "/usr/lib/llvm-20"
     "/usr/lib/llvm-19"
