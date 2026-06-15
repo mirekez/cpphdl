@@ -3,6 +3,7 @@
 #include "cpphdl_bitops.h"
 #include <type_traits>
 #include <initializer_list>
+#include <utility>
 
 namespace cpphdl
 {
@@ -34,6 +35,29 @@ struct is_logic<logic<WIDTH>> : std::true_type {};
 
 template<typename T>
 inline constexpr bool is_logic_v = is_logic<std::remove_cv_t<std::remove_reference_t<T>>>::value;
+
+namespace detail
+{
+
+template<typename T, typename = void>
+struct has_pack_method : std::false_type {};
+
+template<typename T>
+struct has_pack_method<T, std::void_t<decltype(std::declval<const T&>().pack())>> : std::true_type {};
+
+template<typename T, typename = void>
+struct can_static_cast_uint64 : std::false_type {};
+
+template<typename T>
+struct can_static_cast_uint64<T, std::void_t<decltype(static_cast<uint64_t>(std::declval<const T&>()))>> : std::true_type {};
+
+template<typename T, typename V, typename = void>
+struct can_assign_from : std::false_type {};
+
+template<typename T, typename V>
+struct can_assign_from<T, V, std::void_t<decltype(std::declval<T&>() = std::declval<V>())>> : std::true_type {};
+
+}
 
 template<size_t WIDTH>
 struct logic : public bitops<logic<WIDTH>>
@@ -70,7 +94,7 @@ struct logic : public bitops<logic<WIDTH>>
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
     logic(const T& other) : bytes{}
     {
-        if constexpr (requires { other.pack(); }) {
+        if constexpr (detail::has_pack_method<T>::value) {
             *this = other.pack();
         }
         else {
@@ -113,7 +137,7 @@ struct logic : public bitops<logic<WIDTH>>
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
     logic& operator=(const T& other)
     {
-        if constexpr (requires { other.pack(); }) {
+        if constexpr (detail::has_pack_method<T>::value) {
             *this = other.pack();
         }
         else {

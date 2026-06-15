@@ -27,28 +27,16 @@ struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cv_t<std::r
     constexpr static size_t value = std::remove_cv_t<std::remove_reference_t<TYPE>>::_size_bits();
 };
 
-template<typename TYPE, typename = void>
-struct array_can_static_cast_uint64
-{
-    constexpr static bool value = false;
-};
-
-template<typename TYPE>
-struct array_can_static_cast_uint64<TYPE, std::void_t<decltype(static_cast<uint64_t>(std::declval<const TYPE&>()))>>
-{
-    constexpr static bool value = true;
-};
-
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
 {
-    if constexpr (requires { value.pack(); }) {
+    if constexpr (has_pack_method<TYPE>::value) {
         return logic<WIDTH>(value.pack());
     }
     else if constexpr (is_logic_v<TYPE>) {
         return logic<WIDTH>(value);
     }
-    else if constexpr (array_can_static_cast_uint64<TYPE>::value) {
+    else if constexpr (can_static_cast_uint64<TYPE>::value) {
         return logic<WIDTH>(static_cast<uint64_t>(value));
     }
     else {
@@ -69,7 +57,7 @@ TYPE array_unpack_value(const logic<WIDTH>& value)
     else if constexpr (std::is_integral_v<TYPE> || std::is_enum_v<TYPE> || std::is_constructible_v<TYPE, uint64_t>) {
         out = TYPE(static_cast<uint64_t>(value));
     }
-    else if constexpr (requires(TYPE v) { v = 0; }) {
+    else if constexpr (can_assign_from<TYPE, int>::value) {
         out = 0;
     }
     return out;
@@ -88,10 +76,10 @@ struct array_packed_ref
     template<typename T>
     array_packed_ref& operator=(const T& value)
     {
-        if constexpr (requires { value.pack(); }) {
+        if constexpr (has_pack_method<T>::value) {
             ref = value.pack();
         }
-        else if constexpr (array_can_static_cast_uint64<T>::value && !is_logic_v<T> && !is_logic_bits_v<T>) {
+        else if constexpr (can_static_cast_uint64<T>::value && !is_logic_v<T> && !is_logic_bits_v<T>) {
             ref = static_cast<uint64_t>(value);
         }
         else {
@@ -150,7 +138,7 @@ struct array_packed_ref
         else if constexpr (std::is_integral_v<T> || std::is_enum_v<T> || std::is_constructible_v<T, uint64_t>) {
             return T(static_cast<uint64_t>(tmp));
         }
-        else if constexpr (requires(T value, logic<ELEMENT_BITS> bits) { value = bits; }) {
+        else if constexpr (can_assign_from<T, logic<ELEMENT_BITS>>::value) {
             T value{};
             value = tmp;
             return value;
@@ -226,9 +214,9 @@ template<typename TYPE, size_t COUNT, bool PACKED>
 struct array;
 
 template<typename TYPE, size_t COUNT>
-struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
+struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>>
 {
-    constexpr static size_t ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
+    constexpr static size_t ELEMENT_BITS = sizeof(TYPE) * 8;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;
     constexpr static bool PACKED = false;
@@ -270,17 +258,7 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * detail::array_pac
     TYPE& operator[](std::size_t i) { return data[i]; }
     const TYPE& operator[](std::size_t i) const { return data[i]; }
 
-    logic<SIZE_BITS> pack() const
-    {
-        logic<SIZE_BITS> packed = 0;
-        for (size_t i = 0; i < COUNT; ++i) {
-            auto elem = detail::array_pack_value<ELEMENT_BITS>(data[i]);
-            for (size_t bit = 0; bit < ELEMENT_BITS; ++bit) {
-                packed.set(i * ELEMENT_BITS + bit, elem.get(bit));
-            }
-        }
-        return packed;
-    }
+    array<TYPE, COUNT, true> pack() const;
 
     logic_bits<SIZE_BITS> bits(size_t last, size_t first)
     {
@@ -338,31 +316,6 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * detail::array_pac
     array& operator^=(const array& other)
     {
         return (array&)(*this = *this ^ other);
-    }
-
-    explicit operator uint64_t() const
-    {
-        return pack().to_ullong();
-    }
-
-    explicit operator bool() const
-    {
-        return pack().to_ullong();
-    }
-
-    explicit operator uint32_t() const
-    {
-        return pack().to_ullong();
-    }
-
-    explicit operator uint16_t() const
-    {
-        return pack().to_ullong();
-    }
-
-    explicit operator uint8_t() const
-    {
-        return pack().to_ullong();
     }
 
     std::string to_string()
@@ -429,7 +382,7 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
         else if constexpr (std::is_integral_v<TYPE> || std::is_enum_v<TYPE> || std::is_constructible_v<TYPE, uint64_t>) {
             return TYPE(static_cast<uint64_t>(tmp));
         }
-        else if constexpr (requires(TYPE value, logic<ELEMENT_BITS> bits) { value = bits; }) {
+        else if constexpr (detail::can_assign_from<TYPE, logic<ELEMENT_BITS>>::value) {
             TYPE value{};
             value = tmp;
             return value;
@@ -494,6 +447,16 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
 
 template<size_t COUNT, bool PACKED>
 struct array<void,COUNT,PACKED> {};
+
+template<typename TYPE, size_t COUNT>
+array<TYPE, COUNT, true> array<TYPE, COUNT, false>::pack() const
+{
+    array<TYPE, COUNT, true> packed;
+    for (size_t i = 0; i < COUNT; ++i) {
+        packed[i] = data[i];
+    }
+    return packed;
+}
 
 
 }

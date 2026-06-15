@@ -144,10 +144,10 @@ constexpr size_t type_width()
 template<size_t WIDTH, typename T>
 constexpr logic<WIDTH> pack_value(const T& value)
 {
-    if constexpr (requires { value.pack(); }) {
+    if constexpr (detail::has_pack_method<T>::value) {
         return logic<WIDTH>(value.pack());
     }
-    else if constexpr (requires { static_cast<uint64_t>(value); }) {
+    else if constexpr (detail::can_static_cast_uint64<T>::value) {
         return logic<WIDTH>(static_cast<uint64_t>(value));
     }
     else {
@@ -168,7 +168,7 @@ constexpr T unpack_value(const logic<WIDTH>& value)
     else if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
         out = static_cast<T>(static_cast<uint64_t>(value));
     }
-    else if constexpr (requires(T v) { v = 0; }) {
+    else if constexpr (detail::can_assign_from<T, int>::value) {
         out = 0;
     }
     return out;
