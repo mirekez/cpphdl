@@ -70,6 +70,82 @@ constexpr T sv_cast(const V& value)
     return out;
 }
 
+template<size_t WIDTH, typename T>
+constexpr int64_t sv_signed(const T& value)
+{
+    uint64_t raw = static_cast<uint64_t>(value);
+    if constexpr (WIDTH == 0) {
+        return 0;
+    }
+    else if constexpr (WIDTH >= 64) {
+        return static_cast<int64_t>(raw);
+    }
+    else {
+        constexpr uint64_t mask = (1ull << WIDTH) - 1ull;
+        constexpr uint64_t sign = 1ull << (WIDTH - 1);
+        raw &= mask;
+        if ((raw & sign) != 0) {
+            raw |= ~mask;
+        }
+        return static_cast<int64_t>(raw);
+    }
+}
+
+template<size_t WIDTH, typename T>
+constexpr uint64_t sv_unsigned(const T& value)
+{
+    uint64_t raw = static_cast<uint64_t>(value);
+    if constexpr (WIDTH == 0) {
+        return 0;
+    }
+    else if constexpr (WIDTH >= 64) {
+        return raw;
+    }
+    else {
+        return raw & ((1ull << WIDTH) - 1ull);
+    }
+}
+
+template<size_t WIDTH, typename T>
+constexpr logic<WIDTH> sv_bits(const T& value, size_t last, size_t first)
+{
+    if constexpr (requires { value.bits(last, first); }) {
+        return logic<WIDTH>(value.bits(last, first));
+    }
+    else {
+        auto raw = static_cast<uint64_t>(value);
+        if constexpr (WIDTH == 0) {
+            return logic<WIDTH>(0);
+        }
+        else if constexpr (WIDTH >= 64) {
+            return logic<WIDTH>(raw >> first);
+        }
+        else {
+            return logic<WIDTH>((raw >> first) & ((1ull << WIDTH) - 1ull));
+        }
+    }
+}
+
+template<typename T>
+constexpr uint64_t sv_bits_runtime(const T& value, size_t last, size_t first)
+{
+    auto width = last >= first ? last - first + 1 : 0;
+    uint64_t raw = 0;
+    if constexpr (requires { value.bits(last, first); }) {
+        raw = static_cast<uint64_t>(value.bits(last, first));
+    }
+    else {
+        raw = static_cast<uint64_t>(value) >> first;
+    }
+    if (width == 0) {
+        return 0;
+    }
+    if (width >= 64) {
+        return raw;
+    }
+    return raw & ((1ull << width) - 1ull);
+}
+
 template<size_t WIDTH>
 constexpr logic<WIDTH> byteswap(const logic<WIDTH>& value)
 {
