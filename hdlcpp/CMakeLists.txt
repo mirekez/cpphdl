@@ -20,3 +20,7 @@ endif()
 add_executable(hdlcpp hdlcpp.cpp)
 target_include_directories(hdlcpp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(hdlcpp PRIVATE slang::slang)
+
+add_executable(test_combs tests/test_combs.cpp)
+target_include_directories(test_combs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME hdlcpp_test_combs COMMAND test_combs)

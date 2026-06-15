@@ -215,7 +215,8 @@
                 return emitCombOutputRead(*mod, name);
             }
             auto isRegisterObject = mod->types.count(name) && mod->types.at(name).rfind("reg<", 0) == 0;
-            if (!isRegisterObject && mod->wireMap.count(name)) {
+            if (!isRegisterObject && mod->wireMap.count(name) &&
+                moduleMethodExists(*mod, mod->wireMap[name])) {
                 return mod->wireMap[name] + "()";
             }
             if (!isRegisterObject && mod->combSideEffectDriver.count(name)) {
@@ -317,7 +318,8 @@
                 memoryScalar = memorySelect && scalarMemory(currentType);
             }
             auto keyIsRegisterObject = mod->types.count(key) && mod->types.at(key).rfind("reg<", 0) == 0;
-            if (!keyIsRegisterObject && mod->wireMap.count(key)) {
+            if (!keyIsRegisterObject && mod->wireMap.count(key) &&
+                moduleMethodExists(*mod, mod->wireMap[key])) {
                 return mod->wireMap[key] + "()";
             }
             return s;
@@ -935,6 +937,88 @@
                     ++it;
                 }
             }
+            auto isGeneratedCombStorage = [&](const std::string& base) {
+                for (const auto& out : m.outputPortCppNames) {
+                    if (base == outputStorageName(m, out.first) ||
+                        base == combStorageName(m, out.first)) {
+                        return true;
+                    }
+                }
+                for (const auto& method : m.methods) {
+                    if (!method.returnName.empty() && base == method.returnName) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            for (const auto& method : m.methods) {
+                for (const auto& line : method.body) {
+                    auto base = hdlcpp::assignmentBase(line);
+                    if (base.empty() || method.localNames.count(base) || isGeneratedCombStorage(base) ||
+                        m.types.count(base) || m.outputPortCppNames.count(base)) {
+                        continue;
+                    }
+                    if (std::find(m.memberNames.begin(), m.memberNames.end(), base) != m.memberNames.end() ||
+                        m.memberArraySizes.count(base)) {
+                        continue;
+                    }
+                    auto rhs = hdlcpp::assignmentRhs(line);
+                    auto width = foldWidth(typeWidth(expressionStorageType(m, rhs)));
+                    auto type = (isNumber(width) && width != "0") ? ("logic<" + width + ">") : std::string("logic<1>");
+                    m.types[base] = type;
+                    if (!m.varNames.count(base)) {
+                        m.vars.push_back({type, base});
+                        m.varNames.insert(base);
+                    }
+                }
+                if (method.name.find("_comb_func") != std::string::npos) {
+                    for (const auto& line : method.body) {
+                        auto base = hdlcpp::assignmentBase(line);
+                        if (base.empty() || base == method.returnBase || base == method.returnName ||
+                            method.localNames.count(base) ||
+                            isGeneratedCombStorage(base) ||
+                            !m.types.count(base) || (m.types[base].rfind("reg<", 0) == 0)) {
+                            continue;
+                        }
+                        m.combAssignedVars.insert(base);
+                        m.combSideEffectDriver.emplace(base, method.name);
+                    }
+                }
+            }
+            for (const auto& item : m.combSideEffectDriver) {
+                const auto& base = item.first;
+                const auto& driver = item.second;
+                if (base.empty() || driver.empty() || m.combMethodByBase.count(base)) {
+                    continue;
+                }
+                if (m.types.count(base) && m.types[base].rfind("reg<", 0) == 0) {
+                    continue;
+                }
+                std::string retType;
+                std::string returnName;
+                if (m.outputPortCppNames.count(base)) {
+                    retType = outputStorageType(m, base, m.outputPortCppNames[base]);
+                    returnName = outputStorageName(m, base);
+                }
+                else if (m.types.count(base)) {
+                    retType = unwrapRegType(m.types[base]);
+                    returnName = combStorageName(m, base);
+                }
+                if (retType.empty() || returnName.empty()) {
+                    continue;
+                }
+                MethodGen bridge;
+                bridge.name = base + "_comb_func";
+                bridge.ret = retType + "&";
+                bridge.returnName = returnName;
+                bridge.returnBase = base;
+                bridge.body.push_back(driver + "();");
+                m.combReturnTypes[returnName] = retType;
+                m.combMethodByBase[base] = m.methods.size();
+                m.wireMap[base] = bridge.name;
+                m.combAssignedVars.insert(base);
+                m.methods.push_back(bridge);
+            }
             if (m.isPackage) {
                 if (std::any_of(m.packageDecls.begin(), m.packageDecls.end(), [](const std::string& decl) {
                         return decl.find(" SNAN ") != std::string::npos;
@@ -1031,7 +1115,7 @@
                 }
                 auto drivers = combDriversFor(m, svName);
                 if (!hasRuntimeAssignLines(m)) {
-                    drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string("assign_comb_func")), drivers.end());
+                    drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string(continuousCombFuncName())), drivers.end());
                 }
                 if (drivers.empty()) {
                     return "";
@@ -1069,10 +1153,61 @@
                 }
                 return false;
             };
+            auto normalizeChildOutputPortInit = [&](std::string init) {
+                auto assignPos = init.find("_ASSIGN(");
+                if (assignPos == std::string::npos || init.find("_ASSIGN_COMB(") != std::string::npos) {
+                    return init;
+                }
+                auto exprBegin = assignPos + std::string("_ASSIGN(").size();
+                auto exprEnd = init.rfind(')');
+                if (exprEnd == std::string::npos || exprEnd <= exprBegin) {
+                    return init;
+                }
+                auto expr = trim(init.substr(exprBegin, exprEnd - exprBegin));
+                if (isChildOutputPortCall(m, expr)) {
+                    init.replace(assignPos, std::string("_ASSIGN").size(), "_ASSIGN_COMB");
+                }
+                return init;
+            };
+            auto childOutputBridgeRhs = [&](const std::string& svName) -> std::string {
+                if (!isAssignOnlyOutput(m, svName)) {
+                    return "";
+                }
+                auto it = m.assignExprByBase.find(svName);
+                if (it == m.assignExprByBase.end()) {
+                    return "";
+                }
+                auto rhs = postProcessCppLine(lateBindExpr(m, it->second, ""));
+                return isChildOutputPortCall(m, rhs) ? rhs : std::string();
+            };
+            auto combOutputDrivers = [&](const std::string& svName) {
+                auto drivers = combDriversFor(m, svName);
+                if (!hasRuntimeAssignLines(m)) {
+                    drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string(continuousCombFuncName())), drivers.end());
+                }
+                return drivers;
+            };
             for (auto& p : m.ports) {
                 std::string init = p.init;
+                bool emittedForwardingPort = false;
 	                for (auto& out : m.outputPortCppNames) {
 	                    if (out.second == p.name) {
+                        auto bridgeRhs = childOutputBridgeRhs(out.first);
+                        if (!bridgeRhs.empty() && p.array.empty()) {
+                            h << "    " << postProcessCppLine(p.type) << "& " << p.name << "() { return " << bridgeRhs << "; }\n";
+                            emittedForwardingPort = true;
+                            break;
+                        }
+                        auto combDrivers = combOutputDrivers(out.first);
+                        if (!combDrivers.empty() && isCombOnlyOutput(m, out.first) && p.array.empty() &&
+                            (configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", m.name + "|" + out.first) ||
+                             configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", m.name + "|" + p.name))) {
+                            h << "    " << postProcessCppLine(p.type) << "& " << p.name
+                              << "() { __readonly_" << out.first << "_comb_func(); return "
+                              << outputStorageName(m, out.first) << "; }\n";
+                            emittedForwardingPort = true;
+                            break;
+                        }
                         if (isCombOnlyOutput(m, out.first)) {
                             auto combInit = combOutputInit(out.first);
                             if (!combInit.empty()) {
@@ -1101,8 +1236,17 @@
 	                        break;
 	                    }
 	                }
+                            if (emittedForwardingPort) {
+                                continue;
+                            }
                             init = lateBindExpr(m, init, "");
                             auto processedInit = postProcessCppLine(init);
+                            if (outputPortWithName(p.name)) {
+                                processedInit = normalizeChildOutputPortInit(processedInit);
+                            }
+                            if (outputPortWithName(p.name) && trim(processedInit).empty()) {
+                                processedInit = " = _ASSIGN( " + postProcessCppLine(p.type) + "{} )";
+                            }
                             if (outputPortWithName(p.name) && initReferencesChild(processedInit)) {
                                 if (!trim(processedInit).empty()) {
                                     auto eq = processedInit.find('=');
@@ -1131,8 +1275,7 @@
 	                    continue;
 	                }
 	                auto boundLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(m, structuralAssignMethod, line)));
-	                if (boundLine.find("_comb_func()") != std::string::npos ||
-	                    boundLine.find("assign_comb_func()") != std::string::npos) {
+	                if (boundLine.find("_comb_func()") != std::string::npos) {
 	                    line = finalAdaptStructuralAssignLine(m, boundLine);
 	                }
 	            }
@@ -1148,24 +1291,52 @@
 	            if (!combActiveFlags.empty()) {
 	                h << "\n";
 	            }
+            std::set<std::string> declaredPrivateNames;
             for (auto& p : m.outputPortCppNames) {
                 if (isAssignOnlyOutput(m, p.first)) {
                     continue;
                 }
-                if (isCombOnlyOutput(m, p.first) && m.wireMap.count(p.first)) {
+                bool storageDeclaredByLazyComb = false;
+                if (auto it = m.combMethodByBase.find(p.first);
+                    it != m.combMethodByBase.end() && it->second < m.methods.size()) {
+                    const auto& method = m.methods[it->second];
+                    storageDeclaredByLazyComb = method.returnName == outputStorageName(m, p.first) &&
+                        !noCacheCombMethod(m, method);
+                }
+                if (storageDeclaredByLazyComb) {
                     continue;
                 }
                 auto storageType = outputStorageType(m, p.first, p.second);
                 if (m.seqAssignedVars.count(p.first)) {
                     storageType = regTypeFor(storageType);
                 }
-                h << "    " << storageType << " " << outputStorageName(m, p.first) << ";\n";
+                auto storageName = outputStorageName(m, p.first);
+                if (!storageName.empty() && !declaredPrivateNames.count(storageName)) {
+                    h << "    " << storageType << " " << storageName << ";\n";
+                    declaredPrivateNames.insert(storageName);
+                }
             }
             for (auto& v : m.vars) {
                 if (m.bridgeAssignVars.count(v.second)) {
                     continue;
                 }
-                if (m.combMethodByBase.count(v.second) && !m.seqAssignedVars.count(v.second)) {
+                bool isOutputStorage = false;
+                for (const auto& out : m.outputPortCppNames) {
+                    if (v.second == outputStorageName(m, out.first) ||
+                        v.second == combStorageName(m, out.first)) {
+                        isOutputStorage = true;
+                        break;
+                    }
+                }
+                if (isOutputStorage) {
+                    continue;
+                }
+                if (declaredPrivateNames.count(v.second)) {
+                    continue;
+                }
+                if (auto it = m.combMethodByBase.find(v.second);
+                    it != m.combMethodByBase.end() && it->second < m.methods.size() &&
+                    !m.seqAssignedVars.count(v.second) && !noCacheCombMethod(m, m.methods[it->second])) {
                     continue;
                 }
                 auto emittedType = (m.combAssignedVars.count(v.second) && !m.seqAssignedVars.count(v.second)) ? unwrapRegType(v.first) :
@@ -1185,17 +1356,20 @@
                     h << "    " << emittedType << " " << v.second;
                 }
                 h << ";\n";
+                declaredPrivateNames.insert(v.second);
             }
             std::set<std::string> explicitCombStorage;
             for (auto& f : m.methods) {
                 if (!noCacheCombMethod(m, f) || f.returnName.empty() ||
-                    explicitCombStorage.count(f.returnName)) {
+                    explicitCombStorage.count(f.returnName) ||
+                    declaredPrivateNames.count(f.returnName)) {
                     continue;
                 }
                 auto typeIt = m.combReturnTypes.find(f.returnName);
                 auto type = typeIt != m.combReturnTypes.end() ? typeIt->second : std::string("auto");
                 h << "    " << postProcessCppLine(type) << " " << f.returnName << ";\n";
                 explicitCombStorage.insert(f.returnName);
+                declaredPrivateNames.insert(f.returnName);
             }
 	            h << "\n";
 	            if (configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", m.name)) {
@@ -1253,6 +1427,13 @@
 	                h << "        return data_o_comb;\n";
 	                h << "    }\n\n";
 	            }
+            for (auto& out : m.outputPortCppNames) {
+                if (isCombOnlyOutput(m, out.first) &&
+                    (configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", m.name + "|" + out.first) ||
+                     configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", m.name + "|" + out.second))) {
+                    emitReadonlyCombOutputMethod(h, m, out.first);
+                }
+            }
 	            for (auto& f : m.methods) {
                 if (f.name.find("_comb_func") == std::string::npos) {
                     continue;
@@ -1261,8 +1442,17 @@
             }
             if (hasRuntimeAssignLines(m)) {
                 MethodGen runtimeAssignMethod;
-                runtimeAssignMethod.name = "assign_comb_func";
-                h << "    void assign_comb_func()\n    {\n";
+                runtimeAssignMethod.name = continuousCombFuncName();
+                if (const char* debugModules = std::getenv("HDLCPP_DEBUG_ASSIGN_MODULES");
+                    debugModules && (std::string(debugModules) == "*" ||
+                                     std::string(debugModules).find(m.name) != std::string::npos)) {
+                    std::cerr << "HDLCPP_ASSIGN_DEBUG module=" << m.name << "\n";
+                    for (const auto& line : m.assignLines) {
+                        std::cerr << line << "\n";
+                    }
+                    std::cerr << "HDLCPP_ASSIGN_DEBUG_END\n";
+                }
+                h << "    void " << continuousCombFuncName() << "()\n    {\n";
                 if (!configuredNameEquals("HDLCPP_SKIP_ASSIGN_MODULES", m.name)) {
                     for (auto& line : m.assignLines) {
                         if (isStructuralAssignLine(line)) {
@@ -1497,6 +1687,7 @@
 		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
 		                    }
 		                    emittedAssignLine = normalizeAssignWrapperForCombCalls(finalAdaptStructuralAssignLine(m, emittedAssignLine));
+                            emittedAssignLine = normalizeChildOutputPortAssignWrapper(m, emittedAssignLine);
                     auto arraySize = directMemberBindingArraySize(line);
 		                    if (!arraySize.empty()) {
 		                        const std::string generatedLoopAliases[] = {"j", "k", "m", "z_gen", "w_gen"};
@@ -1542,6 +1733,7 @@
 		                        replaceAll(emittedAssignLine, "decltype(" + typeKv.first + ")", typeKv.second);
 		                    }
 		                    emittedAssignLine = normalizeAssignWrapperForCombCalls(finalAdaptStructuralAssignLine(m, emittedAssignLine));
+                            emittedAssignLine = normalizeChildOutputPortAssignWrapper(m, emittedAssignLine);
                     if (configuredNameEquals("HDLCPP_SKIP_ASSIGN_LINE_PREFIXES", m.name + "|" + trim(emittedAssignLine).substr(0, trim(emittedAssignLine).find(' ')))) {
 		                        continue;
 		                    }
@@ -1559,7 +1751,7 @@
                         }
 		            }
             for (auto& line : deferredPortInitLines) {
-                h << "        " << line << "\n";
+                h << "        " << normalizeChildOutputPortAssignWrapper(m, line) << "\n";
             }
             for (auto& name : m.memberNames) {
                 auto arr = m.memberArraySizes.find(name);
@@ -1594,7 +1786,7 @@
                         base == out.second) {
                         if (!m.seqAssignedVars.count(out.first)) {
                             m.combAssignedVars.insert(out.first);
-                            m.combSideEffectDriver.emplace(out.first, "assign_comb_func");
+                            m.combSideEffectDriver.emplace(out.first, continuousCombFuncName());
                         }
                         break;
                     }
@@ -1603,7 +1795,7 @@
             if (!base.empty() && m.varNames.count(base) && !m.seqAssignedVars.count(base) &&
                 !m.outputPortCppNames.count(base) && !m.combMethodByBase.count(base)) {
                 m.combAssignedVars.insert(base);
-                m.combSideEffectDriver.emplace(base, "assign_comb_func");
+                m.combSideEffectDriver.emplace(base, continuousCombFuncName());
             }
         }
         auto substituteConfiguredPortType = [&](const std::string& moduleType, const std::string& params, std::string typeText) {
@@ -1636,8 +1828,7 @@
         };
         auto needsCombPortBinding = [](const std::string& rhs) {
             return !isSimpleCombRef(rhs) &&
-                   (rhs.find("_comb_func()") != std::string::npos ||
-                    rhs.find("assign_comb_func()") != std::string::npos);
+                   rhs.find("_comb_func()") != std::string::npos;
         };
         auto materializeCombPortBinding = [&](const std::string& instance, const std::string& portName,
                                               const std::string& typeText, const std::string& rhs) {
@@ -1682,6 +1873,7 @@
             bool isOutput = false;
             std::string portType = "bool";
             bool portTypeKnown = false;
+            bool outputIsPortRef = false;
             if (child) {
                 if (child->portCppNames.count(conn.port)) {
                     portName = child->portCppNames[conn.port];
@@ -1704,6 +1896,7 @@
                         portTypeKnown = true;
                         if (p.direction == "output") {
                             isOutput = true;
+                            outputIsPortRef = true;
                         }
                         break;
                     }
@@ -1770,7 +1963,7 @@
                         m.assignExprByBase[outBase] = outExpr;
                         for (auto& p : m.ports) {
                             if (p.name == m.outputPortCppNames[outBase]) {
-                                p.init = " = _ASSIGN_COMB( " + outExpr + " )";
+                                p.init = " = " + std::string(outputIsPortRef ? "_ASSIGN_COMB" : "_ASSIGN") + "( " + outExpr + " )";
                                 break;
                             }
                         }
@@ -1793,7 +1986,7 @@
                 rhs = lateBindExpr(m, rhs, "");
                 std::string wrapper = isSimpleCombRef(rhs) ? "_ASSIGN_COMB" : "_ASSIGN";
                 if (!rawRhsBase.empty() && m.combAssignedVars.count(rawRhsBase) && !m.seqAssignedVars.count(rawRhsBase) && !m.combMethodByBase.count(rawRhsBase) && !m.combSideEffectDriver.count(rawRhsBase) && hasRuntimeAssignLines(m)) {
-                    rhs = "(assign_comb_func(), " + rhs + ")";
+                    rhs = "(" + std::string(continuousCombFuncName()) + "(), " + rhs + ")";
                     wrapper = "_ASSIGN_COMB";
                 }
                 else if (!rawRhsBase.empty() && m.combSideEffectDriver.count(rawRhsBase) && !m.seqAssignedVars.count(rawRhsBase)) {
@@ -1851,6 +2044,44 @@
 
     void wireAssignsToPorts(ModuleGen& m)
     {
+        auto rhsIsChildOutputPortRef = [&](const std::string& expr) {
+            auto s = trim(expr);
+            if (!hasSuffix(s, "()")) {
+                return false;
+            }
+            s = trim(s.substr(0, s.size() - 2));
+            auto dot = s.find('.');
+            if (dot == std::string::npos || s.find('.', dot + 1) != std::string::npos) {
+                return false;
+            }
+            auto instance = trim(s.substr(0, dot));
+            auto portName = trim(s.substr(dot + 1));
+            if (instance.empty() || portName.empty() || instance.find('[') != std::string::npos) {
+                return false;
+            }
+            std::string childType;
+            for (size_t i = 0; i < m.memberNames.size() && i < m.memberTypes.size(); ++i) {
+                if (m.memberNames[i] == instance) {
+                    childType = m.memberTypes[i];
+                    break;
+                }
+            }
+            auto* child = childType.empty() ? nullptr : findModule(childType);
+            if (!child) {
+                return false;
+            }
+            for (const auto& out : child->outputPortCppNames) {
+                if (out.first == portName || out.second == portName) {
+                    return true;
+                }
+            }
+            for (const auto& p : child->ports) {
+                if (p.direction == "output" && p.name == portName) {
+                    return true;
+                }
+            }
+            return false;
+        };
         for (auto& a : m.assigns) {
             for (auto& p : m.ports) {
                 if (p.name == a.first && p.init.empty()) {
@@ -1866,8 +2097,12 @@
                         (m.combAssignedVars.count(rhsBase) ||
                          m.combMethodByBase.count(rhsBase) ||
                          m.combSideEffectDriver.count(rhsBase));
-                    auto wrapper = (m.varNames.count(a.second) && !combDrivenLocal) ? "_ASSIGN_REG" :
+                    std::string wrapper = (m.varNames.count(a.second) && !combDrivenLocal) ? "_ASSIGN_REG" :
                         (combDrivenLocal ? "_ASSIGN_COMB" : "_ASSIGN");
+                    auto rhsForWrapper = lateBindExpr(m, rhs, "");
+                    if (wrapper == "_ASSIGN" && rhsIsChildOutputPortRef(rhsForWrapper)) {
+                        wrapper = "_ASSIGN_COMB";
+                    }
                     p.init = std::string(" = ") + wrapper + "( " + rhs + " )";
                 }
             }
@@ -2254,10 +2489,7 @@
             configuredNameEquals("HDLCPP_NOCACHE_COMB_METHODS", method.returnName)) {
             return true;
         }
-        return emitPlainCombMethod(mod, method) ||
-               isPurePortBridgeComb(mod, method) ||
-               isChildOutputComb(mod, method) ||
-               isPureCombOutputBundle(mod, method);
+        return emitPlainCombMethod(mod, method);
     }
 
     bool methodBodyMentionsCombMethod(const MethodGen& method, const MethodGen& candidate,
@@ -2328,6 +2560,23 @@
         auto comb = method.name.find("_comb_func") != std::string::npos;
         auto selfStrippedLine = stripSelfSideEffectWrappers(mod, line, method.name);
         auto trimmed = trim(selfStrippedLine);
+        auto bindWithLocals = [&](std::string text, const std::string& exclude, bool lhs = false) {
+            std::vector<std::pair<std::string, std::string>> protectedNames;
+            size_t idx = 0;
+            for (const auto& local : method.localNames) {
+                if (local.empty() || local == exclude) {
+                    continue;
+                }
+                auto placeholder = "__hdlcpp_local_" + std::to_string(idx++) + "__";
+                replaceIdentifierAll(text, local, placeholder);
+                protectedNames.push_back({placeholder, local});
+            }
+            auto out = lateBindExpr(mod, text, exclude, method.name, lhs);
+            for (const auto& item : protectedNames) {
+                replaceIdentifierAll(out, item.first, item.second);
+            }
+            return out;
+        };
         if (trimmed.rfind("case ", 0) == 0 || trimmed.rfind("default:", 0) == 0 ||
             trimmed == "{" || trimmed == "}" || trimmed == "else {") {
             return selfStrippedLine;
@@ -2339,37 +2588,49 @@
             if (comb && !method.returnName.empty() && !method.returnBase.empty()) {
                 replaceIdentifierAll(controlLine, method.returnBase, method.returnName);
             }
-            return lateBindExpr(mod, controlLine, "", method.name);
+            return bindWithLocals(controlLine, "");
         }
         auto eq = selfStrippedLine.find('=');
         if (eq == std::string::npos) {
-            return lateBindExpr(mod, selfStrippedLine, "", method.name);
+            if (!hdlcpp::declarationName(selfStrippedLine).empty()) {
+                return selfStrippedLine;
+            }
+            return bindWithLocals(selfStrippedLine, "");
         }
         auto lhs = selfStrippedLine.substr(0, eq);
         auto rhs = selfStrippedLine.substr(eq + 1);
+        auto declaredLocal = hdlcpp::declarationName(selfStrippedLine);
+        if (!declaredLocal.empty()) {
+            auto boundRhs = bindWithLocals(rhs, "");
+            return lhs + "=" + boundRhs;
+        }
         auto lhsBase = baseFromLValueText(lhs);
-        if (comb && !method.returnName.empty() && !lhsBase.empty() && lhsBase == method.returnBase) {
+        if (comb && !method.returnName.empty() && !lhsBase.empty() && lhsBase == method.returnBase &&
+            !method.localNames.count(lhsBase)) {
             auto baseEnd = lhs.find(lhsBase);
             if (baseEnd != std::string::npos) {
                 lhs.replace(baseEnd, lhsBase.size(), method.returnName);
             }
         }
-        else if (comb && !lhsBase.empty() && mod.combMethodByBase.count(lhsBase) && !mod.seqAssignedVars.count(lhsBase)) {
+        else if (comb && !lhsBase.empty() && !method.localNames.count(lhsBase) &&
+                 mod.combMethodByBase.count(lhsBase) && !mod.seqAssignedVars.count(lhsBase)) {
             auto baseEnd = lhs.find(lhsBase);
             if (baseEnd != std::string::npos) {
                 lhs.replace(baseEnd, lhsBase.size(), combStorageName(mod, lhsBase));
             }
         }
-        else if (!comb && !lhsBase.empty() && mod.combMethodByBase.count(lhsBase) && !mod.seqAssignedVars.count(lhsBase)) {
+        else if (!comb && !lhsBase.empty() && !method.localNames.count(lhsBase) &&
+                 mod.combMethodByBase.count(lhsBase) && !mod.seqAssignedVars.count(lhsBase)) {
             auto baseEnd = lhs.find(lhsBase);
             if (baseEnd != std::string::npos) {
                 lhs.replace(baseEnd, lhsBase.size(), combStorageName(mod, lhsBase));
             }
         }
-        if (comb && !method.returnName.empty() && !method.returnBase.empty()) {
+        if (comb && !method.returnName.empty() && !method.returnBase.empty() &&
+            !method.localNames.count(method.returnBase)) {
             replaceIdentifierAll(rhs, method.returnBase, method.returnName);
         }
-        auto boundLhs = lateBindExpr(mod, lhs, lhsBase, method.name, true);
+        auto boundLhs = bindWithLocals(lhs, lhsBase, true);
         auto trimmedLhs = trim(lhs);
         for (auto& outPort : mod.outputPortCppNames) {
             if (trimmedLhs == outPort.second && isAssignOnlyOutput(mod, outPort.first)) {
@@ -2378,7 +2639,7 @@
             }
         }
         auto rhsExclude = (comb && !method.returnName.empty()) ? method.returnName : std::string();
-        auto boundRhs = lateBindExpr(mod, rhs, rhsExclude, method.name);
+        auto boundRhs = bindWithLocals(rhs, rhsExclude);
         for (auto& combItem : mod.combMethodByBase) {
             if (combItem.second >= mod.methods.size()) {
                 continue;
@@ -2411,6 +2672,216 @@
             replaceAll(line, "_ASSIGN_REG(", "_ASSIGN_COMB(");
         }
         return line;
+    }
+
+    bool isChildOutputPortCall(const ModuleGen& mod, std::string expr)
+    {
+        expr = trim(expr);
+        if (!hasSuffix(expr, "()")) {
+            return false;
+        }
+        expr = trim(expr.substr(0, expr.size() - 2));
+        auto dot = expr.find('.');
+        if (dot == std::string::npos || expr.find('.', dot + 1) != std::string::npos) {
+            return false;
+        }
+        auto instance = trim(expr.substr(0, dot));
+        auto portName = trim(expr.substr(dot + 1));
+        if (instance.empty() || portName.empty() || instance.find('[') != std::string::npos) {
+            return false;
+        }
+        std::string childType;
+        for (size_t i = 0; i < mod.memberNames.size() && i < mod.memberTypes.size(); ++i) {
+            if (mod.memberNames[i] == instance) {
+                childType = mod.memberTypes[i];
+                break;
+            }
+        }
+        auto baseChildType = trim(childType);
+        if (auto lt = baseChildType.find('<'); lt != std::string::npos) {
+            baseChildType = trim(baseChildType.substr(0, lt));
+        }
+        auto configuredOutput = [&](const std::string& name) {
+            auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
+            auto check = [&](const std::string& key) {
+                auto it = portTypes.find(key);
+                if (it == portTypes.end()) {
+                    return false;
+                }
+                auto spec = it->second;
+                auto sep = spec.find(':');
+                auto direction = trim(sep == std::string::npos ? spec : spec.substr(0, sep));
+                return direction == "output";
+            };
+            return check(childType + "." + name) || check(baseChildType + "." + name);
+        };
+        if (configuredOutput(portName)) {
+            return true;
+        }
+        if (hasSuffix(portName, "_out") && configuredOutput(portName.substr(0, portName.size() - 4))) {
+            return true;
+        }
+        auto* child = childType.empty() ? nullptr : findModule(childType);
+        if (!child) {
+            return false;
+        }
+        for (const auto& out : child->outputPortCppNames) {
+            if (out.first == portName || out.second == portName) {
+                return true;
+            }
+        }
+        for (const auto& p : child->ports) {
+            if (p.direction == "output" && p.name == portName) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string normalizeChildOutputPortAssignWrapper(const ModuleGen& mod, std::string line)
+    {
+        auto assignPos = line.find("_ASSIGN(");
+        if (assignPos == std::string::npos || line.find("_ASSIGN_COMB(") != std::string::npos) {
+            return line;
+        }
+        auto exprBegin = assignPos + std::string("_ASSIGN(").size();
+        auto exprEnd = line.rfind(')');
+        if (exprEnd == std::string::npos || exprEnd <= exprBegin) {
+            return line;
+        }
+        auto expr = trim(line.substr(exprBegin, exprEnd - exprBegin));
+        if (isChildOutputPortCall(mod, expr)) {
+            line.replace(assignPos, std::string("_ASSIGN").size(), "_ASSIGN_COMB");
+        }
+        return line;
+    }
+
+    bool lineAssignsTarget(const std::string& line, const std::string& target)
+    {
+        auto t = trim(line);
+        if (t.rfind(target, 0) != 0) {
+            return false;
+        }
+        if (t.size() == target.size()) {
+            return false;
+        }
+        auto c = t[target.size()];
+        if (c != ' ' && c != '\t' && c != '=' && c != '[' && c != '.') {
+            return false;
+        }
+        return t.find('=') != std::string::npos;
+    }
+
+    int braceDelta(const std::string& line)
+    {
+        int delta = 0;
+        bool inString = false;
+        bool escape = false;
+        for (char c : line) {
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escape = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (c == '{') {
+                ++delta;
+            }
+            else if (c == '}') {
+                --delta;
+            }
+        }
+        return delta;
+    }
+
+    void emitReadonlyCombOutputMethod(std::ofstream& out, const ModuleGen& mod, const std::string& svName)
+    {
+        auto drivers = combDriversFor(mod, svName);
+        if (drivers.empty()) {
+            return;
+        }
+        auto driverName = drivers.front();
+        const MethodGen* driver = nullptr;
+        for (auto& method : mod.methods) {
+            if (method.name == driverName) {
+                driver = &method;
+                break;
+            }
+        }
+        if (!driver) {
+            return;
+        }
+        auto storageName = outputStorageName(mod, svName);
+        size_t scanLimit = driver->body.size();
+        auto stopTokens = configuredTextMap("HDLCPP_READONLY_COMB_STOP_TOKENS");
+        std::string stopSpec;
+        if (auto it = stopTokens.find(mod.name + "|" + svName); it != stopTokens.end()) {
+            stopSpec = it->second;
+        }
+        else if (auto it = stopTokens.find(mod.name + "|" + mod.outputPortCppNames.at(svName)); it != stopTokens.end()) {
+            stopSpec = it->second;
+        }
+        if (!stopSpec.empty()) {
+            std::vector<std::string> tokens;
+            std::stringstream ss(stopSpec);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                token = trim(token);
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                }
+            }
+            for (size_t i = 0; i < driver->body.size(); ++i) {
+                for (auto& item : tokens) {
+                    if (driver->body[i].find(item) != std::string::npos) {
+                        scanLimit = i;
+                        break;
+                    }
+                }
+                if (scanLimit != driver->body.size()) {
+                    break;
+                }
+            }
+        }
+        size_t lastAssign = std::string::npos;
+        for (size_t i = 0; i < scanLimit && i < driver->body.size(); ++i) {
+            if (lineAssignsTarget(driver->body[i], storageName) ||
+                lineAssignsTarget(driver->body[i], svName)) {
+                lastAssign = i;
+            }
+        }
+        if (lastAssign == std::string::npos) {
+            return;
+        }
+        int depth = 0;
+        size_t emitThrough = lastAssign;
+        for (size_t i = 0; i < driver->body.size(); ++i) {
+            depth += braceDelta(driver->body[i]);
+            if (i >= lastAssign && depth <= 0) {
+                emitThrough = i;
+                break;
+            }
+        }
+        auto storageType = outputStorageType(mod, svName, mod.outputPortCppNames.at(svName));
+        out << "    " << postProcessCppLine(storageType) << "& __readonly_" << svName << "_comb_func()\n    {\n";
+        for (auto& import : mod.imports) {
+            out << "        using namespace " << import << ";\n";
+        }
+        for (size_t i = 0; i <= emitThrough && i < driver->body.size(); ++i) {
+            auto emittedLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(mod, *driver, driver->body[i])));
+            out << "        " << emittedLine << "\n";
+        }
+        out << "        return " << storageName << ";\n";
+        out << "    }\n\n";
     }
 
     void emitMethod(std::ofstream& out, const ModuleGen& mod, const MethodGen& m)
@@ -2455,6 +2926,25 @@
 	            }
             for (auto& l : m.body) {
                 auto emittedLine = repairMalformedEquality(postProcessCppLine(lateBindCombRhs(mod, m, l)));
+                if (!m.returnBase.empty()) {
+                    auto assigned = hdlcpp::assignmentBase(emittedLine);
+                    if (!assigned.empty() && assigned != m.returnBase &&
+                        assigned != m.returnName &&
+                        !(mod.outputPortCppNames.count(m.returnBase) &&
+                          assigned == outputStorageName(mod, m.returnBase))) {
+                        bool assignsKnownCombBase = false;
+                        for (const auto& item : mod.combAssignedVars) {
+                            if (assigned == item || assigned == combStorageName(mod, item) ||
+                                (mod.outputPortCppNames.count(item) && assigned == outputStorageName(mod, item))) {
+                                assignsKnownCombBase = true;
+                                break;
+                            }
+                        }
+                        if (assignsKnownCombBase) {
+                            continue;
+                        }
+                    }
+                }
                 if (!m.returnName.empty()) {
                     replaceSelfCombCall(emittedLine, m.returnName);
                 }

@@ -13,6 +13,7 @@ struct MethodGen {
     std::string ret = "void";
     std::string args;
     std::vector<std::string> body;
+    std::set<std::string> localNames;
     std::string returnName;
     std::string returnBase;
 };
@@ -60,6 +61,7 @@ struct ModuleGen {
     std::map<std::string, std::string> wireMap;
     std::map<std::string, std::string> combSideEffectDriver;
     std::set<std::string> combSideEffectChildInputReads;
+    std::map<std::string, std::string> preferredCombDriver;
     std::map<std::string, size_t> combMethodByBase;
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
@@ -70,6 +72,13 @@ struct ModuleGen {
     int alwaysNo = 0;
     bool hasWorkTask = false;
 };
+
+static std::string trim(std::string s);
+
+static const char* continuousCombFuncName()
+{
+    return "continuous_comb_func";
+}
 
 static bool isCombOnlyOutput(const ModuleGen& m, const std::string& svName)
 {
@@ -84,6 +93,23 @@ static bool isAssignOnlyOutput(const ModuleGen& m, const std::string& svName)
            m.assignExprByBase.count(svName) &&
            !m.combAssignedVars.count(svName) &&
            !m.seqAssignedVars.count(svName);
+}
+
+static bool isDirectCombOutputMethodType(const ModuleGen& m, std::string type)
+{
+    type = trim(type);
+    const std::string constPrefix = "const ";
+    if (type.rfind(constPrefix, 0) == 0) {
+        type = trim(type.substr(constPrefix.size()));
+    }
+    while (!type.empty() && (type.back() == '&' || type.back() == '*')) {
+        type.pop_back();
+        type = trim(type);
+    }
+    if (type.rfind("array<", 0) == 0 || type.rfind("std::array<", 0) == 0) {
+        return true;
+    }
+    return m.typeParamNames.count(type) != 0;
 }
 
 static bool memoryLikeType(const std::string& type);
@@ -765,6 +791,13 @@ static bool lhsAssignsField(const std::string& lhs, const std::string& base, con
     return next >= lhs.size() || lhs[next] == '.' || lhs[next] == '[';
 }
 
+static bool moduleMethodExists(const ModuleGen& m, const std::string& name)
+{
+    return std::any_of(m.methods.begin(), m.methods.end(), [&](const MethodGen& method) {
+        return method.name == name;
+    });
+}
+
 static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::string& base,
                                                const std::string& field = "")
 {
@@ -776,13 +809,22 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
     };
 
     if (field.empty()) {
+        auto preferred = m.preferredCombDriver.find(base);
+        if (preferred != m.preferredCombDriver.end()) {
+            addDriver(preferred->second);
+        }
+    }
+
+    if (field.empty() && m.combSideEffectDriver.count(base)) {
+        addDriver(m.combSideEffectDriver.at(base));
+    }
+
+    if (field.empty()) {
         auto direct = m.wireMap.find(base);
         if (direct != m.wireMap.end()) {
-            addDriver(direct->second);
-        }
-        auto side = m.combSideEffectDriver.find(base);
-        if (side != m.combSideEffectDriver.end()) {
-            addDriver(side->second);
+            if (direct->second.find("_comb_func") == std::string::npos || moduleMethodExists(m, direct->second)) {
+                addDriver(direct->second);
+            }
         }
     }
 

@@ -22,6 +22,16 @@
                 return &candidate;
             }
         }
+        auto base = trim(name);
+        auto lt = base.find('<');
+        if (lt != std::string::npos) {
+            base = trim(base.substr(0, lt));
+            for (auto& candidate : modules) {
+                if (candidate.name == base) {
+                    return &candidate;
+                }
+            }
+        }
         return nullptr;
     }
 
@@ -587,6 +597,11 @@
     void handle(const DataDeclarationSyntax& node)
     {
         if (!mod) {
+            return;
+        }
+        auto declarationText = node.toString();
+        if (declarationText.find("automatic ") != std::string::npos ||
+            declarationText.rfind("automatic", 0) == 0) {
             return;
         }
         if (node.type && node.type->kind == SyntaxKind::EnumType) {
@@ -1259,16 +1274,14 @@
         }
         MethodGen m;
         auto assigned = firstAssigned(*node.statement);
-        auto existingCombIt = mod->combMethodByBase.find(assigned);
-        auto hasExistingComb = comb && !assigned.empty() && existingCombIt != mod->combMethodByBase.end() &&
-                               existingCombIt->second < mod->methods.size();
         if (comb) {
             auto assignedIsReg = !assigned.empty() && mod->types.count(assigned) &&
                 mod->types[assigned].rfind("reg<", 0) == 0;
             m.name = (assigned.empty() || assignedIsReg) ? "always_" + std::to_string(mod->alwaysNo) + "_comb_func" : assigned + "_comb_func";
             if (!assigned.empty() && mod->types.count(assigned) && !assignedIsReg) {
                 auto retType = unwrapRegType(mod->types[assigned]);
-                m.returnName = combStorageName(*mod, assigned);
+                m.returnName = mod->outputPortCppNames.count(assigned) ?
+                    outputStorageName(*mod, assigned) : combStorageName(*mod, assigned);
                 m.returnBase = assigned;
                 if (mod->outputPortCppNames.count(assigned)) {
                     auto cppName = mod->outputPortCppNames[assigned];
@@ -1280,10 +1293,6 @@
                 }
                 m.ret = retType + "&";
                 mod->combReturnTypes[m.returnName] = retType;
-                if (!hasExistingComb) {
-                    mod->wireMap[assigned] = m.name;
-                    mod->combMethodByBase[assigned] = mod->methods.size();
-                }
             }
             else {
                 m.ret = "void";
@@ -1300,27 +1309,162 @@
         emitStatement(*node.statement, m.body, comb, 0);
         localTypeScopes.pop_back();
         if (comb) {
-            std::set<std::string> assignedBases;
-            collectAssignedBases(*node.statement, assignedBases);
-            for (const auto& base : assignedBases) {
-                if (!base.empty() && mod->types.count(base) && mod->types[base].rfind("reg<", 0) != 0) {
-                    mod->combAssignedVars.insert(base);
-                    if (base != assigned) {
-                        auto sideIt = mod->combSideEffectDriver.find(base);
-                        if (sideIt == mod->combSideEffectDriver.end() || sideIt->second == "assign_comb_func") {
-                            mod->combSideEffectDriver[base] = m.name;
-                        }
-                    }
+            std::set<std::string> localNames;
+            for (const auto& line : m.body) {
+                auto local = hdlcpp::declarationName(line);
+                if (!local.empty()) {
+                    localNames.insert(local);
                 }
             }
-        }
-        if (hasExistingComb) {
-            auto& existing = mod->methods[existingCombIt->second];
-            existing.body.insert(existing.body.end(), m.body.begin(), m.body.end());
-            if (!m.returnName.empty()) {
-                existing.returnName = m.returnName;
-                existing.returnBase = m.returnBase;
-                existing.ret = m.ret;
+            std::set<std::string> assignedBases;
+            collectAssignedBases(*node.statement, assignedBases);
+            for (const auto& line : m.body) {
+                auto base = hdlcpp::assignmentBase(line);
+                if (!base.empty() && !localNames.count(base)) {
+                    assignedBases.insert(base);
+                }
+            }
+            for (const auto& local : localNames) {
+                assignedBases.erase(local);
+            }
+            for (const auto& line : m.body) {
+                auto base = hdlcpp::assignmentBase(line);
+                if (base.empty() || localNames.count(base) || mod->types.count(base) || mod->outputPortCppNames.count(base)) {
+                    continue;
+                }
+                auto rhs = hdlcpp::assignmentRhs(line);
+                auto width = foldWidth(typeWidth(expressionStorageType(*mod, rhs)));
+                std::string type;
+                if (isNumber(width) && width != "0") {
+                    type = "logic<" + width + ">";
+                }
+                else {
+                    type = "logic<1>";
+                }
+                mod->types[base] = type;
+                if (!mod->varNames.count(base)) {
+                    mod->vars.push_back({type, base});
+                    mod->varNames.insert(base);
+                }
+            }
+            std::vector<std::string> assignedList(assignedBases.begin(), assignedBases.end());
+            auto plan = hdlcpp::planCombExtraction(m.body, assignedList);
+            if (const char* debugModules = std::getenv("HDLCPP_DEBUG_COMB_MODULES");
+                debugModules && std::string(debugModules).find(mod->name) != std::string::npos) {
+                std::cerr << "HDLCPP_COMB_DEBUG_OLD module=" << mod->name << "\n";
+                std::cerr << "assigned:";
+                for (const auto& base : assignedList) {
+                    std::cerr << " " << base;
+                }
+                std::cerr << "\nbody:\n";
+                for (const auto& line : m.body) {
+                    std::cerr << line << "\n";
+                }
+                std::cerr << "HDLCPP_COMB_DEBUG_OLD_END\n";
+            }
+
+            auto methodNameInUse = [&](const std::string& name) {
+                return std::any_of(mod->methods.begin(), mod->methods.end(), [&](const MethodGen& method) {
+                    return method.name == name;
+                });
+            };
+            auto uniqueCombMethodName = [&](std::string name) {
+                if (!methodNameInUse(name)) {
+                    return name;
+                }
+                do {
+                    name = "always_" + std::to_string(mod->alwaysNo++) + "_comb_func";
+                } while (methodNameInUse(name));
+                return name;
+            };
+            auto makeCombMethod = [&](const std::string& base,
+                                      const std::vector<std::string>& body,
+                                      bool preferred) {
+                if (preferred) {
+                    auto existingIt = mod->combMethodByBase.find(base);
+                    if (existingIt != mod->combMethodByBase.end() && existingIt->second < mod->methods.size()) {
+                        auto& existing = mod->methods[existingIt->second];
+                        existing.body.insert(existing.body.end(), body.begin(), body.end());
+                        return existing.name;
+                    }
+                }
+
+                MethodGen generated;
+                generated.name = uniqueCombMethodName(preferred ? base + "_comb_func" :
+                                                       "always_" + std::to_string(mod->alwaysNo) + "_comb_func");
+                if (!preferred) {
+                    mod->alwaysNo++;
+                }
+                generated.body = body;
+                generated.localNames = localNames;
+                    bool assignedIsReg = mod->types.count(base) && mod->types[base].rfind("reg<", 0) == 0;
+                    bool assignedIsKnown = mod->types.count(base) || mod->outputPortCppNames.count(base);
+                    if (!assignedIsReg && assignedIsKnown) {
+                        auto retType = mod->types.count(base) ? unwrapRegType(mod->types[base]) : std::string();
+                    generated.returnName = mod->outputPortCppNames.count(base) ?
+                        outputStorageName(*mod, base) : combStorageName(*mod, base);
+                        generated.returnBase = base;
+                        if (mod->outputPortCppNames.count(base)) {
+                        auto cppName = mod->outputPortCppNames[base];
+                        auto storageType = outputStorageType(*mod, base, cppName);
+                        if (!storageType.empty()) {
+                            retType = storageType;
+                        }
+                    }
+                    generated.ret = retType + "&";
+                    mod->combReturnTypes[generated.returnName] = retType;
+                    if (!mod->combMethodByBase.count(base)) {
+                        mod->combMethodByBase[base] = mod->methods.size();
+                        mod->wireMap[base] = generated.name;
+                    }
+                }
+                else {
+                    generated.ret = "void";
+                }
+                mod->methods.push_back(generated);
+                return mod->methods.back().name;
+            };
+
+            auto isCombAssignableBase = [&](const std::string& base) {
+                if (base.empty()) {
+                    return false;
+                }
+                if (mod->outputPortCppNames.count(base)) {
+                    return true;
+                }
+                return mod->types.count(base) && mod->types[base].rfind("reg<", 0) != 0;
+            };
+
+            for (const auto& base : plan.independent) {
+                if (isCombAssignableBase(base)) {
+                    mod->combAssignedVars.insert(base);
+                    auto body = hdlcpp::extractIndependentCombLines(m.body, base);
+                    auto driver = makeCombMethod(base, body, true);
+                    mod->preferredCombDriver[base] = driver;
+                    mod->combSideEffectDriver[base] = driver;
+                }
+            }
+            if (!plan.combined.empty()) {
+                std::string name;
+                do {
+                    name = "always_" + std::to_string(mod->alwaysNo++) + "_comb_func";
+                } while (methodNameInUse(name));
+                MethodGen combined;
+                combined.name = name;
+                combined.ret = "void";
+                combined.body = m.body;
+                combined.localNames = localNames;
+                auto driver = combined.name;
+                mod->methods.push_back(combined);
+                for (const auto& base : plan.combined) {
+                    if (isCombAssignableBase(base)) {
+                        mod->combAssignedVars.insert(base);
+                        if (!mod->preferredCombDriver.count(base)) {
+                            mod->preferredCombDriver[base] = driver;
+                        }
+                        mod->combSideEffectDriver[base] = driver;
+                    }
+                }
             }
             return;
         }
@@ -1735,6 +1879,7 @@
                     bool isOutput = false;
                     std::string portType = "bool";
                     bool portTypeKnown = false;
+                    bool outputIsPortRef = false;
                     if (child) {
                         if (child->portCppNames.count(port)) {
                             portName = child->portCppNames[port];
@@ -1745,6 +1890,7 @@
                                 knownPort = true;
                                 portType = p.type;
                                 isOutput = p.direction == "output";
+                                outputIsPortRef = isOutput;
                                 portTypeKnown = true;
                                 break;
                             }
@@ -1815,7 +1961,7 @@
                             mod->assignExprByBase[outBase] = outExpr;
                             for (auto& p : mod->ports) {
                                 if (p.name == mod->outputPortCppNames[outBase]) {
-                                    p.init = " = _ASSIGN_COMB( " + outExpr + " )";
+                                    p.init = " = " + std::string(outputIsPortRef ? "_ASSIGN_COMB" : "_ASSIGN") + "( " + outExpr + " )";
                                     break;
                                 }
                             }
@@ -2010,19 +2156,202 @@
                 localTypeScopes.push_back({});
                 emitStatement(*proc.statement, lines, true, 0);
                 localTypeScopes.pop_back();
-                std::set<std::string> assignedBases;
-                collectAssignedBases(*proc.statement, assignedBases);
-                for (const auto& base : assignedBases) {
-                    if (!base.empty() && mod->types.count(base)) {
-                        mod->combAssignedVars.insert(base);
-                        if (!mod->combMethodByBase.count(base)) {
-                            mod->combSideEffectDriver.emplace(base, "assign_comb_func");
-                        }
+                for (auto& line : lines) {
+                    applyGenerateReplacements(line);
+                    for (const auto& out : mod->outputPortCppNames) {
+                        hdlcpp::rewriteLhsBase(line, combStorageName(*mod, out.first), out.first);
+                        hdlcpp::rewriteLhsBase(line, outputStorageName(*mod, out.first), out.first);
+                        hdlcpp::rewriteLhsBase(line, out.second, out.first);
                     }
                 }
-                for (auto line : lines) {
-                    applyGenerateReplacements(line);
-                    mod->assignLines.push_back("    " + line);
+                auto scopedLines = lines;
+                std::set<std::string> localNames;
+                for (const auto& line : scopedLines) {
+                    auto local = hdlcpp::declarationName(line);
+                    if (!local.empty()) {
+                        localNames.insert(local);
+                    }
+                }
+                if (!methodLoopHeaders.empty() || (!index.empty() && !indexLimit.empty())) {
+                    std::vector<std::string> wrapped;
+                    if (!methodLoopHeaders.empty()) {
+                        for (auto& header : methodLoopHeaders) {
+                            wrapped.push_back(header);
+                        }
+                    }
+                    else {
+                        wrapped.push_back("for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(" + indexLimit + ");i++) {");
+                    }
+                    for (auto& line : lines) {
+                        wrapped.push_back("    " + line);
+                    }
+                    auto closeCount = !methodLoopHeaders.empty() ? methodLoopHeaders.size() : 1;
+                    for (size_t n = 0; n < closeCount; ++n) {
+                        wrapped.push_back("}");
+                    }
+                    scopedLines.swap(wrapped);
+                }
+                std::set<std::string> assignedBases;
+                collectAssignedBases(*proc.statement, assignedBases);
+                for (const auto& line : scopedLines) {
+                    auto base = hdlcpp::assignmentBase(line);
+                    if (!base.empty() && !localNames.count(base)) {
+                        assignedBases.insert(base);
+                    }
+                }
+                for (const auto& local : localNames) {
+                    assignedBases.erase(local);
+                }
+                for (const auto& line : scopedLines) {
+                    auto base = hdlcpp::assignmentBase(line);
+                    if (base.empty() || localNames.count(base) || mod->types.count(base) || mod->outputPortCppNames.count(base)) {
+                        continue;
+                    }
+                    auto rhs = hdlcpp::assignmentRhs(line);
+                    auto width = foldWidth(typeWidth(expressionStorageType(*mod, rhs)));
+                    std::string type;
+                    if (isNumber(width) && width != "0") {
+                        type = "logic<" + width + ">";
+                    }
+                    else {
+                        type = "logic<1>";
+                    }
+                    mod->types[base] = type;
+                    if (!mod->varNames.count(base)) {
+                        mod->vars.push_back({type, base});
+                        mod->varNames.insert(base);
+                    }
+                }
+                std::vector<std::string> assignedList(assignedBases.begin(), assignedBases.end());
+                auto plan = hdlcpp::planCombExtraction(scopedLines, assignedList);
+                if (const char* debugModules = std::getenv("HDLCPP_DEBUG_COMB_MODULES");
+                    debugModules && std::string(debugModules).find(mod->name) != std::string::npos) {
+                    std::cerr << "HDLCPP_COMB_DEBUG module=" << mod->name << "\n";
+                    std::cerr << "assigned:";
+                    for (const auto& base : assignedList) {
+                        std::cerr << " " << base;
+                    }
+                    std::cerr << "\nindependent:";
+                    for (const auto& base : plan.independent) {
+                        std::cerr << " " << base;
+                    }
+                    std::cerr << "\ncombined:";
+                    for (const auto& base : plan.combined) {
+                        std::cerr << " " << base;
+                    }
+                    std::cerr << "\nlines:\n";
+                    for (const auto& line : scopedLines) {
+                        std::cerr << line << "\n";
+                    }
+                    std::cerr << "HDLCPP_COMB_DEBUG_END\n";
+                }
+
+                auto makeCombMethod = [&](const std::string& base,
+                                          const std::vector<std::string>& body,
+                                          bool preferred) {
+                    if (preferred) {
+                        auto existingIt = mod->combMethodByBase.find(base);
+                        if (existingIt != mod->combMethodByBase.end() && existingIt->second < mod->methods.size()) {
+                            auto& existing = mod->methods[existingIt->second];
+                            existing.body.insert(existing.body.end(), body.begin(), body.end());
+                            return existing.name;
+                        }
+                    }
+                    auto methodNameInUse = [&](const std::string& name) {
+                        return std::any_of(mod->methods.begin(), mod->methods.end(), [&](const MethodGen& method) {
+                            return method.name == name;
+                        });
+                    };
+                    auto uniqueCombMethodName = [&](std::string name) {
+                        if (!methodNameInUse(name)) {
+                            return name;
+                        }
+                        do {
+                            name = "always_" + std::to_string(mod->alwaysNo++) + "_comb_func";
+                        } while (methodNameInUse(name));
+                        return name;
+                    };
+                    MethodGen m;
+                    m.name = uniqueCombMethodName(preferred ? base + "_comb_func" :
+                                                  "always_" + std::to_string(mod->alwaysNo) + "_comb_func");
+                    if (!preferred) {
+                        mod->alwaysNo++;
+                    }
+                    m.body = body;
+                    m.localNames = localNames;
+                    bool assignedIsReg = mod->types.count(base) && mod->types[base].rfind("reg<", 0) == 0;
+                    bool assignedIsKnown = mod->types.count(base) || mod->outputPortCppNames.count(base);
+                    if (!assignedIsReg && assignedIsKnown) {
+                        auto retType = mod->types.count(base) ? unwrapRegType(mod->types[base]) : std::string();
+                        m.returnName = mod->outputPortCppNames.count(base) ?
+                            outputStorageName(*mod, base) : combStorageName(*mod, base);
+                        m.returnBase = base;
+                        if (mod->outputPortCppNames.count(base)) {
+                            auto cppName = mod->outputPortCppNames[base];
+                            auto storageType = outputStorageType(*mod, base, cppName);
+                            if (!storageType.empty()) {
+                                retType = storageType;
+                            }
+                        }
+                        m.ret = retType + "&";
+                        mod->combReturnTypes[m.returnName] = retType;
+                        if (!mod->combMethodByBase.count(base)) {
+                            mod->combMethodByBase[base] = mod->methods.size();
+                            mod->wireMap[base] = m.name;
+                        }
+                    }
+                    else {
+                        m.ret = "void";
+                    }
+                    mod->methods.push_back(m);
+                    return mod->methods.back().name;
+                };
+
+                auto isCombAssignableBase = [&](const std::string& base) {
+                    if (base.empty()) {
+                        return false;
+                    }
+                    if (mod->outputPortCppNames.count(base)) {
+                        return true;
+                    }
+                    return mod->types.count(base) && mod->types[base].rfind("reg<", 0) != 0;
+                };
+
+                for (const auto& base : plan.independent) {
+                    if (isCombAssignableBase(base)) {
+                        mod->combAssignedVars.insert(base);
+                        auto body = hdlcpp::extractIndependentCombLines(scopedLines, base);
+                        auto driver = makeCombMethod(base, body, true);
+                        mod->preferredCombDriver[base] = driver;
+                        mod->combSideEffectDriver[base] = driver;
+                    }
+                }
+                if (!plan.combined.empty()) {
+                    auto methodNameInUse = [&](const std::string& name) {
+                        return std::any_of(mod->methods.begin(), mod->methods.end(), [&](const MethodGen& method) {
+                            return method.name == name;
+                        });
+                    };
+                    std::string name;
+                    do {
+                        name = "always_" + std::to_string(mod->alwaysNo++) + "_comb_func";
+                    } while (methodNameInUse(name));
+                    MethodGen m;
+                    m.name = name;
+                    m.ret = "void";
+                    m.body = scopedLines;
+                    m.localNames = localNames;
+                    auto driver = m.name;
+                    mod->methods.push_back(m);
+                    for (const auto& base : plan.combined) {
+                        if (isCombAssignableBase(base)) {
+                            mod->combAssignedVars.insert(base);
+                            if (!mod->preferredCombDriver.count(base)) {
+                                mod->preferredCombDriver[base] = driver;
+                            }
+                            mod->combSideEffectDriver[base] = driver;
+                        }
+                    }
                 }
                 loopVars = savedLoopVars;
             }
@@ -2346,12 +2675,12 @@
         }
         auto drivers = combDriversFor(mod, svName, field);
         if (!hasRuntimeAssignLines(mod)) {
-            drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string("assign_comb_func")), drivers.end());
+            drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string(continuousCombFuncName())), drivers.end());
         }
         if (drivers.empty() && !field.empty()) {
             drivers = combDriversFor(mod, svName);
             if (!hasRuntimeAssignLines(mod)) {
-                drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string("assign_comb_func")), drivers.end());
+                drivers.erase(std::remove(drivers.begin(), drivers.end(), std::string(continuousCombFuncName())), drivers.end());
             }
         }
         if (drivers.empty()) {
@@ -2478,19 +2807,18 @@
                            const std::vector<std::string>& loopHeaders = {})
     {
         auto base = !svBase.empty() ? svBase : baseFromLValueText(lhs);
-        if (base.empty() || !target.types.count(base)) {
+        if (base.empty() || (!target.types.count(base) && !target.outputPortCppNames.count(base))) {
             return;
         }
-        if (target.types[base].rfind("reg<", 0) == 0) {
+        if (target.types.count(base) && target.types[base].rfind("reg<", 0) == 0) {
             return;
         }
 
-        auto retType = unwrapRegType(target.types[base]);
+        auto retType = target.types.count(base) ? unwrapRegType(target.types[base]) : std::string();
         auto returnName = combStorageName(target, base);
         if (target.outputPortCppNames.count(base)) {
             auto cppName = target.outputPortCppNames[base];
-            auto storageType = target.types.count(base) ? target.types[base] :
-                outputStorageType(target, base, cppName);
+            auto storageType = outputStorageType(target, base, cppName);
             if (!storageType.empty()) {
                 retType = storageType;
             }
@@ -2520,7 +2848,7 @@
 
         auto finalRhs = rhs;
         if (retType == "bool" || retType == "u1") {
-            finalRhs = truthyExpr(finalRhs, typeWidth(target.types[base]));
+            finalRhs = truthyExpr(finalRhs, target.types.count(base) ? typeWidth(target.types[base]) : "1");
         }
 
         // Procedural assignments to fields are value updates. Port/function_ref binding is
@@ -4086,8 +4414,7 @@
                 return line;
             }
             if (isSimpleCombRef(arg) ||
-                (arg.find("_comb_func()") == std::string::npos &&
-                 arg.find("assign_comb_func()") == std::string::npos)) {
+                arg.find("_comb_func()") == std::string::npos) {
                 return line;
             }
             inputPort = true;
@@ -4136,8 +4463,7 @@
         auto materializeCombPortBinding = [&]() {
             auto assignWrap = line.find("_ASSIGN(", eq);
             if (assignWrap == std::string::npos || assignWrap >= argStart || isSimpleCombRef(arg) ||
-                (arg.find("_comb_func()") == std::string::npos &&
-                 arg.find("assign_comb_func()") == std::string::npos)) {
+                arg.find("_comb_func()") == std::string::npos) {
                 return false;
             }
 

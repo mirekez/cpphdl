@@ -1525,9 +1525,6 @@
                     mod->seqAssignedVars.insert(base);
                 }
             }
-            if (comb && mod->outputPortCppNames.count(base) && isWholeObjectSelect(*b.left, base)) {
-                lhs = combStorageName(*mod, base);
-            }
             if (mod->types.count(base) && (mod->types[base] == "bool" || mod->types[base] == "u1" || mod->types[base] == "reg<u1>")) {
                 rhs = truthyExpr(rhs, exprWidth(*b.right));
             }
@@ -1607,10 +1604,7 @@
         if (expr.kind == SyntaxKind::IdentifierName) {
             auto name = tok(expr.as<IdentifierNameSyntax>().identifier);
             if (mod->outputPortCppNames.count(name)) {
-                if (isAssignOnlyOutput(*mod, name)) {
-                    return mod->outputPortCppNames[name];
-                }
-                return outputStorageName(*mod, name);
+                return name;
             }
             if (mod->portCppNames.count(name)) {
                 return mod->portCppNames[name];
@@ -1620,7 +1614,7 @@
         if (expr.kind == SyntaxKind::IdentifierSelectName) {
             auto& n = expr.as<IdentifierSelectNameSyntax>();
             auto base = tok(n.identifier);
-            auto s = mod->outputPortCppNames.count(base) ? outputStorageName(*mod, base) :
+            auto s = mod->outputPortCppNames.count(base) ? base :
                 (mod->portCppNames.count(base) ? mod->portCppNames[base] : base);
             auto key = base;
             auto memorySelect = mod->types.count(base) && memoryLikeType(mod->types[base]);
