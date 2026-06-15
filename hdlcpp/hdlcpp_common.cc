@@ -59,6 +59,7 @@ struct ModuleGen {
     std::map<std::string, std::string> outputPortCppNames;
     std::map<std::string, std::string> wireMap;
     std::map<std::string, std::string> combSideEffectDriver;
+    std::set<std::string> combSideEffectChildInputReads;
     std::map<std::string, size_t> combMethodByBase;
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
@@ -1138,6 +1139,55 @@ static size_t matchingOpenBefore(const std::string& s, size_t close, char openCh
 static size_t selectedExprStartBefore(const std::string& s, size_t endExclusive);
 static std::string numericizeSelectedArithmetic(std::string s);
 
+static size_t matchingTemplateClose(const std::string& s, size_t open)
+{
+    if (open >= s.size() || s[open] != '<') {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = open + 1; i < s.size(); ++i) {
+        if (s[i] == '<' && i + 1 < s.size() && s[i + 1] == '<') {
+            ++i;
+            continue;
+        }
+        if (s[i] == '>' && i + 1 < s.size() && s[i + 1] == '>' &&
+            (i == 0 || std::isspace(static_cast<unsigned char>(s[i - 1])))) {
+            ++i;
+            continue;
+        }
+        if (s[i] == '<') {
+            ++depth;
+        }
+        else if (s[i] == '>') {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+static size_t matchingParenClose(const std::string& s, size_t open)
+{
+    if (open >= s.size() || s[open] != '(') {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = open + 1; i < s.size(); ++i) {
+        if (s[i] == '(' || s[i] == '[' || s[i] == '{') {
+            ++depth;
+        }
+        else if (s[i] == ')' || s[i] == ']' || s[i] == '}') {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
 static std::string valueAssignCombFunctionPorts(std::string line)
 {
     return line;
@@ -1166,23 +1216,37 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, ">>>", ">>");
     line = repairDottedLogicWidthCasts(std::move(line));
     applyConfiguredLinePatches(line);
+    auto repairOneBitCastsBeforeFields = [&]() {
+        const std::string prefix = "logic<1>(";
+        for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
+            auto close = matchingParenClose(line, pos + prefix.size() - 1);
+            if (close == std::string::npos || close + 1 >= line.size() || line[close + 1] != '.') {
+                pos += prefix.size();
+                continue;
+            }
+            auto fieldStart = close + 2;
+            auto fieldEnd = fieldStart;
+            while (fieldEnd < line.size() &&
+                   (std::isalnum(static_cast<unsigned char>(line[fieldEnd])) || line[fieldEnd] == '_')) {
+                ++fieldEnd;
+            }
+            auto field = line.substr(fieldStart, fieldEnd - fieldStart);
+            if (field.empty() || field == "bits" || field == "get") {
+                pos = fieldEnd;
+                continue;
+            }
+            auto inner = line.substr(pos + prefix.size(), close - (pos + prefix.size()));
+            auto repl = "(" + inner + ")";
+            line.replace(pos, close + 1 - pos, repl);
+            pos += repl.size();
+        }
+    };
+    repairOneBitCastsBeforeFields();
     auto repairRuntimeLogicWidths = [&]() {
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
-            int depth = 1;
-            size_t end = start;
-            for (; end < line.size(); ++end) {
-                if (line[end] == '<') {
-                    ++depth;
-                }
-                else if (line[end] == '>') {
-                    --depth;
-                    if (depth == 0) {
-                        break;
-                    }
-                }
-            }
-            if (end >= line.size()) {
+            auto end = matchingTemplateClose(line, pos + 5);
+            if (end == std::string::npos) {
                 break;
             }
             auto width = line.substr(start, end - start);
@@ -1202,6 +1266,72 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     repairRuntimeLogicWidths();
+    auto balanceCompletedLogicStatement = [&]() {
+        if (line.find("logic<") == std::string::npos) {
+            return;
+        }
+        auto trimmed = trim(line);
+        if (trimmed.empty() || trimmed.back() != ';') {
+            return;
+        }
+        int balance = 0;
+        for (char c : line) {
+            if (c == '(') {
+                ++balance;
+            }
+            else if (c == ')') {
+                --balance;
+            }
+        }
+        if (balance <= 0 || balance > 8) {
+            return;
+        }
+        std::string closes(static_cast<size_t>(balance), ')');
+        auto semi = line.rfind(';');
+        if (semi == std::string::npos) {
+            return;
+        }
+        auto insertAt = semi;
+        if (line.find("cat{") != std::string::npos) {
+            auto catPos = line.find("cat{");
+            int braceDepth = 0;
+            int parenDepth = 0;
+            for (size_t i = 0; i < semi; ++i) {
+                char c = line[i];
+                if (c == '{') {
+                    ++braceDepth;
+                }
+                else if (c == '}') {
+                    --braceDepth;
+                }
+                else if (c == '(') {
+                    ++parenDepth;
+                }
+                else if (c == ')') {
+                    --parenDepth;
+                }
+                else if (i > catPos && c == ',' && braceDepth > 0 && parenDepth > 0) {
+                    auto next = i + 1;
+                    while (next < semi && std::isspace(static_cast<unsigned char>(line[next]))) {
+                        ++next;
+                    }
+                    bool catSeparator = line.compare(next, 6, "logic<") == 0 ||
+                        line.compare(next, 2, "u<") == 0 ||
+                        line.compare(next, 4, "cat{") == 0;
+                    if (!catSeparator) {
+                        continue;
+                    }
+                    line.insert(i, std::string(static_cast<size_t>(parenDepth), ')'));
+                    return;
+                }
+            }
+            if (semi > 0 && line[semi - 1] == '}') {
+                insertAt = semi - 1;
+            }
+        }
+        line.insert(insertAt, closes);
+    };
+    balanceCompletedLogicStatement();
     auto removeSimpleOneBitMasks = [&]() {
         const std::string castPrefix = "((uint64_t)(";
         const std::string maskSuffix = ") & ((1ull << 1) - 1ull))";
@@ -1827,13 +1957,16 @@ static std::string postProcessCppLine(std::string line)
             };
             line = lhs + " " + pred + " ? " + wrapBranch(left) + " : " + wrapBranch(right) + ";";
             replaceAll(line, " )", ")");
+            balanceCompletedLogicStatement();
             return line;
         }
     }
 
     // Struct-field assignments are plain C++ value updates. Wrapping every dotted LHS
     // in _ASSIGN turns these into lambda assignments and breaks packed/local structs.
-    return lhs + rhs;
+    line = lhs + rhs;
+    balanceCompletedLogicStatement();
+    return line;
 }
 
 static std::string exprText(const std::string& in)

@@ -19,12 +19,25 @@
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             return exprType(*expr.as<ParenthesizedExpressionSyntax>().expression);
         }
+        if (mod) {
+            auto pathResolved = pathType(expr.toString());
+            if (!pathResolved.empty()) {
+                return pathResolved;
+            }
+        }
         if (expr.kind == SyntaxKind::IdentifierName) {
             auto name = tok(expr.as<IdentifierNameSyntax>().identifier);
+            auto localType = lookupLocalType(name);
+            if (!localType.empty()) {
+                return localType;
+            }
             if (mod && mod->types.count(name)) {
                 return mod->types[name];
             }
             return "";
+        }
+        if (expr.kind == SyntaxKind::ScopedName) {
+            return pathType(expr.toString());
         }
         if (expr.kind == SyntaxKind::MemberAccessExpression) {
             auto& e = expr.as<MemberAccessExpressionSyntax>();
@@ -34,6 +47,9 @@
             auto& e = expr.as<ElementSelectExpressionSyntax>();
             auto type = unwrappedValueType(exprType(*e.left));
             auto args = templateArgsFor(type, "array");
+            if (args.empty()) {
+                args = templateArgsFor(type, "std::array");
+            }
             if (args.size() >= 2) {
                 return args[0];
             }
@@ -42,11 +58,16 @@
         if (expr.kind == SyntaxKind::IdentifierSelectName) {
             auto& n = expr.as<IdentifierSelectNameSyntax>();
             std::string type;
-            if (mod && mod->types.count(tok(n.identifier))) {
-                type = mod->types[tok(n.identifier)];
+            auto baseName = tok(n.identifier);
+            type = lookupLocalType(baseName);
+            if (type.empty() && mod && mod->types.count(baseName)) {
+                type = mod->types[baseName];
             }
-            for (auto sel : n.selectors) {
+            for (size_t idx = 0; idx < n.selectors.size(); ++idx) {
                 auto args = templateArgsFor(unwrappedValueType(type), "array");
+                if (args.empty()) {
+                    args = templateArgsFor(unwrappedValueType(type), "std::array");
+                }
                 if (args.size() >= 2) {
                     type = args[0];
                 }
@@ -54,6 +75,89 @@
             return type;
         }
         return "";
+    }
+
+    std::string invocationCalleeRaw(const InvocationExpressionSyntax& call)
+    {
+        return call.left ? trim(call.left->toString()) : std::string();
+    }
+
+    const ExpressionSyntax* firstInvocationExpressionArg(const InvocationExpressionSyntax& call)
+    {
+        if (!call.arguments) {
+            return nullptr;
+        }
+        for (auto arg : call.arguments->parameters) {
+            if (arg->kind != SyntaxKind::OrderedArgument) {
+                continue;
+            }
+            auto exprNode = arg->as<OrderedArgumentSyntax>().expr;
+            if (exprNode && ExpressionSyntax::isKind(exprNode->kind)) {
+                return &exprNode->as<ExpressionSyntax>();
+            }
+            if (exprNode && exprNode->kind == SyntaxKind::SimplePropertyExpr) {
+                auto& prop = exprNode->as<SimplePropertyExprSyntax>();
+                if (prop.expr && prop.expr->kind == SyntaxKind::SimpleSequenceExpr) {
+                    auto& seq = prop.expr->as<SimpleSequenceExprSyntax>();
+                    if (seq.expr && ExpressionSyntax::isKind(seq.expr->kind)) {
+                        return &seq.expr->as<ExpressionSyntax>();
+                    }
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    std::string emitSystemSignednessCast(const InvocationExpressionSyntax& call, const std::string& rawCallee)
+    {
+        auto arg = firstInvocationExpressionArg(call);
+        if (!arg) {
+            return rawCallee == "$signed" ? "int64_t(0)" : "uint64_t(0)";
+        }
+        auto width = foldWidth(exprWidth(*arg));
+        if (width.empty()) {
+            width = "64";
+        }
+        std::string helper = rawCallee == "$signed" ? "cpphdl::sv_signed" : "cpphdl::sv_unsigned";
+        return helper + "<(size_t)(" + width + ")>(" + emitNumericExpr(*arg) + ")";
+    }
+
+    std::string emitSystemBitsValue(const InvocationExpressionSyntax& call)
+    {
+        auto arg = firstInvocationExpressionArg(call);
+        if (!arg) {
+            return "0";
+        }
+        auto widthForType = [&](const std::string& type) -> std::string {
+            auto width = foldWidth(resolvedTypeWidth(type));
+            if (!width.empty()) {
+                return width;
+            }
+            if (!trim(type).empty()) {
+                return "cpphdl::type_width<" + trim(type) + ">()";
+            }
+            return "";
+        };
+        if (auto type = exprType(*arg); !type.empty()) {
+            if (auto width = widthForType(type); !width.empty()) {
+                return width;
+            }
+        }
+        auto base = assignedBase(*arg);
+        if (!base.empty()) {
+            if (auto localType = lookupLocalType(base); !localType.empty()) {
+                if (auto width = widthForType(localType); !width.empty()) {
+                    return width;
+                }
+            }
+            if (mod && mod->types.count(base)) {
+                if (auto width = widthForType(mod->types[base]); !width.empty()) {
+                    return width;
+                }
+            }
+        }
+        auto width = foldWidth(exprWidth(*arg));
+        return width.empty() ? "0" : width;
     }
 
     std::string pathType(std::string path)
@@ -103,10 +207,16 @@
             }
             ++i;
         }
-        if (names.empty() || !mod || !mod->types.count(names.front())) {
+        if (names.empty()) {
             return "";
         }
-        auto type = mod->types[names.front()];
+        auto type = lookupLocalType(names.front());
+        if (type.empty() && mod && mod->types.count(names.front())) {
+            type = mod->types[names.front()];
+        }
+        if (type.empty()) {
+            return "";
+        }
         for (size_t i = 1; i < names.size(); ++i) {
             type = fieldTypeFor(type, names[i]);
             if (type.empty()) {
@@ -240,6 +350,28 @@
         if (auto literalWidth = numericLiteralWidth(simple); !literalWidth.empty()) {
             return literalWidth;
         }
+        if (expr.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expr.as<ScopedNameSyntax>();
+            auto selectorWidth = [&]() -> std::string {
+                if (scoped.right->kind == SyntaxKind::IdentifierSelectName) {
+                    auto& n = scoped.right->as<IdentifierSelectNameSyntax>();
+                    if (!n.selectors.empty()) {
+                        auto last = n.selectors.back();
+                        if (last && last->selector) {
+                            return selectWidth(*last);
+                        }
+                    }
+                }
+                return "";
+            }();
+            if (!selectorWidth.empty()) {
+                return foldWidth(selectorWidth);
+            }
+            auto width = foldWidth(resolvedTypeWidth(pathType(simple)));
+            if (!width.empty()) {
+                return width;
+            }
+        }
         if (simple.find('.') != std::string::npos && simple.find('[') == std::string::npos) {
             auto width = foldWidth(resolvedTypeWidth(pathType(simple)));
             if (!width.empty()) {
@@ -260,13 +392,22 @@
             auto& n = expr.as<IdentifierSelectNameSyntax>();
             if (mod) {
                 auto baseName = tok(n.identifier);
-                auto it = mod->types.find(baseName);
-                if (it != mod->types.end()) {
-                    auto selectedType = unwrapRegType(it->second);
+                auto selectedType = lookupLocalType(baseName);
+                if (selectedType.empty()) {
+                    auto it = mod->types.find(baseName);
+                    if (it != mod->types.end()) {
+                        selectedType = it->second;
+                    }
+                }
+                if (!selectedType.empty()) {
+                    selectedType = unwrapRegType(selectedType);
                     bool consumedArraySelect = false;
                     for (auto s : n.selectors) {
-                        if (selectedType.rfind("array<", 0) == 0) {
+                        if (selectedType.rfind("array<", 0) == 0 || selectedType.rfind("std::array<", 0) == 0) {
                             auto args = templateArgsFor(selectedType, "array");
+                            if (args.empty()) {
+                                args = templateArgsFor(selectedType, "std::array");
+                            }
                             if (args.size() >= 2) {
                                 auto elemWidth = foldWidth(resolvedTypeWidth(args[0]));
                                 if (!elemWidth.empty() && s->selector && RangeSelectSyntax::isKind(s->selector->kind)) {
@@ -307,6 +448,9 @@
             if (e.select) {
                 auto leftType = unwrappedValueType(exprType(*e.left));
                 auto arrayArgs = templateArgsFor(leftType, "array");
+                if (arrayArgs.empty()) {
+                    arrayArgs = templateArgsFor(leftType, "std::array");
+                }
                 if (arrayArgs.size() >= 2 && e.select->selector) {
                     auto elemWidth = foldWidth(resolvedTypeWidth(arrayArgs[0]));
                     if (!elemWidth.empty()) {
@@ -367,6 +511,16 @@
         }
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
+            auto rawCallee = invocationCalleeRaw(i);
+            if (rawCallee == "$signed" || rawCallee == "$unsigned") {
+                if (auto arg = firstInvocationExpressionArg(i)) {
+                    return exprWidth(*arg);
+                }
+                return "64";
+            }
+            if (rawCallee == "$bits") {
+                return "32";
+            }
             auto width = knownFunctionReturnWidth(exprText(i.left->toString()));
             if (!width.empty()) {
                 return width;
@@ -416,6 +570,13 @@
         }();
         if (!selectedArrayWidth.empty()) {
             return selectedArrayWidth;
+        }
+        if (mod) {
+            auto directType = exprType(expr);
+            auto directWidth = foldWidth(typeWidth(directType));
+            if (!directWidth.empty()) {
+                return directWidth;
+            }
         }
         auto base = assignedBase(expr);
         if (mod->types.count(base)) {
@@ -1293,6 +1454,12 @@
             auto& b = expr.as<BinaryExpressionSyntax>();
             auto base = assignedBase(*b.left);
             auto lhs = emitLValue(*b.left);
+            if ((!mod || !mod->types.count(base)) && !lhs.empty()) {
+                auto textBase = baseFromLValueText(lhs);
+                if (mod && mod->types.count(textBase)) {
+                    base = textBase;
+                }
+            }
             auto rhs = emitExpr(*b.right);
             bool rhsConditionalSized = false;
             if (b.right->kind == SyntaxKind::ConditionalExpression &&
@@ -1402,9 +1569,10 @@
             if (!targetStorageType.empty() && trimmedRhs.rfind("{.", 0) == 0) {
                 rhs = targetStorageType + trimmedRhs;
             }
-            if ((isNonblockingAssignmentKind(expr.kind) || (!comb && mod->varNames.count(base))) &&
-                sequentialStorageType.rfind("reg<", 0) == 0 &&
-                !memoryLikeType(sequentialStorageType)) {
+            if (((isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) ||
+                 ((!comb && mod->varNames.count(base)) &&
+                  sequentialStorageType.rfind("reg<", 0) == 0 &&
+                  !memoryLikeType(sequentialStorageType)))) {
                 if (b.left->kind == SyntaxKind::ElementSelectExpression || lhs.find('[') != std::string::npos ||
                     lhs.find(".bits(") != std::string::npos) {
                     lhs.replace(0, base.size(), base + "._next");
@@ -1458,29 +1626,36 @@
             auto memorySelect = mod->types.count(base) && memoryLikeType(mod->types[base]);
             auto memoryScalar = memorySelect && scalarMemory(mod->types[base]);
             auto currentType = mod->types.count(base) ? unwrapRegType(mod->types[base]) : std::string();
+            auto arrayArgsForType = [&](const std::string& type) {
+                auto args = templateArgsFor(type, "array");
+                if (args.empty()) {
+                    args = templateArgsFor(type, "std::array");
+                }
+                return args;
+            };
             size_t arrayLevel = 0;
             for (auto sel : n.selectors) {
-                if (currentType.rfind("array<", 0) == 0 && sel->selector &&
+                auto currentArrayArgs = arrayArgsForType(currentType);
+                if (!currentArrayArgs.empty() && sel->selector &&
                     sel->selector->kind == SyntaxKind::BitSelect) {
                     auto index = arrayIndexExpr(base, arrayLevel, *sel->selector->as<BitSelectSyntax>().expr);
                     s += "[(unsigned)(" + index + ")]";
                     key = emitSelectOn(key, *sel, true);
-                    auto args = templateArgsFor(currentType, "array");
-                    currentType = args.size() >= 2 ? args[0] : std::string();
+                    currentType = currentArrayArgs.size() >= 2 ? currentArrayArgs[0] : std::string();
                     ++arrayLevel;
                     memorySelect = !currentType.empty() && memoryLikeType(currentType);
                     memoryScalar = memorySelect && scalarMemory(currentType);
                     continue;
                 }
-                if (currentType.rfind("array<", 0) == 0 && sel->selector &&
+                currentArrayArgs = arrayArgsForType(currentType);
+                if (!currentArrayArgs.empty() && sel->selector &&
                     RangeSelectSyntax::isKind(sel->selector->kind)) {
                     auto& r = sel->selector->as<RangeSelectSyntax>();
                     auto left = arrayIndexExpr(base, arrayLevel, emitIndexExpr(*r.left));
                     auto right = arrayIndexExpr(base, arrayLevel, emitIndexExpr(*r.right));
                     s = emitBitsCall(s, left, right);
                     key = emitSelectOn(key, *sel, true);
-                    auto args = templateArgsFor(currentType, "array");
-                    currentType = args.size() >= 2 ? args[0] : std::string();
+                    currentType = currentArrayArgs.size() >= 2 ? currentArrayArgs[0] : std::string();
                     ++arrayLevel;
                     memorySelect = !currentType.empty() && memoryLikeType(currentType);
                     memoryScalar = memorySelect && scalarMemory(currentType);
@@ -1488,10 +1663,10 @@
                 }
                 s = emitSelectOn(s, *sel, true, memorySelect, memoryScalar);
                 key = emitSelectOn(key, *sel, true);
-                if (currentType.rfind("array<", 0) == 0 && sel->selector &&
+                currentArrayArgs = arrayArgsForType(currentType);
+                if (!currentArrayArgs.empty() && sel->selector &&
                     sel->selector->kind == SyntaxKind::BitSelect) {
-                    auto args = templateArgsFor(currentType, "array");
-                    currentType = args.size() >= 2 ? args[0] : std::string();
+                    currentType = currentArrayArgs.size() >= 2 ? currentArrayArgs[0] : std::string();
                     ++arrayLevel;
                 }
                 else {
@@ -1534,12 +1709,19 @@
                 e.select->selector->kind == SyntaxKind::BitSelect) {
                 return emitMemoryRowAccess(base, emitLValue(*e.left), *e.select->selector->as<BitSelectSyntax>().expr);
             }
-            if (mod->types.count(base) && unwrapRegType(mod->types[base]).rfind("array<", 0) == 0 &&
+            auto baseArrayArgsForType = [&](const std::string& type) {
+                auto args = templateArgsFor(type, "array");
+                if (args.empty()) {
+                    args = templateArgsFor(type, "std::array");
+                }
+                return args;
+            };
+            if (mod->types.count(base) && !baseArrayArgsForType(unwrapRegType(mod->types[base])).empty() &&
                 e.select && e.select->selector && e.select->selector->kind == SyntaxKind::BitSelect) {
                 auto index = arrayIndexExpr(base, 0, *e.select->selector->as<BitSelectSyntax>().expr);
                 return emitLValue(*e.left) + "[(unsigned)(" + index + ")]";
             }
-            if (mod->types.count(base) && unwrapRegType(mod->types[base]).rfind("array<", 0) == 0 &&
+            if (mod->types.count(base) && !baseArrayArgsForType(unwrapRegType(mod->types[base])).empty() &&
                 e.select && e.select->selector && RangeSelectSyntax::isKind(e.select->selector->kind)) {
                 auto& r = e.select->selector->as<RangeSelectSyntax>();
                 auto left = arrayIndexExpr(base, 0, emitIndexExpr(*r.left));
@@ -1607,12 +1789,16 @@
         }
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
+            auto rawCallee = invocationCalleeRaw(i);
+            if (rawCallee == "$signed" || rawCallee == "$unsigned") {
+                return emitSystemSignednessCast(i, rawCallee);
+            }
             auto callee = exprText(i.left->toString());
             if (auto qualifiedCalls = configuredTextMap("HDLCPP_QUALIFIED_CALLS"); qualifiedCalls.count(callee)) {
                 callee = qualifiedCalls[callee];
             }
             if (callee == "$bits") {
-                return emitExpr(expr);
+                return emitSystemBitsValue(i);
             }
             std::string args = "(";
             if (i.arguments) {
@@ -1681,8 +1867,8 @@
         auto base = assignedBase(expr);
         if (mod && !base.empty() && mod->types.count(base)) {
             auto type = mod->types[base];
-            while (type.rfind("array<", 0) == 0) {
-                auto args = memoryArgs("memory<" + type.substr(6, type.size() - 7) + ">");
+            while (type.rfind("array<", 0) == 0 || type.rfind("std::array<", 0) == 0) {
+                auto args = templateArgsFor(type, type.rfind("std::array<", 0) == 0 ? "std::array" : "array");
                 if (args.size() != 2) {
                     break;
                 }
@@ -1717,8 +1903,8 @@
         auto base = assignedBase(expr);
         if (mod && !base.empty() && mod->types.count(base)) {
             auto type = mod->types[base];
-            while (type.rfind("array<", 0) == 0) {
-                auto args = memoryArgs("memory<" + type.substr(6, type.size() - 7) + ">");
+            while (type.rfind("array<", 0) == 0 || type.rfind("std::array<", 0) == 0) {
+                auto args = templateArgsFor(type, type.rfind("std::array<", 0) == 0 ? "std::array" : "array");
                 if (args.size() != 2) {
                     break;
                 }
@@ -1741,8 +1927,11 @@
             return emitConditionalAsType(c, "logic<1>");
         }
         auto base = assignedBase(lhsExpr);
-        if (base.empty() && lhs.find('[') != std::string::npos) {
-            base = trim(lhs.substr(0, lhs.find('[')));
+        if ((base.empty() || (mod && !mod->types.count(base))) && lhs.find('[') != std::string::npos) {
+            auto textBase = baseFromLValueText(lhs);
+            if (!textBase.empty()) {
+                base = textBase;
+            }
         }
         auto lvalueBaseType = std::string();
         if (!base.empty() && lhs.find('[') != std::string::npos) {
@@ -1755,7 +1944,7 @@
                 return emitConditionalAsType(c, "logic<1>");
             }
             auto lhsWidth = foldWidth(exprWidth(lhsExpr));
-            if (lhsWidth == "1") {
+            if (lhsWidth == "1" && lhs.find('.') == std::string::npos) {
                 return emitConditionalAsType(c, "logic<1>");
             }
         }
@@ -1786,8 +1975,9 @@
         }
         if (!lhsType.empty()) {
             auto remaining = lhs;
-            while (lhsType.rfind("array<", 0) == 0 && remaining.find('[') != std::string::npos) {
-                auto args = templateArgsFor(lhsType, "array");
+            while ((lhsType.rfind("array<", 0) == 0 || lhsType.rfind("std::array<", 0) == 0) &&
+                   remaining.find('[') != std::string::npos) {
+                auto args = templateArgsFor(lhsType, lhsType.rfind("std::array<", 0) == 0 ? "std::array" : "array");
                 if (args.size() < 2) {
                     break;
                 }
@@ -1921,17 +2111,35 @@
         auto s = mod->outputPortCppNames.count(base) ?
             (isAssignOnlyOutput(*mod, base) ? mod->outputPortCppNames[base] + "()" : emitCombOutputRead(*mod, base)) :
             (mod->portCppNames.count(base) ? mod->portCppNames[base] + "()" : (isAssignDrivenVar(*mod, base) ? base + "()" : base));
-        auto currentType = mod->types.count(base) ? unwrapRegType(mod->types[base]) : std::string();
+        auto resolveAliasType = [&](std::string type) {
+            type = unwrapRegType(trim(std::move(type)));
+            for (size_t guard = 0; mod && guard < 16; ++guard) {
+                auto it = mod->types.find(type);
+                if (it == mod->types.end() || it->second == type) {
+                    break;
+                }
+                type = unwrapRegType(trim(it->second));
+            }
+            return type;
+        };
+        auto arrayArgsForType = [&](const std::string& type) {
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) {
+                args = templateArgsFor(type, "std::array");
+            }
+            return args;
+        };
+        auto currentType = resolveAliasType(mod->types.count(base) ? mod->types[base] : lookupLocalType(base));
         auto memorySelect = !currentType.empty() && memoryLikeType(currentType);
         auto memoryScalar = memorySelect && scalarMemory(currentType);
         size_t arrayLevel = 0;
         for (size_t idx = 0; idx + 1 < n.selectors.size(); ++idx) {
             auto sel = n.selectors[idx];
-            if (currentType.rfind("array<", 0) == 0 && sel->selector && sel->selector->kind == SyntaxKind::BitSelect) {
+            auto arrayArgs = arrayArgsForType(currentType);
+            if (!arrayArgs.empty() && sel->selector && sel->selector->kind == SyntaxKind::BitSelect) {
                 auto index = arrayIndexExpr(base, arrayLevel, *sel->selector->as<BitSelectSyntax>().expr);
                 s += "[(unsigned)(" + index + ")]";
-                auto args = templateArgsFor(currentType, "array");
-                currentType = args.size() >= 2 ? args[0] : std::string();
+                currentType = arrayArgs.size() >= 2 ? resolveAliasType(arrayArgs[0]) : std::string();
                 ++arrayLevel;
             }
             else {
@@ -1942,12 +2150,17 @@
             memoryScalar = memorySelect && scalarMemory(currentType);
         }
         if (last->selector->kind == SyntaxKind::BitSelect) {
-            if (currentType.rfind("array<", 0) == 0) {
+            auto arrayArgs = arrayArgsForType(currentType);
+            if (!arrayArgs.empty()) {
                 auto index = arrayIndexExpr(base, arrayLevel, emitNumericExpr(*last->selector->as<BitSelectSyntax>().expr));
                 return "(uint64_t)(" + s + "[(unsigned)(" + index + ")])";
             }
             auto index = emitNumericExpr(*last->selector->as<BitSelectSyntax>().expr);
-            if (loopVars.count(base) || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t") {
+            auto localBaseType = lookupLocalType(base);
+            bool unknownSingleSelectScalar = currentType.empty() && n.selectors.size() == 1 &&
+                (!mod || (!mod->portCppNames.count(base) && !mod->outputPortCppNames.count(base) && !isAssignDrivenVar(*mod, base)));
+            if (loopVars.count(base) || unknownSingleSelectScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
+                localBaseType == "unsigned" || localBaseType == "u32" || localBaseType == "uint32_t" || localBaseType == "u64" || localBaseType == "uint64_t") {
                 return "(((uint64_t)(" + s + ") >> (unsigned)(" + index + ")) & 1ull)";
             }
             return "(uint64_t)(logic<1>(" + s + "[" + bitIndexArg(index) + "]))";
@@ -1955,10 +2168,10 @@
         if (RangeSelectSyntax::isKind(last->selector->kind)) {
             auto& r = last->selector->as<RangeSelectSyntax>();
             auto bounds = indexedRangeBounds(r);
-            if (currentType.rfind("array<", 0) == 0) {
-                auto args = templateArgsFor(currentType, "array");
-                if (args.size() >= 2) {
-                    auto elemWidth = foldWidth(resolvedTypeWidth(args[0]));
+            auto arrayArgs = arrayArgsForType(currentType);
+            if (!arrayArgs.empty()) {
+                if (arrayArgs.size() >= 2) {
+                    auto elemWidth = foldWidth(resolvedTypeWidth(arrayArgs[0]));
                     auto count = foldWidth(selectTemplateWidth(*last));
                     if (!elemWidth.empty() && !count.empty()) {
                         auto width = foldWidth("(" + elemWidth + ") * (" + count + ")");
@@ -1968,7 +2181,11 @@
                     }
                 }
             }
-            if (loopVars.count(base) || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t") {
+            auto localBaseType = lookupLocalType(base);
+            bool unknownSingleRangeScalar = currentType.empty() && n.selectors.size() == 1 &&
+                (!mod || (!mod->portCppNames.count(base) && !mod->outputPortCppNames.count(base) && !isAssignDrivenVar(*mod, base)));
+            if (loopVars.count(base) || unknownSingleRangeScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
+                localBaseType == "unsigned" || localBaseType == "u32" || localBaseType == "uint32_t" || localBaseType == "u64" || localBaseType == "uint64_t") {
                 auto value = "(((uint64_t)(" + s + ")) >> (unsigned)(" + bounds.second + "))";
                 auto width = foldWidth(selectWidth(*last));
                 if (isNumber(width) && std::stoul(width) < 64) {
@@ -1989,6 +2206,7 @@
         auto& r = e.select->selector->as<RangeSelectSyntax>();
         auto base = assignedBase(*e.left);
         bool integralBase = false;
+        auto leftType = unwrapRegType(exprType(*e.left));
         if (!base.empty()) {
             integralBase = loopVars.count(base) || (mod && mod->types.count(base) &&
                 (mod->types[base] == "bool" || mod->types[base] == "unsigned" || mod->types[base] == "u32" ||
@@ -1998,10 +2216,18 @@
                 integralBase = true;
             }
         }
+        if (!integralBase &&
+            (leftType == "bool" || leftType == "unsigned" || leftType == "u32" || leftType == "uint32_t" ||
+             leftType == "u64" || leftType == "uint64_t")) {
+            integralBase = true;
+        }
         auto bounds = indexedRangeBounds(r);
         if (!base.empty() && mod && mod->types.count(base)) {
             auto type = unwrapRegType(mod->types[base]);
             auto args = templateArgsFor(type, "array");
+            if (args.empty()) {
+                args = templateArgsFor(type, "std::array");
+            }
             if (args.size() >= 2) {
                 auto elemWidth = foldWidth(resolvedTypeWidth(args[0]));
                 auto count = foldWidth(selectTemplateWidth(*e.select));
@@ -2024,8 +2250,53 @@
         return "(uint64_t)(" + emitExpr(*e.left) + ".bits(" + bounds.first + "," + bounds.second + "))";
     }
 
+    std::string emitNumericBitSelectExpr(const ElementSelectExpressionSyntax& e)
+    {
+        if (!e.select || !e.select->selector || e.select->selector->kind != SyntaxKind::BitSelect) {
+            return "";
+        }
+        auto base = assignedBase(*e.left);
+        if (base.empty()) {
+            return "";
+        }
+        auto resolveAliasType = [&](std::string type) {
+            type = unwrapRegType(trim(std::move(type)));
+            for (size_t guard = 0; mod && guard < 16; ++guard) {
+                auto it = mod->types.find(type);
+                if (it == mod->types.end() || it->second == type) {
+                    break;
+                }
+                type = unwrapRegType(trim(it->second));
+            }
+            return type;
+        };
+        auto arrayArgsForType = [&](const std::string& type) {
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) {
+                args = templateArgsFor(type, "std::array");
+            }
+            return args;
+        };
+        auto baseType = resolveAliasType(exprType(*e.left));
+        if (baseType.empty()) {
+            baseType = resolveAliasType(mod && mod->types.count(base) ? mod->types[base] : lookupLocalType(base));
+        }
+        if (arrayArgsForType(baseType).empty()) {
+            return "";
+        }
+        auto index = arrayIndexExpr(base, 0, *e.select->selector->as<BitSelectSyntax>().expr);
+        return "(uint64_t)(" + emitExpr(*e.left) + "[(unsigned)(" + index + ")])";
+    }
+
     std::string emitNumericExpr(const ExpressionSyntax& expr, const std::string& emitted = "")
     {
+        if (expr.kind == SyntaxKind::InvocationExpression) {
+            auto& i = expr.as<InvocationExpressionSyntax>();
+            auto rawCallee = invocationCalleeRaw(i);
+            if (rawCallee == "$signed" || rawCallee == "$unsigned") {
+                return emitSystemSignednessCast(i, rawCallee);
+            }
+        }
         if (expr.kind == SyntaxKind::IdentifierSelectName) {
             auto numericSelect = emitNumericIdentifierSelectExpr(expr.as<IdentifierSelectNameSyntax>());
             if (!numericSelect.empty()) {
@@ -2033,6 +2304,10 @@
             }
         }
         if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            auto numericBit = emitNumericBitSelectExpr(expr.as<ElementSelectExpressionSyntax>());
+            if (!numericBit.empty()) {
+                return numericBit;
+            }
             auto numericRange = emitNumericRangeSelectExpr(expr.as<ElementSelectExpressionSyntax>());
             if (!numericRange.empty()) {
                 return numericRange;
