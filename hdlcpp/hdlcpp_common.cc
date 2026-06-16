@@ -13,6 +13,7 @@ struct MethodGen {
     std::string ret = "void";
     std::string args;
     std::vector<std::string> body;
+    std::set<std::string> localNames;
     std::string returnName;
     std::string returnBase;
 };
@@ -59,6 +60,8 @@ struct ModuleGen {
     std::map<std::string, std::string> outputPortCppNames;
     std::map<std::string, std::string> wireMap;
     std::map<std::string, std::string> combSideEffectDriver;
+    std::set<std::string> combSideEffectChildInputReads;
+    std::map<std::string, std::string> preferredCombDriver;
     std::map<std::string, size_t> combMethodByBase;
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
@@ -69,6 +72,13 @@ struct ModuleGen {
     int alwaysNo = 0;
     bool hasWorkTask = false;
 };
+
+static std::string trim(std::string s);
+
+static const char* continuousCombFuncName()
+{
+    return "continuous_comb_func";
+}
 
 static bool isCombOnlyOutput(const ModuleGen& m, const std::string& svName)
 {
@@ -83,6 +93,23 @@ static bool isAssignOnlyOutput(const ModuleGen& m, const std::string& svName)
            m.assignExprByBase.count(svName) &&
            !m.combAssignedVars.count(svName) &&
            !m.seqAssignedVars.count(svName);
+}
+
+static bool isDirectCombOutputMethodType(const ModuleGen& m, std::string type)
+{
+    type = trim(type);
+    const std::string constPrefix = "const ";
+    if (type.rfind(constPrefix, 0) == 0) {
+        type = trim(type.substr(constPrefix.size()));
+    }
+    while (!type.empty() && (type.back() == '&' || type.back() == '*')) {
+        type.pop_back();
+        type = trim(type);
+    }
+    if (type.rfind("array<", 0) == 0 || type.rfind("std::array<", 0) == 0) {
+        return true;
+    }
+    return m.typeParamNames.count(type) != 0;
 }
 
 static bool memoryLikeType(const std::string& type);
@@ -764,6 +791,13 @@ static bool lhsAssignsField(const std::string& lhs, const std::string& base, con
     return next >= lhs.size() || lhs[next] == '.' || lhs[next] == '[';
 }
 
+static bool moduleMethodExists(const ModuleGen& m, const std::string& name)
+{
+    return std::any_of(m.methods.begin(), m.methods.end(), [&](const MethodGen& method) {
+        return method.name == name;
+    });
+}
+
 static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::string& base,
                                                const std::string& field = "")
 {
@@ -775,13 +809,22 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
     };
 
     if (field.empty()) {
+        auto preferred = m.preferredCombDriver.find(base);
+        if (preferred != m.preferredCombDriver.end()) {
+            addDriver(preferred->second);
+        }
+    }
+
+    if (field.empty() && m.combSideEffectDriver.count(base)) {
+        addDriver(m.combSideEffectDriver.at(base));
+    }
+
+    if (field.empty()) {
         auto direct = m.wireMap.find(base);
         if (direct != m.wireMap.end()) {
-            addDriver(direct->second);
-        }
-        auto side = m.combSideEffectDriver.find(base);
-        if (side != m.combSideEffectDriver.end()) {
-            addDriver(side->second);
+            if (direct->second.find("_comb_func") == std::string::npos || moduleMethodExists(m, direct->second)) {
+                addDriver(direct->second);
+            }
         }
     }
 
@@ -1138,6 +1181,55 @@ static size_t matchingOpenBefore(const std::string& s, size_t close, char openCh
 static size_t selectedExprStartBefore(const std::string& s, size_t endExclusive);
 static std::string numericizeSelectedArithmetic(std::string s);
 
+static size_t matchingTemplateClose(const std::string& s, size_t open)
+{
+    if (open >= s.size() || s[open] != '<') {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = open + 1; i < s.size(); ++i) {
+        if (s[i] == '<' && i + 1 < s.size() && s[i + 1] == '<') {
+            ++i;
+            continue;
+        }
+        if (s[i] == '>' && i + 1 < s.size() && s[i + 1] == '>' &&
+            (i == 0 || std::isspace(static_cast<unsigned char>(s[i - 1])))) {
+            ++i;
+            continue;
+        }
+        if (s[i] == '<') {
+            ++depth;
+        }
+        else if (s[i] == '>') {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+static size_t matchingParenClose(const std::string& s, size_t open)
+{
+    if (open >= s.size() || s[open] != '(') {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = open + 1; i < s.size(); ++i) {
+        if (s[i] == '(' || s[i] == '[' || s[i] == '{') {
+            ++depth;
+        }
+        else if (s[i] == ')' || s[i] == ']' || s[i] == '}') {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
 static std::string valueAssignCombFunctionPorts(std::string line)
 {
     return line;
@@ -1166,23 +1258,37 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, ">>>", ">>");
     line = repairDottedLogicWidthCasts(std::move(line));
     applyConfiguredLinePatches(line);
+    auto repairOneBitCastsBeforeFields = [&]() {
+        const std::string prefix = "logic<1>(";
+        for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
+            auto close = matchingParenClose(line, pos + prefix.size() - 1);
+            if (close == std::string::npos || close + 1 >= line.size() || line[close + 1] != '.') {
+                pos += prefix.size();
+                continue;
+            }
+            auto fieldStart = close + 2;
+            auto fieldEnd = fieldStart;
+            while (fieldEnd < line.size() &&
+                   (std::isalnum(static_cast<unsigned char>(line[fieldEnd])) || line[fieldEnd] == '_')) {
+                ++fieldEnd;
+            }
+            auto field = line.substr(fieldStart, fieldEnd - fieldStart);
+            if (field.empty() || field == "bits" || field == "get") {
+                pos = fieldEnd;
+                continue;
+            }
+            auto inner = line.substr(pos + prefix.size(), close - (pos + prefix.size()));
+            auto repl = "(" + inner + ")";
+            line.replace(pos, close + 1 - pos, repl);
+            pos += repl.size();
+        }
+    };
+    repairOneBitCastsBeforeFields();
     auto repairRuntimeLogicWidths = [&]() {
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
-            int depth = 1;
-            size_t end = start;
-            for (; end < line.size(); ++end) {
-                if (line[end] == '<') {
-                    ++depth;
-                }
-                else if (line[end] == '>') {
-                    --depth;
-                    if (depth == 0) {
-                        break;
-                    }
-                }
-            }
-            if (end >= line.size()) {
+            auto end = matchingTemplateClose(line, pos + 5);
+            if (end == std::string::npos) {
                 break;
             }
             auto width = line.substr(start, end - start);
@@ -1202,6 +1308,72 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     repairRuntimeLogicWidths();
+    auto balanceCompletedLogicStatement = [&]() {
+        if (line.find("logic<") == std::string::npos) {
+            return;
+        }
+        auto trimmed = trim(line);
+        if (trimmed.empty() || trimmed.back() != ';') {
+            return;
+        }
+        int balance = 0;
+        for (char c : line) {
+            if (c == '(') {
+                ++balance;
+            }
+            else if (c == ')') {
+                --balance;
+            }
+        }
+        if (balance <= 0 || balance > 8) {
+            return;
+        }
+        std::string closes(static_cast<size_t>(balance), ')');
+        auto semi = line.rfind(';');
+        if (semi == std::string::npos) {
+            return;
+        }
+        auto insertAt = semi;
+        if (line.find("cat{") != std::string::npos) {
+            auto catPos = line.find("cat{");
+            int braceDepth = 0;
+            int parenDepth = 0;
+            for (size_t i = 0; i < semi; ++i) {
+                char c = line[i];
+                if (c == '{') {
+                    ++braceDepth;
+                }
+                else if (c == '}') {
+                    --braceDepth;
+                }
+                else if (c == '(') {
+                    ++parenDepth;
+                }
+                else if (c == ')') {
+                    --parenDepth;
+                }
+                else if (i > catPos && c == ',' && braceDepth > 0 && parenDepth > 0) {
+                    auto next = i + 1;
+                    while (next < semi && std::isspace(static_cast<unsigned char>(line[next]))) {
+                        ++next;
+                    }
+                    bool catSeparator = line.compare(next, 6, "logic<") == 0 ||
+                        line.compare(next, 2, "u<") == 0 ||
+                        line.compare(next, 4, "cat{") == 0;
+                    if (!catSeparator) {
+                        continue;
+                    }
+                    line.insert(i, std::string(static_cast<size_t>(parenDepth), ')'));
+                    return;
+                }
+            }
+            if (semi > 0 && line[semi - 1] == '}') {
+                insertAt = semi - 1;
+            }
+        }
+        line.insert(insertAt, closes);
+    };
+    balanceCompletedLogicStatement();
     auto removeSimpleOneBitMasks = [&]() {
         const std::string castPrefix = "((uint64_t)(";
         const std::string maskSuffix = ") & ((1ull << 1) - 1ull))";
@@ -1827,13 +1999,16 @@ static std::string postProcessCppLine(std::string line)
             };
             line = lhs + " " + pred + " ? " + wrapBranch(left) + " : " + wrapBranch(right) + ";";
             replaceAll(line, " )", ")");
+            balanceCompletedLogicStatement();
             return line;
         }
     }
 
     // Struct-field assignments are plain C++ value updates. Wrapping every dotted LHS
     // in _ASSIGN turns these into lambda assignments and breaks packed/local structs.
-    return lhs + rhs;
+    line = lhs + rhs;
+    balanceCompletedLogicStatement();
+    return line;
 }
 
 static std::string exprText(const std::string& in)
