@@ -4,28 +4,14 @@
 
 #define __PACKED __attribute__((packed))
 
-#if __cplusplus >= 202302L
-#define USE_FORMAT_H  // for c++26
-#endif
-
-#ifdef USE_FORMAT_H
+#if defined(__has_include)
+#if __has_include(<format>)
 #include <format>
-#include <print>
-#else
-namespace std {
-
-
-template<typename T>
-struct formatter {};
-struct format_parse_context { constexpr bool begin() { return true; } };
-template<typename T>
-bool format_to(bool, const char*, T& t)
-{
-    return false;
-}
-
-}
 #endif
+#else
+#include <format>
+#endif
+#include "cpphdl_std_format.h"
 
 //     u& operator= (const u& v) = default;
 
@@ -41,7 +27,7 @@ struct u
         return WIDTH;
     }
 
-    constexpr u() = default;
+    u() = default;
     constexpr u(uint64_t v) : value(v) {}
     u& operator= (uint64_t v) { value = v; return *this; };
 //    u* operator&() { return (u*)this; }
@@ -105,6 +91,7 @@ struct u
 template<size_t W>
 struct is_from_cpphdl_namespace<cpphdl::u<W>> : std::true_type {};
 
+#ifdef CPPHDL_HAS_STD_FORMAT
 template<size_t WIDTH>
 struct std::formatter<cpphdl::u<WIDTH>>
 {
@@ -139,24 +126,13 @@ struct std::formatter<cpphdl::u<WIDTH>>
         return out;
     }
 };
+#endif
 
 //    class& operator= (type v) { value = v; return *this; };
 //    class& operator= (const class& v) = default;
 
-#define DEFINE_REGULAR_TYPE_CLASS(type, class, size, text) \
-namespace cpphdl \
-{ \
-struct class : public u<size> \
-{ \
-    constexpr class() = default; \
-    constexpr class(type v) : u(v) {}  \
-    template<size_t W> constexpr class(u<W> v) : u((uint64_t)v) {}  \
-    type* operator&() { return (type*)this; } \
-    template<size_t W> explicit constexpr operator u<W>() { return value; }  \
-}; \
-} \
-template<> \
-struct is_from_cpphdl_namespace<cpphdl::class> : std::true_type {}; \
+#ifdef CPPHDL_HAS_STD_FORMAT
+#define DEFINE_REGULAR_TYPE_FORMATTER(type, class, text) \
 template<> \
 struct std::formatter<cpphdl::class> \
 { \
@@ -167,7 +143,26 @@ struct std::formatter<cpphdl::class> \
         out = std::format_to(out, text, (type)val.value); \
         return out; \
     } \
+};
+#else
+#define DEFINE_REGULAR_TYPE_FORMATTER(type, class, text)
+#endif
+
+#define DEFINE_REGULAR_TYPE_CLASS(type, class, size, text) \
+namespace cpphdl \
+{ \
+struct class : public u<size> \
+{ \
+    class() = default; \
+    constexpr class(type v) : u(v) {}  \
+    template<size_t W> constexpr class(u<W> v) : u((uint64_t)v) {}  \
+    type* operator&() { return (type*)this; } \
+    template<size_t W> explicit constexpr operator u<W>() { return value; }  \
 }; \
+} \
+template<> \
+struct is_from_cpphdl_namespace<cpphdl::class> : std::true_type {}; \
+DEFINE_REGULAR_TYPE_FORMATTER(type, class, text) \
 static_assert (sizeof(cpphdl::class) == (size+7)/8, "struct " #class " size is not correct");
 
 DEFINE_REGULAR_TYPE_CLASS(bool, u1, 8, "{:1x}");

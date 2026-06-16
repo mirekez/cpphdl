@@ -218,6 +218,24 @@ path.write_text(f"""/dts-v1/;
 \t\t\tstatus = "okay";
 \t\t}};
 
+\t\teth0: ethernet@8200e000 {{
+\t\t\tcompatible = "xlnx,axi-ethernet-2.01.a";
+\t\t\treg = <0x8200e000 0x100>, <0x8200e100 0x100>;
+\t\t\tinterrupt-parent = <&plic0>;
+\t\t\tinterrupts = <3 3 3>;
+\t\t\tphy-mode = "rgmii";
+\t\t\tmac-address = [02 00 00 00 00 02];
+\t\t\tlocal-mac-address = [02 00 00 00 00 02];
+\t\t\txlnx,rxmem = <0x800>;
+\t\t\txlnx,txcsum = <0>;
+\t\t\txlnx,rxcsum = <0>;
+\t\t\tstatus = "okay";
+\t\t\tfixed-link {{
+\t\t\t\tspeed = <1000>;
+\t\t\t\tfull-duplex;
+\t\t\t}};
+\t\t}};
+
 \t\tplic0: interrupt-controller@82010000 {{
 \t\t\t#interrupt-cells = <1>;
 \t\t\tinterrupt-controller;
@@ -286,10 +304,28 @@ prepare_config()
     cp "${KERNEL_CONFIG}" "${dst_config}"
 
     if [[ -x "${KERNEL_SRC}/scripts/config" ]]; then
-        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e BLK_DEV_TRIBE_SD
-        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e EXT2_FS
+        for option in \
+            SMP HOTPLUG_CPU MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
+            BPF_SYSCALL BPF_JIT BPF_PRELOAD CGROUPS NAMESPACES \
+            FTRACE RCU_TRACE DEBUG_MISC DEBUG_BUGVERBOSE SLUB_DEBUG \
+            VT VT_CONSOLE INPUT INPUT_KEYBOARD INPUT_MOUSE HID_SUPPORT HID HID_GENERIC \
+            IPV6 FAT_FS MSDOS_FS VFAT_FS BLK_DEV_LOOP \
+            RD_BZIP2 RD_LZMA RD_XZ RD_LZO RD_LZ4 RD_ZSTD \
+            AIO IO_URING EFI EFI_STUB EFIVAR_FS SWAP SYSVIPC PROC_PAGE_MONITOR \
+            AUTOFS_FS NLS RISCV_APLIC RISCV_APLIC_MSI RISCV_IMSIC PRINTK_TIME \
+            ELF_CORE COREDUMP FHANDLE INOTIFY_USER DNOTIFY; do
+            "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -d "${option}"
+        done
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val LOG_BUF_SHIFT 14
+
+        for option in \
+            FUTEX TMPFS PROC_FS SYSFS DEVTMPFS NET INET \
+            RISCV_ISA_C BLK_DEV_TRIBE_SD EXT2_FS NETDEVICES ETHERNET \
+            NET_VENDOR_XILINX DMADEVICES XILINX_DMA XILINX_AXI_EMAC PHYLINK FIXED_PHY; do
+            "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e "${option}"
+        done
     else
-        for option in BLK_DEV_TRIBE_SD EXT2_FS; do
+        for option in FUTEX TMPFS PROC_FS SYSFS DEVTMPFS NET INET RISCV_ISA_C BLK_DEV_TRIBE_SD EXT2_FS NETDEVICES ETHERNET NET_VENDOR_XILINX DMADEVICES XILINX_DMA XILINX_AXI_EMAC PHYLINK FIXED_PHY; do
             if grep -q "^CONFIG_${option}=" "${dst_config}"; then
                 sed -i "s/^CONFIG_${option}=.*/CONFIG_${option}=y/" "${dst_config}"
             elif grep -q "^# CONFIG_${option} is not set" "${dst_config}"; then
@@ -301,6 +337,23 @@ prepare_config()
     fi
 
     kernel_make olddefconfig
+
+    if [[ -x "${KERNEL_SRC}/scripts/config" ]]; then
+        for option in \
+            SMP HOTPLUG_CPU MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
+            BPF_SYSCALL BPF_JIT BPF_PRELOAD CGROUPS NAMESPACES \
+            FTRACE RCU_TRACE DEBUG_MISC DEBUG_BUGVERBOSE SLUB_DEBUG \
+            VT VT_CONSOLE INPUT INPUT_KEYBOARD INPUT_MOUSE HID_SUPPORT HID HID_GENERIC \
+            IPV6 FAT_FS MSDOS_FS VFAT_FS BLK_DEV_LOOP \
+            RD_BZIP2 RD_LZMA RD_XZ RD_LZO RD_LZ4 RD_ZSTD \
+            AIO IO_URING EFI EFI_STUB EFIVAR_FS SWAP SYSVIPC PROC_PAGE_MONITOR \
+            AUTOFS_FS NLS RISCV_APLIC RISCV_APLIC_MSI RISCV_IMSIC PRINTK_TIME \
+            ELF_CORE COREDUMP FHANDLE INOTIFY_USER DNOTIFY; do
+            "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -d "${option}"
+        done
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val LOG_BUF_SHIFT 14
+        kernel_make olddefconfig
+    fi
 }
 
 copy_outputs()

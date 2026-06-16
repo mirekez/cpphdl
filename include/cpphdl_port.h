@@ -2,9 +2,11 @@
 
 #include <exception>
 #include <functional>
+#include <stdio.h>
 
 #if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>)
 #if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in generated/verilated code
+#include <sstream>
 #include <stacktrace>
 #endif
 #endif
@@ -138,9 +140,12 @@ public:
             return *cache;
         }
         if (!assigned) {
-            std::print(stderr, "Port is not assigned, check backtrace in gdb\n");
+            fprintf(stderr, "Port is not assigned, check backtrace in gdb\n");
 #if defined(CPPHDL_HAVE_STACKTRACE)
-            std::print(stderr, "Backtrace: \n{}\n", std::stacktrace::current());
+            std::ostringstream backtrace_stream;
+            backtrace_stream << std::stacktrace::current();
+            const std::string backtrace_text = backtrace_stream.str();
+            fprintf(stderr, "Backtrace: \n%s\n", backtrace_text.c_str());
 #endif
             *(volatile char*)0 = 0;
         }

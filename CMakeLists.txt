@@ -54,6 +54,8 @@ project(cpphdl
   VERSION 0.8
   LANGUAGES C CXX)
 
+add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
+
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
 option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
 option(CPPHDL_BUILD_TESTS "Build CppHDL standalone tests" ON)

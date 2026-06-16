@@ -121,6 +121,7 @@ public:
 
             masters_out[i].wvalid_in = _ASSIGN_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.wvalid_in());
             masters_out[i].wdata_in = slave_in.wdata_in;
+            masters_out[i].wstrb_in = slave_in.wstrb_in;
             masters_out[i].wlast_in = slave_in.wlast_in;
             masters_out[i].bready_in = _ASSIGN_I(aw_active_reg && aw_sel_safe_comb_func() == i && slave_in.bready_in());
 

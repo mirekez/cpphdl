@@ -218,8 +218,9 @@ inline bool VerilatorCompileValidReady(std::string cpp_name, std::string top, st
         "; verilator -cc Predef_pkg.sv " + top + ".sv --exe " + cpp_name + " --top-module " + top +
         " --Wno-fatal --CFLAGS \"-DVERILATOR -I../../../../include -DVERILATOR_MODEL=V" + top + " " +
         model_define + " " + compilerParams + "\"").c_str());
+    const std::string verilator_cxx = ToolShellQuoteString(VerilatorCxx());
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
-        "; make -j4 -f V" + top + ".mk CXX=clang++ LINK=\"clang++ -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
+        "; make -j4 -f V" + top + ".mk CXX=" + verilator_cxx + " LINK=\"" + verilator_cxx + " -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 }
 #endif
 

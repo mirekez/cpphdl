@@ -143,6 +143,16 @@ static bool check_direct_arrays()
     ok &= check((uint64_t)logic<16>(unpacked_logic.bits(31, 16)) == 0x0055, "unpacked bits second byte-aligned object");
     ok &= check((uint64_t)logic<16>(unpacked_logic.bits(47, 32)) == 0x01aa, "unpacked bits third byte-aligned object");
 
+    auto packed_logic = unpacked_logic.pack();
+    ok &= check(decltype(packed_logic)::PACKED, "unpacked logic pack returns packed array");
+    ok &= check(decltype(packed_logic)::_size_bits() == 27, "unpacked logic pack uses compact width");
+    ok &= check((uint64_t)packed_logic[0] == 0x101, "unpacked logic pack index 0");
+    ok &= check((uint64_t)packed_logic[1] == 0x055, "unpacked logic pack index 1");
+    ok &= check((uint64_t)packed_logic[2] == 0x1aa, "unpacked logic pack index 2");
+    ok &= check((uint64_t)logic<9>(packed_logic.bits(8, 0)) == 0x101, "unpacked logic pack bits first compact object");
+    ok &= check((uint64_t)logic<9>(packed_logic.bits(17, 9)) == 0x055, "unpacked logic pack bits second compact object");
+    ok &= check((uint64_t)logic<9>(packed_logic.bits(26, 18)) == 0x1aa, "unpacked logic pack bits third compact object");
+
     unpacked_logic.bits(20, 16) = 0x1f;
     ok &= check((uint64_t)unpacked_logic[1] == 0x05f, "unpacked bits write through");
     ok &= check((uint64_t)unpacked_logic[0] == 0x101, "unpacked bits did not disturb previous object");
@@ -161,6 +171,13 @@ static bool check_direct_arrays()
     ok &= check((uint64_t)unpacked_u[0] == 1, "unpacked u index 0");
     ok &= check((uint64_t)unpacked_u[4] == 5, "unpacked u index 4");
     ok &= check((uint64_t)logic<8>(unpacked_u.bits(39, 32)) == 5, "unpacked u byte-aligned final object");
+
+    auto packed_u = unpacked_u.pack();
+    ok &= check(decltype(packed_u)::PACKED, "unpacked u pack returns packed array");
+    ok &= check(decltype(packed_u)::_size_bits() == 15, "unpacked u pack uses compact width");
+    ok &= check((uint64_t)packed_u[0] == 1, "unpacked u pack index 0");
+    ok &= check((uint64_t)packed_u[4] == 5, "unpacked u pack index 4");
+    ok &= check((uint64_t)logic<3>(packed_u.bits(14, 12)) == 5, "unpacked u pack compact final object");
 
     return ok;
 }

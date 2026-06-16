@@ -47,7 +47,7 @@ public:
         ram.read1_in = _ASSIGN(false);
         ram.write1_in = _ASSIGN(axi_in.wvalid_in() && axi_in.wready_out());
         ram.write1_data_in = axi_in.wdata_in;
-        ram.write1_mask_in = _ASSIGN(~logic<DATA_WIDTH / 8>(0));
+        ram.write1_mask_in = axi_in.wstrb_in;
         ram.debugen_in = debugen_in;
         ram.__inst_name = __inst_name + "/ram";
         ram._assign();

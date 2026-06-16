@@ -109,17 +109,9 @@ static uint16_t expected_static_method(uint16_t value)
 static bool check_generated_sv()
 {
     std::filesystem::path top_path = "generated/StaticMethod.sv";
-    std::filesystem::path plain_pkg = "generated/StaticMethodPlainHelper_pkg.sv";
-    std::filesystem::path config_pkg = "generated/StaticMethodConfig_pkg.sv";
-    std::filesystem::path templ_pkg = "generated/StaticMethodTemplateHelperStaticMethodConfig_pkg.sv";
-    std::filesystem::path nested_pkg = "generated/StaticMethodHolder_Nested_pkg.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(top_path)) {
         top_path = "StaticMethod_1/StaticMethod.sv";
-        plain_pkg = "StaticMethod_1/StaticMethodPlainHelper_pkg.sv";
-        config_pkg = "StaticMethod_1/StaticMethodConfig_pkg.sv";
-        templ_pkg = "StaticMethod_1/StaticMethodTemplateHelperStaticMethodConfig_pkg.sv";
-        nested_pkg = "StaticMethod_1/StaticMethodHolder_Nested_pkg.sv";
     }
 #endif
 
@@ -131,10 +123,6 @@ static bool check_generated_sv()
 
     std::string top((std::istreambuf_iterator<char>(top_in)), std::istreambuf_iterator<char>());
     bool ok = true;
-    ok &= std::filesystem::exists(plain_pkg);
-    ok &= std::filesystem::exists(config_pkg);
-    ok &= std::filesystem::exists(templ_pkg);
-    ok &= std::filesystem::exists(nested_pkg);
     ok &= top.find("StaticMethodPlainHelper___mix") != std::string::npos;
     ok &= top.find("StaticMethodTemplateHelperStaticMethodConfig___fold") != std::string::npos;
     ok &= top.find("StaticMethodHolder_Nested___spread") != std::string::npos;

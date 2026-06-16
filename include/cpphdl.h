@@ -61,6 +61,15 @@ namespace cpphdl
 
 
 
+
+template<typename T, typename V>
+constexpr T sv_cast(const V& value)
+{
+    T out{};
+    out = value;
+    return out;
+}
+
 template<size_t WIDTH>
 constexpr logic<WIDTH> byteswap(const logic<WIDTH>& value)
 {
@@ -102,20 +111,26 @@ constexpr T operator^(T lhs, const logic<WIDTH>& rhs)
     return static_cast<T>(static_cast<uint64_t>(lhs) ^ static_cast<uint64_t>(rhs));
 }
 
-template<typename T>
+template<typename T, typename = void>
 struct type_width_value
 {
     static constexpr size_t value = sizeof(T) * 8;
 };
 
+template<typename T>
+struct type_width_value<T, std::void_t<decltype(T::_size_bits())>>
+{
+    static constexpr size_t value = T::_size_bits();
+};
+
 template<size_t WIDTH>
-struct type_width_value<logic<WIDTH>>
+struct type_width_value<logic<WIDTH>, void>
 {
     static constexpr size_t value = WIDTH;
 };
 
 template<typename T, size_t N, bool PACKED>
-struct type_width_value<array<T, N, PACKED>>
+struct type_width_value<array<T, N, PACKED>, void>
 {
     static constexpr size_t value = array<T, N, PACKED>::_size_bits();
 };
@@ -123,7 +138,40 @@ struct type_width_value<array<T, N, PACKED>>
 template<typename T>
 constexpr size_t type_width()
 {
-    return type_width_value<std::remove_cvref_t<T>>::value;
+    return type_width_value<std::remove_cv_t<std::remove_reference_t<T>>>::value;
+}
+
+template<size_t WIDTH, typename T>
+constexpr logic<WIDTH> pack_value(const T& value)
+{
+    if constexpr (detail::has_pack_method<T>::value) {
+        return logic<WIDTH>(value.pack());
+    }
+    else if constexpr (detail::can_static_cast_uint64<T>::value) {
+        return logic<WIDTH>(static_cast<uint64_t>(value));
+    }
+    else {
+        return logic<WIDTH>(0);
+    }
+}
+
+template<typename T, size_t WIDTH>
+constexpr T unpack_value(const logic<WIDTH>& value)
+{
+    T out{};
+    if constexpr (std::is_assignable_v<T&, logic<WIDTH>>) {
+        out = value;
+    }
+    else if constexpr (std::is_constructible_v<T, logic<WIDTH>>) {
+        out = T(value);
+    }
+    else if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
+        out = static_cast<T>(static_cast<uint64_t>(value));
+    }
+    else if constexpr (detail::can_assign_from<T, int>::value) {
+        out = 0;
+    }
+    return out;
 }
 
 template<size_t COUNT, size_t WIDTH>
@@ -149,6 +197,12 @@ constexpr logic<1> reduce_and(const logic<WIDTH>& value)
     return logic<1>(1);
 }
 
+template<typename T, size_t TOTAL_BITS, size_t ELEMENT_BITS>
+constexpr logic<1> reduce_and(const detail::array_packed_ref<T, TOTAL_BITS, ELEMENT_BITS>& value)
+{
+    return reduce_and(logic<ELEMENT_BITS>(value));
+}
+
 template<typename T, size_t N, bool PACKED>
 constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
 {
@@ -163,7 +217,7 @@ constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
 template<typename T, typename V>
 constexpr void sv_assign_field(T& dst, const V& value)
 {
-    if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<std::remove_cvref_t<V>>) {
+    if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<std::remove_cv_t<std::remove_reference_t<V>>>) {
         dst = static_cast<T>(value);
     }
     else {
@@ -186,7 +240,7 @@ constexpr void sv_assign_field(std::array<T, N>& dst, std::initializer_list<V> v
 template<typename T, size_t N, typename V>
 constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cvref_t<V>, std::array<T, N>>) {
+    if constexpr (std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, std::array<T, N>>) {
         dst = value;
     }
     else {
@@ -199,7 +253,7 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 template<typename T, size_t N, bool PACKED, typename V>
 constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cvref_t<V>, array<T, N, PACKED>>) {
+    if constexpr (std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, array<T, N, PACKED>>) {
         dst = value;
     }
     else {
@@ -262,3 +316,20 @@ constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
         __prev__system_clock_##name = _system_clock;
 
 #endif
+
+#if defined(__has_include)
+#if __has_include(<format>)
+#include <format>
+#endif
+#if __has_include(<print>)
+#include <print>
+#define CPPHDL_HAS_STD_PRINT 1
+#endif
+#else
+#include <format>
+#include <print>
+#define CPPHDL_HAS_STD_PRINT 1
+#endif
+
+#define CPPHDL_WANT_STD_PRINT_STUBS 1
+#include "cpphdl_std_format.h"

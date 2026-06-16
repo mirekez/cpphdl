@@ -102,6 +102,11 @@ static int packet_matches(void)
             return 0;
         }
     }
+    for (unsigned i = sizeof(tx_packet); i < 60u; ++i) {
+        if (rx_packet[i] != 0) {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -146,7 +151,7 @@ int main(void)
         tribe_uart_puts("R0\n");
         return 1;
     }
-    if ((rx_sts & ETH_BD_LEN_MASK) != sizeof(tx_packet)) {
+    if ((rx_sts & ETH_BD_LEN_MASK) != 60u) {
         tribe_uart_puts("R1\n");
         return 1;
     }

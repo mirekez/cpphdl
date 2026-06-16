@@ -563,6 +563,7 @@ public:
         slave_axi[port].aw.id = 3;
         slave_axi[port].w.valid = false;
         slave_axi[port].w.data = beat;
+        slave_axi[port].w.strb = ~logic<PORT_BITS / 8>(0);
         slave_axi[port].w.last = true;
         slave_axi[port].b.ready = false;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_awready(port); ++i) {
@@ -594,6 +595,49 @@ public:
         slave_axi[port].b.ready = true;
         cycle(false);
         slave_axi[port].b.ready = false;
+        cycle(false);
+    }
+
+    void axi_write_masked_beat(size_t port, uint32_t request_addr, logic<PORT_BITS> beat, logic<PORT_BITS / 8> strb)
+    {
+        slave_axi[port].aw.valid = true;
+        slave_axi[port].aw.addr = request_addr & ~(uint32_t)((PORT_BITS / 8) - 1);
+        slave_axi[port].aw.id = 4;
+        slave_axi[port].w.valid = false;
+        slave_axi[port].w.data = beat;
+        slave_axi[port].w.strb = strb;
+        slave_axi[port].w.last = true;
+        slave_axi[port].b.ready = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_awready(port); ++i) {
+            cycle(false);
+        }
+        if (!slave_awready(port)) {
+            std::print("\nmasked AXI write address ERROR port={} addr={:#x}\n", port, request_addr);
+            error = true;
+        }
+        cycle(false);
+        slave_axi[port].aw.valid = false;
+        slave_axi[port].w.valid = true;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_wready(port); ++i) {
+            cycle(false);
+        }
+        if (!slave_wready(port)) {
+            std::print("\nmasked AXI write data ERROR port={} addr={:#x}\n", port, request_addr);
+            error = true;
+        }
+        cycle(false);
+        slave_axi[port].w.valid = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_bvalid(port); ++i) {
+            cycle(false);
+        }
+        if (!slave_bvalid(port)) {
+            std::print("\nmasked AXI write response ERROR port={} addr={:#x}\n", port, request_addr);
+            error = true;
+        }
+        slave_axi[port].b.ready = true;
+        cycle(false);
+        slave_axi[port].b.ready = false;
+        slave_axi[port].w.strb = ~logic<PORT_BITS / 8>(0);
         cycle(false);
     }
 
@@ -683,6 +727,36 @@ public:
             uint32_t expected = 0x73000000u + (uint32_t)word * 0x00010101u;
             if (data != expected) {
                 std::print("\nfull-width AXI write/read ERROR word={} data={:#x} expected={:#x}\n", word, data, expected);
+                error = true;
+            }
+        }
+    }
+
+    void slave_write_strobe_preserves_neighbor_words_check()
+    {
+        uint32_t base = 0x00000500u;
+        logic<PORT_BITS> beat;
+        logic<PORT_BITS / 8> strb;
+        size_t word;
+
+        for (word = 0; word < PORT_BITS / 32; ++word) {
+            write_only(base + (uint32_t)word * 4u, 0x81000000u + (uint32_t)word, 0xf);
+        }
+
+        beat = 0;
+        for (word = 0; word < PORT_BITS / 32; ++word) {
+            beat.bits(word * 32 + 31, word * 32) = 0xdead0000u + (uint32_t)word;
+        }
+        strb = 0;
+        strb.bits(7, 4) = 0xf;
+        beat.bits(63, 32) = 0x0000003cu;
+        axi_write_masked_beat(1, base, beat, strb);
+
+        for (word = 0; word < PORT_BITS / 32; ++word) {
+            uint32_t expected = (word == 1) ? 0x0000003cu : (0x81000000u + (uint32_t)word);
+            uint32_t got = axi_read_word(0, base + (uint32_t)word * 4u);
+            if (got != expected) {
+                std::print("\nAXI wstrb preserve ERROR word={} got={:#x} expected={:#x}\n", word, got, expected);
                 error = true;
             }
         }
@@ -854,6 +928,72 @@ public:
         write_only(0x0000017du, 0x00000045u, 0x1);
         read_check(0x0000017cu, 0x0000454du);
         d_read_check(0x0000017du, 0x00000045u);
+    }
+
+    void cpu_byte_store_visible_to_axi_master_check(bool fill_before_store, bool force_evict)
+    {
+        uint32_t saved_memory_base = memory_base;
+        uint32_t local_base = fill_before_store ?
+            (force_evict ? 0x000007c0u : 0x000006c0u) :
+            (force_evict ? 0x00000840u : 0x00000740u);
+        uint32_t cpu_base = 0x80000000u + local_base;
+        constexpr uint32_t set_stride = (L2_SIZE / LINE_SIZE / WAYS) * LINE_SIZE;
+        uint8_t expected[PORT_BITS / 8];
+
+        memory_base = 0x80000000u;
+        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+            uint32_t value = 0x44332211u + (uint32_t)word * 0x11111111u;
+            set_backing_word(local_base + (uint32_t)word * 4u, value);
+            expected[word * 4u + 0u] = (uint8_t)(value >> 0);
+            expected[word * 4u + 1u] = (uint8_t)(value >> 8);
+            expected[word * 4u + 2u] = (uint8_t)(value >> 16);
+            expected[word * 4u + 3u] = (uint8_t)(value >> 24);
+        }
+
+        // Mimic Linux networking: byte stores patch an unaligned Ethernet
+        // header just before DMA reads it. Run both hit and write-miss cases.
+        if (fill_before_store) {
+            d_read_check(cpu_base, 0x44332211u);
+        }
+        const uint8_t mac_dst[6] = {0x82, 0x80, 0x79, 0x17, 0x0a, 0x07};
+        const uint8_t mac_src[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
+        const uint8_t eth_type[2] = {0x08, 0x00};
+        for (size_t i = 0; i < 6; ++i) {
+            write_only(cpu_base + 2u + (uint32_t)i, mac_dst[i], 0x1);
+            expected[2u + i] = mac_dst[i];
+        }
+        for (size_t i = 0; i < 6; ++i) {
+            write_only(cpu_base + 8u + (uint32_t)i, mac_src[i], 0x1);
+            expected[8u + i] = mac_src[i];
+        }
+        for (size_t i = 0; i < 2; ++i) {
+            write_only(cpu_base + 14u + (uint32_t)i, eth_type[i], 0x1);
+            expected[14u + i] = eth_type[i];
+        }
+        // Also patch the destination IPv4 bytes in the next word, matching the
+        // failed ping trace where CPU reads saw c0.a8.4c.01 but DMA did not.
+        const uint8_t ip_dst[4] = {0xc0, 0xa8, 0x4c, 0x01};
+        for (size_t i = 0; i < 4; ++i) {
+            write_only(cpu_base + 32u + (uint32_t)i, ip_dst[i], 0x1);
+            expected[32u + i] = ip_dst[i];
+        }
+
+        if (force_evict) {
+            for (size_t way = 0; way <= WAYS; ++way) {
+                write_only(cpu_base + (uint32_t)((way + 1u) * set_stride), 0x70000000u + (uint32_t)way, 0xf);
+            }
+        }
+
+        logic<PORT_BITS> beat = axi_read_beat(0, local_base);
+        for (size_t i = 0; i < PORT_BITS / 8; ++i) {
+            uint8_t got = (uint8_t)beat.bits(i * 8u + 7u, i * 8u);
+            if (got != expected[i]) {
+                std::print("\nCPU byte store AXI visibility ERROR fill_before_store={} force_evict={} byte={} got={:#x} expected={:#x}\n",
+                    fill_before_store, force_evict, i, got, expected[i]);
+                error = true;
+            }
+        }
+        memory_base = saved_memory_base;
     }
 
     void dirty_eviction_check()
@@ -1198,6 +1338,7 @@ public:
                    "\n    - data-port direct read crossing an L2 beat end"
                    "\n    - immediate CPU hit from a line that was just filled"
                    "\n    - cached CPU partial writes"
+                   "\n    - CPU byte stores visible to external AXI/DMA reads"
                    "\n    - dirty eviction"
                    "\n    - external AXI master read of CPU-written cache line"
                    "\n    - CPU read of external AXI-master-written cache line"
@@ -1226,9 +1367,14 @@ public:
         write_then_read_check(64 + 4, 0xabcd0000u, 0xc, 0xabcd5678u);
         stack_alias_check();
         byte_store_check();
+        cpu_byte_store_visible_to_axi_master_check(true, false);
+        cpu_byte_store_visible_to_axi_master_check(false, false);
+        cpu_byte_store_visible_to_axi_master_check(true, true);
+        cpu_byte_store_visible_to_axi_master_check(false, true);
         dirty_eviction_check();
         slave_coherence_check();
         slave_full_width_write_check();
+        slave_write_strobe_preserves_neighbor_words_check();
         slave_completion_does_not_release_cpu_iport_check();
         slave_request_does_not_hide_cpu_write_completion_check();
         slave_request_does_not_drop_cpu_dport_read_check();

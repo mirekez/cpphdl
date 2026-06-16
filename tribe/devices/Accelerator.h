@@ -199,6 +199,7 @@ public:
         dma_out.awid_in = _ASSIGN((u<ID_WIDTH>)0);
         dma_out.wvalid_in = _ASSIGN(state_reg == ST_DMA_W);
         dma_out.wdata_in = _ASSIGN(dma_wbeat_comb_func());
+        dma_out.wstrb_in = _ASSIGN(~logic<DATA_WIDTH / 8>(0));
         dma_out.wlast_in = _ASSIGN(state_reg == ST_DMA_W);
         dma_out.bready_in = _ASSIGN(state_reg == ST_DMA_B && dma_out.bvalid_out());
         dma_out.arvalid_in = _ASSIGN(state_reg == ST_DMA_AR);
