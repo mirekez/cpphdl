@@ -136,7 +136,7 @@ class [[clang::annotate(
     "CPPHDL_REPLACEMENT="
     "`default_nettype none\n"
     "\n"
-    "module AnnotateReplacementTemplate #(\n"
+    "module AnnotateReplacementTemplate$(TAG) #(\n"
     "    parameter int __paramNumber1 = $(MASK)\n"
     ") (\n"
     "    input wire clk\n"
