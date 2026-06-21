@@ -37,6 +37,34 @@ public:
     void _assign() {}
 };
 
+template<int WIDTH = 3>
+class ConstexprPortsizeExprParent : public Module
+{
+public:
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
+
+private:
+    ConstexprPortsizeChild<WIDTH + 1> child_expr;
+    u<8> value_comb;
+
+    u<8>& value_comb_func()
+    {
+        return value_comb = child_expr.value_out();
+    }
+
+public:
+    void _work(bool reset)
+    {
+        child_expr._work(reset);
+    }
+    void _strobe() {}
+
+    void _assign()
+    {
+        child_expr._assign();
+    }
+};
+
 class ConstexprPortsize : public Module
 {
 public:
@@ -44,23 +72,26 @@ public:
 
 private:
     ConstexprPortsizeChild<4> child;
+    ConstexprPortsizeExprParent<3> expr_parent;
     u<8> value_comb;
 
     u<8>& value_comb_func()
     {
-        return value_comb = child.value_out();
+        return value_comb = child.value_out() + expr_parent.value_out();
     }
 
 public:
     void _work(bool reset)
     {
         child._work(reset);
+        expr_parent._work(reset);
     }
     void _strobe() {}
 
     void _assign()
     {
         child._assign();
+        expr_parent._assign();
     }
 };
 
@@ -87,21 +118,25 @@ static bool check_generated_sv()
 {
 #ifdef VERILATOR
     const std::filesystem::path parent_path = "ConstexprPortsize_1/ConstexprPortsize.sv";
+    const std::filesystem::path expr_parent_path = "ConstexprPortsize_1/ConstexprPortsizeExprParent.sv";
     const std::filesystem::path child_path = "ConstexprPortsize_1/ConstexprPortsizeChild.sv";
 #else
     const std::filesystem::path parent_path = "generated/ConstexprPortsize.sv";
+    const std::filesystem::path expr_parent_path = "generated/ConstexprPortsizeExprParent.sv";
     const std::filesystem::path child_path = "generated/ConstexprPortsizeChild.sv";
 #endif
 
     std::ifstream parent_in(parent_path);
+    std::ifstream expr_parent_in(expr_parent_path);
     std::ifstream child_in(child_path);
-    if (!parent_in || !child_in) {
-        std::print("\nERROR: can't open generated SystemVerilog files {} and {}\n",
-            parent_path.string(), child_path.string());
+    if (!parent_in || !expr_parent_in || !child_in) {
+        std::print("\nERROR: can't open generated SystemVerilog files {}, {}, and {}\n",
+            parent_path.string(), expr_parent_path.string(), child_path.string());
         return false;
     }
 
     const std::string parent((std::istreambuf_iterator<char>(parent_in)), std::istreambuf_iterator<char>());
+    const std::string expr_parent((std::istreambuf_iterator<char>(expr_parent_in)), std::istreambuf_iterator<char>());
     const std::string child((std::istreambuf_iterator<char>(child_in)), std::istreambuf_iterator<char>());
 
     bool ok = true;
@@ -121,6 +156,14 @@ static bool check_generated_sv()
         "parent did not emit a resolved child bit_in wire array size");
     require(parent.find(".bit_in(child__bit_in)") != std::string::npos,
         "parent did not connect the child bit_in array");
+    require(expr_parent.find("[AAA]") == std::string::npos,
+        "expression parent leaked child constexpr AAA as an undefined local name");
+    require(expr_parent.find("child_expr__bit_in[WIDTH") != std::string::npos
+            && expr_parent.find("+") != std::string::npos,
+        "expression parent did not preserve the parent WIDTH + 1 child actual");
+    require(expr_parent.find("WIDTH + 'h1 + 'h1") == std::string::npos
+            && expr_parent.find("WIDTH+'h1+'h1") == std::string::npos,
+        "expression parent recursively expanded WIDTH while resolving child port size");
 
     return ok;
 }
@@ -206,7 +249,7 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "ConstexprPortsize", {"Predef_pkg", "ConstexprPortsizeChild"}, {"../../../../include"}, 1);
+        ok &= VerilatorCompile(__FILE__, "ConstexprPortsize", {"Predef_pkg", "ConstexprPortsizeChild", "ConstexprPortsizeExprParent"}, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";

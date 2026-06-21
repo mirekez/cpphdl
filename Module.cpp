@@ -78,6 +78,7 @@ bool replaceModuleParameterRefs(Expr& expr, const Module& mod, const Field& memb
                 if (e.type == Expr::EXPR_VAR && e.value == mod.parameters[i].name) {
                     e = memberNumericParameterActual(mod, member, i);
                     changed = true;
+                    return true;
                 }
                 return false;
             });
@@ -96,6 +97,7 @@ bool replaceModuleConstRefs(Expr& expr, const Module& mod)
                 if (e.type == Expr::EXPR_VAR && e.value == mod.consts[i].name) {
                     e = mod.consts[i].expr.sub[0];
                     changed = true;
+                    return true;
                 }
                 return false;
             });
@@ -105,17 +107,18 @@ bool replaceModuleConstRefs(Expr& expr, const Module& mod)
 
 void resolveNestedModuleRefs(Expr& expr, const Module& mod, const Field& member)
 {
-    // Resolve nested references until stable because constexprs may point to
-    // template parameters, and those parameters then need member-actual
-    // substitution: AAA -> WIDTH -> 4.
+    // Resolve child constexpr aliases first because they can chain into each
+    // other before reaching a template parameter: AAA -> BBB -> WIDTH.
     for (size_t pass = 0; pass < 8; ++pass) {
-        bool changed = false;
-        changed |= replaceModuleConstRefs(expr, mod);
-        changed |= replaceModuleParameterRefs(expr, mod, member);
-        if (!changed) {
+        if (!replaceModuleConstRefs(expr, mod)) {
             break;
         }
     }
+
+    // Substitute child template parameters only once. The member actual can be
+    // an expression in the parent module, such as WIDTH + 1. Repeating this
+    // step would treat the parent WIDTH as the child WIDTH and expand forever.
+    replaceModuleParameterRefs(expr, mod, member);
 }
 
 Expr portArrayExpr(const Field& port, const Module& mod, const Field& member)
