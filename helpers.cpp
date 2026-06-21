@@ -26,6 +26,166 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
 CXXRecordDecl* lookupQualifiedRecord(ASTContext* ctx, llvm::StringRef QualifiedName);
 //const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ctx);
 
+static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordDecl* owner)
+{
+    if (!current || !owner) {
+        return false;
+    }
+
+    const CXXRecordDecl* currentDef = current->getDefinition();
+    const CXXRecordDecl* ownerDef = owner->getDefinition();
+    current = currentDef ? currentDef : current;
+    owner = ownerDef ? ownerDef : owner;
+
+    if (current == owner ||
+        current->getQualifiedNameAsString() == owner->getQualifiedNameAsString()) {
+        return true;
+    }
+
+    return current->isDerivedFrom(owner);
+}
+
+static bool cpphdlRecordHasValueFieldsImpl(const CXXRecordDecl* RD, std::unordered_set<const CXXRecordDecl*>& visited)
+{
+    if (!RD) {
+        return false;
+    }
+
+    const CXXRecordDecl* def = RD->getDefinition();
+    RD = def ? def : RD;
+    if (!visited.insert(RD).second) {
+        return false;
+    }
+
+    for (const Decl* D : RD->decls()) {
+        if (isa<FieldDecl>(D)) {
+            return true;
+        }
+    }
+
+    for (const CXXBaseSpecifier& base : RD->bases()) {
+        if (const CXXRecordDecl* baseRD = base.getType()->getAsCXXRecordDecl()) {
+            if (cpphdlRecordHasValueFieldsImpl(baseRD, visited)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static std::string qualifierLocalName(std::string qualifier)
+{
+    if (size_t pos = qualifier.find('<'); pos != std::string::npos) {
+        qualifier.resize(pos);
+    }
+    if (size_t pos = qualifier.rfind("::"); pos != std::string::npos) {
+        qualifier.erase(0, pos + 2);
+    }
+    return genTypeName(qualifier);
+}
+
+static bool recordOrBaseMatchesQualifier(const CXXRecordDecl* record, const std::string& qualifier)
+{
+    if (!record || qualifier.empty()) {
+        return false;
+    }
+
+    std::string recordName = record->getQualifiedNameAsString();
+    str_replace(recordName, "::", "_");
+    if (qualifier == recordName || qualifierLocalName(qualifier) == qualifierLocalName(record->getQualifiedNameAsString())) {
+        return true;
+    }
+
+    if (const auto* spec = dyn_cast<ClassTemplateSpecializationDecl>(record)) {
+        const std::string primary = spec->getSpecializedTemplate()->getQualifiedNameAsString();
+        if (qualifierLocalName(qualifier) == qualifierLocalName(primary)) {
+            return true;
+        }
+    }
+
+    for (const auto& base : record->bases()) {
+        if (recordOrBaseMatchesQualifier(base.getType()->getAsCXXRecordDecl(), qualifier)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool qualifierIsLocalModuleContext(const std::string& qualifier, const CXXRecordDecl* parent, const cpphdl::Module* mod)
+{
+    if (recordOrBaseMatchesQualifier(parent, qualifier)) {
+        return true;
+    }
+    if (parent) {
+        for (const Decl* decl : parent->decls()) {
+            if (const auto* alias = dyn_cast<TypeAliasDecl>(decl)) {
+                if (alias->getNameAsString() == qualifier || alias->getNameAsString() == qualifierLocalName(qualifier)) {
+                    return true;
+                }
+            }
+        }
+    }
+    if (mod && std::any_of(mod->aliases.begin(), mod->aliases.end(), [&](const cpphdl::Field& alias) {
+            return alias.name == qualifier || alias.name == qualifierLocalName(qualifier);
+        })) {
+        return true;
+    }
+    return false;
+}
+
+bool cpphdlRecordHasValueFields(const CXXRecordDecl* RD)
+{
+    std::unordered_set<const CXXRecordDecl*> visited;
+    return cpphdlRecordHasValueFieldsImpl(RD, visited);
+}
+
+static bool cpphdlRecordIsOrDerivesFromModule(const CXXRecordDecl* RD, std::unordered_set<const CXXRecordDecl*>& visited)
+{
+    if (!RD) {
+        return false;
+    }
+    const CXXRecordDecl* def = RD->getDefinition();
+    RD = def ? def : RD;
+    if (!visited.insert(RD).second) {
+        return false;
+    }
+    if (RD->getQualifiedNameAsString() == "cpphdl::Module") {
+        return true;
+    }
+    for (const CXXBaseSpecifier& base : RD->bases()) {
+        if (cpphdlRecordIsOrDerivesFromModule(base.getType()->getAsCXXRecordDecl(), visited)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD)
+{
+    if (!RD || !RD->hasDefinition()) {
+        return false;
+    }
+    if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+        RD->getQualifiedNameAsString().find("std::") == 0) {
+        return false;
+    }
+
+    std::unordered_set<const CXXRecordDecl*> visited;
+    if (cpphdlRecordIsOrDerivesFromModule(RD, visited)) {
+        return false;
+    }
+
+    // Empty user structs still need SV packages when they participate in
+    // template-specialized aggregate types. exportStruct() gives them a pad bit.
+    return true;
+}
+
+static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    return cpphdlRecordShouldExportAsStruct(RD) && !isCurrentOrBaseRecord(hlp.parent, RD);
+}
+
 static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helpers& hlp)
 {
     if (!method || !hlp.mod) {
@@ -44,11 +204,12 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
             return;
         }
     }
+    if (isCurrentOrBaseRecord(hlp.parent, parent)) {
+        return;
+    }
 
     auto importRecord = [&](CXXRecordDecl* record) {
-        if (!record || !record->hasDefinition() ||
-            record->getQualifiedNameAsString().find("cpphdl::") == 0 ||
-            record->getQualifiedNameAsString().find("std::") == 0) {
+        if (!cpphdlRecordShouldExportAsStruct(record, hlp)) {
             return;
         }
         auto st = exportStruct(record, hlp);
@@ -434,7 +595,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     }
 
                     CRD = resolveCXXRecordDecl(QT);
-                    if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0
+                    if (cpphdlRecordShouldExportAsStruct(CRD, *this)
                         && CRD->getQualifiedNameAsString().find("IO_FILE") == (size_t)-1) {
                         auto st = exportStruct(CRD, *this);
                         if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {
@@ -549,7 +710,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         } else
         if (owner && Var && Var->isConstexpr()
             && (flags&FLAG_EXTERNAL_THIS
-                || (mod && mod->origName.find(owner->getQualifiedNameAsString()) != 0
+                || (mod && !isCurrentOrBaseRecord(parent, owner)
                     && owner->getQualifiedNameAsString().find("cpphdl::") != 0
                     && owner->getQualifiedNameAsString().find("std::") != 0))) {  // make name for pkg constexpr parameter access
             std::string sname = owner->getQualifiedNameAsString();
@@ -669,7 +830,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             DEBUG_AST1(" ANON");
             anon = true;
         } else
-        if (Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS)) {  // make name for pkg constexpr parameter access
+        if (Var && Var->isConstexpr() && (flags&FLAG_EXTERNAL_THIS) && !isCurrentOrBaseRecord(parent, CRD)) {  // make name for pkg constexpr parameter access
             DEBUG_AST1(" PKG");
             std::string sname = CRD->getQualifiedNameAsString();
             str_replace(sname, "::", "_");
@@ -1256,6 +1417,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         DEBUG_AST1(" DependentScopeDeclRefExpr");
         const std::string qualifier = dependentQualifierText(DSDRE, ctx->getPrintingPolicy());
         if (!qualifier.empty()) {
+            if (qualifierIsLocalModuleContext(qualifier, parent, mod)) {
+                return cpphdl::Expr{DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
+            }
             return cpphdl::Expr{genTypeName(qualifier) + "_pkg::" + DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
         }
         return cpphdl::Expr{DSDRE->getDeclName().getAsString(), cpphdl::Expr::EXPR_VAR};
@@ -1327,7 +1491,7 @@ void Helpers::ArgToExpr(const TemplateArgument& arg, cpphdl::Expr& expr, bool sp
         expr.sub.emplace_back(std::move(expr1));
 
         auto* CRD = resolveCXXRecordDecl(QT);  // types embedded in any templates
-        if (specialization && CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+        if (specialization && cpphdlRecordShouldExportAsStruct(CRD, *this)) {
             auto st = exportStruct(CRD, *this);
             if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {
                 auto ret = mod->imports.emplace_back(st.name);
@@ -1355,6 +1519,21 @@ void Helpers::ArgToExpr(const TemplateArgument& arg, cpphdl::Expr& expr, bool sp
         DEBUG_AST1("(integral " << str << "),");
     } else
     if (arg.getKind() == TemplateArgument::Declaration) {
+        // Declaration non-type template args, such as string tag variables,
+        // participate in specialization identity even though they are not SV
+        // module parameters.
+        if (const auto* ND = dyn_cast_or_null<NamedDecl>(arg.getAsDecl())) {
+            cpphdl::Expr expr1{genTypeName(ND->getNameAsString()), cpphdl::Expr::EXPR_VAR};
+            if (const auto* VD = dyn_cast<VarDecl>(ND)) {
+                if (const clang::Expr* init = VD->getInit()) {
+                    init = init->IgnoreParenImpCasts();
+                    if (const auto* SL = dyn_cast<StringLiteral>(init)) {
+                        expr1 = cpphdl::Expr{SL->getString().str(), cpphdl::Expr::EXPR_STRING};
+                    }
+                }
+            }
+            expr.sub.emplace_back(std::move(expr1));
+        }
         DEBUG_AST1("(decl " << str << "),");
     } else {
         DEBUG_AST1("(unhandled " << str << "),");
@@ -1479,7 +1658,16 @@ void Helpers::followSpecialization(const CXXRecordDecl* RD, std::string& name, s
                     first = false;
                 }
                 if (params) {
-                    params->emplace_back(cpphdl::Field{Params->getParam(i)->getNameAsString(), std::move(expr)});
+                    cpphdl::Field field{Params->getParam(i)->getNameAsString(), std::move(expr)};
+                    if (const auto* NTTP = dyn_cast<NonTypeTemplateParmDecl>(Params->getParam(i));
+                        NTTP && NTTP->hasDefaultArgument()) {
+                        cpphdl::Expr defaultExpr;
+                        ArgToExpr(NTTP->getDefaultArgument().getArgument(), defaultExpr, false);
+                        if (!defaultExpr.sub.empty()) {
+                            field.initializer = std::move(defaultExpr.sub.front());
+                        }
+                    }
+                    params->emplace_back(std::move(field));
                 }
             }
         }
