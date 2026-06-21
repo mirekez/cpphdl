@@ -48,36 +48,73 @@ std::vector<std::string> memberArrayIndices(size_t dims)
     return indices;
 }
 
-void replaceModuleParameterRefs(Expr& expr, const Module& mod, const Field& member)
+Expr memberNumericParameterActual(const Module& mod, const Field& member, size_t parameterIndex)
 {
+    // Member expressions keep only numeric template actuals as SV parameters.
+    // Walk through the original argument list and count only those numeric
+    // entries so mod.parameters[N] maps to the correct member actual.
+    size_t memberParamIndex = static_cast<size_t>(-1);
+    for (size_t j = 0; j < parameterIndex + 1 && memberParamIndex + 1 < member.expr.sub.size();) {
+        ++memberParamIndex;
+        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
+            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {
+            ++j;
+        }
+    }
+    if (memberParamIndex < member.expr.sub.size()) {
+        return member.expr.sub[memberParamIndex];
+    }
+    return mod.parameters[parameterIndex].expr;
+}
+
+bool replaceModuleParameterRefs(Expr& expr, const Module& mod, const Field& member)
+{
+    // Parent-side wires for a nested module must use the instantiated member's
+    // numeric actuals. A child port sized by WIDTH must become [4] for
+    // Child<4> child; otherwise WIDTH is undefined in the parent module.
+    bool changed = false;
     for (size_t i=0; i < mod.parameters.size(); ++i) {
         expr.traverseIf( [&](Expr& e) {
                 if (e.type == Expr::EXPR_VAR && e.value == mod.parameters[i].name) {
-                    size_t memberParamIndex = -1;
-                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {
-                        ++memberParamIndex;
-                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
-                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {
-                            ++j;
-                        }
-                    }
-                    Expr memberParam = member.expr.sub[memberParamIndex];
-                    e.value = std::string("(") + memberParam.str() + ")";
+                    e = memberNumericParameterActual(mod, member, i);
+                    changed = true;
                 }
                 return false;
             });
     }
+    return changed;
 }
 
-void replaceModuleConstRefs(Expr& expr, const Module& mod)
+bool replaceModuleConstRefs(Expr& expr, const Module& mod)
 {
+    // Child ports can be sized through local static constexpr aliases, for
+    // example AAA = WIDTH. The parent cannot see AAA, so expand it before
+    // writing the parent-side child__port wire declaration.
+    bool changed = false;
     for (size_t i=0; i < mod.consts.size(); ++i) {
         expr.traverseIf( [&](Expr& e) {
                 if (e.type == Expr::EXPR_VAR && e.value == mod.consts[i].name) {
                     e = mod.consts[i].expr.sub[0];
+                    changed = true;
                 }
                 return false;
             });
+    }
+    return changed;
+}
+
+void resolveNestedModuleRefs(Expr& expr, const Module& mod, const Field& member)
+{
+    // Resolve nested references until stable because constexprs may point to
+    // template parameters, and those parameters then need member-actual
+    // substitution: AAA -> WIDTH -> 4.
+    for (size_t pass = 0; pass < 8; ++pass) {
+        bool changed = false;
+        changed |= replaceModuleConstRefs(expr, mod);
+        changed |= replaceModuleParameterRefs(expr, mod, member);
+        if (!changed) {
+            break;
+        }
     }
 }
 
@@ -86,7 +123,7 @@ Expr portArrayExpr(const Field& port, const Module& mod, const Field& member)
     Expr array;
     if (port.array.size()) {
         array = port.array[0];
-        replaceModuleParameterRefs(array, mod, member);
+        resolveNestedModuleRefs(array, mod, member);
     }
     return array;
 }
@@ -95,8 +132,7 @@ Expr portWireExpr(const Field& port, const Module& mod, const Field& member)
 {
     Expr expr = port.expr;
     expr.flags = Expr::FLAG_WIRE;
-    replaceModuleConstRefs(expr, mod);
-    replaceModuleParameterRefs(expr, mod, member);
+    resolveNestedModuleRefs(expr, mod, member);
     return expr;
 }
 
@@ -434,52 +470,8 @@ bool Module::printMembers(std::ofstream& out)
             Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
-                    Expr expr = port.expr;
-                    expr.flags = Expr::FLAG_WIRE;
-                    for (size_t i=0; i < mod->consts.size(); ++i) {  // we want to extract parameters values which influence port width
-                        expr.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->consts[i].name) {  // port of mod depends on its parameter
-                                    e = mod->consts[i].expr.sub[0];
-                                }
-                                return false;
-                            });
-                    }
-                    for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence port width
-                        expr.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
-                                    size_t memberParamIndex = -1;
-                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
-                                        ++memberParamIndex;
-                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
-                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
-                                            ++j;
-                                        }
-                                    }
-                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
-                                }
-                                return false;
-                            });
-                    }
-                    Expr array;
-                    if (port.array.size()) {  // supporting only one dimension now
-                        array = port.array[0];
-                    }
-                    for (size_t i=0; i < mod->parameters.size(); ++i) {  // we want to extract parameters values which influence array sizwe
-                        array.traverseIf( [&](Expr& e) {
-                                if (e.type == Expr::EXPR_VAR && e.value == mod->parameters[i].name) {  // port of mod depends on its parameter
-                                    size_t memberParamIndex = -1;
-                                    for (size_t j=0; j < i+1 && memberParamIndex+1 < member.expr.sub.size();) {  // skip all non numeric parameters
-                                        ++memberParamIndex;
-                                        if (member.expr.sub[memberParamIndex].type == Expr::EXPR_PARAM
-                                            || member.expr.sub[memberParamIndex].type == Expr::EXPR_NUM) {  // need to count only number parameters for members templates
-                                            ++j;
-                                        }
-                                    }
-                                    e.value = std::string("(") + member.expr.sub[memberParamIndex].str() + ")";
-                                }
-                                return false;
-                            });
-                    }
+                    Expr expr = portWireExpr(port, *mod, member);
+                    Expr array = portArrayExpr(port, *mod, member);
 //                    out << array.debug() << "\n";
 //                    out << expr.debug() << "\n";
 //                    out << port.expr.debug() << "\n";

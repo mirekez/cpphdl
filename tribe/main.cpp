@@ -1607,6 +1607,7 @@ int main (int argc, char** argv)
                   "RAM1PORT",
                   "L1Cache",
                   "L2Cache",
+                  "L2CacheOO",
                   "BranchPredictor",
                   "InterruptController",
 	                  "Decode",
