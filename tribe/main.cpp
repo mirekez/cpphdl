@@ -85,10 +85,15 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         if (label.empty()) {
             label = filename;
         }
+        const bool quiet_harness_output = std::getenv("TRIBE_TEST_QUIET");
 #ifdef VERILATOR
-        std::print("VERILATOR TestTribe[{}]...", label);
+        if (!quiet_harness_output) {
+            std::print("VERILATOR TestTribe[{}]...", label);
+        }
 #else
-        std::print("CppHDL TestTribe[{}]...", label);
+        if (!quiet_harness_output) {
+            std::print("CppHDL TestTribe[{}]...", label);
+        }
 #endif
         if (debugen_in) {
             std::print("\n");
@@ -122,12 +127,16 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         uint32_t elf_entry = 0;
         if (!raw_program && load_elf(fbin, ram, read_bytes, start_mem_addr, ram_size * 4, elf_entry, elf_phys_override, elf_phys_offset)) {
             reset_pc = elf_entry;
-            std::print("Reading ELF program into memory (size: {})\n", read_bytes);
+            if (!quiet_harness_output) {
+                std::print("Reading ELF program into memory (size: {})\n", read_bytes);
+            }
         }
         else {
             fseek(fbin, start_offset, SEEK_SET);
             read_bytes = fread(ram.data(), 1, 4 * ram_size, fbin);
-            std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
+            if (!quiet_harness_output) {
+                std::print("Reading raw program into memory (size: {}, offset: {})\n", read_bytes, start_offset);
+            }
         }
         if (!dtb_file.empty()) {
             if (!boot_dtb_addr) {
@@ -144,7 +153,9 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 fclose(fbin);
                 return false;
             }
-            std::print("Reading DTB into memory (size: {}, addr: {:08x})\n", dtb_bytes, boot_dtb_addr);
+            if (!quiet_harness_output) {
+                std::print("Reading DTB into memory (size: {}, addr: {:08x})\n", dtb_bytes, boot_dtb_addr);
+            }
         }
         if (!initramfs_file.empty()) {
             if (!initramfs_addr) {
@@ -157,7 +168,9 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 fclose(fbin);
                 return false;
             }
-            std::print("Reading initramfs into memory (size: {}, addr: {:08x})\n", initramfs_bytes, initramfs_addr);
+            if (!quiet_harness_output) {
+                std::print("Reading initramfs into memory (size: {}, addr: {:08x})\n", initramfs_bytes, initramfs_addr);
+            }
         }
 
         const size_t active_lines = (ram_size * 4 + (TRIBE_L2_AXI_WIDTH/8) - 1) / (TRIBE_L2_AXI_WIDTH/8);
@@ -188,8 +201,10 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 std::print("can't open SD image '{}'\n", sd_image_file);
                 return false;
             }
-            std::print("Reading SD image into card model (size: {}, file: {})\n",
-                sdcard_verif.image_size(), sd_image_file);
+            if (!quiet_harness_output) {
+                std::print("Reading SD image into card model (size: {}, file: {})\n",
+                    sdcard_verif.image_size(), sd_image_file);
+            }
         }
 
         auto save_sd_image = [&]() {
@@ -247,14 +262,18 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 init_uart_script_state(scripted_uart_after.empty(),
                     scripted_uart_after.empty() ? scripted_uart_start_delay : 0);
             }
-            std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
+            if (!quiet_harness_output) {
+                std::print("Loaded checkpoint '{}'\n", checkpoint_load_file);
+            }
             if (!sd_image_file.empty() && std::getenv("TRIBE_SD_IMAGE_OVERRIDE_CHECKPOINT")) {
                 if (!sdcard_verif.load_image(sd_image_file)) {
                     std::print("can't reload SD image '{}' after checkpoint\n", sd_image_file);
                     return false;
                 }
-                std::print("Reloaded SD image after checkpoint (size: {}, file: {})\n",
-                    sdcard_verif.image_size(), sd_image_file);
+                if (!quiet_harness_output) {
+                    std::print("Reloaded SD image after checkpoint (size: {}, file: {})\n",
+                        sdcard_verif.image_size(), sd_image_file);
+                }
             }
         }
         const char* trace_period_env = std::getenv("TRIBE_TRACE_PC_PERIOD");
@@ -1261,8 +1280,10 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
             fclose(trace_uart_rx_file);
         }
         perf_print();
-        std::print(" {} ({} microseconds)\n", !error ? (checkpoint_save_only_success ? "CHECKPOINT SAVED" : "PASSED") : "FAILED",
-            (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
+        if (!quiet_harness_output) {
+            std::print(" {} ({} microseconds)\n", !error ? (checkpoint_save_only_success ? "CHECKPOINT SAVED" : "PASSED") : "FAILED",
+                (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
+        }
         return !error;
     }
 
