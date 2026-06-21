@@ -44,7 +44,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "verif/SDCardVerif.h"
 #endif
 #include "cache/L1Cache.h"
-#include "cache/L2Cache.h"
+#include "cache/l2/L2CacheOO.h"
 
 #include <cstdlib>
 #include <csignal>
@@ -107,7 +107,7 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<L1_ICACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
     L1Cache<L1_DCACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
-    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
+    L2CacheOO<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
     reg<u1> icache_invalidate_issued_reg;
 

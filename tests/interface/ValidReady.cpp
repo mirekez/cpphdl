@@ -210,7 +210,7 @@ inline bool VerilatorCompileValidReady(std::string cpp_name, std::string top, st
     std::filesystem::copy_file("generated/Predef_pkg.sv", folder_name + "/Predef_pkg.sv", std::filesystem::copy_options::overwrite_existing);
     std::filesystem::copy_file("generated/" + top + ".sv", folder_name + "/" + top + ".sv", std::filesystem::copy_options::overwrite_existing);
 
-    std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == 1") +
+    std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == 1 && $0 !~ /=/") +
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(datawidth) + "\"); print }' " +
         folder_name + "/" + top + ".sv").c_str());
 

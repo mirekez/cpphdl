@@ -170,6 +170,8 @@ public:
     void _assign() {}
 };
 
+template class AnnotateReplacementTemplate<109, AnnotateReplacementTemplateTag>;
+
 class AnnotateReplacementNested : public Module
 {
 public:
@@ -675,7 +677,7 @@ int main(int argc, char** argv)
             "Predef_pkg",
             "AnnotateReplacementNestedLocal_pkg",
             "AnnotateReplacementParentLocal_pkg",
-            "AnnotateReplacementTemplate",
+            "AnnotateReplacementTemplateTEMPLATE",
             "AnnotateReplacementTemplateNested"
         }, {"../../../../include"}, 1);
         unsetenv("CPPHDL_VERILATOR_CFLAGS");
@@ -715,7 +717,7 @@ int main(int argc, char** argv)
     return !(ok && TestAnnotateReplacement<AnnotateReplacementTemplateParent>(
         "TestAnnotateReplacementTemplate",
         109,
-        "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplate.sv",
+        "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplateTEMPLATE.sv",
         "CPPHDL_ANNOTATE_REPLACEMENT_TEMPLATE_MARKER_109_TEMPLATE_$",
         "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplateParent.sv",
         "AnnotateReplacementTemplateParent_1/AnnotateReplacementTemplateNested.sv",
@@ -758,7 +760,7 @@ int main(int argc, char** argv)
     ok = ok && TestAnnotateReplacement<AnnotateReplacementTemplateParent>(
         "TestAnnotateReplacementTemplate",
         109,
-        "generated/AnnotateReplacementTemplate.sv",
+        "generated/AnnotateReplacementTemplateTEMPLATE.sv",
         "CPPHDL_ANNOTATE_REPLACEMENT_TEMPLATE_MARKER_109_TEMPLATE_$",
         "generated/AnnotateReplacementTemplateParent.sv",
         "generated/AnnotateReplacementTemplateNested.sv",

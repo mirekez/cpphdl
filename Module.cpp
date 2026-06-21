@@ -218,7 +218,13 @@ bool Module::print(std::ofstream& out)
         out <<  " #(\n";
         bool first = true;
         for (auto& p : parameters) {
-            out << (first?"    ":",   ") << "parameter " << p.name << "\n";
+            out << (first?"    ":",   ") << "parameter " << p.name;
+            if (p.initializer.type != Expr::EXPR_NONE) {
+                out << " = " << p.initializer.str();
+            } else if (p.expr.type == Expr::EXPR_NUM) {
+                out << " = " << p.expr.str();
+            }
+            out << "\n";
             first = false;
         }
         out <<  " )\n";

@@ -226,6 +226,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         IOUART_test
         L1Cache_test
         L2Cache_test
+        L2CacheOO_test
         Linux_test
         MMU_TLB_Test
         NS16550A_test
@@ -236,8 +237,11 @@ foreach(src ${TRIBE_TEST_SOURCES})
     if(target_name IN_LIST tribe_verilator_ctest_targets)
         set(verilator_test_args)
         set(verilator_test_timeout 600)
-        if(target_name STREQUAL "L2Cache_test")
+        if(target_name STREQUAL "L2Cache_test" OR target_name STREQUAL "L2CacheOO_test")
             set(verilator_test_timeout 1800)
+        endif()
+        if(target_name STREQUAL "L2CacheOO_test")
+            set(verilator_test_args 0)
         endif()
         if(target_name STREQUAL "Linux_test")
             # Keep the default CTest Linux Verilator pass as a build smoke.

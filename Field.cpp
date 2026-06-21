@@ -3,6 +3,8 @@
 #include "Project.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <vector>
@@ -24,6 +26,61 @@ size_t dimToSize(Expr dim)
 {
     std::string text = dimToString(dim);
     return std::strtoull(text.c_str(), nullptr, 0);
+}
+
+std::string trim(std::string text)
+{
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
+        text.erase(text.begin());
+    }
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
+        text.pop_back();
+    }
+    return text;
+}
+
+bool parseDimToSize(Expr dim, size_t& value)
+{
+    std::string text = trim(dimToString(dim));
+    if (text == "false") {
+        value = 0;
+        return true;
+    }
+    if (text == "true") {
+        value = 1;
+        return true;
+    }
+
+    int base = 0;
+    if (text.size() > 2 && text[0] == '\'' && (text[1] == 'h' || text[1] == 'H')) {
+        text = text.substr(2);
+        base = 16;
+    } else
+    if (text.size() > 2 && text[0] == '\'' && (text[1] == 'd' || text[1] == 'D')) {
+        text = text.substr(2);
+        base = 10;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    unsigned long long parsed = std::strtoull(text.c_str(), &end, base);
+    if (end == text.c_str() || errno == ERANGE) {
+        return false;
+    }
+    while (end && *end && std::isspace(static_cast<unsigned char>(*end))) {
+        ++end;
+    }
+    if (end && *end) {
+        return false;
+    }
+    value = static_cast<size_t>(parsed);
+    return true;
+}
+
+bool dimIsKnownZero(Expr dim)
+{
+    size_t value = 0;
+    return parseDimToSize(std::move(dim), value) && value == 0;
 }
 
 std::string unpackedDims(const std::vector<Expr>& dims)
@@ -92,6 +149,21 @@ ArrayShape flattenArrayShape(const Expr& expr)
     return ArrayShape{expr};
 }
 
+bool shapeHasZeroDim(const ArrayShape& shape)
+{
+    for (auto dim : shape.cpphdlDims) {
+        if (dimIsKnownZero(std::move(dim))) {
+            return true;
+        }
+    }
+    for (auto dim : shape.unpackedDims) {
+        if (dimIsKnownZero(std::move(dim))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& nameSuffix)
 {
     ArrayShape shape = flattenArrayShape(field.expr);
@@ -128,6 +200,10 @@ bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& 
 bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
 {
     currField = this;
+
+    if (inStruct && isZeroSizeArray()) {
+        return true;
+    }
 
     if (nameSuffix.empty()) {
         printAnnotations(out, *this);
@@ -192,6 +268,21 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
     }
 
     return true;
+}
+
+bool Field::isZeroSizeArray() const
+{
+    ArrayShape shape = flattenArrayShape(expr);
+    if (shape.hasArray && shapeHasZeroDim(shape)) {
+        return true;
+    }
+
+    for (auto dim : array) {
+        if (dimIsKnownZero(std::move(dim))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Field::printPort(std::ofstream& out)

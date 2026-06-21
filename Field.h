@@ -23,6 +23,7 @@ struct Field
 
     bool print(std::ofstream& out, std::string nameSuffix = "", bool inStruct = false);
     bool printPort(std::ofstream& out);
+    bool isZeroSizeArray() const;
 };
 
 

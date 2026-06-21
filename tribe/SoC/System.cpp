@@ -920,7 +920,7 @@ int main(int argc, char** argv)
             ok &= VerilatorCompile(__FILE__, "System", {"Predef_pkg",
                 "Amo_pkg", "Trap_pkg", "State_pkg", "Rv32i_pkg", "Rv32ic_pkg", "Rv32im_pkg", "Rv32ia_pkg", "Zicsr_pkg",
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
-                "File", "RAM1PORT", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "BranchPredictor", "InterruptController",
+                "File", "RAM1PORT", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "L2CacheOO", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
                 "Tribe", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),

@@ -7,6 +7,8 @@
 
 using namespace clang;
 
+bool cpphdlRecordHasValueFields(const CXXRecordDecl* RD);
+
 struct Helpers
 {
     Helpers(ASTContext* context, cpphdl::Module* module = nullptr, const CXXRecordDecl* RD = nullptr) : ctx(context), mod(module), parent(RD) {}

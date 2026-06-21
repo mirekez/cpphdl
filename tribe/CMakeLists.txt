@@ -176,6 +176,7 @@ foreach(flag -std=c++26 -std=c++2c)
 endforeach()
 
 if(BUILD_TESTING)
+    add_subdirectory(cache/l2/tests)
     add_subdirectory(tests)
 
     set(RISCV_OPCODES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-opcodes" CACHE PATH "Path to a local riscv/riscv-opcodes checkout")
