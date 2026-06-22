@@ -189,6 +189,24 @@ std::unordered_set<std::string> ModuleAvailableImportPackages(const Module& mod)
     return packages;
 }
 
+void ensureWorkMethod(std::vector<Method>& methods)
+{
+    if (std::any_of(methods.begin(), methods.end(), [](const Method& method) {
+            return method.name == "_work";
+        })) {
+        return;
+    }
+
+    // Every generated module has a posedge block that calls _work(reset).
+    // A C++ module can still be valid without an explicit _work() when only
+    // comb logic is used, so synthesize the no-op task that the clock block
+    // requires instead of depending on call-site discovery to create it.
+    Method work;
+    work.name = "_work";
+    work.arguments.emplace_back(Field{"reset", Expr{"bool", Expr::EXPR_TYPE}});
+    methods.emplace_back(std::move(work));
+}
+
 }
 
 void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* importsSet)
@@ -309,6 +327,8 @@ bool Module::print(std::ofstream& out)
 
     out << "    // members\n";
     printMembers(out);
+
+    ensureWorkMethod(methods);
 
     Optimizer opt;
     opt.optimizeBlocking(methods);

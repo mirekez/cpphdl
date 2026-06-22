@@ -5,7 +5,7 @@
 
 #include "cpphdl.h"
 #ifndef L2CACHE_TEST_DUT_HEADER
-#define L2CACHE_TEST_DUT_HEADER "L2Cache.h"
+#define L2CACHE_TEST_DUT_HEADER "l2/L2CacheOO.h"
 #endif
 #include L2CACHE_TEST_DUT_HEADER
 #include "Axi4Ram.h"
@@ -98,11 +98,11 @@ static constexpr size_t LINE_SIZE = 32;
 static constexpr size_t WAIT_LIMIT = 128;
 
 #ifndef L2CACHE_TEST_DUT
-#define L2CACHE_TEST_DUT L2Cache
+#define L2CACHE_TEST_DUT L2CacheOO
 #endif
 
 #ifndef L2CACHE_TEST_TOP_NAME
-#define L2CACHE_TEST_TOP_NAME "L2Cache"
+#define L2CACHE_TEST_TOP_NAME "L2CacheOO"
 #endif
 
 #ifndef L2CACHE_TEST_SOURCE_FILE
