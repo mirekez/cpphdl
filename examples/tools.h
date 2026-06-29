@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <fstream>
+#include <string_view>
+
 inline std::string HostOptCflags()
 {
     const char* extra = std::getenv("CPPHDL_HOST_OPT_FLAGS");
@@ -62,6 +66,36 @@ inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const s
     return current_generated;
 }
 
+inline void AppendGeneratedModulesByPrefix(std::vector<std::string>& modules,
+    const std::filesystem::path& generated_dir,
+    const std::vector<std::string>& prefixes)
+{
+    namespace fs = std::filesystem;
+
+    if (!fs::exists(generated_dir)) {
+        return;
+    }
+
+    for (const auto& prefix : prefixes) {
+        std::vector<std::string> matches;
+        for (const auto& entry : fs::directory_iterator(generated_dir)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".sv") {
+                continue;
+            }
+            const std::string stem = entry.path().stem().string();
+            if (stem.rfind(prefix, 0) == 0) {
+                matches.push_back(stem);
+            }
+        }
+        std::sort(matches.begin(), matches.end());
+        for (const auto& module : matches) {
+            if (std::find(modules.begin(), modules.end(), module) == modules.end()) {
+                modules.push_back(module);
+            }
+        }
+    }
+}
+
 inline std::string ToolShellQuote(const std::filesystem::path& path)
 {
     std::string text = path.string();
@@ -91,6 +125,115 @@ inline std::string ToolShellQuoteString(const std::string& text)
     }
     quoted += "'";
     return quoted;
+}
+
+inline void ToolReplaceAll(std::string& text, const std::string& from, const std::string& to)
+{
+    size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+        text.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+}
+
+inline unsigned TribeVerilatorL2PortBits()
+{
+#if defined(TRIBE_L2_AXI_WIDTH)
+    return TRIBE_L2_AXI_WIDTH;
+#else
+    return 64;
+#endif
+}
+
+inline unsigned TribeVerilatorL2MemAddrBits()
+{
+#if defined(TRIBE_RAM_BYTES_CONFIG) && defined(TRIBE_IO_REGION_SIZE_CONFIG)
+    uint64_t span = (uint64_t)TRIBE_RAM_BYTES_CONFIG + (uint64_t)TRIBE_IO_REGION_SIZE_CONFIG;
+    unsigned bits = 0;
+    uint64_t size = 1;
+    while (size < span) {
+        size <<= 1;
+        ++bits;
+    }
+    return bits ? bits : 1;
+#else
+    return 32;
+#endif
+}
+
+inline std::string StripL2CachePackageImports(const std::string& text)
+{
+    std::string filtered;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        std::string_view line(text.data() + pos, end - pos);
+        if (line.find("import L2Cache") != 0 || line.find("_pkg::*;") == std::string_view::npos) {
+            filtered.append(line);
+            filtered.push_back('\n');
+        }
+        pos = end + 1;
+    }
+    return filtered;
+}
+
+inline void NormalizeCopiedTribeSv(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    text = StripL2CachePackageImports(text);
+    ToolReplaceAll(text, "Base_pkg::PORT_BITWIDTH", std::to_string(TribeVerilatorL2PortBits()));
+    ToolReplaceAll(text, "Base_pkg::MEM_ADDR_BITS", std::to_string(TribeVerilatorL2MemAddrBits()));
+    ToolReplaceAll(text, "MEM_PORTS", "4");
+    const std::string mem_addr_bits = std::to_string(TribeVerilatorL2MemAddrBits());
+    // OOP L2 currently emits inherited AXI address intermediates as 32-bit
+    // wires. Match the copied child module port width so Verilator does not
+    // reject unpacked array connections with implicit packed-width casts.
+    ToolReplaceAll(text, "wire[32-1:0] l2cache__axi_in__awaddr_in[4];",
+        "wire[" + mem_addr_bits + "-1:0] l2cache__axi_in__awaddr_in[4];");
+    ToolReplaceAll(text, "wire[32-1:0] l2cache__axi_in__araddr_in[4];",
+        "wire[" + mem_addr_bits + "-1:0] l2cache__axi_in__araddr_in[4];");
+    ToolReplaceAll(text, "wire[32-1:0] l2cache__axi_out__awaddr_out[4];",
+        "wire[" + mem_addr_bits + "-1:0] l2cache__axi_out__awaddr_out[4];");
+    ToolReplaceAll(text, "wire[32-1:0] l2cache__axi_out__araddr_out[4];",
+        "wire[" + mem_addr_bits + "-1:0] l2cache__axi_out__araddr_out[4];");
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << text;
+}
+
+inline void NormalizeCopiedL2CacheOOSv(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    text = StripL2CachePackageImports(text);
+
+    std::string filtered;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        std::string_view line(text.data() + pos, end - pos);
+        const bool inherited_alias = line.find("Base_pkg::") != std::string_view::npos;
+        const bool inherited_typedef = line.find("typedef L2Cache") != std::string_view::npos;
+        if (!inherited_alias && !inherited_typedef) {
+            filtered.append(line);
+            filtered.push_back('\n');
+        }
+        pos = end + 1;
+    }
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << filtered;
 }
 
 inline bool ToolExecutableWorks(const std::string& executable)
@@ -182,9 +325,18 @@ inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string fold
     std::filesystem::remove_all(folder_name);
     std::filesystem::create_directory(folder_name);
     std::filesystem::copy_file(generated_dir / (top_name + ".sv"), folder_name + "/" + top_name + ".sv", std::filesystem::copy_options::overwrite_existing);
+    if (top_name == "Tribe") {
+        NormalizeCopiedTribeSv(folder_name + "/" + top_name + ".sv");
+    }
     std::string modules_list;
     for (const auto& module : modules) {
         std::filesystem::copy_file(generated_dir / (module + ".sv"), folder_name + "/" + module + ".sv", std::filesystem::copy_options::overwrite_existing);
+        if (module == "Tribe") {
+            NormalizeCopiedTribeSv(folder_name + "/" + module + ".sv");
+        }
+        if (module == "L2CacheOO") {
+            NormalizeCopiedL2CacheOOSv(folder_name + "/" + module + ".sv");
+        }
         modules_list += module + ".sv ";
     }
     std::string includes_list;
@@ -194,7 +346,8 @@ inline bool VerilatorCompileInExactFolder(std::string cpp_name, std::string fold
     size_t n = 0;
     // SV parameters substitution
     ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
-        " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(args) + "\"); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
+        " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " + std::to_string(args) +
+        "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
     // running Verilator
     SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
@@ -211,7 +364,7 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
         return false;
     }
 #endif
-    return VerilatorCompileInFolder(cpp_name, folder_base, "Tribe", {"Predef_pkg",
+    std::vector<std::string> modules = {"Predef_pkg",
               "Amo_pkg",
               "Trap_pkg",
               "State_pkg",
@@ -232,6 +385,7 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
               "RAM1PORT",
               "L1Cache",
               "L2Cache",
+              "L2CacheOO",
               "BranchPredictor",
               "InterruptController",
               "Decode",
@@ -240,7 +394,8 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
               "CSR",
               "MMU_TLB",
               "Writeback",
-              "WritebackMem"}, {
+              "WritebackMem"};
+    return VerilatorCompileInFolder(cpp_name, folder_base, "Tribe", modules, {
                   (source_root / "include").string(),
                   (source_root / "tribe").string(),
                   (source_root / "tribe" / "common").string(),

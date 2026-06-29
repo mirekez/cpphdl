@@ -4,7 +4,10 @@
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
-#include "L2Cache.h"
+#ifndef L2CACHE_TEST_DUT_HEADER
+#define L2CACHE_TEST_DUT_HEADER "l2/L2CacheOO.h"
+#endif
+#include L2CACHE_TEST_DUT_HEADER
 #include "Axi4Ram.h"
 
 #include <chrono>
@@ -94,6 +97,18 @@ long _system_clock = -1;
 static constexpr size_t LINE_SIZE = 32;
 static constexpr size_t WAIT_LIMIT = 128;
 
+#ifndef L2CACHE_TEST_DUT
+#define L2CACHE_TEST_DUT L2CacheOO
+#endif
+
+#ifndef L2CACHE_TEST_TOP_NAME
+#define L2CACHE_TEST_TOP_NAME "L2CacheOO"
+#endif
+
+#ifndef L2CACHE_TEST_SOURCE_FILE
+#define L2CACHE_TEST_SOURCE_FILE __FILE__
+#endif
+
 #ifdef VERILATOR
 #define PORT_VALUE(val) val
 #define L2_VALUE(val) (eval_l2(false), val)
@@ -116,7 +131,7 @@ class TestL2Cache : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
-    L2Cache<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS> l2;
+    L2CACHE_TEST_DUT<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS> l2;
 #endif
     Axi4Ram<32, 4, PORT_BITS, RAM_DEPTH_PER_PORT> ram[MEM_PORTS];
 
@@ -1328,9 +1343,11 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestL2Cache<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
+        std::print("VERILATOR Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...",
+            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
 #else
-        std::print("CppHDL TestL2Cache<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...", L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
+        std::print("CppHDL Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...",
+            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
 #endif
         std::print("\n  features under test:"
                    "\n    - cached CPU read fill and hit"
@@ -1406,13 +1423,14 @@ int main(int argc, char** argv)
 #ifndef VERILATOR
     if (!noveril) {
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
+        const std::string verilator_source = L2CACHE_TEST_SOURCE_FILE;
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         auto compile_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
             if (only != -1 && only != index) {
                 return true;
             }
-            return VerilatorCompile(__FILE__, "L2Cache", {"Predef_pkg", "RAM1PORT"},
+            return VerilatorCompile(verilator_source, L2CACHE_TEST_TOP_NAME, {"Predef_pkg", "RAM1PORT"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "cache").string()},
@@ -1445,34 +1463,41 @@ int main(int argc, char** argv)
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        auto run_l2 = [&](int index, const char* command) {
-            return (only != -1 && only != index) || std::system(command) == 0;
+        auto run_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
+            if (only != -1 && only != index) {
+                return true;
+            }
+            std::ostringstream command;
+            command << L2CACHE_TEST_TOP_NAME << "_" << cache_size << "_" << port_bits << "_"
+                    << LINE_SIZE << "_" << ways << "_32_32_" << mem_ports
+                    << "/obj_dir/V" << L2CACHE_TEST_TOP_NAME << " " << index;
+            return std::system(command.str().c_str()) == 0;
         };
         ok = ok &&
-            run_l2(0, "L2Cache_16384_64_32_1_32_32_4/obj_dir/VL2Cache 0") &&
-            run_l2(1, "L2Cache_16384_64_32_2_32_32_4/obj_dir/VL2Cache 1") &&
-            run_l2(2, "L2Cache_16384_64_32_4_32_32_4/obj_dir/VL2Cache 2") &&
-            run_l2(3, "L2Cache_16384_256_32_1_32_32_4/obj_dir/VL2Cache 3") &&
-            run_l2(4, "L2Cache_16384_256_32_2_32_32_4/obj_dir/VL2Cache 4") &&
-            run_l2(5, "L2Cache_16384_256_32_4_32_32_4/obj_dir/VL2Cache 5") &&
-            run_l2(6, "L2Cache_16384_64_32_1_32_32_8/obj_dir/VL2Cache 6") &&
-            run_l2(7, "L2Cache_16384_64_32_2_32_32_8/obj_dir/VL2Cache 7") &&
-            run_l2(8, "L2Cache_16384_64_32_4_32_32_8/obj_dir/VL2Cache 8") &&
-            run_l2(9, "L2Cache_16384_256_32_1_32_32_8/obj_dir/VL2Cache 9") &&
-            run_l2(10, "L2Cache_16384_256_32_2_32_32_8/obj_dir/VL2Cache 10") &&
-            run_l2(11, "L2Cache_16384_256_32_4_32_32_8/obj_dir/VL2Cache 11") &&
-            run_l2(12, "L2Cache_65536_64_32_1_32_32_4/obj_dir/VL2Cache 12") &&
-            run_l2(13, "L2Cache_65536_64_32_2_32_32_4/obj_dir/VL2Cache 13") &&
-            run_l2(14, "L2Cache_65536_64_32_4_32_32_4/obj_dir/VL2Cache 14") &&
-            run_l2(15, "L2Cache_65536_256_32_1_32_32_4/obj_dir/VL2Cache 15") &&
-            run_l2(16, "L2Cache_65536_256_32_2_32_32_4/obj_dir/VL2Cache 16") &&
-            run_l2(17, "L2Cache_65536_256_32_4_32_32_4/obj_dir/VL2Cache 17") &&
-            run_l2(18, "L2Cache_65536_64_32_1_32_32_8/obj_dir/VL2Cache 18") &&
-            run_l2(19, "L2Cache_65536_64_32_2_32_32_8/obj_dir/VL2Cache 19") &&
-            run_l2(20, "L2Cache_65536_64_32_4_32_32_8/obj_dir/VL2Cache 20") &&
-            run_l2(21, "L2Cache_65536_256_32_1_32_32_8/obj_dir/VL2Cache 21") &&
-            run_l2(22, "L2Cache_65536_256_32_2_32_32_8/obj_dir/VL2Cache 22") &&
-            run_l2(23, "L2Cache_65536_256_32_4_32_32_8/obj_dir/VL2Cache 23");
+            run_l2(0, 16384, 64, 4, 1) &&
+            run_l2(1, 16384, 64, 4, 2) &&
+            run_l2(2, 16384, 64, 4, 4) &&
+            run_l2(3, 16384, 256, 4, 1) &&
+            run_l2(4, 16384, 256, 4, 2) &&
+            run_l2(5, 16384, 256, 4, 4) &&
+            run_l2(6, 16384, 64, 8, 1) &&
+            run_l2(7, 16384, 64, 8, 2) &&
+            run_l2(8, 16384, 64, 8, 4) &&
+            run_l2(9, 16384, 256, 8, 1) &&
+            run_l2(10, 16384, 256, 8, 2) &&
+            run_l2(11, 16384, 256, 8, 4) &&
+            run_l2(12, 65536, 64, 4, 1) &&
+            run_l2(13, 65536, 64, 4, 2) &&
+            run_l2(14, 65536, 64, 4, 4) &&
+            run_l2(15, 65536, 256, 4, 1) &&
+            run_l2(16, 65536, 256, 4, 2) &&
+            run_l2(17, 65536, 256, 4, 4) &&
+            run_l2(18, 65536, 64, 8, 1) &&
+            run_l2(19, 65536, 64, 8, 2) &&
+            run_l2(20, 65536, 64, 8, 4) &&
+            run_l2(21, 65536, 256, 8, 1) &&
+            run_l2(22, 65536, 256, 8, 2) &&
+            run_l2(23, 65536, 256, 8, 4);
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

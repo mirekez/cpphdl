@@ -148,3 +148,13 @@ Use this skill when developing and debugging new CppHDL module, device, example 
 
 - If you see bug in cpphdl functionality and fixing it - develop a new test in root tests/ folder or add section to correspondent old test
 - If you see bug in Tribe cpu code or modules or devices and fixing it - develop a new test in tribe/tests folder or add section to correspondent old test
+
+# CppHDL Template Specialization Conversion
+
+Use these rules when changing template handling in the cpphdl converter.
+
+- Template structs/unions must be emitted only as concrete specializations. Numeric, type, and textual/string-like template arguments are all part of the generated package/type name. Do not generate an unspecialized primary-template package for a template struct.
+- Static `constexpr` values in a specialized struct package must be concrete values for that specialization. Generated struct packages must not contain unresolved template parameter names such as `WIDTH`, `CONV_TYPE`, `FMT`, or `TAG`.
+- Template `Module` classes keep numeric template parameters as SystemVerilog module parameters. Numeric parameters should not be added to the generated module name, and method/member expressions should preserve the symbolic parameter where possible.
+- Template `Module` classes use type and textual/string-like template parameters as specialization identity. These parameters are added to the generated module name and select a separate SV module for each type/text combination.
+- When a fixed type specialization contributes static `constexpr` values used by a module, resolve those fixed type constexprs to concrete values. Numeric module parameters remain symbolic.

@@ -41,6 +41,25 @@ namespace
 
 using AnnotationVars = std::unordered_map<std::string, std::string>;
 
+static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordDecl* owner)
+{
+    if (!current || !owner) {
+        return false;
+    }
+
+    const CXXRecordDecl* currentDef = current->getDefinition();
+    const CXXRecordDecl* ownerDef = owner->getDefinition();
+    current = currentDef ? currentDef : current;
+    owner = ownerDef ? ownerDef : owner;
+
+    if (current == owner ||
+        current->getQualifiedNameAsString() == owner->getQualifiedNameAsString()) {
+        return true;
+    }
+
+    return current->isDerivedFrom(owner);
+}
+
 bool evaluatedIntegerExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr& out)
 {
     if (!expr) {
@@ -502,6 +521,7 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
 }
 
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
+static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp);
 
 std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CXXRecordDecl* RD, Helpers& hlp)
 {
@@ -525,8 +545,7 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CX
         if (!tmp.sub.empty()) {
             QualType QT = args[i].getAsType().getNonReferenceType();
             CXXRecordDecl* CRD = hlp.resolveCXXRecordDecl(QT);
-            if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != 0
-                && CRD->getQualifiedNameAsString().find("std::") != 0) {
+            if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
                 auto st = exportStruct(CRD, hlp);
                 if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(),
                         [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
@@ -535,6 +554,53 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CX
                 }
             }
             result.emplace(typeParam->getNameAsString(), std::move(tmp.sub.front()));
+        }
+    }
+    return result;
+}
+
+std::unordered_map<std::string, cpphdl::Expr> templateTypeConstexprSubstitutions(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    // Type template arguments are fixed for a module specialization. Resolve
+    // their static constexpr fields so generated modules do not reference a
+    // package that is intentionally not emitted for value-less helper types.
+    std::unordered_map<std::string, cpphdl::Expr> result;
+    const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
+    if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        return result;
+    }
+
+    const TemplateArgumentList& args = CTSD->getTemplateArgs();
+    const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
+    const unsigned n = std::min<unsigned>(args.size(), params->size());
+    for (unsigned i = 0; i < n; ++i) {
+        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(params->getParam(i));
+        if (!typeParam || args[i].getKind() != TemplateArgument::Type) {
+            continue;
+        }
+
+        QualType QT = args[i].getAsType().getNonReferenceType();
+        CXXRecordDecl* CRD = hlp.resolveCXXRecordDecl(QT);
+        if (!CRD || !CRD->hasDefinition()) {
+            continue;
+        }
+
+        const std::string paramPkg = typeParam->getNameAsString() + "_pkg::";
+        std::string concreteName = genTypeName(CRD->getQualifiedNameAsString());
+        hlp.followSpecialization(CRD, concreteName);
+        const std::string concretePkg = concreteName + "_pkg::";
+
+        for (Decl* D : CRD->getDefinition()->decls()) {
+            const auto* VD = dyn_cast<VarDecl>(D);
+            if (!VD || !VD->isStaticDataMember() || !VD->isConstexpr() || !VD->getInit()) {
+                continue;
+            }
+            cpphdl::Expr value;
+            if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, value)) {
+                continue;
+            }
+            result.emplace(paramPkg + VD->getNameAsString(), value);
+            result.emplace(concretePkg + VD->getNameAsString(), std::move(value));
         }
     }
     return result;
@@ -552,15 +618,15 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutionsForRecord
     const TemplateParameterList* params = CTSD->getSpecializedTemplate()->getTemplateParameters();
     const unsigned n = std::min<unsigned>(args.size(), params->size());
     for (unsigned i = 0; i < n; ++i) {
-        const auto* typeParam = dyn_cast<TemplateTypeParmDecl>(params->getParam(i));
-        if (!typeParam || args[i].getKind() != TemplateArgument::Type) {
+        const NamedDecl* param = params->getParam(i);
+        if (!param || param->getName().empty()) {
             continue;
         }
 
         cpphdl::Expr tmp;
         hlp.ArgToExpr(args[i], tmp, false);
         if (!tmp.sub.empty()) {
-            result.emplace(typeParam->getNameAsString(), std::move(tmp.sub.front()));
+            result.emplace(param->getNameAsString(), std::move(tmp.sub.front()));
         }
     }
     return result;
@@ -659,6 +725,41 @@ void replacePackageOwner(cpphdl::Expr& expr, const std::string& from, const std:
     });
 }
 
+void localizeKnownModuleConstRefs(cpphdl::Expr& expr, const cpphdl::Module& mod)
+{
+    expr.traverseIf([&](cpphdl::Expr& e) {
+        if (e.type != cpphdl::Expr::EXPR_VAR) {
+            return false;
+        }
+        const size_t scope = e.value.rfind("_pkg::");
+        if (scope == std::string::npos) {
+            return false;
+        }
+        const std::string constName = e.value.substr(scope + 6);
+        if (std::find_if(mod.consts.begin(), mod.consts.end(),
+                [&](const cpphdl::Field& c){ return c.name == constName; }) != mod.consts.end()) {
+            e.value = constName;
+        }
+        return false;
+    });
+}
+
+void rewriteSelfConstReferenceToTemplateParameter(cpphdl::Expr& expr, const std::string& constName, const cpphdl::Module& mod)
+{
+    if (expr.type != cpphdl::Expr::EXPR_VAR || expr.value != constName) {
+        return;
+    }
+
+    const std::string templateParamName = constName + "_";
+    if (std::find_if(mod.parameters.begin(), mod.parameters.end(),
+            [&](const cpphdl::Field& param){ return param.name == templateParamName; }) != mod.parameters.end()) {
+        // Re-exported base geometry constants often use CACHE_SIZE = Base::CACHE_SIZE
+        // while the module template parameter is CACHE_SIZE_.  Localizing the
+        // base reference to CACHE_SIZE would create a circular SV parameter.
+        expr.value = templateParamName;
+    }
+}
+
 bool structHasAnonymousAggregateWrapper(const std::string& typeName)
 {
     auto it = std::find_if(currProject->structs.begin(), currProject->structs.end(),
@@ -670,6 +771,29 @@ bool structHasAnonymousAggregateWrapper(const std::string& typeName)
     return std::any_of(it->fields.begin(), it->fields.end(), [](const cpphdl::Field& field) {
         return field.name.empty() && field.definition.type != cpphdl::Struct::STRUCT_EMPTY;
     });
+}
+
+static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp)
+{
+    if (!RD || !RD->hasDefinition()) {
+        return false;
+    }
+    if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+        RD->getQualifiedNameAsString().find("std::") == 0) {
+        return false;
+    }
+
+    auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+    if (ModuleClass && RD->isDerivedFrom(ModuleClass)) {
+        return false;
+    }
+    if (isCurrentOrBaseRecord(hlp.parent, RD)) {
+        return false;
+    }
+
+    // Empty user structs still need SV packages when used through template type
+    // parameters; exportStruct() adds the pad bit that makes them legal SV.
+    return true;
 }
 
 void fixAnonymousLocalMemberAccess(cpphdl::Expr& expr, std::unordered_map<std::string, bool>& localAnonTypes)
@@ -763,6 +887,8 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
             init = hlp.exprToExpr(VD->getInit());
         }
         applyTemplateTypeSubstitutions(init, typeSubstitutions);
+        const auto typeConstexprSubstitutions = templateTypeConstexprSubstitutions(RD, hlp);
+        applyTemplateTypeSubstitutions(init, typeConstexprSubstitutions);
         st->parameters.emplace_back(cpphdl::Field{VD->getNameAsString(), std::move(init)});
         DEBUG_EXPR(debugIndent, " Expr: " << st->parameters.back().expr.debug(debugIndent));
     };
@@ -852,7 +978,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                 }
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
                 // folded struct
-                if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+                if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
                     if (!CRD->isAnonymousStructOrUnion() && CRD->getIdentifier()) {  // add to imports
                         std::string name = genTypeName(CRD->getQualifiedNameAsString());
                         if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
@@ -1104,7 +1230,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             }
         }
         else
-        if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+        if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
             auto st = exportStruct(CRD, hlp);
             if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
                 hlp.mod->imports.emplace_back(st.name);
@@ -1186,7 +1312,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             }
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);
-            if (CRD && CRD->getQualifiedNameAsString().find("cpphdl::") != (size_t)0 && CRD->getQualifiedNameAsString().find("std::") != (size_t)0) {
+            if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
                 auto st = exportStruct(CRD, hlp);
                 if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
                     hlp.mod->imports.emplace_back(st.name);
@@ -1276,7 +1402,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             QualType QT = MD->getThisType()->getPointeeType();
 
             auto* CRD = hlp.resolveCXXRecordDecl(QT);  // this of method
-            if (CRD) {
+            if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
                 auto st = exportStruct(CRD, hlp);
                 if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
                     hlp.mod->imports.emplace_back(st.name);
@@ -1438,18 +1564,28 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             }
             const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
             applyTemplateTypeSubstitutions(init, typeSubstitutions);
+            const auto typeConstexprSubstitutions = templateTypeConstexprSubstitutions(hlp.parent, hlp);
+            applyTemplateTypeSubstitutions(init, typeConstexprSubstitutions);
 
             auto it = std::find_if(hlp.mod->consts.begin(), hlp.mod->consts.end(),
                 [&](auto& c){ return c.name == VD->getNameAsString(); } );
             if (it != hlp.mod->consts.end()) {
                 if (it->expr.sub.empty()) {
+                    localizeKnownModuleConstRefs(init, *hlp.mod);
+                    rewriteSelfConstReferenceToTemplateParameter(init, VD->getNameAsString(), *hlp.mod);
                     it->expr.sub.emplace_back(std::move(init));
                 }
                 else {
+                    localizeKnownModuleConstRefs(init, *hlp.mod);
+                    rewriteSelfConstReferenceToTemplateParameter(init, VD->getNameAsString(), *hlp.mod);
                     updateExpr(it->expr.sub[0], init);
+                    localizeKnownModuleConstRefs(it->expr.sub[0], *hlp.mod);
+                    rewriteSelfConstReferenceToTemplateParameter(it->expr.sub[0], VD->getNameAsString(), *hlp.mod);
                 }
             }
             else {
+                localizeKnownModuleConstRefs(init, *hlp.mod);
+                rewriteSelfConstReferenceToTemplateParameter(init, VD->getNameAsString(), *hlp.mod);
                 hlp.mod->consts.emplace_back(cpphdl::Field{VD->getNameAsString(),
                     cpphdl::Expr{"parameter", cpphdl::Expr::EXPR_CONST, {std::move(init)}}});
                 DEBUG_AST(debugIndent, "constexpr: " << VD->getNameAsString() << "\n");
@@ -1545,7 +1681,15 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if ([[maybe_unused]] auto* TypeAlias = dyn_cast<TypeAliasDecl>(D)) {
                 DEBUG_AST(debugIndent, "Type alias: " << TypeAlias->getNameAsString() << ", " << TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()));
                 if (find_if(mod.aliases.begin(), mod.aliases.end(), [&](auto& a){ return a.name == TypeAlias->getNameAsString(); }) == mod.aliases.end()) {
-                    if (TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
+                    QualType aliasQT = TypeAlias->getUnderlyingType().getNonReferenceType();
+                    CXXRecordDecl* aliasRD = hlp.resolveCXXRecordDecl(aliasQT);
+                    auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+                    const bool aliasIsClassOnly =
+                        aliasRD
+                        && (!cpphdlRecordHasValueFields(aliasRD)
+                            || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)));
+                    if (!aliasIsClassOnly
+                        && TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
                         mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(),
                             cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE}});
                     }

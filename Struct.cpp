@@ -85,6 +85,14 @@ size_t prepareStructLayout(Struct& st)
             continue;
         }
 
+        // GNU zero-length arrays are C++ layout markers. Packed SystemVerilog
+        // has no zero-width fields, so remove them before sizing or padding.
+        if (f.isZeroSizeArray()) {
+            st.fields.erase(st.fields.begin() + i);
+            --i;
+            continue;
+        }
+
         bool bitField = f.bitwidth.type != Expr::EXPR_NONE;
         if (st.type == Struct::STRUCT_STRUCT && !bitField && bitSize % 8) {
             size_t alignBits = 8 - bitSize % 8;

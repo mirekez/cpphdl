@@ -8,12 +8,12 @@
 
 using namespace cpphdl;
 
-struct TemplateModuleNameConv16
+struct TemplateModuleNameConv
 {
     static constexpr uint16_t MASK = 0x1234;
 };
 
-template<typename CONV_TYPE = TemplateModuleNameConv16>
+template<typename CONV_TYPE = TemplateModuleNameConv>
 class Arithmetic
 {
 public:
@@ -23,24 +23,24 @@ public:
     }
 };
 
-template<int PIPE_DEPTH_MUL = 0, int PIPE_DEPTH_SUM = 0>
+template<int PARAM1 = 0, int PARAM2 = 0>
 class [[clang::annotate(
     "CPPHDL_REPLACEMENT="
     "`default_nettype none\n"
     "\n"
     "import Predef_pkg::*;\n"
     "\n"
-    "module Arithmetic_FP16E5 #(parameter int PIPE_DEPTH_MUL = $(PIPE_DEPTH_MUL), parameter int PIPE_DEPTH_SUM = $(PIPE_DEPTH_SUM))\n"
+    "module TemplateModuleName_Arithmetic #(parameter int PARAM1 = $(PARAM1), parameter int PARAM2 = $(PARAM2))\n"
     " (\n"
     "    input wire clk,\n"
     "    input wire reset,\n"
     "    input wire[16-1:0] value_in,\n"
     "    output wire[16-1:0] value_out\n"
     ");\n"
-    "    assign value_out = value_in ^ 16'(PIPE_DEPTH_MUL + PIPE_DEPTH_SUM + 16'h1234);\n"
+    "    assign value_out = value_in ^ 16'(PARAM1 + PARAM2 + 16'h1234);\n"
     "endmodule\n"
     ";"
-)]] Arithmetic_FP16E5 : public Module
+)]] TemplateModuleName_Arithmetic : public Module
 {
 public:
     _PORT(logic<16>) value_in;
@@ -51,7 +51,7 @@ private:
 
     logic<16>& value_comb_func()
     {
-        value_comb = value_in() ^ logic<16>((uint16_t)(PIPE_DEPTH_MUL + PIPE_DEPTH_SUM + Arithmetic<>::mask()));
+        value_comb = value_in() ^ logic<16>((uint16_t)(PARAM1 + PARAM2 + Arithmetic<>::mask()));
         return value_comb;
     }
 
@@ -68,7 +68,7 @@ public:
     _PORT(logic<16>) value_out = _ASSIGN(arithmetic.value_out());
 
 private:
-    Arithmetic_FP16E5<0, 0> arithmetic;
+    TemplateModuleName_Arithmetic<0, 0> arithmetic;
 
 public:
     void _assign()
@@ -88,7 +88,7 @@ public:
     }
 };
 
-template class Arithmetic_FP16E5<0, 0>;
+template class TemplateModuleName_Arithmetic<0, 0>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -110,11 +110,11 @@ long _system_clock = -1;
 
 static bool check_generated_sv()
 {
-    std::filesystem::path sv_path = "generated/Arithmetic_FP16E5.sv";
+    std::filesystem::path sv_path = "generated/TemplateModuleName_Arithmetic.sv";
     std::filesystem::path top_path = "generated/TemplateModuleName.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(sv_path)) {
-        sv_path = "TemplateModuleName_1/Arithmetic_FP16E5.sv";
+        sv_path = "TemplateModuleName_1/TemplateModuleName_Arithmetic.sv";
         top_path = "TemplateModuleName_1/TemplateModuleName.sv";
     }
 #endif
@@ -130,10 +130,10 @@ static bool check_generated_sv()
     std::string sv((std::istreambuf_iterator<char>(sv_in)), std::istreambuf_iterator<char>());
     std::string top((std::istreambuf_iterator<char>(top_in)), std::istreambuf_iterator<char>());
     bool ok = true;
-    ok &= sv.find("module Arithmetic_FP16E5 #(") != std::string::npos;
-    ok &= sv.find("module ArithmeticFP16E5") == std::string::npos;
-    ok &= top.find("Arithmetic_FP16E5 #(") != std::string::npos;
-    ok &= top.find("ArithmeticFP16E5 #(") == std::string::npos;
+    ok &= sv.find("module TemplateModuleName_Arithmetic #(") != std::string::npos;
+    ok &= sv.find("module TemplateModuleNameArithmetic") == std::string::npos;
+    ok &= top.find("TemplateModuleName_Arithmetic #(") != std::string::npos;
+    ok &= top.find("TemplateModuleNameArithmetic #(") == std::string::npos;
     if (!ok) {
         std::print("\nERROR: template module name underscore was not preserved\n");
     }
@@ -243,7 +243,7 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "TemplateModuleName", {
             "Predef_pkg",
-            "Arithmetic_FP16E5"
+            "TemplateModuleName_Arithmetic"
         }, {"../../../../include"}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

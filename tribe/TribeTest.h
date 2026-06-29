@@ -1651,26 +1651,28 @@ public:
             percent(perf_dcache_wait), perf_dcache_wait,
             percent(perf_icache_wait), perf_icache_wait,
             percent(perf_branch), perf_branch);
-        std::print("I-cache wait detail: issue={:.2f}% ({})"
-                   ", lookup={:.2f}% ({})"
-                   ", lookup_hit={:.2f}% ({})"
-                   ", refill={:.2f}% ({})"
-                   ", init={:.2f}% ({})\n",
-            percent(perf_icache_issue_wait_cycles), perf_icache_issue_wait_cycles,
-            percent(perf_icache_lookup_wait_cycles), perf_icache_lookup_wait_cycles,
-            percent(perf_icache_hit_lookup_cycles), perf_icache_hit_lookup_cycles,
-            percent(perf_icache_refill_wait_cycles), perf_icache_refill_wait_cycles,
-            percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
-        std::print("Runtime detail: checkpoint={:.2f}% strobe={:.2f}% tribe_strobe={:.2f}% perf={:.2f}% work={:.2f}% tribe_work={:.2f}% uart={:.2f}% trace_probe={:.2f}% negedge={:.2f}%\n",
-            runtime_part_percent(runtime_checkpoint_ticks),
-            runtime_part_percent(runtime_strobe_ticks),
-            runtime_part_percent(runtime_tribe_strobe_ticks),
-            runtime_part_percent(runtime_perf_ticks),
-            runtime_part_percent(runtime_work_ticks),
-            runtime_part_percent(runtime_tribe_work_ticks),
-            runtime_part_percent(runtime_uart_ticks),
-            runtime_part_percent(runtime_trace_ticks),
-            runtime_part_percent(runtime_negedge_ticks));
+        if (std::getenv("TRIBE_PERF_DETAIL")) {
+            std::print("I-cache wait detail: issue={:.2f}% ({})"
+                       ", lookup={:.2f}% ({})"
+                       ", lookup_hit={:.2f}% ({})"
+                       ", refill={:.2f}% ({})"
+                       ", init={:.2f}% ({})\n",
+                percent(perf_icache_issue_wait_cycles), perf_icache_issue_wait_cycles,
+                percent(perf_icache_lookup_wait_cycles), perf_icache_lookup_wait_cycles,
+                percent(perf_icache_hit_lookup_cycles), perf_icache_hit_lookup_cycles,
+                percent(perf_icache_refill_wait_cycles), perf_icache_refill_wait_cycles,
+                percent(perf_icache_init_wait_cycles), perf_icache_init_wait_cycles);
+            std::print("Runtime detail: checkpoint={:.2f}% strobe={:.2f}% tribe_strobe={:.2f}% perf={:.2f}% work={:.2f}% tribe_work={:.2f}% uart={:.2f}% trace_probe={:.2f}% negedge={:.2f}%\n",
+                runtime_part_percent(runtime_checkpoint_ticks),
+                runtime_part_percent(runtime_strobe_ticks),
+                runtime_part_percent(runtime_tribe_strobe_ticks),
+                runtime_part_percent(runtime_perf_ticks),
+                runtime_part_percent(runtime_work_ticks),
+                runtime_part_percent(runtime_tribe_work_ticks),
+                runtime_part_percent(runtime_uart_ticks),
+                runtime_part_percent(runtime_trace_ticks),
+                runtime_part_percent(runtime_negedge_ticks));
+        }
     }
 
     bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", uint64_t max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0, const std::string& dtb_file = "", bool linux_earlycon_mapbase = false, const std::string& initramfs_file = "", uint32_t initramfs_addr = 0, const std::string& checkpoint_load_file = "", const std::string& checkpoint_save_file = "", uint64_t checkpoint_save_cycle = 0, bool append_output = false, const std::string& bootargs = "", bool checkpoint_save_only_success = false, const std::string& expected_output_contains = "", const std::string& test_label = "", bool mirror_uart_output = false, bool interactive_uart_input = false, const std::string& checkpoint_save_after = "", const std::string& sd_image_file = "", const std::string& eth_tap_socket_path = "");
