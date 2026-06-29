@@ -411,41 +411,6 @@ std::string readReplacementFromScript(const std::string& command)
     return result;
 }
 
-static void rewriteReplacementModuleName(std::string& replacement, const std::string& moduleName)
-{
-    // Annotated replacement text is raw SV. Keep it raw, but align the first
-    // module declaration with the specialized CppHDL module name used by child
-    // instances.
-    const std::string keyword = "module";
-    size_t pos = replacement.find(keyword);
-    while (pos != std::string::npos) {
-        const bool beforeOk = pos == 0 ||
-            !(std::isalnum(static_cast<unsigned char>(replacement[pos - 1])) || replacement[pos - 1] == '_');
-        const size_t after = pos + keyword.size();
-        const bool afterOk = after < replacement.size() &&
-            std::isspace(static_cast<unsigned char>(replacement[after]));
-        if (beforeOk && afterOk) {
-            size_t nameStart = replacement.find_first_not_of(" \t\r\n", after);
-            if (nameStart == std::string::npos) {
-                return;
-            }
-            size_t nameEnd = nameStart;
-            while (nameEnd < replacement.size()) {
-                unsigned char ch = static_cast<unsigned char>(replacement[nameEnd]);
-                if (!(std::isalnum(ch) || ch == '_' || ch == '$')) {
-                    break;
-                }
-                ++nameEnd;
-            }
-            if (nameEnd > nameStart) {
-                replacement.replace(nameStart, nameEnd - nameStart, moduleName);
-            }
-            return;
-        }
-        pos = replacement.find(keyword, pos + keyword.size());
-    }
-}
-
 std::string cpphdlReplacementFromAnnotations(const CXXRecordDecl* RD, const ASTContext& ctx)
 {
     constexpr std::string_view replacement_prefix = "CPPHDL_REPLACEMENT=";
@@ -1827,9 +1792,6 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         mod->parameters = std::move(params);
         mod->origName = RD->getQualifiedNameAsString();
         mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
-        if (!mod->replacement.empty()) {
-            rewriteReplacementModuleName(mod->replacement, mod->name);
-        }
 
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod->name << ")"); on_return ret_debug([](){ --debugIndent; });
 

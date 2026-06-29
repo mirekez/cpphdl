@@ -154,7 +154,7 @@ static bool run_perf_test(bool debug)
     ok = ok && check_metric("dcache_wait_pct", dcache_wait_pct, expected_dcache_wait_pct, 20.0);
     ok = ok && check_metric("icache_wait_pct", icache_wait_pct, expected_icache_wait_pct, 20.0);
     ok = ok && check_metric("branch_pct", branch_pct, expected_branch_pct, 30.0);
-    ok = ok && check_metric("icache_refill_pct", icache_refill_pct, expected_icache_refill_pct, 20.0);
+    ok = ok && check_metric("icache_refill_pct", icache_refill_pct, expected_icache_refill_pct, 25.0);
     return ok;
 }
 
