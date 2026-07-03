@@ -31,6 +31,7 @@ constexpr unsigned clog2(unsigned x)
 #include <type_traits>
 #include <array>
 #include <initializer_list>
+#include <utility>
 
 template<typename T>
 struct is_from_cpphdl_namespace : std::false_type {};
@@ -70,6 +71,17 @@ namespace cpphdl
 
 
 
+
+namespace detail
+{
+
+template<typename T, typename = void>
+struct has_bits_method : std::false_type {};
+
+template<typename T>
+struct has_bits_method<T, std::void_t<decltype(std::declval<const T&>().bits(size_t{}, size_t{}))>> : std::true_type {};
+
+}
 
 
 template<typename T, typename V>
@@ -119,7 +131,7 @@ constexpr uint64_t sv_unsigned(const T& value)
 template<size_t WIDTH, typename T>
 constexpr logic<WIDTH> sv_bits(const T& value, size_t last, size_t first)
 {
-    if constexpr (requires { value.bits(last, first); }) {
+    if constexpr (detail::has_bits_method<T>::value) {
         return logic<WIDTH>(value.bits(last, first));
     }
     else {
@@ -141,7 +153,7 @@ constexpr uint64_t sv_bits_runtime(const T& value, size_t last, size_t first)
 {
     auto width = last >= first ? last - first + 1 : 0;
     uint64_t raw = 0;
-    if constexpr (requires { value.bits(last, first); }) {
+    if constexpr (detail::has_bits_method<T>::value) {
         raw = static_cast<uint64_t>(value.bits(last, first));
     }
     else {
