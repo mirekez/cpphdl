@@ -4,7 +4,7 @@
 
 using namespace cpphdl;
 
-// Re-export geometry constants through inherited helper layers; called by every L2Cache*Ops layer and L2CacheOO.
+// Re-export geometry constants through inherited helper layers; called by every L2Cache*Ops layer and L2Cache.
 #define L2CACHE_GEOMETRY_CONSTANTS(GEOM_TYPE) \
     static constexpr size_t CACHE_SIZE = GEOM_TYPE::CACHE_SIZE; \
     static constexpr size_t PORT_BITWIDTH = GEOM_TYPE::PORT_BITWIDTH; \

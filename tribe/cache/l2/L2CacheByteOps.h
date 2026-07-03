@@ -9,7 +9,7 @@ public:
     // Re-export geometry constants for byte-lane helpers; called by this layer and inherited response glue.
     L2CACHE_GEOMETRY_CONSTANTS(GEOM);
 
-    // Merge a masked unaligned store into the addressed word; called by L2CacheOOPrimitives and future write-hit control.
+    // Merge a masked unaligned store into the addressed word; called by L2CachePrimitives and future write-hit control.
     static uint32_t store_word(uint32_t old_data, uint32_t write_data, uint8_t write_mask, uint32_t byte_offset)
     {
         size_t i;
@@ -49,7 +49,7 @@ public:
         return byte_offset == 0 ? (uint32_t)0 : write_data >> (32u - byte_offset * 8u);
     }
 
-    // Extract spill byte mask for the next word of an unaligned store; called by L2CacheOOPrimitives and future write-split control.
+    // Extract spill byte mask for the next word of an unaligned store; called by L2CachePrimitives and future write-split control.
     static uint8_t cross_write_mask(uint8_t write_mask, uint32_t byte_offset)
     {
         size_t i;

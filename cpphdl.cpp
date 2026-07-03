@@ -18,6 +18,7 @@
 #include "Expr.h"
 #include "Struct.h"
 #include "Enum.h"
+#include "json_output.h"
 
 #include <algorithm>
 #include <array>
@@ -979,12 +980,6 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 //                DEBUG_EXPR(debugIndent, " Expr: " << st->fields.back().type.debug(debugIndent));
                 // folded struct
                 if (cpphdlRecordShouldExportAsStruct(CRD, hlp)) {
-                    if (!CRD->isAnonymousStructOrUnion() && CRD->getIdentifier()) {  // add to imports
-                        std::string name = genTypeName(CRD->getQualifiedNameAsString());
-                        if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
-                            st->imports.emplace_back(name);
-                        }
-                    }
                     auto st1 = exportStruct(CRD, hlp);
 
                     if (CRD->isAnonymousStructOrUnion() || !CRD->getIdentifier()) {
@@ -993,6 +988,10 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
                         DEBUG_AST1(" ANON");
                     }
                     else {
+                        // Template struct fields must import the concrete specialization package, not the primary template name.
+                        if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == st1.name; }) == st->imports.end()) {
+                            st->imports.emplace_back(st1.name);
+                        }
                         if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(), [&](auto& imp){ return imp.name == st1.name; }) == hlp.mod->imports.end()) {
                             hlp.mod->imports.emplace_back(st1.name);
                             currProject->structs.emplace_back(std::move(st1));
@@ -1129,7 +1128,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     }
     const auto inlineAnnotations = fieldInlineAnnotations(sourceField, *hlp.ctx);
 
-    if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out")) {
+    const bool isInterfaceField = CRD && CRD->isDerivedFrom(InterfaceClass);
+    if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out") || isInterfaceField) {
         DEBUG_AST1(" {port " << fieldName << "} ");
 
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
@@ -1205,12 +1205,30 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         if (CRD && CRD->isDerivedFrom(InterfaceClass)) {  // Interface struct
             // for Interface structs we need Abstract declaration to know expressions of template parameters in subfields (and port cames too)
             ClassTemplateDecl *CTD = dyn_cast<ClassTemplateSpecializationDecl>(CRD)->getSpecializedTemplate();
+            const clang::TemplateParameterList *interfaceParams = CTD ? CTD->getTemplateParameters() : nullptr;
             CRD = CTD->getTemplatedDecl();
             for (Decl* D : CRD->decls()) {
                 if (auto* FD = dyn_cast<FieldDecl>(D)) {
                     QualType QT = FD->getType().getNonReferenceType();
                     hlp.skipStdFunctionType(QT);
                     cpphdl::Expr exprSub = hlp.digQT(QT);
+                    if (interfaceParams) {
+                        size_t i = 0;
+                        for (const clang::NamedDecl *param : *interfaceParams) {
+                            // Interface ports are cloned from the primary template,
+                            // so replace ADDR_WIDTH/DATA_WIDTH/etc with the
+                            // concrete Axi4If<...> actuals while creating them.
+                            exprSub.traverseIf([&](auto& e) {
+                                if (e.type == cpphdl::Expr::EXPR_VAR
+                                    && e.value == param->getNameAsString()
+                                    && expr.sub.size() > i) {
+                                    e = expr.sub[i];
+                                }
+                                return false;
+                            });
+                            ++i;
+                        }
+                    }
                     std::string ending = FD->getNameAsString();
                     if (str_ending(fieldName, "_out")) {
                         if (str_ending(ending, "_out")) {
@@ -1861,6 +1879,7 @@ int main(int argc, const char **argv)
 {
     std::vector<const char*> replace;
     std::string generated_dir = "generated";
+    std::string json_output;
     bool saw_double_dash = false;
     bool injected_double_dash = false;
 
@@ -1889,6 +1908,24 @@ int main(int argc, const char **argv)
             generated_dir = arg + 16;
             if (generated_dir.empty()) {
                 llvm::errs() << "--generated-dir requires a non-empty directory argument\n";
+                return 1;
+            }
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--json-output") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--json-output requires a file name argument\n";
+                return 1;
+            }
+            json_output = argv[++i];
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--json-output=", 14) == 0) {
+            json_output = arg + 14;
+            if (json_output.empty()) {
+                llvm::errs() << "--json-output requires a non-empty file name argument\n";
                 return 1;
             }
             continue;
@@ -1961,5 +1998,8 @@ int main(int argc, const char **argv)
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
     currProject->generate(generated_dir);
+    if (!json_output.empty() && !cpphdl::writeJsonOutput(*currProject, json_output)) {
+        return 1;
+    }
     return ret;
 }

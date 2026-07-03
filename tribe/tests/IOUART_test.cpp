@@ -40,14 +40,32 @@ static std::filesystem::path source_root_dir()
 
 static std::filesystem::path build_root_dir()
 {
-    std::filesystem::path cwd = std::filesystem::current_path();
-    if (std::filesystem::exists(cwd.parent_path().parent_path() / "cpphdl")) {
-        return cwd.parent_path().parent_path();
+    if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
+        std::filesystem::path path(build_dir);
+        if (std::filesystem::exists(path / "cpphdl")) {
+            return path;
+        }
     }
-    if (std::filesystem::exists(cwd / "cpphdl")) {
+
+    std::filesystem::path cwd = std::filesystem::current_path();
+    if (std::filesystem::exists(cwd / "tribe64" / "tribe64")) {
         return cwd;
     }
-    return cwd.parent_path().parent_path();
+    if (std::filesystem::exists(cwd / "build" / "tribe64" / "tribe64")) {
+        return cwd / "build";
+    }
+    if (std::filesystem::exists(cwd.parent_path() / "tribe64" / "tribe64")) {
+        return cwd.parent_path();
+    }
+    if (std::filesystem::exists(cwd.parent_path().parent_path() / "tribe64" / "tribe64")) {
+        return cwd.parent_path().parent_path();
+    }
+
+    const auto source_build = source_root_dir() / "build";
+    if (std::filesystem::exists(source_build / "cpphdl")) {
+        return source_build;
+    }
+    return cwd;
 }
 
 static std::filesystem::path riscv_home_dir()

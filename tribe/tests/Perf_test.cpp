@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <print>
 #include <string>
+#include <unistd.h>
 
 static std::filesystem::path source_root_dir()
 {
@@ -70,7 +71,7 @@ static bool check_metric_u64_max_ratio(const char* name, uint64_t value, uint64_
     return true;
 }
 
-static bool run_perf_test(bool debug)
+static bool run_perf_test(bool debug, bool check_wall_time)
 {
     const auto linux_dir = tribe_linux_dir();
     const auto elf = linux_dir / "vmlinux";
@@ -146,7 +147,9 @@ static bool run_perf_test(bool debug)
     // first kernel init sequence all execute with the same cache geometry used
     // by run_linux_probe.sh.
     ok = ok && check_metric_u64("clocks", perf.clocks, expected_clocks, 10.0);
-    ok = ok && check_metric_u64_max_ratio("wall_us", wall_us, expected_wall_us, 3.0);
+    if (check_wall_time) {
+        ok = ok && check_metric_u64_max_ratio("wall_us", wall_us, expected_wall_us, 3.0);
+    }
     ok = ok && check_metric("stall_pct", stall_pct, expected_stall_pct, 20.0);
     ok = ok && check_metric("issue_wait_pct", issue_pct, expected_issue_pct, 20.0);
     ok = ok && check_metric("total_stall_pct", total_stall_pct, expected_total_stall_pct, 25.0);
@@ -178,9 +181,13 @@ int main(int argc, char** argv)
 
 #ifdef VERILATOR
     Verilated::commandArgs(argc, argv);
-    return run_perf_test(debug) ? 0 : 1;
+    return run_perf_test(debug, true) ? 0 : 1;
 #else
-    bool ok = run_perf_test(debug);
+    // The CTest "_verilator" entry runs this host executable as a wrapper
+    // before it builds and launches the Verilated model. Under parallel CTest
+    // that wrapper can be CPU-starved by other Verilator builds, so only the
+    // standalone Perf_test --noveril path enforces host wall time.
+    bool ok = run_perf_test(debug, noveril);
 
     if (ok && !noveril) {
         const auto source_root = source_root_dir();
@@ -190,8 +197,12 @@ int main(int argc, char** argv)
             " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE) +
             " -DTRIBE_CLINT_TICK_DIV_CONFIG=256";
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_defines.c_str(), 1);
-        ok &= VerilatorCompileTribeInFolder(__FILE__, "Perf", source_root);
-        ok &= std::system((std::string("Perf/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        // Perf wrappers are expensive and can overlap during manual/CTest
+        // reruns. Use a process-unique directory so one run cannot remove
+        // another run's Verilator dependency files under obj_dir.
+        std::string verilator_dir = "Perf_" + std::to_string((long long)getpid());
+        ok &= VerilatorCompileTribeInFolder(__FILE__, verilator_dir, source_root);
+        ok &= std::system((verilator_dir + "/obj_dir/VTribe" + (debug ? " --debug" : "")).c_str()) == 0;
     }
     return ok ? 0 : 1;
 #endif

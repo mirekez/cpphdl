@@ -38,10 +38,15 @@ foreach(src ${TEST_SOURCES})
 
     include_directories("../include")
 
+    set(cpphdl_json_args "")
+    if(rel_path MATCHES "^json/")
+        set(cpphdl_json_args "--json-output generated/${name}")
+    endif()
+
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_json_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
     )
 

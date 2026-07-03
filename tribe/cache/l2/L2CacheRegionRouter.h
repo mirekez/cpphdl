@@ -19,7 +19,7 @@ public:
     // Re-export geometry constants for memory-region routing; called by route() and inherited layers.
     L2CACHE_GEOMETRY_CONSTANTS(GEOM);
 
-    // Map an absolute address to memory port/local address/uncached flag; called by L2CacheOOPrimitives and future miss routing.
+    // Map an absolute address to memory port/local address/uncached flag; called by L2CachePrimitives and future miss routing.
     static L2CacheRegionResult<GEOM::MEM_PORT_BITS> route(uint32_t addr, uint32_t memory_base,
         const uint32_t (&region_size)[GEOM::MEM_PORTS], const bool (&region_uncached)[GEOM::MEM_PORTS])
     {

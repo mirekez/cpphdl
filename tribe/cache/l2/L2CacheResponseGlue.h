@@ -26,7 +26,7 @@ public:
         return ret;
     }
 
-    // Build an unaligned read response crossing into the next line; called by L2CacheOOPrimitives and future miss glue.
+    // Build an unaligned read response crossing into the next line; called by L2CachePrimitives and future miss glue.
     static logic<GEOM::PORT_BITWIDTH> cross_line_read_data(logic<GEOM::PORT_BITWIDTH> low_beat,
         logic<GEOM::PORT_BITWIDTH> high_beat, uint32_t addr)
     {

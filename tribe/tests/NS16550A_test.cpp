@@ -3,6 +3,7 @@
 #include "NS16550A.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -41,6 +42,13 @@ static std::filesystem::path tribe_code_dir()
 
 static std::filesystem::path build_root_dir()
 {
+    if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
+        std::filesystem::path path(build_dir);
+        if (std::filesystem::exists(path / "tribe64" / "tribe64")) {
+            return path;
+        }
+    }
+
     std::filesystem::path cwd = std::filesystem::current_path();
     if (std::filesystem::exists(cwd / "tribe64" / "tribe64")) {
         return cwd;

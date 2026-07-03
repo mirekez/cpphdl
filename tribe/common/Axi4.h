@@ -248,6 +248,85 @@ struct Axi4If : Interface
     (dst).rlast_out = _ASSIGN_I((src).rlast_out()); \
     (dst).rid_out = _ASSIGN_I((src).rid_out())
 
+#define AXI4_DRIVER_FROM_COMB_I(dst, src) \
+    (dst).awvalid_in = _ASSIGN_COMB_I((src).aw.valid); \
+    (dst).awaddr_in = _ASSIGN_COMB_I((src).aw.addr); \
+    (dst).awid_in = _ASSIGN_COMB_I((src).aw.id); \
+    (dst).wvalid_in = _ASSIGN_COMB_I((src).w.valid); \
+    (dst).wdata_in = _ASSIGN_COMB_I((src).w.data); \
+    (dst).wstrb_in = _ASSIGN_COMB_I((src).w.strb); \
+    (dst).wlast_in = _ASSIGN_COMB_I((src).w.last); \
+    (dst).bready_in = _ASSIGN_COMB_I((src).b.ready); \
+    (dst).arvalid_in = _ASSIGN_COMB_I((src).ar.valid); \
+    (dst).araddr_in = _ASSIGN_COMB_I((src).ar.addr); \
+    (dst).arid_in = _ASSIGN_COMB_I((src).ar.id); \
+    (dst).rready_in = _ASSIGN_COMB_I((src).r.ready)
+
+#define AXI4_RESPONDER_FROM_COMB_I(dst, src) \
+    (dst).awready_out = _ASSIGN_COMB_I((src).aw.ready); \
+    (dst).wready_out = _ASSIGN_COMB_I((src).w.ready); \
+    (dst).bvalid_out = _ASSIGN_COMB_I((src).b.valid); \
+    (dst).bid_out = _ASSIGN_COMB_I((src).b.id); \
+    (dst).arready_out = _ASSIGN_COMB_I((src).ar.ready); \
+    (dst).rvalid_out = _ASSIGN_COMB_I((src).r.valid); \
+    (dst).rdata_out = _ASSIGN_COMB_I((src).r.data); \
+    (dst).rlast_out = _ASSIGN_COMB_I((src).r.last); \
+    (dst).rid_out = _ASSIGN_COMB_I((src).r.id)
+
+#define AXI4_DRIVER_FROM_COMB_TRIGGER_I(dst, trigger, src) \
+    (dst).awvalid_in = _ASSIGN_COMB_I((trigger) ? (src).aw.valid : (src).aw.valid); \
+    (dst).awaddr_in = _ASSIGN_COMB_I((trigger) ? (src).aw.addr : (src).aw.addr); \
+    (dst).awid_in = _ASSIGN_COMB_I((trigger) ? (src).aw.id : (src).aw.id); \
+    (dst).wvalid_in = _ASSIGN_COMB_I((trigger) ? (src).w.valid : (src).w.valid); \
+    (dst).wdata_in = _ASSIGN_COMB_I((trigger) ? (src).w.data : (src).w.data); \
+    (dst).wstrb_in = _ASSIGN_COMB_I((trigger) ? (src).w.strb : (src).w.strb); \
+    (dst).wlast_in = _ASSIGN_COMB_I((trigger) ? (src).w.last : (src).w.last); \
+    (dst).bready_in = _ASSIGN_COMB_I((trigger) ? (src).b.ready : (src).b.ready); \
+    (dst).arvalid_in = _ASSIGN_COMB_I((trigger) ? (src).ar.valid : (src).ar.valid); \
+    (dst).araddr_in = _ASSIGN_COMB_I((trigger) ? (src).ar.addr : (src).ar.addr); \
+    (dst).arid_in = _ASSIGN_COMB_I((trigger) ? (src).ar.id : (src).ar.id); \
+    (dst).rready_in = _ASSIGN_COMB_I((trigger) ? (src).r.ready : (src).r.ready)
+
+#define AXI4_RESPONDER_FROM_COMB_TRIGGER_I(dst, trigger, src) \
+    (dst).awready_out = _ASSIGN_COMB_I((trigger) ? (src).aw.ready : (src).aw.ready); \
+    (dst).wready_out = _ASSIGN_COMB_I((trigger) ? (src).w.ready : (src).w.ready); \
+    (dst).bvalid_out = _ASSIGN_COMB_I((trigger) ? (src).b.valid : (src).b.valid); \
+    (dst).bid_out = _ASSIGN_COMB_I((trigger) ? (src).b.id : (src).b.id); \
+    (dst).arready_out = _ASSIGN_COMB_I((trigger) ? (src).ar.ready : (src).ar.ready); \
+    (dst).rvalid_out = _ASSIGN_COMB_I((trigger) ? (src).r.valid : (src).r.valid); \
+    (dst).rdata_out = _ASSIGN_COMB_I((trigger) ? (src).r.data : (src).r.data); \
+    (dst).rlast_out = _ASSIGN_COMB_I((trigger) ? (src).r.last : (src).r.last); \
+    (dst).rid_out = _ASSIGN_COMB_I((trigger) ? (src).r.id : (src).r.id)
+
+// Bind an Axi4If driver from flat comb arrays that were filled by one grouped comb builder.
+// This avoids parameterized struct typedefs when the surrounding SV module keeps numeric parameters symbolic.
+#define AXI4_DRIVER_FROM_FLAT_COMB_TRIGGER_I(dst, trigger, prefix, index) \
+    (dst).awvalid_in = _ASSIGN_COMB_I((trigger) ? (prefix##_aw_valid)[index] : (prefix##_aw_valid)[index]); \
+    (dst).awaddr_in = _ASSIGN_COMB_I((trigger) ? (prefix##_aw_addr)[index] : (prefix##_aw_addr)[index]); \
+    (dst).awid_in = _ASSIGN_COMB_I((trigger) ? (prefix##_aw_id)[index] : (prefix##_aw_id)[index]); \
+    (dst).wvalid_in = _ASSIGN_COMB_I((trigger) ? (prefix##_w_valid)[index] : (prefix##_w_valid)[index]); \
+    (dst).wdata_in = _ASSIGN_COMB_I((trigger) ? (prefix##_w_data)[index] : (prefix##_w_data)[index]); \
+    (dst).wstrb_in = _ASSIGN_COMB_I((trigger) ? (prefix##_w_strb)[index] : (prefix##_w_strb)[index]); \
+    (dst).wlast_in = _ASSIGN_COMB_I((trigger) ? (prefix##_w_last)[index] : (prefix##_w_last)[index]); \
+    (dst).bready_in = _ASSIGN_COMB_I((trigger) ? (prefix##_b_ready)[index] : (prefix##_b_ready)[index]); \
+    (dst).arvalid_in = _ASSIGN_COMB_I((trigger) ? (prefix##_ar_valid)[index] : (prefix##_ar_valid)[index]); \
+    (dst).araddr_in = _ASSIGN_COMB_I((trigger) ? (prefix##_ar_addr)[index] : (prefix##_ar_addr)[index]); \
+    (dst).arid_in = _ASSIGN_COMB_I((trigger) ? (prefix##_ar_id)[index] : (prefix##_ar_id)[index]); \
+    (dst).rready_in = _ASSIGN_COMB_I((trigger) ? (prefix##_r_ready)[index] : (prefix##_r_ready)[index])
+
+// Bind an Axi4If responder from flat comb arrays that were filled by one grouped comb builder.
+// The trigger expression calls that builder once through the generated comb dependency chain.
+#define AXI4_RESPONDER_FROM_FLAT_COMB_TRIGGER_I(dst, trigger, prefix, index) \
+    (dst).awready_out = _ASSIGN_COMB_I((trigger) ? (prefix##_aw_ready)[index] : (prefix##_aw_ready)[index]); \
+    (dst).wready_out = _ASSIGN_COMB_I((trigger) ? (prefix##_w_ready)[index] : (prefix##_w_ready)[index]); \
+    (dst).bvalid_out = _ASSIGN_COMB_I((trigger) ? (prefix##_b_valid)[index] : (prefix##_b_valid)[index]); \
+    (dst).bid_out = _ASSIGN_COMB_I((trigger) ? (prefix##_b_id)[index] : (prefix##_b_id)[index]); \
+    (dst).arready_out = _ASSIGN_COMB_I((trigger) ? (prefix##_ar_ready)[index] : (prefix##_ar_ready)[index]); \
+    (dst).rvalid_out = _ASSIGN_COMB_I((trigger) ? (prefix##_r_valid)[index] : (prefix##_r_valid)[index]); \
+    (dst).rdata_out = _ASSIGN_COMB_I((trigger) ? (prefix##_r_data)[index] : (prefix##_r_data)[index]); \
+    (dst).rlast_out = _ASSIGN_COMB_I((trigger) ? (prefix##_r_last)[index] : (prefix##_r_last)[index]); \
+    (dst).rid_out = _ASSIGN_COMB_I((trigger) ? (prefix##_r_id)[index] : (prefix##_r_id)[index])
+
 #define AXI4_DRIVER_FROM_REGS(dst, awvalid, awaddr, awid, wvalid, wdata, wlast, bready, arvalid, araddr, arid, rready) \
     (dst).awvalid_in = _ASSIGN_REG(awvalid); \
     (dst).awaddr_in = _ASSIGN_REG(awaddr); \

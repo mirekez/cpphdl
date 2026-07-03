@@ -1,7 +1,8 @@
 #pragma once
 
 #include "cpphdl.h"
-#include "RAM1PORT.h"
+#include "RAM.h"
+#include "L1MemIf.h"
 
 using namespace cpphdl;
 
@@ -79,17 +80,17 @@ Request-facing actions that can directly answer or retire a CPU request:
         coherency; mem_addr_comb_func() uses req_addr_reg or a containing beat
         address depending on DCACHE, req_cache_disable_reg, and
         direct_cross_beat_read_comb_func().
-   4.3. Wait for mem_wait_in() to deassert so the returned beat is valid.
+   4.3. Wait for mem_out.wait_out() to deassert so the returned beat is valid.
    4.4. Assemble the direct 32-bit result so unaligned words inside or across a
         PORT_BITWIDTH beat are correct; direct_data_comb_func() selects and
-        shifts mem_read_data_in().
+        shifts mem_out.read_data_out().
    4.5. Store the direct result in last_addr_reg/last_data_reg/last_valid_reg
         and enter ST_DONE so the CPU response protocol matches cached misses.
 
 5. Retire a CPU write as a write-through/no-write-allocate operation, achieved
    by forwarding the write to memory and invalidating the matching L1 set.
-   5.1. Forward every CPU write so L2 receives the store; mem_write_out,
-        mem_write_data_out, and mem_write_mask_out directly follow write_in(),
+   5.1. Forward every CPU write so L2 receives the store; mem_out.write_in,
+        mem_out.write_data_in, and mem_out.write_mask_in directly follow write_in(),
         write_data_in(), and write_mask_in().
    5.2. Invalidate possible stale L1 hits for that set so later reads refetch
         coherent data; tag_ram[].wr_in is asserted on write_in() and
@@ -133,12 +134,12 @@ Background and delayed activities:
    3.1. Clear partial refill state so the new line starts from a known image;
         reset refill_beat_reg, refill_even_line_reg, refill_odd_line_reg, and
         refill_req_data_valid_reg.
-   3.2. Drive mem_read_out while ST_REFILL is active so backing memory supplies
+   3.2. Drive mem_out.read_in while ST_REFILL is active so backing memory supplies
         refill beats for the registered request.
    3.3. Generate the refill beat address so each memory beat maps into the
         cache line; mem_addr_comb_func() adds refill_beat_reg * PORT_BYTES to
         the line-aligned req_addr_reg.
-   3.4. Wait while mem_wait_in() is true so partial line registers only update
+   3.4. Wait while mem_out.wait_out() is true so partial line registers only update
         from accepted memory data.
 
 4. Each accepted cacheable refill beat updates the pending line image, with the
@@ -146,10 +147,10 @@ Background and delayed activities:
    refill_even_line_reg and refill_odd_line_reg accumulation.
    4.1. Store low 16-bit halves into the even image so even_ram[] receives its
         final line format; refill_even_line_comb_func() copies bits [15:0] from
-        each 32-bit word in mem_read_data_in().
+        each 32-bit word in mem_out.read_data_out().
    4.2. Store high 16-bit halves into the odd image so odd_ram[] receives its
         final line format; refill_odd_line_comb_func() copies bits [31:16] from
-        each 32-bit word in mem_read_data_in().
+        each 32-bit word in mem_out.read_data_out().
    4.3. Preserve an early aligned requested beat so later refill beats cannot
         overwrite the response value; update refill_req_data_reg and
         refill_req_data_valid_reg when refill_beat_reg matches
@@ -233,13 +234,7 @@ public:
     _PORT(bool)      invalidate_in;
     _PORT(bool)      cache_disable_in;
 
-    _PORT(bool)      mem_write_out = _ASSIGN(write_in());
-    _PORT(uint32_t)  mem_write_data_out = _ASSIGN(write_data_in());
-    _PORT(uint8_t)   mem_write_mask_out = _ASSIGN(write_mask_in());
-    _PORT(bool)      mem_read_out = _ASSIGN_COMB(mem_read_comb_func());
-    _PORT(uint32_t)  mem_addr_out = _ASSIGN_COMB(mem_addr_comb_func());
-    _PORT(logic<PORT_BITWIDTH>) mem_read_data_in;
-    _PORT(bool)      mem_wait_in;
+    L1MemIf<PORT_BITWIDTH> mem_out;
     _PORT(L1CachePerf) perf_out = _ASSIGN_COMB(perf_comb_func());
 
     bool debugen_in;
@@ -247,6 +242,11 @@ public:
     void _assign()
     {
         size_t i;
+        mem_out.write_in = _ASSIGN(write_in());
+        mem_out.write_data_in = _ASSIGN(write_data_in());
+        mem_out.write_mask_in = _ASSIGN(write_mask_in());
+        mem_out.read_in = _ASSIGN_COMB(mem_read_comb_func());
+        mem_out.addr_in = _ASSIGN_COMB(mem_addr_comb_func());
         for (i = 0; i < WAYS; ++i) {
             even_ram[i].addr_in = _ASSIGN((state_reg == ST_REFILL || (state_reg == ST_LOOKUP && !issue_read_comb_func())) ? req_set_comb_func() : input_set_comb_func());
             even_ram[i].data_in = _ASSIGN(refill_even_line_comb_func());
@@ -273,9 +273,9 @@ public:
     }
 
 private:
-    RAM1PORT<HALF_LINE_BITS, SETS> even_ram[WAYS];
-    RAM1PORT<HALF_LINE_BITS, SETS> odd_ram[WAYS];
-    RAM1PORT<TAG_BITS + 2, SETS> tag_ram[WAYS];
+    RAM<HALF_LINE_BITS, SETS> even_ram[WAYS];
+    RAM<HALF_LINE_BITS, SETS> odd_ram[WAYS];
+    RAM<TAG_BITS + 2, SETS> tag_ram[WAYS];
 
     reg<u<3>> state_reg;
     reg<u32> req_addr_reg;
@@ -381,7 +381,7 @@ private:
             word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
             // Store bits [15:0] from each 32-bit refill word in the even half RAM.
             refill_even_line_comb.bits(word * 16 + 15, word * 16) =
-                (uint32_t)mem_read_data_in().bits(i * 32 + 15, i * 32);
+                (uint32_t)mem_out.read_data_out().bits(i * 32 + 15, i * 32);
         }
         return refill_even_line_comb;
     }
@@ -395,7 +395,7 @@ private:
             word = (uint32_t)refill_beat_reg * PORT_WORDS + i;
             // Store bits [31:16] from each 32-bit refill word in the odd half RAM.
             refill_odd_line_comb.bits(word * 16 + 15, word * 16) =
-                (uint32_t)mem_read_data_in().bits(i * 32 + 31, i * 32 + 16);
+                (uint32_t)mem_out.read_data_out().bits(i * 32 + 31, i * 32 + 16);
         }
         return refill_odd_line_comb;
     }
@@ -447,20 +447,20 @@ private:
         word = 0;
         if (!req_cacheable_reg && direct_cross_beat_read_comb_func()) {
             // Cross-beat direct reads return the assembled 32-bit word in the low bits.
-            direct_data_comb = (uint32_t)mem_read_data_in().bits(31, 0);
+            direct_data_comb = (uint32_t)mem_out.read_data_out().bits(31, 0);
         }
         else {
             word = (((uint32_t)req_addr_reg % PORT_BYTES) / 4u);
             byte = (uint32_t)req_addr_reg & 3u;
             // Start with the addressed word shifted down by the byte offset.
-            direct_data_comb = (uint32_t)mem_read_data_in().bits(word * 32 + 31, word * 32) >> (byte * 8u);
+            direct_data_comb = (uint32_t)mem_out.read_data_out().bits(word * 32 + 31, word * 32) >> (byte * 8u);
             if (byte != 0 && word + 1 < PORT_WORDS) {
                 // Unaligned access within the same beat: take the remaining high bytes from the next word.
-                direct_data_comb |= (uint32_t)mem_read_data_in().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
+                direct_data_comb |= (uint32_t)mem_out.read_data_out().bits((word + 1) * 32 + 31, (word + 1) * 32) << (32u - byte * 8u);
             }
             else if (byte != 0) {
                 // Unaligned access at the end of the beat: the high bytes wrap to word zero of the next beat.
-                direct_data_comb |= (uint32_t)mem_read_data_in().bits(31, 0) << (32u - byte * 8u);
+                direct_data_comb |= (uint32_t)mem_out.read_data_out().bits(31, 0) << (32u - byte * 8u);
             }
         }
         return direct_data_comb;
@@ -676,7 +676,7 @@ public:
         }
         else if (state_reg == ST_REFILL && req_read_reg) {
             if (req_cacheable_reg) {
-                if (!mem_wait_in()) {
+                if (!mem_out.wait_out()) {
                     // Each accepted beat updates the partial line image. The CPU-requested
                     // beat is latched separately because later refill beats carry different words.
                     refill_even_line_reg._next = refill_even_line_comb_func();
@@ -701,7 +701,7 @@ public:
                 }
             }
             else {
-                if (!mem_wait_in()) {
+                if (!mem_out.wait_out()) {
                     last_addr_reg._next = req_addr_reg;
                     last_data_reg._next = direct_data_comb_func();
                     last_valid_reg._next = true;

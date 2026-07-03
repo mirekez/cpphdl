@@ -11,6 +11,8 @@
 
 #include "TribeTest.h"
 
+#include <cstdlib>
+
 class PcSymbolTable
 {
     std::vector<std::pair<uint32_t, std::string>> symbols;
@@ -1318,12 +1320,18 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 {
     namespace fs = std::filesystem;
 
-    fs::path cpphdl = fs::current_path() / ".." / "cpphdl";
+    fs::path cpphdl;
+    if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
+        cpphdl = fs::path(build_dir) / "cpphdl";
+    }
+    if (cpphdl.empty() || !fs::exists(cpphdl)) {
+        cpphdl = fs::current_path() / ".." / "cpphdl";
+    }
     if (!fs::exists(cpphdl)) {
         cpphdl = source_root / "build" / "cpphdl";
     }
     if (!fs::exists(cpphdl)) {
-        std::print("can't find cpphdl generator near build directory or source root\n");
+        std::print("can't find cpphdl generator in CPPHDL_BUILD_DIR, near build directory, or source root\n");
         return false;
     }
 
@@ -1347,6 +1355,13 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 [[maybe_unused]] static void use_executable_workdir_if_needed(const char* argv0)
 {
     namespace fs = std::filesystem;
+
+    // CTest gives every executable a private work directory. Do not chdir back
+    // to build/tribe/tests there, or parallel tests overwrite each other's ELF,
+    // checkpoint, log, and Verilator generated artifacts.
+    if (std::getenv("TRIBE_KEEP_WORKDIR")) {
+        return;
+    }
 
     if (fs::exists("generated/Tribe.sv") || fs::exists("rv32i.bin") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
         return;
@@ -1603,11 +1618,31 @@ int main (int argc, char** argv)
                   "Wb_pkg",
                   "L1CachePerf_pkg",
                   "TribePerf_pkg",
+                  "L2CacheFsmState_pkg",
+                  "L2MemDriver_pkg",
+                  "L2AxiResponderComb_pkg",
+                  "L2AxiDriverComb_pkg",
+                  "Axi4WriteAddressReady_pkg",
+                  "Axi4WriteDataReady_pkg",
+                  "Axi4WriteResponse4_pkg",
+                  "Axi4ReadAddressReady_pkg",
+                  "Axi4ReadData4_64_pkg",
+                  "Axi4Responder4_64_pkg",
+                  "Axi4WriteAddress23_4_pkg",
+                  "Axi4WriteAddress32_4_pkg",
+                  "Axi4WriteData64_pkg",
+                  "Axi4WriteResponseReady_pkg",
+                  "Axi4ReadAddress32_4_pkg",
+                  "Axi4ReadDataReady_pkg",
+                  "Axi4Driver32_4_64_pkg",
+                  "Axi4ReadData4_256_pkg",
+                  "Axi4Responder4_256_pkg",
+                  "Axi4WriteData256_pkg",
+                  "Axi4Driver32_4_256_pkg",
                   "File",
-                  "RAM1PORT",
+                  "RAM",
                   "L1Cache",
                   "L2Cache",
-                  "L2CacheOO",
                   "BranchPredictor",
                   "InterruptController",
 	                  "Decode",

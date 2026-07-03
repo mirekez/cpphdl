@@ -42,6 +42,14 @@ void addStructImport(const std::string& name, std::vector<std::string>& imports,
 
 void collectExprStructImports(const Expr& expr, const Struct& owner, std::vector<std::string>& imports, std::unordered_set<std::string>& seen)
 {
+    if (expr.type == Expr::EXPR_TEMPLATE) {
+        // Template struct fields are emitted as concrete specialization names; import that package, not the primary template.
+        Expr concrete = expr;
+        const std::string concreteName = concrete.str();
+        if (concreteName != owner.name && findStructByName(concreteName)) {
+            addStructImport(concreteName, imports, seen);
+        }
+    }
     if (expr.type == Expr::EXPR_TYPE && expr.value != owner.name && findStructByName(expr.value)) {
         addStructImport(expr.value, imports, seen);
     }

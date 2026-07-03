@@ -5,9 +5,9 @@
 
 #include "cpphdl.h"
 #include "L1Cache.h"
-#include "Ram.h"
 
 #include <chrono>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -31,8 +31,22 @@ static constexpr size_t RAM_WORDS = 32768;
 
 #ifdef VERILATOR
 #define PORT_VALUE(val) val
+#define L1_MEM_READ_IN cache.mem_out___05Fread_out
+#define L1_MEM_WRITE_IN cache.mem_out___05Fwrite_out
+#define L1_MEM_ADDR_IN cache.mem_out___05Faddr_out
+#define L1_MEM_WRITE_DATA_IN cache.mem_out___05Fwrite_data_out
+#define L1_MEM_WRITE_MASK_IN cache.mem_out___05Fwrite_mask_out
+#define L1_MEM_READ_DATA_OUT cache.mem_out___05Fread_data_in
+#define L1_MEM_WAIT_OUT cache.mem_out___05Fwait_in
 #else
 #define PORT_VALUE(val) val()
+#define L1_MEM_READ_IN cache.mem_out.read_in
+#define L1_MEM_WRITE_IN cache.mem_out.write_in
+#define L1_MEM_ADDR_IN cache.mem_out.addr_in
+#define L1_MEM_WRITE_DATA_IN cache.mem_out.write_data_in
+#define L1_MEM_WRITE_MASK_IN cache.mem_out.write_mask_in
+#define L1_MEM_READ_DATA_OUT cache.mem_out.read_data_out
+#define L1_MEM_WAIT_OUT cache.mem_out.wait_out
 #endif
 #define PORT_EXPR(val) _ASSIGN(PORT_VALUE(val))
 
@@ -61,7 +75,8 @@ class TestL1Cache : public Module
 #else
     L1Cache<CACHE_SIZE, LINE_SIZE, WAYS, CACHE_ID, ADDR_BITS, PORT_BITS> cache;
 #endif
-    Ram<32, RAM_WORDS, 7> ram;
+    RAM<32, RAM_WORDS> ram;
+    std::array<uint32_t, RAM_WORDS> ram_image = {};
 
     bool read = false;
     bool write = false;
@@ -84,8 +99,8 @@ public:
         cache.addr_in = _ASSIGN_REG(addr);
         cache.write_data_in = _ASSIGN_REG(write_data);
         cache.write_mask_in = _ASSIGN_REG(write_mask);
-        cache.mem_read_data_in = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : backing_read_data_comb_func());
-        cache.mem_wait_in = _ASSIGN(false);
+        L1_MEM_READ_DATA_OUT = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : backing_read_data_comb_func());
+        L1_MEM_WAIT_OUT = _ASSIGN(false);
         cache.stall_in = _ASSIGN_REG(stall);
         cache.flush_in = _ASSIGN_REG(flush);
         cache.invalidate_in = _ASSIGN(false);
@@ -95,13 +110,11 @@ public:
         cache._assign();
 #endif
 
-        ram.read_in = PORT_EXPR(cache.mem_read_out);
-        ram.read_addr_in = PORT_EXPR(cache.mem_addr_out);
-        ram.write_in = PORT_EXPR(cache.mem_write_out);
-        ram.write_addr_in = PORT_EXPR(cache.mem_addr_out);
-        ram.write_data_in = PORT_EXPR(cache.mem_write_data_out);
-        ram.write_mask_in = PORT_EXPR(cache.mem_write_mask_out);
-        ram.debugen_in = false;
+        ram.rd_in = PORT_EXPR(L1_MEM_READ_IN);
+        ram.wr_in = PORT_EXPR(L1_MEM_WRITE_IN);
+        ram.addr_in = _ASSIGN((u<clog2(RAM_WORDS)>)(PORT_VALUE(L1_MEM_ADDR_IN) >> 2));
+        ram.data_in = PORT_EXPR(L1_MEM_WRITE_DATA_IN);
+        ram.id_in = 7;
         ram.__inst_name = __inst_name + "/ram";
         ram._assign();
     }
@@ -109,9 +122,44 @@ public:
     void preload_ram()
     {
         for (size_t i = 0; i < RAM_WORDS; ++i) {
-            ram.ram.buffer[i] = mem_word(i);
+            ram_image[i] = mem_word(i);
         }
-        ram.ram.buffer.apply();
+    }
+
+    void update_ram_image()
+    {
+        uint32_t word;
+        uint32_t data;
+        uint32_t mask;
+        uint32_t byte;
+
+        if (!PORT_VALUE(L1_MEM_WRITE_IN)) {
+            return;
+        }
+
+        word = (uint32_t)PORT_VALUE(L1_MEM_ADDR_IN);
+        data = (uint32_t)PORT_VALUE(L1_MEM_WRITE_DATA_IN);
+        mask = (uint32_t)PORT_VALUE(L1_MEM_WRITE_MASK_IN);
+
+        // Keep the byte-addressable backing image equivalent to the old
+        // test-only Ram helper, including unaligned partial-word writes.
+        for (byte = 0; byte < 4; ++byte) {
+            uint32_t byte_addr;
+            uint32_t image_word;
+            uint32_t image_byte;
+            uint32_t image_data;
+
+            if ((mask & (1u << byte)) != 0) {
+                byte_addr = word + byte;
+                image_word = byte_addr >> 2;
+                image_byte = byte_addr & 3u;
+                image_data = (data >> (byte * 8u)) & 0xffu;
+                if (image_word < RAM_WORDS) {
+                    ram_image[image_word] = (ram_image[image_word] & ~(0xffu << (image_byte * 8u))) |
+                        (image_data << (image_byte * 8u));
+                }
+            }
+        }
     }
 
     bool busy()
@@ -136,12 +184,12 @@ public:
 
     uint32_t expected_ram_read(uint32_t request_addr)
     {
-        uint32_t lo = (uint32_t)ram.ram.buffer[request_addr >> 2];
+        uint32_t lo = ram_image[request_addr >> 2];
         uint32_t shift = (request_addr & 0x3) * 8;
         if (shift == 0) {
             return lo;
         }
-        uint32_t hi = (uint32_t)ram.ram.buffer[(request_addr >> 2) + 1];
+        uint32_t hi = ram_image[(request_addr >> 2) + 1];
         return (lo >> shift) | (hi << (32 - shift));
     }
 
@@ -152,12 +200,12 @@ public:
 
     uint32_t backing_read_data_value()
     {
-        uint32_t request_addr = PORT_VALUE(cache.mem_addr_out);
+        uint32_t request_addr = PORT_VALUE(L1_MEM_ADDR_IN);
 #ifdef VERILATOR
         // Verilated L1 samples mem_read_data_in on its clock edge, while the
         // C++ RAM model exposes a registered read output. Drive the backing
         // word directly from the test memory image so each refill beat matches
-        // the current mem_addr_out and cannot reuse an earlier line beat.
+        // the current mem.addr_in and cannot reuse an earlier line beat.
         return backing_read_data_from_image(request_addr);
 #else
         if ((request_addr & 3u) != 0 &&
@@ -165,7 +213,7 @@ public:
             // Instruction end-halfword fetches still use L2 direct cross-line behavior.
             return backing_read_data_from_image(request_addr);
         }
-        return ram.read_data_out();
+        return backing_read_data_from_image(request_addr);
 #endif
     }
 
@@ -182,11 +230,11 @@ public:
         cache.write_data_in = write_data;
         cache.write_mask_in = write_mask;
         if (direct_mode) {
-            cache.mem_read_data_in = direct_mem_data;
+            L1_MEM_READ_DATA_OUT = direct_mem_data;
         } else {
-            cache.mem_read_data_in = backing_read_data_from_image((uint32_t)cache.mem_addr_out);
+            L1_MEM_READ_DATA_OUT = backing_read_data_from_image((uint32_t)L1_MEM_ADDR_IN);
         }
-        cache.mem_wait_in = false;
+        L1_MEM_WAIT_OUT = false;
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.invalidate_in = false;
@@ -215,6 +263,7 @@ public:
 
     void strobe()
     {
+        update_ram_image();
 #ifndef VERILATOR
         cache._strobe();
 #endif
@@ -529,7 +578,7 @@ public:
         bool got_second = false;
         for (size_t i = 0; i < 64 && !got_second; ++i) {
             cycle(false);
-            if (PORT_VALUE(cache.mem_read_out) && PORT_VALUE(cache.mem_addr_out) == request_addr) {
+            if (PORT_VALUE(L1_MEM_READ_IN) && PORT_VALUE(L1_MEM_ADDR_IN) == request_addr) {
                 saw_second_request = true;
             }
             if (valid() && raddr() == request_addr) {
@@ -586,7 +635,7 @@ public:
         got_second = false;
         for (size_t i = 0; i < 64 && !got_second; ++i) {
             cycle(false);
-            if (PORT_VALUE(cache.mem_read_out) && PORT_VALUE(cache.mem_addr_out) == request_addr) {
+            if (PORT_VALUE(L1_MEM_READ_IN) && PORT_VALUE(L1_MEM_ADDR_IN) == request_addr) {
                 saw_second_request = true;
             }
             if (valid() && raddr() == request_addr) {
@@ -640,8 +689,8 @@ public:
 
         for (size_t i = 0; i < 80 && !got; ++i) {
             saw_busy |= busy();
-            if (PORT_VALUE(cache.mem_read_out)) {
-                uint32_t mem_addr = PORT_VALUE(cache.mem_addr_out);
+            if (PORT_VALUE(L1_MEM_READ_IN)) {
+                uint32_t mem_addr = PORT_VALUE(L1_MEM_ADDR_IN);
                 saw_line_refill |= mem_addr == line_base;
                 saw_direct_cross_line |= mem_addr == request_addr;
             }
@@ -670,7 +719,7 @@ public:
         got = false;
         cycle(false);
         for (size_t i = 0; i < 8 && !got; ++i) {
-            saw_mem_on_hit |= PORT_VALUE(cache.mem_read_out);
+            saw_mem_on_hit |= PORT_VALUE(L1_MEM_READ_IN);
             if (valid() && raddr() == request_addr) {
                 got = true;
                 break;
@@ -783,8 +832,8 @@ public:
         cache.addr_in = _ASSIGN_REG(addr);
         cache.write_data_in = _ASSIGN(0);
         cache.write_mask_in = _ASSIGN(0);
-        cache.mem_read_data_in = _ASSIGN(mem_read_data_comb_func());
-        cache.mem_wait_in = _ASSIGN(false);
+        L1_MEM_READ_DATA_OUT = _ASSIGN(mem_read_data_comb_func());
+        L1_MEM_WAIT_OUT = _ASSIGN(false);
         cache.stall_in = _ASSIGN(false);
         cache.flush_in = _ASSIGN(false);
         cache.invalidate_in = _ASSIGN(false);
@@ -802,7 +851,7 @@ public:
         uint32_t byte;
         size_t i;
         mem_read_data_comb = 0;
-        request_addr = (uint32_t)cache.mem_addr_out();
+        request_addr = (uint32_t)L1_MEM_ADDR_IN();
         if ((request_addr & 3u) != 0 &&
             (((request_addr % (PORT_BITS / 8)) / 4u) + 1 >= (PORT_BITS / 32))) {
             // Match L2 direct cross-beat behavior: assembled 32-bit data is returned in bits [31:0].
@@ -986,7 +1035,7 @@ int main(int argc, char** argv)
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
         auto compile_l1 = [&](size_t cache_size, size_t ways, int id, size_t port_bits) {
-            return VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM1PORT"},
+            return VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM"},
                 {(source_root / "include").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "cache").string()},

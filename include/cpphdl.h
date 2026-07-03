@@ -54,6 +54,16 @@ struct cpphdl_exception
 #include "cpphdl_module.h"
 #include "cpphdl_port.h"
 
+#ifdef VERILATOR
+// Some Verilator installations still expect user code to provide this
+// timestamp hook even when tests do not use delays or SystemC. Keep the shared
+// harness linkable with both conda and system Verilator headers.
+inline double sc_time_stamp()
+{
+    return 0.0;
+}
+#endif
+
 namespace cpphdl
 {
 
