@@ -7,6 +7,7 @@
 #include "CLINT.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -74,6 +75,13 @@ static std::string shell_quote(const std::filesystem::path& path)
 
 static std::filesystem::path build_root_dir()
 {
+    if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
+        std::filesystem::path path(build_dir);
+        if (std::filesystem::exists(path / "tribe64" / "tribe64")) {
+            return path;
+        }
+    }
+
     std::filesystem::path cwd = std::filesystem::current_path();
     if (std::filesystem::exists(cwd / "tribe64" / "tribe64")) {
         return cwd;
@@ -99,6 +107,12 @@ static std::filesystem::path build_root_dir()
 static void use_executable_workdir_if_needed(const char* argv0)
 {
     namespace fs = std::filesystem;
+
+    // CTest supplies a private directory for generated SV and temporary test
+    // outputs. Keeping it prevents CLINT_test from racing other Tribe tests.
+    if (std::getenv("TRIBE_KEEP_WORKDIR")) {
+        return;
+    }
 
     if (fs::exists("generated/CLINTTest.sv")) {
         return;

@@ -35,7 +35,6 @@
 #include <x86intrin.h>
 #endif
 
-#include "Ram.h"
 #include "Axi4Ram.h"
 
 #include <tuple>
@@ -966,7 +965,7 @@ public:
         tribe.mem_region_size_in[3] = _ASSIGN((uint32_t)TRIBE_IO_REGION_SIZE);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             tribe.axi_in[i].awvalid_in = _ASSIGN(false);
-            tribe.axi_in[i].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].awaddr_in = _ASSIGN((u<32>)0);
             tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].wvalid_in = _ASSIGN(false);
             tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
@@ -974,12 +973,12 @@ public:
             tribe.axi_in[i].wlast_in = _ASSIGN(false);
             tribe.axi_in[i].bready_in = _ASSIGN(false);
             tribe.axi_in[i].arvalid_in = _ASSIGN(false);
-            tribe.axi_in[i].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].araddr_in = _ASSIGN((u<32>)0);
             tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].rready_in = _ASSIGN(false);
         }
         tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
-        tribe.axi_in[0].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
+        tribe.axi_in[0].awaddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.awaddr_in());
         tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
         tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
         tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
@@ -987,11 +986,11 @@ public:
         tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
         tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
         tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
-        tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
+        tribe.axi_in[0].araddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.araddr_in());
         tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
         tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
         tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
-        tribe.axi_in[1].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.awaddr_in());
+        tribe.axi_in[1].awaddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.awaddr_in());
         tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
         tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
         tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
@@ -999,11 +998,11 @@ public:
         tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
         tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
         tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
-        tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
+        tribe.axi_in[1].araddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.araddr_in());
         tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
         tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
         tribe.axi_in[2].awvalid_in = _ASSIGN(ethgig_dma.dma_out.awvalid_in());
-        tribe.axi_in[2].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)ethgig_dma.dma_out.awaddr_in());
+        tribe.axi_in[2].awaddr_in = _ASSIGN((u<32>)(uint32_t)ethgig_dma.dma_out.awaddr_in());
         tribe.axi_in[2].awid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.awid_in());
         tribe.axi_in[2].wvalid_in = _ASSIGN(ethgig_dma.dma_out.wvalid_in());
         tribe.axi_in[2].wdata_in = _ASSIGN(ethgig_dma.dma_out.wdata_in());
@@ -1011,7 +1010,7 @@ public:
         tribe.axi_in[2].wlast_in = _ASSIGN(ethgig_dma.dma_out.wlast_in());
         tribe.axi_in[2].bready_in = _ASSIGN(ethgig_dma.dma_out.bready_in());
         tribe.axi_in[2].arvalid_in = _ASSIGN(ethgig_dma.dma_out.arvalid_in());
-        tribe.axi_in[2].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)ethgig_dma.dma_out.araddr_in());
+        tribe.axi_in[2].araddr_in = _ASSIGN((u<32>)(uint32_t)ethgig_dma.dma_out.araddr_in());
         tribe.axi_in[2].arid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.arid_in());
         tribe.axi_in[2].rready_in = _ASSIGN(ethgig_dma.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)

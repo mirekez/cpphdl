@@ -16,6 +16,8 @@ struct MethodGen {
     std::set<std::string> localNames;
     std::string returnName;
     std::string returnBase;
+    bool localCombBody = false;
+    bool staticConstexpr = false;
 };
 
 struct InstanceConnGen {
@@ -26,6 +28,13 @@ struct InstanceConnGen {
     std::string lhs;
     bool connected = true;
     std::string params;
+    std::vector<std::string> guards;
+};
+
+struct PendingCombGen {
+    std::vector<std::string> lines;
+    std::vector<std::string> variables;
+    std::set<std::string> localNames;
 };
 
 struct ModuleGen {
@@ -61,24 +70,43 @@ struct ModuleGen {
     std::map<std::string, std::string> wireMap;
     std::map<std::string, std::string> combSideEffectDriver;
     std::set<std::string> combSideEffectChildInputReads;
+    std::set<std::string> runtimeAssignDrivenVars;
     std::map<std::string, std::string> preferredCombDriver;
     std::map<std::string, size_t> combMethodByBase;
+    std::map<std::pair<std::string, std::string>, size_t> combMethodByField;
+    std::set<std::string> noCacheCombBases;
+    std::map<std::string, PendingCombGen> pendingCombByBase;
+    std::map<std::string, std::vector<std::string>> structuralAssignGuards;
     std::map<std::string, std::string> combReturnTypes;
+    std::map<std::string, std::string> functionReturnTypes;
     std::map<std::string, std::string> outputRegTypes;
     std::map<std::string, std::string> types;
     std::map<std::string, std::string> typeWidths;
     std::map<std::string, std::map<std::string, std::string>> typeFields;
+    std::map<std::string, std::vector<std::string>> typeFieldOrder;
     std::map<std::string, std::vector<std::string>> arrayLowerBounds;
     int alwaysNo = 0;
     bool hasWorkTask = false;
 };
 
-static std::string trim(std::string s);
-
-static const char* continuousCombFuncName()
+static void mergePendingComb(ModuleGen& mod, const std::string& base, const PendingCombGen& pending)
 {
-    return "continuous_comb_func";
+    auto it = mod.pendingCombByBase.find(base);
+    if (it == mod.pendingCombByBase.end()) {
+        mod.pendingCombByBase[base] = pending;
+        return;
+    }
+    auto& current = it->second;
+    current.lines.insert(current.lines.end(), pending.lines.begin(), pending.lines.end());
+    for (const auto& variable : pending.variables) {
+        if (std::find(current.variables.begin(), current.variables.end(), variable) == current.variables.end()) {
+            current.variables.push_back(variable);
+        }
+    }
+    current.localNames.insert(pending.localNames.begin(), pending.localNames.end());
 }
+
+static std::string trim(std::string s);
 
 static bool isCombOnlyOutput(const ModuleGen& m, const std::string& svName)
 {
@@ -208,7 +236,6 @@ static bool isSideEffectReadExpr(std::string rhs)
     rhs = begin == std::string::npos ? std::string() : rhs.substr(begin, end - begin + 1);
     return rhs.size() >= 6 && rhs.rfind("((", 0) == 0 &&
            rhs.substr(rhs.size() - 2) == "))" &&
-           rhs.find("_active ?") == std::string::npos &&
            rhs.find("(), ") != std::string::npos;
 }
 
@@ -275,7 +302,37 @@ static bool isIdentifierUsed(const std::string& text, const std::string& name)
     return false;
 }
 
+static bool exprReferencesModuleState(const ModuleGen& m, const std::string& text)
+{
+    for (const auto& name : m.varNames) {
+        if (isIdentifierUsed(text, name)) {
+            return true;
+        }
+    }
+    for (const auto& item : m.outputRegTypes) {
+        if (isIdentifierUsed(text, item.first)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string zeroAssignmentRhsForLValue(const std::string& lhs)
+{
+    if (lhs.find(".bits(") != std::string::npos || lhs.find(".get(") != std::string::npos) {
+        return "";
+    }
+    if (lhs.find('.') != std::string::npos) {
+        return "std::remove_cvref_t<decltype(" + lhs + ")>{}";
+    }
+    if (lhs.find('[') != std::string::npos) {
+        return "0";
+    }
+    return "";
+}
+
 static void replaceAll(std::string& s, const std::string& from, const std::string& to);
+static void replaceIdentifierAll(std::string& s, const std::string& from, const std::string& to);
 static bool isNumericValueType(const std::string& type);
 
 static bool isZeroLiteralText(const std::string& expr)
@@ -375,6 +432,32 @@ static std::vector<std::string> splitTopLevelArgs(const std::string& text)
     return args;
 }
 
+static std::map<std::string, std::string> localUsingTypeAliases(const ModuleGen& mod)
+{
+    std::map<std::string, std::string> aliases;
+    for (auto decl : mod.typeDecls) {
+        decl = trim(std::move(decl));
+        const std::string prefix = "using ";
+        if (decl.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        auto eq = decl.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        auto name = trim(decl.substr(prefix.size(), eq - prefix.size()));
+        auto type = trim(decl.substr(eq + 1));
+        if (!type.empty() && type.back() == ';') {
+            type.pop_back();
+            type = trim(type);
+        }
+        if (!name.empty() && !type.empty()) {
+            aliases[name] = type;
+        }
+    }
+    return aliases;
+}
+
 static std::string templateParamValueType(const std::string& param)
 {
     auto text = trim(param);
@@ -458,6 +541,282 @@ static std::vector<std::string> configuredModuleParams(const std::string& type)
     }
     auto it = params.find(type);
     return it == params.end() ? std::vector<std::string>{} : it->second;
+}
+
+static bool configuredModuleTrait(const std::string& type, const std::string& trait)
+{
+    static bool loaded = false;
+    static std::map<std::string, std::set<std::string>> traits;
+    if (!loaded) {
+        loaded = true;
+        if (auto* path = std::getenv("HDLCPP_MODULE_TRAITS")) {
+            std::ifstream in(path);
+            std::string line;
+            while (std::getline(in, line)) {
+                line = trim(line);
+                if (line.empty() || line[0] == '#') {
+                    continue;
+                }
+                auto sep = line.find('\t');
+                if (sep == std::string::npos) {
+                    continue;
+                }
+                auto module = trim(line.substr(0, sep));
+                auto rest = line.substr(sep + 1);
+                for (size_t start = 0; start <= rest.size();) {
+                    auto end = rest.find('\t', start);
+                    auto item = trim(rest.substr(start, end == std::string::npos ? std::string::npos : end - start));
+                    if (!module.empty() && !item.empty()) {
+                        traits[module].insert(item);
+                    }
+                    if (end == std::string::npos) {
+                        break;
+                    }
+                    start = end + 1;
+                }
+            }
+        }
+    }
+    auto it = traits.find(type);
+    if (it == traits.end()) {
+        return false;
+    }
+    return it->second.count(trait) != 0 || it->second.count(trait + "=1") != 0 ||
+           it->second.count(trait + "=true") != 0;
+}
+
+static std::string templateParamDefaultValue(const std::string& decl)
+{
+    int angleDepth = 0;
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    for (size_t i = 0; i < decl.size(); ++i) {
+        char ch = decl[i];
+        if (ch == '<') {
+            ++angleDepth;
+        }
+        else if (ch == '>' && angleDepth > 0) {
+            --angleDepth;
+        }
+        else if (ch == '(') {
+            ++parenDepth;
+        }
+        else if (ch == ')' && parenDepth > 0) {
+            --parenDepth;
+        }
+        else if (ch == '[') {
+            ++bracketDepth;
+        }
+        else if (ch == ']' && bracketDepth > 0) {
+            --bracketDepth;
+        }
+        else if (ch == '=' && angleDepth == 0 && parenDepth == 0 && bracketDepth == 0) {
+            return trim(decl.substr(i + 1));
+        }
+    }
+    return {};
+}
+
+static size_t matchingTemplateCloseLocal(const std::string& s, size_t open)
+{
+    if (open >= s.size() || s[open] != '<') {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = open + 1; i < s.size(); ++i) {
+        if (s[i] == '<' && i + 1 < s.size() && s[i + 1] == '<') {
+            ++i;
+            continue;
+        }
+        if (s[i] == '>' && i + 1 < s.size() && s[i + 1] == '>' &&
+            (i == 0 || std::isspace(static_cast<unsigned char>(s[i - 1])))) {
+            ++i;
+            continue;
+        }
+        if (s[i] == '<') {
+            ++depth;
+        }
+        else if (s[i] == '>') {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+static bool findTopLevelTernaryExpr(const std::string& text, size_t& qpos, size_t& cpos)
+{
+    int paren = 0;
+    int bracket = 0;
+    int brace = 0;
+    qpos = std::string::npos;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == '(') ++paren;
+        else if (c == ')' && paren > 0) --paren;
+        else if (c == '[') ++bracket;
+        else if (c == ']' && bracket > 0) --bracket;
+        else if (c == '{') ++brace;
+        else if (c == '}' && brace > 0) --brace;
+        else if (c == '?' && paren == 0 && bracket == 0 && brace == 0) {
+            qpos = i;
+            break;
+        }
+    }
+    if (qpos == std::string::npos) {
+        return false;
+    }
+    paren = bracket = brace = 0;
+    for (size_t i = qpos + 1; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == '(') ++paren;
+        else if (c == ')' && paren > 0) --paren;
+        else if (c == '[') ++bracket;
+        else if (c == ']' && bracket > 0) --bracket;
+        else if (c == '{') ++brace;
+        else if (c == '}' && brace > 0) --brace;
+        else if (c == ':' && paren == 0 && bracket == 0 && brace == 0 &&
+                 (i == 0 || text[i - 1] != ':') &&
+                 (i + 1 >= text.size() || text[i + 1] != ':')) {
+            cpos = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string stripBalancedOuterParens(std::string text)
+{
+    text = trim(std::move(text));
+    bool changed = true;
+    while (changed && text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+        changed = false;
+        int depth = 0;
+        bool wraps = true;
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '(') {
+                ++depth;
+            }
+            else if (text[i] == ')') {
+                --depth;
+                if (depth == 0 && i + 1 < text.size()) {
+                    wraps = false;
+                    break;
+                }
+            }
+        }
+        if (wraps && depth == 0) {
+            text = trim(text.substr(1, text.size() - 2));
+            changed = true;
+        }
+    }
+    return text;
+}
+
+static std::string dropExtraTrailingClosingParens(std::string text)
+{
+    for (;;) {
+        int balance = 0;
+        for (char ch : text) {
+            if (ch == '(') {
+                ++balance;
+            }
+            else if (ch == ')') {
+                --balance;
+            }
+        }
+        if (balance >= 0) {
+            return text;
+        }
+        auto pos = text.find_last_not_of(" \t\r\n");
+        if (pos == std::string::npos || text[pos] != ')') {
+            return text;
+        }
+        text.erase(pos, 1);
+    }
+}
+
+static std::string coerceNumericWidthTernary(std::string expr)
+{
+    auto stripped = stripBalancedOuterParens(expr);
+    size_t qpos = std::string::npos;
+    size_t cpos = std::string::npos;
+    if (!findTopLevelTernaryExpr(stripped, qpos, cpos)) {
+        return expr;
+    }
+    auto pred = trim(stripped.substr(0, qpos));
+    auto left = trim(stripped.substr(qpos + 1, cpos - qpos - 1));
+    auto right = trim(stripped.substr(cpos + 1));
+    return "((uint64_t)(" + pred + ") ? (uint64_t)(" + left + ") : (uint64_t)(" + right + "))";
+}
+
+static std::string coerceLogicWidthTernaries(std::string text)
+{
+    for (size_t pos = 0; (pos = text.find("logic<", pos)) != std::string::npos;) {
+        auto open = pos + std::string("logic").size();
+        auto close = matchingTemplateCloseLocal(text, open);
+        if (close == std::string::npos) {
+            break;
+        }
+        auto inner = text.substr(open + 1, close - open - 1);
+        auto coerced = coerceNumericWidthTernary(inner);
+        if (coerced != inner) {
+            text.replace(open + 1, close - open - 1, coerced);
+            pos = open + 1 + coerced.size();
+        }
+        else {
+            pos = close + 1;
+        }
+    }
+    return text;
+}
+
+static std::string substituteParamDeclValues(const std::vector<std::string>& declaredParams,
+                                             const std::vector<std::string>& actualParams,
+                                             std::string text)
+{
+    if (text.empty() || declaredParams.empty()) {
+        return text;
+    }
+    std::vector<std::pair<std::string, std::string>> values;
+    for (size_t i = 0; i < declaredParams.size(); ++i) {
+        auto name = templateParamName(declaredParams[i]);
+        if (name.empty()) {
+            continue;
+        }
+        std::string value;
+        if (i < actualParams.size() && !actualParams[i].empty()) {
+            value = actualParams[i];
+        }
+        else {
+            value = templateParamDefaultValue(declaredParams[i]);
+        }
+        if (!value.empty()) {
+            values.push_back({name, value});
+        }
+    }
+    for (size_t pass = 0; pass < values.size() + 2; ++pass) {
+        auto before = text;
+        for (const auto& item : values) {
+            replaceIdentifierAll(text, item.first, item.second);
+        }
+        if (text == before) {
+            break;
+        }
+    }
+    return coerceLogicWidthTernaries(text);
+}
+
+static std::string substituteModuleParamValues(const std::string& moduleType, const std::string& params, std::string text)
+{
+    if (text.empty() || params.empty()) {
+        return text;
+    }
+    auto declaredParams = configuredModuleParams(moduleType);
+    auto actualParams = splitTopLevelArgs(params);
+    return substituteParamDeclValues(declaredParams, actualParams, std::move(text));
 }
 
 struct ConfiguredLinePatch {
@@ -551,6 +910,49 @@ static void applyConfiguredLinePatches(std::string& line)
     }
 }
 
+static void repairPatchedConcatOperandWidths(std::string& line)
+{
+    if (line.find("cat{") == std::string::npos) {
+        return;
+    }
+    const std::string prefix = "logic<64>((uint64_t)(logic<";
+    for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
+        auto widthStart = pos + prefix.size();
+        int depth = 1;
+        size_t widthEnd = std::string::npos;
+        for (size_t i = widthStart; i < line.size(); ++i) {
+            if (i + 1 < line.size() && line[i] == '<' && line[i + 1] == '<') {
+                ++i;
+                continue;
+            }
+            if (i + 1 < line.size() && line[i] == '>' && line[i + 1] == '>') {
+                ++i;
+                continue;
+            }
+            if (line[i] == '<') {
+                ++depth;
+            }
+            else if (line[i] == '>') {
+                if (--depth == 0) {
+                    widthEnd = i;
+                    break;
+                }
+            }
+        }
+        if (widthEnd == std::string::npos) {
+            break;
+        }
+        auto width = trim(line.substr(widthStart, widthEnd - widthStart));
+        if (width.empty() || width == "64" || width == "(64)" || width == "(uint64_t)(64)") {
+            pos = widthEnd + 1;
+            continue;
+        }
+        auto replacement = "logic<" + width + ">((uint64_t)(logic<";
+        line.replace(pos, prefix.size(), replacement);
+        pos += replacement.size() + width.size();
+    }
+}
+
 static std::set<std::string> configuredNameSet(const char* envName)
 {
     std::set<std::string> out;
@@ -576,14 +978,15 @@ static bool configuredNameEquals(const char* envName, const std::string& value)
 static std::map<std::string, std::string> configuredTextMap(const char* envName)
 {
     static std::map<std::string, std::map<std::string, std::string>> cache;
-    auto key = std::string(envName);
+    auto pathValue = std::getenv(envName) ? std::string(std::getenv(envName)) : std::string();
+    auto key = std::string(envName) + "=" + pathValue;
     auto it = cache.find(key);
     if (it != cache.end()) {
         return it->second;
     }
     std::map<std::string, std::string> out;
-    if (auto* path = std::getenv(envName)) {
-        std::ifstream in(path);
+    if (!pathValue.empty()) {
+        std::ifstream in(pathValue);
         std::string line;
         while (std::getline(in, line)) {
             line = trim(line);
@@ -635,8 +1038,36 @@ static std::optional<uint64_t> parseConfiguredUint(std::string value)
         return text;
     };
     value = stripOuterParens(value);
-    if (value.rfind("(uint64_t)", 0) == 0) {
-        value = stripOuterParens(value.substr(std::strlen("(uint64_t)")));
+    bool unwrappedCast = true;
+    while (unwrappedCast) {
+        unwrappedCast = false;
+        value = stripOuterParens(value);
+        if (value.rfind("(uint64_t)", 0) == 0) {
+            value = stripOuterParens(value.substr(std::strlen("(uint64_t)")));
+            unwrappedCast = true;
+            continue;
+        }
+        if (value.rfind("static_cast<", 0) == 0) {
+            auto close = value.find(">(");
+            if (close != std::string::npos && value.back() == ')') {
+                value = stripOuterParens(value.substr(close + 1));
+                unwrappedCast = true;
+                continue;
+            }
+        }
+        auto svCast = value.find("'(");
+        if (svCast != std::string::npos && value.back() == ')') {
+            auto type = trim(value.substr(0, svCast));
+            bool typeOk = !type.empty() &&
+                std::all_of(type.begin(), type.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == '_' || c == ':' || c == '<' ||
+                           c == '>' || c == ',' || c == ' ' || c == '\t';
+                });
+            if (typeOk) {
+                value = stripOuterParens(value.substr(svCast + 1));
+                unwrappedCast = true;
+            }
+        }
     }
     auto findTopLevelOp = [](const std::string& text, const std::string& op) -> size_t {
         int depth = 0;
@@ -696,6 +1127,16 @@ static std::optional<uint64_t> parseConfiguredUint(std::string value)
     if (value == "true") {
         return 1;
     }
+    if (value.rfind("0b", 0) == 0 || value.rfind("0B", 0) == 0) {
+        uint64_t parsed = 0;
+        for (size_t i = 2; i < value.size(); ++i) {
+            if (value[i] != '0' && value[i] != '1') {
+                return std::nullopt;
+            }
+            parsed = (parsed << 1) | static_cast<uint64_t>(value[i] == '1');
+        }
+        return parsed;
+    }
     try {
         size_t pos = 0;
         auto parsed = std::stoull(value, &pos, 0);
@@ -708,17 +1149,179 @@ static std::optional<uint64_t> parseConfiguredUint(std::string value)
     return std::nullopt;
 }
 
-static std::optional<bool> evalConfiguredGenerateCondition(const ModuleGen& m, std::string cond)
+static std::string stripConfiguredCastsAndParens(std::string value)
 {
-    auto values = configuredTextMap("HDLCPP_GENERATE_PARAM_VALUES");
-    if (values.empty()) {
+    auto stripOuterParens = [](std::string text) {
+        text = trim(std::move(text));
+        bool changed = true;
+        while (changed && text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+            changed = false;
+            int depth = 0;
+            bool wraps = true;
+            for (size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '(') {
+                    ++depth;
+                }
+                else if (text[i] == ')') {
+                    --depth;
+                    if (depth == 0 && i + 1 != text.size()) {
+                        wraps = false;
+                        break;
+                    }
+                    if (depth < 0) {
+                        wraps = false;
+                        break;
+                    }
+                }
+            }
+            if (wraps && depth == 0) {
+                text = trim(text.substr(1, text.size() - 2));
+                changed = true;
+            }
+        }
+        return text;
+    };
+
+    value = stripOuterParens(std::move(value));
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        value = stripOuterParens(value);
+        if (value.rfind("(uint64_t)", 0) == 0) {
+            value = stripOuterParens(value.substr(std::strlen("(uint64_t)")));
+            changed = true;
+            continue;
+        }
+        if (value.rfind("static_cast<", 0) == 0) {
+            auto close = value.find(">(");
+            if (close != std::string::npos && value.back() == ')') {
+                value = stripOuterParens(value.substr(close + 1));
+                changed = true;
+                continue;
+            }
+        }
+        auto svCast = value.find("'(");
+        if (svCast != std::string::npos && value.back() == ')') {
+            auto type = trim(value.substr(0, svCast));
+            bool typeOk = !type.empty() &&
+                std::all_of(type.begin(), type.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == '_' || c == ':' || c == '<' ||
+                           c == '>' || c == ',' || c == ' ' || c == '\t';
+                });
+            if (typeOk) {
+                value = stripOuterParens(value.substr(svCast + 1));
+                changed = true;
+            }
+        }
+    }
+    return trim(std::move(value));
+}
+
+static std::optional<std::string> parseConfiguredString(std::string value)
+{
+    value = stripConfiguredCastsAndParens(std::move(value));
+    if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
         return std::nullopt;
     }
+    std::string out;
+    for (size_t i = 1; i + 1 < value.size(); ++i) {
+        if (value[i] == '\\' && i + 2 < value.size()) {
+            ++i;
+        }
+        out += value[i];
+    }
+    return out;
+}
 
-    for (auto& item : values) {
+static size_t findConfiguredTopLevelOp(const std::string& text, const std::string& op)
+{
+    int parenDepth = 0;
+    bool inString = false;
+    bool escape = false;
+    for (size_t i = 0; i + op.size() <= text.size(); ++i) {
+        char ch = text[i];
+        if (inString) {
+            if (escape) {
+                escape = false;
+            }
+            else if (ch == '\\') {
+                escape = true;
+            }
+            else if (ch == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            inString = true;
+            continue;
+        }
+        if (ch == '(') {
+            ++parenDepth;
+            continue;
+        }
+        if (ch == ')') {
+            --parenDepth;
+            continue;
+        }
+        if (parenDepth == 0 && text.compare(i, op.size(), op) == 0) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
+static bool configuredNameChar(char ch)
+{
+    return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == ':' || ch == '.';
+}
+
+static void replaceConfiguredName(std::string& text, const std::string& from, const std::string& to)
+{
+    if (from.empty()) {
+        return;
+    }
+    size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+        bool leftOk = pos == 0 || !configuredNameChar(text[pos - 1]);
+        auto end = pos + from.size();
+        bool rightOk = end >= text.size() || !configuredNameChar(text[end]);
+        if (leftOk && rightOk) {
+            text.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+        else {
+            pos = end;
+        }
+    }
+}
+
+static std::optional<bool> evalConfiguredGenerateCondition(const ModuleGen& m, std::string cond)
+{
+    auto originalCond = cond;
+    auto traceDecision = [&](const std::string& substituted, std::optional<bool> result) {
+        if (std::getenv("HDLCPP_TRACE_GENERATE_CONDITIONS")) {
+            std::cerr << "HDLCPP_GENERATE_CONDITION " << m.name
+                      << " result=" << (result ? (*result ? "true" : "false") : "null")
+                      << " original=" << originalCond
+                      << " substituted=" << substituted << "\n";
+        }
+        return result;
+    };
+    auto values = configuredTextMap("HDLCPP_GENERATE_PARAM_VALUES");
+    if (values.empty()) {
+        return traceDecision(cond, std::nullopt);
+    }
+
+    std::vector<std::pair<std::string, std::string>> orderedValues(values.begin(), values.end());
+    std::sort(orderedValues.begin(), orderedValues.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first.size() > rhs.first.size();
+    });
+
+    for (auto& item : orderedValues) {
         auto key = item.first;
         replaceAll(cond, "(uint64_t)(" + key + ")", item.second);
-        replaceAll(cond, key, item.second);
+        replaceConfiguredName(cond, key, item.second);
         auto dot = key.find('.');
         if (dot != std::string::npos) {
             if (key.substr(0, dot) != m.name) {
@@ -727,49 +1330,69 @@ static std::optional<bool> evalConfiguredGenerateCondition(const ModuleGen& m, s
             key = key.substr(dot + 1);
         }
         replaceAll(cond, "(uint64_t)(" + key + ")", item.second);
-        replaceAll(cond, key, item.second);
+        replaceConfiguredName(cond, key, item.second);
     }
 
-    cond = trim(cond);
-    while (cond.size() >= 2 && cond.front() == '(' && cond.back() == ')') {
-        cond = trim(cond.substr(1, cond.size() - 2));
-    }
+    cond = stripConfiguredCastsAndParens(cond);
     if (cond.empty()) {
         return std::nullopt;
+    }
+    for (auto* op : {"||", "&&"}) {
+        auto pos = findConfiguredTopLevelOp(cond, op);
+        if (pos == std::string::npos) {
+            continue;
+        }
+        auto lhs = evalConfiguredGenerateCondition(m, cond.substr(0, pos));
+        auto rhs = evalConfiguredGenerateCondition(m, cond.substr(pos + std::strlen(op)));
+        if (!lhs || !rhs) {
+            return traceDecision(cond, std::nullopt);
+        }
+        return traceDecision(cond, std::string(op) == "||" ? (*lhs || *rhs) : (*lhs && *rhs));
     }
     if (cond.front() == '!') {
         auto inner = evalConfiguredGenerateCondition(m, cond.substr(1));
         if (inner) {
-            return !*inner;
+            return traceDecision(cond, !*inner);
         }
-        return std::nullopt;
+        return traceDecision(cond, std::nullopt);
     }
 
     const char* ops[] = {"==", "!=", ">=", "<=", ">", "<"};
     for (auto* op : ops) {
-        auto pos = cond.find(op);
+        auto pos = findConfiguredTopLevelOp(cond, op);
         if (pos == std::string::npos) {
             continue;
+        }
+        std::string opText(op);
+        if (opText == "==" || opText == "!=") {
+            auto lhsString = parseConfiguredString(cond.substr(0, pos));
+            auto rhsString = parseConfiguredString(cond.substr(pos + std::strlen(op)));
+            if (lhsString && rhsString) {
+                return traceDecision(cond, opText == "==" ? *lhsString == *rhsString : *lhsString != *rhsString);
+            }
         }
         auto lhs = parseConfiguredUint(cond.substr(0, pos));
         auto rhs = parseConfiguredUint(cond.substr(pos + std::strlen(op)));
         if (!lhs || !rhs) {
-            return std::nullopt;
+            return traceDecision(cond, std::nullopt);
         }
-        std::string opText(op);
-        if (opText == "==") return *lhs == *rhs;
-        if (opText == "!=") return *lhs != *rhs;
-        if (opText == ">=") return *lhs >= *rhs;
-        if (opText == "<=") return *lhs <= *rhs;
-        if (opText == ">") return *lhs > *rhs;
-        if (opText == "<") return *lhs < *rhs;
+        if (opText == "==") return traceDecision(cond, *lhs == *rhs);
+        if (opText == "!=") return traceDecision(cond, *lhs != *rhs);
+        if (opText == ">=") return traceDecision(cond, *lhs >= *rhs);
+        if (opText == "<=") return traceDecision(cond, *lhs <= *rhs);
+        if (opText == ">") return traceDecision(cond, *lhs > *rhs);
+        if (opText == "<") return traceDecision(cond, *lhs < *rhs);
     }
 
     auto value = parseConfiguredUint(cond);
     if (value) {
-        return *value != 0;
+        return traceDecision(cond, *value != 0);
     }
-    return std::nullopt;
+    if (std::getenv("HDLCPP_TRACE_PHASES")) {
+        std::cerr << "HDLCPP_PHASE unresolved_generate_condition " << m.name
+                  << " original=" << originalCond << " substituted=" << cond << "\n";
+    }
+    return traceDecision(cond, std::nullopt);
 }
 
 static bool lhsAssignsField(const std::string& lhs, const std::string& base, const std::string& field)
@@ -829,9 +1452,12 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
     }
 
     auto storage = combStorageName(m, base);
-    auto outputStorage = outputStorageName(m, base);
+    auto outputStorage = m.outputPortCppNames.count(base) ? outputStorageName(m, base) : std::string();
     for (auto& method : m.methods) {
         if (method.name.find("_comb_func") == std::string::npos) {
+            continue;
+        }
+        if (method.localCombBody) {
             continue;
         }
         for (auto& line : method.body) {
@@ -843,7 +1469,7 @@ static std::vector<std::string> combDriversFor(const ModuleGen& m, const std::st
             auto lhsBaseEnd = lhs.find_first_of("[.");
             auto lhsBase = trim(lhsBaseEnd == std::string::npos ? lhs : lhs.substr(0, lhsBaseEnd));
             if ((lhs == storage || lhsBase == storage || lhs == base || lhsBase == base ||
-                 lhs == outputStorage || lhsBase == outputStorage) &&
+                 (!outputStorage.empty() && (lhs == outputStorage || lhsBase == outputStorage))) &&
                 (lhsAssignsField(lhs, storage, field) ||
                  lhsAssignsField(lhs, outputStorage, field) ||
                  lhsAssignsField(lhs, base, field))) {
@@ -973,7 +1599,8 @@ static std::string knownFunctionReturnWidth(const std::string& callee)
 
 static bool wantsNumericFunctionArgs(const std::string& callee)
 {
-    return !knownFunctionReturnWidth(callee).empty();
+    (void)callee;
+    return false;
 }
 
 static bool wantsNumericFunctionArg(const std::string& callee, size_t index, bool numericArgs)
@@ -1258,6 +1885,8 @@ static std::string postProcessCppLine(std::string line)
     replaceAll(line, ">>>", ">>");
     line = repairDottedLogicWidthCasts(std::move(line));
     applyConfiguredLinePatches(line);
+    repairPatchedConcatOperandWidths(line);
+    repairPatchedConcatOperandWidths(line);
     auto repairOneBitCastsBeforeFields = [&]() {
         const std::string prefix = "logic<1>(";
         for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
@@ -1308,6 +1937,42 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     repairRuntimeLogicWidths();
+    auto dropExtraClosingParensBeforeDelimiters = [&]() {
+        auto parenBalance = [&]() {
+            int balance = 0;
+            for (char c : line) {
+                if (c == '(') {
+                    ++balance;
+                }
+                else if (c == ')') {
+                    --balance;
+                }
+            }
+            return balance;
+        };
+        for (int balance = parenBalance(); balance < 0; balance = parenBalance()) {
+            bool removed = false;
+            for (size_t pos = line.size(); pos > 0; --pos) {
+                size_t idx = pos - 1;
+                if (line[idx] != ')') {
+                    continue;
+                }
+                size_t next = idx + 1;
+                while (next < line.size() && std::isspace(static_cast<unsigned char>(line[next]))) {
+                    ++next;
+                }
+                if (next < line.size() && (line[next] == ')' || line[next] == '>' || line[next] == ';' || line[next] == ',' || line[next] == ']')) {
+                    line.erase(idx, 1);
+                    removed = true;
+                    break;
+                }
+            }
+            if (!removed) {
+                break;
+            }
+        }
+    };
+    dropExtraClosingParensBeforeDelimiters();
     auto balanceCompletedLogicStatement = [&]() {
         if (line.find("logic<") == std::string::npos) {
             return;
@@ -1374,6 +2039,111 @@ static std::string postProcessCppLine(std::string line)
         line.insert(insertAt, closes);
     };
     balanceCompletedLogicStatement();
+    auto unwrapCatReplicationLambdaCasts = [&]() {
+        for (size_t catPos = 0; (catPos = line.find("cat{", catPos)) != std::string::npos;) {
+            auto pos = line.find("logic<", catPos + 4);
+            if (pos == std::string::npos) {
+                break;
+            }
+            auto widthEnd = matchingTemplateClose(line, pos + 5);
+            if (widthEnd == std::string::npos || widthEnd + 1 >= line.size() || line[widthEnd + 1] != '(') {
+                catPos += 4;
+                continue;
+            }
+            auto outerClose = matchingParenClose(line, widthEnd + 1);
+            if (outerClose == std::string::npos) {
+                catPos += 4;
+                continue;
+            }
+            auto inner = trim(line.substr(widthEnd + 2, outerClose - (widthEnd + 2)));
+            const std::string castPrefix = "(uint64_t)(";
+            if (inner.rfind(castPrefix, 0) == 0 && inner.back() == ')') {
+                inner = trim(inner.substr(castPrefix.size(), inner.size() - castPrefix.size() - 1));
+            }
+            if (inner.find("__cpphdl_rep") == std::string::npos ||
+                inner.rfind("([&]()", 0) != 0) {
+                catPos = outerClose + 1;
+                continue;
+            }
+            line.replace(pos, outerClose + 1 - pos, inner);
+            catPos = pos + inner.size();
+        }
+    };
+    unwrapCatReplicationLambdaCasts();
+    auto repairReplicationResultWidths = [&]() {
+        const std::string prefix = "([&]() { logic<64> __cpphdl_rep{}; for (size_t __cpphdl_i = 0; __cpphdl_i < (size_t)(";
+        for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
+            auto countStart = pos + prefix.size();
+            auto countMarker = line.find("; ++__cpphdl_i) {", countStart);
+            if (countMarker == std::string::npos) {
+                pos += prefix.size();
+                continue;
+            }
+            auto count = trim(line.substr(countStart, countMarker - countStart));
+            if (!count.empty() && count.back() == ')') {
+                count.pop_back();
+                count = trim(std::move(count));
+            }
+            const std::string bitsPrefix = "__cpphdl_rep.bits((__cpphdl_i + 1) * (size_t)(";
+            auto bitsPos = line.find(bitsPrefix, countMarker);
+            if (bitsPos == std::string::npos) {
+                pos = countMarker + 1;
+                continue;
+            }
+            auto widthOpen = bitsPos + bitsPrefix.size() - 1;
+            auto widthClose = matchingParenClose(line, widthOpen);
+            if (widthClose == std::string::npos) {
+                pos = bitsPos + bitsPrefix.size();
+                continue;
+            }
+            auto width = trim(line.substr(widthOpen + 1, widthClose - widthOpen - 1));
+            if (count.empty() || width.empty() || width == "64") {
+                pos = widthClose + 1;
+                continue;
+            }
+            auto logicPos = pos + std::string("([&]() { ").size();
+            const std::string oldLogic = "logic<64>";
+            if (line.compare(logicPos, oldLogic.size(), oldLogic) != 0) {
+                pos = widthClose + 1;
+                continue;
+            }
+            auto replacement = "logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))>";
+            line.replace(logicPos, oldLogic.size(), replacement);
+            pos = logicPos + replacement.size();
+        }
+    };
+    repairReplicationResultWidths();
+    auto balanceReplicationAssignments = [&]() {
+        for (size_t pos = 0; (pos = line.find("__cpphdl_rep.bits", pos)) != std::string::npos;) {
+            auto eq = line.find(" = ", pos);
+            if (eq == std::string::npos) {
+                pos += std::strlen("__cpphdl_rep.bits");
+                continue;
+            }
+            auto semi = line.find("; } return __cpphdl_rep", eq);
+            if (semi == std::string::npos) {
+                pos = eq + 3;
+                continue;
+            }
+            int balance = 0;
+            for (size_t i = eq + 3; i < semi; ++i) {
+                if (line[i] == '(') {
+                    ++balance;
+                }
+                else if (line[i] == ')') {
+                    --balance;
+                }
+            }
+            if (balance > 0 && balance <= 8) {
+                line.insert(semi, std::string(static_cast<size_t>(balance), ')'));
+                semi += static_cast<size_t>(balance);
+            }
+            pos = semi + 1;
+        }
+    };
+    balanceReplicationAssignments();
+    replaceAll(line, "; }()))," , "; }()),");
+    replaceAll(line, "; }()))}", "; }())}");
     auto removeSimpleOneBitMasks = [&]() {
         const std::string castPrefix = "((uint64_t)(";
         const std::string maskSuffix = ") & ((1ull << 1) - 1ull))";
@@ -1403,6 +2173,9 @@ static std::string postProcessCppLine(std::string line)
     };
     removeSimpleOneBitMasks();
     auto removeTargetedMasks = [&](const std::string& token) {
+        if (line.find(token) == std::string::npos || line.find(" & ((1ull << ") == std::string::npos) {
+            return;
+        }
         for (size_t amp = 0; (amp = line.find(" & ((1ull << ", amp)) != std::string::npos;) {
             if (amp == 0 || line[amp - 1] != ')') {
                 amp += 12;
@@ -1459,12 +2232,21 @@ static std::string postProcessCppLine(std::string line)
             }
         }
     }
-    removeTargetedMasks("issue_instr_i_in()");
-    removeTargetedMasks("lsu_ctrl_comb_func().fu");
+    if (line.find(" & ((1ull << ") != std::string::npos) {
+        removeTargetedMasks("issue_instr_i_in()");
+        removeTargetedMasks("lsu_ctrl_comb_func().fu");
+    }
     applyConfiguredLinePatches(line);
-    replaceAll(line, "(((((uint64_t)((issue_instr_i_in()", "((((uint64_t)((issue_instr_i_in()");
-    replaceAll(line, "(((((uint64_t)(lsu_ctrl_comb_func().fu", "((((uint64_t)(lsu_ctrl_comb_func().fu");
+    if (line.find("issue_instr_i_in()") != std::string::npos) {
+        replaceAll(line, "(((((uint64_t)((issue_instr_i_in()", "((((uint64_t)((issue_instr_i_in()");
+    }
+    if (line.find("lsu_ctrl_comb_func().fu") != std::string::npos) {
+        replaceAll(line, "(((((uint64_t)(lsu_ctrl_comb_func().fu", "((((uint64_t)(lsu_ctrl_comb_func().fu");
+    }
     auto removeOneBitMasks = [&](const std::string& token) {
+        if (line.find(token) == std::string::npos || line.find(" & ((1ull << 1) - 1ull))") == std::string::npos) {
+            return;
+        }
         for (size_t amp = 0; (amp = line.find(" & ((1ull << 1) - 1ull))", amp)) != std::string::npos;) {
             if (amp == 0 || line[amp - 1] != ')') {
                 amp += 12;
@@ -1805,6 +2587,17 @@ static std::string postProcessCppLine(std::string line)
         rhs = cleaned.first;
         line = lhs + rhs;
     }
+    auto valueInitTarget = "std::remove_cvref_t<decltype(" + lhsTrim + ")>{}";
+    auto rhsNoSemi = trim(rhs);
+    if (!rhsNoSemi.empty() && rhsNoSemi.back() == ';') {
+        rhsNoSemi = trim(rhsNoSemi.substr(0, rhsNoSemi.size() - 1));
+    }
+    auto firstBracket = lhsTrim.find('[');
+    if (firstBracket != std::string::npos && lhsTrim.substr(0, firstBracket).find('.') == std::string::npos &&
+        rhsNoSemi == valueInitTarget) {
+        rhs = " 0;";
+        line = lhs + rhs;
+    }
 
     auto findTopLevelTernary = [&](const std::string& text, size_t& qpos, size_t& cpos) {
         int depth = 0;
@@ -1997,18 +2790,24 @@ static std::string postProcessCppLine(std::string line)
                 }
                 return "cpphdl::sv_cast<" + target + ">(" + branch + ")";
             };
-            line = lhs + " " + pred + " ? " + wrapBranch(left) + " : " + wrapBranch(right) + ";";
-            replaceAll(line, " )", ")");
-            balanceCompletedLogicStatement();
-            return line;
-        }
-    }
+	            line = lhs + " " + pred + " ? " + wrapBranch(left) + " : " + wrapBranch(right) + ";";
+	            replaceAll(line, " )", ")");
+	            balanceCompletedLogicStatement();
+	            balanceReplicationAssignments();
+	            replaceAll(line, "; }()))," , "; }()),");
+	            replaceAll(line, "; }()))}", "; }())}");
+	            return line;
+	        }
+	    }
 
     // Struct-field assignments are plain C++ value updates. Wrapping every dotted LHS
     // in _ASSIGN turns these into lambda assignments and breaks packed/local structs.
-    line = lhs + rhs;
-    balanceCompletedLogicStatement();
-    return line;
+	line = lhs + rhs;
+	balanceCompletedLogicStatement();
+	balanceReplicationAssignments();
+	replaceAll(line, "; }()))," , "; }()),");
+	replaceAll(line, "; }()))}", "; }())}");
+	return line;
 }
 
 static std::string exprText(const std::string& in)
@@ -2028,6 +2827,81 @@ static std::string exprText(const std::string& in)
             s += in[i];
         }
     }
+    auto rewritePowerOfTwo = [](std::string text) {
+        auto isIdent = [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':' || c == '$' || c == '.';
+        };
+        for (size_t pos = 0; pos < text.size();) {
+            auto two = text.find('2', pos);
+            if (two == std::string::npos) {
+                break;
+            }
+            if ((two > 0 && (std::isalnum(static_cast<unsigned char>(text[two - 1])) || text[two - 1] == '_')) ||
+                (two + 1 < text.size() && (std::isalnum(static_cast<unsigned char>(text[two + 1])) || text[two + 1] == '_'))) {
+                pos = two + 1;
+                continue;
+            }
+            auto stars = two + 1;
+            while (stars < text.size() && std::isspace(static_cast<unsigned char>(text[stars]))) {
+                ++stars;
+            }
+            if (stars + 1 >= text.size() || text[stars] != '*' || text[stars + 1] != '*') {
+                pos = two + 1;
+                continue;
+            }
+            auto expBegin = stars + 2;
+            while (expBegin < text.size() && std::isspace(static_cast<unsigned char>(text[expBegin]))) {
+                ++expBegin;
+            }
+            if (expBegin >= text.size()) {
+                break;
+            }
+            size_t expEnd = expBegin;
+            if (text[expBegin] == '(') {
+                int depth = 0;
+                for (; expEnd < text.size(); ++expEnd) {
+                    if (text[expEnd] == '(') {
+                        ++depth;
+                    }
+                    else if (text[expEnd] == ')') {
+                        --depth;
+                        if (depth == 0) {
+                            ++expEnd;
+                            break;
+                        }
+                    }
+                }
+            }
+            else {
+                while (expEnd < text.size() && isIdent(text[expEnd])) {
+                    ++expEnd;
+                }
+                if (expEnd < text.size() && text[expEnd] == '(') {
+                    int depth = 0;
+                    for (; expEnd < text.size(); ++expEnd) {
+                        if (text[expEnd] == '(') {
+                            ++depth;
+                        }
+                        else if (text[expEnd] == ')') {
+                            --depth;
+                            if (depth == 0) {
+                                ++expEnd;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (expEnd <= expBegin) {
+                pos = stars + 2;
+                continue;
+            }
+            auto exponent = trim(text.substr(expBegin, expEnd - expBegin));
+            text.replace(two, expEnd - two, "(1ull << (unsigned)(" + exponent + "))");
+            pos = two + std::string("(1ull << (unsigned)(").size() + exponent.size() + 2;
+        }
+        return text;
+    };
     replaceAll(s, "\n", " ");
     replaceAll(s, "\t", " ");
     s = normalizeSvLiterals(s);
@@ -2040,9 +2914,7 @@ static std::string exprText(const std::string& in)
     replaceAll(s, "$random", "random");
     replaceAll(s, "$signed", "");
     replaceAll(s, "$unsigned", "");
-    replaceAll(s, "2**", "1ull << ");
-    replaceAll(s, "2 ** ", "1ull << ");
-    replaceAll(s, "2 **", "1ull << ");
+    s = rewritePowerOfTwo(std::move(s));
     std::string compact;
     bool space = false;
     for (auto c : s) {
@@ -2131,6 +3003,16 @@ static std::string replaceAssignmentPatternFields(std::string s)
                 --prev;
             }
             char beforeField = prev == 0 ? '\0' : s[prev - 1];
+            if (beforeField == '/' && prev >= 2 && s[prev - 2] == '*') {
+                auto commentStart = s.rfind("/*", prev - 2);
+                if (commentStart != std::string::npos) {
+                    prev = commentStart;
+                    while (prev > 0 && std::isspace(static_cast<unsigned char>(s[prev - 1]))) {
+                        --prev;
+                    }
+                    beforeField = prev == 0 ? '\0' : s[prev - 1];
+                }
+            }
             if (beforeField == '{' || beforeField == ',') {
                 auto replacementName = cppIdent(s.substr(start, end - start));
                 s.insert(start, ".");
@@ -2150,6 +3032,196 @@ static std::string replaceAssignmentPatternFields(std::string s)
         else {
             pos = end;
         }
+    }
+    return s;
+}
+
+static std::string replaceAssignmentPatternFieldConcats(std::string s)
+{
+    for (size_t pos = 0; (pos = s.find("= {", pos)) != std::string::npos;) {
+        auto fieldPos = pos;
+        while (fieldPos > 0 && std::isspace(static_cast<unsigned char>(s[fieldPos - 1]))) {
+            --fieldPos;
+        }
+        auto nameStart = fieldPos;
+        while (nameStart > 0 &&
+               (std::isalnum(static_cast<unsigned char>(s[nameStart - 1])) || s[nameStart - 1] == '_')) {
+            --nameStart;
+        }
+        if (nameStart == 0 || s[nameStart - 1] != '.') {
+            pos += 3;
+            continue;
+        }
+        auto open = s.find('{', pos);
+        if (open == std::string::npos) {
+            break;
+        }
+        int depth = 0;
+        size_t close = std::string::npos;
+        bool hasTopComma = false;
+        bool hasDesignatedEntry = false;
+        for (size_t i = open; i < s.size(); ++i) {
+            char c = s[i];
+            if (c == '{' || c == '(' || c == '[') {
+                ++depth;
+            }
+            else if (c == '}' || c == ')' || c == ']') {
+                --depth;
+                if (depth == 0 && c == '}') {
+                    close = i;
+                    break;
+                }
+            }
+            else if (depth == 1 && c == ',') {
+                hasTopComma = true;
+            }
+            else if (depth == 1 && c == '.') {
+                hasDesignatedEntry = true;
+            }
+        }
+        if (close == std::string::npos) {
+            break;
+        }
+        auto inner = s.substr(open + 1, close - open - 1);
+        auto enumLikeList = [&]() {
+            auto items = splitTopLevelArgs(inner);
+            if (items.empty()) {
+                return false;
+            }
+            for (auto item : items) {
+                item = trim(item);
+                if (item.empty()) {
+                    return false;
+                }
+                for (char c : item) {
+                    if (!(std::isupper(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) ||
+                          c == '_' || c == ':')) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        if (!hasTopComma || hasDesignatedEntry || inner.find("default =") != std::string::npos || enumLikeList()) {
+            pos = close + 1;
+            continue;
+        }
+        s.replace(open, 1, "cat{");
+        pos = close + 3;
+    }
+    return s;
+}
+
+static std::string replaceTextReplications(std::string s)
+{
+    for (size_t pos = 0; (pos = s.find('{', pos)) != std::string::npos;) {
+        int paren = 0;
+        int bracket = 0;
+        int angle = 0;
+        size_t innerOpen = std::string::npos;
+        bool invalidCount = false;
+        for (size_t i = pos + 1; i < s.size(); ++i) {
+            char c = s[i];
+            if (c == '(') ++paren;
+            else if (c == ')' && paren > 0) --paren;
+            else if (c == '[') ++bracket;
+            else if (c == ']' && bracket > 0) --bracket;
+            else if (c == '<' && i + 1 < s.size() && s[i + 1] == '<') ++i;
+            else if (c == '<') ++angle;
+            else if (c == '>' && angle > 0) --angle;
+            else if ((c == ',' || c == '=' || c == ':') && paren == 0 && bracket == 0 && angle == 0) {
+                invalidCount = true;
+                break;
+            }
+            else if (c == '{' && paren == 0 && bracket == 0 && angle == 0) {
+                innerOpen = i;
+                break;
+            }
+            else if (c == '}' && paren == 0 && bracket == 0 && angle == 0) {
+                invalidCount = true;
+                break;
+            }
+        }
+        if (invalidCount || innerOpen == std::string::npos) {
+            ++pos;
+            continue;
+        }
+        auto count = trim(s.substr(pos + 1, innerOpen - pos - 1));
+        if (count.empty()) {
+            ++pos;
+            continue;
+        }
+        int depth = 1;
+        size_t innerClose = std::string::npos;
+        for (size_t i = innerOpen + 1; i < s.size(); ++i) {
+            if (s[i] == '{') ++depth;
+            else if (s[i] == '}') {
+                --depth;
+                if (depth == 0) {
+                    innerClose = i;
+                    break;
+                }
+            }
+        }
+        if (innerClose == std::string::npos || innerClose + 1 >= s.size() || s[innerClose + 1] != '}') {
+            ++pos;
+            continue;
+        }
+        auto expr = trim(s.substr(innerOpen + 1, innerClose - innerOpen - 1));
+        auto templateArgAfter = [](const std::string& text, size_t namePos, const std::string& name) -> std::string {
+            auto open = namePos + name.size();
+            auto close = matchingTemplateCloseLocal(text, open);
+            if (close == std::string::npos) {
+                return "";
+            }
+            return trim(text.substr(open + 1, close - open - 1));
+        };
+        auto firstTemplateArg = [&](const std::string& text, const std::string& name) -> std::string {
+            for (size_t namePos = 0; (namePos = text.find(name, namePos)) != std::string::npos; ++namePos) {
+                if (namePos > 0) {
+                    auto prev = text[namePos - 1];
+                    if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_') {
+                        continue;
+                    }
+                }
+                auto arg = templateArgAfter(text, namePos, name);
+                if (!arg.empty()) {
+                    return arg;
+                }
+            }
+            return "";
+        };
+        std::string width = "64";
+        auto exprTrim = trim(expr);
+        if (exprTrim.rfind("logic<", 0) == 0) {
+            auto close = matchingTemplateCloseLocal(exprTrim, std::string("logic").size());
+            if (close != std::string::npos) {
+                width = exprTrim.substr(std::string("logic<").size(), close - std::string("logic<").size());
+            }
+        }
+        else if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
+            width = packedWidth;
+        }
+        else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
+            width = packedWidth;
+        }
+        else if (exprTrim.rfind("cat{", 0) == 0) {
+            if (auto logicWidth = firstTemplateArg(exprTrim, "logic"); !logicWidth.empty()) {
+                width = logicWidth;
+            }
+            if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
+                width = packedWidth;
+            }
+            else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
+                width = packedWidth;
+            }
+        }
+        auto replacement = "([&]() { logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))> __cpphdl_rep{}; "
+            "for (size_t __cpphdl_i = 0; __cpphdl_i < (size_t)(" + count + "); ++__cpphdl_i) { "
+            "__cpphdl_rep.bits((__cpphdl_i + 1) * (size_t)(" + width + ") - 1, __cpphdl_i * (size_t)(" + width + ")) = logic<" + width + ">(" + expr + "); "
+            "} return __cpphdl_rep; }())";
+        s.replace(pos, innerClose + 2 - pos, replacement);
+        pos += replacement.size();
     }
     return s;
 }
@@ -2279,6 +3351,31 @@ static std::string replaceStreamingConcats(std::string s)
 
 static std::string replaceGenericSvCasts(std::string s)
 {
+    auto castNameLooksLikeType = [](const std::string& name) {
+        if (name.find("::") != std::string::npos || (name.size() >= 2 && name.substr(name.size() - 2) == "_t")) {
+            return true;
+        }
+        auto lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        auto lastSegment = lower;
+        auto sep = lastSegment.rfind('_');
+        if (sep != std::string::npos) {
+            lastSegment = lastSegment.substr(sep + 1);
+        }
+        for (auto prefix : {std::string("uint"), std::string("int")}) {
+            if (lastSegment.rfind(prefix, 0) != 0 || lastSegment.size() == prefix.size()) {
+                continue;
+            }
+            if (std::all_of(lastSegment.begin() + static_cast<std::ptrdiff_t>(prefix.size()), lastSegment.end(), [](unsigned char ch) {
+                    return std::isdigit(ch);
+                })) {
+                return true;
+            }
+        }
+        return false;
+    };
     for (size_t pos = 0; pos < s.size();) {
         if (std::isdigit(static_cast<unsigned char>(s[pos]))) {
             auto start = pos++;
@@ -2308,7 +3405,7 @@ static std::string replaceGenericSvCasts(std::string s)
                 s[close + 1] == '\'' && s[close + 2] == '(') {
                 auto name = trim(s.substr(pos + 1, close - pos - 1));
                 if (!name.empty()) {
-                    auto repl = "logic<" + name + ">(";
+                    auto repl = castNameLooksLikeType(name) ? ("sv_cast<" + name + ">(") : ("logic<" + name + ">(");
                     s.replace(pos, close + 3 - pos, repl);
                     pos += repl.size();
                     continue;
@@ -2333,8 +3430,7 @@ static std::string replaceGenericSvCasts(std::string s)
         }
         auto name = s.substr(start, pos - start);
         if (pos + 1 < s.size() && s[pos] == '\'' && s[pos + 1] == '(') {
-            auto repl = (name.find("::") != std::string::npos || (name.size() >= 2 && name.substr(name.size() - 2) == "_t")) ?
-                ("sv_cast<" + name + ">(") : ("logic<" + name + ">(");
+            auto repl = castNameLooksLikeType(name) ? ("sv_cast<" + name + ">(") : ("logic<" + name + ">(");
             s.replace(start, pos + 2 - start, repl);
             pos = start + repl.size();
         }
@@ -2781,8 +3877,14 @@ static bool parseNamedAggregateEntries(const std::string& s, std::vector<std::pa
                 inString = true;
                 escaped = false;
             }
-            else if (c == '{' || c == '(' || c == '[' || c == '<') {
+            else if (c == '{' || c == '(' || c == '[') {
                 ++depth;
+            }
+            else if (c == '<') {
+                char prev = pos == 0 ? '\0' : text[pos - 1];
+                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_' || prev == '>') {
+                    ++depth;
+                }
             }
             else if (c == '}' || c == ')' || c == ']' || c == '>') {
                 if (depth == 0) {
@@ -2840,13 +3942,13 @@ static std::string wrapLogicCastsForConstexprNumeric(std::string s)
     return s;
 }
 
-static std::string namedAggregateToConstexprLambda(const std::string& type, const std::string& init)
+static std::string namedAggregateToConstexprLambda(const std::string& type, const std::string& init, bool capture = false)
 {
     std::vector<std::pair<std::string, std::string>> entries;
     if (!parseNamedAggregateEntries(init, entries)) {
         return init;
     }
-    std::string out = "[] { " + type + " v{};";
+    std::string out = std::string(capture ? "[&]" : "[]") + " { " + type + " v{};";
     for (auto& [name, value] : entries) {
         auto aggregateDefaults = configuredTextMap("HDLCPP_AGGREGATE_DEFAULTS");
         auto defaultIt = aggregateDefaults.find(type + "." + name);
@@ -2856,7 +3958,77 @@ static std::string namedAggregateToConstexprLambda(const std::string& type, cons
         if (value.empty()) {
             value = "{}";
         }
-        out += " sv_assign_field(v." + name + ", " + value + ");";
+        if (trim(value).rfind("{.", 0) == 0 || trim(value).rfind("{ .", 0) == 0) {
+            value = namedAggregateToConstexprLambda("std::remove_cvref_t<decltype(v." + name + ")>", value, capture);
+        }
+        auto isZeroExpression = [](std::string text) {
+            text = stripBalancedOuterParens(trim(std::move(text)));
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                text = stripBalancedOuterParens(trim(std::move(text)));
+                if (text.rfind("logic<", 0) == 0) {
+                    auto closeType = matchingTemplateCloseLocal(text, std::string("logic").size());
+                    if (closeType != std::string::npos && closeType + 1 < text.size() && text[closeType + 1] == '(') {
+                        int depth = 1;
+                        size_t closeValue = std::string::npos;
+                        for (size_t i = closeType + 2; i < text.size(); ++i) {
+                            if (text[i] == '(') ++depth;
+                            else if (text[i] == ')') {
+                                --depth;
+                                if (depth == 0) {
+                                    closeValue = i;
+                                    break;
+                                }
+                            }
+                        }
+                        if (closeValue != std::string::npos && trim(text.substr(closeValue + 1)).empty()) {
+                            text = text.substr(closeType + 2, closeValue - closeType - 2);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            uint64_t literal = 0;
+            return parseCppIntegralLiteral(text, literal) && literal == 0;
+        };
+        auto isZeroReplicationLambda = [&](const std::string& text) {
+            if (text.find("__cpphdl_rep") == std::string::npos) {
+                return false;
+            }
+            bool sawAssign = false;
+            for (size_t pos = 0; (pos = text.find("__cpphdl_rep.bits", pos)) != std::string::npos;) {
+                auto eq = text.find('=', pos);
+                auto semi = eq == std::string::npos ? std::string::npos : text.find(';', eq + 1);
+                if (eq == std::string::npos || semi == std::string::npos) {
+                    return false;
+                }
+                sawAssign = true;
+                if (!isZeroExpression(text.substr(eq + 1, semi - eq - 1))) {
+                    return false;
+                }
+                pos = semi + 1;
+            }
+            return sawAssign;
+        };
+        const auto fieldTypeDefault = "std::remove_cvref_t<decltype(v." + name + ")>{}";
+        if (isZeroReplicationLambda(value)) {
+            value = fieldTypeDefault;
+        }
+        if (value == fieldTypeDefault) {
+            out += " v." + name + " = " + value + ";";
+        }
+        else if (trim(value).rfind("{", 0) != 0) {
+            out += " [&] { auto __cpphdl_field_value = " + value + ";";
+            out += " auto __cpphdl_assign_field = [](auto& __cpphdl_dst, const auto& __cpphdl_value) {";
+            out += " if constexpr (requires { __cpphdl_dst = __cpphdl_value; }) {";
+            out += " __cpphdl_dst = __cpphdl_value;";
+            out += " } else { sv_assign_field(__cpphdl_dst, __cpphdl_value); } };";
+            out += " __cpphdl_assign_field(v." + name + ", __cpphdl_field_value); }();";
+        }
+        else {
+            out += " sv_assign_field(v." + name + ", " + value + ");";
+        }
     }
     out += " return v; }()";
     return out;
@@ -2873,9 +4045,12 @@ static std::string cppExprText(std::string s)
     if (hasAssignmentPattern) {
         s = replaceDefaultOnlyAssignmentPattern(std::move(s));
         s = replaceAssignmentPatternFields(s);
+        s = replaceAssignmentPatternFieldConcats(std::move(s));
         s = removeAssignmentPatternDefault(std::move(s));
     }
+    s = replaceTextReplications(std::move(s));
     applyConfiguredLinePatches(s);
+    repairPatchedConcatOperandWidths(s);
     replaceAll(s, "unsigned'(", "(");
     replaceAll(s, "signed'(", "(");
     replaceAll(s, "int'(", "(");
@@ -3112,6 +4287,14 @@ static std::string joinedPackedWidth(const std::vector<PackedFieldInfo>& fields)
     return foldWidth(width);
 }
 
+static std::string packedUnionWidth(const std::vector<PackedFieldInfo>& fields)
+{
+    if (fields.empty()) {
+        return "";
+    }
+    return fields.front().width;
+}
+
 static std::string addWidthExpr(const std::string& offset, const std::string& width)
 {
     if (offset == "0") {
@@ -3120,7 +4303,7 @@ static std::string addWidthExpr(const std::string& offset, const std::string& wi
     return offset + " + " + width;
 }
 
-static std::string packedAggregateHelpers(const std::string& name, std::string width = "", const std::vector<PackedFieldInfo>& fields = {})
+static std::string packedAggregateHelpers(const std::string& name, std::string width = "", const std::vector<PackedFieldInfo>& fields = {}, bool isUnion = false)
 {
     if (width.empty() || fields.empty()) {
         width = "sizeof(" + name + ")*8";
@@ -3131,32 +4314,58 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
         for (auto& field : fields) {
-            auto next = addWidthExpr(offset, field.width);
+            auto next = isUnion ? field.width : addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
             line += "            this->" + field.name + " = cpphdl::unpack_value<std::remove_reference_t<decltype(this->" + field.name + ")>, " + field.width + ">(logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + "))));\n";
             line += "        }\n";
-            offset = next;
+            if (!isUnion) {
+                offset = next;
+            }
         }
         line += "        return *this; }\n";
-        line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return (*this = logic<" + width + ">(v)); }\n";
+        line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return this->template operator=<" + width + ">(logic<" + width + ">(v)); }\n";
         line += "    logic<" + width + "> pack() const { logic<" + width + "> packed = 0;\n";
         offset = "0";
-        for (auto& field : fields) {
-            auto next = addWidthExpr(offset, field.width);
+        for (size_t i = 0; i < fields.size(); ++i) {
+            auto& field = fields[i];
+            auto next = isUnion ? field.width : addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
-            line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+            if (isUnion) {
+                line += "            if constexpr ((uint64_t)(" + field.width + ") <= (uint64_t)(" + width + ")) {\n";
+                line += "                packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(0)) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                line += "            }\n";
+                line += "            return packed;\n";
+            }
+            else {
+                line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+            }
             line += "        }\n";
-            offset = next;
+            if (!isUnion) {
+                offset = next;
+            }
         }
         line += "        return packed; }\n";
-        line += "    auto bits(size_t last, size_t first) { return pack().bits(last, first); }\n";
+        line += "    struct _bits_ref { " + name + "& owner; size_t last; size_t first;\n";
+        line += "        template<typename V> _bits_ref& operator=(const V& v) { auto packed = owner.pack(); packed.bits(last, first) = v; owner.template operator=<" + width + ">(packed); return *this; }\n";
+        line += "        template<size_t W> operator logic<W>() const { return logic<W>(owner.pack().bits(last, first)); }\n";
+        line += "        explicit operator uint64_t() const { return (uint64_t)(owner.pack().bits(last, first)); }\n";
+        line += "    };\n";
+        line += "    struct _bit_ref { " + name + "& owner; size_t index;\n";
+        line += "        template<typename V> _bit_ref& operator=(const V& v) { auto packed = owner.pack(); packed.bits(index, index) = logic<1>(v); owner.template operator=<" + width + ">(packed); return *this; }\n";
+        line += "        operator logic<1>() const { return logic<1>((((uint64_t)(owner.pack())) >> (unsigned)(index)) & 1ull); }\n";
+        line += "        explicit operator bool() const { return (bool)(logic<1>(*this)); }\n";
+        line += "    };\n";
+        line += "    _bits_ref bits(size_t last, size_t first) { return _bits_ref{*this, last, first}; }\n";
+        line += "    auto bits(size_t last, size_t first) const { return pack().bits(last, first); }\n";
+        line += "    _bit_ref operator[](size_t index) { return _bit_ref{*this, index}; }\n";
+        line += "    auto operator[](size_t index) const { return logic<1>((((uint64_t)(pack())) >> (unsigned)(index)) & 1ull); }\n";
     }
     else {
         line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { (*(logic<" + width + ">*)this) = v; return *this; }\n";
         line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { (*(logic<" + width + ">*)this) = logic<" + width + ">(v); return *this; }\n";
         line += "    auto bits(size_t last, size_t first) { return (*(logic<" + width + ">*)this).bits(last, first); }\n";
+        line += "    auto bits(size_t last, size_t first) const { return const_cast<" + name + "*>(this)->bits(last, first); }\n";
     }
-    line += "    auto bits(size_t last, size_t first) const { return const_cast<" + name + "*>(this)->bits(last, first); }\n";
     if (!fields.empty()) {
         line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return pack() | rhs; }\n";
         line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return pack() & rhs; }\n";

@@ -24,3 +24,11 @@ target_link_libraries(hdlcpp PRIVATE slang::slang)
 add_executable(test_combs tests/test_combs.cpp)
 target_include_directories(test_combs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_combs COMMAND test_combs)
+
+add_executable(test_modules tests/test_modules.cpp)
+target_include_directories(test_modules PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME hdlcpp_test_modules COMMAND test_modules)
+
+add_executable(test_structs tests/test_structs.cpp)
+target_include_directories(test_structs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME hdlcpp_test_structs COMMAND test_structs)

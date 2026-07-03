@@ -4,12 +4,8 @@
 
 using namespace cpphdl;
 
-#ifndef DEBUG_RAM
-#define DEBUG_RAM(...)
-#endif
-
 template<size_t WIDTH, size_t DEPTH>
-class RAM1PORT : public Module
+class RAM : public Module
 {
 public:
     _PORT(u<clog2(DEPTH)>) addr_in;
@@ -37,7 +33,6 @@ public:
         if (rd_in()) {
             q_out_reg._next = buffer[addr_in()];
         }
-        DEBUG_RAM("RAM {}, ({:d}){} @{} ({:d}){}, WIDTH: {}, DEPTH: {}\n", id_in, (bool)wr_in(), data_in(), addr_in(), (bool)rd_in(), q_out(), WIDTH, DEPTH);
     }
 
     void _strobe(FILE* checkpoint_fd = nullptr)

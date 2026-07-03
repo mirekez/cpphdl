@@ -44,7 +44,7 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "verif/SDCardVerif.h"
 #endif
 #include "cache/L1Cache.h"
-#include "cache/l2/L2CacheOO.h"
+#include "cache/l2/L2Cache.h"
 
 #include <cstdlib>
 #include <csignal>
@@ -107,7 +107,7 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<L1_ICACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
     L1Cache<L1_DCACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
-    L2CacheOO<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
+    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
     reg<u1> icache_invalidate_issued_reg;
 
@@ -216,7 +216,9 @@ public:
     _PORT(bool)      external_irq_in = _ASSIGN(false);
 #endif
 
-    Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
+    // External coherent masters use CPU physical addresses. L2 narrows only
+    // after region decode when driving axi_out[] toward memory/device regions.
+    Axi4If<32, 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
 
     _PORT(TribePerf) perf_out = _ASSIGN_COMB(perf_comb_func());
@@ -269,10 +271,6 @@ public:
         wb_mem.dcache_read_valid_in = dcache.read_valid_out;
         wb_mem.dcache_read_addr_in = dcache.read_addr_out;
         wb_mem.dcache_read_data_in = dcache.read_data_out;
-        wb_mem.dcache_write_valid_in = dcache.mem_write_out;
-        wb_mem.dcache_write_addr_in = dcache.mem_addr_out;
-        wb_mem.dcache_write_data_in = dcache.mem_write_data_out;
-        wb_mem.dcache_write_mask_in = dcache.mem_write_mask_out;
         wb_mem.store_forward_enable_in = _ASSIGN(
             (uint32_t)wb_mem.alu_result_in() < memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
         wb_mem.hold_in = _ASSIGN(memory_wait_comb_func());
@@ -341,7 +339,7 @@ public:
         immu.fill_flags_in = _ASSIGN((uint8_t)0);
         immu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         immu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
-        immu.mem_wait_in = _ASSIGN(!immu_ptw_selected_comb_func() || l2cache.d_wait_out());
+        immu.mem_wait_in = _ASSIGN(!immu_ptw_selected_comb_func() || l2cache.d_mem_in.wait_out());
         immu.__inst_name = __inst_name + "/immu";
         immu._assign();
 
@@ -373,7 +371,7 @@ public:
         dmmu.fill_flags_in = _ASSIGN((uint8_t)0);
         dmmu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         dmmu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
-        dmmu.mem_wait_in = _ASSIGN(!dmmu_ptw_selected_comb_func() || l2cache.d_wait_out());
+        dmmu.mem_wait_in = _ASSIGN(!dmmu_ptw_selected_comb_func() || l2cache.d_mem_in.wait_out());
         dmmu.__inst_name = __inst_name + "/dmmu";
         dmmu._assign();
 #endif
@@ -425,8 +423,6 @@ public:
 #endif
         dcache.write_data_in = exe_mem.mem_write_data_out;
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
-        dcache.mem_read_data_in = l2cache.d_read_data_out;
-        dcache.mem_wait_in = l2cache.d_wait_out;
         dcache.stall_in = _ASSIGN(branch_stall_comb_func());
         dcache.flush_in = _ASSIGN(false);
         dcache.invalidate_in = external_cache_invalidate_in;
@@ -437,6 +433,12 @@ public:
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
+        // dcache.mem_out is populated by dcache._assign(); bind these after it
+        // so WritebackMem does not capture empty interface port functions.
+        wb_mem.dcache_write_valid_in = dcache.mem_out.write_in;
+        wb_mem.dcache_write_addr_in = dcache.mem_out.addr_in;
+        wb_mem.dcache_write_data_in = dcache.mem_out.write_data_in;
+        wb_mem.dcache_write_mask_in = dcache.mem_out.write_mask_in;
 
         bp.lookup_valid_in = _ASSIGN(decode_branch_valid_comb_func());
         bp.lookup_pc_in = _ASSIGN((uint32_t)dec.state_out().pc);
@@ -464,8 +466,6 @@ public:
         icache.write_in = _ASSIGN( false );
         icache.write_data_in = _ASSIGN( (uint32_t)0 );
         icache.write_mask_in = _ASSIGN( (uint8_t)0 );
-        icache.mem_read_data_in = l2cache.i_read_data_out;
-        icache.mem_wait_in = l2cache.i_wait_out;
         icache.stall_in = _ASSIGN(memory_wait_comb_func() || stall_comb_func());
         icache.flush_in = _ASSIGN(branch_mispredict_comb_func() && !memory_wait_comb_func());
         icache.invalidate_in = _ASSIGN_COMB(icache_invalidate_comb_func());
@@ -474,27 +474,27 @@ public:
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
 
-        l2cache.i_read_in = icache.mem_read_out;
-        l2cache.i_write_in = _ASSIGN(false);
-        l2cache.i_addr_in = icache.mem_addr_out;
-        l2cache.i_write_data_in = _ASSIGN((uint32_t)0);
-        l2cache.i_write_mask_in = _ASSIGN((uint8_t)0);
+        l2cache.i_mem_in.read_in = icache.mem_out.read_in;
+        l2cache.i_mem_in.write_in = _ASSIGN(false);
+        l2cache.i_mem_in.addr_in = icache.mem_out.addr_in;
+        l2cache.i_mem_in.write_data_in = _ASSIGN((uint32_t)0);
+        l2cache.i_mem_in.write_mask_in = _ASSIGN((uint8_t)0);
         // CPU data misses and MMU page-table walks share the L2 data-side request path.
-        l2cache.d_read_in = _ASSIGN(dcache.mem_read_out()
+        l2cache.d_mem_in.read_in = _ASSIGN(dcache.mem_out.read_in()
 #ifdef ENABLE_MMU_TLB
             || dmmu_ptw_selected_comb_func() || immu_ptw_selected_comb_func()
 #endif
             );
-        l2cache.d_write_in = dcache.mem_write_out;
-        l2cache.d_addr_in =
+        l2cache.d_mem_in.write_in = dcache.mem_out.write_in;
+        l2cache.d_mem_in.addr_in =
 #ifdef ENABLE_MMU_TLB
-            _ASSIGN(dcache.mem_read_out() || dcache.mem_write_out() ? (uint32_t)dcache.mem_addr_out() :
+            _ASSIGN(dcache.mem_out.read_in() || dcache.mem_out.write_in() ? (uint32_t)dcache.mem_out.addr_in() :
                 (dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() : (uint32_t)immu.mem_addr_out()));
 #else
-            dcache.mem_addr_out;
+            dcache.mem_out.addr_in;
 #endif
-        l2cache.d_write_data_in = dcache.mem_write_data_out;
-        l2cache.d_write_mask_in = dcache.mem_write_mask_out;
+        l2cache.d_mem_in.write_data_in = dcache.mem_out.write_data_in;
+        l2cache.d_mem_in.write_mask_in = dcache.mem_out.write_mask_in;
         l2cache.memory_base_in = memory_base_in;
         l2cache.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
@@ -512,16 +512,22 @@ public:
         l2cache.debugen_in = debugen_in;
         l2cache.__inst_name = __inst_name + "/l2cache";
         l2cache._assign();
+        // L2 populates L1MemIf response ports in l2cache._assign(); bind the
+        // L1 return path after that so caches do not capture empty functions.
+        dcache.mem_out.read_data_out = l2cache.d_mem_in.read_data_out;
+        dcache.mem_out.wait_out = l2cache.d_mem_in.wait_out;
+        icache.mem_out.read_data_out = l2cache.i_mem_in.read_data_out;
+        icache.mem_out.wait_out = l2cache.i_mem_in.wait_out;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM(axi_in[i], l2cache.axi_in[i]);
         }
 
-        dmem_write_out      = dcache.mem_write_out;
-        dmem_write_data_out = dcache.mem_write_data_out;
-        dmem_write_mask_out = dcache.mem_write_mask_out;
-        dmem_read_out       = dcache.mem_read_out;
-        dmem_addr_out       = dcache.mem_addr_out;
-        imem_read_addr_out  = icache.mem_addr_out;
+        dmem_write_out      = dcache.mem_out.write_in;
+        dmem_write_data_out = dcache.mem_out.write_data_in;
+        dmem_write_mask_out = dcache.mem_out.write_mask_in;
+        dmem_read_out       = dcache.mem_out.read_in;
+        dmem_addr_out       = dcache.mem_out.addr_in;
+        imem_read_addr_out  = icache.mem_out.addr_in;
 #ifdef ENABLE_MMU_TLB
         debug_immu_ptw_read_out = immu.mem_read_out;
         debug_immu_ptw_addr_out = immu.mem_addr_out;
@@ -678,14 +684,14 @@ private:
 #ifdef ENABLE_MMU_TLB
     // DMMU page-table walks share the L2 data port after normal CPU data requests.
     _LAZY_COMB(dmmu_ptw_selected_comb, bool)
-        dmmu_ptw_selected_comb = dmmu.mem_read_out() && !dcache.mem_read_out() && !dcache.mem_write_out();
+        dmmu_ptw_selected_comb = dmmu.mem_read_out() && !dcache.mem_out.read_in() && !dcache.mem_out.write_in();
         return dmmu_ptw_selected_comb;
     }
 
     // IMMU page-table walks use the shared L2 data port only when DMMU and D-cache are idle.
     _LAZY_COMB(immu_ptw_selected_comb, bool)
         immu_ptw_selected_comb = immu.mem_read_out() && !dmmu.mem_read_out() &&
-            !dcache.mem_read_out() && !dcache.mem_write_out();
+            !dcache.mem_out.read_in() && !dcache.mem_out.write_in();
         return immu_ptw_selected_comb;
     }
 
@@ -701,7 +707,7 @@ private:
 #else
         lane = (addr % 32u) / 4u;
 #endif
-        mmu_l2_read_word_comb = (uint32_t)l2cache.d_read_data_out().bits(lane * 32 + 31, lane * 32);
+        mmu_l2_read_word_comb = (uint32_t)l2cache.d_mem_in.read_data_out().bits(lane * 32 + 31, lane * 32);
         return mmu_l2_read_word_comb;
     }
     // Do not let D-cache consume dmmu.paddr_out until the current translated access has a TLB hit.
@@ -742,11 +748,11 @@ private:
             (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
-            (data_mem_access && !dmmu_faulted_access && dcache.mem_read_out() && l2cache.d_wait_out()) ||
+            (data_mem_access && !dmmu_faulted_access && dcache.mem_out.read_in() && l2cache.d_mem_in.wait_out()) ||
             (data_mem_access && !dmmu_faulted_access &&
-                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && l2cache.d_wait_out()) ||
+                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && l2cache.d_mem_in.wait_out()) ||
             (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCE &&
-                (dcache.busy_out() || l2cache.d_wait_out() || l2cache.i_wait_out())) ||
+                (dcache.busy_out() || l2cache.d_mem_in.wait_out() || l2cache.i_mem_in.wait_out())) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !dmmu_faulted_access &&
             !wb_mem.load_ready_out());

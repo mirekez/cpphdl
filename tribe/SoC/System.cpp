@@ -17,6 +17,7 @@
 #endif
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -202,7 +203,7 @@ public:
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             tribe.mem_region_size_in[i] = mem_region_size_in[i];
             tribe.axi_in[i].awvalid_in = _ASSIGN(false);
-            tribe.axi_in[i].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].awaddr_in = _ASSIGN((u<32>)0);
             tribe.axi_in[i].awid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].wvalid_in = _ASSIGN(false);
             tribe.axi_in[i].wdata_in = _ASSIGN((logic<TRIBE_L2_AXI_WIDTH>)0);
@@ -210,12 +211,12 @@ public:
             tribe.axi_in[i].wlast_in = _ASSIGN(false);
             tribe.axi_in[i].bready_in = _ASSIGN(false);
             tribe.axi_in[i].arvalid_in = _ASSIGN(false);
-            tribe.axi_in[i].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)0);
+            tribe.axi_in[i].araddr_in = _ASSIGN((u<32>)0);
             tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].rready_in = _ASSIGN(false);
         }
         tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
-        tribe.axi_in[0].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.awaddr_in());
+        tribe.axi_in[0].awaddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.awaddr_in());
         tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
         tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
         tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
@@ -223,11 +224,11 @@ public:
         tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
         tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
         tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
-        tribe.axi_in[0].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)accelerator.dma_out.araddr_in());
+        tribe.axi_in[0].araddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.araddr_in());
         tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
         tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
         tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
-        tribe.axi_in[1].awaddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.awaddr_in());
+        tribe.axi_in[1].awaddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.awaddr_in());
         tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
         tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
         tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
@@ -235,7 +236,7 @@ public:
         tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
         tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
         tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
-        tribe.axi_in[1].araddr_in = _ASSIGN((u<clog2(MAX_RAM_SIZE)>)(uint32_t)sdcard.dma_out.araddr_in());
+        tribe.axi_in[1].araddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.araddr_in());
         tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
         tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
@@ -818,6 +819,12 @@ public:
 
 [[maybe_unused]] static void use_executable_workdir_if_needed(const char* argv0)
 {
+    // CTest isolates each executable's generated files in its own work dir.
+    // Preserve that isolation instead of returning to the shared binary dir.
+    if (std::getenv("TRIBE_KEEP_WORKDIR")) {
+        return;
+    }
+
     std::filesystem::path exe(argv0 ? argv0 : "");
     if (exe.has_parent_path()) {
         std::filesystem::current_path(exe.parent_path());
@@ -828,12 +835,18 @@ public:
 [[maybe_unused]] static bool regenerate_system_sv(const std::filesystem::path& source_root)
 {
     namespace fs = std::filesystem;
-    fs::path cpphdl = fs::current_path() / ".." / "cpphdl";
+    fs::path cpphdl;
+    if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
+        cpphdl = fs::path(build_dir) / "cpphdl";
+    }
+    if (cpphdl.empty() || !fs::exists(cpphdl)) {
+        cpphdl = fs::current_path() / ".." / "cpphdl";
+    }
     if (!fs::exists(cpphdl)) {
         cpphdl = source_root / "build" / "cpphdl";
     }
     if (!fs::exists(cpphdl)) {
-        std::print("can't find cpphdl generator near build directory or source root\n");
+        std::print("can't find cpphdl generator in CPPHDL_BUILD_DIR, near build directory, or source root\n");
         return false;
     }
 
@@ -920,7 +933,7 @@ int main(int argc, char** argv)
             ok &= VerilatorCompile(__FILE__, "System", {"Predef_pkg",
                 "Amo_pkg", "Trap_pkg", "State_pkg", "Rv32i_pkg", "Rv32ic_pkg", "Rv32im_pkg", "Rv32ia_pkg", "Zicsr_pkg",
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
-                "File", "RAM1PORT", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "L2CacheOO", "BranchPredictor", "InterruptController",
+                "File", "RAM", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
                 "Tribe", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),

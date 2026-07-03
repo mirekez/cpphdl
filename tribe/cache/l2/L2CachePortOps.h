@@ -21,7 +21,7 @@ template<class GEOM>
 class L2CachePortOps : public GEOM
 {
 public:
-    // Re-export geometry constants for port-arbitration helpers; called by the final L2CacheOO stack.
+    // Re-export geometry constants for port-arbitration helpers; called by the final L2Cache stack.
     L2CACHE_GEOMETRY_CONSTANTS(GEOM);
 
     // Select the request source and operation kind for one cache cycle; called by future top-level arbitration.

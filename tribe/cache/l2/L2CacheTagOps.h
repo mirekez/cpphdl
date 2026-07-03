@@ -16,7 +16,7 @@ public:
     // Re-export geometry constants for tag packing/search; called by tag helpers and inherited layers.
     L2CACHE_GEOMETRY_CONSTANTS(GEOM);
 
-    // Pack valid/dirty/tag into one tag RAM entry; called by L2CacheOOPrimitives and future refill/writeback state.
+    // Pack valid/dirty/tag into one tag RAM entry; called by L2CachePrimitives and future refill/writeback state.
     static logic<GEOM::TAG_RAM_BITS> make_tag(bool valid, bool dirty, u<GEOM::TAG_BITS> tag)
     {
         logic<GEOM::TAG_RAM_BITS> ret;
@@ -46,7 +46,7 @@ public:
         return (uint64_t)entry.bits(GEOM::TAG_BITS - 1, 0);
     }
 
-    // Search all ways for a valid matching tag; called by L2CacheOOPrimitives and future lookup control.
+    // Search all ways for a valid matching tag; called by L2CachePrimitives and future lookup control.
     static L2CacheHitResult<GEOM::WAY_BITS> find_hit(const array<logic<GEOM::TAG_RAM_BITS>, GEOM::WAYS, true>& tags,
         u<GEOM::TAG_BITS> request_tag)
     {
