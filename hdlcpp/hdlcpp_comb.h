@@ -775,6 +775,17 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
                     out.push_back(assign);
                 }
             }
+            else if (lhs == base) {
+                auto rhs = assignmentRhs(lines[i]);
+                auto rhsTrimmed = trimCombText(rhs);
+                if (rhsTrimmed == "0" || rhsTrimmed == "0b0" || rhsTrimmed == "{}") {
+                    out.push_back(resultName + " = {};");
+                }
+                else if (rhs.find("_comb_func()") != std::string::npos ||
+                         rhs.find("sv_cast<") != std::string::npos) {
+                    out.push_back(resultName + " = (" + rhs + ")." + field + ";");
+                }
+            }
             ++i;
             continue;
         }

@@ -1957,6 +1957,17 @@ static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
 struct MyFrontendAction : public ASTFrontendAction
 {
+    bool BeginSourceFileAction(CompilerInstance &CI) override
+    {
+        // Fetched Clang 21 can report failed include-search candidates here
+        // even when a later search directory opens the header successfully.
+        CI.getDiagnostics().setSeverity(
+            clang::diag::err_cannot_open_file,
+            clang::diag::Severity::Ignored,
+            clang::SourceLocation());
+        return true;
+    }
+
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override
     {
         return std::make_unique<MethodConsumer>(&CI.getASTContext());
@@ -2049,7 +2060,8 @@ int main(int argc, const char **argv)
     std::vector<std::string> cpphdl_include_args;
 #ifdef CPPHDL_SOURCE_DIR
     if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
-        cpphdl_include_args.push_back("-I" + cpphdl_source_include.string());
+        cpphdl_include_args.push_back("-isystem");
+        cpphdl_include_args.push_back(cpphdl_source_include.string());
     }
 #endif
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS

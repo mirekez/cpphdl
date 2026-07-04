@@ -113,6 +113,16 @@
             auto& i = expr.as<InvocationExpressionSyntax>();
             auto callee = trim(exprText(i.left->toString()));
             auto lookup = [&](std::string name) -> std::string {
+                if (auto combIt = mod->combReturnTypes.find(name); combIt != mod->combReturnTypes.end()) {
+                    return combIt->second;
+                }
+                static const std::string combSuffix = "_func";
+                if (name.size() > combSuffix.size() && name.substr(name.size() - combSuffix.size()) == combSuffix) {
+                    auto storage = name.substr(0, name.size() - combSuffix.size());
+                    if (auto combIt = mod->combReturnTypes.find(storage); combIt != mod->combReturnTypes.end()) {
+                        return combIt->second;
+                    }
+                }
                 auto it = mod->functionReturnTypes.find(name);
                 if (it != mod->functionReturnTypes.end()) {
                     return it->second;
@@ -173,11 +183,52 @@
     {
         type = unwrapRegType(trim(std::move(type)));
         for (size_t guard = 0; mod && guard < 32; ++guard) {
-            auto it = mod->types.find(type);
-            if (it == mod->types.end() || it->second == type) {
+            auto lookupAlias = [&](const std::string& name) -> std::string {
+                if (auto it = mod->types.find(name); it != mod->types.end()) {
+                    return it->second;
+                }
+                if (auto scope = name.rfind("::"); scope != std::string::npos) {
+                    auto packageName = name.substr(0, scope);
+                    auto localName = name.substr(scope + 2);
+                    if (auto* package = findModule(packageName); package && package->types.count(localName)) {
+                        return package->types[localName];
+                    }
+                }
+                if (name.find("::") == std::string::npos) {
+                    for (const auto& import : mod->imports) {
+                        if (auto* package = findModule(import); package && package->types.count(name)) {
+                            return package->types[name];
+                        }
+                    }
+                    std::string packageAlias;
+                    bool ambiguousPackageAlias = false;
+                    for (const auto& candidate : modules) {
+                        if (!candidate.isPackage) {
+                            continue;
+                        }
+                        auto it = candidate.types.find(name);
+                        if (it == candidate.types.end()) {
+                            continue;
+                        }
+                        if (packageAlias.empty()) {
+                            packageAlias = it->second;
+                        }
+                        else if (packageAlias != it->second) {
+                            ambiguousPackageAlias = true;
+                            break;
+                        }
+                    }
+                    if (!ambiguousPackageAlias && !packageAlias.empty()) {
+                        return packageAlias;
+                    }
+                }
+                return "";
+            };
+            auto alias = lookupAlias(type);
+            if (alias.empty() || alias == type) {
                 break;
             }
-            type = unwrapRegType(trim(it->second));
+            type = unwrapRegType(trim(alias));
         }
         return type;
     }
@@ -225,6 +276,49 @@
             args = templateArgsFor(resolvedType, "std::array");
         }
         return args.size() >= 2 && (args.size() < 3 || trim(args[2]) != "true");
+    }
+
+    std::string canonicalArrayBound(std::string text)
+    {
+        text = trim(std::move(text));
+        replaceAll(text, " ", "");
+        replaceAll(text, "\t", "");
+        replaceAll(text, "(uint64_t)", "");
+        replaceAll(text, "(unsigned)", "");
+        replaceAll(text, "(size_t)", "");
+        replaceAll(text, "&((1ull<<32)-1ull)", "");
+        replaceAll(text, "&((1ull<<64)-1ull)", "");
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            while (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+                auto close = matchingParenClose(text, 0);
+                if (close != text.size() - 1) {
+                    break;
+                }
+                text = trim(text.substr(1, text.size() - 2));
+                replaceAll(text, " ", "");
+                replaceAll(text, "\t", "");
+                changed = true;
+            }
+        }
+        return text;
+    }
+
+    bool sameArrayValueShape(const std::string& targetType, const std::string& sourceType)
+    {
+        auto target = resolveAliasValueType(targetType);
+        auto source = resolveAliasValueType(sourceType);
+        auto targetArgs = templateArgsFor(target, target.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+        auto sourceArgs = templateArgsFor(source, source.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+        if (targetArgs.size() < 2 || sourceArgs.size() < 2) {
+            return false;
+        }
+        auto targetPacked = targetArgs.size() >= 3 ? trim(targetArgs[2]) : "false";
+        auto sourcePacked = sourceArgs.size() >= 3 ? trim(sourceArgs[2]) : "false";
+        return trim(targetArgs[0]) == trim(sourceArgs[0]) &&
+            canonicalArrayBound(targetArgs[1]) == canonicalArrayBound(sourceArgs[1]) &&
+            targetPacked == sourcePacked;
     }
 
     std::string packedValueExpr(const ExpressionSyntax& expr, const std::string& emitted = "")
@@ -2559,7 +2653,10 @@
                 int angleDepth = 1;
                 size_t typeEnd = pos;
                 for (; typeEnd < text.size(); ++typeEnd) {
-                    if (text[typeEnd] == '<') {
+                    if (text[typeEnd] == '<' && typeEnd + 1 < text.size() && text[typeEnd + 1] == '<') {
+                        ++typeEnd;
+                    }
+                    else if (text[typeEnd] == '<') {
                         ++angleDepth;
                     }
                     else if (text[typeEnd] == '>' && --angleDepth == 0) {
@@ -2594,7 +2691,10 @@
                 int angleDepth = 1;
                 size_t typeEnd = pos;
                 for (; typeEnd < text.size(); ++typeEnd) {
-                    if (text[typeEnd] == '<') {
+                    if (text[typeEnd] == '<' && typeEnd + 1 < text.size() && text[typeEnd + 1] == '<') {
+                        ++typeEnd;
+                    }
+                    else if (text[typeEnd] == '<') {
                         ++angleDepth;
                     }
                     else if (text[typeEnd] == '>' && --angleDepth == 0) {
@@ -2672,7 +2772,10 @@
                 trimmedRhs.rfind("cpphdl::pack_value<", 0) != 0 &&
                 trimmedRhs.rfind("cpphdl::unpack_value<", 0) != 0 &&
                 trimmedRhs.rfind("cpphdl::sv_cast<", 0) != 0) {
-                rhs = "cpphdl::pack_value<cpphdl::type_width<" + targetStorageType + ">()>(" + rhs + ")";
+                auto sourceStorageType = exprType(*b.right);
+                if (sourceStorageType.empty() || !sameArrayValueShape(targetStorageType, sourceStorageType)) {
+                    rhs = "cpphdl::pack_value<cpphdl::type_width<" + targetStorageType + ">()>(" + rhs + ")";
+                }
             }
             else if (!targetStorageType.empty() && isUnpackedArrayValueType(targetStorageType) &&
                 lhs.find('[') == std::string::npos && lhs.find('.') == std::string::npos &&
@@ -2680,8 +2783,11 @@
                 !isUnbasedUnsizedLiteralExpr(*b.right, '0') && !isUnbasedUnsizedLiteralExpr(*b.right, '1') &&
                 trimmedRhs.rfind("cpphdl::unpack_value<", 0) != 0 &&
                 trimmedRhs.rfind("cpphdl::sv_cast<", 0) != 0) {
-                rhs = "cpphdl::unpack_value<" + targetStorageType + ">(cpphdl::pack_value<cpphdl::type_width<" +
-                    targetStorageType + ">()>(" + rhs + "))";
+                auto sourceStorageType = exprType(*b.right);
+                if (sourceStorageType.empty() || !sameArrayValueShape(targetStorageType, sourceStorageType)) {
+                    rhs = "cpphdl::unpack_value<" + targetStorageType + ">(cpphdl::pack_value<cpphdl::type_width<" +
+                        targetStorageType + ">()>(" + rhs + "))";
+                }
             }
             if (((isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) ||
                  ((!comb && mod->varNames.count(base)) &&

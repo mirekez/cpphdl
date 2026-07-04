@@ -4959,7 +4959,7 @@
             return target + "(" + rhs + ")";
         }
         if (sourceIsPackedAggregate) {
-            return "cpphdl::pack_value<cpphdl::type_width<" + target + ">()>(" + rhs + ")";
+            return target + "(" + rhs + ")";
         }
         return rhs;
     }

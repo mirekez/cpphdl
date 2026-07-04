@@ -1025,6 +1025,30 @@
             resolvedTarget = resolveAliasValueType(normalizeDecltypeType(resolvedTarget));
             auto sourceIsAggregate = isAggregateValueType(sourceType) ||
                 resolvedSource.rfind("array<", 0) == 0 || resolvedSource.rfind("std::array<", 0) == 0;
+            if ((resolvedTarget.rfind("logic<", 0) == 0 || resolvedTarget.rfind("u<", 0) == 0 ||
+                 isPrimitiveWrapperType(resolvedTarget)) &&
+                !isAggregateValueType(target) && !isAggregateValueType(resolvedTarget)) {
+                return target + "(" + emitNumericExpr(*operand) + ")";
+            }
+            auto scalarAliasName = [](std::string type) {
+                type = trim(std::move(type));
+                auto scope = type.rfind("::");
+                if (scope != std::string::npos) {
+                    type = type.substr(scope + 2);
+                }
+                std::string lowered;
+                lowered.reserve(type.size());
+                for (char ch : type) {
+                    lowered.push_back((char)std::tolower((unsigned char)ch));
+                }
+                return lowered.find("uint") != std::string::npos || lowered.find("int") != std::string::npos;
+            };
+            if (!sourceIsAggregate && scalarAliasName(target) && !isAggregateValueType(target)) {
+                auto targetWidth = foldWidth(typeWidth(target));
+                if (!targetWidth.empty()) {
+                    return target + "(" + emitNumericExpr(*operand) + ")";
+                }
+            }
             auto targetIsAggregate = isAggregateValueType(target) ||
                 resolvedTarget.rfind("array<", 0) == 0 || resolvedTarget.rfind("std::array<", 0) == 0 ||
                 (mod && mod->typeParamNames.count(target));
@@ -1979,10 +2003,20 @@
 		                    return type;
 		                };
 		                auto fieldType = [&](const std::string& base, const std::string& field) {
-		                    if (!m.types.count(base)) {
+		                    std::string baseType;
+		                    if (m.types.count(base)) {
+		                        baseType = m.types[base];
+		                    }
+		                    else if (auto source = methodForBase(base); source && !source->returnName.empty()) {
+		                        auto typeIt = m.combReturnTypes.find(source->returnName);
+		                        if (typeIt != m.combReturnTypes.end()) {
+		                            baseType = typeIt->second;
+		                        }
+		                    }
+		                    if (baseType.empty()) {
 		                        return std::string();
 		                    }
-		                    auto baseType = unwrapRegType(m.types[base]);
+		                    baseType = unwrapRegType(baseType);
 		                    auto resolvedBaseType = resolveLocalAliasType(baseType);
 		                    if (resolvedBaseType.empty()) {
 		                        resolvedBaseType = baseType;
@@ -1990,6 +2024,9 @@
 		                    auto type = fieldTypeFor(resolvedBaseType, field);
 		                    if (type.empty()) {
 		                        if (resolvedBaseType.find("::") != std::string::npos) {
+		                            return std::string();
+		                        }
+		                        if (resolvedBaseType.rfind("array<", 0) == 0) {
 		                            return std::string();
 		                        }
 		                        auto knownFields = fieldOrderFor(resolvedBaseType);
@@ -2003,17 +2040,6 @@
 		                        type = "std::remove_cvref_t<decltype(std::declval<" + resolvedBaseType + ">()." + field + ")>";
 		                    }
 		                    return unwrapRegType(type);
-		                };
-		                auto hasConfirmedField = [&](const std::string& base, const std::string& field) {
-		                    if (!m.types.count(base)) {
-		                        return false;
-		                    }
-		                    auto baseType = unwrapRegType(m.types[base]);
-		                    auto resolvedBaseType = resolveLocalAliasType(baseType);
-		                    if (resolvedBaseType.empty()) {
-		                        resolvedBaseType = baseType;
-		                    }
-		                    return !fieldTypeFor(resolvedBaseType, field).empty();
 		                };
 	                auto readBalancedArgument = [](const std::string& text, size_t pos) -> std::pair<std::string, size_t> {
 	                    int paren = 0;
@@ -2104,7 +2130,117 @@
 	                };
 	                auto demandFields = [&]() {
 	                    std::set<std::pair<std::string, std::string>> demand;
+	                    const bool traceFieldDemands = std::getenv("HDLCPP_TRACE_FIELD_DEMANDS") != nullptr;
 	                    auto scan = [&](const std::string& text, const std::string& inheritedField = "") {
+	                        auto demandSelectedAggregateBranch = [&](const std::string& base, const std::string& wholeCall) {
+	                            if (inheritedField.empty()) {
+	                                return;
+	                            }
+	                            std::function<bool(std::string)> branchUsesWholeCall = [&](std::string branch) -> bool {
+	                                branch = trim(std::move(branch));
+	                                while (branch.size() >= 2 && branch.front() == '(' && branch.back() == ')') {
+	                                    auto close = matchingParenClose(branch, 0);
+	                                    if (close != branch.size() - 1) {
+	                                        break;
+	                                    }
+	                                    branch = trim(branch.substr(1, branch.size() - 2));
+	                                }
+	                                if (branch == wholeCall) {
+	                                    return true;
+	                                }
+	                                if (branch.find(wholeCall) != std::string::npos) {
+	                                    return true;
+	                                }
+	                                int paren = 0;
+	                                int angle = 0;
+	                                size_t question = std::string::npos;
+	                                size_t colon = std::string::npos;
+	                                for (size_t pos = 0; pos < branch.size(); ++pos) {
+	                                    if (branch[pos] == '(') ++paren;
+	                                    else if (branch[pos] == ')' && paren > 0) --paren;
+	                                    else if (branch[pos] == '<' && paren == 0) ++angle;
+	                                    else if (branch[pos] == '>' && paren == 0 && angle > 0) --angle;
+	                                    else if (branch[pos] == '?' && paren == 0 && angle == 0) question = pos;
+	                                    else if (branch[pos] == ':' && paren == 0 && angle == 0 && question != std::string::npos) {
+	                                        if ((pos > 0 && branch[pos - 1] == ':') ||
+	                                            (pos + 1 < branch.size() && branch[pos + 1] == ':')) {
+	                                            continue;
+	                                        }
+	                                        colon = pos;
+	                                        break;
+	                                    }
+	                                }
+	                                if (question == std::string::npos || colon == std::string::npos) {
+	                                    return false;
+	                                }
+	                                return branchUsesWholeCall(branch.substr(question + 1, colon - question - 1)) ||
+	                                       branchUsesWholeCall(branch.substr(colon + 1));
+	                            };
+	                            const auto suffix = ")." + inheritedField;
+	                            for (size_t dot = 0; (dot = text.find(suffix, dot)) != std::string::npos;) {
+	                                int depth = 0;
+	                                size_t open = std::string::npos;
+	                                for (size_t pos = dot + 1; pos-- > 0;) {
+	                                    if (text[pos] == ')') {
+	                                        ++depth;
+	                                    }
+	                                    else if (text[pos] == '(') {
+	                                        --depth;
+	                                        if (depth == 0) {
+	                                            open = pos;
+	                                            break;
+	                                        }
+	                                    }
+	                                    if (pos == 0) {
+	                                        break;
+	                                    }
+	                                }
+	                                if (open == std::string::npos) {
+	                                    dot += suffix.size();
+	                                    continue;
+	                                }
+	                                auto inner = trim(text.substr(open + 1, dot - open - 1));
+	                                while (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') {
+	                                    auto close = matchingParenClose(inner, 0);
+	                                    if (close != inner.size() - 1) {
+	                                        break;
+	                                    }
+	                                    inner = trim(inner.substr(1, inner.size() - 2));
+	                                }
+	                                int paren = 0;
+	                                int angle = 0;
+	                                size_t question = std::string::npos;
+	                                size_t colon = std::string::npos;
+	                                for (size_t pos = 0; pos < inner.size(); ++pos) {
+	                                    if (inner[pos] == '(') ++paren;
+	                                    else if (inner[pos] == ')' && paren > 0) --paren;
+	                                    else if (inner[pos] == '<' && paren == 0) ++angle;
+	                                    else if (inner[pos] == '>' && paren == 0 && angle > 0) --angle;
+	                                    else if (inner[pos] == '?' && paren == 0 && angle == 0) question = pos;
+	                                    else if (inner[pos] == ':' && paren == 0 && angle == 0 && question != std::string::npos) {
+	                                        if ((pos > 0 && inner[pos - 1] == ':') || (pos + 1 < inner.size() && inner[pos + 1] == ':')) {
+	                                            continue;
+	                                        }
+	                                        colon = pos;
+	                                        break;
+	                                    }
+	                                }
+	                                if (question != std::string::npos && colon != std::string::npos) {
+	                                    auto lhs = trim(inner.substr(question + 1, colon - question - 1));
+	                                    auto rhs = trim(inner.substr(colon + 1));
+	                                    if (branchUsesWholeCall(lhs) || branchUsesWholeCall(rhs)) {
+	                                        demand.insert({base, inheritedField});
+	                                        if (traceFieldDemands) {
+	                                            std::cerr << "HDLCPP_FIELD_DEMAND module=" << m.name
+	                                                      << " base=" << base
+	                                                      << " field=" << inheritedField
+	                                                      << " via=selected " << wholeCall << "\n";
+	                                        }
+	                                    }
+	                                }
+	                                dot += suffix.size();
+	                            }
+	                        };
 	                        for (const auto& item : m.combMethodByBase) {
 	                            auto source = methodForBase(item.first);
 	                            if (!source) {
@@ -2124,21 +2260,7 @@
 	                                }
 	                                pos = end;
 	                            }
-	                            if (!inheritedField.empty() && hasConfirmedField(item.first, inheritedField)) {
-	                                const auto wholeCall = source->name + "()";
-	                                for (size_t pos = 0; (pos = text.find(wholeCall, pos)) != std::string::npos;) {
-	                                    auto before = pos == 0 ? '\0' : text[pos - 1];
-	                                    auto after = pos + wholeCall.size();
-	                                    while (after < text.size() && std::isspace(static_cast<unsigned char>(text[after]))) {
-	                                        ++after;
-	                                    }
-	                                    if (!(std::isalnum(static_cast<unsigned char>(before)) || before == '_' || before == '.') &&
-	                                        (after >= text.size() || text[after] != '[')) {
-	                                        demand.insert({item.first, inheritedField});
-	                                    }
-	                                    pos += wholeCall.size();
-	                                }
-	                            }
+	                            demandSelectedAggregateBranch(item.first, source->name + "()");
 	                            const auto direct = item.first + ".";
 	                            for (size_t pos = 0; (pos = text.find(direct, pos)) != std::string::npos;) {
 	                                auto prev = pos == 0 ? '\0' : text[pos - 1];
@@ -2170,6 +2292,16 @@
 	                                m.methods[fieldMethod.second].name == method.name) {
 	                                inheritedField = fieldMethod.first.second;
 	                                break;
+	                            }
+	                        }
+	                        if (inheritedField.empty() && !method.returnBase.empty() && !method.returnName.empty()) {
+	                            const auto prefix = method.returnBase + "_";
+	                            const auto suffix = std::string("_comb");
+	                            if (method.returnName.rfind(prefix, 0) == 0 &&
+	                                method.returnName.size() > prefix.size() + suffix.size() &&
+	                                method.returnName.compare(method.returnName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+	                                inheritedField = method.returnName.substr(prefix.size(),
+	                                    method.returnName.size() - prefix.size() - suffix.size());
 	                            }
 	                        }
 	                        for (const auto& line : method.body) {
@@ -2204,6 +2336,60 @@
 		                        }
 		                        auto typeDefaultExpr = [&]() {
 		                            return type + "{}";
+		                        };
+		                        std::function<std::string(std::string)> typeDefaultBranches = [&](std::string expr) -> std::string {
+		                            expr = trim(std::move(expr));
+		                            auto isDefaultBranch = [&](std::string branch) {
+		                                branch = trim(std::move(branch));
+		                                while (branch.size() >= 2 && branch.front() == '(' && branch.back() == ')') {
+		                                    auto close = matchingParenClose(branch, 0);
+		                                    if (close != branch.size() - 1) {
+		                                        break;
+		                                    }
+		                                    branch = trim(branch.substr(1, branch.size() - 2));
+		                                }
+		                                return isDefaultWholeExpr(branch);
+		                            };
+		                            if (isDefaultBranch(expr)) {
+		                                return typeDefaultExpr();
+		                            }
+		                            std::string stripped = expr;
+		                            bool wrapped = false;
+		                            while (stripped.size() >= 2 && stripped.front() == '(' && stripped.back() == ')') {
+		                                auto close = matchingParenClose(stripped, 0);
+		                                if (close != stripped.size() - 1) {
+		                                    break;
+		                                }
+		                                stripped = trim(stripped.substr(1, stripped.size() - 2));
+		                                wrapped = true;
+		                            }
+		                            int paren = 0;
+		                            int angle = 0;
+		                            size_t question = std::string::npos;
+		                            size_t colon = std::string::npos;
+		                            for (size_t pos = 0; pos < stripped.size(); ++pos) {
+		                                if (stripped[pos] == '(') ++paren;
+		                                else if (stripped[pos] == ')' && paren > 0) --paren;
+		                                else if (stripped[pos] == '<' && paren == 0) ++angle;
+		                                else if (stripped[pos] == '>' && paren == 0 && angle > 0) --angle;
+		                                else if (stripped[pos] == '?' && paren == 0 && angle == 0) question = pos;
+		                                else if (stripped[pos] == ':' && paren == 0 && angle == 0 && question != std::string::npos) {
+		                                    if ((pos > 0 && stripped[pos - 1] == ':') ||
+		                                        (pos + 1 < stripped.size() && stripped[pos + 1] == ':')) {
+		                                        continue;
+		                                    }
+		                                    colon = pos;
+		                                    break;
+		                                }
+		                            }
+		                            if (question == std::string::npos || colon == std::string::npos) {
+		                                return expr;
+		                            }
+		                            auto cond = trim(stripped.substr(0, question));
+		                            auto lhs = typeDefaultBranches(stripped.substr(question + 1, colon - question - 1));
+		                            auto rhs = typeDefaultBranches(stripped.substr(colon + 1));
+		                            auto out = "(" + cond + " ? " + lhs + " : " + rhs + ")";
+		                            return wrapped ? out : out;
 		                        };
 		                        const auto storageName = fieldStorageName(base, field);
 		                        const auto sourceStorageName = source->returnName.empty() ? source->returnBase : source->returnName;
@@ -2242,6 +2428,14 @@
 		                                hdlcpp::replaceExactMember(line, sourceStorageName, field, storageName);
 		                                hdlcpp::replaceExactMember(line, source->returnBase, field, storageName);
 		                                hdlcpp::replaceExactMember(line, storageName, field, storageName);
+		                                auto eq = hdlcpp::topLevelAssignPos(line);
+		                                if (eq != std::string::npos && trim(line.substr(0, eq)) == storageName) {
+		                                    auto rhs = trim(line.substr(eq + 1));
+		                                    if (!rhs.empty() && rhs.back() == ';') {
+		                                        rhs.pop_back();
+		                                    }
+		                                    line = storageName + " = " + typeDefaultBranches(rhs) + ";";
+		                                }
 		                            }
 		                            method.body.insert(method.body.end(), extractedFieldBody.begin(), extractedFieldBody.end());
 		                            m.combReturnTypes[method.returnName] = type;
@@ -2270,6 +2464,7 @@
 	                        if (expr.empty()) {
 	                            continue;
 	                        }
+	                        expr = typeDefaultBranches(expr);
 	                        MethodGen method;
 	                        method.name = fieldMethodName(base, field);
 	                        method.ret = type + "&";
@@ -4386,8 +4581,14 @@
             method.body.push_back("    using __cpphdl_target_elem_t = std::remove_cvref_t<decltype(std::declval<const __cpphdl_target_array_t&>()[0])>;");
             method.body.push_back("    " + storage + " = {};");
             method.body.push_back("    auto __cpphdl_src = " + rhs + ";");
+            method.body.push_back("    using __cpphdl_src_elem_t = std::remove_cvref_t<decltype(__cpphdl_src[0])>;");
             method.body.push_back("    for (size_t __cpphdl_i = 0; __cpphdl_i < (__cpphdl_target_array_t::SIZE_BITS / __cpphdl_target_array_t::ELEMENT_BITS); ++__cpphdl_i) {");
-            method.body.push_back("        " + storage + "[__cpphdl_i] = cpphdl::unpack_value<__cpphdl_target_elem_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_elem_t>()>(__cpphdl_src[__cpphdl_i]));");
+            method.body.push_back("        if constexpr (std::is_assignable_v<__cpphdl_target_elem_t&, __cpphdl_src_elem_t>) {");
+            method.body.push_back("            " + storage + "[__cpphdl_i] = __cpphdl_src[__cpphdl_i];");
+            method.body.push_back("        }");
+            method.body.push_back("        else {");
+            method.body.push_back("            " + storage + "[__cpphdl_i] = cpphdl::unpack_value<__cpphdl_target_elem_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_elem_t>()>(__cpphdl_src[__cpphdl_i]));");
+            method.body.push_back("        }");
             method.body.push_back("    }");
             method.body.push_back("}");
             m.methods.push_back(method);
@@ -5354,8 +5555,163 @@
 	                }
 	            }
 	        }
-	        auto projectedFieldCall = [&](std::string branch, const std::string& field) -> std::string {
+	        std::function<std::string(std::string, const std::string&)> projectedFieldCall;
+	        projectedFieldCall = [&](std::string branch, const std::string& field) -> std::string {
 	            branch = trim(branch);
+	            auto sourceAggregateFieldExpr = [&](const MethodGen& source) -> std::string {
+	                auto bindExtractedExpr = [&](std::string expr) {
+	                    expr = trim(std::move(expr));
+	                    auto isIdentText = [](const std::string& text) {
+	                        if (text.empty()) {
+	                            return false;
+	                        }
+	                        if (!std::isalpha(static_cast<unsigned char>(text.front())) && text.front() != '_') {
+	                            return false;
+	                        }
+	                        for (char ch : text) {
+	                            if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_') {
+	                                return false;
+	                            }
+	                        }
+	                        return true;
+	                    };
+	                    if (isIdentText(expr)) {
+	                        if (auto it = mod.combMethodByBase.find(expr);
+	                            it != mod.combMethodByBase.end() && it->second < mod.methods.size()) {
+	                            return mod.methods[it->second].name + "()";
+	                        }
+	                        if (auto it = mod.wireMap.find(expr); it != mod.wireMap.end()) {
+	                            return it->second + "()";
+	                        }
+	                        if (auto it = mod.portCppNames.find(expr); it != mod.portCppNames.end()) {
+	                            return it->second + "()";
+	                        }
+	                    }
+	                    std::vector<std::pair<std::string, std::string>> replacements;
+	                    for (const auto& item : mod.combMethodByBase) {
+	                        if (item.second < mod.methods.size()) {
+	                            replacements.push_back({item.first, mod.methods[item.second].name + "()"});
+	                        }
+	                    }
+	                    std::sort(replacements.begin(), replacements.end(), [](const auto& a, const auto& b) {
+	                        return a.first.size() > b.first.size();
+	                    });
+	                    for (const auto& item : replacements) {
+	                        replaceIdentifierAll(expr, item.first, item.second);
+	                    }
+	                    return expr;
+	                };
+	                const std::string assignNeedle = "__cpphdl_assign_field(v." + field + ", __cpphdl_field_value)";
+	                const std::string valueNeedle = "auto __cpphdl_field_value = ";
+	                for (const auto& line : source.body) {
+	                    auto assignPos = line.find(assignNeedle);
+	                    if (assignPos == std::string::npos) {
+	                        continue;
+	                    }
+	                    auto valuePos = line.rfind(valueNeedle, assignPos);
+	                    if (valuePos == std::string::npos) {
+	                        continue;
+	                    }
+	                    valuePos += valueNeedle.size();
+	                    int paren = 0;
+	                    int brace = 0;
+	                    int bracket = 0;
+	                    for (size_t end = valuePos; end < line.size(); ++end) {
+	                        char ch = line[end];
+	                        if (ch == '(') {
+	                            ++paren;
+	                        }
+	                        else if (ch == ')' && paren > 0) {
+	                            --paren;
+	                        }
+	                        else if (ch == '{') {
+	                            ++brace;
+	                        }
+	                        else if (ch == '}' && brace > 0) {
+	                            --brace;
+	                        }
+	                        else if (ch == '[') {
+	                            ++bracket;
+	                        }
+	                        else if (ch == ']' && bracket > 0) {
+	                            --bracket;
+	                        }
+	                        else if (ch == ';' && paren == 0 && brace == 0 && bracket == 0) {
+	                            return bindExtractedExpr(line.substr(valuePos, end - valuePos));
+	                        }
+	                    }
+	                }
+	                return {};
+	            };
+	            auto unwrapSvCast = [&](std::string text) {
+	                text = trim(std::move(text));
+	                for (;;) {
+	                    const std::string cppCast = "cpphdl::sv_cast<";
+	                    const std::string bareCast = "sv_cast<";
+	                    std::string marker;
+	                    if (text.rfind(cppCast, 0) == 0) {
+	                        marker = cppCast;
+	                    }
+	                    else if (text.rfind(bareCast, 0) == 0) {
+	                        marker = bareCast;
+	                    }
+	                    else {
+	                        return text;
+	                    }
+	                    int angleDepth = 0;
+	                    size_t closeAngle = std::string::npos;
+	                    for (size_t i = marker.size(); i < text.size(); ++i) {
+	                        if (text[i] == '<') {
+	                            ++angleDepth;
+	                        }
+	                        else if (text[i] == '>') {
+	                            if (angleDepth == 0) {
+	                                closeAngle = i;
+	                                break;
+	                            }
+	                            --angleDepth;
+	                        }
+	                    }
+	                    if (closeAngle == std::string::npos) {
+	                        return text;
+	                    }
+	                    size_t openParen = closeAngle + 1;
+	                    while (openParen < text.size() && std::isspace(static_cast<unsigned char>(text[openParen]))) {
+	                        ++openParen;
+	                    }
+	                    if (openParen >= text.size() || text[openParen] != '(') {
+	                        return text;
+	                    }
+	                    auto closeParen = matchingParenClose(text, openParen);
+	                    if (closeParen == std::string::npos) {
+	                        return text;
+	                    }
+	                    size_t tail = closeParen + 1;
+	                    while (tail < text.size() && std::isspace(static_cast<unsigned char>(text[tail]))) {
+	                        ++tail;
+	                    }
+	                    if (tail != text.size()) {
+	                        return text;
+	                    }
+	                    text = trim(text.substr(openParen + 1, closeParen - openParen - 1));
+	                }
+	            };
+	            auto directBranch = unwrapSvCast(branch);
+	            auto containsCall = [](const std::string& text, const std::string& name) {
+	                const auto needle = name + "()";
+	                auto isIdent = [](char ch) {
+	                    return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+	                };
+	                for (size_t pos = 0; (pos = text.find(needle, pos)) != std::string::npos;) {
+	                    auto before = pos == 0 ? '\0' : text[pos - 1];
+	                    auto after = pos + needle.size();
+	                    if (!isIdent(before) && (after >= text.size() || !isIdent(text[after]))) {
+	                        return true;
+	                    }
+	                    pos += needle.size();
+	                }
+	                return false;
+	            };
 	            auto fieldDefault = [&]() -> std::string {
 	                for (const auto& item : mod.combMethodByField) {
 	                    if (item.second >= mod.methods.size() || item.first.second != field) {
@@ -5385,8 +5741,72 @@
 	                    continue;
 	                }
 	                const auto& baseMethod = mod.methods[baseIt->second].name;
-	                if (branch == baseMethod + "()") {
+	                if (directBranch == baseMethod + "()") {
 	                    return mod.methods[item.second].name + "()";
+	                }
+	                if (containsCall(directBranch, baseMethod)) {
+	                    return mod.methods[item.second].name + "()";
+	                }
+	            }
+	            for (const auto& item : mod.combMethodByBase) {
+	                if (item.second >= mod.methods.size()) {
+	                    continue;
+	                }
+	                const auto& sourceMethod = mod.methods[item.second];
+	                if (directBranch != sourceMethod.name + "()") {
+	                    continue;
+	                }
+	                auto expr = sourceAggregateFieldExpr(sourceMethod);
+	                if (!expr.empty()) {
+	                    return expr;
+	                }
+	            }
+	            {
+	                std::string inner = directBranch;
+	                while (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') {
+	                    auto close = matchingParenClose(inner, 0);
+	                    if (close != inner.size() - 1) {
+	                        break;
+	                    }
+	                    inner = trim(inner.substr(1, inner.size() - 2));
+	                }
+	                int paren = 0;
+	                int angle = 0;
+	                size_t question = std::string::npos;
+	                size_t colon = std::string::npos;
+	                for (size_t pos = 0; pos < inner.size(); ++pos) {
+	                    if (inner[pos] == '(') ++paren;
+	                    else if (inner[pos] == ')' && paren > 0) --paren;
+	                    else if (inner[pos] == '<' && paren == 0) ++angle;
+	                    else if (inner[pos] == '>' && paren == 0 && angle > 0) --angle;
+	                    else if (inner[pos] == '?' && paren == 0 && angle == 0) question = pos;
+	                    else if (inner[pos] == ':' && paren == 0 && angle == 0 && question != std::string::npos) {
+	                        if ((pos > 0 && inner[pos - 1] == ':') || (pos + 1 < inner.size() && inner[pos + 1] == ':')) {
+	                            continue;
+	                        }
+	                        colon = pos;
+	                        break;
+	                    }
+	                }
+	                if (question != std::string::npos && colon != std::string::npos) {
+	                    auto cond = trim(inner.substr(0, question));
+	                    auto lhs = trim(inner.substr(question + 1, colon - question - 1));
+	                    auto rhs = trim(inner.substr(colon + 1));
+	                    return "(" + cond + " ? " + projectedFieldCall(lhs, field) +
+	                        " : " + projectedFieldCall(rhs, field) + ")";
+	                }
+	            }
+	            for (const auto& item : mod.combMethodByBase) {
+	                if (item.second >= mod.methods.size()) {
+	                    continue;
+	                }
+	                const auto& sourceMethod = mod.methods[item.second];
+	                if (!containsCall(directBranch, sourceMethod.name)) {
+	                    continue;
+	                }
+	                auto expr = sourceAggregateFieldExpr(sourceMethod);
+	                if (!expr.empty()) {
+	                    return expr;
 	                }
 	            }
 	            return "(" + branch + ")." + field;
@@ -5427,7 +5847,14 @@
 	                    dot = fieldEnd;
 	                    continue;
 	                }
-	                auto inner = out.substr(open + 1, dot - open - 1);
+	                auto inner = trim(out.substr(open + 1, dot - open - 1));
+	                while (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') {
+	                    auto close = matchingParenClose(inner, 0);
+	                    if (close != inner.size() - 1) {
+	                        break;
+	                    }
+	                    inner = trim(inner.substr(1, inner.size() - 2));
+	                }
 	                int paren = 0;
 	                int angle = 0;
 	                size_t question = std::string::npos;
@@ -7238,6 +7665,95 @@
             auto methodStart = std::chrono::steady_clock::now();
             long long lateBindNs = 0;
             long long postProcessNs = 0;
+            auto normalizeReturnDefaultBranches = [&](std::string& line) {
+                if (m.returnName.empty() || type.empty() || type == "auto") {
+                    return;
+                }
+                auto eq = hdlcpp::topLevelAssignPos(line);
+                if (eq == std::string::npos || trim(line.substr(0, eq)) != m.returnName) {
+                    return;
+                }
+                auto rhs = trim(line.substr(eq + 1));
+                const bool hadSemi = !rhs.empty() && rhs.back() == ';';
+                if (hadSemi) {
+                    rhs.pop_back();
+                    rhs = trim(rhs);
+                }
+                if (rhs.find("([&]") != std::string::npos ||
+                    rhs.find("[&]()") != std::string::npos ||
+                    rhs.find("__hdlcpp_field_value") != std::string::npos) {
+                    return;
+                }
+                auto isDefaultBranch = [&](std::string branch) {
+                    branch = trim(std::move(branch));
+                    while (branch.size() >= 2 && branch.front() == '(' && branch.back() == ')') {
+                        auto close = matchingParenClose(branch, 0);
+                        if (close != branch.size() - 1) {
+                            break;
+                        }
+                        branch = trim(branch.substr(1, branch.size() - 2));
+                    }
+                    return branch == "0" || branch == "0u" || branch == "0ull" ||
+                           branch == "0b0" || branch == "{}" ||
+                           branch == "logic<1>(0)" || branch == "logic<1>(0b0)" ||
+                           branch == "logic<1>(false)" || branch == "false";
+                };
+                std::function<std::string(std::string)> normalizeExpr = [&](std::string expr) -> std::string {
+                    expr = trim(std::move(expr));
+                    if (isDefaultBranch(expr)) {
+                        return type + "{}";
+                    }
+                    std::string stripped = expr;
+                    while (stripped.size() >= 2 && stripped.front() == '(' && stripped.back() == ')') {
+                        auto close = matchingParenClose(stripped, 0);
+                        if (close != stripped.size() - 1) {
+                            break;
+                        }
+                        stripped = trim(stripped.substr(1, stripped.size() - 2));
+                    }
+                    int paren = 0;
+                    int angle = 0;
+                    size_t question = std::string::npos;
+                    size_t colon = std::string::npos;
+                    for (size_t pos = 0; pos < stripped.size(); ++pos) {
+                        if (stripped[pos] == '(') ++paren;
+                        else if (stripped[pos] == ')' && paren > 0) --paren;
+                        else if (stripped[pos] == '<' && paren == 0) ++angle;
+                        else if (stripped[pos] == '>' && paren == 0 && angle > 0) --angle;
+                        else if (stripped[pos] == '?' && paren == 0 && angle == 0) {
+                            question = pos;
+                            break;
+                        }
+                    }
+                    if (question == std::string::npos) {
+                        return expr;
+                    }
+                    paren = 0;
+                    angle = 0;
+                    for (size_t pos = question + 1; pos < stripped.size(); ++pos) {
+                        if (stripped[pos] == '(') ++paren;
+                        else if (stripped[pos] == ')' && paren > 0) --paren;
+                        else if (stripped[pos] == '<' && paren == 0) ++angle;
+                        else if (stripped[pos] == '>' && paren == 0 && angle > 0) --angle;
+                        else if (stripped[pos] == ':' && paren == 0 && angle == 0) {
+                            if ((pos > 0 && stripped[pos - 1] == ':') ||
+                                (pos + 1 < stripped.size() && stripped[pos + 1] == ':')) {
+                                continue;
+                            }
+                            colon = pos;
+                            break;
+                        }
+                    }
+                    if (colon == std::string::npos) {
+                        return expr;
+                    }
+                    auto cond = trim(stripped.substr(0, question));
+                    auto lhs = normalizeExpr(stripped.substr(question + 1, colon - question - 1));
+                    auto rhsBranch = normalizeExpr(stripped.substr(colon + 1));
+                    return "(" + cond + " ? " + lhs + " : " + rhsBranch + ")";
+                };
+                line = m.returnName + " = " + normalizeExpr(rhs) + (hadSemi ? ";" : "");
+            };
             for (size_t bodyIndex = 0; bodyIndex < m.body.size(); ++bodyIndex) {
                 auto& l = m.body[bodyIndex];
                 if (tracePhases && m.body.size() >= 100 && bodyIndex != 0 && bodyIndex % 50 == 0) {
@@ -7286,6 +7802,7 @@
                     replaceSelfCombCall(emittedLine, m.returnName);
                 }
                 replaceSameMethodCombReads(emittedLine);
+                normalizeReturnDefaultBranches(emittedLine);
                 auto normalizeWholeArrayAssignment = [&]() {
                     auto eq = hdlcpp::topLevelAssignPos(emittedLine);
                     if (eq == std::string::npos) {
@@ -7335,6 +7852,49 @@
                     auto shapeArgs = templateArgsFor(shapeType, shapeType.rfind("std::array<", 0) == 0 ? "std::array" : "array");
                     const bool targetIsPackedArray = shapeArgs.size() >= 3 && trim(shapeArgs[2]) == "true";
                     const bool targetIsUnpackedArray = shapeArgs.size() >= 2 && !targetIsPackedArray;
+                    auto canonicalArrayBound = [](std::string text) {
+                        text = trim(std::move(text));
+                        replaceAll(text, " ", "");
+                        replaceAll(text, "\t", "");
+                        replaceAll(text, "(uint64_t)", "");
+                        replaceAll(text, "(unsigned)", "");
+                        replaceAll(text, "(size_t)", "");
+                        replaceAll(text, "&((1ull<<32)-1ull)", "");
+                        replaceAll(text, "&((1ull<<64)-1ull)", "");
+                        while (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+                            auto close = matchingParenClose(text, 0);
+                            if (close != text.size() - 1) {
+                                break;
+                            }
+                            text = trim(text.substr(1, text.size() - 2));
+                            replaceAll(text, " ", "");
+                            replaceAll(text, "\t", "");
+                        }
+                        return text;
+                    };
+                    auto sameArrayValueShape = [&](std::string target, std::string source) {
+                        auto aliases = localUsingTypeAliases(mod);
+                        for (auto* type : {&target, &source}) {
+                            *type = trim(*type);
+                            for (size_t guard = 0; guard < 32; ++guard) {
+                                auto it = aliases.find(*type);
+                                if (it == aliases.end() || it->second == *type) {
+                                    break;
+                                }
+                                *type = trim(it->second);
+                            }
+                        }
+                        auto targetArgs = templateArgsFor(target, target.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+                        auto sourceArgs = templateArgsFor(source, source.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+                        if (targetArgs.size() < 2 || sourceArgs.size() < 2) {
+                            return false;
+                        }
+                        auto targetPacked = targetArgs.size() >= 3 ? trim(targetArgs[2]) : "false";
+                        auto sourcePacked = sourceArgs.size() >= 3 ? trim(sourceArgs[2]) : "false";
+                        return trim(targetArgs[0]) == trim(sourceArgs[0]) &&
+                            canonicalArrayBound(targetArgs[1]) == canonicalArrayBound(sourceArgs[1]) &&
+                            targetPacked == sourcePacked;
+                    };
                     auto primitiveTarget = [&](const std::string& type) {
                         auto t = trim(type);
                         return t.empty() || t == "bool" || t == "u1" || t == "unsigned" ||
@@ -7357,12 +7917,185 @@
                         rhs.pop_back();
                         rhs = trim(rhs);
                     }
+                    auto simpleGetterTypeFor = [&](std::string value) -> std::string {
+                        value = trim(std::move(value));
+                        while (!value.empty() && value.front() == '(' && value.back() == ')') {
+                            auto close = matchingParenClose(value, 0);
+                            if (close != value.size() - 1) {
+                                break;
+                            }
+                            value = trim(value.substr(1, value.size() - 2));
+                        }
+                        if (value.size() < 3 || value.substr(value.size() - 2) != "()") {
+                            return "";
+                        }
+                        value = value.substr(0, value.size() - 2);
+                        if (value.find('[') != std::string::npos) {
+                            return "";
+                        }
+                        if (value.find('.') == std::string::npos) {
+                            for (const auto& port : mod.ports) {
+                                auto cppIt = mod.portCppNames.find(port.name);
+                                if (value == port.name ||
+                                    (cppIt != mod.portCppNames.end() && value == cppIt->second)) {
+                                    return port.type;
+                                }
+                            }
+                            if (auto it = mod.combReturnTypes.find(value); it != mod.combReturnTypes.end()) {
+                                return it->second;
+                            }
+                            static const std::string suffix = "_func";
+                            if (value.size() > suffix.size() && value.substr(value.size() - suffix.size()) == suffix) {
+                                auto storage = value.substr(0, value.size() - suffix.size());
+                                if (auto it = mod.combReturnTypes.find(storage); it != mod.combReturnTypes.end()) {
+                                    return it->second;
+                                }
+                            }
+                            for (const auto& method : mod.methods) {
+                                if (method.name == value && !method.returnName.empty()) {
+                                    if (auto it = mod.combReturnTypes.find(method.returnName); it != mod.combReturnTypes.end()) {
+                                        return it->second;
+                                    }
+                                }
+                            }
+                            return "";
+                        }
+                        auto dot = value.find('.');
+                        if (dot == std::string::npos || value.find('.', dot + 1) != std::string::npos) {
+                            return "";
+                        }
+                        auto instance = trim(value.substr(0, dot));
+                        auto getter = trim(value.substr(dot + 1));
+                        std::string childType;
+                        for (size_t i = 0; i < mod.memberNames.size() && i < mod.memberTypes.size(); ++i) {
+                            if (mod.memberNames[i] == instance) {
+                                childType = mod.memberTypes[i];
+                                break;
+                            }
+                        }
+                        if (childType.empty()) {
+                            return "";
+                        }
+                        auto childElementType = arrayElementTypeText(childType);
+                        auto childBaseType = trim(childElementType);
+                        std::string childParams;
+                        if (auto lt = childBaseType.find('<'); lt != std::string::npos) {
+                            int angleDepth = 0;
+                            size_t gt = std::string::npos;
+                            for (size_t pos = lt; pos < childElementType.size(); ++pos) {
+                                if (childElementType[pos] == '<') {
+                                    ++angleDepth;
+                                }
+                                else if (childElementType[pos] == '>' && --angleDepth == 0) {
+                                    gt = pos;
+                                    break;
+                                }
+                            }
+                            if (gt != std::string::npos && gt > lt) {
+                                childParams = childElementType.substr(lt + 1, gt - lt - 1);
+                            }
+                            childBaseType = trim(childBaseType.substr(0, lt));
+                        }
+                        auto* child = findModule(childElementType);
+                        if (!child && !childBaseType.empty()) {
+                            child = findModule(childBaseType);
+                        }
+                        if (!child) {
+                            return "";
+                        }
+                        for (const auto& port : child->ports) {
+                            auto cppIt = child->portCppNames.find(port.name);
+                            if (getter == port.name ||
+                                (cppIt != child->portCppNames.end() && getter == cppIt->second)) {
+                                auto resolvedPortType = port.type;
+                                if (!childParams.empty()) {
+                                    resolvedPortType = substituteParamDeclValues(child->params,
+                                                                                 splitTopLevelArgs(childParams),
+                                                                                 resolvedPortType);
+                                }
+                                return resolvedPortType;
+                            }
+                        }
+                        return "";
+                    };
+                    auto unpackTemplateCall = [](const std::string& text, const std::string& prefix) -> std::pair<std::string, std::string> {
+                        if (text.rfind(prefix, 0) != 0) {
+                            return {};
+                        }
+                        size_t pos = prefix.size();
+                        int angleDepth = 1;
+                        size_t typeEnd = pos;
+                        for (; typeEnd < text.size(); ++typeEnd) {
+                            if (text[typeEnd] == '<' && typeEnd + 1 < text.size() && text[typeEnd + 1] == '<') {
+                                ++typeEnd;
+                            }
+                            else if (text[typeEnd] == '<') {
+                                ++angleDepth;
+                            }
+                            else if (text[typeEnd] == '>' && --angleDepth == 0) {
+                                break;
+                            }
+                        }
+                        if (typeEnd >= text.size() || typeEnd + 1 >= text.size() || text[typeEnd + 1] != '(') {
+                            return {};
+                        }
+                        auto target = trim(text.substr(pos, typeEnd - pos));
+                        size_t argStart = typeEnd + 2;
+                        int parenDepth = 1;
+                        size_t argEnd = argStart;
+                        for (; argEnd < text.size(); ++argEnd) {
+                            if (text[argEnd] == '(') {
+                                ++parenDepth;
+                            }
+                            else if (text[argEnd] == ')' && --parenDepth == 0) {
+                                break;
+                            }
+                        }
+                        if (argEnd >= text.size() || trim(text.substr(argEnd + 1)) != "") {
+                            return {};
+                        }
+                        return {target, trim(text.substr(argStart, argEnd - argStart))};
+                    };
+                    if (targetIsPackedArray && rhs.rfind("cpphdl::pack_value<", 0) == 0) {
+                        auto packed = unpackTemplateCall(rhs, "cpphdl::pack_value<");
+                        auto sourceType = simpleGetterTypeFor(packed.second);
+                        if (!sourceType.empty() && sameArrayValueShape(targetType, sourceType)) {
+                            emittedLine = emittedLine.substr(0, eq + 1) + " " + packed.second +
+                                (hasSemicolon ? ";" : "");
+                            return;
+                        }
+                        if (!packed.second.empty()) {
+                            if (packed.second == "0" || packed.second == "0b0" || packed.second == "0x0" ||
+                                packed.second == "1" || packed.second == "0b1" || packed.second == "0x1") {
+                                emittedLine = emittedLine.substr(0, eq + 1) + " cpphdl::pack_value<cpphdl::type_width<" +
+                                    targetType + ">()>(" + packed.second + ")" + (hasSemicolon ? ";" : "");
+                                return;
+                            }
+                            emittedLine = emittedLine.substr(0, eq + 1) + " ([&]() -> " + targetType +
+                                " { auto&& __cpphdl_src = (" + packed.second +
+                                "); using __cpphdl_target_t = " + targetType +
+                                "; auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>(__cpphdl_src_arg_t&& __cpphdl_src_val) -> __cpphdl_target_t { " +
+                                "using __cpphdl_src_t = std::remove_cvref_t<__cpphdl_src_arg_t>; __cpphdl_target_t __cpphdl_out{}; " +
+                                "if constexpr (requires { __cpphdl_target_t::PACKED; __cpphdl_src_t::PACKED; " +
+                                "__cpphdl_target_t::ELEMENT_BITS; __cpphdl_src_t::ELEMENT_BITS; " +
+                                "__cpphdl_target_t::SIZE_BITS; __cpphdl_src_t::SIZE_BITS; }) { " +
+                                "if constexpr ((__cpphdl_target_t::PACKED == __cpphdl_src_t::PACKED) && " +
+                                "(__cpphdl_target_t::ELEMENT_BITS == __cpphdl_src_t::ELEMENT_BITS) && " +
+                                "(__cpphdl_target_t::SIZE_BITS == __cpphdl_src_t::SIZE_BITS)) { " +
+                                "__cpphdl_out = __cpphdl_src_val; } else { " +
+                                "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                                "} else { __cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                                "return __cpphdl_out; }; return __cpphdl_assign(__cpphdl_src); })()" + (hasSemicolon ? ";" : "");
+                            return;
+                        }
+                    }
                     if (rhs.empty() || rhs == "{}" || rhs.rfind("cpphdl::unpack_value<", 0) == 0 ||
                         rhs.rfind("cpphdl::sv_cast<", 0) == 0 ||
                         (targetIsPackedArray && rhs.rfind("cpphdl::pack_value<", 0) == 0)) {
                         return;
                     }
                     if (rhs == "0" || rhs == "0b0" || rhs == "0x0" ||
+                        rhs == "1" || rhs == "0b1" || rhs == "0x1" ||
                         rhs.find(';') != std::string::npos || rhs.find('\n') != std::string::npos) {
                         return;
                     }
@@ -7391,6 +8124,43 @@
                         return "";
                     }();
                     if (!rhsPortGetterType.empty() && trim(rhsPortGetterType) == trim(targetType)) {
+                        return;
+                    }
+                    if (!rhsPortGetterType.empty() && sameArrayValueShape(targetType, rhsPortGetterType)) {
+                        return;
+                    }
+                    auto rhsLocalCombGetterType = [&]() -> std::string {
+                        auto call = trim(rhs);
+                        while (!call.empty() && call.front() == '(' && call.back() == ')') {
+                            call = trim(call.substr(1, call.size() - 2));
+                        }
+                        if (call.size() < 3 || call.substr(call.size() - 2) != "()") {
+                            return "";
+                        }
+                        call = call.substr(0, call.size() - 2);
+                        if (call.find('.') != std::string::npos || call.find('[') != std::string::npos) {
+                            return "";
+                        }
+                        if (auto it = mod.combReturnTypes.find(call); it != mod.combReturnTypes.end()) {
+                            return it->second;
+                        }
+                        static const std::string suffix = "_func";
+                        if (call.size() > suffix.size() && call.substr(call.size() - suffix.size()) == suffix) {
+                            auto storage = call.substr(0, call.size() - suffix.size());
+                            if (auto it = mod.combReturnTypes.find(storage); it != mod.combReturnTypes.end()) {
+                                return it->second;
+                            }
+                        }
+                        for (const auto& method : mod.methods) {
+                            if (method.name == call && !method.returnName.empty()) {
+                                if (auto it = mod.combReturnTypes.find(method.returnName); it != mod.combReturnTypes.end()) {
+                                    return it->second;
+                                }
+                            }
+                        }
+                        return "";
+                    }();
+                    if (!rhsLocalCombGetterType.empty() && sameArrayValueShape(targetType, rhsLocalCombGetterType)) {
                         return;
                     }
                     auto rhsChildGetterType = [&]() -> std::string {
@@ -7498,14 +8268,30 @@
                              ((lhsPos != std::string::npos) || (rhsPos != std::string::npos)))) {
                             return;
                         }
+                        if (sameArrayValueShape(rhsTypeName, lhsTypeName)) {
+                            return;
+                        }
                     }
                     auto targetCtorPrefix = trim(targetType) + "{";
                     if (!targetCtorPrefix.empty() && rhs.rfind(targetCtorPrefix, 0) == 0) {
                         return;
                     }
                     if (targetIsPackedArray) {
-                        emittedLine = emittedLine.substr(0, eq + 1) + " cpphdl::pack_value<cpphdl::type_width<" +
-                            targetType + ">()>(" + rhs + ")" + (hasSemicolon ? ";" : "");
+                        emittedLine = emittedLine.substr(0, eq + 1) + " ([&]() -> " + targetType +
+                            " { auto&& __cpphdl_src = (" + rhs +
+                            "); using __cpphdl_target_t = " + targetType +
+                            "; auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>(__cpphdl_src_arg_t&& __cpphdl_src_val) -> __cpphdl_target_t { " +
+                            "using __cpphdl_src_t = std::remove_cvref_t<__cpphdl_src_arg_t>; __cpphdl_target_t __cpphdl_out{}; " +
+                            "if constexpr (requires { __cpphdl_target_t::PACKED; __cpphdl_src_t::PACKED; " +
+                            "__cpphdl_target_t::ELEMENT_BITS; __cpphdl_src_t::ELEMENT_BITS; " +
+                            "__cpphdl_target_t::SIZE_BITS; __cpphdl_src_t::SIZE_BITS; }) { " +
+                            "if constexpr ((__cpphdl_target_t::PACKED == __cpphdl_src_t::PACKED) && " +
+                            "(__cpphdl_target_t::ELEMENT_BITS == __cpphdl_src_t::ELEMENT_BITS) && " +
+                            "(__cpphdl_target_t::SIZE_BITS == __cpphdl_src_t::SIZE_BITS)) { " +
+                            "__cpphdl_out = __cpphdl_src_val; } else { " +
+                            "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                            "} else { __cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                            "return __cpphdl_out; }; return __cpphdl_assign(__cpphdl_src); })()" + (hasSemicolon ? ";" : "");
                     }
                     else {
                         emittedLine = emittedLine.substr(0, eq + 1) + " ([&]() -> " + targetType +
@@ -7581,7 +8367,10 @@
                         int angleDepth = 1;
                         size_t typeEnd = pos;
                         for (; typeEnd < text.size(); ++typeEnd) {
-                            if (text[typeEnd] == '<') {
+                            if (text[typeEnd] == '<' && typeEnd + 1 < text.size() && text[typeEnd + 1] == '<') {
+                                ++typeEnd;
+                            }
+                            else if (text[typeEnd] == '<') {
                                 ++angleDepth;
                             }
                             else if (text[typeEnd] == '>' && --angleDepth == 0) {
@@ -7607,6 +8396,26 @@
                             return {};
                         }
                         return {target, trim(text.substr(argStart, argEnd - argStart))};
+                    };
+                    auto packedArrayAssignExpr = [&](const std::string& value) {
+                        if (value == "0" || value == "0b0" || value == "0x0" ||
+                            value == "1" || value == "0b1" || value == "0x1") {
+                            return "cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" + value + ")";
+                        }
+                        return "([&]() -> " + targetType + " { auto&& __cpphdl_src = (" + value +
+                            "); using __cpphdl_target_t = " + targetType +
+                            "; auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>(__cpphdl_src_arg_t&& __cpphdl_src_val) -> __cpphdl_target_t { " +
+                            "using __cpphdl_src_t = std::remove_cvref_t<__cpphdl_src_arg_t>; __cpphdl_target_t __cpphdl_out{}; " +
+                            "if constexpr (requires { __cpphdl_target_t::PACKED; __cpphdl_src_t::PACKED; " +
+                            "__cpphdl_target_t::ELEMENT_BITS; __cpphdl_src_t::ELEMENT_BITS; " +
+                            "__cpphdl_target_t::SIZE_BITS; __cpphdl_src_t::SIZE_BITS; }) { " +
+                            "if constexpr ((__cpphdl_target_t::PACKED == __cpphdl_src_t::PACKED) && " +
+                            "(__cpphdl_target_t::ELEMENT_BITS == __cpphdl_src_t::ELEMENT_BITS) && " +
+                            "(__cpphdl_target_t::SIZE_BITS == __cpphdl_src_t::SIZE_BITS)) { " +
+                            "__cpphdl_out = __cpphdl_src_val; } else { " +
+                            "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                            "} else { __cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val); } " +
+                            "return __cpphdl_out; }; return __cpphdl_assign(__cpphdl_src); })()";
                     };
                     auto unpacked = unpackTemplateCall(rhs, "cpphdl::unpack_value<");
                     if (unpacked.first.empty()) {
@@ -7636,9 +8445,12 @@
                         if (!castedAggregate) {
                             return;
                         }
-                        emittedLine = emittedLine.substr(0, eq + 1) +
-                            " cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" +
-                            casted.second + ")" + (hasSemicolon ? ";" : "");
+                        emittedLine = emittedLine.substr(0, eq + 1) + " " +
+                            (isPackedArrayValueType(targetType)
+                                 ? packedArrayAssignExpr(casted.second)
+                                 : "cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" +
+                                       casted.second + ")") +
+                            (hasSemicolon ? ";" : "");
                         return;
                     }
                     auto resolvedUnpackedType = resolveAliasValueType(unpacked.first);
@@ -7656,9 +8468,12 @@
                     if (packed.first.empty()) {
                         return;
                     }
-                    emittedLine = emittedLine.substr(0, eq + 1) +
-                        " cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" +
-                        packed.second + ")" + (hasSemicolon ? ";" : "");
+                    emittedLine = emittedLine.substr(0, eq + 1) + " " +
+                        (isPackedArrayValueType(targetType)
+                             ? packedArrayAssignExpr(packed.second)
+                             : "cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" +
+                                   packed.second + ")") +
+                        (hasSemicolon ? ";" : "");
                 };
                 auto rewriteAggregateSvCastAssignmentFallback = [&]() {
                     auto eq = hdlcpp::topLevelAssignPos(emittedLine);
@@ -7681,7 +8496,10 @@
                         int angleDepth = 1;
                         size_t typeEnd = pos;
                         for (; typeEnd < text.size(); ++typeEnd) {
-                            if (text[typeEnd] == '<') {
+                            if (text[typeEnd] == '<' && typeEnd + 1 < text.size() && text[typeEnd + 1] == '<') {
+                                ++typeEnd;
+                            }
+                            else if (text[typeEnd] == '<') {
                                 ++angleDepth;
                             }
                             else if (text[typeEnd] == '>' && --angleDepth == 0) {
@@ -7910,7 +8728,10 @@ static size_t findMatchingAngle(const std::string& text, size_t open)
 {
     int depth = 0;
     for (size_t i = open; i < text.size(); ++i) {
-        if (text[i] == '<') {
+        if (text[i] == '<' && i + 1 < text.size() && text[i + 1] == '<') {
+            ++i;
+        }
+        else if (text[i] == '<') {
             ++depth;
         }
         else if (text[i] == '>') {
@@ -8412,6 +9233,37 @@ static std::string insertOptimizedExternInclude(std::string mainText)
     return includeLine + mainText;
 }
 
+static std::string normalizeOptimizedPortBindings(std::string mainText)
+{
+    std::ostringstream out;
+    std::istringstream in(mainText);
+    std::string line;
+    while (std::getline(in, line)) {
+        auto marker = line.find("= [&]() { return &");
+        if (marker != std::string::npos) {
+            auto varBegin = marker + std::string("= [&]() { return &").size();
+            auto varEnd = line.find("; };", varBegin);
+            if (varEnd != std::string::npos) {
+                auto var = trim(line.substr(varBegin, varEnd - varBegin));
+                bool simpleName = !var.empty() && (std::isalpha((unsigned char)var[0]) || var[0] == '_');
+                for (char ch : var) {
+                    if (!(std::isalnum((unsigned char)ch) || ch == '_')) {
+                        simpleName = false;
+                        break;
+                    }
+                }
+                if (simpleName) {
+                    auto prefix = line.substr(0, marker);
+                    auto suffix = line.substr(varEnd + std::string("; };").size());
+                    line = prefix + "= _ASSIGN_REG(" + var + ");" + suffix;
+                }
+            }
+        }
+        out << line << "\n";
+    }
+    return out.str();
+}
+
 static int optimizeConcreteRun(const std::filesystem::path& mainPath)
 {
     auto root = std::filesystem::current_path();
@@ -8473,7 +9325,7 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     std::ostringstream make;
     make << "CXX ?= g++\n";
     make << "CPPHDL_INCLUDE ?= /home/me/cpphdl/include\n";
-    make << "CXXFLAGS ?= -std=c++23 -O0 -g0 -w -I$(CPPHDL_INCLUDE) -I$(CURDIR)\n";
+    make << "CXXFLAGS ?= -std=c++23 -O0 -g0 -w -pipe -fno-asynchronous-unwind-tables -I$(CPPHDL_INCLUDE) -I$(CURDIR)\n";
     make << "LDFLAGS ?=\n\n";
     make << "RUNNER := run_cpphdl_matrix_opt\n";
     make << "OBJS := build/opt/cpphdl_optimized_main.o";
@@ -8493,8 +9345,9 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     make << "clean:\n";
     make << "\trm -rf build/opt $(RUNNER)\n";
 
+    auto optimizedMain = normalizeOptimizedPortBindings(insertOptimizedExternInclude(mainText));
     bool writeOk = writeTextFile(root / "cpphdl_optimized_externs.h", externs.str()) &&
-        writeTextFile(root / "cpphdl_optimized_main.cpp", insertOptimizedExternInclude(mainText)) &&
+        writeTextFile(root / "cpphdl_optimized_main.cpp", optimizedMain) &&
         writeTextFile(root / "Makefile.optimize", make.str());
     for (const auto& [path, text] : instantiationFiles) {
         writeOk = writeOk && writeTextFile(root / path, text);

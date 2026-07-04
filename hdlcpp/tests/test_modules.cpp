@@ -468,6 +468,30 @@ endmodule
     expectNotContains(h, "sv_cast<hpdcache_uint32>");
 }
 
+static void testPackedTypedefCastUsesNumericSource(const char* argv0)
+{
+    const std::string sv = R"sv(
+package packed_typedef_cast_pkg;
+  typedef logic [31:0] word_t;
+endpackage
+
+module packed_typedef_cast (
+    input  logic [7:0] in_i,
+    output packed_typedef_cast_pkg::word_t out_o
+);
+  import packed_typedef_cast_pkg::*;
+  always_comb begin
+    out_o = word_t'(in_i);
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "packed_typedef_cast", sv, "");
+    expectContains(h, "word_t(((uint64_t)(in_i_in())");
+    expectNotContains(h, "cpphdl::sv_cast<word_t>");
+    expectNotContains(h, "cpphdl::sv_cast<packed_typedef_cast_pkg::word_t>");
+}
+
 static void testRuntimeRangeSelectUsesRuntimeBits(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -1233,7 +1257,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "parent_port_field_input", sv, "");
-    expectContains(h, "child_i.data_i_in = _ASSIGN(cpphdl::pack_value<cpphdl::type_width<logic<8>>()>(req_i_in().data));");
+    expectContains(h, "child_i.data_i_in = _ASSIGN(logic<8>(req_i_in().data));");
     expectNotContains(h, "child_i.data_i_in = _ASSIGN_COMB(cpphdl::pack_value");
 }
 
@@ -2913,6 +2937,72 @@ endmodule
     expectContains(h, "__port_bind_u_sink_req_i_in_packed_to_array_comb = __cpphdl_src;");
 }
 
+static void testSamePackedArrayCombAssignKeepsArrayShape(const char* argv0)
+{
+    const std::string sv = R"sv(
+module same_packed_array_comb_assign #(
+    parameter int unsigned N = 2
+) (
+    input  logic [N-1:0][31:0] in_i,
+    output logic [N-1:0][31:0] out_o
+);
+  logic [N-1:0][31:0] tmp;
+
+  always_comb begin
+    tmp = in_i;
+  end
+
+  assign out_o = tmp;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "same_packed_array_comb_assign", sv, "same_packed_array_comb_assign.N\t2\n");
+    expectContains(h, "_LAZY_COMB(tmp_comb, array<logic<32>");
+    expectContains(h, "tmp_comb = in_i_in();");
+    expectNotContains(h, "tmp_comb = cpphdl::pack_value<cpphdl::type_width<array<logic<32>");
+    expectContains(h, "out_o_comb = tmp_comb_func();");
+    expectNotContains(h, "out_o_comb = cpphdl::pack_value<cpphdl::type_width<array<logic<32>");
+}
+
+static void testSameUnpackedStructArrayRegAssignKeepsArrayShape(const char* argv0)
+{
+    const std::string sv = R"sv(
+module same_unpacked_struct_array_reg_assign(
+    input logic clk_i,
+    input logic [31:0] a_i,
+    input logic [31:0] b_i,
+    output logic [31:0] out_o
+);
+  typedef struct packed {
+    logic [31:0] instr;
+    logic [1:0]  ex;
+  } item_t;
+
+  item_t mem_q [2];
+  item_t mem_n [2];
+
+  always_comb begin
+    mem_n = mem_q;
+    mem_n[0].instr = a_i;
+    mem_n[1].instr = b_i;
+  end
+
+  always_ff @(posedge clk_i) begin
+    mem_q <= mem_n;
+  end
+
+  assign out_o = mem_q[0].instr;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "same_unpacked_struct_array_reg_assign", sv, "");
+    expectContains(h, "mem_n_comb = ([&]() -> array<item_t,2>");
+    expectContains(h, "__cpphdl_direct = mem_q;");
+    expectContains(h, "mem_q._next = mem_n_comb_func();");
+    expectNotContains(h, "mem_q._next = cpphdl::unpack_value<array<item_t,2>>");
+    expectNotContains(h, "cpphdl::pack_value<cpphdl::type_width<array<item_t,2>>()(mem_n_comb_func())");
+}
+
 static void testPackedByteArrayAssignFromUnpackedWordArrayUsesPackValue(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -2939,8 +3029,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_byte_array_from_unpacked_words", sv, "");
-    expectContains(h, "bytes_comb = cpphdl::pack_value<cpphdl::type_width<array<logic<8>,8,true>>()");
-    expectContains(h, "(words_comb_func());");
+    expectContains(h, "bytes_comb = ([&]() ->");
+    expectContains(h, "using __cpphdl_target_t = array<logic<8>,8,true>;");
+    expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
+    expectContains(h, "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val);");
     expectNotContains(h, "bytes_comb = words_comb_func();");
 }
 
@@ -2966,8 +3058,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "continuous_packed_byte_array_from_unpacked_words", sv, "");
-    expectContains(h, "bytes_comb = cpphdl::pack_value<cpphdl::type_width<array<logic<8>,8,true>>()");
-    expectContains(h, "(words_comb_func());");
+    expectContains(h, "bytes_comb = ([&]() ->");
+    expectContains(h, "using __cpphdl_target_t = array<logic<8>,8,true>;");
+    expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
+    expectContains(h, "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val);");
     expectNotContains(h, "bytes_comb = words_comb_func();");
 }
 
@@ -3102,7 +3196,8 @@ endmodule
     auto h = convertModule(argv0, "array_output_struct_unpack", sv, "");
     expectContains(h, "__port_bind_u_source_raw_o_out_unpacked_array_comb_func");
     expectContains(h, "using __cpphdl_target_array_t = array<resp_t,");
-    expectContains(h, "cpphdl::unpack_value<__cpphdl_target_elem_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_elem_t>()>(__cpphdl_src[__cpphdl_i]))");
+    expectContains(h, "if constexpr (std::is_assignable_v<__cpphdl_target_elem_t&, __cpphdl_src_elem_t>)");
+    expectContains(h, "__port_bind_u_source_raw_o_out_unpacked_array_comb[__cpphdl_i] = __cpphdl_src[__cpphdl_i];");
     expectNotContains(h, "resp_comb = u_source.raw_o_out();");
 }
 
@@ -4031,6 +4126,184 @@ endmodule
     expectNotContains(h, "req_o_kill_req_comb.data_wdata");
 }
 
+static void testFieldExtractionKeepsWholeAggregateSiblingBranch(const char* argv0)
+{
+    const std::string sv = R"sv(
+module field_extraction_whole_aggregate_sibling (
+    input  logic        mode_i,
+    input  logic        sel_i,
+    input  logic [7:0]  tag_i,
+    output logic        any_tag_o
+);
+  typedef struct packed {
+    logic [3:0] off;
+    logic [7:0] tag;
+  } req_t;
+
+  req_t req;
+  req_t store_req;
+  req_t flush_req;
+
+  always_comb begin
+    if (mode_i) begin
+      req.off = 4'h3;
+      req.tag = 8'h00;
+    end else begin
+      store_req = '{off: 4'h8, tag: tag_i};
+      flush_req = '{off: 4'h0, tag: 8'h00};
+      req = sel_i ? store_req : flush_req;
+    end
+  end
+
+  assign any_tag_o = |req.tag;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "field_extraction_whole_aggregate_sibling", sv, "");
+    expectContains(h, "req_tag_comb_func()");
+    expectContains(h, "req_tag_comb = logic<8>(0x00);");
+    expectContains(h, "tag_i_in()");
+    expectContains(h, "(cpphdl::sv_cast<req_t>(__comb_local_store_req)).tag");
+    expectNotContains(h, "req_tag_comb = std::remove_cvref_t<decltype(std::declval<req_t>().tag)>{};\n        if (mode_i_in())");
+}
+
+static void testFieldProjectionThroughSelectedAggregateAvoidsWholeCombRecursion(const char* argv0)
+{
+    const std::string sv = R"sv(
+module field_projection_selected_aggregate_no_recursion (
+    input  logic       sel_i,
+    input  logic [7:0] tag_i,
+    output logic       uncached_o
+);
+  typedef struct packed {
+    logic uncacheable;
+  } pma_t;
+
+  typedef struct packed {
+    logic [7:0] tag;
+    pma_t       pma;
+  } req_t;
+
+  req_t req;
+  req_t store_req;
+  req_t flush_req;
+  logic is_uncacheable;
+
+  assign is_uncacheable = |req.tag;
+  assign store_req = '{tag: tag_i, pma: '{uncacheable: is_uncacheable}};
+  assign flush_req = '{tag: 8'h00, pma: '{uncacheable: 1'b0}};
+  assign req = sel_i ? store_req : flush_req;
+  assign uncached_o = is_uncacheable;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "field_projection_selected_aggregate_no_recursion", sv, "");
+    expectContains(h, "req_tag_comb_func()");
+    expectContains(h, "store_req_tag_comb_func()");
+    expectContains(h, "flush_req_tag_comb_func()");
+    expectNotContains(h, "store_req_comb_func()).tag");
+    expectNotContains(h, "flush_req_comb_func()).tag");
+}
+
+static void testFieldProjectionThroughTypeParamAggregateAvoidsWholeCombRecursion(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+  logic uncacheable;
+} field_projection_param_pma_t;
+
+typedef struct packed {
+  logic [7:0]                  tag;
+  field_projection_param_pma_t pma;
+} field_projection_param_req_t;
+
+module field_projection_type_param_no_recursion #(
+    parameter type req_t = field_projection_param_req_t
+) (
+    input  logic       sel_i,
+    input  logic [7:0] tag_i,
+    output logic       uncached_o
+);
+  req_t req;
+  req_t store_req;
+  req_t flush_req;
+  logic is_uncacheable;
+
+  assign is_uncacheable = |req.tag;
+  assign store_req = '{tag: tag_i, pma: '{uncacheable: is_uncacheable}};
+  assign flush_req = '{tag: 8'h00, pma: '{uncacheable: 1'b0}};
+  assign req = sel_i ? store_req : flush_req;
+  assign uncached_o = is_uncacheable;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "field_projection_type_param_no_recursion", sv, "");
+    expectContains(h, "store_req_tag_comb_func()");
+    expectContains(h, "flush_req_tag_comb_func()");
+    expectContains(h, "req_tag_comb = (sel_i_in() ? store_req_tag_comb_func() : flush_req_tag_comb_func())");
+    expectNotContains(h, "store_req_comb_func()).tag");
+    expectNotContains(h, "flush_req_comb_func()).tag");
+}
+
+static void testFieldCombDoesNotPropagateThroughPlainWholeValueCall(const char* argv0)
+{
+    const std::string sv = R"sv(
+module field_comb_plain_whole_value_no_propagation #(
+    parameter int unsigned N = 2
+) (
+    input  logic [N-1:0] be_i,
+    output logic [N-1:0] be_o
+);
+  typedef struct packed {
+    logic [N-1:0] mem_req_w_be;
+    logic         last;
+  } mem_req_w_t;
+
+  logic [N-1:0] send_be;
+  mem_req_w_t   mem_req_write_data_o;
+
+  assign send_be = be_i;
+  assign mem_req_write_data_o.mem_req_w_be = send_be;
+  assign mem_req_write_data_o.last = 1'b1;
+  assign be_o = mem_req_write_data_o.mem_req_w_be;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "field_comb_plain_whole_value_no_propagation", sv, "");
+    expectContains(h, "mem_req_write_data_o_mem_req_w_be_comb_func()");
+    expectContains(h, "mem_req_write_data_o_mem_req_w_be_comb = send_be_comb_func()");
+    expectNotContains(h, "send_be_mem_req_w_be_comb");
+    expectNotContains(h, "std::declval<logic<(uint64_t)(N)>>().mem_req_w_be");
+}
+
+static void testExtractedFieldConditionalDefaultBranchUsesFieldType(const char* argv0)
+{
+    const std::string sv = R"sv(
+module extracted_field_conditional_default_branch (
+    input  logic       a_i,
+    input  logic [7:0] tag_a_i,
+    output logic [7:0] tag_o
+);
+  typedef struct packed {
+    logic [7:0] tag;
+  } req_t;
+
+  req_t req;
+  req_t req_a;
+
+  assign req_a = '{tag: tag_a_i};
+  assign req = a_i ? req_a : '0;
+  assign tag_o = req.tag;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "extracted_field_conditional_default_branch", sv, "");
+    expectContains(h, "req_tag_comb_func()");
+    expectContains(h, "req_a_tag_comb_func()");
+    expectContains(h, ": logic<8>{}");
+    expectNotContains(h, ": 0)");
+}
+
 static void testSequentialChildInputPortBindingStaysLazy(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -4130,6 +4403,35 @@ endmodule
     expectNotContains(h, "~(a_i_in())");
 }
 
+static void testWideConditionalLogicBranchDoesNotNarrowToUint64(const char* argv0)
+{
+    const std::string sv = R"sv(
+module wide_conditional_logic_branch #(
+    parameter int unsigned NOUTPUT = 2,
+    parameter int unsigned DATA_WIDTH = 96,
+    localparam type data_t = logic [DATA_WIDTH-1:0]
+) (
+    input  data_t data_i,
+    input  logic  sel_i,
+    output data_t data_o [NOUTPUT-1:0]
+);
+  always_comb begin
+    for (int unsigned i = 0; i < NOUTPUT; i++) begin
+      data_o[i] = sel_i ? data_i : '0;
+    end
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "wide_conditional_logic_branch", sv,
+                           "wide_conditional_logic_branch.DATA_WIDTH\t96\n"
+                           "wide_conditional_logic_branch.NOUTPUT\t2\n");
+    expectContains(h, "data_o_comb[");
+    expectContains(h, "? logic<(uint64_t)(((uint64_t)(DATA_WIDTH)");
+    expectContains(h, "(data_i_in())");
+    expectNotContains(h, "(uint64_t)(data_i_in())");
+}
+
 int main(int argc, char** argv)
 {
     assert(argc >= 1);
@@ -4142,6 +4444,7 @@ int main(int argc, char** argv)
     testOrGenerateSelectsOneSameNamedInstance(argv[0]);
     testTemplateTernaryDefaultIsParenthesized(argv[0]);
     testTypedefIntegerCastIsNamedCast(argv[0]);
+    testPackedTypedefCastUsesNumericSource(argv[0]);
     testRuntimeRangeSelectUsesRuntimeBits(argv[0]);
     testSlicedCombDependencyLateBindsMethodCall(argv[0]);
     testDesignatedPatternAssignmentUsesTypedTemporary(argv[0]);
@@ -4226,6 +4529,8 @@ int main(int argc, char** argv)
     testStructArrayToPackedArrayInputUsesElementPack(argv[0]);
     testPackedVectorToUnpackedArrayInputUsesExplicitSlices(argv[0]);
     testSameStructArrayInputPortUsesDirectArrayBinding(argv[0]);
+    testSamePackedArrayCombAssignKeepsArrayShape(argv[0]);
+    testSameUnpackedStructArrayRegAssignKeepsArrayShape(argv[0]);
     testPackedByteArrayAssignFromUnpackedWordArrayUsesPackValue(argv[0]);
     testContinuousPackedByteArrayAssignFromUnpackedWordArrayUsesPackValue(argv[0]);
     testContinuousUnpackedWordArrayAssignFromPackedVectorUsesUnpackValue(argv[0]);
@@ -4261,9 +4566,15 @@ int main(int argc, char** argv)
     testDefaultStructFieldProjectionUsesTypedZero(argv[0]);
     testAggregateOutputFieldReadUsesExtractedFieldComb(argv[0]);
     testExtractedScalarFieldCombSkipsSiblingStructFields(argv[0]);
+    testFieldExtractionKeepsWholeAggregateSiblingBranch(argv[0]);
+    testFieldProjectionThroughSelectedAggregateAvoidsWholeCombRecursion(argv[0]);
+    testFieldProjectionThroughTypeParamAggregateAvoidsWholeCombRecursion(argv[0]);
+    testFieldCombDoesNotPropagateThroughPlainWholeValueCall(argv[0]);
+    testExtractedFieldConditionalDefaultBranchUsesFieldType(argv[0]);
     testSequentialChildInputPortBindingStaysLazy(argv[0]);
     testBinaryPrecedencePreservesNestedEqualityUnderBitwise(argv[0]);
     testGenerateBoundDivisionExpressionIsBalanced(argv[0]);
     testOneBitUnaryNotInConcatAvoidsLogicOperatorNot(argv[0]);
+    testWideConditionalLogicBranchDoesNotNarrowToUint64(argv[0]);
     return 0;
 }
