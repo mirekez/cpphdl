@@ -83,12 +83,14 @@ struct has_bits_method<T, std::void_t<decltype(std::declval<const T&>().bits(siz
 
 }
 
+template<typename T, typename V>
+constexpr void sv_assign_field(T& dst, const V& value);
 
 template<typename T, typename V>
 constexpr T sv_cast(const V& value)
 {
     T out{};
-    out = value;
+    sv_assign_field(out, value);
     return out;
 }
 
