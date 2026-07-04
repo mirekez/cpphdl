@@ -249,6 +249,26 @@ std::string escapeIncludePath(const std::filesystem::path& path)
     return out;
 }
 
+void appendDelimitedIncludeDirs(std::vector<std::string>& args, std::string_view dirs)
+{
+    size_t begin = 0;
+    while (begin <= dirs.size()) {
+        size_t end = dirs.find('|', begin);
+        if (end == std::string_view::npos) {
+            end = dirs.size();
+        }
+        std::string dir(dirs.substr(begin, end - begin));
+        if (!dir.empty() && std::filesystem::exists(dir)) {
+            args.push_back("-isystem");
+            args.push_back(dir);
+        }
+        if (end == dirs.size()) {
+            break;
+        }
+        begin = end + 1;
+    }
+}
+
 bool rewriteCpphdlUmbrellaInclude(const std::filesystem::path& source,
     const std::filesystem::path& cpphdl_include,
     std::filesystem::path& rewritten)
@@ -2068,6 +2088,9 @@ int main(int argc, const char **argv)
     if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
         cpphdl_include_args.push_back("-I" + cpphdl_source_include.string());
     }
+#endif
+#ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
+    appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
 #endif
 
     if (conda_toolchain_headers) {
