@@ -4853,6 +4853,15 @@
                     auto base = baseFromLValueText(s);
                     return !base.empty() && s == base && m.varNames.count(base);
                 }();
+                auto rhsIsExactLocalRegisterRef = [&]() {
+                    auto s = trim(rhs);
+                    auto base = baseFromLValueText(s);
+                    if (base.empty() || s != base || !m.varNames.count(base)) {
+                        return false;
+                    }
+                    auto typeIt = m.types.find(base);
+                    return typeIt != m.types.end() && trim(typeIt->second).rfind("reg<", 0) == 0;
+                };
                 auto rhsReferencesRuntimeState = [&]() {
                     auto valueRhs = stripDecltypeExpressions(rhs);
                     auto memberDeclName = [](std::string decl) {
@@ -4901,7 +4910,8 @@
                     return false;
                 }();
                 auto rhsReferencesLocalState = rhsReferencesRuntimeState && !rhsExactLocalStateRef;
-		                std::string wrapper = (portTypeKnown && isSimpleCombRef(rhs)) ? "_ASSIGN_COMB" : "_ASSIGN";
+		                std::string wrapper = rhsIsExactLocalRegisterRef() ? "_ASSIGN_REG" :
+                    ((portTypeKnown && isSimpleCombRef(rhs)) ? "_ASSIGN_COMB" : "_ASSIGN");
                 bool rhsIsParentPortAccessRef = isParentPortAccessRef(rhs);
                 bool rhsIsCombAccessRef = isCombAccessRef(rhs);
                 bool rhsReferencesDynamicGetter = referencesDynamicCpphdlGetter(rhs);
@@ -5102,7 +5112,8 @@
 	                    rhs = materializeCombPortBinding(conn.instance, portName, portType, rhs);
 	                    wrapper = "_ASSIGN_COMB";
 	                }
-	                if (wrapper == "_ASSIGN_REG" && !isSimpleCombRef(rhs) && !isExactParentPortRef(rhs)) {
+	                if (wrapper == "_ASSIGN_REG" && !rhsIsExactLocalRegisterRef() &&
+	                    !isSimpleCombRef(rhs) && !isExactParentPortRef(rhs)) {
 	                    wrapper = "_ASSIGN_COMB";
 	                }
                 if (wrapper == "_ASSIGN_COMB") {
@@ -5646,18 +5657,22 @@
 	            auto unwrapSvCast = [&](std::string text) {
 	                text = trim(std::move(text));
 	                for (;;) {
-	                    const std::string cppCast = "cpphdl::sv_cast<";
-	                    const std::string bareCast = "sv_cast<";
-	                    std::string marker;
-	                    if (text.rfind(cppCast, 0) == 0) {
-	                        marker = cppCast;
-	                    }
-	                    else if (text.rfind(bareCast, 0) == 0) {
-	                        marker = bareCast;
-	                    }
-	                    else {
-	                        return text;
-	                    }
+		                    const std::string cppCast = "cpphdl::sv_cast<";
+		                    const std::string bareCast = "sv_cast<";
+		                    const std::string staticCast = "static_cast<";
+		                    std::string marker;
+		                    if (text.rfind(cppCast, 0) == 0) {
+		                        marker = cppCast;
+		                    }
+		                    else if (text.rfind(bareCast, 0) == 0) {
+		                        marker = bareCast;
+		                    }
+		                    else if (text.rfind(staticCast, 0) == 0) {
+		                        marker = staticCast;
+		                    }
+		                    else {
+		                        return text;
+		                    }
 	                    int angleDepth = 0;
 	                    size_t closeAngle = std::string::npos;
 	                    for (size_t i = marker.size(); i < text.size(); ++i) {
@@ -5728,10 +5743,94 @@
 	                }
 	                return "0";
 	            };
-	            if (branch == "{}" || branch == "0" || branch == "0u" || branch == "0ull" ||
-	                branch.find("(0b0)") != std::string::npos || branch.find("(0)") != std::string::npos) {
-	                return fieldDefault();
-	            }
+		            std::function<bool(std::string)> isDefaultFieldBranch;
+		            isDefaultFieldBranch = [&](std::string text) {
+		                text = unwrapSvCast(trim(std::move(text)));
+		                while (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+		                    auto close = matchingParenClose(text, 0);
+		                    if (close != text.size() - 1) {
+		                        break;
+		                    }
+		                    text = unwrapSvCast(trim(text.substr(1, text.size() - 2)));
+		                }
+		                auto stripCStyleCast = [&]() -> bool {
+		                    if (text.empty() || text.front() != '(') {
+		                        return false;
+		                    }
+		                    auto close = matchingParenClose(text, 0);
+		                    if (close == std::string::npos || close + 1 >= text.size()) {
+		                        return false;
+		                    }
+		                    auto type = trim(text.substr(1, close - 1));
+		                    if (type.empty() ||
+		                        (!std::isalpha(static_cast<unsigned char>(type.front())) && type.front() != '_') ||
+		                        type.find_first_of("+-*/&|?:") != std::string::npos) {
+		                        return false;
+		                    }
+		                    text = unwrapSvCast(trim(text.substr(close + 1)));
+		                    return true;
+		                };
+		                while (stripCStyleCast()) {
+		                    while (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+		                        auto close = matchingParenClose(text, 0);
+		                        if (close != text.size() - 1) {
+		                            break;
+		                        }
+		                        text = unwrapSvCast(trim(text.substr(1, text.size() - 2)));
+		                    }
+		                }
+		                if (text == "{}" || text == "0" || text == "0u" || text == "0ull" ||
+		                    text == "0b0" || text == "false") {
+		                    return true;
+		                }
+		                auto topLevelBinary = [&](char op, std::string& lhs, std::string& rhs) {
+		                    int paren = 0;
+		                    int bracket = 0;
+		                    int brace = 0;
+		                    int angle = 0;
+		                    for (size_t pos = 0; pos < text.size(); ++pos) {
+		                        char ch = text[pos];
+		                        if (ch == '(') ++paren;
+		                        else if (ch == ')' && paren > 0) --paren;
+		                        else if (ch == '[') ++bracket;
+		                        else if (ch == ']' && bracket > 0) --bracket;
+		                        else if (ch == '{') ++brace;
+		                        else if (ch == '}' && brace > 0) --brace;
+		                        else if (ch == '<' && paren == 0 && bracket == 0 && brace == 0) ++angle;
+		                        else if (ch == '>' && paren == 0 && bracket == 0 && brace == 0 && angle > 0) --angle;
+		                        else if (ch == op && paren == 0 && bracket == 0 && brace == 0 && angle == 0) {
+		                            lhs = trim(text.substr(0, pos));
+		                            rhs = trim(text.substr(pos + 1));
+		                            return true;
+		                        }
+		                    }
+		                    return false;
+		                };
+		                std::string lhs;
+		                std::string rhs;
+		                if (topLevelBinary('&', lhs, rhs)) {
+		                    return isDefaultFieldBranch(lhs) || isDefaultFieldBranch(rhs);
+		                }
+		                auto isZeroCtor = [&](const std::string& prefix) {
+		                    if (text.rfind(prefix, 0) != 0 || text.back() != ')') {
+		                        return false;
+		                    }
+		                    auto open = text.find('(');
+		                    if (open == std::string::npos) {
+		                        return false;
+		                    }
+		                    auto close = matchingParenClose(text, open);
+		                    if (close != text.size() - 1) {
+		                        return false;
+		                    }
+		                    auto arg = trim(text.substr(open + 1, close - open - 1));
+		                    return arg == "0" || arg == "0u" || arg == "0ull" || arg == "0b0" || arg == "false";
+		                };
+		                return isZeroCtor("logic<") || isZeroCtor("u<");
+		            };
+		            if (isDefaultFieldBranch(branch)) {
+		                return fieldDefault();
+		            }
 	            for (const auto& item : mod.combMethodByField) {
 	                if (item.second >= mod.methods.size() || item.first.second != field) {
 	                    continue;

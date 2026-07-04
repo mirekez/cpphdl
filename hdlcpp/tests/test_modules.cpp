@@ -4245,6 +4245,48 @@ endmodule
     expectNotContains(h, "flush_req_comb_func()).tag");
 }
 
+static void testFieldProjectionFromIndexedZeroElementIsNotDefault(const char* argv0)
+{
+    const std::string sv = R"sv(
+module field_projection_index_zero_not_default (
+    input  logic       sel_i,
+    input  logic       sel2_i,
+    input  logic [1:0] trans0_i,
+    input  logic [1:0] trans1_i,
+    output logic [1:0] trans_o
+);
+  typedef struct packed {
+    logic [1:0] trans_id;
+    logic [7:0] data;
+  } fu_t;
+
+  fu_t data_i [2];
+  fu_t one_cycle_data;
+
+  assign data_i[0] = '{trans_id: trans0_i, data: 8'h11};
+  assign data_i[1] = '{trans_id: trans1_i, data: 8'h22};
+
+  always_comb begin
+    one_cycle_data = sel_i ? data_i[0] : '0;
+    if (sel2_i) begin
+      one_cycle_data = data_i[1];
+    end
+  end
+
+  assign trans_o = one_cycle_data.trans_id;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "field_projection_index_zero_not_default", sv, "");
+    expectContains(h, "one_cycle_data_trans_id_comb_func()");
+    expectContains(h, "data_i_comb_func()");
+    expectContains(h, ".trans_id");
+    expectContains(h, "if (sel2_i_in())");
+    expectContains(h, "data_i_comb_func()[(unsigned)(uint64_t)(((uint64_t)(1)");
+    expectNotContains(h, "? logic<2>{} : logic<2>{}");
+    expectNotContains(h, "? std::remove_cvref_t<decltype(std::declval<fu_t>().trans_id)>{} : std::remove_cvref_t<decltype(std::declval<fu_t>().trans_id)>{}");
+}
+
 static void testFieldCombDoesNotPropagateThroughPlainWholeValueCall(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -4341,6 +4383,41 @@ endmodule
     expectContains(h, "u_child.en_i_in = _ASSIGN_COMB(en_i_in());");
     expectNotContains(h, "u_child.rst_ni_in = _ASSIGN(std::remove_cvref_t");
     expectNotContains(h, "u_child.en_i_in = _ASSIGN(std::remove_cvref_t");
+}
+
+static void testChildInputConnectedToParentRegUsesRegBinding(const char* argv0)
+{
+    const std::string sv = R"sv(
+module reg_sink (
+    input  logic [7:0] data_i,
+    output logic [7:0] data_o
+);
+  assign data_o = data_i;
+endmodule
+
+module child_input_parent_reg_binding (
+    input  logic       clk_i,
+    input  logic       rst_ni,
+    input  logic [7:0] data_i,
+    output logic [7:0] data_o
+);
+  logic [7:0] q;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) q <= '0;
+    else q <= data_i;
+  end
+
+  reg_sink u_sink (
+    .data_i(q),
+    .data_o(data_o)
+  );
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "child_input_parent_reg_binding", sv, "");
+    expectContains(h, "u_sink.data_i_in = _ASSIGN_REG(q);");
+    expectNotContains(h, "u_sink.data_i_in = _ASSIGN(q);");
+    expectNotContains(h, "u_sink.data_i_in = _ASSIGN_COMB(q);");
 }
 
 static void testBinaryPrecedencePreservesNestedEqualityUnderBitwise(const char* argv0)
@@ -4569,9 +4646,11 @@ int main(int argc, char** argv)
     testFieldExtractionKeepsWholeAggregateSiblingBranch(argv[0]);
     testFieldProjectionThroughSelectedAggregateAvoidsWholeCombRecursion(argv[0]);
     testFieldProjectionThroughTypeParamAggregateAvoidsWholeCombRecursion(argv[0]);
+    testFieldProjectionFromIndexedZeroElementIsNotDefault(argv[0]);
     testFieldCombDoesNotPropagateThroughPlainWholeValueCall(argv[0]);
     testExtractedFieldConditionalDefaultBranchUsesFieldType(argv[0]);
     testSequentialChildInputPortBindingStaysLazy(argv[0]);
+    testChildInputConnectedToParentRegUsesRegBinding(argv[0]);
     testBinaryPrecedencePreservesNestedEqualityUnderBitwise(argv[0]);
     testGenerateBoundDivisionExpressionIsBalanced(argv[0]);
     testOneBitUnaryNotInConcatAvoidsLogicOperatorNot(argv[0]);
