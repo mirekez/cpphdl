@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <deque>
@@ -235,20 +234,6 @@ std::string replaceAnnotationVariables(const std::string& text, const Annotation
     return out;
 }
 
-std::string escapeIncludePath(const std::filesystem::path& path)
-{
-    std::string text = path.string();
-    std::string out;
-    out.reserve(text.size());
-    for (char ch : text) {
-        if (ch == '\\' || ch == '"') {
-            out += '\\';
-        }
-        out += ch;
-    }
-    return out;
-}
-
 void appendDelimitedIncludeDirs(std::vector<std::string>& args, std::string_view dirs)
 {
     size_t begin = 0;
@@ -334,57 +319,6 @@ void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
         }
     }
     ::pclose(pipe);
-}
-
-bool rewriteCpphdlUmbrellaInclude(const std::filesystem::path& source,
-    const std::filesystem::path& cpphdl_include,
-    std::filesystem::path& rewritten)
-{
-    const std::filesystem::path umbrella = cpphdl_include / "cpphdl.h";
-    if (!std::filesystem::exists(umbrella)) {
-        return false;
-    }
-
-    std::ifstream in(source);
-    if (!in) {
-        return false;
-    }
-
-    std::ostringstream out;
-    bool changed = false;
-    std::string line;
-    while (std::getline(in, line)) {
-        const size_t include_pos = line.find("#include");
-        const size_t quoted = include_pos == std::string::npos ? std::string::npos : line.find("\"cpphdl.h\"", include_pos);
-        const size_t angled = include_pos == std::string::npos ? std::string::npos : line.find("<cpphdl.h>", include_pos);
-        if (quoted != std::string::npos) {
-            line.replace(quoted, std::strlen("\"cpphdl.h\""),
-                "\"" + escapeIncludePath(umbrella) + "\"");
-            changed = true;
-        }
-        else if (angled != std::string::npos) {
-            line.replace(angled, std::strlen("<cpphdl.h>"),
-                "\"" + escapeIncludePath(umbrella) + "\"");
-            changed = true;
-        }
-        out << line << '\n';
-    }
-
-    if (!changed) {
-        return false;
-    }
-
-    static unsigned rewrite_index = 0;
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    rewritten = source.parent_path() /
-        (".cpphdl-" + std::to_string(stamp) + "-" + std::to_string(rewrite_index++) + "-" + source.filename().string());
-
-    std::ofstream tmp(rewritten);
-    if (!tmp) {
-        return false;
-    }
-    tmp << out.str();
-    return true;
 }
 
 std::string trimText(std::string text)
@@ -2033,7 +1967,6 @@ int main(int argc, const char **argv)
 {
     std::vector<const char*> replace;
     std::deque<std::string> owned_args;
-    std::vector<std::filesystem::path> rewritten_sources;
     std::string generated_dir = "generated";
     std::string json_output;
     bool saw_double_dash = false;
@@ -2100,20 +2033,7 @@ int main(int argc, const char **argv)
 
         if (!saw_double_dash) {
             if (str_ending(arg, ".cpp") || str_ending(arg, ".h") || str_ending(arg, ".cc") || str_ending(arg, ".hpp")) {
-                std::filesystem::path rewritten;
-                if (!cpphdl_source_include.empty()
-                    && rewriteCpphdlUmbrellaInclude(arg, cpphdl_source_include, rewritten)) {
-                    // Some ClangTool setups ignore ad-hoc -I arguments before
-                    // diagnostics are produced. Rewriting only cpphdl's own
-                    // umbrella include keeps user-local includes relative to
-                    // the original directory while making cpphdl.h absolute.
-                    rewritten_sources.push_back(rewritten);
-                    owned_args.push_back(rewritten.string());
-                    replace.push_back(owned_args.back().c_str());
-                }
-                else {
-                    replace.push_back(arg);
-                }
+                replace.push_back(arg);
             } else {
                 if (!injected_double_dash) {
                     replace.push_back("--");
@@ -2125,19 +2045,6 @@ int main(int argc, const char **argv)
             replace.push_back(arg);
         }
     }
-
-    std::vector<const char*> new_argv = replace;
-    new_argv.push_back(nullptr);
-    int new_argc = (int)new_argv.size() - 1;
-
-    auto ExpectedParser = tooling::CommonOptionsParser::create(new_argc, (const char**)new_argv.data(), MyToolCategory);
-    if (!ExpectedParser) {
-        llvm::errs() << ExpectedParser.takeError();
-        return 1;
-    }
-    tooling::CommonOptionsParser& Options = ExpectedParser.get();
-
-    tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
     std::vector<std::string> cpphdl_include_args;
 #ifdef CPPHDL_SOURCE_DIR
@@ -2155,6 +2062,19 @@ int main(int argc, const char **argv)
         "-std=c++26",
         "-DSYNTHESIS"};
     args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
+
+    if (!saw_double_dash && !injected_double_dash) {
+        replace.push_back("--");
+    }
+    for (const auto& arg : args) {
+        owned_args.push_back(arg);
+        replace.push_back(owned_args.back().c_str());
+    }
+
+    std::vector<const char*> new_argv = replace;
+    new_argv.push_back(nullptr);
+    int new_argc = (int)new_argv.size() - 1;
+
     if (cpphdlDebugEnabled) {
         llvm::errs() << "CppHDL clang args:";
         for (const auto& arg : args) {
@@ -2162,21 +2082,20 @@ int main(int argc, const char **argv)
         }
         llvm::errs() << "\n";
     }
-    Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
 
+    auto ExpectedParser = tooling::CommonOptionsParser::create(new_argc, (const char**)new_argv.data(), MyToolCategory);
+    if (!ExpectedParser) {
+        llvm::errs() << ExpectedParser.takeError();
+        return 1;
+    }
+    tooling::CommonOptionsParser& Options = ExpectedParser.get();
+
+    tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
     currProject->generate(generated_dir);
-    auto cleanup_rewritten_sources = [&]() {
-        for (const auto& source : rewritten_sources) {
-            std::error_code ec;
-            std::filesystem::remove(source, ec);
-        }
-    };
     if (!json_output.empty() && !cpphdl::writeJsonOutput(*currProject, json_output)) {
-        cleanup_rewritten_sources();
         return 1;
     }
-    cleanup_rewritten_sources();
     return ret;
 }
