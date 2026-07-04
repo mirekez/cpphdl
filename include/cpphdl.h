@@ -356,7 +356,13 @@ constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
     }
     else {
         for (size_t i = 0; i < N; ++i) {
-            sv_assign_field(dst[i], value);
+            if constexpr (PACKED) {
+                auto item = dst[i];
+                sv_assign_field(item, value);
+            }
+            else {
+                sv_assign_field(dst[i], value);
+            }
         }
     }
 }
