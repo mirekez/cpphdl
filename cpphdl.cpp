@@ -2072,17 +2072,6 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    const char* conda_prefix_env = ::getenv("CONDA_PREFIX");
-    std::filesystem::path conda_prefix = conda_prefix_env ? conda_prefix_env : "";
-    std::filesystem::path conda_cxx_include = conda_prefix / "include/c++/v1";
-    std::filesystem::path conda_clang_include = conda_prefix / "lib/clang/21/include";
-    std::filesystem::path conda_sysroot_include = conda_prefix / "x86_64-conda-linux-gnu/sysroot/usr/include";
-    bool conda_toolchain_headers =
-        conda_prefix_env
-        && std::filesystem::exists(conda_cxx_include)
-        && std::filesystem::exists(conda_clang_include)
-        && std::filesystem::exists(conda_sysroot_include);
-
     std::vector<std::string> cpphdl_include_args;
 #ifdef CPPHDL_SOURCE_DIR
     if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
@@ -2093,26 +2082,19 @@ int main(int argc, const char **argv)
     appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
 #endif
 
-    if (conda_toolchain_headers) {
-        std::vector<std::string> args{
-            "-nostdinc",
-            "-x", "c++",
-            "-isystem", conda_cxx_include.string(),
-            "-isystem", conda_clang_include.string(),
-            "-isystem", conda_sysroot_include.string(),
-            "-std=c++26",
-            "-DSYNTHESIS"};
-        args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
+    std::vector<std::string> args{
+        "-x", "c++",
+        "-std=c++26",
+        "-DSYNTHESIS"};
+    args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
+    if (cpphdlDebugEnabled) {
+        llvm::errs() << "CppHDL clang args:";
+        for (const auto& arg : args) {
+            llvm::errs() << " " << arg;
+        }
+        llvm::errs() << "\n";
     }
-    else {
-        std::vector<std::string> args{
-            "-x", "c++",
-            "-std=c++26",
-            "-DSYNTHESIS"};
-        args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
-    }
+    Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
 
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
