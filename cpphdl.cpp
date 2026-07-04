@@ -1976,23 +1976,33 @@ int main(int argc, const char **argv)
         && std::filesystem::exists(conda_clang_include)
         && std::filesystem::exists(conda_sysroot_include);
 
+    std::vector<std::string> cpphdl_include_args;
+#ifdef CPPHDL_SOURCE_DIR
+    const std::filesystem::path cpphdl_source_include = std::filesystem::path(CPPHDL_SOURCE_DIR) / "include";
+    if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
+        cpphdl_include_args.push_back("-I" + cpphdl_source_include.string());
+    }
+#endif
+
     if (conda_toolchain_headers) {
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-            {"-nostdinc",
-             "-x", "c++",
-             "-isystem", conda_cxx_include.string(),
-             "-isystem", conda_clang_include.string(),
-             "-isystem", conda_sysroot_include.string(),
-             "-std=c++26",
-             "-DSYNTHESIS"},
-            tooling::ArgumentInsertPosition::BEGIN));
+        std::vector<std::string> args{
+            "-nostdinc",
+            "-x", "c++",
+            "-isystem", conda_cxx_include.string(),
+            "-isystem", conda_clang_include.string(),
+            "-isystem", conda_sysroot_include.string(),
+            "-std=c++26",
+            "-DSYNTHESIS"};
+        args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
+        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
     }
     else {
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-            {"-x", "c++",
-             "-std=c++26",
-             "-DSYNTHESIS"},
-            tooling::ArgumentInsertPosition::BEGIN));
+        std::vector<std::string> args{
+            "-x", "c++",
+            "-std=c++26",
+            "-DSYNTHESIS"};
+        args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
+        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(args, tooling::ArgumentInsertPosition::BEGIN));
     }
 
 

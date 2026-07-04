@@ -55,6 +55,7 @@ project(cpphdl
   LANGUAGES C CXX)
 
 add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
+add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
 option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
