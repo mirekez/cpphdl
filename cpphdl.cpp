@@ -269,6 +269,73 @@ void appendDelimitedIncludeDirs(std::vector<std::string>& args, std::string_view
     }
 }
 
+std::string shellQuote(const std::string& text)
+{
+    std::string out = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            out += "'\\''";
+        }
+        else {
+            out += ch;
+        }
+    }
+    out += "'";
+    return out;
+}
+
+void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
+{
+    std::string compiler;
+#ifdef CPPHDL_CMAKE_CXX_COMPILER
+    compiler = CPPHDL_CMAKE_CXX_COMPILER;
+#endif
+    if (compiler.empty()) {
+        if (const char* env_cxx = ::getenv("CXX")) {
+            compiler = env_cxx;
+        }
+    }
+    if (compiler.empty()) {
+        compiler = "clang++";
+    }
+
+    const std::string command = "printf '' | " + shellQuote(compiler) + " -E -x c++ - -v 2>&1";
+    FILE* pipe = ::popen(command.c_str(), "r");
+    if (!pipe) {
+        return;
+    }
+
+    std::array<char, 4096> buffer{};
+    bool in_include_list = false;
+    while (std::fgets(buffer.data(), (int)buffer.size(), pipe)) {
+        std::string line(buffer.data());
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+            line.pop_back();
+        }
+        const size_t first = line.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            line.erase(0, first);
+        }
+        const size_t last = line.find_last_not_of(" \t");
+        if (last != std::string::npos) {
+            line.erase(last + 1);
+        }
+        if (line == "#include <...> search starts here:") {
+            in_include_list = true;
+            continue;
+        }
+        if (line == "End of search list.") {
+            in_include_list = false;
+            continue;
+        }
+        if (in_include_list && std::filesystem::exists(line)) {
+            args.push_back("-isystem");
+            args.push_back(line);
+        }
+    }
+    ::pclose(pipe);
+}
+
 bool rewriteCpphdlUmbrellaInclude(const std::filesystem::path& source,
     const std::filesystem::path& cpphdl_include,
     std::filesystem::path& rewritten)
@@ -2081,6 +2148,7 @@ int main(int argc, const char **argv)
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
     appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
 #endif
+    appendCompilerProbeIncludeDirs(cpphdl_include_args);
 
     std::vector<std::string> args{
         "-x", "c++",
