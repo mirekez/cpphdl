@@ -3,7 +3,7 @@
 #endif
 #define MAIN_FILE_INCLUDED
 
-#include "cpphdl.h"
+#include <cpphdl.h>
 
 using namespace cpphdl;
 
@@ -29,17 +29,17 @@ int main()
 
     (void)comb_port();
     (void)comb_port();
-    if (source.calls != 2) {
+    if (source.calls != 1) {
         return 1;
     }
 
     source.calls = 0;
     _PORT(logic<1>) comb_value_port;
-    comb_value_port = _ASSIGN_COMB(logic<1>(source.comb_func()));
+    comb_value_port = _ASSIGN(logic<1>(source.comb_func()));
 
     (void)comb_value_port();
     (void)comb_value_port();
-    if (source.calls != 2) {
+    if (source.calls != 1) {
         return 4;
     }
 
