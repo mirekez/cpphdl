@@ -49,7 +49,7 @@ bool Method::print(std::ofstream& out)
         return printAssigns(out);
     }
 
-    if (str_ending(name, "_comb_func")) {
+    if (cpphdl_is_comb_func_name(name)) {
         return printComb(out);
     }
 
