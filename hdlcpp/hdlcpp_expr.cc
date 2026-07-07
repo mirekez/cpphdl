@@ -821,6 +821,26 @@
                     return width;
                 }
             }
+            auto targetType = trim(cppTypeFromSvText(c.left->toString()));
+            if (targetType.empty()) {
+                targetType = replaceKeywordMemberAccess(rawTargetValue);
+            }
+            auto targetWidth = foldWidth(resolvedTypeWidth(targetType));
+            if (targetWidth.empty()) {
+                targetWidth = foldWidth(typeWidth(targetType));
+            }
+            if (targetWidth.empty()) {
+                auto resolvedTarget = resolveAliasValueType(targetType);
+                if (resolvedTarget != targetType) {
+                    targetWidth = foldWidth(resolvedTypeWidth(resolvedTarget));
+                    if (targetWidth.empty()) {
+                        targetWidth = foldWidth(typeWidth(resolvedTarget));
+                    }
+                }
+            }
+            if (!targetWidth.empty()) {
+                return targetWidth;
+            }
         }
         if (expr.kind == SyntaxKind::ScopedName) {
             auto& scoped = expr.as<ScopedNameSyntax>();
@@ -3656,6 +3676,75 @@
             }
             if (op == "|" || op == "&" || op == "^") {
                 auto width = bitwiseExprWidth(expr);
+                auto isValueTemplateParamName = [&](const std::string& text) {
+                    if (!mod) {
+                        return false;
+                    }
+                    for (const auto& param : mod->params) {
+                        if (templateParamName(param) == text && !templateParamValueType(param).empty()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                auto usesValueTemplateParam = [&](const std::string& text) -> bool {
+                    if (!mod) {
+                        return false;
+                    }
+                    for (const auto& param : mod->params) {
+                        auto name = templateParamName(param);
+                        if (!templateParamValueType(param).empty() && isIdentifierUsed(text, name)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                auto compileTimeMaskExpr = [&](const ExpressionSyntax& e) -> std::string {
+                    const ExpressionSyntax* cur = &e;
+                    while (cur && cur->kind == SyntaxKind::ParenthesizedExpression) {
+                        cur = cur->as<ParenthesizedExpressionSyntax>().expression;
+                    }
+                    if (!cur) {
+                        return "";
+                    }
+                    if (isZeroLiteralExpr(*cur)) {
+                        return "0";
+                    }
+                    if (cur->kind == SyntaxKind::IdentifierName) {
+                        auto name = tok(cur->as<IdentifierNameSyntax>().identifier);
+                        if (isValueTemplateParamName(name)) {
+                            return emitNumericExpr(*cur);
+                        }
+                    }
+                    auto text = stripBalancedOuterParens(trim(exprText(cur->toString())));
+                    if (isValueTemplateParamName(text)) {
+                        return emitNumericExpr(*cur);
+                    }
+                    auto emittedMask = emitNumericExpr(*cur);
+                    if (usesValueTemplateParam(emittedMask)) {
+                        return emittedMask;
+                    }
+                    return "";
+                };
+                if (op == "&") {
+                    auto maskWidth = width.empty() ? std::string("64") : width;
+                    if (auto mask = compileTimeMaskExpr(*b.left); !mask.empty()) {
+                        if (mask == "0") {
+                            return "0";
+                        }
+                        return "(((uint64_t)(" + mask + ") == 0) ? 0 : (uint64_t)(logic<" + maskWidth + ">(" +
+                               logicValueExpr(*b.left, maskWidth) + " & " +
+                               logicValueExpr(*b.right, maskWidth) + ")))";
+                    }
+                    if (auto mask = compileTimeMaskExpr(*b.right); !mask.empty()) {
+                        if (mask == "0") {
+                            return "0";
+                        }
+                        return "(((uint64_t)(" + mask + ") == 0) ? 0 : (uint64_t)(logic<" + maskWidth + ">(" +
+                               logicValueExpr(*b.left, maskWidth) + " & " +
+                               logicValueExpr(*b.right, maskWidth) + ")))";
+                    }
+                }
                 if (!width.empty() && width != "1") {
                     return "(uint64_t)(logic<" + width + ">(" + logicValueExpr(*b.left, width) +
                            " " + op + " " + logicValueExpr(*b.right, width) + "))";

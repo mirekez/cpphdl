@@ -1052,7 +1052,8 @@
             mod->types[anonymousStructType] = anonymousStructType;
         }
         for (auto d : node.declarators) {
-            auto name = tok(d->name);
+            auto svName = tok(d->name);
+            auto name = cppIdent(svName);
             auto type = anonymousStructType.empty() ? varType(*node.type, *d) : anonymousStructType;
             if (!anonymousStructType.empty()) {
                 auto& st = node.type->as<StructUnionTypeSyntax>();
@@ -1065,12 +1066,16 @@
                     type = "array<" + type + "," + *it + ">";
                 }
             }
-            if (mod->seqAssignedVars.count(name)) {
+            if (mod->seqAssignedVars.count(svName)) {
                 type = regTypeFor(type);
             }
             mod->vars.push_back({type, name});
             mod->varNames.insert(name);
             mod->types[name] = type;
+            if (name != svName) {
+                mod->wireMap[svName] = name;
+                mod->types[svName] = type;
+            }
             recordArrayLowerBounds(name, d->dimensions);
         }
     }
@@ -1081,7 +1086,8 @@
             return;
         }
         for (auto d : node.declarators) {
-            auto name = tok(d->name);
+            auto svName = tok(d->name);
+            auto name = cppIdent(svName);
             auto type = varType(*node.type, *d);
             if (node.type->kind == SyntaxKind::ImplicitType) {
                 auto& implicit = node.type->as<ImplicitTypeSyntax>();
@@ -1089,12 +1095,16 @@
                     type = "unsigned";
                 }
             }
-            if (mod->seqAssignedVars.count(name)) {
+            if (mod->seqAssignedVars.count(svName)) {
                 type = regTypeFor(type);
             }
             mod->vars.push_back({type, name});
             mod->varNames.insert(name);
             mod->types[name] = type;
+            if (name != svName) {
+                mod->wireMap[svName] = name;
+                mod->types[svName] = type;
+            }
             recordArrayLowerBounds(name, d->dimensions);
         }
     }
@@ -1841,6 +1851,7 @@
         std::map<std::string, std::string> functionLocalTypes;
         if (node.prototype->portList) {
             bool first = true;
+            std::string lastDirection = "input";
             for (auto p : node.prototype->portList->ports) {
                 if (p->kind == SyntaxKind::FunctionPort) {
                     auto& fp = p->as<FunctionPortSyntax>();
@@ -1855,8 +1866,15 @@
                         }
                     }
                     auto name = tok(fp.declarator->name);
+                    std::string direction = lastDirection;
+                    if (fp.direction) {
+                        direction = tok(fp.direction);
+                        lastDirection = direction;
+                    }
                     functionLocalTypes[name] = type;
-                    m.args += type + " " + name;
+                    const bool byReference =
+                        direction == "output" || direction == "inout" || direction == "ref";
+                    m.args += type + (byReference ? "& " : " ") + name;
                 }
             }
         }
@@ -5587,15 +5605,150 @@
                 argEnd = static_cast<size_t>(static_cast<long long>(argEnd) + delta);
             }
         };
-        auto replaceArg = [&](const std::string& replacement) {
-            line.replace(argStart, argEnd - argStart, replacement);
-            argEnd = argStart + replacement.size();
-            arg = replacement;
-        };
-        auto indexedGetterReturnsPackedElement = [&]() {
-            if (!getterIndexesArrayElement(arg)) {
-                return false;
-            }
+	        auto replaceArg = [&](const std::string& replacement) {
+	            line.replace(argStart, argEnd - argStart, replacement);
+	            argEnd = argStart + replacement.size();
+	            arg = replacement;
+	        };
+	        auto getterAddressableArg = [&](std::string expr) {
+	            expr = trim(std::move(expr));
+	            while (expr.size() > 2 && expr.front() == '(' && expr.back() == ')') {
+	                auto close = matchingParenClose(expr, 0);
+	                if (close != expr.size() - 1) {
+	                    break;
+	                }
+	                expr = trim(expr.substr(1, expr.size() - 2));
+	            }
+	            const char* getters[] = {"_in()", "_out()", "_comb_func()"};
+	            for (auto* getter : getters) {
+	                auto pos = expr.find(getter);
+	                if (pos == std::string::npos) {
+	                    continue;
+	                }
+	                auto callEnd = pos + std::string(getter).size();
+	                auto start = pos;
+	                while (start > 0) {
+	                    auto c = expr[start - 1];
+	                    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) {
+	                        break;
+	                    }
+	                    --start;
+	                }
+	                if (start == pos) {
+	                    continue;
+	                }
+	                for (size_t i = 0; i < start; ++i) {
+	                    if (!std::isspace(static_cast<unsigned char>(expr[i])) && expr[i] != '(') {
+	                        return false;
+	                    }
+	                }
+	                auto rest = trim(expr.substr(callEnd));
+	                while (!rest.empty() && rest.front() == ')') {
+	                    rest = trim(rest.substr(1));
+	                }
+	                if (!rest.empty() && rest.front() == '[') {
+	                    auto getterName = expr.substr(start, callEnd - start - 2);
+	                    auto source = resolveLocalAliasType(getterType(getterName));
+	                    if (!(source.rfind("array<", 0) == 0 || source.rfind("std::array<", 0) == 0) ||
+	                        arrayTypeIsPacked(source)) {
+	                        return false;
+	                    }
+	                }
+	                return rest.empty() || rest.front() == '.' || rest.front() == '[';
+	            }
+	            return false;
+	        };
+	        auto childArraySize = [&]() {
+	            if (auto it = m.memberArraySizes.find(instance); it != m.memberArraySizes.end()) {
+	                return it->second;
+	            }
+	            auto text = trim(childType);
+	            auto args = templateArgsFor(text, text.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+	            if (args.size() >= 2 && (text.rfind("array<", 0) == 0 || text.rfind("std::array<", 0) == 0)) {
+	                return trim(args[1]);
+	            }
+	            return std::string{};
+	        };
+	        auto materializeIndexedCombPortBinding = [&]() {
+	            if (!referencesDynamicCpphdlGetter(arg) || isSimpleCombRef(arg) || getterAddressableArg(arg)) {
+	                return false;
+	            }
+	            std::string indexName;
+	            if (line.find("_ASSIGN_COMB_I(", eq) != std::string::npos) {
+	                indexName = "i";
+	            }
+	            else if (line.find("_ASSIGN_COMB_J(", eq) != std::string::npos) {
+	                indexName = "j";
+	            }
+	            else {
+	                return false;
+	            }
+	            auto size = childArraySize();
+	            if (size.empty()) {
+	                return false;
+	            }
+	            auto sanitizeGeneratedName = [](std::string text) {
+	                for (auto& ch : text) {
+	                    if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_') {
+	                        ch = '_';
+	                    }
+	                }
+	                if (text.empty() || std::isdigit(static_cast<unsigned char>(text[0]))) {
+	                    text = "_" + text;
+	                }
+	                return text;
+	            };
+	            auto base = sanitizeGeneratedName("__port_bind_" + instance + "_" + portName + "_indexed");
+	            auto unique = base;
+	            unsigned suffix = 0;
+	            while (m.types.count(unique) || m.combMethodByBase.count(unique) || m.varNames.count(unique)) {
+	                unique = base + "_" + std::to_string(++suffix);
+	            }
+	            auto retType = trim(portType);
+	            if (!instance.empty() && !portName.empty()) {
+	                retType = "std::remove_cvref_t<decltype(" + instance + "." + portName + "())>";
+	            }
+	            if (retType.empty()) {
+	                retType = "bool";
+	            }
+	            m.types[unique] = "array<" + retType + "," + size + ">";
+	            m.varNames.insert(unique);
+	            m.combAssignedVars.insert(unique);
+
+	            MethodGen method;
+	            method.name = unique + "_comb_func";
+	            method.ret = retType + "&";
+	            method.args = "unsigned " + indexName;
+	            method.returnBase = unique;
+	            m.combReturnTypes[unique] = "array<" + retType + "," + size + ">";
+	            auto indexedStorage = unique + "[(unsigned)(uint64_t)(" + indexName + ")]";
+	            if (retType == "bool" || retType == "u1") {
+	                method.body.push_back(indexedStorage + " = bool(" + arg + ");");
+	            }
+	            else {
+	                method.body.push_back(indexedStorage + " = " + arg + ";");
+	            }
+	            method.body.push_back("return " + indexedStorage + ";");
+	            m.methods.push_back(method);
+
+	            replaceArg(method.name + "(" + indexName + ")");
+	            setAssignComb();
+	            return true;
+	        };
+	        (void)materializeIndexedCombPortBinding;
+	        auto downgradeIndexedCombRvalue = [&]() {
+	            const bool indexedComb =
+	                line.find("_ASSIGN_COMB_I(", eq) != std::string::npos ||
+	                line.find("_ASSIGN_COMB_J(", eq) != std::string::npos ||
+	                line.find("_ASSIGN_COMB_IJ(", eq) != std::string::npos;
+	            if (indexedComb && !getterAddressableArg(arg)) {
+	                setAssignValue();
+	            }
+	        };
+	        auto indexedGetterReturnsPackedElement = [&]() {
+	            if (!getterIndexesArrayElement(arg)) {
+	                return false;
+	            }
             auto source = resolveLocalAliasType(sourceType);
             return arrayTypeIsPacked(source) ||
                 source.rfind("logic<", 0) == 0 ||
@@ -5687,18 +5840,24 @@
             setAssignComb();
             return true;
         };
-        if (portType == "bool") {
-            if (isSimpleCombRef(arg) && sourceType == "bool") {
-                setAssignComb();
-                return line;
-            }
-            if (arg.rfind("bool(", 0) != 0) {
-                replaceArg("bool(" + arg + ")");
-            }
-            setAssignValue();
-            materializeCombPortBinding();
-            return line;
-        }
+	        if (portType == "bool") {
+	            if (isSimpleCombRef(arg) && sourceType == "bool") {
+	                setAssignComb();
+	                return line;
+	            }
+	            if (arg.rfind("bool(", 0) != 0) {
+	                replaceArg("bool(" + arg + ")");
+	            }
+	            if (getterAddressableArg(arg)) {
+	                setAssignComb();
+	            }
+	            else {
+	                setAssignValue();
+	            }
+	            materializeCombPortBinding();
+	            downgradeIndexedCombRvalue();
+	            return line;
+	        }
         bool targetAggregate = portType.rfind("array<", 0) == 0 || portType.rfind("std::array<", 0) == 0;
         if (targetAggregate) {
             auto aggregateInner = outerAggregateCastInner(arg);
@@ -5711,32 +5870,45 @@
                 if (isSimpleCombRef(arg)) {
                     setAssignComb();
                 }
-                else {
-                    materializeCombPortBinding();
-                }
-                return line;
-            }
-            if (arg.rfind(portType + "(", 0) != 0) {
-                replaceArg(portType + "(" + arg + ")");
-            }
-            setAssignValue();
-            materializeCombPortBinding();
-            return line;
-        }
+	                else {
+	                    materializeCombPortBinding();
+	                }
+	                downgradeIndexedCombRvalue();
+	                return line;
+	            }
+	            if (arg.rfind(portType + "(", 0) != 0) {
+	                replaceArg(portType + "(" + arg + ")");
+	            }
+	            if (getterAddressableArg(arg)) {
+	                setAssignComb();
+	            }
+	            else {
+	                setAssignValue();
+	            }
+	            materializeCombPortBinding();
+	            downgradeIndexedCombRvalue();
+	            return line;
+	        }
         if (portType.rfind("logic<", 0) != 0 || portType.back() != '>') {
             if (isSimpleCombRef(arg) && (sourceType.empty() || sourceType == portType)) {
                 setAssignComb();
             }
-            else {
-                materializeCombPortBinding();
-            }
-            return line;
-        }
+	            else {
+	                materializeCombPortBinding();
+	            }
+	            downgradeIndexedCombRvalue();
+	            return line;
+	        }
         bool aggregateSource = sourceType.rfind("array<", 0) == 0 || sourceType.rfind("std::array<", 0) == 0;
-        if (indexedGetterReturnsPackedElement() ||
-            (portType.rfind("logic<", 0) == 0 && getterIndexesArrayElement(arg))) {
-            setAssignValue();
-        }
+	        if (indexedGetterReturnsPackedElement() ||
+	            (portType.rfind("logic<", 0) == 0 && getterIndexesArrayElement(arg))) {
+	            if (getterAddressableArg(arg)) {
+	                setAssignComb();
+	            }
+	            else {
+	                setAssignValue();
+	            }
+	        }
         if (isSimpleCombRef(arg) && !aggregateSource && (sourceType.empty() || sourceType == portType)) {
             setAssignComb();
             return line;
@@ -5759,18 +5931,26 @@
             sourceType.rfind("u<", 0) != 0 && sourceType != "bool") {
             packToPortLogic();
         }
-        if (!aggregateSource) {
-            materializeCombPortBinding();
-            return line;
-        }
-        if (arg.rfind(portType + "(", 0) == 0) {
-            materializeCombPortBinding();
-            return line;
-        }
-        if (!packToPortLogic()) {
-            replaceArg(portType + "(" + arg + ")");
-        }
-        setAssignValue();
-        materializeCombPortBinding();
-        return line;
+	        if (!aggregateSource) {
+	            materializeCombPortBinding();
+	            downgradeIndexedCombRvalue();
+	            return line;
+	        }
+	        if (arg.rfind(portType + "(", 0) == 0) {
+	            materializeCombPortBinding();
+	            downgradeIndexedCombRvalue();
+	            return line;
+	        }
+	        if (!packToPortLogic()) {
+	            replaceArg(portType + "(" + arg + ")");
+	        }
+	        if (getterAddressableArg(arg)) {
+	            setAssignComb();
+	        }
+	        else {
+	            setAssignValue();
+	        }
+	        materializeCombPortBinding();
+	        downgradeIndexedCombRvalue();
+	        return line;
     }

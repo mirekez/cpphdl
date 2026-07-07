@@ -763,9 +763,14 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
             }
             std::string lhsIndex;
             std::string lhsField;
-            if (parseBaseFieldLValue(lhs, base, lhsIndex, lhsField) && lhsField == field) {
+            if (parseBaseFieldLValue(lhs, base, lhsIndex, lhsField) &&
+                (lhsField == field || lhsField.rfind(field + ".", 0) == 0)) {
                 auto rhs = assignmentRhs(lines[i]);
-                auto assign = resultName + " = " + rhs + ";";
+                auto target = resultName;
+                if (lhsField != field) {
+                    target += lhsField.substr(field.size());
+                }
+                auto assign = target + " = " + rhs + ";";
                 if (!indexName.empty() && !lhsIndex.empty()) {
                     out.push_back("if ((uint64_t)(" + lhsIndex + ") == (uint64_t)(" + indexName + ")) {");
                     out.push_back("    " + assign);
@@ -781,8 +786,7 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
                 if (rhsTrimmed == "0" || rhsTrimmed == "0b0" || rhsTrimmed == "{}") {
                     out.push_back(resultName + " = {};");
                 }
-                else if (rhs.find("_comb_func()") != std::string::npos ||
-                         rhs.find("sv_cast<") != std::string::npos) {
+                else {
                     out.push_back(resultName + " = (" + rhs + ")." + field + ";");
                 }
             }
