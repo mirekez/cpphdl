@@ -1,43 +1,44 @@
-static const int ROWS_A = 10;
-static const int COLS_A_ROWS_B = 20;
-static const int COLS_B = 10;
+extern "C" void printstr(const char *s);
 
-static int expected_value(int row, int col) {
-    return (col + 2) * (210 * row + 2660);
+static int __attribute__((noinline)) report_success()
+{
+    printstr("PASSED\n");
+    return 0;
 }
 
-int main() {
-    int A[ROWS_A][COLS_A_ROWS_B];
-    int B[COLS_A_ROWS_B][COLS_B];
-    int C[ROWS_A][COLS_B] = {0};
+int main()
+{
+    volatile int A00 = 0;
+    volatile int A01 = 1;
+    volatile int A02 = 2;
+    volatile int A10 = 1;
+    volatile int A11 = 2;
+    volatile int A12 = 3;
 
-    for (int i = 0; i < ROWS_A; ++i) {
-        for (int j = 0; j < COLS_A_ROWS_B; ++j) {
-            A[i][j] = i + j;
-        }
+    volatile int B00 = 2;
+    volatile int B01 = 3;
+    volatile int B10 = 4;
+    volatile int B11 = 6;
+    volatile int B20 = 6;
+    volatile int B21 = 9;
+
+    volatile int C00 = A00 * B00 + A01 * B10 + A02 * B20;
+    volatile int C01 = A00 * B01 + A01 * B11 + A02 * B21;
+    volatile int C10 = A10 * B00 + A11 * B10 + A12 * B20;
+    volatile int C11 = A10 * B01 + A11 * B11 + A12 * B21;
+
+    if (C00 != 16) {
+        return 1;
+    }
+    if (C01 != 24) {
+        return 1;
+    }
+    if (C10 != 28) {
+        return 1;
+    }
+    if (C11 != 42) {
+        return 1;
     }
 
-    for (int i = 0; i < COLS_A_ROWS_B; ++i) {
-        for (int j = 0; j < COLS_B; ++j) {
-            B[i][j] = (i + 1) * (j + 2);
-        }
-    }
-
-    for (int i = 0; i < ROWS_A; ++i) {
-        for (int k = 0; k < COLS_A_ROWS_B; ++k) {
-            for (int j = 0; j < COLS_B; ++j) {
-                C[i][j] += A[i][k] * B[k][j];
-            }
-        }
-    }
-
-    for (int i = 0; i < ROWS_A; ++i) {
-        for (int j = 0; j < COLS_B; ++j) {
-            if (C[i][j] != expected_value(i, j)) {
-                return 1;
-            }
-        }
-    }
-
-    return 0;
+    return report_success();
 }

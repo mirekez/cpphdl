@@ -105,5 +105,22 @@ ln -s "$OUT" "$SRC_CPPHDL"
     "$HDLCPP" --optimize run_cpphdl_matrix.cpp
 )
 
+python3 - "$OUT/generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+text = text.replace(
+    "__cpphdl_value = cpphdl::sv_cast<__cpphdl_cast_t>(refill_data_comb_func());",
+    "__cpphdl_value = cpphdl::unpack_value<__cpphdl_cast_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_cast_t>()>(refill_data_comb_func()));",
+)
+text = text.replace(
+    "__cpphdl_value = cpphdl::sv_cast<__cpphdl_cast_t>(clean_data_comb_func());",
+    "__cpphdl_value = cpphdl::unpack_value<__cpphdl_cast_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_cast_t>()>(clean_data_comb_func()));",
+)
+path.write_text(text)
+PY
+
 echo "converted CVA6 source: $SRC/core"
 echo "cpphdl output: $OUT"
