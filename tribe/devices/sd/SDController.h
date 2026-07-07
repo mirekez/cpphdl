@@ -424,7 +424,6 @@ public:
         uint32_t next_byte_index;
         uint32_t beat_limit;
         size_t i;
-        logic<DATA_WIDTH> beat;
         bool tx_push;
         bool tx_pop;
         bool rx_push;
@@ -432,6 +431,9 @@ public:
         bool desc_push;
         bool desc_pop;
         uint32_t next_desc_remaining;
+        // cpphdl emits local logic default construction as an assignment in SV;
+        // keep it after scalar locals so Verilator still sees declarations first.
+        logic<DATA_WIDTH> beat;
 
         tx_push = false;
         desc_push = false;

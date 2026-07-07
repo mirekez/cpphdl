@@ -393,9 +393,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + "(" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + ")";
         case EXPR_CALL:
         {
-            if (str_ending(value, "_comb_func")) {
-                std::string str = value;
-                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+            if (cpphdl_is_comb_func_name(value)) {
+                return indent_str + cpphdl_comb_func_signal_name(value);
             }
             std::string func = value;
             if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
@@ -580,10 +579,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 declSize = numericWidth(width.str());
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:" + width.str() + "]";
             }
-            if (str_ending(value, "_comb_func")) {
-                std::string str = value;
-                str_replace(str, "_comb_func", "_comb");
-                return indent_str + prefix + str + suffix;
+            if (cpphdl_is_comb_func_name(value)) {
+                return indent_str + prefix + cpphdl_comb_func_signal_name(value) + suffix;
             }
             if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
                 return indent_str + prefix + escapeIdentifier(value) + suffix;

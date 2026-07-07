@@ -551,6 +551,8 @@ class TestTribe : public Module
     uint64_t runtime_trace_ticks = 0;
     uint64_t runtime_negedge_ticks = 0;
     uint64_t runtime_total_ticks = 0;
+    long perf_system_clock_start = 0;
+    std::chrono::steady_clock::time_point perf_live_start = std::chrono::steady_clock::now();
     uint32_t tohost_addr = 0;
     uint32_t tohost_value = 0;
     uint32_t reset_pc = 0;
@@ -1591,6 +1593,8 @@ public:
         runtime_trace_ticks = 0;
         runtime_negedge_ticks = 0;
         runtime_total_ticks = 0;
+        perf_system_clock_start = _system_clock;
+        perf_live_start = std::chrono::steady_clock::now();
     }
 
     void perf_sample()
@@ -1638,18 +1642,24 @@ public:
         auto runtime_part_percent = [&](uint64_t ticks) {
             return runtime_total_ticks ? (100.0 * (double)ticks / (double)runtime_total_ticks) : 0.0;
         };
+        const auto live_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_live_start).count();
+        const uint64_t system_clock_delta = _system_clock >= perf_system_clock_start ?
+            (uint64_t)(_system_clock - perf_system_clock_start) : 0;
+        const double clocks_per_sec = live_elapsed > 0.0 ? (double)system_clock_delta / live_elapsed : 0.0;
 
         std::print("Performance: clocks={}, stalled={:.2f}% ({})"
                    ", hazards={:.2f}% ({})"
                    ", dcache_wait={:.2f}% ({})"
                    ", icache_wait={:.2f}% ({})"
-                   ", branching={:.2f}% ({})\n",
+                   ", branching={:.2f}% ({})"
+                   ", clocks_per_sec={:.0f}\n",
             perf_clocks,
             percent(perf_stall), perf_stall,
             percent(perf_hazard), perf_hazard,
             percent(perf_dcache_wait), perf_dcache_wait,
             percent(perf_icache_wait), perf_icache_wait,
-            percent(perf_branch), perf_branch);
+            percent(perf_branch), perf_branch,
+            clocks_per_sec);
         if (std::getenv("TRIBE_PERF_DETAIL")) {
             std::print("I-cache wait detail: issue={:.2f}% ({})"
                        ", lookup={:.2f}% ({})"

@@ -213,13 +213,12 @@ public:
     {
         size_t i;
         size_t way;
-        u<clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> bank_addr;
+        uint32_t bank_addr;
         uint32_t data_ram_index;
         uint32_t tag_ram_index;
         bool bank_read;
         bool bank_write;
         uint32_t bank_data;
-        logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8> tag_bank_data;
         bool tag_bank_read;
         bool tag_bank_write;
         uint32_t trace_line;
@@ -228,6 +227,10 @@ public:
         bool trace_active_line;
         uint32_t trace_word0;
         uint32_t trace_word1;
+        // Keep cpphdl local logic declarations after scalar locals: the SV
+        // backend emits default construction as an assignment, and Verilator
+        // requires all task declarations before the first assignment.
+        logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8> tag_bank_data;
         trace_line = 0;
         trace_line_enabled = false;
         trace_req_line = false;
@@ -250,8 +253,10 @@ public:
         trace_word1 = 0;
 
         bank_addr = (state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func();
-        bank_read = (state_reg == ST_IDLE && (active_read_comb_func() || active_write_comb_func())) ||
-            state_reg == ST_CROSS_WRITE_LOOKUP;
+        // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
+        // cycle later from req_reg so generated SV cannot use a live input set
+        // while ST_LOOKUP consumes stale registered RAM outputs.
+        bank_read = state_reg == ST_READ || state_reg == ST_CROSS_WRITE_LOOKUP;
         for (i = 0; i < DATA_BANKS; ++i) {
             // Fill writes only the words carried by the current AXI beat;
             // store hits update one or two addressed word banks.
@@ -365,8 +370,13 @@ public:
                         }
                     }
                 }
-                state_reg._next = active_cross_line_read_comb_func() ? ST_CROSS_AR0 : ST_LOOKUP;
+                // ST_READ samples tag/data arrays from the latched request.
+                // ST_LOOKUP then consumes those registered RAM outputs.
+                state_reg._next = active_cross_line_read_comb_func() ? ST_CROSS_AR0 : ST_READ;
             }
+        }
+        else if (state_reg == ST_READ) {
+            state_reg._next = ST_LOOKUP;
         }
         else if (state_reg == ST_LOOKUP) {
             if (!req_addr_in_memory_comb_func()) {

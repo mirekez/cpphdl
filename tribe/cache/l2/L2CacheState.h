@@ -29,7 +29,8 @@ enum L2CacheFsmState : uint64_t
     ST_IO_W = 16,
     ST_IO_B = 17,
     ST_IO_AR = 18,
-    ST_IO_R = 19
+    ST_IO_R = 19,
+    ST_READ = 20
 };
 
 // Captured L2 request payload after arbitration. Widths use the cache-supported
