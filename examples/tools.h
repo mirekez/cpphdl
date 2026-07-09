@@ -88,6 +88,13 @@ inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const s
         return build_generated;
     }
 
+    if (!rel_source_dir.empty()) {
+        const fs::path build_group_generated = build_root / *rel_source_dir.begin() / "generated";
+        if (fs::exists(build_group_generated / (top_name + ".sv"))) {
+            return build_group_generated;
+        }
+    }
+
     const fs::path build_root_generated = build_root / "generated";
     if (fs::exists(build_root_generated / (top_name + ".sv"))) {
         return build_root_generated;

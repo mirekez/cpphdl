@@ -34,6 +34,45 @@ std::string assignedWireName(Expr expr)
     return expr.str();
 }
 
+const Expr* topLevelLocalDecl(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_DECL) {
+        return &expr;
+    }
+    if (expr.type == Expr::EXPR_BODY && expr.sub.size() == 1 && expr.sub[0].type == Expr::EXPR_DECL) {
+        return &expr.sub[0];
+    }
+    return nullptr;
+}
+
+bool isTopLevelLocalDeclWithType(const Expr& expr)
+{
+    const Expr* decl = topLevelLocalDecl(expr);
+    return decl && decl->sub.size() >= 1 && decl->sub[0].type != Expr::EXPR_NUM;
+}
+
+bool isHiddenLocalDecl(const Expr& expr)
+{
+    return expr.value.find("__") == 0 || expr.value.find("_____") != std::string::npos;
+}
+
+std::string localDeclInitializer(const Expr& expr)
+{
+    const Expr* decl = topLevelLocalDecl(expr);
+    if (!decl || decl->sub.size() < 2 || decl->sub[1].type == Expr::EXPR_NONE || isHiddenLocalDecl(*decl)) {
+        return "";
+    }
+
+    Expr init = decl->sub[1];
+    init.indent = 0;
+    init.flags = expr.flags;
+    std::string indent;
+    for (int i = 0; i < expr.indent; ++i) {
+        indent += "    ";
+    }
+    return indent + escapeIdentifier(decl->value) + " = " + init.str() + ";\n";
+}
+
 }
 
 bool Method::print(std::ofstream& out)
@@ -229,11 +268,36 @@ bool Method::printComb(std::ofstream& out)
     currMethod = this;
 
     out << "    always_comb begin : " << escapeIdentifier(name) << "  // " << name <<"\n";
+    for (auto& stmt : statements) {
+        if (!isTopLevelLocalDeclWithType(stmt)) {
+            continue;
+        }
+
+        // SystemVerilog requires block declarations before executable
+        // statements. C++ default construction appears as declaration plus an
+        // initializer, so print only the declaration here and emit the
+        // initializer later as a normal assignment.
+        Expr decl = *topLevelLocalDecl(stmt);
+        decl.indent = 2;
+        decl.flags = Expr::FLAG_COMB;
+        if (decl.sub.size() > 1) {
+            decl.sub[1] = Expr{};
+        }
+        auto s = decl.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
     for (size_t i = 0; i < statements.size(); ++i) {
         auto& stmt = statements[i];
 //        out << stmt.debug() << "\n";
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
+        if (isTopLevelLocalDeclWithType(stmt)) {
+            out << localDeclInitializer(stmt);
+            continue;
+        }
         if (i + 1 == statements.size() && stmt.type == Expr::EXPR_RETURN) {
             stmt.flags |= Expr::FLAG_COMB_TERMINAL_RETURN;
         }
