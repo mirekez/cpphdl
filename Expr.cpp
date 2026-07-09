@@ -305,8 +305,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
-                std::string str = sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");  // also calc size
-                declSize = sub[0].declSize * atoi(sub[1].str().c_str());
+                std::string str = sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // also calc size
+                declSize = sub[1].declSize * atoi(sub[0].str().c_str());
                 return indent_str + prefix + str;
             }
             if (value.find("cpphdl_") == 0 && sub.size()) {

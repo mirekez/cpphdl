@@ -26,8 +26,8 @@ private:
 
     u<32> c_line[4];
     u<32> c_grid[2][3];
-    array<u<32>, 4> cpp_line;
-    array<array<u<32>, 3>, 2> cpp_grid;
+    array<4, u<32>> cpp_line;
+    array<2, array<3, u<32>>> cpp_grid;
 
     u<32>& plain_comb_func()
     {

@@ -89,11 +89,11 @@ private:
     static constexpr size_t FIFO_INDEX_BITS = clog2(FIFO_DEPTH);
     static constexpr size_t FIFO_COUNT_BITS = clog2(FIFO_DEPTH + 1);
 
-    reg<array<u<8>, FIFO_DEPTH>> tx_fifo_data_reg;
+    reg<array<FIFO_DEPTH, u<8>>> tx_fifo_data_reg;
     reg<u<FIFO_INDEX_BITS>> tx_fifo_rd_reg;
     reg<u<FIFO_INDEX_BITS>> tx_fifo_wr_reg;
     reg<u<FIFO_COUNT_BITS>> tx_fifo_count_reg;
-    reg<array<u<8>, FIFO_DEPTH>> rx_fifo_data_reg;
+    reg<array<FIFO_DEPTH, u<8>>> rx_fifo_data_reg;
     reg<u<FIFO_INDEX_BITS>> rx_fifo_rd_reg;
     reg<u<FIFO_INDEX_BITS>> rx_fifo_wr_reg;
     reg<u<FIFO_COUNT_BITS>> rx_fifo_count_reg;
@@ -136,8 +136,8 @@ private:
     reg<u32> dma_beat_base_reg;
     reg<u32> dma_byte_index_reg;
     reg<u32> dma_beat_limit_reg;
-    reg<array<u32, FIFO_DEPTH>> desc_addr_data_reg;
-    reg<array<u32, FIFO_DEPTH>> desc_len_data_reg;
+    reg<array<FIFO_DEPTH, u32>> desc_addr_data_reg;
+    reg<array<FIFO_DEPTH, u32>> desc_len_data_reg;
     reg<u<FIFO_INDEX_BITS>> desc_rd_reg;
     reg<u<FIFO_INDEX_BITS>> desc_wr_reg;
     reg<u<FIFO_COUNT_BITS>> desc_count_reg;

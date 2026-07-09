@@ -9,7 +9,7 @@ namespace cpphdl
 {
 
 
-template<typename T, size_t S, bool PACKED = false>
+template<size_t S, typename T, bool PACKED = false>
 struct array;
 
 template<size_t WIDTH>

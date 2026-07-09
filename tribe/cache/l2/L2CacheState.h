@@ -52,37 +52,14 @@ struct L2MemDriver
     u<4> slave_id;               // External AXI transaction ID to echo in the response.
 };
 
-// Combinational AXI responder fields driven toward external coherent masters.
-// Concrete maximum widths avoid unresolved parameterized packages in generated SV.
-struct L2AxiResponderComb
+struct L2AxiRouteComb
 {
-    u1 aw_ready;                 // Accept an external AXI write address when this slave slot can track it.
-    u1 w_ready;                  // Accept external AXI write data when the selected write request is active.
-    u1 b_valid;                  // Present a completed external AXI write response.
-    u<4> b_id;                   // Echo the completed external AXI write ID.
-    u1 ar_ready;                 // Accept an external AXI read address when this slave slot wins arbitration.
-    u1 r_valid;                  // Present a completed external AXI read response.
-    logic<256> r_data;           // Read response data; lower PORT_BITWIDTH bits are used.
-    u1 r_last;                   // L2 responds as one-beat AXI transactions.
-    u<4> r_id;                   // Echo the completed external AXI read ID.
-};
-
-// Combinational AXI driver fields driven toward RAM/device regions.
-// Concrete maximum widths avoid unresolved parameterized packages in generated SV.
-struct L2AxiDriverComb
-{
-    u1 aw_valid;                 // Start a write address transaction on the selected memory/device port.
-    u32 aw_addr;                 // Local address inside the selected memory/device region.
-    u<4> aw_id;                  // L2 master writes use ID zero.
-    u1 w_valid;                  // Present write data for the selected memory/device port.
-    logic<256> w_data;           // Write data beat; lower PORT_BITWIDTH bits are used.
-    logic<32> w_strb;            // Write byte enables; lower PORT_BYTES bits are used.
-    u1 w_last;                   // L2 emits one-beat AXI writes.
-    u1 b_ready;                  // Accept write response from the selected memory/device port.
-    u1 ar_valid;                 // Start a read address transaction on the selected memory/device port.
-    u32 ar_addr;                 // Local address inside the selected memory/device region.
-    u<4> ar_id;                  // L2 master reads use ID zero.
-    u1 r_ready;                  // Accept read data from the selected memory/device port.
+    u32 ar_full_addr;            // Full physical read address used for tracing and selected-region calculation.
+    u32 ar_local_addr;           // Read address local to the selected memory/device region.
+    u8 ar_sel;                   // Selected read memory/device port; lower MEM_PORT_BITS bits are used.
+    u32 aw_full_addr;            // Full physical write address used for tracing and selected-region calculation.
+    u32 aw_local_addr;           // Write address local to the selected memory/device region.
+    u8 aw_sel;                   // Selected write memory/device port; lower MEM_PORT_BITS bits are used.
 };
 
 template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
@@ -140,9 +117,8 @@ protected:
     memory<u8, 4, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS) * DATA_BANKS> data_ram;
     memory<u8, (((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8)),
         (CACHE_SIZE / CACHE_LINE_SIZE / WAYS) * WAYS> tag_ram; // {valid, dirty, tag}
-    reg<array<logic<32>, DATA_BANKS, true>> data_q_reg;
-    reg<array<logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>,
-        DATA_BANKS, true>> tag_q_reg;
+    reg<array<DATA_BANKS, logic<32>, true>> data_q_reg;
+    reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
 
     reg<u<5>> state_reg;
     reg<L2MemDriver> req_reg;
@@ -163,12 +139,12 @@ protected:
     // Keep slave write responses as AXI channel structs so valid and ID are updated together.
     // The storage is fixed at 8 entries because the SV generator currently specializes struct-array
     // lengths from the first module instance; unused entries stay idle when MEM_PORTS is smaller.
-    reg<array<Axi4WriteResponse<4>, 8>> slave_b_reg;
+    reg<array<8, Axi4WriteResponse<4>>> slave_b_reg;
     // Keep slave read responses as AXI channel structs. The data field is fixed at 256 bits because
     // generated SV keeps PORT_BITWIDTH as a module parameter, while package structs need a concrete width.
-    reg<array<Axi4ReadData<4, 256>, 8>> slave_r_reg;
+    reg<array<8, Axi4ReadData<4, 256>>> slave_r_reg;
     // Keep split AW state as one AXI address payload so delayed W handshakes retain address and ID together.
-    reg<array<Axi4WriteAddress<ADDR_BITS, 4>, 8>> slave_aw_reg;
+    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_reg;
 
     // True when any external AXI master is offering a one-beat write.
 };

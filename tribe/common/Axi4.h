@@ -212,6 +212,33 @@ struct Axi4If : Interface
     (dst).rlast_out = _ASSIGN((bool)(src).rlast_out()); \
     (dst).rid_out = _ASSIGN((std::remove_reference_t<decltype((dst).rid_out())>)(uint64_t)(src).rid_out())
 
+#define AXI4_PORT_VALUE_TYPE(port) std::remove_reference_t<decltype((port)())>
+
+#define AXI4_DRIVER_FROM_COMB_INDEXED(dst, src, idx) \
+    (dst).awvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awvalid_in))(src)[idx].aw.valid); \
+    (dst).awaddr_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awaddr_in))(uint64_t)(src)[idx].aw.addr); \
+    (dst).awid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awid_in))(uint64_t)(src)[idx].aw.id); \
+    (dst).wvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wvalid_in))(src)[idx].w.valid); \
+    (dst).wdata_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wdata_in))(src)[idx].w.data); \
+    (dst).wstrb_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wstrb_in))(src)[idx].w.strb); \
+    (dst).wlast_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wlast_in))(src)[idx].w.last); \
+    (dst).bready_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bready_in))(src)[idx].b.ready); \
+    (dst).arvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arvalid_in))(src)[idx].ar.valid); \
+    (dst).araddr_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).araddr_in))(uint64_t)(src)[idx].ar.addr); \
+    (dst).arid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arid_in))(uint64_t)(src)[idx].ar.id); \
+    (dst).rready_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rready_in))(src)[idx].r.ready)
+
+#define AXI4_RESPONDER_FROM_COMB_INDEXED(dst, src, idx) \
+    (dst).awready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awready_out))(src)[idx].aw.ready); \
+    (dst).wready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wready_out))(src)[idx].w.ready); \
+    (dst).bvalid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bvalid_out))(src)[idx].b.valid); \
+    (dst).bid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bid_out))(uint64_t)(src)[idx].b.id); \
+    (dst).arready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arready_out))(src)[idx].ar.ready); \
+    (dst).rvalid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rvalid_out))(src)[idx].r.valid); \
+    (dst).rdata_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rdata_out))(src)[idx].r.data); \
+    (dst).rlast_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rlast_out))(src)[idx].r.last); \
+    (dst).rid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rid_out))(uint64_t)(src)[idx].r.id)
+
 #define AXI4_RESPONDER_FROM_LATE(dst, src) \
     (dst).awready_out = _ASSIGN((src).awready_out()); \
     (dst).wready_out = _ASSIGN((src).wready_out()); \

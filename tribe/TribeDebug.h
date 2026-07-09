@@ -339,7 +339,7 @@ class EthGigTapSocket
         if (fd < 0 || frame.size() > 2048) {
             return false;
         }
-        std::array<uint8_t, 2051> msg{};
+        std::array<uint8_t,2051> msg{};
         msg[0] = MSG_FRAME;
         msg[1] = (uint8_t)(frame.size() >> 8);
         msg[2] = (uint8_t)frame.size();
@@ -442,7 +442,7 @@ public:
 
         size_t rx_dgrams = 0;
         for (; rx_dgrams < MAX_RX_DGRAMS_PER_PUMP; ++rx_dgrams) {
-            std::array<uint8_t, 4096> msg{};
+            std::array<uint8_t,4096> msg{};
             ssize_t got = ::recv(fd, msg.data(), msg.size(), MSG_DONTWAIT);
             if (got < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK && !recv_warning_printed) {

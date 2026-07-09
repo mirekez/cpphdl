@@ -44,7 +44,7 @@ private:
 
     logic<27>& dense_logic_comb_func()
     {
-        array<logic<9>, 3, true> dense_logic;
+        array<3,logic<9>, true> dense_logic;
         logic<9> word0;
         logic<9> word1;
         logic<9> word2;
@@ -61,7 +61,7 @@ private:
 
     logic<9>& dense_logic_index_comb_func()
     {
-        array<logic<9>, 3, true> dense_logic;
+        array<3,logic<9>, true> dense_logic;
         dense_logic = 0;
         dense_logic[0] = logic<9>(0x101);
         dense_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
@@ -72,7 +72,7 @@ private:
 
     logic<15>& dense_u_comb_func()
     {
-        array<u<3>, 5, true> dense_u;
+        array<5,u<3>, true> dense_u;
         logic<3> word0;
         logic<3> word1;
         logic<3> word2;
@@ -95,7 +95,7 @@ private:
 
     u<3>& dense_u_index_comb_func()
     {
-        array<u<3>, 5, true> dense_u;
+        array<5,u<3>, true> dense_u;
         dense_u = 0;
         dense_u[0] = 1;
         dense_u[1] = 2;
@@ -149,13 +149,20 @@ static bool check_direct_arrays()
 {
     bool ok = true;
 
-    array<logic<9>, 3, true> dense_logic;
+    static_assert(std::is_same_v<array2D<2, 3, u<2>, true>, array<2, array<3, u<2>, true>, true>>);
+    static_assert(std::is_same_v<array3D<2, 3, 4, u<2>, true>, array<2, array2D<3, 4, u<2>, true>, true>>);
+    static_assert(std::is_same_v<array4D<2, 3, 4, 5, u<2>, true>, array<2, array3D<3, 4, 5, u<2>, true>, true>>);
+    ok &= check(array2D<2, 3, u<2>, true>::_size_bits() == 12, "array2D packed alias width");
+    ok &= check(array3D<2, 3, 4, u<2>, true>::_size_bits() == 48, "array3D packed alias width");
+    ok &= check(array4D<2, 3, 4, 5, u<2>, true>::_size_bits() == 240, "array4D packed alias width");
+
+    array<3,logic<9>,true> dense_logic;
     dense_logic = 0;
     dense_logic[0] = logic<9>(0x101);
     dense_logic[1] = logic<9>(0x055);
     dense_logic[2] = logic<9>(0x1aa);
 
-    ok &= check(array<logic<9>, 3, true>::_size_bits() == 27, "packed logic array width");
+    ok &= check(array<3,logic<9>, true>::_size_bits() == 27, "packed logic array width");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[0]) == 0x101, "packed logic index 0");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x055, "packed logic index 1");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[2]) == 0x1aa, "packed logic index 2");
@@ -166,7 +173,7 @@ static bool check_direct_arrays()
     dense_logic.bits(13, 9) = 0x1f;
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x05f, "packed bits write through");
 
-    array<u<3>, 5, true> dense_u;
+    array<5,u<3>, true> dense_u;
     dense_u = 0;
     dense_u[0] = 1;
     dense_u[1] = 2;
@@ -174,7 +181,7 @@ static bool check_direct_arrays()
     dense_u[3] = 4;
     dense_u[4] = 5;
 
-    ok &= check(array<u<3>, 5, true>::_size_bits() == 15, "packed u array width");
+    ok &= check(array<5,u<3>, true>::_size_bits() == 15, "packed u array width");
     ok &= check((uint64_t)(u<3>)dense_u[2] == 3, "packed u direct index conversion");
     ok &= check((uint64_t)static_cast<logic<3>>(dense_u[0]) == 1, "packed u index 0");
     ok &= check((uint64_t)static_cast<logic<3>>(dense_u[4]) == 5, "packed u index 4");
@@ -184,10 +191,10 @@ static bool check_direct_arrays()
     item.lo = 0x5;
     item.hi = 0x12;
 
-    array<PackedStruct, 2, true> dense_struct;
+    array<2,PackedStruct,true> dense_struct;
     dense_struct = 0;
     dense_struct[1] = item;
-    ok &= check(array<PackedStruct, 2, true>::_size_bits() == 16, "packed struct width");
+    ok &= check(array<2,PackedStruct, true>::_size_bits() == 16, "packed struct width");
     ok &= check((uint64_t)logic<8>(dense_struct.bits(15, 8)) == (uint64_t)item, "packed struct write through");
 
     return ok;

@@ -86,9 +86,9 @@ private:
     CPPHDL_LOGIC_WIDTHS(DECL_LOGIC_TMP)
 #undef DECL_LOGIC_TMP
 
-    reg<array<u8,8>> array_u8_reg;
-    reg<array<u16,4>> array_u16_reg;
-    reg<array<logic<32>,4>> array_logic_reg;
+    reg<array<8, u8>> array_u8_reg;
+    reg<array<4, u16>> array_u16_reg;
+    reg<array<4, logic<32>>> array_logic_reg;
 
     memory<u8,64,16> byte_memory;
     logic<512> digest_comb;
@@ -347,9 +347,9 @@ static logic<512> expected_digest(uint8_t seed)
     CPPHDL_LOGIC_WIDTHS_GE8(EXPECT_LOGIC_GE8)
 #undef EXPECT_LOGIC_GE8
 
-    array<u8,8> arr8;
-    array<u16,4> arr16;
-    array<logic<32>,4> arrlogic;
+    array<8, u8> arr8;
+    array<4, u16> arr16;
+    array<4, logic<32>> arrlogic;
     for (size_t i=0; i < 8; ++i) {
         arr8[i] = (uint8_t)(seed + i);
     }

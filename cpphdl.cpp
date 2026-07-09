@@ -1162,8 +1162,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             break;
         }
 
-        const TemplateArgument& typeArg = TSD->getTemplateArgs()[0];
-        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[1];
+        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[0];
+        const TemplateArgument& typeArg = TSD->getTemplateArgs()[1];
         if (typeArg.getKind() != TemplateArgument::Type) {
             break;
         }

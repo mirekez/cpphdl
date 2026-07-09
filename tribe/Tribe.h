@@ -595,10 +595,10 @@ private:
 
     reg<u32>        alu_result_reg;
 
-    reg<array<State,STAGES_NUM-1>> state_reg;
-    reg<array<u32,STAGES_NUM-1>> predicted_next_reg;
-    reg<array<u32,STAGES_NUM-1>> fallthrough_reg;
-    reg<array<u1,STAGES_NUM-1>> predicted_taken_reg;
+    reg<array<STAGES_NUM-1,State>> state_reg;
+    reg<array<STAGES_NUM-1,u32>> predicted_next_reg;
+    reg<array<STAGES_NUM-1,u32>> fallthrough_reg;
+    reg<array<STAGES_NUM-1,u1>> predicted_taken_reg;
 
     // debug
     reg<u32>        debug_alu_a_reg;

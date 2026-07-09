@@ -23,7 +23,7 @@ public:
     _PORT(u<COUNT_BITS>) count_out = _ASSIGN_REG(count_reg);
 
 private:
-    reg<array<u<8>, DEPTH>> data_reg;
+    reg<array<DEPTH, u<8>>> data_reg;
     reg<u<INDEX_BITS>> rd_reg;
     reg<u<INDEX_BITS>> wr_reg;
     reg<u<COUNT_BITS>> count_reg;

@@ -178,17 +178,18 @@ Background and delayed activities:
 4. A dirty valid victim initiates external writeback, with the goal of
    preserving modified data before replacement, achieved by sending every
    evict_line_reg beat through axi_out[] AW/W/B handshakes.
-   4.1. Reconstruct the evicted beat address so memory receives the original
-        line location; axi_awaddr_full_comb_func() combines evict_tag_reg,
-        req_set_comb_func(), and evict_beat_reg.
-   4.2. Route the writeback to the owning memory region so the correct
-        axi_out[] port sees it; use axi_aw_sel_comb_func(),
-        axi_aw_region_base_comb_func(), and axi_awaddr_local_comb_func().
+   4.1. Reconstruct and route the evicted beat address so memory receives the
+        original line location; axi_route_comb_func().aw_* combines
+        evict_tag_reg, req_set_comb_func(), evict_beat_reg, region selection,
+        and local-address conversion.
+   4.2. Build one logical AXI write driver so the selected axi_out[] port sees a
+        complete grouped transaction; axi_out_driver_comb_func().aw/w/b carries
+        valid, address, data, strobe, and response-ready fields.
    4.3. Send the write address first so the AXI write transaction can begin;
         ST_EVICT_AW waits for selected axi_out[].awready_out().
    4.4. Send the evicted data beat so dirty bytes reach memory; ST_EVICT_W
-        drives axi_wdata_comb_func() from evict_line_reg and all-one strobes
-        through axi_wstrb_comb_func().
+        drives axi_out_driver_comb_func().w from evict_line_reg and all-one
+        strobes.
    4.5. Wait for the write response so the beat is known accepted; ST_EVICT_B
         waits for selected axi_out[].bvalid_out(), then increments
         evict_beat_reg or starts refill at ST_AXI_AR after the final beat.
@@ -199,14 +200,14 @@ Background and delayed activities:
    the requested line and eventually answering the stalled request, achieved by
    ST_AXI_AR/ST_AXI_R beat reads into data_ram[] and final tag_ram[] install.
    5.1. Issue the next refill read so one PORT_BITWIDTH beat can be fetched;
-        ST_AXI_AR drives axi_araddr_full_comb_func(), axi_ar_sel_comb_func(),
-        and axi_araddr_local_comb_func().
+        ST_AXI_AR drives axi_out_driver_comb_func().ar using the read side of
+        axi_route_comb_func().
    5.2. Accept the refill data beat so it can be installed; ST_AXI_R waits for
-        axi_rvalid_selected_comb_func() while axi_rready_comb_func() drives the
-        selected axi_out[].rready_in().
+        axi_out_selected_resp_comb_func().r.valid while
+        axi_out_driver_comb_func().r.ready drives the selected axi_out[].rready_in().
    5.3. Write each accepted refill beat into the victim way so the line becomes
         cached; data_ram[] writes fill_way_reg/req_set_comb_func()/
-        fill_beat_reg with axi_rdata_selected_comb_func().
+        fill_beat_reg with axi_out_selected_resp_comb_func().r.data.
    5.4. Merge write-miss data into the refill beat so the original store is not
         lost; use fill_write_word_comb() for CPU writes or
         req_reg.write_beat/req_reg.write_strobe for external writes.
@@ -257,7 +258,7 @@ Background and delayed activities:
         selected memory region.
    8.2. Issue uncached reads directly to the selected device so the returned
         value is not cached; ST_IO_AR/ST_IO_R route req_reg.addr through
-        axi_ar_sel_comb_func() and axi_araddr_local_comb_func().
+        axi_route_comb_func().ar_*.
    8.3. Return uncached read data to the original requester so the bypass path
         completes like a normal response; update last_data_reg for CPU reads or
         slave_r_reg[i].valid/slave_r_reg[i].data for external slave
@@ -272,12 +273,12 @@ Background and delayed activities:
    of reaching the correct memory/device region, achieved by cumulative
    mem_region_size_in[] selection and local address conversion.
    9.1. Select the target axi_out[] region so memory and devices see only their
-        own traffic; axi_ar_sel_comb_func() and axi_aw_sel_comb_func() compare
-        the access offset against cumulative mem_region_size_in[] ranges.
+        own traffic; axi_route_comb_func() compares the read/write access
+        offsets against cumulative mem_region_size_in[] ranges.
    9.2. Convert the physical access to a region-local address so downstream
-        devices can use smaller address maps; axi_araddr_local_comb_func() and
-        axi_awaddr_local_comb_func() subtract the selected region base and mask
-        to MEM_ADDR_BITS.
+        devices can use smaller address maps; axi_route_comb_func().ar_local_addr
+        and axi_route_comb_func().aw_local_addr subtract the selected region base
+        and mask to MEM_ADDR_BITS.
    9.3. Drive only the selected axi_out[] port so unrelated regions stay idle;
         assert arvalid, awvalid, wvalid, bready, or rready only for the chosen
         delayed transaction port.

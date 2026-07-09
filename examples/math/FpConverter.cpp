@@ -338,14 +338,14 @@ template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
 {
 public:
-    _PORT(array<STYPE,LENGTH>)    data_in;
-    _PORT(array<DTYPE,LENGTH>)    data_out = _ASSIGN( USE_REG ? out_reg : conv_comb_func() );
+    _PORT(array<LENGTH,STYPE>)    data_in;
+    _PORT(array<LENGTH,DTYPE>)    data_out = _ASSIGN( USE_REG ? out_reg : conv_comb_func() );
 
 private:
-    reg<array<DTYPE,LENGTH>> out_reg;
+    reg<array<LENGTH,DTYPE>> out_reg;
 
-    array<DTYPE,LENGTH> conv_comb;
-    array<DTYPE,LENGTH>& conv_comb_func()
+    array<LENGTH,DTYPE> conv_comb;
+    array<LENGTH,DTYPE>& conv_comb_func()
     {
         DTYPE converted;
         if constexpr (LENGTH > 0) { data_in()[0].convert(converted); conv_comb[0] = converted; }
@@ -525,14 +525,14 @@ class TestFpConverter : public Module
     FpConverter<STYPE,DTYPE,LENGTH,USE_REG> converter;
 #endif
 
-    reg<array<STYPE,LENGTH>> out_reg;
-    reg<array<DTYPE,LENGTH>> expected1;
-    reg<array<DTYPE,LENGTH>> expected2;
+    reg<array<LENGTH,STYPE>> out_reg;
+    reg<array<LENGTH,DTYPE>> expected1;
+    reg<array<LENGTH,DTYPE>> expected2;
     reg<u1> can_check1;
     reg<u1> can_check2;
     bool error;
 
-    array<DTYPE,LENGTH>    read_data;  // to support Verilator
+    array<LENGTH,DTYPE>    read_data;  // to support Verilator
 
 public:
 

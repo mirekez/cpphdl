@@ -64,31 +64,16 @@ private:
     using Base::cross_write_data_comb_func;
     using Base::cross_write_mask_comb_func;
     using Base::req_addr_in_memory_comb_func;
-    using Base::axi_araddr_full_comb_func;
-    using Base::axi_ar_sel_comb_func;
-    using Base::axi_araddr_local_comb_func;
-    using Base::axi_arvalid_comb_func;
-    using Base::axi_rready_comb_func;
-    using Base::axi_arready_selected_comb_func;
-    using Base::axi_rvalid_selected_comb_func;
-    using Base::axi_rdata_selected_comb_func;
+    using Base::axi_route_comb_func;
+    using Base::axi_out_driver_comb_func;
+    using Base::axi_out_selected_resp_comb_func;
     using Base::evict_way_comb_func;
     using Base::evict_valid_comb_func;
     using Base::evict_dirty_comb_func;
     using Base::evict_tag_comb_func;
-    using Base::axi_awaddr_full_comb_func;
-    using Base::axi_aw_sel_comb_func;
-    using Base::axi_awaddr_local_comb_func;
-    using Base::axi_awvalid_comb_func;
-    using Base::axi_wvalid_comb_func;
-    using Base::axi_awready_selected_comb_func;
-    using Base::axi_wready_selected_comb_func;
-    using Base::axi_bvalid_selected_comb_func;
     using Base::evict_line_snapshot_comb_func;
     using Base::evict_line_comb_func;
     using Base::req_uncached_region_comb_func;
-    using Base::axi_wdata_comb_func;
-    using Base::axi_wstrb_comb_func;
     using Base::hit_comb_func;
     using Base::hit_way_comb_func;
     using Base::hit_word_comb_func;
@@ -103,50 +88,50 @@ private:
     using Base::i_wait_comb_func;
     using Base::d_wait_comb_func;
 
-    L2AxiResponderComb axi_in_comb[MEM_PORTS];
-    L2AxiDriverComb axi_out_comb[MEM_PORTS];
+    Axi4Responder<4, 256> axi_in_comb[MEM_PORTS];
+    Axi4Driver<32, 4, 256> axi_out_comb[MEM_PORTS];
 
     // Build all AXI slave-side responder bundles and return the array so comb users depend on the driven values.
-    L2AxiResponderComb (&axi_in_comb_func())[MEM_PORTS]
+    Axi4Responder<4, 256> (&axi_in_comb_func())[MEM_PORTS]
     {
         size_t index;
 
         for (index = 0; index < MEM_PORTS; ++index) {
-            axi_in_comb[index].aw_ready = state_reg == ST_IDLE && !slave_aw_reg[index].valid &&
+            axi_in_comb[index].aw.ready = state_reg == ST_IDLE && !slave_aw_reg[index].valid &&
                 !slave_b_reg[index].valid && axi_in[index].awvalid_in();
-            axi_in_comb[index].w_ready = state_reg == ST_IDLE &&
+            axi_in_comb[index].w.ready = state_reg == ST_IDLE &&
                 slave_write_pending_comb_func() && active_slave_index_comb_func() == index;
-            axi_in_comb[index].b_valid = slave_b_reg[index].valid;
-            axi_in_comb[index].b_id = slave_b_reg[index].id;
-            axi_in_comb[index].ar_ready = state_reg == ST_IDLE && active_is_slave_comb_func() &&
+            axi_in_comb[index].b.valid = slave_b_reg[index].valid;
+            axi_in_comb[index].b.id = slave_b_reg[index].id;
+            axi_in_comb[index].ar.ready = state_reg == ST_IDLE && active_is_slave_comb_func() &&
                 !slave_write_pending_comb_func() && slave_read_pending_comb_func() &&
                 active_slave_index_comb_func() == index;
-            axi_in_comb[index].r_valid = slave_r_reg[index].valid;
-            axi_in_comb[index].r_data = slave_r_reg[index].data;
-            axi_in_comb[index].r_last = slave_r_reg[index].last;
-            axi_in_comb[index].r_id = slave_r_reg[index].id;
+            axi_in_comb[index].r.valid = slave_r_reg[index].valid;
+            axi_in_comb[index].r.data = (logic<256>)slave_r_reg[index].data;
+            axi_in_comb[index].r.last = slave_r_reg[index].last;
+            axi_in_comb[index].r.id = slave_r_reg[index].id;
         }
         return axi_in_comb;
     }
 
     // Build all AXI master-side driver bundles and return the array so comb users depend on the driven values.
-    L2AxiDriverComb (&axi_out_comb_func())[MEM_PORTS]
+    Axi4Driver<32, 4, 256> (&axi_out_comb_func())[MEM_PORTS]
     {
         size_t index;
 
         for (index = 0; index < MEM_PORTS; ++index) {
-            axi_out_comb[index].aw_valid = axi_awvalid_comb_func() && axi_aw_sel_comb_func() == index;
-            axi_out_comb[index].aw_addr = axi_awaddr_local_comb_func();
-            axi_out_comb[index].aw_id = (u<4>)0;
-            axi_out_comb[index].w_valid = axi_wvalid_comb_func() && axi_aw_sel_comb_func() == index;
-            axi_out_comb[index].w_data = axi_wdata_comb_func();
-            axi_out_comb[index].w_strb = axi_wstrb_comb_func();
-            axi_out_comb[index].w_last = axi_wvalid_comb_func() && axi_aw_sel_comb_func() == index;
-            axi_out_comb[index].b_ready = axi_aw_sel_comb_func() == index;
-            axi_out_comb[index].ar_valid = axi_arvalid_comb_func() && axi_ar_sel_comb_func() == index;
-            axi_out_comb[index].ar_addr = axi_araddr_local_comb_func();
-            axi_out_comb[index].ar_id = (u<4>)0;
-            axi_out_comb[index].r_ready = axi_rready_comb_func() && axi_ar_sel_comb_func() == index;
+            axi_out_comb[index].aw.valid = axi_out_driver_comb_func().aw.valid && (uint32_t)axi_route_comb_func().aw_sel == index;
+            axi_out_comb[index].aw.addr = axi_out_driver_comb_func().aw.addr;
+            axi_out_comb[index].aw.id = axi_out_driver_comb_func().aw.id;
+            axi_out_comb[index].w.valid = axi_out_driver_comb_func().w.valid && (uint32_t)axi_route_comb_func().aw_sel == index;
+            axi_out_comb[index].w.data = axi_out_driver_comb_func().w.data;
+            axi_out_comb[index].w.strb = axi_out_driver_comb_func().w.strb;
+            axi_out_comb[index].w.last = axi_out_driver_comb_func().w.last && (uint32_t)axi_route_comb_func().aw_sel == index;
+            axi_out_comb[index].b.ready = axi_out_driver_comb_func().b.ready && (uint32_t)axi_route_comb_func().aw_sel == index;
+            axi_out_comb[index].ar.valid = axi_out_driver_comb_func().ar.valid && (uint32_t)axi_route_comb_func().ar_sel == index;
+            axi_out_comb[index].ar.addr = axi_out_driver_comb_func().ar.addr;
+            axi_out_comb[index].ar.id = axi_out_driver_comb_func().ar.id;
+            axi_out_comb[index].r.ready = axi_out_driver_comb_func().r.ready && (uint32_t)axi_route_comb_func().ar_sel == index;
         }
         return axi_out_comb;
     }
@@ -178,34 +163,8 @@ public:
         d_mem_in.wait_out = _ASSIGN_COMB(d_wait_comb_func());
 
         for (i = 0; i < MEM_PORTS; ++i) {
-            // Keep the external interface assignments scalar. cpphdl currently
-            // lowers comb_func()[i].field through temporary struct arrays in a
-            // way that can diverge between C++ and Verilator for live AXI handshakes.
-            axi_in[i].awready_out = _ASSIGN_I(state_reg == ST_IDLE && !slave_aw_reg[i].valid &&
-                !slave_b_reg[i].valid && axi_in[i].awvalid_in());
-            axi_in[i].wready_out = _ASSIGN_I(state_reg == ST_IDLE &&
-                slave_write_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].bvalid_out = _ASSIGN_REG_I(slave_b_reg[i].valid);
-            axi_in[i].bid_out = _ASSIGN_REG_I(slave_b_reg[i].id);
-            axi_in[i].arready_out = _ASSIGN_I(state_reg == ST_IDLE && active_is_slave_comb_func() &&
-                !slave_write_pending_comb_func() && slave_read_pending_comb_func() && active_slave_index_comb_func() == i);
-            axi_in[i].rvalid_out = _ASSIGN_REG_I(slave_r_reg[i].valid);
-            axi_in[i].rdata_out = _ASSIGN_I((logic<PORT_BITWIDTH>)slave_r_reg[i].data);
-            axi_in[i].rlast_out = _ASSIGN_REG_I(slave_r_reg[i].last);
-            axi_in[i].rid_out = _ASSIGN_REG_I(slave_r_reg[i].id);
-
-            axi_out[i].awvalid_in = _ASSIGN_I(axi_awvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].awaddr_in = _ASSIGN_COMB(axi_awaddr_local_comb_func());
-            axi_out[i].awid_in = _ASSIGN((u<4>)0);
-            axi_out[i].wvalid_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].wdata_in = _ASSIGN_COMB(axi_wdata_comb_func());
-            axi_out[i].wstrb_in = _ASSIGN_COMB(axi_wstrb_comb_func());
-            axi_out[i].wlast_in = _ASSIGN_I(axi_wvalid_comb_func() && axi_aw_sel_comb_func() == i);
-            axi_out[i].bready_in = _ASSIGN_I(axi_aw_sel_comb_func() == i);
-            axi_out[i].arvalid_in = _ASSIGN_I(axi_arvalid_comb_func() && axi_ar_sel_comb_func() == i);
-            axi_out[i].araddr_in = _ASSIGN_COMB(axi_araddr_local_comb_func());
-            axi_out[i].arid_in = _ASSIGN((u<4>)0);
-            axi_out[i].rready_in = _ASSIGN_I(axi_rready_comb_func() && axi_ar_sel_comb_func() == i);
+            AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
+            AXI4_DRIVER_FROM_COMB_INDEXED(axi_out[i], axi_out_comb_func(), i);
         }
     }
 
@@ -261,7 +220,7 @@ public:
             // Fill writes only the words carried by the current AXI beat;
             // store hits update one or two addressed word banks.
             bank_write =
-                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_way_reg == (i / LINE_WORDS) &&
+                (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
                 (state_reg == ST_LOOKUP && req_reg.from_slave && req_reg.write && hit_comb_func() &&
@@ -284,10 +243,10 @@ public:
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
                     (req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS] ?
                         (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
-                        (uint32_t)(axi_rdata_selected_comb_func() >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
+                        (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
                  (req_reg.write && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
                  (req_reg.write && ((uint32_t)req_reg.addr & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
-                    (uint32_t)(axi_rdata_selected_comb_func() >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
+                    (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
             if (bank_write) {
                 data_ram_index = (uint32_t)bank_addr * DATA_BANKS + i;
                 data_ram[data_ram_index] = bank_data;
@@ -302,7 +261,7 @@ public:
         for (way = 0; way < WAYS; ++way) {
             tag_bank_read = bank_read;
             tag_bank_write = (state_reg == ST_INIT) ||
-                (state_reg == ST_AXI_R && axi_rvalid_selected_comb_func() && axi_rready_comb_func() && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
+                (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_comb_func() && hit_way_comb_func() == way);
             if (tag_bank_write) {
                 tag_ram_index = (uint32_t)((state_reg == ST_INIT) ? init_set_reg : bank_addr) * WAYS + way;
@@ -510,24 +469,24 @@ public:
             }
         }
         else if (state_reg == ST_EVICT_AW) {
-            if (axi_awvalid_comb_func() && axi_awready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().aw.valid && axi_out_selected_resp_comb_func().aw.ready) {
                 state_reg._next = ST_EVICT_W;
             }
         }
         else if (state_reg == ST_EVICT_W) {
-            if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
-                if (trace_line_enabled && ((axi_awaddr_full_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
+            if (axi_out_driver_comb_func().w.valid && axi_out_selected_resp_comb_func().w.ready) {
+                if (trace_line_enabled && ((axi_route_comb_func().aw_full_addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line)) {
                     trace_word0 = (uint32_t)evict_line_comb_func();
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(evict_line_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} evict addr={:08x} beat={} data0={:08x} data1={:08x} way={}\n",
-                        _system_clock, axi_awaddr_full_comb_func(), (uint32_t)evict_beat_reg,
+                        _system_clock, (uint32_t)axi_route_comb_func().aw_full_addr, (uint32_t)evict_beat_reg,
                         trace_word0, trace_word1, (uint32_t)evict_way_comb_func());
                 }
                 state_reg._next = ST_EVICT_B;
             }
         }
         else if (state_reg == ST_EVICT_B) {
-            if (axi_bvalid_selected_comb_func()) {
+            if (axi_out_selected_resp_comb_func().b.valid) {
                 if (evict_beat_reg == LINE_BEATS - 1) {
                     fill_beat_reg._next = 0;
                     state_reg._next = ST_AXI_AR;
@@ -539,26 +498,26 @@ public:
             }
         }
         else if (state_reg == ST_AXI_AR) {
-            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().ar.valid && axi_out_selected_resp_comb_func().ar.ready) {
                 state_reg._next = ST_AXI_R;
             }
         }
         else if (state_reg == ST_AXI_R) {
-            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+            if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
                 if (trace_req_line) {
-                    trace_word0 = (uint32_t)axi_rdata_selected_comb_func();
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_rdata_selected_comb_func() >> 32) : 0;
+                    trace_word0 = (uint32_t)axi_out_selected_resp_comb_func().r.data;
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_out_selected_resp_comb_func().r.data >> 32) : 0;
                     std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
-                        _system_clock, axi_araddr_full_comb_func(), (uint32_t)fill_beat_reg,
+                        _system_clock, (uint32_t)axi_route_comb_func().ar_full_addr, (uint32_t)fill_beat_reg,
                         trace_word0, trace_word1, (uint32_t)req_word_comb_func(), (uint32_t)req_beat_comb_func());
                 }
                 if (!req_reg.from_slave && req_reg.read && fill_beat_reg == req_beat_comb_func()) {
-                    last_data_reg._next = axi_rdata_selected_comb_func();
+                    last_data_reg._next = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (req_reg.from_slave && req_reg.read && fill_beat_reg == req_beat_comb_func()) {
                     // Do not answer from hit_beat_comb_func() after the final fill beat:
                     // that path can observe stale RAM output for the requested beat.
-                    slave_fill_data_reg._next = axi_rdata_selected_comb_func();
+                    slave_fill_data_reg._next = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -579,7 +538,7 @@ public:
                                         // fill beat, return the latched refill data.
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == req_beat_comb_func()) ?
-                                                axi_rdata_selected_comb_func() : slave_fill_data_reg);
+                                                axi_out_selected_resp_comb_func().r.data : slave_fill_data_reg);
                                     }
                                     if (req_reg.write) {
                                         send_slave_write_response(i, req_reg.slave_id);
@@ -600,26 +559,26 @@ public:
             }
         }
         else if (state_reg == ST_CROSS_AR0) {
-            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().ar.valid && axi_out_selected_resp_comb_func().ar.ready) {
                 state_reg._next = ST_CROSS_R0;
             }
         }
         else if (state_reg == ST_CROSS_R0) {
-            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+            if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
                 // Save the beat containing the tail bytes before requesting the next line.
-                cross_low_reg._next = axi_rdata_selected_comb_func();
+                cross_low_reg._next = axi_out_selected_resp_comb_func().r.data;
                 state_reg._next = ST_CROSS_AR1;
             }
         }
         else if (state_reg == ST_CROSS_AR1) {
-            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().ar.valid && axi_out_selected_resp_comb_func().ar.ready) {
                 state_reg._next = ST_CROSS_R1;
             }
         }
         else if (state_reg == ST_CROSS_R1) {
-            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+            if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
                 // Save the next-line beat containing the high bytes of the unaligned word.
-                cross_high_reg._next = axi_rdata_selected_comb_func();
+                cross_high_reg._next = axi_out_selected_resp_comb_func().r.data;
                 state_reg._next = ST_CROSS_DONE;
             }
         }
@@ -639,17 +598,17 @@ public:
             }
         }
         else if (state_reg == ST_IO_AW) {
-            if (axi_awvalid_comb_func() && axi_awready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().aw.valid && axi_out_selected_resp_comb_func().aw.ready) {
                 state_reg._next = ST_IO_W;
             }
         }
         else if (state_reg == ST_IO_W) {
-            if (axi_wvalid_comb_func() && axi_wready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().w.valid && axi_out_selected_resp_comb_func().w.ready) {
                 state_reg._next = ST_IO_B;
             }
         }
         else if (state_reg == ST_IO_B) {
-            if (axi_bvalid_selected_comb_func()) {
+            if (axi_out_selected_resp_comb_func().b.valid) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
@@ -664,22 +623,22 @@ public:
             }
         }
         else if (state_reg == ST_IO_AR) {
-            if (axi_arvalid_comb_func() && axi_arready_selected_comb_func()) {
+            if (axi_out_driver_comb_func().ar.valid && axi_out_selected_resp_comb_func().ar.ready) {
                 state_reg._next = ST_IO_R;
             }
         }
         else if (state_reg == ST_IO_R) {
-            if (axi_rvalid_selected_comb_func() && axi_rready_comb_func()) {
+            if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
-                            send_slave_read_response(i, req_reg.slave_id, axi_rdata_selected_comb_func());
+                            send_slave_read_response(i, req_reg.slave_id, axi_out_selected_resp_comb_func().r.data);
                         }
                     }
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    last_data_reg._next = axi_rdata_selected_comb_func();
+                    last_data_reg._next = axi_out_selected_resp_comb_func().r.data;
                     state_reg._next = ST_DONE;
                 }
             }

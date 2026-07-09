@@ -27,7 +27,7 @@ private:
 
     logic<9>& unpacked_logic0_comb_func()
     {
-        array<logic<9>, 3> unpacked_logic;
+        array<3,logic<9>> unpacked_logic;
         unpacked_logic = 0;
         unpacked_logic[0] = 0x101;
         unpacked_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
@@ -38,7 +38,7 @@ private:
 
     logic<9>& unpacked_logic1_comb_func()
     {
-        array<logic<9>, 3> unpacked_logic;
+        array<3,logic<9>> unpacked_logic;
         unpacked_logic = 0;
         unpacked_logic[0] = 0x101;
         unpacked_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
@@ -49,7 +49,7 @@ private:
 
     logic<9>& unpacked_logic2_comb_func()
     {
-        array<logic<9>, 3> unpacked_logic;
+        array<3,logic<9>> unpacked_logic;
         unpacked_logic = 0;
         unpacked_logic[0] = 0x101;
         unpacked_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
@@ -60,7 +60,7 @@ private:
 
     u<3>& unpacked_u_index_comb_func()
     {
-        array<u<3>, 5> unpacked_u;
+        array<5,u<3>> unpacked_u;
         unpacked_u = 0;
         unpacked_u[0] = 1;
         unpacked_u[1] = 2;
@@ -73,7 +73,7 @@ private:
 
     u<3>& unpacked_u_last_comb_func()
     {
-        array<u<3>, 5> unpacked_u;
+        array<5,u<3>> unpacked_u;
         unpacked_u = 0;
         unpacked_u[0] = 1;
         unpacked_u[1] = 2;
@@ -127,14 +127,30 @@ static bool check_direct_arrays()
 {
     bool ok = true;
 
-    array<logic<9>, 3> unpacked_logic;
+    static_assert(std::is_same_v<array2D<2, 3, u8>, array<2, array<3, u8, false>, false>>);
+    static_assert(std::is_same_v<array3D<2, 3, 4, u8>, array<2, array2D<3, 4, u8, false>, false>>);
+    static_assert(std::is_same_v<array4D<2, 3, 4, 5, u8>, array<2, array3D<3, 4, 5, u8, false>, false>>);
+
+    array2D<2, 3, u8> alias2d{};
+    alias2d[1][2] = u8(0x5a);
+    ok &= check((uint8_t)alias2d[1][2] == 0x5a, "array2D unpacked alias index");
+
+    array3D<2, 3, 4, u8> alias3d{};
+    alias3d[1][2][3] = u8(0x6b);
+    ok &= check((uint8_t)alias3d[1][2][3] == 0x6b, "array3D unpacked alias index");
+
+    array4D<2, 3, 4, 5, u8> alias4d{};
+    alias4d[1][2][3][4] = u8(0x7c);
+    ok &= check((uint8_t)alias4d[1][2][3][4] == 0x7c, "array4D unpacked alias index");
+
+    array<3,logic<9>> unpacked_logic;
     unpacked_logic = 0;
     unpacked_logic[0] = 0x101;
     unpacked_logic[1] = 0x055;
     unpacked_logic[2] = 0x1aa;
 
-    ok &= check(array<logic<9>, 3>::_size_bits() == sizeof(logic<9>) * 8 * 3, "unpacked logic array width");
-    ok &= check(array<logic<9>, 3>::_size_bits() == 48, "unpacked logic uses byte object width");
+    ok &= check(array<3,logic<9>>::_size_bits() == sizeof(logic<9>) * 8 * 3, "unpacked logic array width");
+    ok &= check(array<3,logic<9>>::_size_bits() == 48, "unpacked logic uses byte object width");
     ok &= check((uint64_t)unpacked_logic[0] == 0x101, "unpacked logic index 0");
     ok &= check((uint64_t)unpacked_logic[1] == 0x055, "unpacked logic index 1");
     ok &= check((uint64_t)unpacked_logic[2] == 0x1aa, "unpacked logic index 2");
@@ -158,7 +174,7 @@ static bool check_direct_arrays()
     ok &= check((uint64_t)unpacked_logic[0] == 0x101, "unpacked bits did not disturb previous object");
     ok &= check((uint64_t)unpacked_logic[2] == 0x1aa, "unpacked bits did not disturb next object");
 
-    array<u<3>, 5> unpacked_u;
+    array<5,u<3>> unpacked_u;
     unpacked_u = 0;
     unpacked_u[0] = 1;
     unpacked_u[1] = 2;
@@ -166,8 +182,8 @@ static bool check_direct_arrays()
     unpacked_u[3] = 4;
     unpacked_u[4] = 5;
 
-    ok &= check(array<u<3>, 5>::_size_bits() == sizeof(u<3>) * 8 * 5, "unpacked u array width");
-    ok &= check(array<u<3>, 5>::_size_bits() == 40, "unpacked u uses byte object width");
+    ok &= check(array<5,u<3>>::_size_bits() == sizeof(u<3>) * 8 * 5, "unpacked u array width");
+    ok &= check(array<5,u<3>>::_size_bits() == 40, "unpacked u uses byte object width");
     ok &= check((uint64_t)unpacked_u[0] == 1, "unpacked u index 0");
     ok &= check((uint64_t)unpacked_u[4] == 5, "unpacked u index 4");
     ok &= check((uint64_t)logic<8>(unpacked_u.bits(39, 32)) == 5, "unpacked u byte-aligned final object");

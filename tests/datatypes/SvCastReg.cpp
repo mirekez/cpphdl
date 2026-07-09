@@ -30,7 +30,7 @@ int main()
         return 3;
     }
 
-    array<logic<4>, 4, true> packed_array = sv_cast<array<logic<4>, 4, true>>(3);
+    array<4, logic<4>, true> packed_array = sv_cast<array<4, logic<4>, true>>(3);
     for (size_t i = 0; i < 4; ++i) {
         if ((uint64_t)packed_array[i] != 3) {
             return 4;

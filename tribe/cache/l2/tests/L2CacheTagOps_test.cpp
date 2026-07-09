@@ -11,7 +11,7 @@ using Ops = L2CacheTagOps<L2CacheRegionRouter<L2CacheByteOps<L2CacheGeometry<102
 
 int L2CacheTagOps_test_main()
 {
-    array<logic<Ops::TAG_RAM_BITS>, Ops::WAYS, true> tags;
+    array<Ops::WAYS, logic<Ops::TAG_RAM_BITS>, true> tags;
     l2test::Context ctx;
 
     l2test::section("1. tag entry packing");

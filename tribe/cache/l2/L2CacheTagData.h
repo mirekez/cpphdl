@@ -26,7 +26,7 @@ protected:
     using Base::req_word_comb_func;
     using Base::req_beat_comb_func;
     using Base::req_tag_comb_func;
-    using Base::axi_rdata_selected_comb_func;
+    using Base::axi_out_selected_resp_comb_func;
 
     _LAZY_COMB(hit_comb, bool)
         size_t i;
@@ -164,7 +164,7 @@ protected:
     _LAZY_COMB(axi_aligned_word_comb, uint32_t)
         uint32_t word;
         word = (uint32_t)req_word_comb_func() % PORT_WORDS;
-        return axi_aligned_word_comb = (uint32_t)(axi_rdata_selected_comb_func() >> (word * 32u));
+        return axi_aligned_word_comb = (uint32_t)(axi_out_selected_resp_comb_func().r.data >> (word * 32u));
     }
 
     // Merge a pending write into the addressed word while filling a cache line from AXI.
@@ -205,7 +205,7 @@ protected:
         word = ((uint32_t)req_word_comb_func() + 1) % PORT_WORDS;
         old_data = 0;
         if ((uint32_t)req_word_comb_func() + 1 < LINE_WORDS) {
-            old_data = (uint32_t)(axi_rdata_selected_comb_func() >> (word * 32u));
+            old_data = (uint32_t)(axi_out_selected_resp_comb_func().r.data >> (word * 32u));
         }
         new_data = byte == 0 ? (uint32_t)0 : (uint32_t)req_reg.write_data >> (32 - byte * 8);
         mask = 0;
@@ -297,7 +297,7 @@ protected:
             read_data_comb = hit_beat_comb_func();
         }
         else if (state_reg == ST_AXI_R || state_reg == ST_IO_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1) {
-            read_data_comb = axi_rdata_selected_comb_func();
+            read_data_comb = axi_out_selected_resp_comb_func().r.data;
         }
         else {
             read_data_comb = 0;
