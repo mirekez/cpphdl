@@ -281,11 +281,69 @@ static void print_bytes(const char* name, const T& sample)
     std::print("\n");
 }
 
+static std::filesystem::path struct_alignment_generated_dir;
+
+static std::vector<std::string> struct_alignment_verilator_modules()
+{
+    return {
+        "Predef_pkg",
+        "AlignMode_MODES_pkg",
+        "TinyBits_pkg",
+        "MixedBits_pkg",
+        "OuterBits_pkg",
+        "InnerUnion_pkg",
+        "StructWithUnion_pkg",
+        "UnionContainingStructContainingUnion_pkg",
+        "UnionStruct_pkg",
+        "UnionWithStruct_pkg",
+        "StructContainingUnionContainingStruct_pkg",
+        "StructWithEnum_pkg"
+    };
+}
+
+static bool regenerate_struct_alignment_sv()
+{
+    namespace fs = std::filesystem;
+
+    const fs::path source_root = CpphdlSourceRootFrom(__FILE__);
+    const fs::path cpphdl = CpphdlToolFrom(source_root);
+    if (!fs::exists(cpphdl)) {
+        std::print("\nERROR: can't find cpphdl generator at {}\n", cpphdl.string());
+        return false;
+    }
+
+    struct_alignment_generated_dir = fs::temp_directory_path() / "cpphdl_StructAlignment_generated";
+    fs::remove_all(struct_alignment_generated_dir);
+    fs::create_directories(struct_alignment_generated_dir);
+
+    std::string command;
+    command += ToolShellQuote(cpphdl);
+    command += " --generated-dir " + ToolShellQuote(struct_alignment_generated_dir);
+    command += " " + ToolShellQuote(source_root / "tests" / "structs" / "StructAlignment.cpp");
+    command += " -I" + ToolShellQuote(source_root / "include");
+    return SystemEcho(command.c_str()) == 0;
+}
+
 static std::filesystem::path generated_sv_path(const std::string& file)
 {
     std::filesystem::path copied = std::filesystem::path("StructAlignment_1") / file;
-    std::filesystem::path generated = std::filesystem::path("generated") / file;
-    if (std::filesystem::exists(copied) && (!std::filesystem::exists(generated) ||
+    std::vector<std::filesystem::path> candidates = {
+        struct_alignment_generated_dir / file,
+        VerilatorGeneratedDir(__FILE__, "StructAlignment") / file,
+        CpphdlSourceRootFrom(__FILE__) / "build" / "tests" / "generated" / file,
+        CpphdlBuildRootFrom(CpphdlSourceRootFrom(__FILE__)) / "tests" / "generated" / file,
+        std::filesystem::path("generated") / file
+    };
+
+    std::filesystem::path generated;
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            generated = candidate;
+            break;
+        }
+    }
+
+    if (std::filesystem::exists(copied) && (generated.empty() ||
             std::filesystem::last_write_time(copied) >= std::filesystem::last_write_time(generated))) {
         return copied;
     }
@@ -541,23 +599,13 @@ int main(int argc, char** argv)
 
     bool ok = true;
 #ifndef VERILATOR
+    ok &= regenerate_struct_alignment_sv();
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "StructAlignment", {
-            "Predef_pkg",
-            "AlignMode_MODES_pkg",
-            "TinyBits_pkg",
-            "MixedBits_pkg",
-            "OuterBits_pkg",
-            "InnerUnion_pkg",
-            "StructWithUnion_pkg",
-            "UnionContainingStructContainingUnion_pkg",
-            "UnionStruct_pkg",
-            "UnionWithStruct_pkg",
-            "StructContainingUnionContainingStruct_pkg",
-            "StructWithEnum_pkg"
-        }, {"../../../../include"}, 1);
+        ok &= VerilatorCompileInExactFolderFromGenerated(__FILE__, "StructAlignment_1", "StructAlignment",
+            struct_alignment_generated_dir, struct_alignment_verilator_modules(),
+            {(CpphdlSourceRootFrom(__FILE__) / "include").string()}, 1);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";

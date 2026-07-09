@@ -47,16 +47,16 @@ inline std::filesystem::path CpphdlBuildRootFrom(const std::filesystem::path& so
 
     if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
         fs::path path(build_dir);
-        if (fs::exists(path / "cpphdl")) {
+        if (fs::is_regular_file(path / "cpphdl")) {
             return path;
         }
     }
 
     fs::path current = fs::current_path();
-    if (fs::exists(current / "cpphdl")) {
+    if (fs::is_regular_file(current / "cpphdl")) {
         return current;
     }
-    if (fs::exists(current / ".." / "cpphdl")) {
+    if (fs::is_regular_file(current / ".." / "cpphdl")) {
         return current / "..";
     }
 

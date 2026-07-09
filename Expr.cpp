@@ -80,6 +80,25 @@ std::string templateWidth(const std::string& value, const char* prefix)
     return value.substr(pos, end - pos);
 }
 
+bool exprIsZeroInitializer(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_NONE) {
+        return true;
+    }
+    if (expr.type == Expr::EXPR_NUM) {
+        return expr.value == "0" || expr.value == "'h0" || expr.value == "false";
+    }
+    if (expr.type == Expr::EXPR_INIT) {
+        for (const auto& child : expr.sub) {
+            if (!exprIsZeroInitializer(child)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 size_t numericWidth(const std::string& width)
 {
     if (width.empty()) {
@@ -782,6 +801,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()>=1);
+            if (exprIsZeroInitializer(*this)) {
+                return indent_str + "0";
+            }
             if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
                 bool first = true;
                 std::string ret;
