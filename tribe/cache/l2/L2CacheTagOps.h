@@ -47,7 +47,7 @@ public:
     }
 
     // Search all ways for a valid matching tag; called by L2CachePrimitives and future lookup control.
-    static L2CacheHitResult<GEOM::WAY_BITS> find_hit(const array<logic<GEOM::TAG_RAM_BITS>, GEOM::WAYS, true>& tags,
+    static L2CacheHitResult<GEOM::WAY_BITS> find_hit(const array<GEOM::WAYS, logic<GEOM::TAG_RAM_BITS>, true>& tags,
         u<GEOM::TAG_BITS> request_tag)
     {
         size_t i;

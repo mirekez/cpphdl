@@ -210,11 +210,20 @@ struct array_packed_ref
 
 } // namespace detail
 
-template<typename TYPE, size_t COUNT, bool PACKED>
+template<size_t COUNT, typename TYPE, bool PACKED>
 struct array;
 
-template<typename TYPE, size_t COUNT>
-struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>>
+template<size_t COUNT1, size_t COUNT2, typename TYPE, bool PACKED = false>
+using array2D = array<COUNT1, array<COUNT2, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT1, size_t COUNT2, size_t COUNT3, typename TYPE, bool PACKED = false>
+using array3D = array<COUNT1, array2D<COUNT2, COUNT3, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT1, size_t COUNT2, size_t COUNT3, size_t COUNT4, typename TYPE, bool PACKED = false>
+using array4D = array<COUNT1, array3D<COUNT2, COUNT3, COUNT4, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT, typename TYPE>
+struct array<COUNT, TYPE, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>>
 {
     constexpr static size_t ELEMENT_BITS = sizeof(TYPE) * 8;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
@@ -229,12 +238,12 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
 
     array() = default;
 
-    array(const array<TYPE,COUNT,false>& other) = default;
+    array(const array<COUNT, TYPE, false>& other) = default;
 
     template<typename T>
     array(const T& other) : bitops<logic<SIZE_BITS>>(other) {}
 
-    array& operator=(const array<TYPE,COUNT,false>& other) = default;
+    array& operator=(const array<COUNT, TYPE, false>& other) = default;
 
     template<size_t WIDTH>
     array& operator=(const logic<WIDTH>& value)
@@ -258,7 +267,7 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
     TYPE& operator[](std::size_t i) { return data[i]; }
     const TYPE& operator[](std::size_t i) const { return data[i]; }
 
-    array<TYPE, COUNT, true> pack() const;
+    array<COUNT, TYPE, true> pack() const;
 
     logic_bits<SIZE_BITS> bits(size_t last, size_t first)
     {
@@ -330,8 +339,8 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
     }
 };
 
-template<typename TYPE, size_t COUNT>
-struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
+template<size_t COUNT, typename TYPE>
+struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
 {
     constexpr static size_t ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
@@ -346,7 +355,7 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
     }
 
     array() = default;
-    array(const array<TYPE, COUNT, true>& other) = default;
+    array(const array<COUNT, TYPE, true>& other) = default;
 
     template<typename T>
     array(const T& other)
@@ -354,7 +363,7 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
         data = other;
     }
 
-    array& operator=(const array<TYPE, COUNT, true>& other) = default;
+    array& operator=(const array<COUNT, TYPE, true>& other) = default;
 
     template<typename T>
     array& operator=(const T& other)
@@ -446,12 +455,12 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
 };
 
 template<size_t COUNT, bool PACKED>
-struct array<void,COUNT,PACKED> {};
+struct array<COUNT, void, PACKED> {};
 
-template<typename TYPE, size_t COUNT>
-array<TYPE, COUNT, true> array<TYPE, COUNT, false>::pack() const
+template<size_t COUNT, typename TYPE>
+array<COUNT, TYPE, true> array<COUNT, TYPE, false>::pack() const
 {
-    array<TYPE, COUNT, true> packed;
+    array<COUNT, TYPE, true> packed;
     for (size_t i = 0; i < COUNT; ++i) {
         packed[i] = data[i];
     }

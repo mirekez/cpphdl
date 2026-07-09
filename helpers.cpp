@@ -239,7 +239,7 @@ static void importStructForStaticMethodOwner(const CXXMethodDecl* method, Helper
 
 static bool isCombFuncName(const std::string& name)
 {
-    return str_ending(name, "_comb_func");
+    return cpphdl_is_comb_func_name(name);
 }
 
 static std::string flattenedCombSignalName(const cpphdl::Module* mod, const std::string& combFuncName)
@@ -250,7 +250,7 @@ static std::string flattenedCombSignalName(const cpphdl::Module* mod, const std:
 
     std::string signal = combFuncName;
     if (isCombFuncName(signal)) {
-        str_replace(signal, "_comb_func", "_comb");
+        signal = cpphdl_comb_func_signal_name(signal);
     }
     else if (!str_ending(signal, "_comb")) {
         return "";
@@ -1237,12 +1237,24 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     return cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};  // we use it to determine std::print
                 }
                 std::string cast_type = castTypeName(CE->getType());
-                if (cast_type.find("cpphdl_u") == 0 || cast_type.find("cpphdl_i") == 0 || cast_type.find("cpphdl_logic") == 0) {
+                if (cast_type.find("cpphdl_u") == 0 || cast_type.find("cpphdl_i") == 0 || cast_type.find("cpphdl_logic") == 0 ||
+                    str.find("cpphdl::u<") != std::string::npos || str.find("cpphdl::i<") != std::string::npos ||
+                    str.find("cpphdl::logic<") != std::string::npos) {
                     return cpphdl::Expr{cast_type, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
                 }
                 return /*cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CE->getArg(0))/*}}*/;
             }
             else {
+                std::string cast_type = castTypeName(CE->getType());
+                std::string canonical_type = CE->getType().getCanonicalType().getAsString(ctx->getPrintingPolicy());
+                if (cast_type.find("cpphdl_u") == 0 || cast_type.find("cpphdl_i") == 0 || cast_type.find("cpphdl_logic") == 0 ||
+                    str.find("cpphdl::u<") != std::string::npos || str.find("cpphdl::i<") != std::string::npos ||
+                    str.find("cpphdl::logic<") != std::string::npos || canonical_type.find("cpphdl::u<") != std::string::npos ||
+                    canonical_type.find("cpphdl::i<") != std::string::npos || canonical_type.find("cpphdl::logic<") != std::string::npos) {
+                    // Scalar CppHDL value-initialization, for example logic<1>{},
+                    // is a real zero assignment in RTL, not an absent expression.
+                    return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
+                }
                 return cpphdl::Expr{str, cpphdl::Expr::EXPR_NONE};
             }
         }
@@ -1441,9 +1453,21 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     if (auto* BCO = dyn_cast<BinaryConditionalOperator>(E)) {
         DEBUG_AST1(" BinaryConditionalOperator");
     }
+*/
     if (auto* SILE = dyn_cast<CXXStdInitializerListExpr>(E)) {
         DEBUG_AST1(" CXXStdInitializerListExpr");
+        auto expr = exprToExpr(SILE->getSubExpr());
+        if (expr.type == cpphdl::Expr::EXPR_INIT) {
+            if (expr.sub.empty()) {
+                return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
+            }
+            if (expr.sub.size() == 1) {
+                return expr.sub[0];
+            }
+        }
+        return expr;
     }
+/*
     if (auto* DIE = dyn_cast<DesignatedInitExpr>(E)) {
         DEBUG_AST1(" DesignatedInitExpr");
     }

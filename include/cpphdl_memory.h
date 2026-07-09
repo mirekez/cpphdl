@@ -11,16 +11,16 @@ namespace cpphdl
 
 
 template<typename T, size_t SIZE>
-struct memory_row: public array<T,SIZE>
+struct memory_row: public array<SIZE, T>
 {
-//    array<T,SIZE> data = 0;
+//    array<SIZE, T> data = 0;
     std::vector<memory_row<T,SIZE>>* changes = 0;
     size_t pos = 0;
 
     template<size_t SIZE1>
-    memory_row& operator=(const array<T,SIZE1>& other)
+    memory_row& operator=(const array<SIZE1, T>& other)
     {
-        array<T,SIZE>::operator=(other);
+        array<SIZE, T>::operator=(other);
         changes->push_back(*this);
         return *this;
     }
@@ -28,35 +28,35 @@ struct memory_row: public array<T,SIZE>
     template<size_t SIZE1>
     memory_row& operator=(const logic<SIZE1>& other)
     {
-        array<T,SIZE>::operator=(other);
+        array<SIZE, T>::operator=(other);
         changes->push_back(*this);
         return *this;
     }
 
     memory_row& operator=(uint64_t other)
     {
-        array<T,SIZE>::operator=(other);
+        array<SIZE, T>::operator=(other);
         changes->push_back(*this);
         return *this;
     }
 
-    using array<T,SIZE>::operator&;
-    using array<T,SIZE>::operator|;
-    using array<T,SIZE>::operator^;
-    using array<T,SIZE>::operator~;
-    using array<T,SIZE>::operator<<;
-    using array<T,SIZE>::operator>>;
-    using array<T,SIZE>::operator+;
-    using array<T,SIZE>::operator-;
-    using array<T,SIZE>::operator==;
-    using array<T,SIZE>::operator!=;
-    using array<T,SIZE>::operator<;
-    using array<T,SIZE>::operator<=;
-    using array<T,SIZE>::operator>;
-    using array<T,SIZE>::operator>=;
-    using array<T,SIZE>::to_ullong;
-    using array<T,SIZE>::to_hex;
-    using array<T,SIZE>::to_string;
+    using array<SIZE, T>::operator&;
+    using array<SIZE, T>::operator|;
+    using array<SIZE, T>::operator^;
+    using array<SIZE, T>::operator~;
+    using array<SIZE, T>::operator<<;
+    using array<SIZE, T>::operator>>;
+    using array<SIZE, T>::operator+;
+    using array<SIZE, T>::operator-;
+    using array<SIZE, T>::operator==;
+    using array<SIZE, T>::operator!=;
+    using array<SIZE, T>::operator<;
+    using array<SIZE, T>::operator<=;
+    using array<SIZE, T>::operator>;
+    using array<SIZE, T>::operator>=;
+    using array<SIZE, T>::to_ullong;
+    using array<SIZE, T>::to_hex;
+    using array<SIZE, T>::to_string;
 
     memory_row& operator<<=(size_t shift)
     {
@@ -117,12 +117,12 @@ struct memory_row: public array<T,SIZE>
 template<typename T, size_t SIZE, size_t DEPTH>
 struct memory
 {
-    array<T,SIZE>* data;
+    array<SIZE, T>* data;
     std::vector<memory_row<T,SIZE>> changes;
 
     memory()
     {
-        data = new array<T,SIZE>[DEPTH];
+        data = new array<SIZE, T>[DEPTH];
     }
 
     ~memory()
@@ -155,18 +155,18 @@ struct memory
             return;
         }
         if (checkpoint_reading(checkpoint_fd)) {
-            checkpoint_read_exact(checkpoint_fd, data, sizeof(array<T,SIZE>[DEPTH]));
+            checkpoint_read_exact(checkpoint_fd, data, sizeof(array<SIZE, T>[DEPTH]));
             changes.clear();
         }
         else {
             apply();
-            checkpoint_write_exact(checkpoint_fd, data, sizeof(array<T,SIZE>[DEPTH]));
+            checkpoint_write_exact(checkpoint_fd, data, sizeof(array<SIZE, T>[DEPTH]));
         }
     }
 
     memory& operator=(memory<T,SIZE,DEPTH>& other)
     {
-        memcpy(data, other.data, sizeof(array<T,SIZE>[DEPTH]));
+        memcpy(data, other.data, sizeof(array<SIZE, T>[DEPTH]));
         return *this;
     }
 

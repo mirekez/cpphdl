@@ -374,6 +374,27 @@ static void testFieldExtractionHandlesIndexedField()
     expectVector(allLines, lines);
 }
 
+static void testFieldExtractionKeepsNestedFieldUpdates()
+{
+    std::vector<std::string> lines = {
+        "st1_req_comb = st1_req_q;",
+        "if (!st1_req_q.from_rtab) {",
+        "    st1_req_comb.req.addr_tag = st1_req_tag_comb_func();",
+        "    st1_req_comb.req.pma = st1_req_pma_comb_func();",
+        "}",
+    };
+
+    auto fieldLines = hdlcpp::extractTargetFieldCombLines(
+        lines, "st1_req_comb", "req", "st1_req_req_comb", "");
+    expectVector(fieldLines, {
+        "st1_req_req_comb = (st1_req_q).req;",
+        "if (!st1_req_q.from_rtab) {",
+        "st1_req_req_comb.addr_tag = st1_req_tag_comb_func();",
+        "st1_req_req_comb.pma = st1_req_pma_comb_func();",
+        "}",
+    });
+}
+
 int main()
 {
     testStandaloneIndependent();
@@ -392,5 +413,6 @@ int main()
     testLargeCombStaysCombined();
     testFieldExtractionAvoidsUnneededFields();
     testFieldExtractionHandlesIndexedField();
+    testFieldExtractionKeepsNestedFieldUpdates();
     return 0;
 }

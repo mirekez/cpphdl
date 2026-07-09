@@ -56,12 +56,12 @@ public:
     _PORT(uint32_t) debug_last_addr_out = _ASSIGN_REG(debug_last_addr_reg);
 
 private:
-    reg<array<u1, ENTRIES>> valid_reg;
-    reg<array<u32, ENTRIES>> vpn_reg;
-    reg<array<u32, ENTRIES>> ppn_reg;
-    reg<array<u8, ENTRIES>> flags_reg;
-    reg<array<u1, ENTRIES>> level_reg;
-    reg<array<u32, ENTRIES>> satp_tag_reg;
+    reg<array<ENTRIES,u1>> valid_reg;
+    reg<array<ENTRIES,u32>> vpn_reg;
+    reg<array<ENTRIES,u32>> ppn_reg;
+    reg<array<ENTRIES,u8>> flags_reg;
+    reg<array<ENTRIES,u1>> level_reg;
+    reg<array<ENTRIES,u32>> satp_tag_reg;
     reg<u<clog2(ENTRIES)>> victim_reg;
 
     reg<u<2>> state_reg;

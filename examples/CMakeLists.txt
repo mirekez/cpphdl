@@ -39,7 +39,7 @@ foreach(src ${EXAMPLE_SOURCES})
         RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/examples
     )
 
-    include_directories("../include")
+    target_include_directories(${target_name} PRIVATE "${CMAKE_SOURCE_DIR}/include")
 
     # verilator tests
     add_custom_command(

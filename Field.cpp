@@ -140,9 +140,9 @@ ArrayShape flattenArrayShape(const Expr& expr)
     }
 
     if (expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
-        ArrayShape shape = flattenArrayShape(expr.sub[0]);
+        ArrayShape shape = flattenArrayShape(expr.sub[1]);
         shape.hasArray = true;
-        shape.cpphdlDims.insert(shape.cpphdlDims.begin(), expr.sub[1]);
+        shape.cpphdlDims.insert(shape.cpphdlDims.begin(), expr.sub[0]);
         return shape;
     }
 

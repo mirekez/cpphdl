@@ -47,7 +47,7 @@ private:
     reg<u<8>> rx_data_reg;
     reg<u1> rx_last_reg;
 
-    reg<array<u<16>, 32>> mdio_regs;
+    reg<array<32, u<16>>> mdio_regs;
     reg<u1> mdio_prev_mdc_reg;
     reg<u<4>> mdio_state_reg;
     reg<u<6>> mdio_preamble_count_reg;

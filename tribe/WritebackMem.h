@@ -46,10 +46,10 @@ private:
     reg<u32> split_load_high_reg;
     reg<u1>  split_load_low_valid_reg;
     reg<u1>  split_load_high_valid_reg;
-    reg<array<u32,2>> store_forward_addr_reg;
-    reg<array<u32,2>> store_forward_data_reg;
-    reg<array<u8,2>>  store_forward_mask_reg;
-    reg<array<u1,2>>  store_forward_valid_reg;
+    reg<array<2,u32>> store_forward_addr_reg;
+    reg<array<2,u32>> store_forward_data_reg;
+    reg<array<2,u8>>  store_forward_mask_reg;
+    reg<array<2,u1>>  store_forward_valid_reg;
 
     _LAZY_COMB(debug_load_data_valid_comb, bool)
         debug_load_data_valid_comb = load_data_valid_reg;

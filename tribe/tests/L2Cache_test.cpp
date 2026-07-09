@@ -260,6 +260,10 @@ public:
             ram[i]._work(reset);
         }
         eval_l2(reset);
+        // The RAM responder reads L2 master outputs through function_refs, then
+        // feeds responder data back into Verilated inputs. A second low-clock
+        // eval settles that L2->RAM->L2 path before the sampling edge.
+        eval_l2(reset);
         l2.clk = 1;
         eval_l2(reset);
         for (size_t i = 0; i < MEM_PORTS; ++i) {

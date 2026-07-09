@@ -53,7 +53,7 @@ private:
     reg<u1> error_reg;
     reg<u1> dma_write_reg;
     reg<u<3>> state_reg;
-    reg<array<u32, MEM_WORDS>> accel_mem_reg;
+    reg<array<MEM_WORDS, u32>> accel_mem_reg;
 
     _LAZY_COMB(read_word_comb, uint32_t)
         uint32_t addr;
@@ -214,8 +214,10 @@ public:
         uint32_t beat_base;
         uint32_t word;
         uint32_t mem_index;
-        logic<DATA_WIDTH> read_data;
         size_t i;
+        // cpphdl emits local logic default construction as an assignment in SV;
+        // keep it after scalar locals so Verilator still sees declarations first.
+        logic<DATA_WIDTH> read_data;
 
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
             addr = (uint32_t)axi_in.araddr_in();

@@ -59,6 +59,16 @@ struct reg : public T
     {
         return *this;
     }
+
+    operator const T&() const
+    {
+        return *this;
+    }
+
+    constexpr T pack() const
+    {
+        return static_cast<const T&>(*this);
+    }
 };
 
 

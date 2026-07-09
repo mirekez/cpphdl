@@ -3,7 +3,7 @@
 #endif
 #define MAIN_FILE_INCLUDED
 
-#include "cpphdl.h"
+#include <cpphdl.h>
 #if !defined(SYNTHESIS)
 #include "cpphdl_vcd.h"
 #endif
@@ -32,7 +32,7 @@ public:
     _PORT(bool)         ready_in;
 
 private:
-    reg<array<logic<WIDTH>, DEPTH>> data_reg;
+    reg<array<DEPTH, logic<WIDTH>>> data_reg;
     reg<u<INDEX_BITS>> head_reg;
     reg<u<INDEX_BITS>> tail_reg;
     reg<u<COUNT_BITS>> count_reg;

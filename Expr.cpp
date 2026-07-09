@@ -80,6 +80,25 @@ std::string templateWidth(const std::string& value, const char* prefix)
     return value.substr(pos, end - pos);
 }
 
+bool exprIsZeroInitializer(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_NONE) {
+        return true;
+    }
+    if (expr.type == Expr::EXPR_NUM) {
+        return expr.value == "0" || expr.value == "'h0" || expr.value == "false";
+    }
+    if (expr.type == Expr::EXPR_INIT) {
+        for (const auto& child : expr.sub) {
+            if (!exprIsZeroInitializer(child)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 size_t numericWidth(const std::string& width)
 {
     if (width.empty()) {
@@ -286,8 +305,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
-                std::string str = sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");  // also calc size
-                declSize = sub[0].declSize * atoi(sub[1].str().c_str());
+                std::string str = sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // also calc size
+                declSize = sub[1].declSize * atoi(sub[0].str().c_str());
                 return indent_str + prefix + str;
             }
             if (value.find("cpphdl_") == 0 && sub.size()) {
@@ -393,9 +412,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + "(" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + ")";
         case EXPR_CALL:
         {
-            if (str_ending(value, "_comb_func")) {
-                std::string str = value;
-                return indent_str + str.replace(str.rfind("_comb_func") + 5, 5, "");
+            if (cpphdl_is_comb_func_name(value)) {
+                return indent_str + cpphdl_comb_func_signal_name(value);
             }
             std::string func = value;
             if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
@@ -580,10 +598,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 declSize = numericWidth(width.str());
                 return indent_str + sub[0].str() + "[" + sub[2].str() + " +:" + width.str() + "]";
             }
-            if (str_ending(value, "_comb_func")) {
-                std::string str = value;
-                str_replace(str, "_comb_func", "_comb");
-                return indent_str + prefix + str + suffix;
+            if (cpphdl_is_comb_func_name(value)) {
+                return indent_str + prefix + cpphdl_comb_func_signal_name(value) + suffix;
             }
             if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
                 return indent_str + prefix + escapeIdentifier(value) + suffix;
@@ -785,6 +801,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()>=1);
+            if (exprIsZeroInitializer(*this)) {
+                return indent_str + "0";
+            }
             if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
                 bool first = true;
                 std::string ret;

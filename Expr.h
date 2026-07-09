@@ -4,6 +4,7 @@
 #include <vector>
 #include <sstream>
 #include <unordered_map>
+#include <cctype>
 
 namespace cpphdl
 {
@@ -162,6 +163,32 @@ struct Expr
 inline bool str_ending(const std::string& str, const char* ending)
 {
     return str.rfind(ending) == str.length()-strlen(ending) && str.length() >= strlen(ending);
+}
+
+inline bool cpphdl_is_comb_func_name(const std::string& name)
+{
+    if (!str_ending(name, "_func")) {
+        return false;
+    }
+    std::string signal = name.substr(0, name.length() - strlen("_func"));
+    size_t pos = signal.rfind("_comb");
+    if (pos == std::string::npos) {
+        return false;
+    }
+    for (size_t i = pos + strlen("_comb"); i < signal.length(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(signal[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline std::string cpphdl_comb_func_signal_name(std::string name)
+{
+    if (cpphdl_is_comb_func_name(name)) {
+        name.resize(name.length() - strlen("_func"));
+    }
+    return name;
 }
 
 inline void str_replace(std::string& str, const char* needle, const char* replace, bool all = true)

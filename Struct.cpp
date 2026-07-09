@@ -141,7 +141,8 @@ size_t prepareStructLayout(Struct& st)
 
 size_t cpphdlScalarWidth(Expr& expr)
 {
-    if (expr.type == Expr::EXPR_TEMPLATE && expr.value.find("cpphdl_") == 0 && expr.sub.size()) {
+    if (expr.type == Expr::EXPR_TEMPLATE && expr.sub.size() &&
+        (expr.value == "cpphdl_logic" || expr.value == "cpphdl_u" || expr.value == "cpphdl_i")) {
         return atoi(expr.sub[0].str().c_str());
     }
     if (expr.type == Expr::EXPR_TYPE) {

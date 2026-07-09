@@ -14,7 +14,7 @@ int L2Cache_test_main()
 {
     uint32_t sizes[4];
     bool uncached[4];
-    array<logic<OpsBase::TAG_RAM_BITS>, OpsBase::WAYS, true> tags;
+    array<OpsBase::WAYS, logic<OpsBase::TAG_RAM_BITS>, true> tags;
     l2test::Context ctx;
 
     sizes[0] = 0x100;

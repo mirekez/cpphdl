@@ -83,12 +83,14 @@ struct has_bits_method<T, std::void_t<decltype(std::declval<const T&>().bits(siz
 
 }
 
+template<typename T, typename V>
+constexpr void sv_assign_field(T& dst, const V& value);
 
 template<typename T, typename V>
 constexpr T sv_cast(const V& value)
 {
     T out{};
-    out = value;
+    sv_assign_field(out, value);
     return out;
 }
 
@@ -228,9 +230,9 @@ struct type_width_value<logic<WIDTH>, void>
 };
 
 template<typename T, size_t N, bool PACKED>
-struct type_width_value<array<T, N, PACKED>, void>
+struct type_width_value<array<N, T, PACKED>, void>
 {
-    static constexpr size_t value = array<T, N, PACKED>::_size_bits();
+    static constexpr size_t value = array<N, T, PACKED>::_size_bits();
 };
 
 template<typename T>
@@ -302,7 +304,7 @@ constexpr logic<1> reduce_and(const detail::array_packed_ref<T, TOTAL_BITS, ELEM
 }
 
 template<typename T, size_t N, bool PACKED>
-constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
+constexpr logic<1> reduce_and(const array<N, T, PACKED>& value)
 {
     for (size_t i = 0; i < N; ++i) {
         if (!static_cast<bool>(value[i])) {
@@ -349,14 +351,20 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 }
 
 template<typename T, size_t N, bool PACKED, typename V>
-constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
+constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 {
-    if constexpr (std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, array<T, N, PACKED>>) {
+    if constexpr (std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, array<N, T, PACKED>>) {
         dst = value;
     }
     else {
         for (size_t i = 0; i < N; ++i) {
-            sv_assign_field(dst[i], value);
+            if constexpr (PACKED) {
+                auto item = dst[i];
+                sv_assign_field(item, value);
+            }
+            else {
+                sv_assign_field(dst[i], value);
+            }
         }
     }
 }

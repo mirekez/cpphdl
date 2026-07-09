@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -231,6 +232,93 @@ std::string replaceAnnotationVariables(const std::string& text, const Annotation
     }
 
     return out;
+}
+
+void appendDelimitedIncludeDirs(std::vector<std::string>& args, std::string_view dirs)
+{
+    size_t begin = 0;
+    while (begin <= dirs.size()) {
+        size_t end = dirs.find('|', begin);
+        if (end == std::string_view::npos) {
+            end = dirs.size();
+        }
+        std::string dir(dirs.substr(begin, end - begin));
+        if (!dir.empty() && std::filesystem::exists(dir)) {
+            args.push_back("-isystem");
+            args.push_back(dir);
+        }
+        if (end == dirs.size()) {
+            break;
+        }
+        begin = end + 1;
+    }
+}
+
+std::string shellQuote(const std::string& text)
+{
+    std::string out = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            out += "'\\''";
+        }
+        else {
+            out += ch;
+        }
+    }
+    out += "'";
+    return out;
+}
+
+void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
+{
+    std::string compiler;
+#ifdef CPPHDL_CMAKE_CXX_COMPILER
+    compiler = CPPHDL_CMAKE_CXX_COMPILER;
+#endif
+    if (compiler.empty()) {
+        if (const char* env_cxx = ::getenv("CXX")) {
+            compiler = env_cxx;
+        }
+    }
+    if (compiler.empty()) {
+        compiler = "clang++";
+    }
+
+    const std::string command = "printf '' | " + shellQuote(compiler) + " -E -x c++ - -v 2>&1";
+    FILE* pipe = ::popen(command.c_str(), "r");
+    if (!pipe) {
+        return;
+    }
+
+    std::array<char, 4096> buffer{};
+    bool in_include_list = false;
+    while (std::fgets(buffer.data(), (int)buffer.size(), pipe)) {
+        std::string line(buffer.data());
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+            line.pop_back();
+        }
+        const size_t first = line.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            line.erase(0, first);
+        }
+        const size_t last = line.find_last_not_of(" \t");
+        if (last != std::string::npos) {
+            line.erase(last + 1);
+        }
+        if (line == "#include <...> search starts here:") {
+            in_include_list = true;
+            continue;
+        }
+        if (line == "End of search list.") {
+            in_include_list = false;
+            continue;
+        }
+        if (in_include_list && std::filesystem::exists(line)) {
+            args.push_back("-isystem");
+            args.push_back(line);
+        }
+    }
+    ::pclose(pipe);
 }
 
 std::string trimText(std::string text)
@@ -1074,8 +1162,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             break;
         }
 
-        const TemplateArgument& typeArg = TSD->getTemplateArgs()[0];
-        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[1];
+        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[0];
+        const TemplateArgument& typeArg = TSD->getTemplateArgs()[1];
         if (typeArg.getKind() != TemplateArgument::Type) {
             break;
         }
@@ -1869,6 +1957,17 @@ static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
 struct MyFrontendAction : public ASTFrontendAction
 {
+    bool BeginSourceFileAction(CompilerInstance &CI) override
+    {
+        // Fetched Clang 21 can report failed include-search candidates here
+        // even when a later search directory opens the header successfully.
+        CI.getDiagnostics().setSeverity(
+            clang::diag::err_cannot_open_file,
+            clang::diag::Severity::Ignored,
+            clang::SourceLocation());
+        return true;
+    }
+
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override
     {
         return std::make_unique<MethodConsumer>(&CI.getASTContext());
@@ -1878,10 +1977,16 @@ struct MyFrontendAction : public ASTFrontendAction
 int main(int argc, const char **argv)
 {
     std::vector<const char*> replace;
+    std::deque<std::string> owned_args;
     std::string generated_dir = "generated";
     std::string json_output;
     bool saw_double_dash = false;
     bool injected_double_dash = false;
+    std::filesystem::path cpphdl_source_include;
+
+#ifdef CPPHDL_SOURCE_DIR
+    cpphdl_source_include = std::filesystem::path(CPPHDL_SOURCE_DIR) / "include";
+#endif
 
     if (argc > 0) {
         replace.push_back(argv[0]);
@@ -1952,9 +2057,43 @@ int main(int argc, const char **argv)
         }
     }
 
+    std::vector<std::string> cpphdl_include_args;
+#ifdef CPPHDL_SOURCE_DIR
+    if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
+        cpphdl_include_args.push_back("-isystem");
+        cpphdl_include_args.push_back(cpphdl_source_include.string());
+    }
+#endif
+#ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
+    appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
+#endif
+    appendCompilerProbeIncludeDirs(cpphdl_include_args);
+
+    std::vector<std::string> args{
+        "-x", "c++",
+        "-std=c++26",
+        "-DSYNTHESIS"};
+    args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
+
+    if (!saw_double_dash && !injected_double_dash) {
+        replace.push_back("--");
+    }
+    for (const auto& arg : args) {
+        owned_args.push_back(arg);
+        replace.push_back(owned_args.back().c_str());
+    }
+
     std::vector<const char*> new_argv = replace;
     new_argv.push_back(nullptr);
     int new_argc = (int)new_argv.size() - 1;
+
+    if (cpphdlDebugEnabled) {
+        llvm::errs() << "CppHDL clang args:";
+        for (const auto& arg : args) {
+            llvm::errs() << " " << arg;
+        }
+        llvm::errs() << "\n";
+    }
 
     auto ExpectedParser = tooling::CommonOptionsParser::create(new_argc, (const char**)new_argv.data(), MyToolCategory);
     if (!ExpectedParser) {
@@ -1964,37 +2103,6 @@ int main(int argc, const char **argv)
     tooling::CommonOptionsParser& Options = ExpectedParser.get();
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
-
-    const char* conda_prefix_env = ::getenv("CONDA_PREFIX");
-    std::filesystem::path conda_prefix = conda_prefix_env ? conda_prefix_env : "";
-    std::filesystem::path conda_cxx_include = conda_prefix / "include/c++/v1";
-    std::filesystem::path conda_clang_include = conda_prefix / "lib/clang/21/include";
-    std::filesystem::path conda_sysroot_include = conda_prefix / "x86_64-conda-linux-gnu/sysroot/usr/include";
-    bool conda_toolchain_headers =
-        conda_prefix_env
-        && std::filesystem::exists(conda_cxx_include)
-        && std::filesystem::exists(conda_clang_include)
-        && std::filesystem::exists(conda_sysroot_include);
-
-    if (conda_toolchain_headers) {
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-            {"-nostdinc",
-             "-x", "c++",
-             "-isystem", conda_cxx_include.string(),
-             "-isystem", conda_clang_include.string(),
-             "-isystem", conda_sysroot_include.string(),
-             "-std=c++26",
-             "-DSYNTHESIS"},
-            tooling::ArgumentInsertPosition::BEGIN));
-    }
-    else {
-        Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-            {"-x", "c++",
-             "-std=c++26",
-             "-DSYNTHESIS"},
-            tooling::ArgumentInsertPosition::BEGIN));
-    }
-
 
     int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
     currProject->generate(generated_dir);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export RISCV_HOME="${RISCV_HOME:-/home/me/riscv}"
+export RISCV_HOME="${RISCV_HOME:-${HOME}/riscv}"
 NO_VERIL=0
 for arg in "$@"; do
     case "${arg}" in

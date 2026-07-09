@@ -187,6 +187,58 @@ struct Axi4If : Interface
     (dst).rlast_out = (src).rlast_out; \
     (dst).rid_out = (src).rid_out
 
+#define AXI4_DRIVER_FROM_IF(dst, src) \
+    (dst).awvalid_in = _ASSIGN((bool)(src).awvalid_in()); \
+    (dst).awaddr_in = _ASSIGN((std::remove_reference_t<decltype((dst).awaddr_in())>)(uint64_t)(src).awaddr_in()); \
+    (dst).awid_in = _ASSIGN((std::remove_reference_t<decltype((dst).awid_in())>)(uint64_t)(src).awid_in()); \
+    (dst).wvalid_in = _ASSIGN((bool)(src).wvalid_in()); \
+    (dst).wdata_in = _ASSIGN((std::remove_reference_t<decltype((dst).wdata_in())>)(src).wdata_in()); \
+    (dst).wstrb_in = _ASSIGN((std::remove_reference_t<decltype((dst).wstrb_in())>)(src).wstrb_in()); \
+    (dst).wlast_in = _ASSIGN((bool)(src).wlast_in()); \
+    (dst).bready_in = _ASSIGN((bool)(src).bready_in()); \
+    (dst).arvalid_in = _ASSIGN((bool)(src).arvalid_in()); \
+    (dst).araddr_in = _ASSIGN((std::remove_reference_t<decltype((dst).araddr_in())>)(uint64_t)(src).araddr_in()); \
+    (dst).arid_in = _ASSIGN((std::remove_reference_t<decltype((dst).arid_in())>)(uint64_t)(src).arid_in()); \
+    (dst).rready_in = _ASSIGN((bool)(src).rready_in())
+
+#define AXI4_RESPONDER_FROM_IF(dst, src) \
+    (dst).awready_out = _ASSIGN((bool)(src).awready_out()); \
+    (dst).wready_out = _ASSIGN((bool)(src).wready_out()); \
+    (dst).bvalid_out = _ASSIGN((bool)(src).bvalid_out()); \
+    (dst).bid_out = _ASSIGN((std::remove_reference_t<decltype((dst).bid_out())>)(uint64_t)(src).bid_out()); \
+    (dst).arready_out = _ASSIGN((bool)(src).arready_out()); \
+    (dst).rvalid_out = _ASSIGN((bool)(src).rvalid_out()); \
+    (dst).rdata_out = _ASSIGN((std::remove_reference_t<decltype((dst).rdata_out())>)(src).rdata_out()); \
+    (dst).rlast_out = _ASSIGN((bool)(src).rlast_out()); \
+    (dst).rid_out = _ASSIGN((std::remove_reference_t<decltype((dst).rid_out())>)(uint64_t)(src).rid_out())
+
+#define AXI4_PORT_VALUE_TYPE(port) std::remove_reference_t<decltype((port)())>
+
+#define AXI4_DRIVER_FROM_COMB_INDEXED(dst, src, idx) \
+    (dst).awvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awvalid_in))(src)[idx].aw.valid); \
+    (dst).awaddr_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awaddr_in))(uint64_t)(src)[idx].aw.addr); \
+    (dst).awid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awid_in))(uint64_t)(src)[idx].aw.id); \
+    (dst).wvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wvalid_in))(src)[idx].w.valid); \
+    (dst).wdata_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wdata_in))(src)[idx].w.data); \
+    (dst).wstrb_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wstrb_in))(src)[idx].w.strb); \
+    (dst).wlast_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wlast_in))(src)[idx].w.last); \
+    (dst).bready_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bready_in))(src)[idx].b.ready); \
+    (dst).arvalid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arvalid_in))(src)[idx].ar.valid); \
+    (dst).araddr_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).araddr_in))(uint64_t)(src)[idx].ar.addr); \
+    (dst).arid_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arid_in))(uint64_t)(src)[idx].ar.id); \
+    (dst).rready_in = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rready_in))(src)[idx].r.ready)
+
+#define AXI4_RESPONDER_FROM_COMB_INDEXED(dst, src, idx) \
+    (dst).awready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).awready_out))(src)[idx].aw.ready); \
+    (dst).wready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).wready_out))(src)[idx].w.ready); \
+    (dst).bvalid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bvalid_out))(src)[idx].b.valid); \
+    (dst).bid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).bid_out))(uint64_t)(src)[idx].b.id); \
+    (dst).arready_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).arready_out))(src)[idx].ar.ready); \
+    (dst).rvalid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rvalid_out))(src)[idx].r.valid); \
+    (dst).rdata_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rdata_out))(src)[idx].r.data); \
+    (dst).rlast_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rlast_out))(src)[idx].r.last); \
+    (dst).rid_out = _ASSIGN_INDEXED((idx), (AXI4_PORT_VALUE_TYPE((dst).rid_out))(uint64_t)(src)[idx].r.id)
+
 #define AXI4_RESPONDER_FROM_LATE(dst, src) \
     (dst).awready_out = _ASSIGN((src).awready_out()); \
     (dst).wready_out = _ASSIGN((src).wready_out()); \
@@ -453,6 +505,20 @@ struct Axi4If : Interface
     (dst).if_name##___05Farid_in[index] = (src).ar.id; \
     (dst).if_name##___05Frready_in[index] = (src).r.ready
 
+#define AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(dst, if_name, index, src) \
+    (dst).if_name##___05Fawvalid_in[index] = (src).awvalid_in(); \
+    (dst).if_name##___05Fawaddr_in[index] = (uint32_t)(src).awaddr_in(); \
+    (dst).if_name##___05Fawid_in[index] = (uint32_t)(src).awid_in(); \
+    (dst).if_name##___05Fwvalid_in[index] = (src).wvalid_in(); \
+    verilator_logic_to_wide((dst).if_name##___05Fwdata_in[index], (src).wdata_in()); \
+    (dst).if_name##___05Fwstrb_in[index] = (uint32_t)(src).wstrb_in(); \
+    (dst).if_name##___05Fwlast_in[index] = (src).wlast_in(); \
+    (dst).if_name##___05Fbready_in[index] = (src).bready_in(); \
+    (dst).if_name##___05Farvalid_in[index] = (src).arvalid_in(); \
+    (dst).if_name##___05Faraddr_in[index] = (uint32_t)(src).araddr_in(); \
+    (dst).if_name##___05Farid_in[index] = (uint32_t)(src).arid_in(); \
+    (dst).if_name##___05Frready_in[index] = (src).rready_in()
+
 #define AXI4_DRIVER_FROM_VERILATOR(dst, src, index, addr_type, data_func) \
     do { \
         (dst).awvalid_in = _ASSIGN_I((bool)(src).axi_out___05Fawvalid_out[index]); \
@@ -497,4 +563,17 @@ struct Axi4If : Interface
         verilator_logic_to_wide((dst).axi_out___05Frdata_in[index], axi4_responder_rvalid ? (src).rdata_out() : std::remove_reference_t<decltype((src).rdata_out())>(0)); \
         (dst).axi_out___05Frlast_in[index] = (src).rlast_out(); \
         (dst).axi_out___05Frid_in[index] = (src).rid_out(); \
+    } while (false)
+
+#define AXI4_RESPONDER_FROM_VERILATOR_IF_CONST(dst, src, if_name, index, data_func) \
+    do { \
+        (dst).awready_out = _ASSIGN((bool)(src).if_name##___05Fawready_out[index]); \
+        (dst).wready_out = _ASSIGN((bool)(src).if_name##___05Fwready_out[index]); \
+        (dst).bvalid_out = _ASSIGN((bool)(src).if_name##___05Fbvalid_out[index]); \
+        (dst).bid_out = _ASSIGN((std::remove_reference_t<decltype((dst).bid_out())>)(uint32_t)(src).if_name##___05Fbid_out[index]); \
+        (dst).arready_out = _ASSIGN((bool)(src).if_name##___05Farready_out[index]); \
+        (dst).rvalid_out = _ASSIGN((bool)(src).if_name##___05Frvalid_out[index]); \
+        (dst).rdata_out = _ASSIGN(data_func((src).if_name##___05Frdata_out[index])); \
+        (dst).rlast_out = _ASSIGN((bool)(src).if_name##___05Frlast_out[index]); \
+        (dst).rid_out = _ASSIGN((std::remove_reference_t<decltype((dst).rid_out())>)(uint32_t)(src).if_name##___05Frid_out[index]); \
     } while (false)
