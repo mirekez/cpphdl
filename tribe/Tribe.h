@@ -3,6 +3,7 @@
 #include "File.h"
 
 #include "Config.h"
+#include "TribeDebug.h"
 
 static constexpr size_t STAGES_NUM = 3;  // Decode, Execute, Writeback  (+ IFetch not counted here)
 static constexpr size_t CACHE_LINE_SIZE = 32;
@@ -120,86 +121,20 @@ public:
     _PORT(uint32_t)  dmem_addr_out;
     _PORT(uint32_t)  imem_read_addr_out;
 #ifdef ENABLE_MMU_TLB
-    _PORT(bool)      debug_immu_ptw_read_out;
-    _PORT(uint32_t)  debug_immu_ptw_addr_out;
-    _PORT(bool)      debug_immu_busy_out;
-    _PORT(bool)      debug_immu_fault_out;
-    _PORT(uint32_t)  debug_immu_paddr_out;
-    _PORT(uint32_t)  debug_immu_last_addr_out;
-    _PORT(uint32_t)  debug_immu_last_pte_out;
-    _PORT(bool)      debug_icache_read_valid_out;
-    _PORT(uint32_t)  debug_icache_read_addr_out;
-    _PORT(bool)      debug_dcache_read_valid_out;
-    _PORT(uint32_t)  debug_dcache_read_addr_out;
-    _PORT(uint32_t)  debug_dcache_read_data_out;
-    _PORT(bool)      debug_dcache_cpu_read_out;
-    _PORT(bool)      debug_dcache_cpu_write_out;
-    _PORT(uint32_t)  debug_dcache_cpu_addr_out;
-    _PORT(uint32_t)  debug_dcache_cpu_wdata_out;
-    _PORT(uint8_t)   debug_dcache_cpu_wmask_out;
-    _PORT(bool)      debug_fetch_valid_out;
-    _PORT(bool)      debug_memory_wait_out;
-    _PORT(bool)      debug_wb_load_ready_out;
-    _PORT(bool)      debug_wb_mem_wait_out;
-    _PORT(bool)      debug_wb_load_data_valid_out;
-    _PORT(uint32_t)  debug_wb_load_addr_out;
-    _PORT(bool)      debug_wb_split_low_valid_out;
-    _PORT(bool)      debug_wb_split_high_valid_out;
-    _PORT(bool)      debug_wb_held_load_valid_out;
-    _PORT(bool)      debug_wb_split_load_in_out;
-    _PORT(uint32_t)  debug_wb_alu_addr_out;
-    _PORT(uint32_t)  debug_wb_state_pc_out;
-    _PORT(uint8_t)   debug_wb_state_wb_op_out;
-    _PORT(uint8_t)   debug_wb_state_mem_op_out;
-    _PORT(uint8_t)   debug_wb_state_rd_out;
-    _PORT(uint8_t)   debug_wb_state_funct3_out;
-    _PORT(bool)      debug_icache_read_in_out;
-    _PORT(bool)      debug_icache_stall_in_out;
-    _PORT(bool)      debug_dmmu_ptw_read_out;
-    _PORT(uint32_t)  debug_dmmu_ptw_addr_out;
-    _PORT(bool)      debug_dmmu_busy_out;
-    _PORT(bool)      debug_dmmu_fault_out;
-    _PORT(uint32_t)  debug_mmu_ptw_word_out;
-    _PORT(uint32_t)  debug_pc_out;
-    _PORT(uint32_t)  debug_satp_out;
-    _PORT(uint32_t)  debug_mstatus_out;
-    _PORT(uint32_t)  debug_mtvec_out;
-    _PORT(uint32_t)  debug_mepc_out;
-    _PORT(uint32_t)  debug_mcause_out;
-    _PORT(uint32_t)  debug_mtval_out;
-    _PORT(uint32_t)  debug_sepc_out;
-    _PORT(uint32_t)  debug_stvec_out;
-    _PORT(uint32_t)  debug_scause_out;
-    _PORT(uint32_t)  debug_stval_out;
-    _PORT(bool)      debug_irq_valid_out;
-    _PORT(uint32_t)  debug_irq_cause_out;
-    _PORT(bool)      debug_irq_to_supervisor_out;
-    _PORT(uint32_t)  debug_irq_mip_out;
-    _PORT(uint32_t)  debug_irq_mie_out;
-    _PORT(uint32_t)  debug_irq_mideleg_out;
-    _PORT(u<2>)      debug_priv_out;
-    _PORT(uint32_t)  debug_ra_out;
-    _PORT(bool)      debug_regs_write_out;
-    _PORT(bool)      debug_regs_write_actual_out;
-    _PORT(uint8_t)   debug_regs_wr_id_out;
-    _PORT(uint32_t)  debug_regs_data_out;
-    _PORT(bool)      debug_branch_taken_now_out;
-    _PORT(uint32_t)  debug_branch_target_now_out;
-    _PORT(uint32_t)  debug_decode_instr_out;
-    _PORT(uint32_t)  debug_decode_pc_out;
-    _PORT(uint8_t)   debug_decode_br_out;
-    _PORT(uint32_t)  debug_decode_imm_out;
+    _PORT(TribeCoreDebug)      debug_core_out = _ASSIGN_COMB(debug_core_comb_func());
+    _PORT(TribeMmuDebug)       debug_mmu_out = _ASSIGN_COMB(debug_mmu_comb_func());
+    _PORT(TribeCacheDebug)     debug_cache_out = _ASSIGN_COMB(debug_cache_comb_func());
+    _PORT(TribeWritebackDebug) debug_wb_out = _ASSIGN_COMB(debug_wb_comb_func());
+    _PORT(TribeCsrDebug)       debug_csr_out = _ASSIGN_COMB(debug_csr_comb_func());
+    _PORT(TribeIrqDebug)       debug_irq_out = _ASSIGN_COMB(debug_irq_comb_func());
+    _PORT(TribeRegsDebug)      debug_regs_out = _ASSIGN_COMB(debug_regs_comb_func());
+    _PORT(TribeBranchDebug)    debug_branch_out = _ASSIGN_COMB(debug_branch_comb_func());
+    _PORT(TribeDecodeDebug)    debug_decode_out = _ASSIGN_COMB(debug_decode_comb_func());
 #endif
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
     _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
-    _PORT(bool)      debug_sbi_ecall_out = _ASSIGN_COMB(sbi_ecall_debug_comb_func());
-    _PORT(uint32_t)  debug_sbi_a7_out = _ASSIGN_COMB(sbi_a7_debug_comb_func());
-    _PORT(uint32_t)  debug_sbi_a6_out = _ASSIGN_COMB(sbi_a6_debug_comb_func());
-    _PORT(uint32_t)  debug_sbi_a0_out = _ASSIGN_COMB(sbi_a0_debug_comb_func());
-    _PORT(bool)      debug_sbi_base_out = _ASSIGN_COMB(sbi_base_comb_func());
-    _PORT(bool)      debug_sbi_noop_out = _ASSIGN_COMB(sbi_noop_comb_func());
-    _PORT(bool)      debug_sbi_handled_out = _ASSIGN_COMB(sbi_handled_comb_func());
+    _PORT(TribeSbiDebug) debug_sbi_out = _ASSIGN_COMB(debug_sbi_comb_func());
     _PORT(uint32_t)  reset_pc_in;
     _PORT(uint32_t)  boot_hartid_in;
     _PORT(uint32_t)  boot_dtb_addr_in;
@@ -528,82 +463,129 @@ public:
         dmem_read_out       = dcache.mem_out.read_in;
         dmem_addr_out       = dcache.mem_out.addr_in;
         imem_read_addr_out  = icache.mem_out.addr_in;
-#ifdef ENABLE_MMU_TLB
-        debug_immu_ptw_read_out = immu.mem_read_out;
-        debug_immu_ptw_addr_out = immu.mem_addr_out;
-        debug_immu_busy_out = immu.busy_out;
-        debug_immu_fault_out = immu.fault_out;
-        debug_immu_paddr_out = immu.paddr_out;
-        debug_immu_last_addr_out = immu.debug_last_addr_out;
-        debug_immu_last_pte_out = immu.debug_last_pte_out;
-        debug_icache_read_valid_out = icache.read_valid_out;
-        debug_icache_read_addr_out = icache.read_addr_out;
-        debug_dcache_read_valid_out = dcache.read_valid_out;
-        debug_dcache_read_addr_out = dcache.read_addr_out;
-        debug_dcache_read_data_out = dcache.read_data_out;
-        debug_dcache_cpu_read_out = dcache.read_in;
-        debug_dcache_cpu_write_out = dcache.write_in;
-        debug_dcache_cpu_addr_out = dcache.addr_in;
-        debug_dcache_cpu_wdata_out = dcache.write_data_in;
-        debug_dcache_cpu_wmask_out = dcache.write_mask_in;
-        debug_fetch_valid_out = _ASSIGN_COMB(fetch_valid_comb_func());
-        debug_memory_wait_out = _ASSIGN_COMB(memory_wait_comb_func());
-        debug_wb_load_ready_out = wb_mem.load_ready_out;
-        debug_wb_mem_wait_out = _ASSIGN(state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && !wb_mem.load_ready_out());
-        debug_wb_load_data_valid_out = wb_mem.debug_load_data_valid_out;
-        debug_wb_load_addr_out = wb_mem.debug_load_addr_out;
-        debug_wb_split_low_valid_out = wb_mem.debug_split_low_valid_out;
-        debug_wb_split_high_valid_out = wb_mem.debug_split_high_valid_out;
-        debug_wb_held_load_valid_out = wb_mem.debug_held_load_valid_out;
-        debug_wb_split_load_in_out = exe_mem.split_load_out;
-        debug_wb_alu_addr_out = wb_mem.alu_result_in;
-        debug_wb_state_pc_out = _ASSIGN((uint32_t)state_reg[1].pc);
-        debug_wb_state_wb_op_out = _ASSIGN((uint8_t)state_reg[1].wb_op);
-        debug_wb_state_mem_op_out = _ASSIGN((uint8_t)state_reg[1].mem_op);
-        debug_wb_state_rd_out = _ASSIGN((uint8_t)state_reg[1].rd);
-        debug_wb_state_funct3_out = _ASSIGN((uint8_t)state_reg[1].funct3);
-        debug_icache_read_in_out = _ASSIGN_COMB(icache.read_in());
-        debug_icache_stall_in_out = _ASSIGN_COMB(icache.stall_in());
-        debug_dmmu_ptw_read_out = dmmu.mem_read_out;
-        debug_dmmu_ptw_addr_out = dmmu.mem_addr_out;
-        debug_dmmu_busy_out = dmmu.busy_out;
-        debug_dmmu_fault_out = dmmu.fault_out;
-        debug_mmu_ptw_word_out = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
-        debug_pc_out = _ASSIGN_REG(pc);
-        debug_satp_out = csr.satp_out;
-        debug_mstatus_out = csr.mstatus_out;
-        debug_mtvec_out = csr.mtvec_out;
-        debug_mepc_out = csr.mepc_out;
-        debug_mcause_out = csr.mcause_out;
-        debug_mtval_out = csr.mtval_out;
-        debug_sepc_out = csr.sepc_out;
-        debug_stvec_out = csr.stvec_out;
-        debug_scause_out = csr.scause_out;
-        debug_stval_out = csr.stval_out;
-        debug_irq_valid_out = irq.interrupt_valid_out;
-        debug_irq_cause_out = irq.interrupt_cause_out;
-        debug_irq_to_supervisor_out = irq.interrupt_to_supervisor_out;
-        debug_irq_mip_out = irq.mip_out;
-        debug_irq_mie_out = csr.mie_out;
-        debug_irq_mideleg_out = csr.mideleg_out;
-        debug_priv_out = csr.priv_out;
-        debug_ra_out = regs.x1_out;
-        debug_regs_write_out = wb.regs_write_out;
-        debug_regs_write_actual_out = _ASSIGN(wb.regs_write_out() &&
-            !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
-        debug_regs_wr_id_out = wb.regs_wr_id_out;
-        debug_regs_data_out = wb.regs_data_out;
-        debug_branch_taken_now_out = exe.branch_taken_out;
-        debug_branch_target_now_out = exe.branch_target_out;
-        debug_decode_instr_out = icache.read_data_out;
-        debug_decode_pc_out = _ASSIGN((uint32_t)dec.state_out().pc);
-        debug_decode_br_out = _ASSIGN((uint8_t)dec.state_out().br_op);
-        debug_decode_imm_out = _ASSIGN((uint32_t)dec.state_out().imm);
-#endif
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
         }
+    }
+
+#ifdef ENABLE_MMU_TLB
+    _LAZY_COMB(debug_core_comb, TribeCoreDebug)
+        debug_core_comb.pc = pc;
+        debug_core_comb.fetch_valid = fetch_valid_comb_func();
+        debug_core_comb.memory_wait = memory_wait_comb_func();
+        return debug_core_comb;
+    }
+
+    _LAZY_COMB(debug_mmu_comb, TribeMmuDebug)
+        debug_mmu_comb.immu_ptw_read = immu.mem_read_out();
+        debug_mmu_comb.immu_ptw_addr = immu.mem_addr_out();
+        debug_mmu_comb.immu_busy = immu.busy_out();
+        debug_mmu_comb.immu_fault = immu.fault_out();
+        debug_mmu_comb.immu_paddr = immu.paddr_out();
+        debug_mmu_comb.immu_last_addr = immu.debug_last_addr_out();
+        debug_mmu_comb.immu_last_pte = immu.debug_last_pte_out();
+        debug_mmu_comb.dmmu_ptw_read = dmmu.mem_read_out();
+        debug_mmu_comb.dmmu_ptw_addr = dmmu.mem_addr_out();
+        debug_mmu_comb.dmmu_busy = dmmu.busy_out();
+        debug_mmu_comb.dmmu_fault = dmmu.fault_out();
+        debug_mmu_comb.ptw_word = mmu_l2_read_word_comb_func();
+        return debug_mmu_comb;
+    }
+
+    _LAZY_COMB(debug_cache_comb, TribeCacheDebug)
+        debug_cache_comb.icache_read_valid = icache.read_valid_out();
+        debug_cache_comb.icache_read_addr = icache.read_addr_out();
+        debug_cache_comb.icache_read_in = icache.read_in();
+        debug_cache_comb.icache_stall_in = icache.stall_in();
+        debug_cache_comb.dcache_read_valid = dcache.read_valid_out();
+        debug_cache_comb.dcache_read_addr = dcache.read_addr_out();
+        debug_cache_comb.dcache_read_data = dcache.read_data_out();
+        debug_cache_comb.dcache_cpu_read = dcache.read_in();
+        debug_cache_comb.dcache_cpu_write = dcache.write_in();
+        debug_cache_comb.dcache_cpu_addr = dcache.addr_in();
+        debug_cache_comb.dcache_cpu_wdata = dcache.write_data_in();
+        debug_cache_comb.dcache_cpu_wmask = dcache.write_mask_in();
+        return debug_cache_comb;
+    }
+
+    _LAZY_COMB(debug_wb_comb, TribeWritebackDebug)
+        debug_wb_comb.load_ready = wb_mem.load_ready_out();
+        debug_wb_comb.mem_wait = state_reg[1].valid && state_reg[1].wb_op == Wb::MEM && !wb_mem.load_ready_out();
+        debug_wb_comb.load_data_valid = wb_mem.debug_load_data_valid_out();
+        debug_wb_comb.load_addr = wb_mem.debug_load_addr_out();
+        debug_wb_comb.split_low_valid = wb_mem.debug_split_low_valid_out();
+        debug_wb_comb.split_high_valid = wb_mem.debug_split_high_valid_out();
+        debug_wb_comb.held_load_valid = wb_mem.debug_held_load_valid_out();
+        debug_wb_comb.split_load_in = exe_mem.split_load_out();
+        debug_wb_comb.alu_addr = wb_mem.alu_result_in();
+        debug_wb_comb.state_pc = (uint32_t)state_reg[1].pc;
+        debug_wb_comb.state_wb_op = (uint8_t)state_reg[1].wb_op;
+        debug_wb_comb.state_mem_op = (uint8_t)state_reg[1].mem_op;
+        debug_wb_comb.state_rd = (uint8_t)state_reg[1].rd;
+        debug_wb_comb.state_funct3 = (uint8_t)state_reg[1].funct3;
+        return debug_wb_comb;
+    }
+
+    _LAZY_COMB(debug_csr_comb, TribeCsrDebug)
+        debug_csr_comb.satp = csr.satp_out();
+        debug_csr_comb.mstatus = csr.mstatus_out();
+        debug_csr_comb.mtvec = csr.mtvec_out();
+        debug_csr_comb.mepc = csr.mepc_out();
+        debug_csr_comb.mcause = csr.mcause_out();
+        debug_csr_comb.mtval = csr.mtval_out();
+        debug_csr_comb.sepc = csr.sepc_out();
+        debug_csr_comb.stvec = csr.stvec_out();
+        debug_csr_comb.scause = csr.scause_out();
+        debug_csr_comb.stval = csr.stval_out();
+        debug_csr_comb.priv = csr.priv_out();
+        return debug_csr_comb;
+    }
+
+    _LAZY_COMB(debug_irq_comb, TribeIrqDebug)
+        debug_irq_comb.valid = irq.interrupt_valid_out();
+        debug_irq_comb.cause = irq.interrupt_cause_out();
+        debug_irq_comb.to_supervisor = irq.interrupt_to_supervisor_out();
+        debug_irq_comb.mip = irq.mip_out();
+        debug_irq_comb.mie = csr.mie_out();
+        debug_irq_comb.mideleg = csr.mideleg_out();
+        return debug_irq_comb;
+    }
+
+    _LAZY_COMB(debug_regs_comb, TribeRegsDebug)
+        debug_regs_comb.ra = regs.x1_out();
+        debug_regs_comb.write = wb.regs_write_out();
+        debug_regs_comb.write_actual = wb.regs_write_out() &&
+            !memory_wait_comb_func() &&
+            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out());
+        debug_regs_comb.wr_id = wb.regs_wr_id_out();
+        debug_regs_comb.data = wb.regs_data_out();
+        return debug_regs_comb;
+    }
+
+    _LAZY_COMB(debug_branch_comb, TribeBranchDebug)
+        debug_branch_comb.taken_now = exe.branch_taken_out();
+        debug_branch_comb.target_now = exe.branch_target_out();
+        return debug_branch_comb;
+    }
+
+    _LAZY_COMB(debug_decode_comb, TribeDecodeDebug)
+        debug_decode_comb.instr = icache.read_data_out();
+        debug_decode_comb.pc = (uint32_t)dec.state_out().pc;
+        debug_decode_comb.br = (uint8_t)dec.state_out().br_op;
+        debug_decode_comb.imm = (uint32_t)dec.state_out().imm;
+        return debug_decode_comb;
+    }
+#endif
+
+    _LAZY_COMB(debug_sbi_comb, TribeSbiDebug)
+        debug_sbi_comb.ecall = sbi_ecall_debug_comb_func();
+        debug_sbi_comb.a7 = sbi_a7_debug_comb_func();
+        debug_sbi_comb.a6 = sbi_a6_debug_comb_func();
+        debug_sbi_comb.a0 = sbi_a0_debug_comb_func();
+        debug_sbi_comb.base = sbi_base_comb_func();
+        debug_sbi_comb.noop = sbi_noop_comb_func();
+        debug_sbi_comb.handled = sbi_handled_comb_func();
+        return debug_sbi_comb;
     }
 
 private:

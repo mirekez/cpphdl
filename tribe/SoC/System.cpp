@@ -136,49 +136,14 @@ public:
     _PORT(uint32_t) imem_read_addr_out = _ASSIGN_COMB(tribe.imem_read_addr_out());
 
 #ifdef ENABLE_MMU_TLB
-    _PORT(bool) debug_immu_ptw_read_out = _ASSIGN_COMB(tribe.debug_immu_ptw_read_out());
-    _PORT(uint32_t) debug_immu_ptw_addr_out = _ASSIGN_COMB(tribe.debug_immu_ptw_addr_out());
-    _PORT(bool) debug_immu_busy_out = _ASSIGN_COMB(tribe.debug_immu_busy_out());
-    _PORT(bool) debug_immu_fault_out = _ASSIGN_COMB(tribe.debug_immu_fault_out());
-    _PORT(uint32_t) debug_immu_paddr_out = _ASSIGN_COMB(tribe.debug_immu_paddr_out());
-    _PORT(uint32_t) debug_immu_last_addr_out = _ASSIGN_COMB(tribe.debug_immu_last_addr_out());
-    _PORT(uint32_t) debug_immu_last_pte_out = _ASSIGN_COMB(tribe.debug_immu_last_pte_out());
-    _PORT(bool) debug_icache_read_valid_out = _ASSIGN_COMB(tribe.debug_icache_read_valid_out());
-    _PORT(uint32_t) debug_icache_read_addr_out = _ASSIGN_COMB(tribe.debug_icache_read_addr_out());
-    _PORT(bool) debug_fetch_valid_out = _ASSIGN_COMB(tribe.debug_fetch_valid_out());
-    _PORT(bool) debug_memory_wait_out = _ASSIGN_COMB(tribe.debug_memory_wait_out());
-    _PORT(bool) debug_wb_load_ready_out = _ASSIGN_COMB(tribe.debug_wb_load_ready_out());
-    _PORT(bool) debug_wb_mem_wait_out = _ASSIGN_COMB(tribe.debug_wb_mem_wait_out());
-    _PORT(bool) debug_icache_read_in_out = _ASSIGN_COMB(tribe.debug_icache_read_in_out());
-    _PORT(bool) debug_icache_stall_in_out = _ASSIGN_COMB(tribe.debug_icache_stall_in_out());
-    _PORT(bool) debug_dmmu_ptw_read_out = _ASSIGN_COMB(tribe.debug_dmmu_ptw_read_out());
-    _PORT(uint32_t) debug_dmmu_ptw_addr_out = _ASSIGN_COMB(tribe.debug_dmmu_ptw_addr_out());
-    _PORT(bool) debug_dmmu_busy_out = _ASSIGN_COMB(tribe.debug_dmmu_busy_out());
-    _PORT(bool) debug_dmmu_fault_out = _ASSIGN_COMB(tribe.debug_dmmu_fault_out());
-    _PORT(uint32_t) debug_mmu_ptw_word_out = _ASSIGN_COMB(tribe.debug_mmu_ptw_word_out());
-    _PORT(uint32_t) debug_pc_out = _ASSIGN_COMB(tribe.debug_pc_out());
-    _PORT(uint32_t) debug_satp_out = _ASSIGN_COMB(tribe.debug_satp_out());
-    _PORT(uint32_t) debug_mstatus_out = _ASSIGN_COMB(tribe.debug_mstatus_out());
-    _PORT(uint32_t) debug_mtvec_out = _ASSIGN_COMB(tribe.debug_mtvec_out());
-    _PORT(uint32_t) debug_mepc_out = _ASSIGN_COMB(tribe.debug_mepc_out());
-    _PORT(uint32_t) debug_mcause_out = _ASSIGN_COMB(tribe.debug_mcause_out());
-    _PORT(uint32_t) debug_mtval_out = _ASSIGN_COMB(tribe.debug_mtval_out());
-    _PORT(uint32_t) debug_sepc_out = _ASSIGN_COMB(tribe.debug_sepc_out());
-    _PORT(uint32_t) debug_stvec_out = _ASSIGN_COMB(tribe.debug_stvec_out());
-    _PORT(uint32_t) debug_scause_out = _ASSIGN_COMB(tribe.debug_scause_out());
-    _PORT(uint32_t) debug_stval_out = _ASSIGN_COMB(tribe.debug_stval_out());
-    _PORT(u<2>) debug_priv_out = _ASSIGN_COMB(tribe.debug_priv_out());
-    _PORT(uint32_t) debug_ra_out = _ASSIGN_COMB(tribe.debug_ra_out());
-    _PORT(bool) debug_regs_write_out = _ASSIGN_COMB(tribe.debug_regs_write_out());
-    _PORT(bool) debug_regs_write_actual_out = _ASSIGN_COMB(tribe.debug_regs_write_actual_out());
-    _PORT(uint8_t) debug_regs_wr_id_out = _ASSIGN_COMB(tribe.debug_regs_wr_id_out());
-    _PORT(uint32_t) debug_regs_data_out = _ASSIGN_COMB(tribe.debug_regs_data_out());
-    _PORT(bool) debug_branch_taken_now_out = _ASSIGN_COMB(tribe.debug_branch_taken_now_out());
-    _PORT(uint32_t) debug_branch_target_now_out = _ASSIGN_COMB(tribe.debug_branch_target_now_out());
-    _PORT(uint32_t) debug_decode_instr_out = _ASSIGN_COMB(tribe.debug_decode_instr_out());
-    _PORT(uint32_t) debug_decode_pc_out = _ASSIGN_COMB(tribe.debug_decode_pc_out());
-    _PORT(uint8_t) debug_decode_br_out = _ASSIGN_COMB(tribe.debug_decode_br_out());
-    _PORT(uint32_t) debug_decode_imm_out = _ASSIGN_COMB(tribe.debug_decode_imm_out());
+    _PORT(TribeCoreDebug) debug_core_out = _ASSIGN_COMB(tribe.debug_core_out());
+    _PORT(TribeMmuDebug) debug_mmu_out = _ASSIGN_COMB(tribe.debug_mmu_out());
+    _PORT(TribeCacheDebug) debug_cache_out = _ASSIGN_COMB(tribe.debug_cache_out());
+    _PORT(TribeWritebackDebug) debug_wb_out = _ASSIGN_COMB(tribe.debug_wb_out());
+    _PORT(TribeCsrDebug) debug_csr_out = _ASSIGN_COMB(tribe.debug_csr_out());
+    _PORT(TribeRegsDebug) debug_regs_out = _ASSIGN_COMB(tribe.debug_regs_out());
+    _PORT(TribeBranchDebug) debug_branch_out = _ASSIGN_COMB(tribe.debug_branch_out());
+    _PORT(TribeDecodeDebug) debug_decode_out = _ASSIGN_COMB(tribe.debug_decode_out());
 #endif
 
     Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[2];
@@ -194,7 +159,7 @@ public:
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
             _ASSIGN((bool)sd_dma_cache_invalidate_reg &&
-                !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
+                !debug_core_out().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out());
 #else
             _ASSIGN((bool)sd_dma_cache_invalidate_reg);
 #endif
@@ -215,30 +180,8 @@ public:
             tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].rready_in = _ASSIGN(false);
         }
-        tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
-        tribe.axi_in[0].awaddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.awaddr_in());
-        tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
-        tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
-        tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
-        tribe.axi_in[0].wstrb_in = _ASSIGN(accelerator.dma_out.wstrb_in());
-        tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
-        tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
-        tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
-        tribe.axi_in[0].araddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.araddr_in());
-        tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
-        tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
-        tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
-        tribe.axi_in[1].awaddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.awaddr_in());
-        tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
-        tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
-        tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
-        tribe.axi_in[1].wstrb_in = _ASSIGN(sdcard.dma_out.wstrb_in());
-        tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
-        tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
-        tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
-        tribe.axi_in[1].araddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.araddr_in());
-        tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
-        tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
+        AXI4_DRIVER_FROM_IF(tribe.axi_in[0], accelerator.dma_out);
+        AXI4_DRIVER_FROM_IF(tribe.axi_in[1], sdcard.dma_out);
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -253,8 +196,8 @@ public:
         AXI4_DRIVER_FROM(axi_out[1], tribe.axi_out[1]);
         AXI4_DRIVER_FROM(mem2.axi_in, tribe.axi_out[2]);
         AXI4_DRIVER_FROM(iospace.slave_in, tribe.axi_out[3]);
-        AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
-        AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
+        AXI4_RESPONDER_FROM_IF(accelerator.dma_out, tribe.axi_in[0]);
+        AXI4_RESPONDER_FROM_IF(sdcard.dma_out, tribe.axi_in[1]);
 
         mem2.debugen_in = debugen_in;
         mem2.__inst_name = __inst_name + "/mem2";
@@ -326,7 +269,7 @@ public:
         sdcard._work(reset);
 #ifdef ENABLE_MMU_TLB
         sd_dma_cache_invalidate_ready =
-            !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+            !debug_core_out().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out();
 #endif
         if (sdcard.dma_write_complete_out()) {
             sd_dma_cache_invalidate_reg._next = true;

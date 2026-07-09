@@ -7,6 +7,7 @@
 #include "devices/net/ethgig/ethgig_phy.h"
 #include "verif/RGMIIVerif.h"
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <csignal>
 #include <vector>
@@ -39,6 +40,8 @@
 
 #include <tuple>
 #include <utility>
+
+class PcSymbolTable;
 
 
 static volatile sig_atomic_t tribe_uart_stdin_sigint_pending = 0;
@@ -80,369 +83,6 @@ static inline uint64_t tribe_runtime_tick()
 #endif
 }
 
-class EthGigTapSocket
-{
-#if defined(__linux__)
-    int fd = -1;
-    std::string local_path;
-    bool send_warning_printed = false;
-    bool recv_warning_printed = false;
-    bool trace_enabled = false;
-    std::ofstream trace_file;
-    uint64_t rx_backlog_drop_count = 0;
-    uint64_t rx_backlog_last_report_cycle = 0;
-    uint64_t host_control_drop_count = 0;
-    uint64_t host_control_last_report_cycle = 0;
-    uint64_t last_host_arp_request_cycle = 0;
-    uint64_t last_host_icmp_echo_cycle = 0;
-
-    static constexpr uint8_t MSG_HELLO = 1;
-    static constexpr uint8_t MSG_FRAME = 2;
-    static constexpr size_t ETHERNET_MIN_FRAME_BYTES = 60;
-    static constexpr size_t MAX_RX_BACKLOG_PACKETS = 2;
-    static constexpr size_t MAX_RX_DGRAMS_PER_PUMP = 16;
-    static constexpr uint64_t RX_BACKLOG_REPORT_PERIOD = 1000000;
-    static constexpr uint64_t HOST_CONTROL_MIN_CYCLES = 195312;
-
-    static bool sockaddr_from_path(const std::string& path, sockaddr_un& addr)
-    {
-        if (path.empty() || path.size() >= sizeof(addr.sun_path)) {
-            return false;
-        }
-        std::memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-        return true;
-    }
-
-    static uint32_t crc32_next(uint32_t crc, uint8_t data)
-    {
-        uint32_t value = crc ^ data;
-        for (uint32_t i = 0; i < 8; ++i) {
-            value = (value & 1u) ? ((value >> 1) ^ 0xedb88320u) : (value >> 1);
-        }
-        return value;
-    }
-
-    static uint32_t fcs_for_frame(const std::vector<uint8_t>& frame)
-    {
-        uint32_t crc = 0xffffffffu;
-        for (uint8_t value : frame) {
-            crc = crc32_next(crc, value);
-        }
-        return ~crc;
-    }
-
-    static std::vector<uint8_t> tap_frame_to_wire(std::vector<uint8_t> frame)
-    {
-        while (frame.size() < ETHERNET_MIN_FRAME_BYTES) {
-            frame.push_back(0);
-        }
-
-        uint32_t fcs = fcs_for_frame(frame);
-        std::vector<uint8_t> wire;
-        wire.reserve(frame.size() + 12);
-        for (uint32_t i = 0; i < 7; ++i) {
-            wire.push_back(0x55);
-        }
-        wire.push_back(0xd5);
-        wire.insert(wire.end(), frame.begin(), frame.end());
-        for (uint32_t i = 0; i < 4; ++i) {
-            wire.push_back((uint8_t)((fcs >> (i * 8u)) & 0xffu));
-        }
-        return wire;
-    }
-
-    static bool wire_frame_to_tap(const std::vector<uint8_t>& wire, std::vector<uint8_t>& frame)
-    {
-        if (wire.size() < 12) {
-            return false;
-        }
-        for (uint32_t i = 0; i < 7; ++i) {
-            if (wire[i] != 0x55u) {
-                return false;
-            }
-        }
-        if (wire[7] != 0xd5u) {
-            return false;
-        }
-
-        frame.assign(wire.begin() + 8, wire.end() - 4);
-        return frame.size() >= 14;
-    }
-
-    static std::string frame_prefix(const std::vector<uint8_t>& frame)
-    {
-        std::ostringstream out;
-        size_t limit = std::min<size_t>(frame.size(), 32);
-        for (size_t i = 0; i < limit; ++i) {
-            if (i != 0) {
-                out << ' ';
-            }
-            out << std::hex << std::setw(2) << std::setfill('0') << (uint32_t)frame[i];
-        }
-        if (frame.size() > limit) {
-            out << " ...";
-        }
-        return out.str();
-    }
-
-    static bool is_host_arp_request(const std::vector<uint8_t>& frame)
-    {
-        return frame.size() >= 42 &&
-            frame[12] == 0x08u && frame[13] == 0x06u &&
-            frame[20] == 0x00u && frame[21] == 0x01u;
-    }
-
-    static bool is_host_icmp_echo_request(const std::vector<uint8_t>& frame)
-    {
-        if (frame.size() < 34 || frame[12] != 0x08u || frame[13] != 0x00u) {
-            return false;
-        }
-        uint8_t ihl = (uint8_t)((frame[14] & 0x0fu) * 4u);
-        size_t icmp = 14u + ihl;
-        return ihl >= 20u && frame.size() > icmp &&
-            frame[23] == 0x01u && frame[icmp] == 0x08u;
-    }
-
-    bool should_drop_host_control_frame(const std::vector<uint8_t>& frame)
-    {
-        uint64_t now = _system_clock;
-        uint64_t* last_cycle = nullptr;
-        if (is_host_arp_request(frame)) {
-            last_cycle = &last_host_arp_request_cycle;
-        }
-        else if (is_host_icmp_echo_request(frame)) {
-            last_cycle = &last_host_icmp_echo_cycle;
-        }
-        else {
-            return false;
-        }
-
-        if (*last_cycle != 0 && now - *last_cycle < HOST_CONTROL_MIN_CYCLES) {
-            ++host_control_drop_count;
-            return true;
-        }
-        *last_cycle = now;
-        return false;
-    }
-
-    void trace(const char* direction, const std::vector<uint8_t>& frame)
-    {
-        if (!trace_enabled) {
-            return;
-        }
-        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
-        out << "ethtap cycle=" << _system_clock << ' ' << direction
-            << " len=" << frame.size() << " data=" << frame_prefix(frame) << '\n';
-        out.flush();
-    }
-
-    void trace_rx_backlog_drops(size_t pending_rx_packets)
-    {
-        if (!trace_enabled || rx_backlog_drop_count == 0) {
-            return;
-        }
-        uint64_t now = _system_clock;
-        if (now - rx_backlog_last_report_cycle < RX_BACKLOG_REPORT_PERIOD) {
-            return;
-        }
-        rx_backlog_last_report_cycle = now;
-        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
-        out << "ethtap cycle=" << now << " drop-rx-backlog count="
-            << rx_backlog_drop_count << " pending=" << pending_rx_packets << '\n';
-        out.flush();
-        rx_backlog_drop_count = 0;
-    }
-
-    void trace_host_control_drops()
-    {
-        if (!trace_enabled || host_control_drop_count == 0) {
-            return;
-        }
-        uint64_t now = _system_clock;
-        if (now - host_control_last_report_cycle < RX_BACKLOG_REPORT_PERIOD) {
-            return;
-        }
-        host_control_last_report_cycle = now;
-        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
-        out << "ethtap cycle=" << now << " drop-host-control-rate count="
-            << host_control_drop_count << '\n';
-        out.flush();
-        host_control_drop_count = 0;
-    }
-
-    bool send_frame(const std::vector<uint8_t>& frame)
-    {
-        if (fd < 0 || frame.size() > 2048) {
-            return false;
-        }
-        std::array<uint8_t, 2051> msg{};
-        msg[0] = MSG_FRAME;
-        msg[1] = (uint8_t)(frame.size() >> 8);
-        msg[2] = (uint8_t)frame.size();
-        std::memcpy(msg.data() + 3, frame.data(), frame.size());
-        ssize_t wrote = ::send(fd, msg.data(), frame.size() + 3, MSG_DONTWAIT);
-        if (wrote < 0 && errno != EAGAIN && errno != EWOULDBLOCK && !send_warning_printed) {
-            std::print("eth tap socket send failed: {}\n", std::strerror(errno));
-            send_warning_printed = true;
-        }
-        return wrote == (ssize_t)(frame.size() + 3);
-    }
-
-#endif
-
-public:
-    ~EthGigTapSocket()
-    {
-        close();
-    }
-
-    bool open(const std::string& server_path)
-    {
-#if defined(__linux__)
-        close();
-        sockaddr_un local_addr{};
-        sockaddr_un server_addr{};
-        local_path = "/tmp/tribe-ethgig-sim-" + std::to_string((long long)::getpid()) + ".sock";
-        if (!sockaddr_from_path(local_path, local_addr) || !sockaddr_from_path(server_path, server_addr)) {
-            std::print("invalid eth tap socket path\n");
-            return false;
-        }
-
-        trace_enabled = std::getenv("TRIBE_TRACE_ETH") != nullptr;
-        if (const char* path = std::getenv("TRIBE_TRACE_ETH_FILE")) {
-            trace_file.open(path, std::ios::out | std::ios::app);
-            if (!trace_file.is_open()) {
-                std::print("can't open TRIBE_TRACE_ETH_FILE '{}'\n", path);
-            }
-        }
-
-        fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-        if (fd < 0) {
-            std::print("can't create eth tap socket: {}\n", std::strerror(errno));
-            return false;
-        }
-        ::unlink(local_path.c_str());
-        if (::bind(fd, reinterpret_cast<sockaddr*>(&local_addr), sizeof(local_addr)) != 0) {
-            std::print("can't bind eth tap socket '{}': {}\n", local_path, std::strerror(errno));
-            close();
-            return false;
-        }
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) != 0) {
-            std::print("can't connect eth tap socket '{}': {}\n", server_path, std::strerror(errno));
-            close();
-            return false;
-        }
-        uint8_t hello = MSG_HELLO;
-        (void)::send(fd, &hello, sizeof(hello), MSG_DONTWAIT);
-        std::print("Connected ethgig media to TAP socket '{}'\n", server_path);
-        return true;
-#else
-        (void)server_path;
-        std::print("eth tap socket is supported only on Linux hosts\n");
-        return false;
-#endif
-    }
-
-    void close()
-    {
-#if defined(__linux__)
-        if (fd >= 0) {
-            ::close(fd);
-            fd = -1;
-        }
-        if (!local_path.empty()) {
-            ::unlink(local_path.c_str());
-            local_path.clear();
-        }
-        if (trace_file.is_open()) {
-            trace_file.close();
-        }
-#endif
-    }
-
-    bool active() const
-    {
-#if defined(__linux__)
-        return fd >= 0;
-#else
-        return false;
-#endif
-    }
-
-    void pump(RGMIIVerifFrontend& rgmii)
-    {
-#if defined(__linux__)
-        if (fd < 0) {
-            return;
-        }
-
-        size_t rx_dgrams = 0;
-        for (; rx_dgrams < MAX_RX_DGRAMS_PER_PUMP; ++rx_dgrams) {
-            std::array<uint8_t, 4096> msg{};
-            ssize_t got = ::recv(fd, msg.data(), msg.size(), MSG_DONTWAIT);
-            if (got < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK && !recv_warning_printed) {
-                    std::print("eth tap socket recv failed: {}\n", std::strerror(errno));
-                    recv_warning_printed = true;
-                }
-                break;
-            }
-            if (got == 0) {
-                break;
-            }
-            if (got >= 3 && msg[0] == MSG_FRAME) {
-                size_t len = (size_t(msg[1]) << 8) | msg[2];
-                if (len <= (size_t)got - 3) {
-                    std::vector<uint8_t> tap_frame(msg.begin() + 3, msg.begin() + 3 + len);
-                    // Host ping/ARP runs against real wall clock, but the
-                    // simulated Linux clock advances much more slowly. Drop
-                    // repeated control frames in simulated time so old echo
-                    // requests do not become delayed replies with growing RTT.
-                    if (should_drop_host_control_frame(tap_frame)) {
-                        continue;
-                    }
-                    // The host TAP runs in real time while Tribe simulation is
-                    // much slower. Bound ingress buffering so stale host frames
-                    // are drained and dropped instead of turning into seconds
-                    // of latency. Keep the drop trace summarized because ARP
-                    // storms can otherwise dominate simulator runtime.
-                    if (rgmii.pending_rx_packets() >= MAX_RX_BACKLOG_PACKETS) {
-                        ++rx_backlog_drop_count;
-                        continue;
-                    }
-                    std::vector<uint8_t> wire_frame = tap_frame_to_wire(tap_frame);
-                    if (rgmii.push_rx_packet_limited(wire_frame, MAX_RX_BACKLOG_PACKETS)) {
-                        trace("tap->wire", tap_frame);
-                    }
-                    else {
-                        ++rx_backlog_drop_count;
-                    }
-                }
-            }
-        }
-        trace_rx_backlog_drops(rgmii.pending_rx_packets());
-        trace_host_control_drops();
-
-        while (rgmii.has_tx_packet()) {
-            std::vector<uint8_t> wire_frame = rgmii.pop_tx_packet();
-            std::vector<uint8_t> tap_frame;
-            if (!wire_frame_to_tap(wire_frame, tap_frame)) {
-                trace("drop-bad-wire", wire_frame);
-                continue;
-            }
-            trace("wire->tap", tap_frame);
-            if (!send_frame(tap_frame)) {
-                break;
-            }
-        }
-#else
-        (void)rgmii;
-#endif
-    }
-};
-
 #ifdef VERILATOR
 #define MAKE_HEADER(name) STRINGIFY(name.h)
 #include MAKE_HEADER(VERILATOR_MODEL)
@@ -471,6 +111,33 @@ static logic<WORDS * 32> verilator_wide_to_logic(const WData (&bits)[WORDS])
 static logic<64> verilator_wide_to_logic(const QData& bits)
 {
     return (uint64_t)bits;
+}
+
+template<typename T>
+static T verilator_packed_to_struct(const QData& bits)
+{
+    T out = {};
+    static_assert(sizeof(T) <= sizeof(bits));
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+
+template<typename T, size_t WORDS>
+static T verilator_packed_to_struct(const VlWide<WORDS>& bits)
+{
+    T out = {};
+    static_assert(sizeof(T) <= WORDS * sizeof(uint32_t));
+    memcpy(&out, bits.m_storage, sizeof(out));
+    return out;
+}
+
+template<typename T, size_t WORDS>
+static T verilator_packed_to_struct(const WData (&bits)[WORDS])
+{
+    T out = {};
+    static_assert(sizeof(T) <= WORDS * sizeof(uint32_t));
+    memcpy(&out, bits, sizeof(out));
+    return out;
 }
 
 template<size_t WIDTH, size_t WORDS>
@@ -575,6 +242,149 @@ class TestTribe : public Module
     bool eth_loopback_enabled = false;
     EthGigTapSocket eth_tap_socket;
     bool tohost_done = false;
+
+    class StdinRawMode;
+
+    struct TraceConfig
+    {
+        uint32_t period = 0;
+        uint32_t addr = 0;
+        uint32_t addr_from = 0;
+        uint32_t addr_to = 0;
+        uint32_t pc_from = 0;
+        uint32_t pc_to = 0;
+        int reg_id = -1;
+        bool mmu = false;
+        bool csr = false;
+        bool wb = false;
+        bool io = false;
+        bool sd = false;
+        bool clint = false;
+        bool sbi = false;
+        bool mmu_fault = false;
+        bool ra = false;
+        bool bad_branch = false;
+        bool sd_data = false;
+        bool* after_seen = nullptr;
+        FILE* pc_file = nullptr;
+        FILE* addr_file = nullptr;
+        FILE* csr_file = nullptr;
+        FILE* clint_file = nullptr;
+        FILE* sd_file = nullptr;
+        FILE* reg_file = nullptr;
+        const PcSymbolTable* pc_symbols = nullptr;
+    };
+
+    struct TraceState
+    {
+        bool last_immu_fault = false;
+        bool sd_prev_active = false;
+        uint32_t sd_prev_addr = 0;
+        bool sd_prev_read = false;
+        bool sd_prev_write = false;
+        uint32_t sd_prev_wdata = 0;
+        uint32_t sd_prev_mask = 0;
+        uint32_t sd_prev_status = 0xffffffffu;
+        uint32_t sd_prev_state = 0xffffffffu;
+        uint32_t sd_prev_count_bucket = 0xffffffffu;
+        uint32_t sd_prev_len = 0xffffffffu;
+        bool sd_prev_cmd_valid = false;
+        bool sd_prev_cmd_ready = false;
+        uint32_t sd_prev_cmd_data = 0xffffffffu;
+        bool sd_prev_rsp_valid = false;
+        bool sd_prev_rsp_ready = false;
+        uint32_t sd_prev_rsp_data = 0xffffffffu;
+        bool sd_prev_dma_awvalid = false;
+        bool sd_prev_dma_awready = false;
+        bool sd_prev_dma_wvalid = false;
+        bool sd_prev_dma_wready = false;
+        bool sd_prev_dma_bvalid = false;
+        bool sd_prev_dma_bready = false;
+        bool sd_prev_dma_arvalid = false;
+        bool sd_prev_dma_arready = false;
+        bool sd_prev_dma_rvalid = false;
+        bool sd_prev_dma_rready = false;
+        uint64_t sd_last_poll_report = 0;
+    };
+
+    struct InteractiveUartConfig
+    {
+        bool ctrl_c_to_guest = false;
+        bool ctrl_z_to_guest = false;
+        bool trace_rx = false;
+        FILE* trace_rx_file = nullptr;
+    };
+
+    struct UartOutputConfig
+    {
+        bool mirror = false;
+        bool trace_rx = false;
+        FILE* trace_rx_file = nullptr;
+        bool* trace_after_seen = nullptr;
+        const std::string* trace_after = nullptr;
+        const std::string* checkpoint_save_after = nullptr;
+        const std::string* checkpoint_save_file = nullptr;
+        const std::string* expected_contains = nullptr;
+        const std::string* scripted_input = nullptr;
+        const std::string* scripted_after = nullptr;
+        uint32_t scripted_start_delay = 0;
+    };
+
+    struct UartOutputState
+    {
+        std::string expected_output;
+        std::string captured_output;
+        bool expected_marker_seen = false;
+        bool checkpoint_save_after_seen = false;
+        bool mirrored_needs_newline = false;
+    };
+
+    bool trace_period_hit(const TraceConfig& trace) const;
+    TribeCoreDebug debug_core_value();
+    TribeMmuDebug debug_mmu_value();
+    TribeCacheDebug debug_cache_value();
+    TribeWritebackDebug debug_wb_value();
+    TribeCsrDebug debug_csr_value();
+    TribeIrqDebug debug_irq_value();
+    TribeRegsDebug debug_regs_value();
+    TribeBranchDebug debug_branch_value();
+    TribeDecodeDebug debug_decode_value();
+    TribeSbiDebug debug_sbi_value();
+    void trace_pc_tick(const TraceConfig& trace);
+    void trace_wb_tick(const TraceConfig& trace);
+    void trace_csr_tick(const TraceConfig& trace);
+    void trace_clint_tick(const TraceConfig& trace);
+    void trace_mmu_fault_tick(const TraceConfig& trace, TraceState& state);
+    void trace_sbi_tick(const TraceConfig& trace);
+    void trace_ra_tick(const TraceConfig& trace);
+    void trace_reg_tick(const TraceConfig& trace);
+    void trace_bad_branch_tick(const TraceConfig& trace);
+    void trace_addr_tick(const TraceConfig& trace);
+    void trace_pc_range_tick(const TraceConfig& trace);
+    void trace_io_tick(const TraceConfig& trace);
+    void trace_sd_tick(const TraceConfig& trace, TraceState& state);
+    void trace_mmu_tick(const TraceConfig& trace);
+    bool poll_interactive_uart_input(const InteractiveUartConfig& config,
+        StdinRawMode& stdin_raw,
+        std::deque<unsigned char>& queue,
+        bool& previous_cr,
+        uint64_t& last_block_report,
+        bool& host_interrupt,
+        bool& error);
+    bool output_file_reached_expected(const std::string& expected_output, bool& error) const;
+    bool capture_uart_output(const UartOutputConfig& config, UartOutputState& state, bool& error);
+    bool handle_uart_simulation(const UartOutputConfig& output_config,
+        UartOutputState& output_state,
+        bool interactive_input,
+        const InteractiveUartConfig& interactive_config,
+        StdinRawMode& stdin_raw,
+        std::deque<unsigned char>& interactive_queue,
+        bool& interactive_previous_cr,
+        uint64_t& interactive_last_block_report,
+        uint32_t scripted_char_delay,
+        bool& host_interrupt,
+        bool& error);
+    bool save_sd_image(const std::string& sd_image_file);
 
     class StdinRawMode
     {
@@ -955,7 +765,7 @@ public:
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
             _ASSIGN(((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out());
+                !debug_core_value().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out());
 #else
             _ASSIGN((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg);
 #endif
@@ -979,42 +789,9 @@ public:
             tribe.axi_in[i].arid_in = _ASSIGN((u<4>)0);
             tribe.axi_in[i].rready_in = _ASSIGN(false);
         }
-        tribe.axi_in[0].awvalid_in = _ASSIGN(accelerator.dma_out.awvalid_in());
-        tribe.axi_in[0].awaddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.awaddr_in());
-        tribe.axi_in[0].awid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.awid_in());
-        tribe.axi_in[0].wvalid_in = _ASSIGN(accelerator.dma_out.wvalid_in());
-        tribe.axi_in[0].wdata_in = _ASSIGN(accelerator.dma_out.wdata_in());
-        tribe.axi_in[0].wstrb_in = _ASSIGN(accelerator.dma_out.wstrb_in());
-        tribe.axi_in[0].wlast_in = _ASSIGN(accelerator.dma_out.wlast_in());
-        tribe.axi_in[0].bready_in = _ASSIGN(accelerator.dma_out.bready_in());
-        tribe.axi_in[0].arvalid_in = _ASSIGN(accelerator.dma_out.arvalid_in());
-        tribe.axi_in[0].araddr_in = _ASSIGN((u<32>)(uint32_t)accelerator.dma_out.araddr_in());
-        tribe.axi_in[0].arid_in = _ASSIGN((u<4>)(uint32_t)accelerator.dma_out.arid_in());
-        tribe.axi_in[0].rready_in = _ASSIGN(accelerator.dma_out.rready_in());
-        tribe.axi_in[1].awvalid_in = _ASSIGN(sdcard.dma_out.awvalid_in());
-        tribe.axi_in[1].awaddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.awaddr_in());
-        tribe.axi_in[1].awid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.awid_in());
-        tribe.axi_in[1].wvalid_in = _ASSIGN(sdcard.dma_out.wvalid_in());
-        tribe.axi_in[1].wdata_in = _ASSIGN(sdcard.dma_out.wdata_in());
-        tribe.axi_in[1].wstrb_in = _ASSIGN(sdcard.dma_out.wstrb_in());
-        tribe.axi_in[1].wlast_in = _ASSIGN(sdcard.dma_out.wlast_in());
-        tribe.axi_in[1].bready_in = _ASSIGN(sdcard.dma_out.bready_in());
-        tribe.axi_in[1].arvalid_in = _ASSIGN(sdcard.dma_out.arvalid_in());
-        tribe.axi_in[1].araddr_in = _ASSIGN((u<32>)(uint32_t)sdcard.dma_out.araddr_in());
-        tribe.axi_in[1].arid_in = _ASSIGN((u<4>)(uint32_t)sdcard.dma_out.arid_in());
-        tribe.axi_in[1].rready_in = _ASSIGN(sdcard.dma_out.rready_in());
-        tribe.axi_in[2].awvalid_in = _ASSIGN(ethgig_dma.dma_out.awvalid_in());
-        tribe.axi_in[2].awaddr_in = _ASSIGN((u<32>)(uint32_t)ethgig_dma.dma_out.awaddr_in());
-        tribe.axi_in[2].awid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.awid_in());
-        tribe.axi_in[2].wvalid_in = _ASSIGN(ethgig_dma.dma_out.wvalid_in());
-        tribe.axi_in[2].wdata_in = _ASSIGN(ethgig_dma.dma_out.wdata_in());
-        tribe.axi_in[2].wstrb_in = _ASSIGN(ethgig_dma.dma_out.wstrb_in());
-        tribe.axi_in[2].wlast_in = _ASSIGN(ethgig_dma.dma_out.wlast_in());
-        tribe.axi_in[2].bready_in = _ASSIGN(ethgig_dma.dma_out.bready_in());
-        tribe.axi_in[2].arvalid_in = _ASSIGN(ethgig_dma.dma_out.arvalid_in());
-        tribe.axi_in[2].araddr_in = _ASSIGN((u<32>)(uint32_t)ethgig_dma.dma_out.araddr_in());
-        tribe.axi_in[2].arid_in = _ASSIGN((u<4>)(uint32_t)ethgig_dma.dma_out.arid_in());
-        tribe.axi_in[2].rready_in = _ASSIGN(ethgig_dma.dma_out.rready_in());
+        AXI4_DRIVER_FROM_IF(tribe.axi_in[0], accelerator.dma_out);
+        AXI4_DRIVER_FROM_IF(tribe.axi_in[1], sdcard.dma_out);
+        AXI4_DRIVER_FROM_IF(tribe.axi_in[2], ethgig_dma.dma_out);
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
@@ -1055,9 +832,9 @@ public:
         AXI4_DRIVER_FROM(sdcard.axi_in, iospace.masters_out[3]);
         AXI4_DRIVER_FROM(ethgig_dma.axi_in, iospace.masters_out[4]);
         AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[5]);
-        AXI4_RESPONDER_FROM(accelerator.dma_out, tribe.axi_in[0]);
-        AXI4_RESPONDER_FROM(sdcard.dma_out, tribe.axi_in[1]);
-        AXI4_RESPONDER_FROM(ethgig_dma.dma_out, tribe.axi_in[2]);
+        AXI4_RESPONDER_FROM_IF(accelerator.dma_out, tribe.axi_in[0]);
+        AXI4_RESPONDER_FROM_IF(sdcard.dma_out, tribe.axi_in[1]);
+        AXI4_RESPONDER_FROM_IF(ethgig_dma.dma_out, tribe.axi_in[2]);
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
@@ -1158,7 +935,7 @@ public:
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
             ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+                !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
 #else
             (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
 #endif
@@ -1238,33 +1015,9 @@ public:
         sdcard_verif.sd_cmd_data_in = sdcard.sd_cmd_data_out;
         sdcard_verif.sd_cmd_last_in = sdcard.sd_cmd_last_out;
         sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
-        accelerator.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[0]);
-        accelerator.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[0]);
-        accelerator.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[0]);
-        accelerator.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[0]);
-        accelerator.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[0]);
-        accelerator.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[0]);
-        accelerator.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[0]));
-        accelerator.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[0]);
-        accelerator.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[0]);
-        sdcard.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[1]);
-        sdcard.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[1]);
-        sdcard.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[1]);
-        sdcard.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[1]);
-        sdcard.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[1]);
-        sdcard.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[1]);
-        sdcard.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[1]));
-        sdcard.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[1]);
-        sdcard.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[1]);
-        ethgig_dma.dma_out.awready_out = _ASSIGN((bool)tribe.axi_in___05Fawready_out[2]);
-        ethgig_dma.dma_out.wready_out = _ASSIGN((bool)tribe.axi_in___05Fwready_out[2]);
-        ethgig_dma.dma_out.bvalid_out = _ASSIGN((bool)tribe.axi_in___05Fbvalid_out[2]);
-        ethgig_dma.dma_out.bid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Fbid_out[2]);
-        ethgig_dma.dma_out.arready_out = _ASSIGN((bool)tribe.axi_in___05Farready_out[2]);
-        ethgig_dma.dma_out.rvalid_out = _ASSIGN((bool)tribe.axi_in___05Frvalid_out[2]);
-        ethgig_dma.dma_out.rdata_out = _ASSIGN(verilator_wide_to_logic(tribe.axi_in___05Frdata_out[2]));
-        ethgig_dma.dma_out.rlast_out = _ASSIGN((bool)tribe.axi_in___05Frlast_out[2]);
-        ethgig_dma.dma_out.rid_out = _ASSIGN((u<4>)(uint32_t)tribe.axi_in___05Frid_out[2]);
+        AXI4_RESPONDER_FROM_VERILATOR_IF_CONST(accelerator.dma_out, tribe, axi_in, 0, verilator_wide_to_logic);
+        AXI4_RESPONDER_FROM_VERILATOR_IF_CONST(sdcard.dma_out, tribe, axi_in, 1, verilator_wide_to_logic);
+        AXI4_RESPONDER_FROM_VERILATOR_IF_CONST(ethgig_dma.dma_out, tribe, axi_in, 2, verilator_wide_to_logic);
         ethgig_mac.tx_valid_in = ethgig_dma.mac_tx_valid_out;
         ethgig_mac.tx_data_in = ethgig_dma.mac_tx_data_out;
         ethgig_mac.tx_last_in = ethgig_dma.mac_tx_last_out;
@@ -1358,7 +1111,7 @@ public:
         tribe.external_cache_invalidate_in =
 #ifdef ENABLE_MMU_TLB
             ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+                !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
 #else
             (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
 #endif
@@ -1366,42 +1119,9 @@ public:
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
         tribe.mem_region_size_in[3] = TRIBE_IO_REGION_SIZE;
-        tribe.axi_in___05Fawvalid_in[0] = accelerator.dma_out.awvalid_in();
-        tribe.axi_in___05Fawaddr_in[0] = (uint32_t)accelerator.dma_out.awaddr_in();
-        tribe.axi_in___05Fawid_in[0] = (uint32_t)accelerator.dma_out.awid_in();
-        tribe.axi_in___05Fwvalid_in[0] = accelerator.dma_out.wvalid_in();
-        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[0], accelerator.dma_out.wdata_in());
-        tribe.axi_in___05Fwstrb_in[0] = (uint32_t)accelerator.dma_out.wstrb_in();
-        tribe.axi_in___05Fwlast_in[0] = accelerator.dma_out.wlast_in();
-        tribe.axi_in___05Fbready_in[0] = accelerator.dma_out.bready_in();
-        tribe.axi_in___05Farvalid_in[0] = accelerator.dma_out.arvalid_in();
-        tribe.axi_in___05Faraddr_in[0] = (uint32_t)accelerator.dma_out.araddr_in();
-        tribe.axi_in___05Farid_in[0] = (uint32_t)accelerator.dma_out.arid_in();
-        tribe.axi_in___05Frready_in[0] = accelerator.dma_out.rready_in();
-        tribe.axi_in___05Fawvalid_in[1] = sdcard.dma_out.awvalid_in();
-        tribe.axi_in___05Fawaddr_in[1] = (uint32_t)sdcard.dma_out.awaddr_in();
-        tribe.axi_in___05Fawid_in[1] = (uint32_t)sdcard.dma_out.awid_in();
-        tribe.axi_in___05Fwvalid_in[1] = sdcard.dma_out.wvalid_in();
-        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[1], sdcard.dma_out.wdata_in());
-        tribe.axi_in___05Fwstrb_in[1] = (uint32_t)sdcard.dma_out.wstrb_in();
-        tribe.axi_in___05Fwlast_in[1] = sdcard.dma_out.wlast_in();
-        tribe.axi_in___05Fbready_in[1] = sdcard.dma_out.bready_in();
-        tribe.axi_in___05Farvalid_in[1] = sdcard.dma_out.arvalid_in();
-        tribe.axi_in___05Faraddr_in[1] = (uint32_t)sdcard.dma_out.araddr_in();
-        tribe.axi_in___05Farid_in[1] = (uint32_t)sdcard.dma_out.arid_in();
-        tribe.axi_in___05Frready_in[1] = sdcard.dma_out.rready_in();
-        tribe.axi_in___05Fawvalid_in[2] = ethgig_dma.dma_out.awvalid_in();
-        tribe.axi_in___05Fawaddr_in[2] = (uint32_t)ethgig_dma.dma_out.awaddr_in();
-        tribe.axi_in___05Fawid_in[2] = (uint32_t)ethgig_dma.dma_out.awid_in();
-        tribe.axi_in___05Fwvalid_in[2] = ethgig_dma.dma_out.wvalid_in();
-        verilator_logic_to_wide(tribe.axi_in___05Fwdata_in[2], ethgig_dma.dma_out.wdata_in());
-        tribe.axi_in___05Fwstrb_in[2] = (uint32_t)ethgig_dma.dma_out.wstrb_in();
-        tribe.axi_in___05Fwlast_in[2] = ethgig_dma.dma_out.wlast_in();
-        tribe.axi_in___05Fbready_in[2] = ethgig_dma.dma_out.bready_in();
-        tribe.axi_in___05Farvalid_in[2] = ethgig_dma.dma_out.arvalid_in();
-        tribe.axi_in___05Faraddr_in[2] = (uint32_t)ethgig_dma.dma_out.araddr_in();
-        tribe.axi_in___05Farid_in[2] = (uint32_t)ethgig_dma.dma_out.arid_in();
-        tribe.axi_in___05Frready_in[2] = ethgig_dma.dma_out.rready_in();
+        AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(tribe, axi_in, 0, accelerator.dma_out);
+        AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(tribe, axi_in, 1, sdcard.dma_out);
+        AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(tribe, axi_in, 2, ethgig_dma.dma_out);
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
@@ -1431,11 +1151,11 @@ public:
 #ifdef ENABLE_MMU_TLB
 #ifdef VERILATOR
         sd_dma_cache_invalidate_ready =
-            !((bool)tribe.debug_memory_wait_out) && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+            !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
         eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
 #else
         sd_dma_cache_invalidate_ready =
-            !tribe.debug_memory_wait_out() && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+            !debug_core_value().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out();
         eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
 #endif
 #endif
