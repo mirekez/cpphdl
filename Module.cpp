@@ -18,15 +18,6 @@ Module* currModule = nullptr;
 namespace
 {
 
-std::string svArrayDims(const std::vector<Expr>& dims)
-{
-    std::string text;
-    for (auto dim : dims) {
-        text += "[" + dim.str() + "]";
-    }
-    return text;
-}
-
 std::string svIndex(const std::vector<std::string>& indices)
 {
     std::string text;
@@ -121,22 +112,25 @@ void resolveNestedModuleRefs(Expr& expr, const Module& mod, const Field& member)
     replaceModuleParameterRefs(expr, mod, member);
 }
 
-Expr portArrayExpr(const Field& port, const Module& mod, const Field& member)
+Field portWireField(const Field& port, const Module& mod, const Field& member)
 {
-    Expr array;
-    if (port.array.size()) {
-        array = port.array[0];
-        resolveNestedModuleRefs(array, mod, member);
-    }
-    return array;
-}
+    Field wire{member.name + "__" + port.name, port.expr};
+    wire.expr.flags = Expr::FLAG_WIRE;
+    resolveNestedModuleRefs(wire.expr, mod, member);
 
-Expr portWireExpr(const Field& port, const Module& mod, const Field& member)
-{
-    Expr expr = port.expr;
-    expr.flags = Expr::FLAG_WIRE;
-    resolveNestedModuleRefs(expr, mod, member);
-    return expr;
+    // Arrays of module instances are unpacked around the complete child port.
+    wire.array = member.array;
+    for (auto dim : port.array) {
+        resolveNestedModuleRefs(dim, mod, member);
+        wire.array.emplace_back(std::move(dim));
+    }
+
+    // Preserve the child's packed port dimensions without packing outer member dimensions.
+    wire.packedArrayDims = port.packedArrayDims
+        ? port.packedArrayDims
+        : (port.packedArray ? port.array.size() : 0);
+    wire.packedArray = wire.packedArrayDims != 0;
+    return wire;
 }
 
 const Struct* findStructPackage(const std::string& name)
@@ -432,18 +426,12 @@ bool Module::printMembers(std::ofstream& out)
             Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {
-                    Expr expr = portWireExpr(port, *mod, member);
-                    Expr array = portArrayExpr(port, *mod, member);
-                    if (array.type != Expr::EXPR_NONE) {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name
-                            << svArrayDims(member.array) << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
-                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    Field wire = portWireField(port, *mod, member);
+                    wire.indent = 1;
+                    if (!wire.print(out)) {
+                        return false;
                     }
-                    else {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name
-                            << svArrayDims(member.array) << ";\n";  // cant be reg or memory
-                        wires.push_back(Field{member.name + "__" + port.name, expr});
-                    }
+                    wires.emplace_back(std::move(wire));
                 }
             }
             else {
@@ -493,18 +481,14 @@ bool Module::printMembers(std::ofstream& out)
             Module* mod = currProject->findModule(member.expr.str());
             if (mod) {
                 for (auto& port : mod->ports) {  // we cant use parameters of nested module's port in parent module, so we need to replace them with corresponding parameters
-                    Expr expr = portWireExpr(port, *mod, member);
-                    Expr array = portArrayExpr(port, *mod, member);
-//                    out << array.debug() << "\n";
-//                    out << expr.debug() << "\n";
+                    Field wire = portWireField(port, *mod, member);
+//                    out << wire.expr.debug() << "\n";
 //                    out << port.expr.debug() << "\n";
-                    if (array.type != Expr::EXPR_NONE) {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name << "[" << array.str() << "]" << ";\n";  // cant be reg or memory
-                        wires.push_back(Field{member.name + "__" + port.name, expr});
-                    } else {
-                        out << "      " << expr.str() << " " << member.name << "__" << port.name << ";\n";  // cant be reg or memory
-                        wires.push_back(Field{member.name + "__" + port.name, expr});
+                    wire.indent = 1;
+                    if (!wire.print(out)) {
+                        return false;
                     }
+                    wires.emplace_back(std::move(wire));
                 }
             }
             else {
