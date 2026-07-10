@@ -41,52 +41,21 @@ private:
     using Base::slave_b_reg;
     using Base::slave_r_reg;
     using Base::slave_aw_reg;
-    using Base::slave_write_pending_comb_func;
-    using Base::slave_read_pending_comb_func;
-    using Base::active_slave_index_comb_func;
-    using Base::active_is_slave_comb_func;
-    using Base::active_is_d_comb_func;
-    using Base::active_read_comb_func;
-    using Base::active_write_comb_func;
-    using Base::active_addr_comb_func;
-    using Base::active_write_data_comb_func;
-    using Base::active_write_beat_comb_func;
-    using Base::active_write_mask_comb_func;
-    using Base::active_write_strobe_comb_func;
-    using Base::active_write_word_mask_comb_func;
-    using Base::req_set_comb_func;
-    using Base::active_set_comb_func;
-    using Base::req_word_comb_func;
-    using Base::req_beat_comb_func;
-    using Base::req_cross_beat_read_comb_func;
-    using Base::active_cross_line_read_comb_func;
-    using Base::req_cross_line_write_comb_func;
-    using Base::cross_write_data_comb_func;
-    using Base::cross_write_mask_comb_func;
-    using Base::req_addr_in_memory_comb_func;
+    using Base::active_request_comb_func;
+    using Base::request_geometry_comb_func;
     using Base::axi_route_comb_func;
     using Base::axi_out_driver_comb_func;
     using Base::axi_out_selected_resp_comb_func;
-    using Base::evict_way_comb_func;
-    using Base::evict_valid_comb_func;
-    using Base::evict_dirty_comb_func;
-    using Base::evict_tag_comb_func;
-    using Base::evict_line_snapshot_comb_func;
+    using Base::evict_candidate_comb_func;
     using Base::evict_line_comb_func;
     using Base::req_uncached_region_comb_func;
-    using Base::hit_comb_func;
-    using Base::hit_way_comb_func;
-    using Base::hit_word_comb_func;
-    using Base::write_word_comb_func;
-    using Base::write_next_word_comb_func;
-    using Base::fill_write_word_comb_func;
-    using Base::fill_write_next_word_comb_func;
-    using Base::hit_beat_comb_func;
+    using Base::hit_lookup_comb_func;
+    using Base::hit_write_pair_comb_func;
+    using Base::fill_write_pair_comb_func;
     using Base::cross_read_data_comb_func;
     using Base::tag_write_data_comb_func;
     using Base::read_data_comb_func;
-    using Base::i_wait_comb_func;
-    using Base::d_wait_comb_func;
+    using Base::cpu_wait_comb_func;
 
     Axi4Responder<4,256> axi_in_comb[MEM_PORTS];
     Axi4Driver<32,4,256> axi_out_comb[MEM_PORTS];
@@ -95,17 +64,20 @@ private:
     Axi4Responder<4,256> (&axi_in_comb_func())[MEM_PORTS]
     {
         size_t index;
+        L2ActiveRequestComb active_request;
 
+        active_request = active_request_comb_func();
         for (index = 0; index < MEM_PORTS; ++index) {
             axi_in_comb[index].aw.ready = state_reg == ST_IDLE && !slave_aw_reg[index].valid &&
                 !slave_b_reg[index].valid && axi_in[index].awvalid_in();
             axi_in_comb[index].w.ready = state_reg == ST_IDLE &&
-                slave_write_pending_comb_func() && active_slave_index_comb_func() == index;
+                active_request.request.from_slave && active_request.request.write &&
+                active_request.request.slave_index == index;
             axi_in_comb[index].b.valid = slave_b_reg[index].valid;
             axi_in_comb[index].b.id = slave_b_reg[index].id;
-            axi_in_comb[index].ar.ready = state_reg == ST_IDLE && active_is_slave_comb_func() &&
-                !slave_write_pending_comb_func() && slave_read_pending_comb_func() &&
-                active_slave_index_comb_func() == index;
+            axi_in_comb[index].ar.ready = state_reg == ST_IDLE &&
+                active_request.request.from_slave && active_request.request.read &&
+                active_request.request.slave_index == index;
             axi_in_comb[index].r.valid = slave_r_reg[index].valid;
             axi_in_comb[index].r.data = (logic<256>)slave_r_reg[index].data;
             axi_in_comb[index].r.last = slave_r_reg[index].last;
@@ -157,9 +129,9 @@ public:
     {
         size_t i;
         this->i_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
-        this->i_mem_in.wait_out = _ASSIGN_COMB(i_wait_comb_func());
+        this->i_mem_in.wait_out = _ASSIGN_COMB(cpu_wait_comb_func().instruction);
         d_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
-        d_mem_in.wait_out = _ASSIGN_COMB(d_wait_comb_func());
+        d_mem_in.wait_out = _ASSIGN_COMB(cpu_wait_comb_func().data);
 
         for (i = 0; i < MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
@@ -188,7 +160,19 @@ public:
         // Keep cpphdl local logic declarations after scalar locals: the SV
         // backend emits default construction as an assignment, and Verilator
         // requires all task declarations before the first assignment.
+        L2ActiveRequestComb active_request;
+        L2RequestGeometryComb request_geometry;
+        L2EvictCandidateComb evict_candidate;
+        L2HitLookupComb hit_lookup;
+        L2WordPairComb hit_write_pair;
+        L2WordPairComb fill_write_pair;
         logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8> tag_bank_data;
+        active_request = active_request_comb_func();
+        request_geometry = request_geometry_comb_func();
+        evict_candidate = evict_candidate_comb_func();
+        hit_lookup = hit_lookup_comb_func();
+        hit_write_pair = hit_write_pair_comb_func();
+        fill_write_pair = fill_write_pair_comb_func();
         trace_line = 0;
         trace_line_enabled = false;
         trace_req_line = false;
@@ -197,7 +181,8 @@ public:
             trace_line_enabled = true;
             trace_line = 0x400u;
             trace_req_line = (((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
-            trace_active_line = ((active_addr_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
+            trace_active_line = (((uint32_t)active_request.request.addr &
+                ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
         }
 #ifndef SYNTHESIS
         const char* trace_line_env;
@@ -205,12 +190,13 @@ public:
         trace_line_enabled = trace_line_env != nullptr;
         trace_line = trace_line_env ? (uint32_t)std::strtoul(trace_line_env, nullptr, 0) & ~(uint32_t)(CACHE_LINE_SIZE - 1) : 0;
         trace_req_line = trace_line_env && (((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
-        trace_active_line = trace_line_env && ((active_addr_comb_func() & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
+        trace_active_line = trace_line_env && (((uint32_t)active_request.request.addr &
+            ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
 #endif
         trace_word0 = 0;
         trace_word1 = 0;
 
-        bank_addr = (state_reg == ST_IDLE) ? active_set_comb_func() : req_set_comb_func();
+        bank_addr = (state_reg == ST_IDLE) ? active_request.set : request_geometry.set;
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
         // cycle later from req_reg so generated SV cannot use a live input set
         // while ST_LOOKUP consumes stale registered RAM outputs.
@@ -222,29 +208,32 @@ public:
                 (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
-                (state_reg == ST_LOOKUP && req_reg.from_slave && req_reg.write && hit_comb_func() &&
-                    hit_way_comb_func() == (i / LINE_WORDS) &&
-                    (i % LINE_WORDS) >= (uint32_t)req_beat_comb_func() * PORT_WORDS &&
-                    (i % LINE_WORDS) < ((uint32_t)req_beat_comb_func() + 1u) * PORT_WORDS &&
+                (state_reg == ST_LOOKUP && req_reg.from_slave && req_reg.write && hit_lookup.hit &&
+                    hit_lookup.way == (i / LINE_WORDS) &&
+                    (i % LINE_WORDS) >= (uint32_t)request_geometry.beat * PORT_WORDS &&
+                    (i % LINE_WORDS) < ((uint32_t)request_geometry.beat + 1u) * PORT_WORDS &&
                     req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS]) ||
-                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_comb_func() &&
+                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit &&
                     !req_reg.from_slave &&
-                    hit_way_comb_func() == (i / LINE_WORDS) &&
-                    (req_word_comb_func() == (i % LINE_WORDS) ||
-                     (((uint32_t)req_reg.addr & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS))));
+                    hit_lookup.way == (i / LINE_WORDS) &&
+                    (request_geometry.word == (i % LINE_WORDS) ||
+                     (((uint32_t)req_reg.addr & 3u) != 0 &&
+                        (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS))));
             bank_data = (state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 (req_reg.from_slave ?
                     (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
-                    ((((uint32_t)req_reg.addr & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ?
-                        write_next_word_comb_func() : write_word_comb_func())) :
-                ((req_reg.from_slave && req_reg.write && req_beat_comb_func() == fill_beat_reg &&
+                    ((((uint32_t)req_reg.addr & 3u) != 0 &&
+                        (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ?
+                        (uint32_t)hit_write_pair.next_word : (uint32_t)hit_write_pair.word)) :
+                ((req_reg.from_slave && req_reg.write && request_geometry.beat == fill_beat_reg &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
                     (req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS] ?
                         (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
                         (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
-                 (req_reg.write && req_word_comb_func() == (i % LINE_WORDS)) ? fill_write_word_comb_func() :
-                 (req_reg.write && ((uint32_t)req_reg.addr & 3u) != 0 && req_word_comb_func() + 1 == (i % LINE_WORDS)) ? fill_write_next_word_comb_func() :
+                 (req_reg.write && request_geometry.word == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.word :
+                 (req_reg.write && ((uint32_t)req_reg.addr & 3u) != 0 &&
+                    (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.next_word :
                     (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
             if (bank_write) {
                 data_ram_index = (uint32_t)bank_addr * DATA_BANKS + i;
@@ -261,7 +250,7 @@ public:
             tag_bank_read = bank_read;
             tag_bank_write = (state_reg == ST_INIT) ||
                 (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
-                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_comb_func() && hit_way_comb_func() == way);
+                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit && hit_lookup.way == way);
             if (tag_bank_write) {
                 tag_ram_index = (uint32_t)((state_reg == ST_INIT) ? init_set_reg : bank_addr) * WAYS + way;
                 tag_ram[tag_ram_index] = tag_bank_data;
@@ -296,48 +285,33 @@ public:
             }
         }
         else if (state_reg == ST_IDLE) {
-            if (active_read_comb_func() || active_write_comb_func()) {
+            if (active_request.valid) {
                 if (trace_active_line) {
                     std::print("trace-l2 cycle={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
-                        _system_clock, active_addr_comb_func(), active_read_comb_func(), active_write_comb_func(),
-                        active_write_data_comb_func(), active_write_mask_comb_func(), active_is_slave_comb_func(),
-                        active_is_d_comb_func(), (uint32_t)victim_reg);
+                        _system_clock, (uint32_t)active_request.request.addr,
+                        (bool)active_request.request.read, (bool)active_request.request.write,
+                        (uint32_t)active_request.request.write_data,
+                        (uint32_t)active_request.request.write_mask,
+                        (bool)active_request.request.from_slave,
+                        (bool)active_request.request.port, (uint32_t)victim_reg);
                 }
-                req_reg._next.addr = active_addr_comb_func();
-                req_reg._next.write_data = active_write_data_comb_func();
-                req_reg._next.write_beat = active_write_beat_comb_func();
-                req_reg._next.write_mask = active_write_mask_comb_func();
-                req_reg._next.write_strobe = active_write_strobe_comb_func();
-                req_reg._next.write_word_mask = active_write_word_mask_comb_func();
-                req_reg._next.read = active_read_comb_func();
-                req_reg._next.write = active_write_comb_func();
-                req_reg._next.port = active_is_d_comb_func();
-                req_reg._next.from_slave = active_is_slave_comb_func();
-                req_reg._next.slave_index = 0;
+                req_reg._next = active_request.request;
                 for (i = 0; i < MEM_PORTS; ++i) {
-                    if (active_is_slave_comb_func() && active_slave_index_comb_func() == i) {
-                        // Store the loop winner directly. This avoids cpphdl
-                        // reusing an earlier clog2(MEM_PORTS) cast when the
-                        // selected slave index later has to address 8 ports.
-                        req_reg._next.slave_index = i;
-                        req_reg._next.slave_id = slave_write_pending_comb_func() ?
-                            (slave_aw_reg[i].valid ? slave_aw_reg[i].id : axi_in[i].awid_in()) :
-                            axi_in[i].arid_in();
-                        if (slave_write_pending_comb_func()) {
-                            slave_aw_reg._next[i].valid = false;
-                        }
+                    if (active_request.request.from_slave && active_request.request.write &&
+                        active_request.request.slave_index == i) {
+                        slave_aw_reg._next[i].valid = false;
                     }
                 }
                 // ST_READ samples tag/data arrays from the latched request.
                 // ST_LOOKUP then consumes those registered RAM outputs.
-                state_reg._next = active_cross_line_read_comb_func() ? ST_CROSS_AR0 : ST_READ;
+                state_reg._next = active_request.cross_line_read ? ST_CROSS_AR0 : ST_READ;
             }
         }
         else if (state_reg == ST_READ) {
             state_reg._next = ST_LOOKUP;
         }
         else if (state_reg == ST_LOOKUP) {
-            if (!req_addr_in_memory_comb_func()) {
+            if (!request_geometry.addr_in_memory) {
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-outside addr={:08x} rd={} wr={}\n",
                         _system_clock, (uint32_t)req_reg.addr, (bool)req_reg.read, (bool)req_reg.write);
@@ -369,22 +343,23 @@ public:
                 }
                 state_reg._next = req_reg.read ? ST_IO_AR : ST_IO_AW;
             }
-            else if (hit_comb_func()) {
+            else if (hit_lookup.hit) {
                 if (trace_req_line) {
-                    trace_word0 = (uint32_t)hit_beat_comb_func();
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(hit_beat_comb_func() >> 32) : 0;
+                    trace_word0 = (uint32_t)hit_lookup.beat;
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(hit_lookup.beat >> 32) : 0;
                     std::print("trace-l2 cycle={} lookup-hit addr={:08x} rd={} wr={} way={} word={} hit_word={:08x} beat0={:08x} beat1={:08x} wdata={:08x} mask={:02x}\n",
                         _system_clock, (uint32_t)req_reg.addr, (bool)req_reg.read, (bool)req_reg.write,
-                        (uint32_t)hit_way_comb_func(), (uint32_t)req_word_comb_func(), hit_word_comb_func(),
+                        (uint32_t)hit_lookup.way, (uint32_t)request_geometry.word,
+                        (uint32_t)hit_lookup.read_word,
                         trace_word0, trace_word1, (uint32_t)req_reg.write_data, (uint32_t)req_reg.write_mask);
                 }
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
                             if (req_reg.read) {
-                                send_slave_read_response(i, req_reg.slave_id, hit_beat_comb_func());
+                                send_slave_read_response(i, req_reg.slave_id, hit_lookup.beat);
                             }
-                            if (req_reg.write && !req_cross_line_write_comb_func()) {
+                            if (req_reg.write && !request_geometry.cross_line_write) {
                                 send_slave_write_response(i, req_reg.slave_id);
                             }
                         }
@@ -394,20 +369,20 @@ public:
                     last_data_reg._next = 0;
                 }
                 if (!req_reg.from_slave && req_reg.read) {
-                    if (req_cross_beat_read_comb_func()) {
+                    if (request_geometry.cross_beat_read) {
                         last_data_reg._next = 0;
-                        last_data_reg._next.bits(31, 0) = hit_word_comb_func();
+                        last_data_reg._next.bits(31, 0) = hit_lookup.read_word;
                     }
                     else {
-                        last_data_reg._next = hit_beat_comb_func();
+                        last_data_reg._next = hit_lookup.beat;
                     }
                 }
-                if (req_cross_line_write_comb_func()) {
+                if (request_geometry.cross_line_write) {
                     // Finish the part of an unaligned store that spills into the first word of the next line.
                     req_reg._next.addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
-                    req_reg._next.write_data = cross_write_data_comb_func();
-                    req_reg._next.write_mask = cross_write_mask_comb_func();
-                    req_reg._next.write_strobe = active_write_strobe_comb_func();
+                    req_reg._next.write_data = request_geometry.cross_write_data;
+                    req_reg._next.write_mask = request_geometry.cross_write_mask;
+                    req_reg._next.write_strobe = active_request.request.write_strobe;
                     state_reg._next = ST_CROSS_WRITE_LOOKUP;
                 }
                 else {
@@ -420,19 +395,20 @@ public:
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-miss addr={:08x} rd={} wr={} victim={} evict_valid={} evict_dirty={} evict_tag={:08x}\n",
                         _system_clock, (uint32_t)req_reg.addr, (bool)req_reg.read, (bool)req_reg.write,
-                        (uint32_t)victim_reg, evict_valid_comb_func(), evict_dirty_comb_func(), (uint32_t)evict_tag_comb_func());
+                        (uint32_t)victim_reg, (bool)evict_candidate.valid,
+                        (bool)evict_candidate.dirty, (uint32_t)evict_candidate.tag);
                 }
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
-                evict_tag_reg._next = evict_tag_comb_func();
-                evict_line_reg._next = evict_line_snapshot_comb_func();
-                state_reg._next = (!req_reg.from_slave && req_cross_beat_read_comb_func()) ? ST_CROSS_AR0 :
-                    ((evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR);
+                evict_tag_reg._next = evict_candidate.tag;
+                evict_line_reg._next = evict_candidate.line;
+                state_reg._next = (!req_reg.from_slave && request_geometry.cross_beat_read) ? ST_CROSS_AR0 :
+                    ((evict_candidate.valid && evict_candidate.dirty) ? ST_EVICT_AW : ST_AXI_AR);
             }
         }
         else if (state_reg == ST_CROSS_WRITE_LOOKUP) {
-            if (!req_addr_in_memory_comb_func()) {
+            if (!request_geometry.addr_in_memory) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
@@ -445,7 +421,7 @@ public:
                     state_reg._next = ST_DONE;
                 }
             }
-            else if (hit_comb_func()) {
+            else if (hit_lookup.hit) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
@@ -462,9 +438,9 @@ public:
                 fill_way_reg._next = victim_reg;
                 fill_beat_reg._next = 0;
                 evict_beat_reg._next = 0;
-                evict_tag_reg._next = evict_tag_comb_func();
-                evict_line_reg._next = evict_line_snapshot_comb_func();
-                state_reg._next = (evict_valid_comb_func() && evict_dirty_comb_func()) ? ST_EVICT_AW : ST_AXI_AR;
+                evict_tag_reg._next = evict_candidate.tag;
+                evict_line_reg._next = evict_candidate.line;
+                state_reg._next = (evict_candidate.valid && evict_candidate.dirty) ? ST_EVICT_AW : ST_AXI_AR;
             }
         }
         else if (state_reg == ST_EVICT_AW) {
@@ -479,7 +455,7 @@ public:
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(evict_line_comb_func() >> 32) : 0;
                     std::print("trace-l2 cycle={} evict addr={:08x} beat={} data0={:08x} data1={:08x} way={}\n",
                         _system_clock, (uint32_t)axi_route_comb_func().aw_full_addr, (uint32_t)evict_beat_reg,
-                        trace_word0, trace_word1, (uint32_t)evict_way_comb_func());
+                        trace_word0, trace_word1, (uint32_t)evict_candidate.way);
                 }
                 state_reg._next = ST_EVICT_B;
             }
@@ -508,24 +484,25 @@ public:
                     trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_out_selected_resp_comb_func().r.data >> 32) : 0;
                     std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
                         _system_clock, (uint32_t)axi_route_comb_func().ar_full_addr, (uint32_t)fill_beat_reg,
-                        trace_word0, trace_word1, (uint32_t)req_word_comb_func(), (uint32_t)req_beat_comb_func());
+                        trace_word0, trace_word1, (uint32_t)request_geometry.word,
+                        (uint32_t)request_geometry.beat);
                 }
-                if (!req_reg.from_slave && req_reg.read && fill_beat_reg == req_beat_comb_func()) {
+                if (!req_reg.from_slave && req_reg.read && fill_beat_reg == request_geometry.beat) {
                     last_data_reg._next = axi_out_selected_resp_comb_func().r.data;
                 }
-                if (req_reg.from_slave && req_reg.read && fill_beat_reg == req_beat_comb_func()) {
-                    // Do not answer from hit_beat_comb_func() after the final fill beat:
+                if (req_reg.from_slave && req_reg.read && fill_beat_reg == request_geometry.beat) {
+                    // Do not answer from hit_lookup.beat after the final fill beat:
                     // that path can observe stale RAM output for the requested beat.
                     slave_fill_data_reg._next = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
                     victim_reg._next = (victim_reg == WAYS - 1) ? 0 : victim_reg + 1;
-                    if (req_cross_line_write_comb_func()) {
+                    if (request_geometry.cross_line_write) {
                         req_reg._next.addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
-                        req_reg._next.write_data = cross_write_data_comb_func();
-                        req_reg._next.write_mask = cross_write_mask_comb_func();
-                        req_reg._next.write_strobe = active_write_strobe_comb_func();
+                        req_reg._next.write_data = request_geometry.cross_write_data;
+                        req_reg._next.write_mask = request_geometry.cross_write_mask;
+                        req_reg._next.write_strobe = active_request.request.write_strobe;
                         state_reg._next = ST_CROSS_WRITE_LOOKUP;
                     }
                     else {
@@ -536,7 +513,7 @@ public:
                                         // If the requested beat arrived before the final
                                         // fill beat, return the latched refill data.
                                         send_slave_read_response(i, req_reg.slave_id,
-                                            (fill_beat_reg == req_beat_comb_func()) ?
+                                            (fill_beat_reg == request_geometry.beat) ?
                                                 axi_out_selected_resp_comb_func().r.data : slave_fill_data_reg);
                                     }
                                     if (req_reg.write) {
