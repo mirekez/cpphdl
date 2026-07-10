@@ -52,6 +52,78 @@ struct L2MemDriver
     u<4> slave_id;               // External AXI transaction ID to echo in the response.
 };
 
+// Carries arbitration output and the address properties needed while accepting
+// one request, keeping all values derived from the same live inputs together.
+struct L2ActiveRequestComb
+{
+    L2MemDriver request;          // Complete request payload selected from AXI, D, or I input.
+    u32 set;                      // Cache set derived from the selected live request address.
+    u1 valid;                     // At least one read or write operation was selected.
+    u1 cross_line_read;           // Selected instruction read crosses the cache-line boundary.
+};
+
+// Carries all address decomposition and cross-line properties derived from the
+// registered request so downstream layers evaluate one coherent decode result.
+struct L2RequestGeometryComb
+{
+    u32 set;                      // Cache set containing req_reg.addr.
+    u32 word;                     // 32-bit word index inside the request cache line.
+    u32 beat;                     // Memory-port beat index inside the request cache line.
+    u32 tag;                      // Tag portion of req_reg.addr.
+    u1 cross_beat_read;           // Unaligned read needs data from the following memory beat.
+    u1 cross_line_write;          // Store bytes spill into the following cache line.
+    u1 addr_in_memory;            // Registered request lies inside the configured memory window.
+    u32 cross_write_data;         // Store data shifted for the following cache line.
+    u8 cross_write_mask;          // Store mask remapped for the following cache line.
+};
+
+// Carries all metadata read from the one way selected for replacement, so the
+// eviction decision and captured writeback line use the same candidate.
+struct L2EvictCandidateComb
+{
+    u32 way;                      // Way selected from victim_reg or fill_way_reg.
+    u1 valid;                     // Selected way currently contains a valid cache line.
+    u1 dirty;                     // Selected way must be written back before replacement.
+    u32 tag;                      // Selected way tag used to reconstruct the writeback address.
+    logic<256> line;              // Complete selected 32-byte cache line snapshot.
+};
+
+// Carries the complete AXI write-data payload for one uncached request so data
+// alignment and byte-strobe alignment are always derived together.
+struct L2IoWritePayloadComb
+{
+    logic<256> data;              // Write beat with CPU data moved to its addressed byte lane.
+    logic<32> strobe;             // Byte enables aligned to the same lanes as data.
+};
+
+// Carries one associative tag lookup and every cache-data value selected by
+// that result, avoiding repeated tag compares and independent way selection.
+struct L2HitLookupComb
+{
+    u1 hit;                       // A valid way matches the registered request tag.
+    u32 way;                      // Matching way used by all selected data fields.
+    u32 aligned_word;             // Addressed aligned word before store-byte merging.
+    u32 aligned_next_word;        // Following aligned word for spillover store merging.
+    u32 read_word;                // Unaligned 32-bit load assembled from the selected words.
+    logic<256> beat;              // Requested memory-port beat packed from the matching way.
+};
+
+// Carries both cache words affected by one potentially unaligned store so the
+// low-word and spillover masks are produced from one byte-offset calculation.
+struct L2WordPairComb
+{
+    u32 word;                     // Addressed word after applying in-word store bytes.
+    u32 next_word;                // Following word after applying spillover store bytes.
+};
+
+// Carries both CPU-side wait decisions because instruction priority, data
+// priority, and completed-response ownership must be evaluated together.
+struct L2CpuWaitComb
+{
+    u1 instruction;               // Wait returned to the instruction-side L1 request.
+    u1 data;                      // Wait returned to the data-side L1 request.
+};
+
 struct L2AxiRouteComb
 {
     u32 ar_full_addr;            // Full physical read address used for tracing and selected-region calculation.
