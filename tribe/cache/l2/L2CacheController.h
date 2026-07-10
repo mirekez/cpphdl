@@ -88,11 +88,11 @@ private:
     using Base::i_wait_comb_func;
     using Base::d_wait_comb_func;
 
-    Axi4Responder<4, 256> axi_in_comb[MEM_PORTS];
-    Axi4Driver<32, 4, 256> axi_out_comb[MEM_PORTS];
+    Axi4Responder<4,256> axi_in_comb[MEM_PORTS];
+    Axi4Driver<32,4,256> axi_out_comb[MEM_PORTS];
 
     // Build all AXI slave-side responder bundles and return the array so comb users depend on the driven values.
-    Axi4Responder<4, 256> (&axi_in_comb_func())[MEM_PORTS]
+    Axi4Responder<4,256> (&axi_in_comb_func())[MEM_PORTS]
     {
         size_t index;
 
@@ -115,7 +115,7 @@ private:
     }
 
     // Build all AXI master-side driver bundles and return the array so comb users depend on the driven values.
-    Axi4Driver<32, 4, 256> (&axi_out_comb_func())[MEM_PORTS]
+    Axi4Driver<32,4,256> (&axi_out_comb_func())[MEM_PORTS]
     {
         size_t index;
 
@@ -151,7 +151,6 @@ private:
         slave_b_reg._next[index].valid = true;
         slave_b_reg._next[index].id = id;
     }
-
 
 public:
     void _assign()
