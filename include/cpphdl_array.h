@@ -16,6 +16,15 @@ namespace detail
 {
 
 template<typename TYPE, typename = void>
+struct is_packed_array : std::false_type {};
+
+template<typename TYPE>
+struct is_packed_array<TYPE, std::void_t<typename TYPE::value_type,
+    decltype(TYPE::COUNT_VALUE), decltype(TYPE::PACKED)>> : std::bool_constant<TYPE::PACKED> {};
+
+struct array_packed_offset_t {};
+
+template<typename TYPE, typename = void>
 struct array_packed_size_bits
 {
     constexpr static size_t value = sizeof(TYPE) * 8;
@@ -73,6 +82,11 @@ struct array_packed_ref
     {
     }
 
+    array_packed_ref(logic<TOTAL_BITS>* parent, size_t first, array_packed_offset_t)
+        : ref(parent, first, first + ELEMENT_BITS - 1)
+    {
+    }
+
     template<typename T>
     array_packed_ref& operator=(const T& value)
     {
@@ -111,9 +125,19 @@ struct array_packed_ref
         return logic<ELEMENT_BITS>(ref).bits(last, first);
     }
 
-    logic_bits<TOTAL_BITS> operator[](size_t bitnum)
+    auto operator[](size_t index)
     {
-        return bits(bitnum, bitnum);
+        if constexpr (is_packed_array<TYPE>::value) {
+            // Nested packed indexing must keep referencing the outer bit store.
+            using element_type = typename TYPE::value_type;
+            constexpr size_t element_bits = array_packed_size_bits<element_type>::value;
+            cpphdl_assert(index < TYPE::COUNT_VALUE, "wrong nested packed array index");
+            return array_packed_ref<element_type, TOTAL_BITS, element_bits>(
+                ref.parent, ref.first + index * element_bits, array_packed_offset_t{});
+        }
+        else {
+            return bits(index, index);
+        }
     }
 
     logic<1> operator[](size_t bitnum) const
@@ -226,6 +250,8 @@ template<size_t COUNT, typename TYPE>
 struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
 {
     using BaseOps = bitops<array<COUNT, TYPE, false>>;
+    using value_type = TYPE;
+    constexpr static size_t COUNT_VALUE = COUNT;
     constexpr static size_t ELEMENT_BITS = sizeof(TYPE) * 8;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;
@@ -346,6 +372,8 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
 template<size_t COUNT, typename TYPE>
 struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
 {
+    using value_type = TYPE;
+    constexpr static size_t COUNT_VALUE = COUNT;
     constexpr static size_t ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;

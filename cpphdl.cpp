@@ -609,6 +609,18 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
     }
 }
 
+void updateArrayDim(cpphdl::Expr& concrete, const cpphdl::Expr& abstract)
+{
+    // Modules are visited as a concrete specialization first and then as their
+    // primary template. Keep the primary expression as the single dimension;
+    // updateExpr() would retain both concrete and symbolic array dimensions.
+    if (concrete.type == cpphdl::Expr::EXPR_NUM && abstract.type != cpphdl::Expr::EXPR_NUM) {
+        concrete = abstract;
+        return;
+    }
+    updateExpr(concrete, abstract);
+}
+
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp);
 
@@ -1200,6 +1212,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
 
     cpphdl::Expr expr = hlp.digQT(QT);
+    // Dependent cpphdl::array specializations are not ClassTemplateSpecializationDecls,
+    // so the type loop above cannot separate their dimensions from the element type.
+    // Normalize them here to the same representation used by concrete specializations.
+    while (expr.type == cpphdl::Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        array_dim.emplace_back(std::move(expr.sub[0]));
+        cpphdl::Expr element = std::move(expr.sub[1]);
+        expr = std::move(element);
+        ++cppArrayDims;
+    }
     const bool packedArray = functionRefCpphdlArray || cppArrayDims != 0;
     size_t packedArrayDims = cppArrayDims;
     if (functionRefCpphdlArray && packedArrayDims == 0) {
@@ -1229,7 +1250,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             updateExpr(field->expr, expr);
             for (size_t i=0; i < array_dim.size(); ++i) {
                 if (field->array.size() > i) {
-                    updateExpr(field->array[i], array_dim[i]);
+                    updateArrayDim(field->array[i], array_dim[i]);
                 }
             }
         } else
@@ -1248,7 +1269,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 DEBUG_EXPR(debugIndent, " updating " << field->name << " " << array_dim.size() << "/" << field->array.size() << "... ");
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
                 const clang::TemplateSpecializationType *TST = QT->getAs<clang::TemplateSpecializationType>();
@@ -1367,7 +1388,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 updateExpr(field->expr, expr);
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
             } else
@@ -1396,7 +1417,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 updateExpr(field->expr, expr);
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
             } else

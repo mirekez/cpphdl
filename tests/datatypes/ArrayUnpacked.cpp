@@ -17,6 +17,8 @@ public:
     _PORT(logic<9>) unpacked_logic2_out = _ASSIGN_COMB(unpacked_logic2_comb_func());
     _PORT(u<3>) unpacked_u_index_out = _ASSIGN_COMB(unpacked_u_index_comb_func());
     _PORT(u<3>) unpacked_u_last_out = _ASSIGN_COMB(unpacked_u_last_comb_func());
+    _PORT(u<8>) array2d_out = _ASSIGN_COMB(array2d_comb_func());
+    _PORT(u<8>) array3d_out = _ASSIGN_COMB(array3d_comb_func());
 
 private:
     logic<9> unpacked_logic0_comb;
@@ -24,6 +26,8 @@ private:
     logic<9> unpacked_logic2_comb;
     u<3> unpacked_u_index_comb;
     u<3> unpacked_u_last_comb;
+    u<8> array2d_comb;
+    u<8> array3d_comb;
 
     logic<9>& unpacked_logic0_comb_func()
     {
@@ -82,6 +86,24 @@ private:
         unpacked_u[4] = (uint64_t)seed_in() & 0x7;
         unpacked_u_last_comb = unpacked_u[4];
         return unpacked_u_last_comb;
+    }
+
+    u<8>& array2d_comb_func()
+    {
+        array2D<2, 3, u<8>> values;
+        values = 0;
+        values[1][2] = (uint8_t)seed_in() + 0x20u;
+        array2d_comb = values[1][2];
+        return array2d_comb;
+    }
+
+    u<8>& array3d_comb_func()
+    {
+        array3D<2, 2, 3, u<8>> values;
+        values = 0;
+        values[1][1][2] = (uint8_t)seed_in() + 0x40u;
+        array3d_comb = values[1][1][2];
+        return array3d_comb;
     }
 
 public:
@@ -288,6 +310,24 @@ public:
 #endif
     }
 
+    u<8> array2d()
+    {
+#ifdef VERILATOR
+        return u<8>(verilator_read<uint8_t>(&dut.array2d_out));
+#else
+        return dut.array2d_out();
+#endif
+    }
+
+    u<8> array3d()
+    {
+#ifdef VERILATOR
+        return u<8>(verilator_read<uint8_t>(&dut.array3d_out));
+#else
+        return dut.array3d_out();
+#endif
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -314,6 +354,8 @@ public:
             error |= !check((uint64_t)unpacked_logic2() == 0x1aa, "module unpacked logic index 2");
             error |= !check((uint64_t)unpacked_u_index() == 3, "module unpacked u index");
             error |= !check((uint64_t)unpacked_u_last() == (i & 0x7), "module unpacked u last index");
+            error |= !check((uint64_t)array2d() == ((i + 0x20u) & 0xffu), "module unpacked array2D index");
+            error |= !check((uint64_t)array3d() == ((i + 0x40u) & 0xffu), "module unpacked array3D index");
 
             neg(false);
             ++_system_clock;
