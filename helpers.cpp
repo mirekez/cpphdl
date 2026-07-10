@@ -45,6 +45,100 @@ static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordD
     return current->isDerivedFrom(owner);
 }
 
+static bool statementAlwaysReturns(const Stmt* statement);
+
+// A nested switch exits its enclosing case when every represented case returns.
+// Exhaustiveness is intentionally not checked here; the switch converter already
+// treats a final case without default as complete for fallthrough diagnostics.
+static bool switchCasesAlwaysReturn(const SwitchStmt* switchStmt)
+{
+    const auto* compound = dyn_cast_or_null<CompoundStmt>(switchStmt->getBody());
+    if (!compound) {
+        return false;
+    }
+
+    bool sawCase = false;
+    bool currentCaseReturns = false;
+    for (const Stmt* statement : compound->body()) {
+        const Stmt* caseBody = nullptr;
+        if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
+            caseBody = caseStmt->getSubStmt();
+        } else if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
+            caseBody = defaultStmt->getSubStmt();
+        }
+
+        if (caseBody) {
+            if (sawCase && !currentCaseReturns) {
+                return false;
+            }
+            sawCase = true;
+            currentCaseReturns = statementAlwaysReturns(caseBody);
+        } else if (sawCase && !currentCaseReturns && statementAlwaysReturns(statement)) {
+            currentCaseReturns = true;
+        }
+    }
+    return sawCase && currentCaseReturns;
+}
+
+// Report a case as returning only when every control-flow path through the
+// statement exits the current function. This recognizes Clang's nested AST for
+// `case X: return value;` and for switches used directly as a case body.
+static bool statementAlwaysReturns(const Stmt* statement)
+{
+    if (!statement) {
+        return false;
+    }
+    if (isa<ReturnStmt>(statement)) {
+        return true;
+    }
+    if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
+        for (const Stmt* child : compound->body()) {
+            if (statementAlwaysReturns(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
+        return ifStmt->getElse() && statementAlwaysReturns(ifStmt->getThen()) &&
+            statementAlwaysReturns(ifStmt->getElse());
+    }
+    if (const auto* switchStmt = dyn_cast<SwitchStmt>(statement)) {
+        return switchCasesAlwaysReturn(switchStmt);
+    }
+    if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
+        return statementAlwaysReturns(caseStmt->getSubStmt());
+    }
+    if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
+        return statementAlwaysReturns(defaultStmt->getSubStmt());
+    }
+    return false;
+}
+
+// A direct break terminates the current switch case but does not return from
+// the function, so keep it separate from statementAlwaysReturns().
+static bool statementTerminatesSwitchCase(const Stmt* statement)
+{
+    if (!statement) {
+        return false;
+    }
+    if (isa<BreakStmt>(statement) || statementAlwaysReturns(statement)) {
+        return true;
+    }
+    if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
+        for (const Stmt* child : compound->body()) {
+            if (statementTerminatesSwitchCase(child)) {
+                return true;
+            }
+        }
+    }
+    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
+        return ifStmt->getElse() && statementTerminatesSwitchCase(ifStmt->getThen()) &&
+            statementTerminatesSwitchCase(ifStmt->getElse());
+    }
+    return false;
+}
+
 static bool cpphdlRecordHasValueFieldsImpl(const CXXRecordDecl* RD, std::unordered_set<const CXXRecordDecl*>& visited)
 {
     if (!RD) {
@@ -488,15 +582,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         cpphdl::Expr expr = cpphdl::Expr{"switch", cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
 
         cpphdl::Expr body;
-        bool wasBreak = true;
+        bool caseOpen = false;
+        bool caseTerminated = true;
         for (const Stmt *S : dyn_cast<CompoundStmt>(SS->getBody())->body()) {
             if (const auto* CS = dyn_cast<CaseStmt>(S)) {
-                if (!wasBreak) {
+                if (caseOpen) {
                     expr.sub.emplace_back(std::move(body));
-
-                    const SourceManager &SM = ctx->getSourceManager();
-                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    if (!caseTerminated) {
+                        const SourceManager &SM = ctx->getSourceManager();
+                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    }
                 }
 
                 body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // first place we call str() in Clang part (to make a string value)
@@ -504,33 +600,56 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // first place we call str() in Clang part (to make a string value)
                 }
                 body.sub.emplace_back(exprToExpr(CS->getSubStmt()));
-                wasBreak = false;
-            } else
-            if (dyn_cast<DefaultStmt>(S)) {
-                if (!wasBreak) {
+                caseOpen = true;
+                caseTerminated = statementTerminatesSwitchCase(CS->getSubStmt());
+                if (caseTerminated) {
                     expr.sub.emplace_back(std::move(body));
-
-                    const SourceManager &SM = ctx->getSourceManager();
-                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    caseOpen = false;
+                }
+            } else
+            if (const auto* DS = dyn_cast<DefaultStmt>(S)) {
+                if (caseOpen) {
+                    expr.sub.emplace_back(std::move(body));
+                    if (!caseTerminated) {
+                        const SourceManager &SM = ctx->getSourceManager();
+                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    }
                 }
                 body = cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY};
-                wasBreak = false;
+                // Clang stores an inline default body inside DefaultStmt just as
+                // it does for CaseStmt, so preserve it in the generated case.
+                body.sub.emplace_back(exprToExpr(DS->getSubStmt()));
+                caseOpen = true;
+                caseTerminated = statementTerminatesSwitchCase(DS->getSubStmt());
+                if (caseTerminated) {
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
             } else
             if (dyn_cast<BreakStmt>(S)) {
-                expr.sub.emplace_back(std::move(body));
-                wasBreak = true;
+                if (caseOpen) {
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
+                caseTerminated = true;
             } else
             if (dyn_cast<ReturnStmt>(S)) {
-                body.sub.emplace_back(exprToExpr(S));
-                expr.sub.emplace_back(std::move(body));
-                wasBreak = true;
+                if (caseOpen) {
+                    body.sub.emplace_back(exprToExpr(S));
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
+                caseTerminated = true;
             }
             else {
-                body.sub.emplace_back(exprToExpr(S));
+                if (caseOpen) {
+                    body.sub.emplace_back(exprToExpr(S));
+                    caseTerminated = statementTerminatesSwitchCase(S);
+                }
             }
         }
-        if (!wasBreak) {
+        if (caseOpen) {
             expr.sub.emplace_back(std::move(body));
         }
 
