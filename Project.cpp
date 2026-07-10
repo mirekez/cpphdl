@@ -114,6 +114,38 @@ void Project::generate(const std::string& outDir)
         std::cout << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
     }
 
+    // A module class gets a package only when another module references one
+    // of its static constexpr fields as <Module>_pkg::<name>. This preserves
+    // the normal module-only output while making cross-module constants legal.
+    for (const auto& packageName : modulePackages) {
+        auto mod = std::find_if(modules.begin(), modules.end(), [&](const auto& candidate) {
+            return candidate.name == packageName;
+        });
+        if (mod == modules.end() || mod->consts.empty()) {
+            continue;
+        }
+
+        fs::path filePath = fs::path(outDir) / (packageName + "_pkg.sv");
+        std::ofstream out(filePath);
+        if (!out) {
+            std::cerr << "Failed to open '" << filePath << "' for writing\n";
+            continue;
+        }
+
+        out << "package " << packageName << "_pkg;\n\n";
+        Module* savedModule = currModule;
+        currModule = &*mod;
+        for (const auto& constant : mod->consts) {
+            Field field = constant;
+            field.expr.value = field.name;
+            out << "parameter ";
+            field.print(out);
+        }
+        currModule = savedModule;
+        out << "\nendpackage\n";
+        std::cout << "Generated: " << filePath << "\n";
+    }
+
     std::set<std::string> structures_uniq;
     for (auto& str : structs) {  // export structs but not structures
         if (structures_uniq.find(str.name) != structures_uniq.end()) {

@@ -416,7 +416,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + cpphdl_comb_func_signal_name(value);
             }
             std::string func = value;
-            if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
+            const bool generatedFunction = currModule && std::any_of(
+                currModule->methods.begin(), currModule->methods.end(), [&](const Method& method) {
+                    return method.name == func && !method.ret.empty();
+                });
+            // Continuous assignments may call generated SV functions. Keep
+            // suppressing unknown C++ calls and generated tasks, which cannot
+            // legally provide a continuous-assignment value.
+            if ((flags&FLAG_ASSIGN) && func != "clog2" && !generatedFunction) {
                 return "";
             }
             if (func == "clog2") {
@@ -573,6 +580,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
             ASSERT(sub.size());
             if (value == "_assign" || value == "_strobe" || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
                 return "";
+            }
+            if ((flags&FLAG_MODULE_INSTANCE_METHOD)) {
+                std::string call = sub[0].str() + "." + escapeIdentifier(value) + "(";
+                for (size_t i = 1; i < sub.size(); ++i) {
+                    if (sub[i].type != EXPR_NONE) {
+                        if (call.back() != '(') {
+                            call += ", ";
+                        }
+                        call += sub[i].str();
+                    }
+                }
+                return indent_str + prefix + call + ")" + suffix;
             }
 //            if ((value == "_work" || value == "_work_neg" || str_ending(value, "____work") || str_ending(value, "____work_neg")) && sub[0].value != "_this") {  // never need this functions except third party class work
 //                return "";
