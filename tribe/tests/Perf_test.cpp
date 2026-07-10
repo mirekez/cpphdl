@@ -29,6 +29,21 @@ static std::filesystem::path tribe_linux_dir()
     return std::filesystem::path(__FILE__).parent_path().parent_path() / "linux";
 }
 
+static bool linux_perf_inputs_available()
+{
+    const auto linux_dir = tribe_linux_dir();
+    const auto elf = linux_dir / "vmlinux";
+    const auto dtb = linux_dir / "config32.initramfs.dtb";
+    const auto initramfs = linux_dir / "initramfs.cpio";
+    for (const auto& path : {elf, dtb, initramfs}) {
+        if (!std::filesystem::exists(path)) {
+            std::print("missing Linux perf input: {}\n", path.string());
+            return false;
+        }
+    }
+    return true;
+}
+
 static double percent(uint64_t value, uint64_t total)
 {
     return total ? 100.0 * (double)value / (double)total : 0.0;
@@ -77,11 +92,8 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     const auto elf = linux_dir / "vmlinux";
     const auto dtb = linux_dir / "config32.initramfs.dtb";
     const auto initramfs = linux_dir / "initramfs.cpio";
-    for (const auto& path : {elf, dtb, initramfs}) {
-        if (!std::filesystem::exists(path)) {
-            std::print("missing Linux perf input: {}\n", path.string());
-            return false;
-        }
+    if (!linux_perf_inputs_available()) {
+        return false;
     }
 
     TestTribe test(debug);
@@ -177,6 +189,10 @@ int main(int argc, char** argv)
             std::print("Unknown option: {}\n", arg);
             return 2;
         }
+    }
+
+    if (!linux_perf_inputs_available()) {
+        return 77;
     }
 
 #ifdef VERILATOR
