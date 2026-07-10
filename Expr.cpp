@@ -749,8 +749,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8" + " +: (" + value + ")]";  // currently supporting dereference shift only for char*
         }
         case EXPR_CAST:
+        {
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
+            auto sizedOperand = [&](const std::string& width) {
+                const std::string operand = sub[0].str(prefix, suffix);
+                if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0) {
+                    return width + operand;
+                }
+                return width + "'(" + operand + ")";
+            };
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);
@@ -791,7 +799,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             } else
             if (value.find("cpphdl_i") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_i");
@@ -799,19 +807,20 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "signed'(" + sizedOperand(width) + ")";
             }
             if (value.find("u<") == 0) {
                 std::string width = templateWidth(value, "u<");
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             } else
             if (value.find("i<") == 0) {
                 std::string width = templateWidth(value, "i<");
                 declSize = numericWidth(width);
-                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "signed'(" + sizedOperand(width) + ")";
             }
             return indent_str + /*typeToSV(value) + "'(" + */sub[0].str(prefix, suffix);// + ")";  // cast only simple types
+        }
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {

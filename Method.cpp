@@ -171,8 +171,31 @@ bool Method::print(std::ofstream& out)
         out << "    begin: " << name << "\n";
     }
 
+    // Tasks and functions have the same SystemVerilog declaration-order rule
+    // as always_comb blocks: every local declaration must precede the first
+    // executable initializer or statement.
+    for (auto& stmt : statements) {
+        if (!isTopLevelLocalDeclWithType(stmt)) {
+            continue;
+        }
+        Expr decl = *topLevelLocalDecl(stmt);
+        decl.indent = 2;
+        if (decl.sub.size() > 1) {
+            decl.sub[1] = Expr{};
+        }
+        auto s = decl.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
+
     for (auto& stmt : statements) {
         stmt.indent = 2;
+        if (isTopLevelLocalDeclWithType(stmt)) {
+            out << localDeclInitializer(stmt);
+            continue;
+        }
 //        out << stmt.debug() << "\n";
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {

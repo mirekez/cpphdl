@@ -710,7 +710,19 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                     expr.sub.emplace_back(digQT(QT));
                     if (VD->getInit()) {
-                        expr.sub.emplace_back(exprToExpr(VD->getInit()));
+                        const clang::Expr* init = VD->getInit()->IgnoreImplicit();
+                        const auto* constructor = dyn_cast<CXXConstructExpr>(init);
+                        // Clang represents `u<4> value;` and other class-type
+                        // declarations as a zero-argument callinit even though
+                        // the source has no initializer. Do not turn that
+                        // implicit constructor node into an RTL zero assignment.
+                        // Explicit `{}` is ListInit and remains a real zeroing
+                        // assignment, as required by its C++ semantics.
+                        const bool implicitDefaultInit = VD->getInitStyle() == VarDecl::CallInit
+                            && constructor && constructor->getNumArgs() == 0;
+                        if (!implicitDefaultInit) {
+                            expr.sub.emplace_back(exprToExpr(VD->getInit()));
+                        }
                     }
 
                     CRD = resolveCXXRecordDecl(QT);
