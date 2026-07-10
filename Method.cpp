@@ -34,6 +34,56 @@ std::string assignedWireName(Expr expr)
     return expr.str();
 }
 
+bool exprContainsValue(const Expr& expr, const std::string& value)
+{
+    if (expr.value == value) {
+        return true;
+    }
+    for (const auto& sub : expr.sub) {
+        if (exprContainsValue(sub, value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool fieldCanNameWireOrPort(const Field& field, const std::string& name)
+{
+    // Interface fields are flattened as <interface>__<field> in SV ports.
+    return field.name == name || name.find(field.name + "__") == 0;
+}
+
+std::string flippedInterfaceDirectionName(std::string name)
+{
+    if (str_ending(name, "_in")) {
+        name.replace(name.length() - 3, 3, "_out");
+    }
+    else if (str_ending(name, "_out")) {
+        name.replace(name.length() - 4, 4, "_in");
+    }
+    return name;
+}
+
+bool moduleHasAssignableName(const Module& module, const std::string& name)
+{
+    auto matches = [&](const Field& field) {
+        return fieldCanNameWireOrPort(field, name);
+    };
+    auto flippedName = flippedInterfaceDirectionName(name);
+    auto flippedMatches = [&](const Field& field) {
+        return flippedName != name && fieldCanNameWireOrPort(field, flippedName);
+    };
+
+    return any_of(module.wires.begin(), module.wires.end(), matches) ||
+        any_of(module.ports.begin(), module.ports.end(), matches) ||
+        any_of(module.vars.begin(), module.vars.end(), matches) ||
+        any_of(module.members.begin(), module.members.end(), matches) ||
+        any_of(module.wires.begin(), module.wires.end(), flippedMatches) ||
+        any_of(module.ports.begin(), module.ports.end(), flippedMatches) ||
+        any_of(module.vars.begin(), module.vars.end(), flippedMatches) ||
+        any_of(module.members.begin(), module.members.end(), flippedMatches);
+}
+
 const Expr* topLevelLocalDecl(const Expr& expr)
 {
     if (expr.type == Expr::EXPR_DECL) {
@@ -190,7 +240,7 @@ bool Method::printAssigns(std::ofstream& out)
         out << "        genvar " << "g" << var << ";\n";
     }
     for (auto& stmt : statements) {
-        if (stmt.traverseIf( [](Expr& e) { return e.value == "__inst_name";} )) {
+        if (exprContainsValue(stmt, "__inst_name")) {
             continue;
         }
 
@@ -202,7 +252,7 @@ bool Method::printAssigns(std::ofstream& out)
                     if ((e.type == Expr::EXPR_OPERATORCALL && e.value == "=") ||
                         (e.type == Expr::EXPR_BINARY && e.value == "=")) {
                         std::string wname = assignedWireName(e.sub[0]);
-                        if (!any_of(currModule->wires.begin(), currModule->wires.end(), [&](auto& w){ return w.name == wname; } ) && wname.length() > 2) {
+                        if (!moduleHasAssignableName(*currModule, wname) && wname.length() > 2) {
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";
                         }
                     }

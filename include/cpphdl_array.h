@@ -223,8 +223,9 @@ template<size_t COUNT1, size_t COUNT2, size_t COUNT3, size_t COUNT4, typename TY
 using array4D = array<COUNT1, array3D<COUNT2, COUNT3, COUNT4, TYPE, PACKED>, PACKED>;
 
 template<size_t COUNT, typename TYPE>
-struct array<COUNT, TYPE, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>>
+struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
 {
+    using BaseOps = bitops<array<COUNT, TYPE, false>>;
     constexpr static size_t ELEMENT_BITS = sizeof(TYPE) * 8;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;
@@ -241,7 +242,10 @@ struct array<COUNT, TYPE, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
     array(const array<COUNT, TYPE, false>& other) = default;
 
     template<typename T>
-    array(const T& other) : bitops<logic<SIZE_BITS>>(other) {}
+    array(const T& other)
+    {
+        *this = other;
+    }
 
     array& operator=(const array<COUNT, TYPE, false>& other) = default;
 
@@ -284,23 +288,23 @@ struct array<COUNT, TYPE, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
         return *(const logic<SIZE_BITS>*)this;
     }
 
-    using bitops<logic<SIZE_BITS>>::operator=;
-    using bitops<logic<SIZE_BITS>>::operator&;
-    using bitops<logic<SIZE_BITS>>::operator|;
-    using bitops<logic<SIZE_BITS>>::operator^;
-    using bitops<logic<SIZE_BITS>>::operator~;
-    using bitops<logic<SIZE_BITS>>::operator<<;
-    using bitops<logic<SIZE_BITS>>::operator>>;
-    using bitops<logic<SIZE_BITS>>::operator+;
-    using bitops<logic<SIZE_BITS>>::operator-;
-    using bitops<logic<SIZE_BITS>>::operator==;
-    using bitops<logic<SIZE_BITS>>::operator!=;
-    using bitops<logic<SIZE_BITS>>::operator<;
-    using bitops<logic<SIZE_BITS>>::operator<=;
-    using bitops<logic<SIZE_BITS>>::operator>;
-    using bitops<logic<SIZE_BITS>>::operator>=;
-    using bitops<logic<SIZE_BITS>>::to_ullong;
-    using bitops<logic<SIZE_BITS>>::to_hex;
+    using BaseOps::operator=;
+    using BaseOps::operator&;
+    using BaseOps::operator|;
+    using BaseOps::operator^;
+    using BaseOps::operator~;
+    using BaseOps::operator<<;
+    using BaseOps::operator>>;
+    using BaseOps::operator+;
+    using BaseOps::operator-;
+    using BaseOps::operator==;
+    using BaseOps::operator!=;
+    using BaseOps::operator<;
+    using BaseOps::operator<=;
+    using BaseOps::operator>;
+    using BaseOps::operator>=;
+    using BaseOps::to_ullong;
+    using BaseOps::to_hex;
 
     array& operator<<=(size_t shift)
     {
