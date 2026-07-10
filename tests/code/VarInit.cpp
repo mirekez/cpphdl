@@ -13,8 +13,11 @@ class VarInit : public Module
 public:
     _PORT(logic<1>) ready_out = _ASSIGN_COMB(ready_comb_func());
     _PORT(logic<1>) ready1_out = _ASSIGN_COMB(ready_comb1_func());
+    _PORT(u<4>) local_out = _ASSIGN_REG(local_reg);
 
 private:
+    u<4> local_reg;
+
     _LAZY_COMB(ready_comb, logic<1>)
         ready_comb = {};
         return ready_comb;
@@ -27,7 +30,32 @@ private:
 
 public:
     void _assign() {}
-    void _work(bool reset) {}
+    void _work(bool reset)
+    {
+        uint8_t index_a, index_b;
+        u<4> noinit_u;
+        u8 noinit_u8;
+        logic<4> noinit_logic;
+        array<2, u<4>, true> noinit_packed;
+        array<2, u<4>, false> noinit_unpacked;
+        u<4> explicit_empty{};
+        u<4> explicit_zero{0};
+        index_a = 1;
+        index_b = 2;
+        noinit_u = index_a + index_b;
+        noinit_u8 = 1;
+        noinit_logic = 2;
+        noinit_packed[0] = 1;
+        noinit_packed[1] = 2;
+        noinit_unpacked[0] = 1;
+        noinit_unpacked[1] = 2;
+        local_reg = (uint64_t)noinit_u + (uint64_t)noinit_u8 + (uint64_t)(u<4>)noinit_logic +
+            (uint64_t)(u<4>)noinit_packed[0] + (uint64_t)noinit_unpacked[0] +
+            (uint64_t)explicit_empty + (uint64_t)explicit_zero;
+        if (reset) {
+            local_reg = 0;
+        }
+    }
     void _strobe() {}
 };
 
@@ -91,6 +119,16 @@ static bool check_generated_sv()
           compact.find("ready_comb1='0;") != std::string::npos;
     ok &= compact.find("assignready_out=ready_comb;") != std::string::npos;
     ok &= compact.find("assignready1_out=ready_comb1;") != std::string::npos;
+    ok &= compact.find("noinit_u=0;") == std::string::npos;
+    ok &= compact.find("noinit_u8=0;") == std::string::npos;
+    ok &= compact.find("noinit_logic=0;") == std::string::npos;
+    ok &= compact.find("noinit_packed=0;") == std::string::npos;
+    ok &= compact.find("noinit_unpacked=0;") == std::string::npos;
+    ok &= compact.find("logic[4-1:0]explicit_empty;") != std::string::npos;
+    ok &= compact.find("explicit_empty=0;") != std::string::npos;
+    ok &= compact.find("logic[4-1:0]explicit_zero;") != std::string::npos;
+    ok &= compact.find("explicit_zero=0;") != std::string::npos ||
+          compact.find("explicit_zero=unsigned'(4'h0);") != std::string::npos;
     if (!ok) {
         std::print("\nERROR: lazy comb aggregate-init generation check failed in {}\n", sv_path.string());
     }
