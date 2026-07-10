@@ -63,7 +63,8 @@ struct Expr
         FLAG_NOBASE = 128,  // dont use base of member expr (for constexpr of structs)
         FLAG_NOTREG = 256,  // declare logic instead of reg
         FLAG_BRACKETS = 512,
-        FLAG_COMB_TERMINAL_RETURN = 1024  // final comb return only assigns value; no named-block disable needed
+        FLAG_COMB_TERMINAL_RETURN = 1024,  // final comb return only assigns value; no named-block disable needed
+        FLAG_MODULE_INSTANCE_METHOD = 2048  // call a function through a generated module instance
     };
     unsigned flags = FLAG_NONE;
     bool interface = false;

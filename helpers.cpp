@@ -836,6 +836,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             str_replace(sname, "::", "_");
             // extracting parameters of the template
             followSpecialization(owner, sname);
+            auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+            if (ModuleClass && owner->isDerivedFrom(ModuleClass)) {
+                // Static methods use DeclRefExpr for unqualified constants.
+                // Request the module package here just as MemberExpr does for
+                // explicitly qualified external constant access.
+                currProject->modulePackages.insert(sname);
+                if (std::find_if(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp){ return imp.name == sname; }) == mod->imports.end()) {
+                    mod->imports.emplace_back(sname);
+                }
+            }
             name = sname + "_pkg::" + name;
         } else
         if (owner && Var && mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
@@ -875,7 +886,19 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
 
         bool notThis = false;
+        bool moduleInstanceMethod = false;
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
+            const clang::Expr* base = ME->getBase()->IgnoreParenImpCasts();
+            if (const auto* baseMember = dyn_cast<MemberExpr>(base)) {
+                if (const auto* field = dyn_cast<FieldDecl>(baseMember->getMemberDecl())) {
+                    auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+                    CXXRecordDecl* fieldType = resolveCXXRecordDecl(field->getType().getNonReferenceType());
+                    const std::string methodName = MCE->getDirectCallee()
+                        ? MCE->getDirectCallee()->getNameAsString() : "";
+                    moduleInstanceMethod = ModuleClass && fieldType && fieldType->isDerivedFrom(ModuleClass)
+                        && methodName != "_work" && methodName != "_assign" && methodName != "_strobe";
+                }
+            }
             auto expr = exprToExpr(ME->getBase());
 
 //            if (auto* DRE = dyn_cast<DeclRefExpr>(ME->getBase())) {
@@ -911,7 +934,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             MD = dyn_cast_or_null<CXXMethodDecl>(MCE->getDirectCallee());
         }
         if (MD) {
-            if (call.sub.size()  // we need not call members - they are accessible through ports wires
+            if (moduleInstanceMethod) {
+                // Keep a real function call on the generated module instance.
+                // Its function body stays in the child module and can use the
+                // child's parameters and state without an invalid _this type.
+                call.flags |= cpphdl::Expr::FLAG_MODULE_INSTANCE_METHOD;
+            }
+            else if (call.sub.size()  // we need not call members - they are accessible through ports wires
                 && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
                 auto newName = putMethod(MD, *this, notThis);
                 DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
@@ -955,6 +984,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             str_replace(sname, "::", "_");
             // extracting parameters of the template
             followSpecialization(CRD, sname);
+            auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+            if (ModuleClass && CRD->isDerivedFrom(ModuleClass)) {
+                // A Module is not a struct package by default. Record the
+                // package demand created by this external constexpr access and
+                // import it in the consumer so SV build tools see the dependency.
+                currProject->modulePackages.insert(sname);
+                if (std::find_if(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp){ return imp.name == sname; }) == mod->imports.end()) {
+                    mod->imports.emplace_back(sname);
+                }
+            }
             name = sname + "_pkg::" + name;
             ignoreBase = true;
         } else
