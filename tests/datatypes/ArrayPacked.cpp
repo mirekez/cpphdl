@@ -27,6 +27,43 @@ struct PackedStruct
     }
 };
 
+// A 71-bit element exposes truncation that a uint64_t-only proxy path conceals.
+// Its high data bit crosses the host scalar boundary used by the old conversion.
+// Model explicit pack and unpack behavior for packed-array proxy regressions.
+struct WidePackedStruct
+{
+    logic<2> err;
+    logic<4> id;
+    logic<64> data;
+    logic<1> last;
+
+    constexpr static size_t _size_bits()
+    {
+        return 71;
+    }
+
+    template<size_t W>
+    WidePackedStruct& operator=(const logic<W>& value)
+    {
+        logic<71> packed = value;
+        last = logic<1>(packed.bits(0, 0));
+        data = logic<64>(packed.bits(64, 1));
+        id = logic<4>(packed.bits(68, 65));
+        err = logic<2>(packed.bits(70, 69));
+        return *this;
+    }
+
+    logic<71> pack() const
+    {
+        logic<71> packed = 0;
+        packed.bits(0, 0) = last;
+        packed.bits(64, 1) = data;
+        packed.bits(68, 65) = id;
+        packed.bits(70, 69) = err;
+        return packed;
+    }
+};
+
 class ArrayPacked : public Module
 {
 public:
@@ -189,6 +226,27 @@ static bool check_direct_arrays()
     dense_struct[1] = item;
     ok &= check(array<PackedStruct, 2, true>::_size_bits() == 16, "packed struct width");
     ok &= check((uint64_t)logic<8>(dense_struct.bits(15, 8)) == (uint64_t)item, "packed struct write through");
+
+    // Exercise both proxy-to-value packing and proxy-to-proxy assignment above 64 bits.
+    // Either old path silently cleared packed bit 64 and the data field's top bit.
+    // Check the field value and its exact packed position after both conversions.
+    WidePackedStruct wide{};
+    wide.data = logic<64>(0xfc02721301320213ull);
+    wide.id = logic<4>(8);
+    wide.last = logic<1>(0);
+    wide.err = logic<2>(0);
+
+    array<logic<71>, 2, true> wide_logic_array{};
+    wide_logic_array[0] = wide.pack();
+    WidePackedStruct unpacked = cpphdl::unpack_value<WidePackedStruct>(cpphdl::pack_value<71>(wide_logic_array[0]));
+    ok &= check((uint64_t)unpacked.data == 0xfc02721301320213ull, "wide packed array ref pack_value keeps bit 63 of data field");
+    ok &= check((bool)unpacked.pack()[64], "wide packed array ref pack_value keeps packed bit 64");
+
+    array<WidePackedStruct, 2, true> wide_struct_array{};
+    wide_struct_array[0] = wide_logic_array[0];
+    WidePackedStruct assigned = wide_struct_array[0];
+    ok &= check((uint64_t)assigned.data == 0xfc02721301320213ull, "wide packed ref to packed struct ref assignment keeps bit 63 of data field");
+    ok &= check((bool)assigned.pack()[64], "wide packed ref to packed struct ref assignment keeps packed bit 64");
 
     return ok;
 }

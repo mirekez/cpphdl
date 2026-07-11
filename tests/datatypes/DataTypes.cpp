@@ -464,6 +464,18 @@ public:
         return !error;
     }
 
+    // The existing wide checker does not print 32-bit slice failures compactly.
+    // This regression needs the exact high-word value to diagnose truncation clearly.
+    // Compare and report fixed-width hexadecimal values without changing test control.
+    bool check32(const char* name, const logic<32>& got, uint32_t exp)
+    {
+        if ((uint32_t)got != exp) {
+            std::print("\n{} ERROR: got 0x{:08x}, expected 0x{:08x}\n", name, (uint32_t)got, exp);
+            error = true;
+        }
+        return !error;
+    }
+
     logic<512> expected_slice_widen()
     {
         logic<512> exp;
@@ -497,6 +509,10 @@ public:
         ++_system_clock;
 
         check("slice widen", read_slice_widen(), expected_slice_widen());
+        // The former sv_bits path could retain only the low host-converted portion.
+        // Selecting bits 63:32 verifies that slicing reads the requested source range.
+        // Use a high word with its sign bit set so accidental narrowing is visible.
+        check32("sv_bits high word", cpphdl::sv_bits<32>(logic<64>(0x9232011516139112ull), 63, 32), 0x92320115u);
 
         for (uint8_t i=0; i < 32; ++i) {
             seed = (uint8_t)(i * 7 + 3);

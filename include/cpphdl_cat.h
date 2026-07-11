@@ -17,7 +17,15 @@ struct reg;
 template<size_t... N>
 constexpr size_t SUM()
 {
-    return (N + ...);
+    // A zero-argument concatenation instantiated an invalid empty fold expression.
+    // Generic concatenation machinery may form this case while evaluating templates.
+    // Return the SystemVerilog-equivalent zero width before folding nonempty packs.
+    if constexpr (sizeof...(N) == 0) {
+        return 0;
+    }
+    else {
+        return (N + ...);
+    }
 }
 
 template<typename T>
@@ -53,16 +61,18 @@ template<typename T>
 constexpr size_t cat_width_v = cat_width<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
 template<size_t WIDTH>
-logic<WIDTH> cat_to_logic(const logic<WIDTH>& value)
+// Concatenations are used in constant expressions for widths and parameters.
+// Non-constexpr conversion helpers prevented otherwise constant cat expressions.
+// Keep conversion bit-accurate while making logic and integer paths constexpr.
+constexpr logic<WIDTH> cat_to_logic(const logic<WIDTH>& value)
 {
     return value;
 }
 
 template<size_t WIDTH>
-logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
+constexpr logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
 {
     logic<WIDTH> result{};
-    std::memset(result.bytes, 0, sizeof(result.bytes));
     uint64_t raw = value;
     for (size_t i = 0; i < WIDTH; ++i) {
         result.set(i, (raw >> i) & 1);
@@ -70,11 +80,11 @@ logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
     return result;
 }
 
-inline logic<8> cat_to_logic(const u1& value) { return cat_to_logic(u<8>((uint64_t)value)); }
-inline logic<8> cat_to_logic(const u8& value) { return cat_to_logic(u<8>((uint64_t)value)); }
-inline logic<16> cat_to_logic(const u16& value) { return cat_to_logic(u<16>((uint64_t)value)); }
-inline logic<32> cat_to_logic(const u32& value) { return cat_to_logic(u<32>((uint64_t)value)); }
-inline logic<64> cat_to_logic(const u64& value) { return cat_to_logic(u<64>((uint64_t)value)); }
+constexpr logic<8> cat_to_logic(const u1& value) { return cat_to_logic(u<8>((uint64_t)value)); }
+constexpr logic<8> cat_to_logic(const u8& value) { return cat_to_logic(u<8>((uint64_t)value)); }
+constexpr logic<16> cat_to_logic(const u16& value) { return cat_to_logic(u<16>((uint64_t)value)); }
+constexpr logic<32> cat_to_logic(const u32& value) { return cat_to_logic(u<32>((uint64_t)value)); }
+constexpr logic<64> cat_to_logic(const u64& value) { return cat_to_logic(u<64>((uint64_t)value)); }
 
 template<typename TYPE, size_t COUNT, bool PACKED>
 logic<array<TYPE, COUNT, PACKED>::_size_bits()> cat_to_logic(const array<TYPE, COUNT, PACKED>& value)
@@ -93,13 +103,16 @@ struct cat : logic<SUM<N...>()>
 {
     static constexpr size_t WIDTH = SUM<N...>();
 
-    void append(size_t& high_offset)
+    // cat construction previously depended on memset, memcpy, and runtime conversion.
+    // Those operations prevented valid SystemVerilog constant concatenations in C++.
+    // Use constexpr loops and logic's constexpr scalar conversion throughout the type.
+    constexpr void append(size_t& high_offset)
     {
         (void)high_offset;
     }
 
     template<size_t ARG_WIDTH, typename... Args>
-    void append(size_t& high_offset, const logic<ARG_WIDTH>& arg, const Args&... args)
+    constexpr void append(size_t& high_offset, const logic<ARG_WIDTH>& arg, const Args&... args)
     {
         high_offset -= ARG_WIDTH;
         for (size_t i = 0; i < ARG_WIDTH; ++i) {
@@ -109,29 +122,103 @@ struct cat : logic<SUM<N...>()>
     }
 
     template<typename... Args>
-    cat(const Args&... args)
+    constexpr cat(const Args&... args)
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
-        std::memset(this->bytes, 0, sizeof(this->bytes));
+        for (size_t i = 0; i < sizeof(this->bytes); ++i) {
+            this->bytes[i] = 0;
+        }
         size_t high_offset = WIDTH;
         append(high_offset, cat_to_logic(args)...);
     }
 
-    const cat& operator=(const cat& other)
+    constexpr const cat& operator=(const cat& other)
     {
-        std::memcpy(this->bytes, other.bytes, std::min(sizeof(this->bytes), sizeof(other.bytes)));
+        for (size_t i = 0; i < sizeof(this->bytes) && i < sizeof(other.bytes); ++i) {
+            this->bytes[i] = other.bytes[i];
+        }
         return *this;
     }
 
-    operator uint64_t() const
+    constexpr operator uint64_t() const
     {
-        return this->to_ullong();
+        return static_cast<const logic<WIDTH>*>(this)->to_uint64_constexpr();
+    }
+
+    template<typename T, typename std::enable_if_t<std::is_integral_v<T>, int> = 0>
+    constexpr explicit operator T() const
+    {
+        return static_cast<T>(static_cast<const logic<WIDTH>*>(this)->to_uint64_constexpr());
     }
 };
 
 template<typename... Args>
 cat(const Args&...) -> cat<cat_width_v<Args>...>;
+
+// Generated arithmetic compares concatenations directly with integral expressions.
+// Inherited logic conversions leave several built-in candidates and cause ambiguity.
+// Constrain explicit overloads to integral peers and compare the cat bit value.
+template<typename T>
+concept cat_integral = std::is_integral_v<std::remove_cv_t<std::remove_reference_t<T>>>;
+
+template<size_t... N, cat_integral T>
+constexpr bool operator==(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) == static_cast<uint64_t>(rhs); }
+template<cat_integral T, size_t... N>
+constexpr bool operator==(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) == static_cast<uint64_t>(rhs); }
+template<size_t... N, cat_integral T>
+constexpr bool operator!=(const cat<N...>& lhs, T rhs) { return !(lhs == rhs); }
+template<cat_integral T, size_t... N>
+constexpr bool operator!=(T lhs, const cat<N...>& rhs) { return !(lhs == rhs); }
+template<size_t... N, cat_integral T>
+constexpr bool operator<(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs); }
+template<cat_integral T, size_t... N>
+constexpr bool operator<(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs); }
+template<size_t... N, cat_integral T>
+constexpr bool operator<=(const cat<N...>& lhs, T rhs) { return !(rhs < lhs); }
+template<cat_integral T, size_t... N>
+constexpr bool operator<=(T lhs, const cat<N...>& rhs) { return !(rhs < lhs); }
+template<size_t... N, cat_integral T>
+constexpr bool operator>(const cat<N...>& lhs, T rhs) { return rhs < lhs; }
+template<cat_integral T, size_t... N>
+constexpr bool operator>(T lhs, const cat<N...>& rhs) { return rhs < lhs; }
+template<size_t... N, cat_integral T>
+constexpr bool operator>=(const cat<N...>& lhs, T rhs) { return !(lhs < rhs); }
+template<cat_integral T, size_t... N>
+constexpr bool operator>=(T lhs, const cat<N...>& rhs) { return !(lhs < rhs); }
+
+template<size_t... N>
+constexpr uint64_t operator-(const cat<N...>& value) { return -static_cast<uint64_t>(value); }
+
+// SystemVerilog permits concatenations as operands of ordinary integral operators.
+// C++ overload resolution cannot consistently choose through the logic base class.
+// Define symmetric cat operations that explicitly use the concatenated uint64_t value.
+#define CPPHDL_CAT_BINARY_OP(OP) \
+template<size_t... N, cat_integral T> \
+constexpr uint64_t operator OP(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); } \
+template<cat_integral T, size_t... N> \
+constexpr uint64_t operator OP(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); } \
+template<size_t... L, size_t... R> \
+constexpr uint64_t operator OP(const cat<L...>& lhs, const cat<R...>& rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); }
+
+CPPHDL_CAT_BINARY_OP(+)
+CPPHDL_CAT_BINARY_OP(-)
+CPPHDL_CAT_BINARY_OP(*)
+CPPHDL_CAT_BINARY_OP(/)
+CPPHDL_CAT_BINARY_OP(%)
+CPPHDL_CAT_BINARY_OP(&)
+CPPHDL_CAT_BINARY_OP(|)
+CPPHDL_CAT_BINARY_OP(^)
+#undef CPPHDL_CAT_BINARY_OP
+
+template<size_t... N, cat_integral T>
+constexpr uint64_t operator<<(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) << static_cast<unsigned>(rhs); }
+template<cat_integral T, size_t... N>
+constexpr uint64_t operator<<(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) << static_cast<unsigned>(static_cast<uint64_t>(rhs)); }
+template<size_t... N, cat_integral T>
+constexpr uint64_t operator>>(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) >> static_cast<unsigned>(rhs); }
+template<cat_integral T, size_t... N>
+constexpr uint64_t operator>>(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) >> static_cast<unsigned>(static_cast<uint64_t>(rhs)); }
 
 template<size_t... N>
 using Cat = cat<N...>;
