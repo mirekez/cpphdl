@@ -609,6 +609,18 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
     }
 }
 
+void updateArrayDim(cpphdl::Expr& concrete, const cpphdl::Expr& abstract)
+{
+    // Modules are visited as a concrete specialization first and then as their
+    // primary template. Keep the primary expression as the single dimension;
+    // updateExpr() would retain both concrete and symbolic array dimensions.
+    if (concrete.type == cpphdl::Expr::EXPR_NUM && abstract.type != cpphdl::Expr::EXPR_NUM) {
+        concrete = abstract;
+        return;
+    }
+    updateExpr(concrete, abstract);
+}
+
 cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st = nullptr);
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp);
 
@@ -1162,8 +1174,8 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             break;
         }
 
-        const TemplateArgument& typeArg = TSD->getTemplateArgs()[0];
-        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[1];
+        const TemplateArgument& sizeArg = TSD->getTemplateArgs()[0];
+        const TemplateArgument& typeArg = TSD->getTemplateArgs()[1];
         if (typeArg.getKind() != TemplateArgument::Type) {
             break;
         }
@@ -1200,6 +1212,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
 
     cpphdl::Expr expr = hlp.digQT(QT);
+    // Dependent cpphdl::array specializations are not ClassTemplateSpecializationDecls,
+    // so the type loop above cannot separate their dimensions from the element type.
+    // Normalize them here to the same representation used by concrete specializations.
+    while (expr.type == cpphdl::Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        array_dim.emplace_back(std::move(expr.sub[0]));
+        cpphdl::Expr element = std::move(expr.sub[1]);
+        expr = std::move(element);
+        ++cppArrayDims;
+    }
     const bool packedArray = functionRefCpphdlArray || cppArrayDims != 0;
     size_t packedArrayDims = cppArrayDims;
     if (functionRefCpphdlArray && packedArrayDims == 0) {
@@ -1229,7 +1250,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             updateExpr(field->expr, expr);
             for (size_t i=0; i < array_dim.size(); ++i) {
                 if (field->array.size() > i) {
-                    updateExpr(field->array[i], array_dim[i]);
+                    updateArrayDim(field->array[i], array_dim[i]);
                 }
             }
         } else
@@ -1248,23 +1269,54 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 DEBUG_EXPR(debugIndent, " updating " << field->name << " " << array_dim.size() << "/" << field->array.size() << "... ");
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
                 const clang::TemplateSpecializationType *TST = QT->getAs<clang::TemplateSpecializationType>();
                 if (TST && TST->getTemplateName().getAsTemplateDecl()) {
                     const clang::TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl();
                     const clang::TemplateParameterList *params = TD->getTemplateParameters();  // getting port names
-                    size_t i=0;
-                    for (const clang::NamedDecl *param : *params) {  // looking for parameters of Interface struct used in SubFields
-                        DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
-                        field->expr.traverseIf( [&](auto& e) {
-                                if (e.type == cpphdl::Expr::EXPR_VAR && e.value == param->getNameAsString() && expr.sub.size() > i) {
-                                    e = expr.sub[i];  // get parameter expression from Interface parameters if one of parameters names is used in fields of the Interface
+                    // Rebuild the flattened sub-port from the Interface primary template;
+                    // the existing field contains only the first concrete specialization.
+                    const auto* classTemplate = dyn_cast<ClassTemplateDecl>(TD);
+                    const CXXRecordDecl* primary = classTemplate ? classTemplate->getTemplatedDecl() : nullptr;
+                    if (primary) {
+                        for (Decl* D : primary->decls()) {
+                            auto* FD = dyn_cast<FieldDecl>(D);
+                            if (!FD) {
+                                continue;
+                            }
+                            std::string ending = FD->getNameAsString();
+                            if (str_ending(fieldName, "_out")) {
+                                if (str_ending(ending, "_out")) {
+                                    ending.replace(ending.length() - 4, 4, "_in");
+                                } else if (str_ending(ending, "_in")) {
+                                    ending.replace(ending.length() - 3, 3, "_out");
                                 }
-                                return false;
-                            });
-                        ++i;
+                            }
+                            if (field->name != fieldName + "__" + ending) {
+                                continue;
+                            }
+
+                            QualType subQT = FD->getType().getNonReferenceType();
+                            hlp.skipStdFunctionType(subQT);
+                            cpphdl::Expr abstractSub = hlp.digQT(subQT);
+                            size_t i = 0;
+                            for (const clang::NamedDecl *param : *params) {
+                                DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
+                                abstractSub.traverseIf([&](auto& e) {
+                                    if (e.type == cpphdl::Expr::EXPR_VAR
+                                        && e.value == param->getNameAsString()
+                                        && expr.sub.size() > i) {
+                                        e = expr.sub[i];
+                                    }
+                                    return false;
+                                });
+                                ++i;
+                            }
+                            updateExpr(field->expr, abstractSub);
+                            break;
+                        }
                     }
                 }
                 DEBUG_AST(debugIndent, "SubField: " << field->name << ": " << field->expr.debug(debugIndent)
@@ -1367,7 +1419,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 updateExpr(field->expr, expr);
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
             } else
@@ -1396,7 +1448,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 updateExpr(field->expr, expr);
                 for (size_t i=0; i < array_dim.size(); ++i) {
                     if (field->array.size() > i) {
-                        updateExpr(field->array[i], array_dim[i]);
+                        updateArrayDim(field->array[i], array_dim[i]);
                     }
                 }
             } else

@@ -32,6 +32,15 @@ struct is_array_packed_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>> : s
 };
 
 template<typename TYPE, typename = void>
+struct is_packed_array : std::false_type {};
+
+template<typename TYPE>
+struct is_packed_array<TYPE, std::void_t<typename TYPE::value_type,
+    decltype(TYPE::COUNT_VALUE), decltype(TYPE::PACKED)>> : std::bool_constant<TYPE::PACKED> {};
+
+struct array_packed_offset_t {};
+
+template<typename TYPE, typename = void>
 struct array_packed_size_bits
 {
     constexpr static size_t value = sizeof(TYPE) * 8;
@@ -42,6 +51,16 @@ struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cv_t<std::r
 {
     constexpr static size_t value = std::remove_cv_t<std::remove_reference_t<TYPE>>::_size_bits();
 };
+
+template<typename TYPE, typename = void>
+struct has_to_string_method : std::false_type {};
+
+// Array formatting delegates to an element's textual representation when the
+// element provides one, including nested cpphdl::array and logic objects.
+template<typename TYPE>
+struct has_to_string_method<TYPE,
+    std::void_t<decltype(std::declval<const TYPE&>().to_string())>>
+    : std::is_convertible<decltype(std::declval<const TYPE&>().to_string()), std::string> {};
 
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
@@ -96,6 +115,11 @@ struct array_packed_ref
     {
     }
 
+    array_packed_ref(logic<TOTAL_BITS>* parent, size_t first, array_packed_offset_t)
+        : ref(parent, first, first + ELEMENT_BITS - 1)
+    {
+    }
+
     template<typename T>
     array_packed_ref& operator=(const T& value)
     {
@@ -141,9 +165,19 @@ struct array_packed_ref
         return logic<ELEMENT_BITS>(ref).bits(last, first);
     }
 
-    logic_bits<TOTAL_BITS> operator[](size_t bitnum)
+    auto operator[](size_t index)
     {
-        return bits(bitnum, bitnum);
+        if constexpr (is_packed_array<TYPE>::value) {
+            // Nested packed indexing must keep referencing the outer bit store.
+            using element_type = typename TYPE::value_type;
+            constexpr size_t element_bits = array_packed_size_bits<element_type>::value;
+            cpphdl_assert(index < TYPE::COUNT_VALUE, "wrong nested packed array index");
+            return array_packed_ref<element_type, TOTAL_BITS, element_bits>(
+                ref.parent, ref.first + index * element_bits, array_packed_offset_t{});
+        }
+        else {
+            return bits(index, index);
+        }
     }
 
     logic<1> operator[](size_t bitnum) const
@@ -258,12 +292,24 @@ struct value_type_for_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>>
 template<typename T>
 using value_type_for_ref_t = typename detail::value_type_for_ref<T>::type;
 
-template<typename TYPE, size_t COUNT, bool PACKED>
+template<size_t COUNT, typename TYPE, bool PACKED>
 struct array;
 
-template<typename TYPE, size_t COUNT>
-struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>>
+template<size_t COUNT1, size_t COUNT2, typename TYPE, bool PACKED = false>
+using array2D = array<COUNT1, array<COUNT2, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT1, size_t COUNT2, size_t COUNT3, typename TYPE, bool PACKED = false>
+using array3D = array<COUNT1, array2D<COUNT2, COUNT3, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT1, size_t COUNT2, size_t COUNT3, size_t COUNT4, typename TYPE, bool PACKED = false>
+using array4D = array<COUNT1, array3D<COUNT2, COUNT3, COUNT4, TYPE, PACKED>, PACKED>;
+
+template<size_t COUNT, typename TYPE>
+struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
 {
+    using BaseOps = bitops<array<COUNT, TYPE, false>>;
+    using value_type = TYPE;
+    constexpr static size_t COUNT_VALUE = COUNT;
     constexpr static size_t ELEMENT_BITS = sizeof(TYPE) * 8;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;
@@ -277,7 +323,7 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
 
     array() = default;
 
-    array(const array<TYPE,COUNT,false>& other) = default;
+    array(const array<COUNT, TYPE, false>& other) = default;
 
     // Generated unpacked-array literals use C++ initializer-list construction.
     // The previous generic constructor could not express ordered element assignment.
@@ -288,9 +334,12 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
     }
 
     template<typename T>
-    array(const T& other) : bitops<logic<SIZE_BITS>>(other) {}
+    array(const T& other)
+    {
+        *this = other;
+    }
 
-    array& operator=(const array<TYPE,COUNT,false>& other) = default;
+    array& operator=(const array<COUNT, TYPE, false>& other) = default;
 
     array& operator=(std::initializer_list<TYPE> init)
     {
@@ -329,7 +378,7 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
     TYPE& operator[](std::size_t i) { return data[i]; }
     const TYPE& operator[](std::size_t i) const { return data[i]; }
 
-    array<TYPE, COUNT, true> pack() const;
+    array<COUNT, TYPE, true> pack() const;
 
     logic_bits<SIZE_BITS> bits(size_t last, size_t first)
     {
@@ -346,23 +395,23 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
         return *(const logic<SIZE_BITS>*)this;
     }
 
-    using bitops<logic<SIZE_BITS>>::operator=;
-    using bitops<logic<SIZE_BITS>>::operator&;
-    using bitops<logic<SIZE_BITS>>::operator|;
-    using bitops<logic<SIZE_BITS>>::operator^;
-    using bitops<logic<SIZE_BITS>>::operator~;
-    using bitops<logic<SIZE_BITS>>::operator<<;
-    using bitops<logic<SIZE_BITS>>::operator>>;
-    using bitops<logic<SIZE_BITS>>::operator+;
-    using bitops<logic<SIZE_BITS>>::operator-;
-    using bitops<logic<SIZE_BITS>>::operator==;
-    using bitops<logic<SIZE_BITS>>::operator!=;
-    using bitops<logic<SIZE_BITS>>::operator<;
-    using bitops<logic<SIZE_BITS>>::operator<=;
-    using bitops<logic<SIZE_BITS>>::operator>;
-    using bitops<logic<SIZE_BITS>>::operator>=;
-    using bitops<logic<SIZE_BITS>>::to_ullong;
-    using bitops<logic<SIZE_BITS>>::to_hex;
+    using BaseOps::operator=;
+    using BaseOps::operator&;
+    using BaseOps::operator|;
+    using BaseOps::operator^;
+    using BaseOps::operator~;
+    using BaseOps::operator<<;
+    using BaseOps::operator>>;
+    using BaseOps::operator+;
+    using BaseOps::operator-;
+    using BaseOps::operator==;
+    using BaseOps::operator!=;
+    using BaseOps::operator<;
+    using BaseOps::operator<=;
+    using BaseOps::operator>;
+    using BaseOps::operator>=;
+    using BaseOps::to_ullong;
+    using BaseOps::to_hex;
 
     array& operator<<=(size_t shift)
     {
@@ -389,21 +438,28 @@ struct array<TYPE, COUNT, false> : public bitops<logic<COUNT * sizeof(TYPE) * 8>
         return (array&)(*this = *this ^ other);
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
         std::string str;
         for (int i=COUNT-1; i >= 0; --i) {
-            char buf[10] = {};
-            std::snprintf(buf, 10, "%.02lx", (uint64_t)data[i]);
-            str += buf;
+            if constexpr (detail::has_to_string_method<TYPE>::value) {
+                str += data[i].to_string();
+            }
+            else {
+                char buf[10] = {};
+                std::snprintf(buf, sizeof(buf), "%.02lx", (uint64_t)data[i]);
+                str += buf;
+            }
         }
         return str;
     }
 };
 
-template<typename TYPE, size_t COUNT>
-struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
+template<size_t COUNT, typename TYPE>
+struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_packed_size_bits<TYPE>::value>>
 {
+    using value_type = TYPE;
+    constexpr static size_t COUNT_VALUE = COUNT;
     constexpr static size_t ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
     constexpr static size_t SIZE_BITS = COUNT * ELEMENT_BITS;
     constexpr static size_t SIZE = (SIZE_BITS + 7) / 8;
@@ -417,7 +473,7 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
     }
 
     array() = default;
-    array(const array<TYPE, COUNT, true>& other) = default;
+    array(const array<COUNT, TYPE, true>& other) = default;
 
     // Packed-array literals also require ordered element initialization.
     // Direct list construction was unavailable and selected unsuitable conversions.
@@ -433,7 +489,7 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
         data = other;
     }
 
-    array& operator=(const array<TYPE, COUNT, true>& other) = default;
+    array& operator=(const array<COUNT, TYPE, true>& other) = default;
 
     array& operator=(std::initializer_list<TYPE> init)
     {
@@ -533,19 +589,26 @@ struct array<TYPE, COUNT, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_ullong();
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
+        if constexpr (detail::has_to_string_method<TYPE>::value) {
+            std::string str;
+            for (int i = COUNT - 1; i >= 0; --i) {
+                str += (*this)[i].to_string();
+            }
+            return str;
+        }
         return data.to_hex();
     }
 };
 
 template<size_t COUNT, bool PACKED>
-struct array<void,COUNT,PACKED> {};
+struct array<COUNT, void, PACKED> {};
 
-template<typename TYPE, size_t COUNT>
-array<TYPE, COUNT, true> array<TYPE, COUNT, false>::pack() const
+template<size_t COUNT, typename TYPE>
+array<COUNT, TYPE, true> array<COUNT, TYPE, false>::pack() const
 {
-    array<TYPE, COUNT, true> packed;
+    array<COUNT, TYPE, true> packed;
     for (size_t i = 0; i < COUNT; ++i) {
         packed[i] = data[i];
     }

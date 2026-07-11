@@ -80,6 +80,25 @@ std::string templateWidth(const std::string& value, const char* prefix)
     return value.substr(pos, end - pos);
 }
 
+bool exprIsZeroInitializer(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_NONE) {
+        return true;
+    }
+    if (expr.type == Expr::EXPR_NUM) {
+        return expr.value == "0" || expr.value == "'h0" || expr.value == "false";
+    }
+    if (expr.type == Expr::EXPR_INIT) {
+        for (const auto& child : expr.sub) {
+            if (!exprIsZeroInitializer(child)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 size_t numericWidth(const std::string& width)
 {
     if (width.empty()) {
@@ -286,8 +305,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             if (value == "cpphdl_array") {
                 ASSERT(sub.size() >= 2);
-                std::string str = sub[0].str("", suffix + "[" + sub[1].str() + "-1:0]");  // also calc size
-                declSize = sub[0].declSize * atoi(sub[1].str().c_str());
+                std::string str = sub[1].str("", suffix + "[" + sub[0].str() + "-1:0]");  // also calc size
+                declSize = sub[1].declSize * atoi(sub[0].str().c_str());
                 return indent_str + prefix + str;
             }
             if (value.find("cpphdl_") == 0 && sub.size()) {
@@ -397,7 +416,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 return indent_str + cpphdl_comb_func_signal_name(value);
             }
             std::string func = value;
-            if ((flags&FLAG_ASSIGN) && func != "clog2") {  // no calls in assigns, and how about clog2
+            const bool generatedFunction = currModule && std::any_of(
+                currModule->methods.begin(), currModule->methods.end(), [&](const Method& method) {
+                    return method.name == func && !method.ret.empty();
+                });
+            // Continuous assignments may call generated SV functions. Keep
+            // suppressing unknown C++ calls and generated tasks, which cannot
+            // legally provide a continuous-assignment value.
+            if ((flags&FLAG_ASSIGN) && func != "clog2" && !generatedFunction) {
                 return "";
             }
             if (func == "clog2") {
@@ -555,6 +581,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "_assign" || value == "_strobe" || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
                 return "";
             }
+            if ((flags&FLAG_MODULE_INSTANCE_METHOD)) {
+                std::string call = sub[0].str() + "." + escapeIdentifier(value) + "(";
+                for (size_t i = 1; i < sub.size(); ++i) {
+                    if (sub[i].type != EXPR_NONE) {
+                        if (call.back() != '(') {
+                            call += ", ";
+                        }
+                        call += sub[i].str();
+                    }
+                }
+                return indent_str + prefix + call + ")" + suffix;
+            }
 //            if ((value == "_work" || value == "_work_neg" || str_ending(value, "____work") || str_ending(value, "____work_neg")) && sub[0].value != "_this") {  // never need this functions except third party class work
 //                return "";
 //            }
@@ -711,8 +749,16 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + base.str() + suffix + "[(" + expr.str() + ")*8" + " +: (" + value + ")]";  // currently supporting dereference shift only for char*
         }
         case EXPR_CAST:
+        {
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
+            auto sizedOperand = [&](const std::string& width) {
+                const std::string operand = sub[0].str(prefix, suffix);
+                if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0 && numericWidth(width)) {
+                    return width + operand;
+                }
+                return width + "'(" + operand + ")";
+            };
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);
@@ -753,7 +799,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             } else
             if (value.find("cpphdl_i") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_i");
@@ -761,19 +807,20 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "signed'(" + sizedOperand(width) + ")";
             }
             if (value.find("u<") == 0) {
                 std::string width = templateWidth(value, "u<");
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             } else
             if (value.find("i<") == 0) {
                 std::string width = templateWidth(value, "i<");
                 declSize = numericWidth(width);
-                return indent_str + "signed'(" + width + "'(" + sub[0].str(prefix, suffix) + "))";
+                return indent_str + "signed'(" + sizedOperand(width) + ")";
             }
             return indent_str + /*typeToSV(value) + "'(" + */sub[0].str(prefix, suffix);// + ")";  // cast only simple types
+        }
         case EXPR_PAREN:
             ASSERT(sub.size()==1);
             if (sub[0].type == EXPR_VAR || sub[0].type == EXPR_MEMBER || (sub[0].type == EXPR_UNARY && sub[0].value == "*")) {
@@ -782,6 +829,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
             ASSERT(sub.size()>=1);
+            if (exprIsZeroInitializer(*this)) {
+                return indent_str + "0";
+            }
             if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
                 bool first = true;
                 std::string ret;

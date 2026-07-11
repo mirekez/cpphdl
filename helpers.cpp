@@ -45,6 +45,100 @@ static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordD
     return current->isDerivedFrom(owner);
 }
 
+static bool statementAlwaysReturns(const Stmt* statement);
+
+// A nested switch exits its enclosing case when every represented case returns.
+// Exhaustiveness is intentionally not checked here; the switch converter already
+// treats a final case without default as complete for fallthrough diagnostics.
+static bool switchCasesAlwaysReturn(const SwitchStmt* switchStmt)
+{
+    const auto* compound = dyn_cast_or_null<CompoundStmt>(switchStmt->getBody());
+    if (!compound) {
+        return false;
+    }
+
+    bool sawCase = false;
+    bool currentCaseReturns = false;
+    for (const Stmt* statement : compound->body()) {
+        const Stmt* caseBody = nullptr;
+        if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
+            caseBody = caseStmt->getSubStmt();
+        } else if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
+            caseBody = defaultStmt->getSubStmt();
+        }
+
+        if (caseBody) {
+            if (sawCase && !currentCaseReturns) {
+                return false;
+            }
+            sawCase = true;
+            currentCaseReturns = statementAlwaysReturns(caseBody);
+        } else if (sawCase && !currentCaseReturns && statementAlwaysReturns(statement)) {
+            currentCaseReturns = true;
+        }
+    }
+    return sawCase && currentCaseReturns;
+}
+
+// Report a case as returning only when every control-flow path through the
+// statement exits the current function. This recognizes Clang's nested AST for
+// `case X: return value;` and for switches used directly as a case body.
+static bool statementAlwaysReturns(const Stmt* statement)
+{
+    if (!statement) {
+        return false;
+    }
+    if (isa<ReturnStmt>(statement)) {
+        return true;
+    }
+    if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
+        for (const Stmt* child : compound->body()) {
+            if (statementAlwaysReturns(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
+        return ifStmt->getElse() && statementAlwaysReturns(ifStmt->getThen()) &&
+            statementAlwaysReturns(ifStmt->getElse());
+    }
+    if (const auto* switchStmt = dyn_cast<SwitchStmt>(statement)) {
+        return switchCasesAlwaysReturn(switchStmt);
+    }
+    if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
+        return statementAlwaysReturns(caseStmt->getSubStmt());
+    }
+    if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
+        return statementAlwaysReturns(defaultStmt->getSubStmt());
+    }
+    return false;
+}
+
+// A direct break terminates the current switch case but does not return from
+// the function, so keep it separate from statementAlwaysReturns().
+static bool statementTerminatesSwitchCase(const Stmt* statement)
+{
+    if (!statement) {
+        return false;
+    }
+    if (isa<BreakStmt>(statement) || statementAlwaysReturns(statement)) {
+        return true;
+    }
+    if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
+        for (const Stmt* child : compound->body()) {
+            if (statementTerminatesSwitchCase(child)) {
+                return true;
+            }
+        }
+    }
+    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
+        return ifStmt->getElse() && statementTerminatesSwitchCase(ifStmt->getThen()) &&
+            statementTerminatesSwitchCase(ifStmt->getElse());
+    }
+    return false;
+}
+
 static bool cpphdlRecordHasValueFieldsImpl(const CXXRecordDecl* RD, std::unordered_set<const CXXRecordDecl*>& visited)
 {
     if (!RD) {
@@ -488,15 +582,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         cpphdl::Expr expr = cpphdl::Expr{"switch", cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
 
         cpphdl::Expr body;
-        bool wasBreak = true;
+        bool caseOpen = false;
+        bool caseTerminated = true;
         for (const Stmt *S : dyn_cast<CompoundStmt>(SS->getBody())->body()) {
             if (const auto* CS = dyn_cast<CaseStmt>(S)) {
-                if (!wasBreak) {
+                if (caseOpen) {
                     expr.sub.emplace_back(std::move(body));
-
-                    const SourceManager &SM = ctx->getSourceManager();
-                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    if (!caseTerminated) {
+                        const SourceManager &SM = ctx->getSourceManager();
+                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    }
                 }
 
                 body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // first place we call str() in Clang part (to make a string value)
@@ -504,33 +600,56 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // first place we call str() in Clang part (to make a string value)
                 }
                 body.sub.emplace_back(exprToExpr(CS->getSubStmt()));
-                wasBreak = false;
-            } else
-            if (dyn_cast<DefaultStmt>(S)) {
-                if (!wasBreak) {
+                caseOpen = true;
+                caseTerminated = statementTerminatesSwitchCase(CS->getSubStmt());
+                if (caseTerminated) {
                     expr.sub.emplace_back(std::move(body));
-
-                    const SourceManager &SM = ctx->getSourceManager();
-                    PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                    std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    caseOpen = false;
+                }
+            } else
+            if (const auto* DS = dyn_cast<DefaultStmt>(S)) {
+                if (caseOpen) {
+                    expr.sub.emplace_back(std::move(body));
+                    if (!caseTerminated) {
+                        const SourceManager &SM = ctx->getSourceManager();
+                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
+                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
+                    }
                 }
                 body = cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY};
-                wasBreak = false;
+                // Clang stores an inline default body inside DefaultStmt just as
+                // it does for CaseStmt, so preserve it in the generated case.
+                body.sub.emplace_back(exprToExpr(DS->getSubStmt()));
+                caseOpen = true;
+                caseTerminated = statementTerminatesSwitchCase(DS->getSubStmt());
+                if (caseTerminated) {
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
             } else
             if (dyn_cast<BreakStmt>(S)) {
-                expr.sub.emplace_back(std::move(body));
-                wasBreak = true;
+                if (caseOpen) {
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
+                caseTerminated = true;
             } else
             if (dyn_cast<ReturnStmt>(S)) {
-                body.sub.emplace_back(exprToExpr(S));
-                expr.sub.emplace_back(std::move(body));
-                wasBreak = true;
+                if (caseOpen) {
+                    body.sub.emplace_back(exprToExpr(S));
+                    expr.sub.emplace_back(std::move(body));
+                    caseOpen = false;
+                }
+                caseTerminated = true;
             }
             else {
-                body.sub.emplace_back(exprToExpr(S));
+                if (caseOpen) {
+                    body.sub.emplace_back(exprToExpr(S));
+                    caseTerminated = statementTerminatesSwitchCase(S);
+                }
             }
         }
-        if (!wasBreak) {
+        if (caseOpen) {
             expr.sub.emplace_back(std::move(body));
         }
 
@@ -591,7 +710,19 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                     expr.sub.emplace_back(digQT(QT));
                     if (VD->getInit()) {
-                        expr.sub.emplace_back(exprToExpr(VD->getInit()));
+                        const clang::Expr* init = VD->getInit()->IgnoreImplicit();
+                        const auto* constructor = dyn_cast<CXXConstructExpr>(init);
+                        // Clang represents `u<4> value;` and other class-type
+                        // declarations as a zero-argument callinit even though
+                        // the source has no initializer. Do not turn that
+                        // implicit constructor node into an RTL zero assignment.
+                        // Explicit `{}` is ListInit and remains a real zeroing
+                        // assignment, as required by its C++ semantics.
+                        const bool implicitDefaultInit = VD->getInitStyle() == VarDecl::CallInit
+                            && constructor && constructor->getNumArgs() == 0;
+                        if (!implicitDefaultInit) {
+                            expr.sub.emplace_back(exprToExpr(VD->getInit()));
+                        }
                     }
 
                     CRD = resolveCXXRecordDecl(QT);
@@ -717,6 +848,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             str_replace(sname, "::", "_");
             // extracting parameters of the template
             followSpecialization(owner, sname);
+            auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+            if (ModuleClass && owner->isDerivedFrom(ModuleClass)) {
+                // Static methods use DeclRefExpr for unqualified constants.
+                // Request the module package here just as MemberExpr does for
+                // explicitly qualified external constant access.
+                currProject->modulePackages.insert(sname);
+                if (std::find_if(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp){ return imp.name == sname; }) == mod->imports.end()) {
+                    mod->imports.emplace_back(sname);
+                }
+            }
             name = sname + "_pkg::" + name;
         } else
         if (owner && Var && mod->origName.find(owner->getQualifiedNameAsString()) != 0 && owner->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
@@ -756,7 +898,19 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         cpphdl::Expr call = cpphdl::Expr{(MCE->getDirectCallee()?MCE->getDirectCallee()->getNameAsString():""), cpphdl::Expr::EXPR_MEMBERCALL};
 
         bool notThis = false;
+        bool moduleInstanceMethod = false;
         if (auto* ME = dyn_cast<MemberExpr>(MCE->getCallee())) {
+            const clang::Expr* base = ME->getBase()->IgnoreParenImpCasts();
+            if (const auto* baseMember = dyn_cast<MemberExpr>(base)) {
+                if (const auto* field = dyn_cast<FieldDecl>(baseMember->getMemberDecl())) {
+                    auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+                    CXXRecordDecl* fieldType = resolveCXXRecordDecl(field->getType().getNonReferenceType());
+                    const std::string methodName = MCE->getDirectCallee()
+                        ? MCE->getDirectCallee()->getNameAsString() : "";
+                    moduleInstanceMethod = ModuleClass && fieldType && fieldType->isDerivedFrom(ModuleClass)
+                        && methodName != "_work" && methodName != "_assign" && methodName != "_strobe";
+                }
+            }
             auto expr = exprToExpr(ME->getBase());
 
 //            if (auto* DRE = dyn_cast<DeclRefExpr>(ME->getBase())) {
@@ -792,7 +946,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             MD = dyn_cast_or_null<CXXMethodDecl>(MCE->getDirectCallee());
         }
         if (MD) {
-            if (call.sub.size()  // we need not call members - they are accessible through ports wires
+            if (moduleInstanceMethod) {
+                // Keep a real function call on the generated module instance.
+                // Its function body stays in the child module and can use the
+                // child's parameters and state without an invalid _this type.
+                call.flags |= cpphdl::Expr::FLAG_MODULE_INSTANCE_METHOD;
+            }
+            else if (call.sub.size()  // we need not call members - they are accessible through ports wires
                 && std::find_if(mod->members.begin(), mod->members.end(), [&](auto& member){ return member.name == call.sub[0].value; }) == mod->members.end()) {
                 auto newName = putMethod(MD, *this, notThis);
                 DEBUG_AST1(" Called method( " << MD->getQualifiedNameAsString() << " => " << newName << ")");
@@ -836,6 +996,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             str_replace(sname, "::", "_");
             // extracting parameters of the template
             followSpecialization(CRD, sname);
+            auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+            if (ModuleClass && CRD->isDerivedFrom(ModuleClass)) {
+                // A Module is not a struct package by default. Record the
+                // package demand created by this external constexpr access and
+                // import it in the consumer so SV build tools see the dependency.
+                currProject->modulePackages.insert(sname);
+                if (std::find_if(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp){ return imp.name == sname; }) == mod->imports.end()) {
+                    mod->imports.emplace_back(sname);
+                }
+            }
             name = sname + "_pkg::" + name;
             ignoreBase = true;
         } else

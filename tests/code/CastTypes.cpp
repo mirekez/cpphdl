@@ -104,7 +104,7 @@ static T verilator_read(const void* ptr)
 
 static bool check_generated_sv()
 {
-    std::filesystem::path sv_path = "generated/CastTypes.sv";
+    std::filesystem::path sv_path = VerilatorGeneratedDir(__FILE__, "CastTypes") / "CastTypes.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(sv_path)) {
         sv_path = "CastTypes_8/CastTypes.sv";
@@ -285,12 +285,22 @@ int main(int argc, char** argv)
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "CastTypes", {"Predef_pkg"}, {"../../../../include"}, 8);
-        ok &= check_generated_sv();
+        if (!VerilatorCompile(__FILE__, "CastTypes", {"Predef_pkg"},
+                {(CpphdlSourceRootFrom(__FILE__) / "include").string()}, 8)) {
+            std::cout << "ERROR: CastTypes Verilator compile failed\n";
+            ok = false;
+        }
+        if (!check_generated_sv()) {
+            std::cout << "ERROR: CastTypes generated SystemVerilog check failed\n";
+            ok = false;
+        }
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        ok = ok && std::system("CastTypes_8/obj_dir/VCastTypes") == 0;
+        if (ok && std::system("CastTypes_8/obj_dir/VCastTypes") != 0) {
+            std::cout << "ERROR: CastTypes Verilator executable failed\n";
+            ok = false;
+        }
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

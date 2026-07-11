@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-PREFIX="${SAIL_RISCV_PREFIX:-${RISCV_HOME:-/home/me/riscv}}"
+PREFIX="${SAIL_RISCV_PREFIX:-${RISCV_HOME:-${HOME}/riscv}}"
 REPO_DIR="${SAIL_RISCV_REPO_DIR:-${SCRIPT_DIR}/sail-riscv}"
 REPO_URL="${SAIL_RISCV_REPO_URL:-https://github.com/riscv/sail-riscv.git}"
 RISCV_ARCH_TEST_DIR="${RISCV_ARCH_TEST_DIR:-${SCRIPT_DIR}/riscv-arch-test}"

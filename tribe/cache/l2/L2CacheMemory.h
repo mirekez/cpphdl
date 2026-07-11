@@ -33,272 +33,168 @@ protected:
     using Base::evict_beat_reg;
     using Base::evict_tag_reg;
     using Base::evict_line_reg;
-    using Base::req_set_comb_func;
-    using Base::req_beat_comb_func;
-    using Base::req_addr_in_memory_comb_func;
+    using Base::request_geometry_comb_func;
 
-    _LAZY_COMB(axi_araddr_full_comb, uint32_t)
-        uint32_t line_addr;
-        line_addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)fill_beat_reg * PORT_BYTES);
+    // Build uncached write data and byte enables together because both use the
+    // same request byte offset and AXI word lane.
+    _LAZY_COMB(io_write_payload_comb, L2IoWritePayloadComb)
+        uint32_t byte;
+        uint32_t word;
+        size_t i;
+        io_write_payload_comb = {};
+        if (req_reg.from_slave) {
+            io_write_payload_comb.data = req_reg.write_beat;
+            io_write_payload_comb.strobe = req_reg.write_strobe;
+            return io_write_payload_comb;
+        }
+        byte = (uint32_t)req_reg.addr & 3u;
+        word = ((uint32_t)req_reg.addr % PORT_BYTES) / 4u;
+        // CPU stores keep the store value in low bits and carry the byte address separately.
+        // Align data and strobes to the same AXI beat lanes in this one operation.
+        io_write_payload_comb.data.bits(word * 32 + 31, word * 32) =
+            (uint32_t)req_reg.write_data << (byte * 8u);
+        for (i = 0; i < 4; ++i) {
+            if ((req_reg.write_mask & (1u << i)) != 0 && word * 4u + byte + i < PORT_BYTES) {
+                io_write_payload_comb.strobe[word * 4u + byte + i] = 1;
+            }
+        }
+        return io_write_payload_comb;
+    }
+
+    // Compute both read and write AXI address routes in one place so later layers consume route fields instead of scalar AXI combs.
+    _LAZY_COMB(axi_route_comb, L2AxiRouteComb)
+        size_t i;
+        uint64_t base;
+        uint32_t ar_total_local;
+        uint32_t ar_region_base;
+        uint32_t aw_total_local;
+        uint32_t aw_region_base;
+
+        axi_route_comb.ar_full_addr =
+            ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)fill_beat_reg * PORT_BYTES);
         if (state_reg == ST_IO_AR || state_reg == ST_IO_R) {
-            line_addr = req_reg.addr;
+            axi_route_comb.ar_full_addr = req_reg.addr;
         }
         if (state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_R0) {
-            line_addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + ((uint32_t)req_beat_comb_func() * PORT_BYTES);
+            axi_route_comb.ar_full_addr =
+                ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) +
+                    ((uint32_t)request_geometry_comb_func().beat * PORT_BYTES);
         }
         if (state_reg == ST_CROSS_AR1 || state_reg == ST_CROSS_R1) {
-            line_addr = ((uint32_t)req_reg.addr & ~(uint32_t)(PORT_BYTES - 1)) + PORT_BYTES;
+            axi_route_comb.ar_full_addr = ((uint32_t)req_reg.addr & ~(uint32_t)(PORT_BYTES - 1)) + PORT_BYTES;
         }
-        return axi_araddr_full_comb = line_addr;
-    }
-
-    // AXI read address relative to memory_base_in before memory-port selection.
-    _LAZY_COMB(axi_araddr_total_local_comb, uint32_t)
-        return axi_araddr_total_local_comb = axi_araddr_full_comb_func() - memory_base_in();
-    }
-
-    // Memory/device port selected by cumulative region sizes for AXI reads.
-    _LAZY_COMB(axi_ar_sel_comb, u<clog2(MEM_PORTS)>)
-        size_t i;
-        uint64_t base;
-        uint64_t local;
-        local = axi_araddr_total_local_comb_func();
+        ar_total_local = (uint32_t)axi_route_comb.ar_full_addr - memory_base_in();
         base = 0;
-        axi_ar_sel_comb = MEM_PORTS - 1;
+        ar_region_base = 0;
+        axi_route_comb.ar_sel = MEM_PORTS - 1;
         for (i = 0; i < MEM_PORTS; ++i) {
-            if (local >= base && local < base + mem_region_size_in[i]()) {
-                axi_ar_sel_comb = i;
+            if ((uint64_t)ar_total_local >= base && (uint64_t)ar_total_local < base + mem_region_size_in[i]()) {
+                axi_route_comb.ar_sel = i;
+                ar_region_base = (uint32_t)base;
             }
             base += mem_region_size_in[i]();
         }
-        return axi_ar_sel_comb;
-    }
+        axi_route_comb.ar_local_addr = (uint32_t)(((uint64_t)(ar_total_local - ar_region_base)) & MEM_ADDR_MASK64);
 
-    // Region base offset inside the full memory window for the selected read port.
-    _LAZY_COMB(axi_ar_region_base_comb, uint32_t)
-        size_t i;
-        uint64_t base;
-        base = 0;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (i < axi_ar_sel_comb_func()) {
-                base += mem_region_size_in[i]();
-            }
-        }
-        return axi_ar_region_base_comb = base;
-    }
-
-    // Local AXI read address presented to the selected memory/device port.
-    _LAZY_COMB(axi_araddr_local_comb, u<MEM_ADDR_BITS>)
-        // Ports are now disjoint cumulative regions, not interleaved banks, so
-        // keep the full byte address inside the selected region.
-        return axi_araddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)(axi_araddr_total_local_comb_func() - axi_ar_region_base_comb_func()) & MEM_ADDR_MASK64);
-    }
-
-    // AXI read address valid for normal fills and cross-line read beats.
-    _LAZY_COMB(axi_arvalid_comb, bool)
-        return axi_arvalid_comb = req_addr_in_memory_comb_func() &&
-            (state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1 || state_reg == ST_IO_AR);
-    }
-
-    // AXI read data ready while waiting for a normal fill, cross-line beat, or uncached IO read.
-    _LAZY_COMB(axi_rready_comb, bool)
-        return axi_rready_comb = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1 || state_reg == ST_IO_R;
-    }
-
-    // Ready from the currently selected AXI read-address port.
-    _LAZY_COMB(axi_arready_selected_comb, bool)
-        size_t i;
-        axi_arready_selected_comb = false;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_ar_sel_comb_func() == i) {
-                axi_arready_selected_comb = axi_out[i].arready_out();
-            }
-        }
-        return axi_arready_selected_comb;
-    }
-
-    // Valid from the currently selected AXI read-data port.
-    _LAZY_COMB(axi_rvalid_selected_comb, bool)
-        size_t i;
-        axi_rvalid_selected_comb = false;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_ar_sel_comb_func() == i) {
-                axi_rvalid_selected_comb = axi_out[i].rvalid_out();
-            }
-        }
-        return axi_rvalid_selected_comb;
-    }
-
-    // Read data from the currently selected AXI memory port.
-    _LAZY_COMB(axi_rdata_selected_comb, logic<PORT_BITWIDTH>)
-        size_t i;
-        axi_rdata_selected_comb = 0;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_ar_sel_comb_func() == i) {
-                axi_rdata_selected_comb = axi_out[i].rdata_out();
-            }
-        }
-        return axi_rdata_selected_comb;
-    }
-
-    // Way to evict or refill, depending on whether lookup has already chosen fill_way_reg.
-    _LAZY_COMB(evict_way_comb, u<(WAYS <= 1 ? 1 : clog2(WAYS))>)
-        return evict_way_comb = (state_reg == ST_LOOKUP) ? victim_reg : fill_way_reg;
-    }
-
-    // Valid bit of the candidate eviction way.
-    _LAZY_COMB(evict_valid_comb, bool)
-        bool valid;
-        size_t i;
-        valid = false;
-        for (i = 0; i < WAYS; ++i) {
-            if (evict_way_comb_func() == i) {
-                valid = (bool)tag_q_reg[i][TAG_BITS + 1];
-            }
-        }
-        return evict_valid_comb = valid;
-    }
-
-    // Dirty bit of the candidate eviction way.
-    _LAZY_COMB(evict_dirty_comb, bool)
-        bool dirty;
-        size_t i;
-        dirty = false;
-        for (i = 0; i < WAYS; ++i) {
-            if (evict_way_comb_func() == i) {
-                dirty = (bool)tag_q_reg[i][TAG_BITS];
-            }
-        }
-        return evict_dirty_comb = dirty;
-    }
-
-    // Tag of the candidate eviction way, used to reconstruct the writeback address.
-    _LAZY_COMB(evict_tag_comb, u<ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE)>)
-        size_t i;
-        evict_tag_comb = 0;
-        for (i = 0; i < WAYS; ++i) {
-            if (evict_way_comb_func() == i) {
-                evict_tag_comb = (uint64_t)tag_q_reg[i].bits(TAG_BITS - 1, 0);
-            }
-        }
-        return evict_tag_comb;
-    }
-
-    // Full AXI writeback address for the current evicted PORT_BITWIDTH beat or MMIO store.
-    _LAZY_COMB(axi_awaddr_full_comb, uint32_t)
-        uint32_t addr;
-        addr = (((uint32_t)evict_tag_reg << (SET_BITS + LINE_BITS)) |
-            ((uint32_t)req_set_comb_func() << LINE_BITS)) + ((uint32_t)evict_beat_reg * PORT_BYTES);
+        axi_route_comb.aw_full_addr = (((uint32_t)evict_tag_reg << (SET_BITS + LINE_BITS)) |
+            ((uint32_t)request_geometry_comb_func().set << LINE_BITS)) +
+                ((uint32_t)evict_beat_reg * PORT_BYTES);
         if (state_reg == ST_IO_AW || state_reg == ST_IO_W || state_reg == ST_IO_B) {
-            addr = req_reg.addr;
+            axi_route_comb.aw_full_addr = req_reg.addr;
         }
-        return axi_awaddr_full_comb = addr;
-    }
-
-    // AXI writeback address relative to memory_base_in before memory-port selection.
-    _LAZY_COMB(axi_awaddr_total_local_comb, uint32_t)
-        return axi_awaddr_total_local_comb = axi_awaddr_full_comb_func() - memory_base_in();
-    }
-
-    // Memory/device port selected by cumulative region sizes for AXI writes.
-    _LAZY_COMB(axi_aw_sel_comb, u<clog2(MEM_PORTS)>)
-        size_t i;
-        uint64_t base;
-        uint64_t local;
-        local = axi_awaddr_total_local_comb_func();
+        aw_total_local = (uint32_t)axi_route_comb.aw_full_addr - memory_base_in();
         base = 0;
-        axi_aw_sel_comb = MEM_PORTS - 1;
+        aw_region_base = 0;
+        axi_route_comb.aw_sel = MEM_PORTS - 1;
         for (i = 0; i < MEM_PORTS; ++i) {
-            if (local >= base && local < base + mem_region_size_in[i]()) {
-                axi_aw_sel_comb = i;
+            if ((uint64_t)aw_total_local >= base && (uint64_t)aw_total_local < base + mem_region_size_in[i]()) {
+                axi_route_comb.aw_sel = i;
+                aw_region_base = (uint32_t)base;
             }
             base += mem_region_size_in[i]();
         }
-        return axi_aw_sel_comb;
+        axi_route_comb.aw_local_addr = (uint32_t)(((uint64_t)(aw_total_local - aw_region_base)) & MEM_ADDR_MASK64);
+        return axi_route_comb;
     }
 
-    // Region base offset inside the full memory window for the selected write port.
-    _LAZY_COMB(axi_aw_region_base_comb, uint32_t)
+    // Build the logical AXI master transaction before fanout to the selected memory/device port.
+    _LAZY_COMB(axi_out_driver_comb, Axi4Driver<32, 4, 256>)
+        axi_out_driver_comb.aw.valid = request_geometry_comb_func().addr_in_memory &&
+            (state_reg == ST_EVICT_AW || state_reg == ST_IO_AW);
+        axi_out_driver_comb.aw.addr = (u<32>)(uint32_t)axi_route_comb_func().aw_local_addr;
+        axi_out_driver_comb.aw.id = (u<4>)0;
+        axi_out_driver_comb.w.valid = request_geometry_comb_func().addr_in_memory &&
+            (state_reg == ST_EVICT_W || state_reg == ST_IO_W);
+        axi_out_driver_comb.w.data = state_reg == ST_IO_W ? io_write_payload_comb_func().data : (logic<256>)evict_line_comb_func();
+        axi_out_driver_comb.w.strb = state_reg == ST_IO_W ? io_write_payload_comb_func().strobe : (logic<32>)~logic<PORT_BYTES>(0);
+        axi_out_driver_comb.w.last = axi_out_driver_comb.w.valid;
+        axi_out_driver_comb.b.ready = axi_route_comb_func().aw_sel < MEM_PORTS;
+        axi_out_driver_comb.ar.valid = request_geometry_comb_func().addr_in_memory &&
+            (state_reg == ST_AXI_AR || state_reg == ST_CROSS_AR0 || state_reg == ST_CROSS_AR1 || state_reg == ST_IO_AR);
+        axi_out_driver_comb.ar.addr = (u<32>)(uint32_t)axi_route_comb_func().ar_local_addr;
+        axi_out_driver_comb.ar.id = (u<4>)0;
+        axi_out_driver_comb.r.ready = state_reg == ST_AXI_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1 || state_reg == ST_IO_R;
+        return axi_out_driver_comb;
+    }
+
+    // Gather the response side of the currently selected AXI memory/device ports into one responder bundle.
+    _LAZY_COMB(axi_out_selected_resp_comb, Axi4Responder<4, 256>)
         size_t i;
-        uint64_t base;
-        base = 0;
+        axi_out_selected_resp_comb.aw.ready = false;
+        axi_out_selected_resp_comb.w.ready = false;
+        axi_out_selected_resp_comb.b.valid = false;
+        axi_out_selected_resp_comb.b.id = 0;
+        axi_out_selected_resp_comb.ar.ready = false;
+        axi_out_selected_resp_comb.r.valid = false;
+        axi_out_selected_resp_comb.r.data = 0;
+        axi_out_selected_resp_comb.r.last = false;
+        axi_out_selected_resp_comb.r.id = 0;
         for (i = 0; i < MEM_PORTS; ++i) {
-            if (i < axi_aw_sel_comb_func()) {
-                base += mem_region_size_in[i]();
+            if ((uint32_t)axi_route_comb_func().aw_sel == i) {
+                axi_out_selected_resp_comb.aw.ready = axi_out[i].awready_out();
+                axi_out_selected_resp_comb.w.ready = axi_out[i].wready_out();
+                axi_out_selected_resp_comb.b.valid = axi_out[i].bvalid_out();
+                axi_out_selected_resp_comb.b.id = axi_out[i].bid_out();
+            }
+            if ((uint32_t)axi_route_comb_func().ar_sel == i) {
+                axi_out_selected_resp_comb.ar.ready = axi_out[i].arready_out();
+                axi_out_selected_resp_comb.r.valid = axi_out[i].rvalid_out();
+                axi_out_selected_resp_comb.r.data = (logic<256>)axi_out[i].rdata_out();
+                axi_out_selected_resp_comb.r.last = axi_out[i].rlast_out();
+                axi_out_selected_resp_comb.r.id = axi_out[i].rid_out();
             }
         }
-        return axi_aw_region_base_comb = base;
+        return axi_out_selected_resp_comb;
     }
 
-    // Local AXI write address presented to the selected memory/device port.
-    _LAZY_COMB(axi_awaddr_local_comb, u<MEM_ADDR_BITS>)
-        // Ports are now disjoint cumulative regions, not interleaved banks, so
-        // keep the full byte address inside the selected region.
-        return axi_awaddr_local_comb = (u<MEM_ADDR_BITS>)((uint64_t)(axi_awaddr_total_local_comb_func() - axi_aw_region_base_comb_func()) & MEM_ADDR_MASK64);
-    }
-
-    // AXI write address valid during dirty-line eviction.
-    _LAZY_COMB(axi_awvalid_comb, bool)
-        return axi_awvalid_comb = req_addr_in_memory_comb_func() && (state_reg == ST_EVICT_AW || state_reg == ST_IO_AW);
-    }
-
-    // AXI write data valid during dirty-line eviction.
-    _LAZY_COMB(axi_wvalid_comb, bool)
-        return axi_wvalid_comb = req_addr_in_memory_comb_func() && (state_reg == ST_EVICT_W || state_reg == ST_IO_W);
-    }
-
-    // Ready from the currently selected AXI write-address port.
-    _LAZY_COMB(axi_awready_selected_comb, bool)
-        size_t i;
-        axi_awready_selected_comb = false;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_aw_sel_comb_func() == i) {
-                axi_awready_selected_comb = axi_out[i].awready_out();
-            }
-        }
-        return axi_awready_selected_comb;
-    }
-
-    // Ready from the currently selected AXI write-data port.
-    _LAZY_COMB(axi_wready_selected_comb, bool)
-        size_t i;
-        axi_wready_selected_comb = false;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_aw_sel_comb_func() == i) {
-                axi_wready_selected_comb = axi_out[i].wready_out();
-            }
-        }
-        return axi_wready_selected_comb;
-    }
-
-    // Write response valid from the currently selected AXI port.
-    _LAZY_COMB(axi_bvalid_selected_comb, bool)
-        size_t i;
-        axi_bvalid_selected_comb = false;
-        for (i = 0; i < MEM_PORTS; ++i) {
-            if (axi_aw_sel_comb_func() == i) {
-                axi_bvalid_selected_comb = axi_out[i].bvalid_out();
-            }
-        }
-        return axi_bvalid_selected_comb;
-    }
-
-    // Snapshot the candidate eviction line at the miss lookup cycle.
-    _LAZY_COMB(evict_line_snapshot_comb, logic<CACHE_LINE_SIZE * 8>)
+    // Read all metadata and data for the selected replacement way together so
+    // lookup decisions and the registered writeback snapshot cannot diverge.
+    _LAZY_COMB(evict_candidate_comb, L2EvictCandidateComb)
         size_t i;
         size_t way;
         size_t word;
+        evict_candidate_comb = {};
         way = 0;
         word = 0;
-        evict_line_snapshot_comb = 0;
+        // Cast both template-width way registers before the ternary so the shared
+        // SV module does not inherit the first (WAYS=1) specialization's width.
+        evict_candidate_comb.way = (state_reg == ST_LOOKUP) ?
+            (uint32_t)victim_reg : (uint32_t)fill_way_reg;
+        for (i = 0; i < WAYS; ++i) {
+            if ((uint32_t)evict_candidate_comb.way == i) {
+                evict_candidate_comb.valid = (bool)tag_q_reg[i][TAG_BITS + 1];
+                evict_candidate_comb.dirty = (bool)tag_q_reg[i][TAG_BITS];
+                evict_candidate_comb.tag = (uint64_t)tag_q_reg[i].bits(TAG_BITS - 1, 0);
+            }
+        }
         for (i = 0; i < DATA_BANKS; ++i) {
             way = i / LINE_WORDS;
             word = i % LINE_WORDS;
-            if (evict_way_comb_func() == way) {
-                evict_line_snapshot_comb.bits(word * 32 + 31, word * 32) = data_q_reg[i];
+            if ((uint32_t)evict_candidate_comb.way == way) {
+                evict_candidate_comb.line.bits(word * 32 + 31, word * 32) = data_q_reg[i];
             }
         }
-        return evict_line_snapshot_comb;
+        return evict_candidate_comb;
     }
 
     // Pack the evicted cache way snapshot into the current PORT_BITWIDTH AXI write beat.
@@ -332,50 +228,7 @@ protected:
             }
             base += mem_region_size_in[i]();
         }
-        return req_uncached_region_comb = req_addr_in_memory_comb_func() && req_uncached_region_comb;
-    }
-
-    // Write beat for uncached MMIO stores, placing the 32-bit word at its byte lane.
-    _LAZY_COMB(io_write_beat_comb, logic<PORT_BITWIDTH>)
-        uint32_t byte;
-        uint32_t word;
-        io_write_beat_comb = 0;
-        if (req_reg.from_slave) {
-            return io_write_beat_comb = (logic<PORT_BITWIDTH>)req_reg.write_beat;
-        }
-        byte = (uint32_t)req_reg.addr & 3u;
-        word = ((uint32_t)req_reg.addr % PORT_BYTES) / 4u;
-        // CPU stores keep the store value in low bits and carry the byte address separately.
-        // The AXI-like device bus has no write strobe, so align the value to the addressed byte lane.
-        io_write_beat_comb.bits(word * 32 + 31, word * 32) = (uint32_t)req_reg.write_data << (byte * 8u);
-        return io_write_beat_comb;
-    }
-
-    _LAZY_COMB(io_write_strobe_comb, logic<PORT_BITWIDTH / 8>)
-        uint32_t byte;
-        uint32_t word;
-        size_t i;
-        io_write_strobe_comb = 0;
-        if (req_reg.from_slave) {
-            return io_write_strobe_comb = (logic<PORT_BYTES>)req_reg.write_strobe;
-        }
-        byte = (uint32_t)req_reg.addr & 3u;
-        word = ((uint32_t)req_reg.addr % PORT_BYTES) / 4u;
-        for (i = 0; i < 4; ++i) {
-            if ((req_reg.write_mask & (1u << i)) != 0 && word * 4u + byte + i < PORT_BYTES) {
-                io_write_strobe_comb[word * 4u + byte + i] = 1;
-            }
-        }
-        return io_write_strobe_comb;
-    }
-
-    // Select cache-line eviction data or the single MMIO write beat for AXI W.
-    _LAZY_COMB(axi_wdata_comb, logic<PORT_BITWIDTH>)
-        return axi_wdata_comb = state_reg == ST_IO_W ? io_write_beat_comb_func() : evict_line_comb_func();
-    }
-
-    _LAZY_COMB(axi_wstrb_comb, logic<PORT_BITWIDTH / 8>)
-        return axi_wstrb_comb = state_reg == ST_IO_W ? io_write_strobe_comb_func() : ~logic<PORT_BYTES>(0);
+        return req_uncached_region_comb = request_geometry_comb_func().addr_in_memory && req_uncached_region_comb;
     }
 
     // Associative tag compare for the registered request.

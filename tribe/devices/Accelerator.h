@@ -53,7 +53,7 @@ private:
     reg<u1> error_reg;
     reg<u1> dma_write_reg;
     reg<u<3>> state_reg;
-    reg<array<u32, MEM_WORDS>> accel_mem_reg;
+    reg<array<MEM_WORDS, u32>> accel_mem_reg;
 
     _LAZY_COMB(read_word_comb, uint32_t)
         uint32_t addr;

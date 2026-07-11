@@ -43,8 +43,8 @@ private:
     static constexpr size_t INDEX_BITS = clog2(FIFO_DEPTH);
     static constexpr size_t COUNT_BITS = clog2(FIFO_DEPTH + 1);
 
-    reg<array<u<8>, FIFO_DEPTH>> tx_data_reg;
-    reg<array<u1, FIFO_DEPTH>> tx_last_reg;
+    reg<array<FIFO_DEPTH, u<8>>> tx_data_reg;
+    reg<array<FIFO_DEPTH, u1>> tx_last_reg;
     reg<u<INDEX_BITS>> tx_rd_reg;
     reg<u<INDEX_BITS>> tx_wr_reg;
     reg<u<COUNT_BITS>> tx_count_reg;
@@ -60,13 +60,13 @@ private:
     reg<u<3>> tx_fcs_index_reg;
     reg<u32> tx_ipg_count_reg;
 
-    reg<array<u<8>, FIFO_DEPTH>> rx_data_reg;
-    reg<array<u1, FIFO_DEPTH>> rx_last_reg;
+    reg<array<FIFO_DEPTH, u<8>>> rx_data_reg;
+    reg<array<FIFO_DEPTH, u1>> rx_last_reg;
     reg<u<INDEX_BITS>> rx_rd_reg;
     reg<u<INDEX_BITS>> rx_wr_reg;
     reg<u<COUNT_BITS>> rx_count_reg;
 
-    reg<array<u<8>, FIFO_DEPTH>> rx_frame_data_reg;
+    reg<array<FIFO_DEPTH, u<8>>> rx_frame_data_reg;
     reg<u<COUNT_BITS>> rx_frame_count_reg;
     reg<u<COUNT_BITS>> rx_payload_count_reg;
     reg<u<COUNT_BITS>> rx_copy_index_reg;

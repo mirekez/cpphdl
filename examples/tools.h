@@ -47,16 +47,16 @@ inline std::filesystem::path CpphdlBuildRootFrom(const std::filesystem::path& so
 
     if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
         fs::path path(build_dir);
-        if (fs::exists(path / "cpphdl")) {
+        if (fs::is_regular_file(path / "cpphdl")) {
             return path;
         }
     }
 
     fs::path current = fs::current_path();
-    if (fs::exists(current / "cpphdl")) {
+    if (fs::is_regular_file(current / "cpphdl")) {
         return current;
     }
-    if (fs::exists(current / ".." / "cpphdl")) {
+    if (fs::is_regular_file(current / ".." / "cpphdl")) {
         return current / "..";
     }
 
@@ -86,6 +86,13 @@ inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const s
     const fs::path build_generated = build_root / rel_source_dir / "generated";
     if (fs::exists(build_generated / (top_name + ".sv"))) {
         return build_generated;
+    }
+
+    if (!rel_source_dir.empty()) {
+        const fs::path build_group_generated = build_root / *rel_source_dir.begin() / "generated";
+        if (fs::exists(build_group_generated / (top_name + ".sv"))) {
+            return build_group_generated;
+        }
     }
 
     const fs::path build_root_generated = build_root / "generated";

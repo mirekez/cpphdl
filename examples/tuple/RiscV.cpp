@@ -289,7 +289,7 @@ public:
 //        memcpy(&riscv.data_in.m_storage, data_out, sizeof(riscv.data_in.m_storage));
         riscv.debugen_in    = debugen_in;
 
-//        data_in           = (array<DTYPE,LENGTH>*) &riscv.data_out.m_storage;
+//        data_in           = (array<LENGTH, DTYPE>*) &riscv.data_out.m_storage;
 
         riscv.clk = 1;
         riscv.reset = reset;

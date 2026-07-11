@@ -96,7 +96,7 @@ template<typename T, size_t N, typename V>
 constexpr void sv_assign_field(std::array<T, N>& dst, const V& value);
 
 template<typename T, size_t N, bool PACKED, typename V>
-constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value);
+constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value);
 
 template<typename T, typename V>
 constexpr T sv_cast(const V& value)
@@ -284,9 +284,9 @@ struct type_width_value<logic<WIDTH>, void>
 };
 
 template<typename T, size_t N, bool PACKED>
-struct type_width_value<array<T, N, PACKED>, void>
+struct type_width_value<array<N, T, PACKED>, void>
 {
-    static constexpr size_t value = array<T, N, PACKED>::_size_bits();
+    static constexpr size_t value = array<N, T, PACKED>::_size_bits();
 };
 
 template<typename T>
@@ -383,7 +383,7 @@ constexpr logic<1> reduce_and(const detail::array_packed_ref<T, TOTAL_BITS, ELEM
 }
 
 template<typename T, size_t N, bool PACKED>
-constexpr logic<1> reduce_and(const array<T, N, PACKED>& value)
+constexpr logic<1> reduce_and(const array<N, T, PACKED>& value)
 {
     for (size_t i = 0; i < N; ++i) {
         if (!static_cast<bool>(value[i])) {
@@ -430,17 +430,17 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 }
 
 template<typename T, size_t N, bool PACKED, typename V>
-constexpr void sv_assign_field(array<T, N, PACKED>& dst, const V& value)
+constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 {
     // Scalar assignment to a packed array means assignment to its complete bit field.
     // Element-by-element conversion repeated the scalar and changed packed semantics.
     // Repack compatible scalar sources once and unpack them into the destination shape.
     using src_t = std::remove_cv_t<std::remove_reference_t<V>>;
-    if constexpr (std::is_same_v<src_t, array<T, N, PACKED>>) {
+    if constexpr (std::is_same_v<src_t, array<N, T, PACKED>>) {
         dst = value;
     }
     else if constexpr (PACKED && (detail::has_pack_method<src_t>::value || is_logic_v<src_t> || std::is_integral_v<src_t> || std::is_enum_v<src_t>)) {
-        dst = unpack_value<array<T, N, PACKED>>(pack_value<type_width<array<T, N, PACKED>>()>(value));
+        dst = unpack_value<array<N, T, PACKED>>(pack_value<type_width<array<N, T, PACKED>>()>(value));
     }
     else {
         for (size_t i = 0; i < N; ++i) {

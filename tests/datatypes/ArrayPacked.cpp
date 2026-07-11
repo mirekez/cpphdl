@@ -72,16 +72,20 @@ public:
     _PORT(logic<9>) dense_logic_index_out = _ASSIGN_COMB(dense_logic_index_comb_func());
     _PORT(logic<15>) dense_u_out = _ASSIGN_COMB(dense_u_comb_func());
     _PORT(u<3>) dense_u_index_out = _ASSIGN_COMB(dense_u_index_comb_func());
+    _PORT(u<8>) array2d_out = _ASSIGN_COMB(array2d_comb_func());
+    _PORT(u<8>) array3d_out = _ASSIGN_COMB(array3d_comb_func());
 
 private:
     logic<27> dense_logic_comb;
     logic<9> dense_logic_index_comb;
     logic<15> dense_u_comb;
     u<3> dense_u_index_comb;
+    u<8> array2d_comb;
+    u<8> array3d_comb;
 
     logic<27>& dense_logic_comb_func()
     {
-        array<logic<9>, 3, true> dense_logic;
+        array<3,logic<9>, true> dense_logic;
         logic<9> word0;
         logic<9> word1;
         logic<9> word2;
@@ -98,7 +102,7 @@ private:
 
     logic<9>& dense_logic_index_comb_func()
     {
-        array<logic<9>, 3, true> dense_logic;
+        array<3,logic<9>, true> dense_logic;
         dense_logic = 0;
         dense_logic[0] = logic<9>(0x101);
         dense_logic[1] = logic<9>(0x040 | ((uint64_t)seed_in() & 0x1f));
@@ -109,7 +113,7 @@ private:
 
     logic<15>& dense_u_comb_func()
     {
-        array<u<3>, 5, true> dense_u;
+        array<5,u<3>, true> dense_u;
         logic<3> word0;
         logic<3> word1;
         logic<3> word2;
@@ -132,7 +136,7 @@ private:
 
     u<3>& dense_u_index_comb_func()
     {
-        array<u<3>, 5, true> dense_u;
+        array<5,u<3>, true> dense_u;
         dense_u = 0;
         dense_u[0] = 1;
         dense_u[1] = 2;
@@ -141,6 +145,24 @@ private:
         dense_u[4] = (uint64_t)seed_in() & 0x7;
         dense_u_index_comb = (uint64_t)dense_u[2];
         return dense_u_index_comb;
+    }
+
+    u<8>& array2d_comb_func()
+    {
+        array2D<2, 3, u<8>, true> values;
+        values = 0;
+        values[1][2] = (uint8_t)seed_in() + 0x20u;
+        array2d_comb = (u<8>)values[1][2];
+        return array2d_comb;
+    }
+
+    u<8>& array3d_comb_func()
+    {
+        array3D<2, 2, 3, u<8>, true> values;
+        values = 0;
+        values[1][1][2] = (uint8_t)seed_in() + 0x40u;
+        array3d_comb = (u<8>)values[1][1][2];
+        return array3d_comb;
     }
 
 public:
@@ -186,13 +208,32 @@ static bool check_direct_arrays()
 {
     bool ok = true;
 
-    array<logic<9>, 3, true> dense_logic;
+    static_assert(std::is_same_v<array2D<2, 3, u<2>, true>, array<2, array<3, u<2>, true>, true>>);
+    static_assert(std::is_same_v<array3D<2, 3, 4, u<2>, true>, array<2, array2D<3, 4, u<2>, true>, true>>);
+    static_assert(std::is_same_v<array4D<2, 3, 4, 5, u<2>, true>, array<2, array3D<3, 4, 5, u<2>, true>, true>>);
+    ok &= check(array2D<2, 3, u<2>, true>::_size_bits() == 12, "array2D packed alias width");
+    ok &= check(array3D<2, 3, 4, u<2>, true>::_size_bits() == 48, "array3D packed alias width");
+    ok &= check(array4D<2, 3, 4, 5, u<2>, true>::_size_bits() == 240, "array4D packed alias width");
+
+    array2D<2, 3, u<2>, true> alias2d;
+    alias2d = 0;
+    alias2d[1][2] = 3;
+    ok &= check((uint64_t)(u<2>)alias2d[1][2] == 3, "array2D packed alias nested index");
+    ok &= check((uint64_t)(u<2>)alias2d[1][1] == 0, "array2D packed alias preserves adjacent element");
+
+    array3D<2, 3, 4, u<2>, true> alias3d;
+    alias3d = 0;
+    alias3d[1][2][3] = 2;
+    ok &= check((uint64_t)(u<2>)alias3d[1][2][3] == 2, "array3D packed alias nested index");
+    ok &= check((uint64_t)(u<2>)alias3d[1][2][2] == 0, "array3D packed alias preserves adjacent element");
+
+    array<3,logic<9>,true> dense_logic;
     dense_logic = 0;
     dense_logic[0] = logic<9>(0x101);
     dense_logic[1] = logic<9>(0x055);
     dense_logic[2] = logic<9>(0x1aa);
 
-    ok &= check(array<logic<9>, 3, true>::_size_bits() == 27, "packed logic array width");
+    ok &= check(array<3,logic<9>, true>::_size_bits() == 27, "packed logic array width");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[0]) == 0x101, "packed logic index 0");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x055, "packed logic index 1");
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[2]) == 0x1aa, "packed logic index 2");
@@ -203,7 +244,7 @@ static bool check_direct_arrays()
     dense_logic.bits(13, 9) = 0x1f;
     ok &= check((uint64_t)static_cast<logic<9>>(dense_logic[1]) == 0x05f, "packed bits write through");
 
-    array<u<3>, 5, true> dense_u;
+    array<5,u<3>, true> dense_u;
     dense_u = 0;
     dense_u[0] = 1;
     dense_u[1] = 2;
@@ -211,7 +252,7 @@ static bool check_direct_arrays()
     dense_u[3] = 4;
     dense_u[4] = 5;
 
-    ok &= check(array<u<3>, 5, true>::_size_bits() == 15, "packed u array width");
+    ok &= check(array<5,u<3>, true>::_size_bits() == 15, "packed u array width");
     ok &= check((uint64_t)(u<3>)dense_u[2] == 3, "packed u direct index conversion");
     ok &= check((uint64_t)static_cast<logic<3>>(dense_u[0]) == 1, "packed u index 0");
     ok &= check((uint64_t)static_cast<logic<3>>(dense_u[4]) == 5, "packed u index 4");
@@ -221,10 +262,10 @@ static bool check_direct_arrays()
     item.lo = 0x5;
     item.hi = 0x12;
 
-    array<PackedStruct, 2, true> dense_struct;
+    array<2,PackedStruct,true> dense_struct;
     dense_struct = 0;
     dense_struct[1] = item;
-    ok &= check(array<PackedStruct, 2, true>::_size_bits() == 16, "packed struct width");
+    ok &= check(array<2,PackedStruct, true>::_size_bits() == 16, "packed struct width");
     ok &= check((uint64_t)logic<8>(dense_struct.bits(15, 8)) == (uint64_t)item, "packed struct write through");
 
     // Exercise both proxy-to-value packing and proxy-to-proxy assignment above 64 bits.
@@ -236,13 +277,13 @@ static bool check_direct_arrays()
     wide.last = logic<1>(0);
     wide.err = logic<2>(0);
 
-    array<logic<71>, 2, true> wide_logic_array{};
+    array<2, logic<71>, true> wide_logic_array{};
     wide_logic_array[0] = wide.pack();
     WidePackedStruct unpacked = cpphdl::unpack_value<WidePackedStruct>(cpphdl::pack_value<71>(wide_logic_array[0]));
     ok &= check((uint64_t)unpacked.data == 0xfc02721301320213ull, "wide packed array ref pack_value keeps bit 63 of data field");
     ok &= check((bool)unpacked.pack()[64], "wide packed array ref pack_value keeps packed bit 64");
 
-    array<WidePackedStruct, 2, true> wide_struct_array{};
+    array<2, WidePackedStruct, true> wide_struct_array{};
     wide_struct_array[0] = wide_logic_array[0];
     WidePackedStruct assigned = wide_struct_array[0];
     ok &= check((uint64_t)assigned.data == 0xfc02721301320213ull, "wide packed ref to packed struct ref assignment keeps bit 63 of data field");
@@ -332,6 +373,24 @@ public:
 #endif
     }
 
+    u<8> array2d()
+    {
+#ifdef VERILATOR
+        return u<8>(verilator_read<uint8_t>(&dut.array2d_out));
+#else
+        return dut.array2d_out();
+#endif
+    }
+
+    u<8> array3d()
+    {
+#ifdef VERILATOR
+        return u<8>(verilator_read<uint8_t>(&dut.array3d_out));
+#else
+        return dut.array3d_out();
+#endif
+    }
+
     bool run()
     {
 #ifdef VERILATOR
@@ -358,6 +417,8 @@ public:
             error |= !check((uint64_t)dense_logic_index() == expected_logic1, "module packed logic index");
             error |= !check((uint64_t)dense_u() == expected_u, "module packed u full bits");
             error |= !check((uint64_t)dense_u_index() == 3, "module packed u index");
+            error |= !check((uint64_t)array2d() == ((i + 0x20u) & 0xffu), "module packed array2D index");
+            error |= !check((uint64_t)array3d() == ((i + 0x40u) & 0xffu), "module packed array3D index");
 
             neg(false);
             ++_system_clock;

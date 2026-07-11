@@ -375,6 +375,13 @@ if(CPPHDL_USING_FETCHED_LLVM)
 endif()
 cpphdl_link_stdcxxexp_if_available(cpphdl)
 
+function(cpphdl_add_converter_dependency target)
+  # POST_BUILD conversion runs only when the owning executable links. Make a
+  # rebuilt converter invalidate that link so generated RTL cannot stay stale.
+  add_dependencies(${target} cpphdl)
+  set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_BINARY_DIR}/cpphdl")
+endfunction()
+
 if(CPPHDL_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()

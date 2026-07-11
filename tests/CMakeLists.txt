@@ -9,6 +9,9 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
+# Verilator can leave specialization work directories below a test source
+# directory. They contain generated .cpp files, not independent CppHDL tests.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -59,7 +62,7 @@ foreach(src ${TEST_SOURCES})
     cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
 
-    add_dependencies(${target_name} cpphdl)
+    cpphdl_add_converter_dependency(${target_name})
 
     add_test(
         NAME ${target_name}

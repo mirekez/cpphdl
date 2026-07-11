@@ -31,20 +31,20 @@ private:
     logic<16> logic_2d[2][2];
     logic<16> logic_3d[2][2][2];
 
-    array<u<16>, 3> cpp_1d;
-    array<array<u<16>, 3>, 2> cpp_2d;
-    array<array<array<u<16>, 2>, 2>, 2> cpp_3d;
-    array<u<16>, 2> mixed_c_cpp[2][2];
-    array<PackedVarItem, 2> cpp_struct_1d;
-    array<u<16>, 4> cpp_type_1d;
-    array<array<PackedVarItem, 2>, 3> cpp_struct_2d;
-    array<array<u<16>, 3>, 2> cpp_type_2d;
+    array<3,u<16>> cpp_1d;
+    array<2,array<3,u<16>>> cpp_2d;
+    array<2,array<2,array<2,u<16>>>> cpp_3d;
+    array<2,u<16>> mixed_c_cpp[2][2];
+    array<2,PackedVarItem> cpp_struct_1d;
+    array<4,u<16>> cpp_type_1d;
+    array<3,array<2,PackedVarItem>> cpp_struct_2d;
+    array<2,array<3,u<16>>> cpp_type_2d;
 
     reg<u<16>> reg_1d[2];
     reg<u<16>> reg_2d[2][2];
     reg<u<16>> reg_3d[2][2][2];
-    reg<array<u<16>, 2>> reg_cpp[2];
-    reg<array<u<16>, 2>> reg_mixed[2][2];
+    reg<array<2,u<16>>> reg_cpp[2];
+    reg<array<2,u<16>>> reg_mixed[2][2];
 
     u<16> comb_comb;
     logic<16> logic_comb;

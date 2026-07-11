@@ -24,23 +24,23 @@ class AvalonEndpoint : public Module
 public:
     bool debugen_in = false;
 
-    _PORT(array<u8,DATA_BYTES>)  data_in;
+    _PORT(array<DATA_BYTES, u8>)  data_in;
     _PORT(bool)                  valid_in;
     _PORT(uint64_t)              addr_in;
     _PORT(uint8_t)               nbytes_in;
 
     _PORT(bool)                wait_out = _ASSIGN( !output_buffer.ready_out() || hole_delayed );
     _PORT(uint64_t)            avmm_address_out    = _ASSIGN((uint64_t)(output_buffer.data_out() >> DATA_BITS));
-    _PORT(array<u8,AV_BYTES>)  avmm_writedata_out  = _ASSIGN((array<u8,AV_BYTES>)output_buffer.data_out());
+    _PORT(array<AV_BYTES, u8>)  avmm_writedata_out  = _ASSIGN((array<AV_BYTES, u8>)output_buffer.data_out());
     _PORT(logic<AV_BYTES>)     avmm_byteenable_out = _ASSIGN((logic<AV_BYTES>)(output_buffer.data_out() >> (DATA_BITS + 64)));
     _PORT(bool)                avmm_write_out      = output_buffer.valid_out;
     _PORT(bool)                avmm_read_out       = _ASSIGN(false);
     _PORT(bool)                avmm_waitrequest_in;
-    _PORT(array<u8,AV_BYTES>)  avmm_readdata_in;
+    _PORT(array<AV_BYTES, u8>)  avmm_readdata_in;
     _PORT(bool)                avmm_readdatavalid_in;
 
     reg<u1> valid_delayed;
-    reg<array<u8,DATA_BYTES>> data_delayed;
+    reg<array<DATA_BYTES, u8>> data_delayed;
     reg<u64> addr_delayed;
     reg<u8> nbytes_delayed;
     reg<u1> hole_delayed;
@@ -295,7 +295,7 @@ class TestAvalonEndpoint : public Module
     AvalonEndpoint<DATA_WIDTH, AVALON_WIDTH, AVALON_BITS> dut;
 #endif
 
-    reg<array<u8, BUS_BYTES>> data_in_reg;
+    reg<array<BUS_BYTES, u8>> data_in_reg;
     reg<u1> valid_in_reg;
     reg<u64> addr_in_reg;
     reg<u8> nbytes_in_reg;
@@ -319,7 +319,7 @@ class TestAvalonEndpoint : public Module
     bool wait_out_value = false;
     bool avmm_write_value = false;
     uint64_t avmm_address_value = 0;
-    array<u8, AV_BYTES> avmm_writedata_value;
+    array<AV_BYTES, u8> avmm_writedata_value;
     logic<AV_BYTES> avmm_byteenable_value;
 
     uint32_t next_prbs()
@@ -336,7 +336,7 @@ class TestAvalonEndpoint : public Module
 
 #ifdef VERILATOR
     template<size_t N, typename Words>
-    static void pack_sv_byte_array(Words& dst, const array<u8, N>& src)
+    static void pack_sv_byte_array(Words& dst, const array<N, u8>& src)
     {
         std::memset(&dst, 0, sizeof(dst));
         uint32_t* words = reinterpret_cast<uint32_t*>(&dst);
@@ -347,7 +347,7 @@ class TestAvalonEndpoint : public Module
     }
 
     template<size_t N, typename Words>
-    static void unpack_sv_byte_array(array<u8, N>& dst, const Words& src)
+    static void unpack_sv_byte_array(array<N, u8>& dst, const Words& src)
     {
         const uint32_t* words = reinterpret_cast<const uint32_t*>(&src);
         for (size_t i = 0; i < N; ++i) {
@@ -513,7 +513,7 @@ public:
         dut.addr_in = _ASSIGN_REG(addr_in_reg);
         dut.nbytes_in = _ASSIGN_REG(nbytes_in_reg);
         dut.avmm_waitrequest_in = _ASSIGN_REG(waitrequest_reg);
-        dut.avmm_readdata_in = _ASSIGN(array<u8, AV_BYTES>{});
+        dut.avmm_readdata_in = _ASSIGN(array<AV_BYTES, u8>{});
         dut.avmm_readdatavalid_in = _ASSIGN(false);
         dut.__inst_name = __inst_name + "/endpoint";
         dut._assign();

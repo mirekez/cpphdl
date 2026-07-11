@@ -26,25 +26,25 @@ union PayloadChoice
 union PayloadBusData
 {
     u8 bytes[2];
-    array<PayloadItem, 2> values;
+    array<2,PayloadItem> values;
 } __PACKED;
 
 struct ArrayPayload
 {
     unsigned prefix:4;
-    array<u8, 3> bytes;
-    array<array<u8, 2>, 3> byte_matrix;
-    array<u8, 2> byte_rows[3];
-    array<array<u8, 2>, 3> byte_tables[4];
-    array<array<u8, 2>, 3> byte_grid[4][5];
-    array<PayloadItem, 2> items;
-    array<array<PayloadItem, 2>, 3> item_matrix;
-    array<PayloadItem, 2> item_rows[3];
-    array<array<PayloadItem, 2>, 3> item_tables[4];
-    array<array<PayloadItem, 2>, 3> item_grid[4][5];
+    array<3,u8> bytes;
+    array<3,array<2,u8>> byte_matrix;
+    array<2,u8> byte_rows[3];
+    array<3,array<2,u8>> byte_tables[4];
+    array<3,array<2,u8>> byte_grid[4][5];
+    array<2,PayloadItem> items;
+    array<3,array<2,PayloadItem>> item_matrix;
+    array<2,PayloadItem> item_rows[3];
+    array<3,array<2,PayloadItem>> item_tables[4];
+    array<3,array<2,PayloadItem>> item_grid[4][5];
     unsigned mid:3;
-    array<u16, 1> halfs;
-    array<PayloadChoice, 2> choices;
+    array<1,u16> halfs;
+    array<2,PayloadChoice> choices;
     PayloadBusData bus_data;
     unsigned tail:5;
 } __PACKED;

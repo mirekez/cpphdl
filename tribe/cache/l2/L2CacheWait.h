@@ -16,66 +16,62 @@ public:
 protected:
     using Base::state_reg;
     using Base::req_reg;
-    using Base::active_is_slave_comb_func;
+    using Base::active_request_comb_func;
 
-    _LAZY_COMB(i_wait_comb, bool)
+    // Resolve both CPU wait outputs from one ownership snapshot so D-side
+    // priority and completion release cannot be evaluated inconsistently.
+    _LAZY_COMB(cpu_wait_comb, L2CpuWaitComb)
         bool done_i_read;
-        done_i_read = state_reg == ST_DONE && !req_reg.from_slave && !req_reg.port && req_reg.read &&
-            i_mem_in.read_in() && (uint32_t)i_mem_in.addr_in() == (uint32_t)req_reg.addr;
-        i_wait_comb = false;
-        if (i_mem_in.read_in()) {
-            i_wait_comb = true;
-            // Only release the wait for the live I-side request that owns this completed response.
-            if (done_i_read) {
-                i_wait_comb = false;
-            }
-        }
-        if (state_reg != ST_IDLE &&
-            !done_i_read) {
-            i_wait_comb = true;
-        }
-        if (d_mem_in.read_in() || d_mem_in.write_in()) {
-            i_wait_comb = true;
-        }
-        if (active_is_slave_comb_func() &&
-            !done_i_read) {
-            i_wait_comb = true;
-        }
-        return i_wait_comb;
-    }
-
-    // Data-side wait/ready generation for reads and writes.
-    _LAZY_COMB(d_wait_comb, bool)
         bool done_d_read;
         bool done_d_write;
+        done_i_read = state_reg == ST_DONE && !req_reg.from_slave && !req_reg.port && req_reg.read &&
+            i_mem_in.read_in() && (uint32_t)i_mem_in.addr_in() == (uint32_t)req_reg.addr;
         done_d_read = state_reg == ST_DONE && !req_reg.from_slave && req_reg.port && req_reg.read &&
             d_mem_in.read_in() && (uint32_t)d_mem_in.addr_in() == (uint32_t)req_reg.addr;
         done_d_write = state_reg == ST_DONE && !req_reg.from_slave && req_reg.port && req_reg.write &&
             d_mem_in.write_in() && (uint32_t)d_mem_in.addr_in() == (uint32_t)req_reg.addr;
-        d_wait_comb = false;
+        cpu_wait_comb = {};
+        if (i_mem_in.read_in()) {
+            cpu_wait_comb.instruction = true;
+            // Only release the wait for the live I-side request that owns this completed response.
+            if (done_i_read) {
+                cpu_wait_comb.instruction = false;
+            }
+        }
+        if (state_reg != ST_IDLE &&
+            !done_i_read) {
+            cpu_wait_comb.instruction = true;
+        }
+        if (d_mem_in.read_in() || d_mem_in.write_in()) {
+            cpu_wait_comb.instruction = true;
+        }
+        if (active_request_comb_func().request.from_slave &&
+            !done_i_read) {
+            cpu_wait_comb.instruction = true;
+        }
         if (d_mem_in.write_in()) {
-            d_wait_comb = true;
+            cpu_wait_comb.data = true;
             // Do not let a previous completed D-side transaction acknowledge a new write.
             if (done_d_write) {
-                d_wait_comb = false;
+                cpu_wait_comb.data = false;
             }
         }
         if (d_mem_in.read_in()) {
-            d_wait_comb = true;
+            cpu_wait_comb.data = true;
             // Do not let a previous completed D-side transaction acknowledge a new read.
             if (done_d_read) {
-                d_wait_comb = false;
+                cpu_wait_comb.data = false;
             }
         }
         if (state_reg != ST_IDLE &&
             !(done_d_read || done_d_write)) {
-            d_wait_comb = true;
+            cpu_wait_comb.data = true;
         }
-        if (active_is_slave_comb_func() &&
+        if (active_request_comb_func().request.from_slave &&
             !(done_d_read || done_d_write)) {
-            d_wait_comb = true;
+            cpu_wait_comb.data = true;
         }
-        return d_wait_comb;
+        return cpu_wait_comb;
     }
 
 };

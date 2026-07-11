@@ -19,6 +19,16 @@ template<typename BASE>
 class bitops
 {
 private:
+    static uint8_t* raw_bytes(BASE& value)
+    {
+        return reinterpret_cast<uint8_t*>(&value);
+    }
+
+    static const uint8_t* raw_bytes(const BASE& value)
+    {
+        return reinterpret_cast<const uint8_t*>(&value);
+    }
+
     static void apply_and(BASE& dst, const BASE& rhs)
     {
         apply_binary(dst, rhs, [](uint64_t a, uint64_t b){ return a & b; });
@@ -49,13 +59,19 @@ private:
     {
         size_t size = bitops_value_size<BASE>::value;
 
-        uint8_t* dptr = (uint8_t*)&dst;
-        const uint8_t* rptr = (const uint8_t*)&rhs;
+        uint8_t* dptr = raw_bytes(dst);
+        const uint8_t* rptr = raw_bytes(rhs);
 
         size_t i = 0;
         // 64-bit chunks
         for (; i + sizeof(uint64_t) <= size; i += sizeof(uint64_t)) {
-            *(uint64_t*)(dptr + i) = op(*(uint64_t*)(dptr + i), *(const uint64_t*)(rptr + i));
+            uint64_t lhs = 0;
+            uint64_t rhs = 0;
+            uint64_t result = 0;
+            std::memcpy(&lhs, dptr + i, sizeof(lhs));
+            std::memcpy(&rhs, rptr + i, sizeof(rhs));
+            result = op(lhs, rhs);
+            std::memcpy(dptr + i, &result, sizeof(result));
         }
 
         // remaining bytes
@@ -70,20 +86,22 @@ public:
     template<typename T>
     bitops(const T& other)
     {
-        memcpy(this, &other, std::min(sizeof(BASE), sizeof(other)));
-        if (sizeof(BASE) > sizeof(other)) {
-            memset((uint8_t*)this + sizeof(other), 0, sizeof(BASE) - sizeof(other));
+        BASE& dst = static_cast<BASE&>(*this);
+        std::memcpy(raw_bytes(dst), &other, std::min(bitops_value_size<BASE>::value, sizeof(other)));
+        if (bitops_value_size<BASE>::value > sizeof(other)) {
+            std::memset(raw_bytes(dst) + sizeof(other), 0, bitops_value_size<BASE>::value - sizeof(other));
         }
     }
 
     template<typename T>
     BASE& operator=(const T& other)
     {
-        memcpy(this, &other, std::min(sizeof(BASE), sizeof(other)));
-        if (sizeof(BASE) > sizeof(other)) {
-            memset((uint8_t*)this + sizeof(other), 0, sizeof(BASE) - sizeof(other));
+        BASE& dst = static_cast<BASE&>(*this);
+        std::memcpy(raw_bytes(dst), &other, std::min(bitops_value_size<BASE>::value, sizeof(other)));
+        if (bitops_value_size<BASE>::value > sizeof(other)) {
+            std::memset(raw_bytes(dst) + sizeof(other), 0, bitops_value_size<BASE>::value - sizeof(other));
         }
-        return (BASE&)*this;
+        return dst;
     }
 
     template<typename T>
@@ -115,7 +133,7 @@ public:
         BASE result = static_cast<const BASE&>(*this);
 
         size_t size = bitops_value_size<BASE>::value;
-        uint8_t* ptr = (uint8_t*)&result;
+        uint8_t* ptr = raw_bytes(result);
 
         for (size_t i = 0; i < size; ++i)
             ptr[i] = ~ptr[i];
@@ -135,8 +153,8 @@ public:
             return result;
         }
 
-        const uint8_t* src8 = (const uint8_t*)this;
-        uint8_t* dst8 = (uint8_t*)&result;
+        const uint8_t* src8 = raw_bytes(static_cast<const BASE&>(*this));
+        uint8_t* dst8 = raw_bytes(result);
 
         constexpr size_t word_count = size / step;
         constexpr size_t remainder  = size % step;
@@ -207,8 +225,8 @@ public:
             return result;
         }
 
-        const uint8_t* src8 = (const uint8_t*)this;
-        uint8_t* dst8 = (uint8_t*)&result;
+        const uint8_t* src8 = raw_bytes(static_cast<const BASE&>(*this));
+        uint8_t* dst8 = raw_bytes(result);
 
         constexpr size_t word_count = size / step;
         constexpr size_t remainder  = size % step;
@@ -269,10 +287,11 @@ public:
     BASE operator+(const T& rhs) const
     {
         BASE result{};
+        BASE rhs_base = rhs;
 
-        const uint8_t* ap = (const uint8_t*)this;
-        const uint8_t* bp = (const uint8_t*)&rhs;
-        uint8_t* rp = (uint8_t*)&result;
+        const uint8_t* ap = raw_bytes(static_cast<const BASE&>(*this));
+        const uint8_t* bp = raw_bytes(rhs_base);
+        uint8_t* rp = raw_bytes(result);
 
         constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
@@ -308,10 +327,11 @@ public:
     BASE operator-(const T& rhs) const
     {
         BASE result{};
+        BASE rhs_base = rhs;
 
-        const uint8_t* ap = (const uint8_t*)this;
-        const uint8_t* bp = (const uint8_t*)&rhs;
-        uint8_t* rp = (uint8_t*)&result;
+        const uint8_t* ap = raw_bytes(static_cast<const BASE&>(*this));
+        const uint8_t* bp = raw_bytes(rhs_base);
+        uint8_t* rp = raw_bytes(result);
 
         constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
@@ -342,7 +362,7 @@ public:
 
     bool operator==(const BASE& rhs) const
     {
-        return std::memcmp(this, &rhs, bitops_value_size<BASE>::value) == 0;
+        return std::memcmp(raw_bytes(static_cast<const BASE&>(*this)), raw_bytes(rhs), bitops_value_size<BASE>::value) == 0;
     }
 
     bool operator!=(const BASE& rhs) const
@@ -360,8 +380,8 @@ public:
         constexpr size_t rhs_size = bitops_value_size<T>::value;
         constexpr size_t min_size = lhs_size < rhs_size ? lhs_size : rhs_size;
 
-        const uint8_t* lhs_ptr = (const uint8_t*)this;
-        const uint8_t* rhs_ptr = (const uint8_t*)&rhs;
+        const uint8_t* lhs_ptr = raw_bytes(static_cast<const BASE&>(*this));
+        const uint8_t* rhs_ptr = reinterpret_cast<const uint8_t*>(&rhs);
 
         if (std::memcmp(lhs_ptr, rhs_ptr, min_size) != 0) {
             return false;
@@ -409,8 +429,8 @@ public:
         constexpr size_t size = bitops_value_size<BASE>::value;
         constexpr size_t step = sizeof(uint64_t);
 
-        const uint8_t* a = (const uint8_t*)this;
-        const uint8_t* b = (const uint8_t*)&rhs;
+        const uint8_t* a = raw_bytes(static_cast<const BASE&>(*this));
+        const uint8_t* b = raw_bytes(rhs);
 
         for (size_t i = size; i >= step; i -= step) {
             uint64_t av, bv;
@@ -475,7 +495,7 @@ public:
     uint64_t to_ullong() const
     {
         uint64_t value = 0;
-        std::memcpy(&value, this, std::min(bitops_value_size<BASE>::value, sizeof(uint64_t)));
+        std::memcpy(&value, raw_bytes(static_cast<const BASE&>(*this)), std::min(bitops_value_size<BASE>::value, sizeof(uint64_t)));
         return value;
     }
 
@@ -483,7 +503,7 @@ public:
     {
         constexpr size_t size = bitops_value_size<BASE>::value;
         static const char* digits = "0123456789abcdef";
-        const uint8_t* ptr = (const uint8_t*)this;
+        const uint8_t* ptr = raw_bytes(static_cast<const BASE&>(*this));
 
         std::string result;
         result.reserve(size * 2);

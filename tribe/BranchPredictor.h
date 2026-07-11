@@ -31,10 +31,10 @@ public:
     _PORT(uint32_t)  update_target_in;
 
 private:
-    reg<array<u<COUNTER_BITS>, ENTRIES>> counter_reg;
-    reg<array<u32, ENTRIES>> target_reg;
-    reg<array<u32, ENTRIES>> tag_reg;
-    reg<array<u1, ENTRIES>> valid_reg;
+    reg<array<ENTRIES,u<COUNTER_BITS>>> counter_reg;
+    reg<array<ENTRIES,u32>> target_reg;
+    reg<array<ENTRIES,u32>> tag_reg;
+    reg<array<ENTRIES,u1>> valid_reg;
 
     _LAZY_COMB(lookup_index_comb, u<INDEX_BITS>)
         return lookup_index_comb = (u<INDEX_BITS>)(lookup_pc_in() >> 1);

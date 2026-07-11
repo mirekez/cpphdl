@@ -48,8 +48,8 @@ template<> struct cat_width<u32> { static constexpr size_t value = 32; };
 template<> struct cat_width<u64> { static constexpr size_t value = 64; };
 
 template<typename TYPE, size_t COUNT, bool PACKED>
-struct cat_width<array<TYPE, COUNT, PACKED>> {
-    static constexpr size_t value = array<TYPE, COUNT, PACKED>::_size_bits();
+struct cat_width<array<COUNT, TYPE, PACKED>> {
+    static constexpr size_t value = array<COUNT, TYPE, PACKED>::_size_bits();
 };
 
 template<typename T>
@@ -87,9 +87,9 @@ constexpr logic<32> cat_to_logic(const u32& value) { return cat_to_logic(u<32>((
 constexpr logic<64> cat_to_logic(const u64& value) { return cat_to_logic(u<64>((uint64_t)value)); }
 
 template<typename TYPE, size_t COUNT, bool PACKED>
-logic<array<TYPE, COUNT, PACKED>::_size_bits()> cat_to_logic(const array<TYPE, COUNT, PACKED>& value)
+logic<array<COUNT, TYPE, PACKED>::_size_bits()> cat_to_logic(const array<COUNT, TYPE, PACKED>& value)
 {
-    return (logic<array<TYPE, COUNT, PACKED>::_size_bits()>)value;
+    return (logic<array<COUNT, TYPE, PACKED>::_size_bits()>)value;
 }
 
 template<typename T>

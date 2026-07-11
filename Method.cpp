@@ -34,6 +34,95 @@ std::string assignedWireName(Expr expr)
     return expr.str();
 }
 
+bool exprContainsValue(const Expr& expr, const std::string& value)
+{
+    if (expr.value == value) {
+        return true;
+    }
+    for (const auto& sub : expr.sub) {
+        if (exprContainsValue(sub, value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool fieldCanNameWireOrPort(const Field& field, const std::string& name)
+{
+    // Interface fields are flattened as <interface>__<field> in SV ports.
+    return field.name == name || name.find(field.name + "__") == 0;
+}
+
+std::string flippedInterfaceDirectionName(std::string name)
+{
+    if (str_ending(name, "_in")) {
+        name.replace(name.length() - 3, 3, "_out");
+    }
+    else if (str_ending(name, "_out")) {
+        name.replace(name.length() - 4, 4, "_in");
+    }
+    return name;
+}
+
+bool moduleHasAssignableName(const Module& module, const std::string& name)
+{
+    auto matches = [&](const Field& field) {
+        return fieldCanNameWireOrPort(field, name);
+    };
+    auto flippedName = flippedInterfaceDirectionName(name);
+    auto flippedMatches = [&](const Field& field) {
+        return flippedName != name && fieldCanNameWireOrPort(field, flippedName);
+    };
+
+    return any_of(module.wires.begin(), module.wires.end(), matches) ||
+        any_of(module.ports.begin(), module.ports.end(), matches) ||
+        any_of(module.vars.begin(), module.vars.end(), matches) ||
+        any_of(module.members.begin(), module.members.end(), matches) ||
+        any_of(module.wires.begin(), module.wires.end(), flippedMatches) ||
+        any_of(module.ports.begin(), module.ports.end(), flippedMatches) ||
+        any_of(module.vars.begin(), module.vars.end(), flippedMatches) ||
+        any_of(module.members.begin(), module.members.end(), flippedMatches);
+}
+
+const Expr* topLevelLocalDecl(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_DECL) {
+        return &expr;
+    }
+    if (expr.type == Expr::EXPR_BODY && expr.sub.size() == 1 && expr.sub[0].type == Expr::EXPR_DECL) {
+        return &expr.sub[0];
+    }
+    return nullptr;
+}
+
+bool isTopLevelLocalDeclWithType(const Expr& expr)
+{
+    const Expr* decl = topLevelLocalDecl(expr);
+    return decl && decl->sub.size() >= 1 && decl->sub[0].type != Expr::EXPR_NUM;
+}
+
+bool isHiddenLocalDecl(const Expr& expr)
+{
+    return expr.value.find("__") == 0 || expr.value.find("_____") != std::string::npos;
+}
+
+std::string localDeclInitializer(const Expr& expr)
+{
+    const Expr* decl = topLevelLocalDecl(expr);
+    if (!decl || decl->sub.size() < 2 || decl->sub[1].type == Expr::EXPR_NONE || isHiddenLocalDecl(*decl)) {
+        return "";
+    }
+
+    Expr init = decl->sub[1];
+    init.indent = 0;
+    init.flags = expr.flags;
+    std::string indent;
+    for (int i = 0; i < expr.indent; ++i) {
+        indent += "    ";
+    }
+    return indent + escapeIdentifier(decl->value) + " = " + init.str() + ";\n";
+}
+
 }
 
 bool Method::print(std::ofstream& out)
@@ -82,8 +171,31 @@ bool Method::print(std::ofstream& out)
         out << "    begin: " << name << "\n";
     }
 
+    // Tasks and functions have the same SystemVerilog declaration-order rule
+    // as always_comb blocks: every local declaration must precede the first
+    // executable initializer or statement.
+    for (auto& stmt : statements) {
+        if (!isTopLevelLocalDeclWithType(stmt)) {
+            continue;
+        }
+        Expr decl = *topLevelLocalDecl(stmt);
+        decl.indent = 2;
+        if (decl.sub.size() > 1) {
+            decl.sub[1] = Expr{};
+        }
+        auto s = decl.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
+
     for (auto& stmt : statements) {
         stmt.indent = 2;
+        if (isTopLevelLocalDeclWithType(stmt)) {
+            out << localDeclInitializer(stmt);
+            continue;
+        }
 //        out << stmt.debug() << "\n";
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
@@ -151,7 +263,7 @@ bool Method::printAssigns(std::ofstream& out)
         out << "        genvar " << "g" << var << ";\n";
     }
     for (auto& stmt : statements) {
-        if (stmt.traverseIf( [](Expr& e) { return e.value == "__inst_name";} )) {
+        if (exprContainsValue(stmt, "__inst_name")) {
             continue;
         }
 
@@ -163,7 +275,7 @@ bool Method::printAssigns(std::ofstream& out)
                     if ((e.type == Expr::EXPR_OPERATORCALL && e.value == "=") ||
                         (e.type == Expr::EXPR_BINARY && e.value == "=")) {
                         std::string wname = assignedWireName(e.sub[0]);
-                        if (!any_of(currModule->wires.begin(), currModule->wires.end(), [&](auto& w){ return w.name == wname; } ) && wname.length() > 2) {
+                        if (!moduleHasAssignableName(*currModule, wname) && wname.length() > 2) {
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";
                         }
                     }
@@ -229,11 +341,36 @@ bool Method::printComb(std::ofstream& out)
     currMethod = this;
 
     out << "    always_comb begin : " << escapeIdentifier(name) << "  // " << name <<"\n";
+    for (auto& stmt : statements) {
+        if (!isTopLevelLocalDeclWithType(stmt)) {
+            continue;
+        }
+
+        // SystemVerilog requires block declarations before executable
+        // statements. C++ default construction appears as declaration plus an
+        // initializer, so print only the declaration here and emit the
+        // initializer later as a normal assignment.
+        Expr decl = *topLevelLocalDecl(stmt);
+        decl.indent = 2;
+        decl.flags = Expr::FLAG_COMB;
+        if (decl.sub.size() > 1) {
+            decl.sub[1] = Expr{};
+        }
+        auto s = decl.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
     for (size_t i = 0; i < statements.size(); ++i) {
         auto& stmt = statements[i];
 //        out << stmt.debug() << "\n";
         stmt.indent = 2;
         stmt.flags = Expr::FLAG_COMB;
+        if (isTopLevelLocalDeclWithType(stmt)) {
+            out << localDeclInitializer(stmt);
+            continue;
+        }
         if (i + 1 == statements.size() && stmt.type == Expr::EXPR_RETURN) {
             stmt.flags |= Expr::FLAG_COMB_TERMINAL_RETURN;
         }
