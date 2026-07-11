@@ -11,11 +11,15 @@ bool cpphdlRecordHasValueFields(const CXXRecordDecl* RD);
 
 struct Helpers
 {
-    Helpers(ASTContext* context, cpphdl::Module* module = nullptr, const CXXRecordDecl* RD = nullptr) : ctx(context), mod(module), parent(RD) {}
+    Helpers(ASTContext* context, cpphdl::Module* module = nullptr, const CXXRecordDecl* RD = nullptr)
+        : ctx(context), mod(module), parent(RD), specializationParent(RD) {}
 
     ASTContext* ctx;
     cpphdl::Module* mod;
     const CXXRecordDecl* parent;
+    // Abstract template passes use parent for symbolic numeric expressions but
+    // retain the concrete record here for fixed type-template substitutions.
+    const CXXRecordDecl* specializationParent;
 
     enum {
         FLAG_NONE = 0,

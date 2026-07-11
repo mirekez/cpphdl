@@ -746,7 +746,7 @@ void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl
         return;
     }
 
-    const auto substitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    const auto substitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
     if (substitutions.empty()) {
         return;
     }
@@ -1560,7 +1560,12 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             // extracting parameters of the template
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), parentName, &params);
-            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            // A concrete helper already contributes its fixed type arguments
+            // through followSpecialization(); only a primary template needs the
+            // enclosing module's type substitution appended to its name.
+            if (!dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            }
             externalThisTypeName = parentName;
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
@@ -1589,7 +1594,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             if (MD->isStatic()) {
                 parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
                 hlp.followSpecialization(MD->getParent(), parentName);
-                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                if (!dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
+                    appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                }
             }
             else {
                 parentName = genTypeName(MD->getParent()->getNameAsString());
@@ -1629,7 +1636,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
     }
 
-    const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    const auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
     for (auto& ret : method.ret) {
         applyTemplateTypeSubstitutions(ret, typeSubstitutions);
     }
@@ -1880,6 +1887,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                 // first actual (for example WAYS=1) back into inherited array
                 // dimensions and freezes an otherwise parameterized module.
                 Helpers abstractHlp(context, &mod, aRD);
+                // Keep numeric expressions dependent on the primary template,
+                // while nested method calls still resolve its fixed type arguments
+                // from the concrete module specialization being assembled.
+                abstractHlp.specializationParent = RD;
 
                 for (Decl* D : aRD->decls()) {  // need fields from abstract class to get its port width parametrict expressions (not numbers)
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {

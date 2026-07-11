@@ -4,11 +4,13 @@
 #include <functional>
 #include <stdio.h>
 
-#if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>)
-#if !defined(SYNTHESIS) && !defined(VERILATOR)  // we dont want this lib in generated/verilated code
+#if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>) && \
+    !defined(SYNTHESIS) && !defined(VERILATOR)
+// Record that this translation unit can use stacktrace; CMake's capability
+// result alone is insufficient when a consumer selects C++17.
+#define CPPHDL_USE_STACKTRACE 1
 #include <sstream>
 #include <stacktrace>
-#endif
 #endif
 
 extern long _system_clock;  // please declare _system_clock in main cpp
@@ -141,7 +143,7 @@ public:
         }
         if (!assigned) {
             fprintf(stderr, "Port is not assigned, check backtrace in gdb\n");
-#if defined(CPPHDL_HAVE_STACKTRACE)
+#if defined(CPPHDL_USE_STACKTRACE)
             std::ostringstream backtrace_stream;
             backtrace_stream << std::stacktrace::current();
             const std::string backtrace_text = backtrace_stream.str();

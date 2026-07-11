@@ -31,6 +31,12 @@ foreach(src ${TEST_SOURCES})
         endif()
     endforeach()
 
+    # Public constexpr helpers must remain usable by C++17 projects even though
+    # converter regressions normally compile in the newest supported language mode.
+    if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp")
+        target_compile_options(${target_name} PRIVATE "-std=c++17")
+    endif()
+
     cpphdl_link_stdcxxexp_if_available(${target_name})
 
     set_target_properties(${target_name} PROPERTIES

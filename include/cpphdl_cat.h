@@ -160,31 +160,32 @@ cat(const Args&...) -> cat<cat_width_v<Args>...>;
 // Inherited logic conversions leave several built-in candidates and cause ambiguity.
 // Constrain explicit overloads to integral peers and compare the cat bit value.
 template<typename T>
-concept cat_integral = std::is_integral_v<std::remove_cv_t<std::remove_reference_t<T>>>;
+using enable_cat_integral_t = std::enable_if_t<
+    std::is_integral_v<std::remove_cv_t<std::remove_reference_t<T>>>, int>;
 
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator==(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) == static_cast<uint64_t>(rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator==(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) == static_cast<uint64_t>(rhs); }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator!=(const cat<N...>& lhs, T rhs) { return !(lhs == rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator!=(T lhs, const cat<N...>& rhs) { return !(lhs == rhs); }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator<(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator<(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs); }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator<=(const cat<N...>& lhs, T rhs) { return !(rhs < lhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator<=(T lhs, const cat<N...>& rhs) { return !(rhs < lhs); }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator>(const cat<N...>& lhs, T rhs) { return rhs < lhs; }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator>(T lhs, const cat<N...>& rhs) { return rhs < lhs; }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator>=(const cat<N...>& lhs, T rhs) { return !(lhs < rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr bool operator>=(T lhs, const cat<N...>& rhs) { return !(lhs < rhs); }
 
 template<size_t... N>
@@ -194,9 +195,9 @@ constexpr uint64_t operator-(const cat<N...>& value) { return -static_cast<uint6
 // C++ overload resolution cannot consistently choose through the logic base class.
 // Define symmetric cat operations that explicitly use the concatenated uint64_t value.
 #define CPPHDL_CAT_BINARY_OP(OP) \
-template<size_t... N, cat_integral T> \
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0> \
 constexpr uint64_t operator OP(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); } \
-template<cat_integral T, size_t... N> \
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0> \
 constexpr uint64_t operator OP(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); } \
 template<size_t... L, size_t... R> \
 constexpr uint64_t operator OP(const cat<L...>& lhs, const cat<R...>& rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); }
@@ -211,13 +212,13 @@ CPPHDL_CAT_BINARY_OP(|)
 CPPHDL_CAT_BINARY_OP(^)
 #undef CPPHDL_CAT_BINARY_OP
 
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr uint64_t operator<<(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) << static_cast<unsigned>(rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr uint64_t operator<<(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) << static_cast<unsigned>(static_cast<uint64_t>(rhs)); }
-template<size_t... N, cat_integral T>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr uint64_t operator>>(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) >> static_cast<unsigned>(rhs); }
-template<cat_integral T, size_t... N>
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr uint64_t operator>>(T lhs, const cat<N...>& rhs) { return static_cast<uint64_t>(lhs) >> static_cast<unsigned>(static_cast<uint64_t>(rhs)); }
 
 template<size_t... N>
