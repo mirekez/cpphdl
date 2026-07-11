@@ -1276,16 +1276,47 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 if (TST && TST->getTemplateName().getAsTemplateDecl()) {
                     const clang::TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl();
                     const clang::TemplateParameterList *params = TD->getTemplateParameters();  // getting port names
-                    size_t i=0;
-                    for (const clang::NamedDecl *param : *params) {  // looking for parameters of Interface struct used in SubFields
-                        DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
-                        field->expr.traverseIf( [&](auto& e) {
-                                if (e.type == cpphdl::Expr::EXPR_VAR && e.value == param->getNameAsString() && expr.sub.size() > i) {
-                                    e = expr.sub[i];  // get parameter expression from Interface parameters if one of parameters names is used in fields of the Interface
+                    // Rebuild the flattened sub-port from the Interface primary template;
+                    // the existing field contains only the first concrete specialization.
+                    const auto* classTemplate = dyn_cast<ClassTemplateDecl>(TD);
+                    const CXXRecordDecl* primary = classTemplate ? classTemplate->getTemplatedDecl() : nullptr;
+                    if (primary) {
+                        for (Decl* D : primary->decls()) {
+                            auto* FD = dyn_cast<FieldDecl>(D);
+                            if (!FD) {
+                                continue;
+                            }
+                            std::string ending = FD->getNameAsString();
+                            if (str_ending(fieldName, "_out")) {
+                                if (str_ending(ending, "_out")) {
+                                    ending.replace(ending.length() - 4, 4, "_in");
+                                } else if (str_ending(ending, "_in")) {
+                                    ending.replace(ending.length() - 3, 3, "_out");
                                 }
-                                return false;
-                            });
-                        ++i;
+                            }
+                            if (field->name != fieldName + "__" + ending) {
+                                continue;
+                            }
+
+                            QualType subQT = FD->getType().getNonReferenceType();
+                            hlp.skipStdFunctionType(subQT);
+                            cpphdl::Expr abstractSub = hlp.digQT(subQT);
+                            size_t i = 0;
+                            for (const clang::NamedDecl *param : *params) {
+                                DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
+                                abstractSub.traverseIf([&](auto& e) {
+                                    if (e.type == cpphdl::Expr::EXPR_VAR
+                                        && e.value == param->getNameAsString()
+                                        && expr.sub.size() > i) {
+                                        e = expr.sub[i];
+                                    }
+                                    return false;
+                                });
+                                ++i;
+                            }
+                            updateExpr(field->expr, abstractSub);
+                            break;
+                        }
                     }
                 }
                 DEBUG_AST(debugIndent, "SubField: " << field->name << ": " << field->expr.debug(debugIndent)

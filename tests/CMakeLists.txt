@@ -56,7 +56,7 @@ foreach(src ${TEST_SOURCES})
     cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
 
-    add_dependencies(${target_name} cpphdl)
+    cpphdl_add_converter_dependency(${target_name})
 
     add_test(
         NAME ${target_name}

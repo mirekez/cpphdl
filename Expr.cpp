@@ -754,7 +754,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             sub[0].indent = indent;
             auto sizedOperand = [&](const std::string& width) {
                 const std::string operand = sub[0].str(prefix, suffix);
-                if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0) {
+                if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0 && numericWidth(width)) {
                     return width + operand;
                 }
                 return width + "'(" + operand + ")";

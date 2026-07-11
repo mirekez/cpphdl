@@ -36,6 +36,16 @@ struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cv_t<std::r
     constexpr static size_t value = std::remove_cv_t<std::remove_reference_t<TYPE>>::_size_bits();
 };
 
+template<typename TYPE, typename = void>
+struct has_to_string_method : std::false_type {};
+
+// Array formatting delegates to an element's textual representation when the
+// element provides one, including nested cpphdl::array and logic objects.
+template<typename TYPE>
+struct has_to_string_method<TYPE,
+    std::void_t<decltype(std::declval<const TYPE&>().to_string())>>
+    : std::is_convertible<decltype(std::declval<const TYPE&>().to_string()), std::string> {};
+
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
 {
@@ -357,13 +367,18 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         return (array&)(*this = *this ^ other);
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
         std::string str;
         for (int i=COUNT-1; i >= 0; --i) {
-            char buf[10] = {};
-            std::snprintf(buf, 10, "%.02lx", (uint64_t)data[i]);
-            str += buf;
+            if constexpr (detail::has_to_string_method<TYPE>::value) {
+                str += data[i].to_string();
+            }
+            else {
+                char buf[10] = {};
+                std::snprintf(buf, sizeof(buf), "%.02lx", (uint64_t)data[i]);
+                str += buf;
+            }
         }
         return str;
     }
@@ -480,8 +495,15 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_ullong();
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
+        if constexpr (detail::has_to_string_method<TYPE>::value) {
+            std::string str;
+            for (int i = COUNT - 1; i >= 0; --i) {
+                str += (*this)[i].to_string();
+            }
+            return str;
+        }
         return data.to_hex();
     }
 };
