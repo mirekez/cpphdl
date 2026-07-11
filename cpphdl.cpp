@@ -1202,7 +1202,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     if (CRD && CRD->isDerivedFrom(ModuleClass)) {  // check if template is derived from cpphdl::Module
         isMember = true;
     }
-    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& m){ return m.name == fieldName; } ) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
+    // Abstract dependent base members may not resolve to a concrete Module
+    // type. Match the name already installed by the concrete base, including
+    // the base prefix used inside a derived module.
+    std::string memberLookupName = fieldName;
+    if (hlp.mod->origName.find(hlp.parent->getQualifiedNameAsString()) != 0) {
+        memberLookupName = genTypeName(hlp.parent->getQualifiedNameAsString()) + "___" + fieldName;
+    }
+    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(),
+        [&](auto& m){ return m.name == fieldName || m.name == memberLookupName; }) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
         isMember = true;
     }
 
@@ -1867,11 +1875,18 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
                 DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
+                // Parse primary-template fields in their own dependent context.
+                // Reusing the concrete specialization helper substitutes the
+                // first actual (for example WAYS=1) back into inherited array
+                // dimensions and freezes an otherwise parameterized module.
+                Helpers abstractHlp(context, &mod, aRD);
+
                 for (Decl* D : aRD->decls()) {  // need fields from abstract class to get its port width parametrict expressions (not numbers)
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {
-                        hlp.flags |= Helpers::FLAG_ABSTRACT;
-                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp, FD);
-                        hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                        abstractHlp.flags |= Helpers::FLAG_ABSTRACT;
+                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(),
+                            FD->getInClassInitializer(), abstractHlp, FD);
+                        abstractHlp.flags &= ~Helpers::FLAG_ABSTRACT;
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
                         if (putStaticConstexpr(VD)) {
@@ -1881,9 +1896,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                             continue;
                         }
                         if (VD->isStaticDataMember() && !VD->isConstexpr()) {
-                            hlp.flags |= Helpers::FLAG_ABSTRACT;
-                            putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);
-                            hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                            abstractHlp.flags |= Helpers::FLAG_ABSTRACT;
+                            putField(VD->getType().getNonReferenceType(), VD->getNameAsString(),
+                                VD->getInit(), abstractHlp);
+                            abstractHlp.flags &= ~Helpers::FLAG_ABSTRACT;
                         }
                     }
 // else  // no need to update code because of SubstNonTypeTemplateParmExpr replacements

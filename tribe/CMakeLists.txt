@@ -176,6 +176,7 @@ foreach(flag -std=c++26 -std=c++2c)
 endforeach()
 
 if(BUILD_TESTING)
+    add_subdirectory(cache/l1/tests)
     add_subdirectory(cache/l2/tests)
     add_subdirectory(tests)
 
