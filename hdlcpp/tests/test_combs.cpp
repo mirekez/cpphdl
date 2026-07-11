@@ -78,6 +78,29 @@ static void testLocalRewriteDoesNotTouchMemberField()
     });
 }
 
+static void testExternalInterfaceBaseIsNotLocalized()
+{
+    std::vector<std::string> lines = {
+        "target = logic<1>(0b0);",
+        "slave.aw_ready = logic<1>(0b0);",
+        "if (slave.ar_valid) {",
+        "    slave.ar_ready = logic<1>(0b1);",
+        "    target = slave.ar_addr;",
+        "}",
+    };
+    std::vector<std::string> vars = {"target"};
+
+    auto targetLines = hdlcpp::extractTargetCombLines(lines, vars, "target");
+    expectVector(targetLines, {
+        "target = logic<1>(0b0);",
+        "slave.aw_ready = logic<1>(0b0);",
+        "if (slave.ar_valid) {",
+        "    slave.ar_ready = logic<1>(0b1);",
+        "    target = slave.ar_addr;",
+        "}",
+    });
+}
+
 static void testRetainedForLoopKeepsLoopMaintenance()
 {
     std::vector<std::string> lines = {
@@ -400,6 +423,7 @@ int main()
     testStandaloneIndependent();
     testTangledComb();
     testLocalRewriteDoesNotTouchMemberField();
+    testExternalInterfaceBaseIsNotLocalized();
     testRetainedForLoopKeepsLoopMaintenance();
     testMixedIndependentThenTangled();
     testControlLinesStayWithIndependentTarget();

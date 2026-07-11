@@ -14,6 +14,53 @@
         return "((~(uint64_t)(" + value + ")) & " + widthMaskExpr(width) + ")";
     }
 
+    bool isValueTemplateParamName(const std::string& text) const
+    {
+        if (!mod) {
+            return false;
+        }
+        for (const auto& param : mod->params) {
+            if (templateParamName(param) == text && !templateParamValueType(param).empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool isSvBuiltinCastTarget(const std::string& text) const
+    {
+        return text == "bool" || text == "int" || text == "unsigned" || text == "uint64_t" ||
+               text == "uint32_t" || text == "uint16_t" || text == "uint8_t" ||
+               text == "longint" || text == "shortint";
+    }
+
+    bool isDecimalText(const std::string& text) const
+    {
+        return !text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        });
+    }
+
+    bool isSvWidthCastTarget(const std::string& rawTarget) const
+    {
+        auto target = stripBalancedOuterParens(trim(rawTarget));
+        if (target.empty() || isSvBuiltinCastTarget(target)) {
+            return false;
+        }
+        if (isDecimalText(target) || isValueTemplateParamName(target) || !constantType(target).empty()) {
+            return true;
+        }
+        if (target.find('(') != std::string::npos || target.find('.') != std::string::npos) {
+            return true;
+        }
+        for (char ch : target) {
+            if (ch == '+' || ch == '*' || ch == '/' || ch == '%') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool isUnbasedUnsizedLiteralExpr(const ExpressionSyntax& expr, char value)
     {
         const ExpressionSyntax* e = &expr;
@@ -503,7 +550,7 @@
         }
         auto width = signednessCastWidth(*arg);
         std::string helper = rawCallee == "$signed" ? "cpphdl::sv_signed" : "cpphdl::sv_unsigned";
-        return helper + "<(size_t)(" + width + ")>(" + emitNumericExpr(*arg) + ")";
+        return helper + "<(std::size_t)(" + width + ")>(" + emitNumericExpr(*arg) + ")";
     }
 
     std::string emitSystemBitsValue(const InvocationExpressionSyntax& call)
@@ -549,6 +596,25 @@
         }
         auto width = foldWidth(exprWidth(*arg));
         return width.empty() ? "0" : width;
+    }
+
+    std::string emitSystemHighValue(const InvocationExpressionSyntax& call)
+    {
+        auto arg = firstInvocationExpressionArg(call);
+        if (!arg) {
+            return "0";
+        }
+        auto width = emitSystemBitsValue(call);
+        if (isNumber(width)) {
+            auto value = std::stoull(width);
+            return value == 0 ? "0" : std::to_string(value - 1);
+        }
+        return "((" + width + ") == 0 ? 0 : (" + width + ") - 1)";
+    }
+
+    std::string emitSystemIsUnknownValue(const InvocationExpressionSyntax&)
+    {
+        return "false";
     }
 
     std::string pathType(std::string path)
@@ -755,31 +821,7 @@
             if (target.empty()) {
                 return "";
             }
-            auto isBuiltinValueType = [](const std::string& value) {
-                return value == "bool" || value == "int" || value == "unsigned" || value == "uint64_t" ||
-                       value == "uint32_t" || value == "uint16_t" || value == "uint8_t" ||
-                       value == "longint" || value == "shortint";
-            };
-            auto isValueTemplateParamName = [&](const std::string& value) {
-                if (!mod) {
-                    return false;
-                }
-                for (const auto& param : mod->params) {
-                    if (templateParamName(param) == value && !templateParamValueType(param).empty()) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            auto isDecimal = [](const std::string& value) {
-                return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-                    return std::isdigit(ch);
-                });
-            };
-            bool widthCast = !isBuiltinValueType(target) &&
-                             (isDecimal(target) || target.find('.') != std::string::npos ||
-                              isValueTemplateParamName(target) || !constantType(target).empty());
-            if (!widthCast) {
+            if (!isSvWidthCastTarget(target)) {
                 return "";
             }
             return foldWidth(replaceKeywordMemberAccess(exprText(target)));
@@ -791,31 +833,7 @@
             auto& c = expr.as<CastExpressionSyntax>();
             auto rawTarget = trim(exprText(c.left->toString()));
             auto rawTargetValue = stripBalancedOuterParens(rawTarget);
-            auto isBuiltinValueType = [](const std::string& text) {
-                return text == "bool" || text == "int" || text == "unsigned" || text == "uint64_t" ||
-                       text == "uint32_t" || text == "uint16_t" || text == "uint8_t" ||
-                       text == "longint" || text == "shortint";
-            };
-            auto isValueTemplateParamName = [&](const std::string& text) {
-                if (!mod) {
-                    return false;
-                }
-                for (const auto& param : mod->params) {
-                    if (templateParamName(param) == text && !templateParamValueType(param).empty()) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            auto isDecimal = [](const std::string& text) {
-                return !text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char ch) {
-                    return std::isdigit(ch);
-                });
-            };
-            bool widthCast = !isBuiltinValueType(rawTargetValue) &&
-                             (isDecimal(rawTargetValue) || rawTargetValue.find('.') != std::string::npos ||
-                              isValueTemplateParamName(rawTargetValue) || !constantType(rawTargetValue).empty());
-            if (widthCast) {
+            if (isSvWidthCastTarget(rawTargetValue)) {
                 auto width = foldWidth(emitUntypedNumericExpr(*c.left));
                 if (!width.empty()) {
                     return width;
@@ -1103,6 +1121,12 @@
             if (rawCallee == "$bits") {
                 return "32";
             }
+            if (rawCallee == "$high") {
+                return "32";
+            }
+            if (rawCallee == "$isunknown") {
+                return "1";
+            }
             auto width = knownFunctionReturnWidth(exprText(i.left->toString()));
             if (!width.empty()) {
                 return width;
@@ -1238,7 +1262,7 @@
             if (storageType.empty()) {
                 return "";
             }
-            auto type = resolveAliasValueType(storageType);
+            auto type = resolveAliasValueType(unwrapRegType(storageType));
             auto args = templateArgsFor(type, "array");
             if (args.empty()) {
                 args = templateArgsFor(type, "std::array");
@@ -1536,12 +1560,38 @@
         if (e->kind == SyntaxKind::ElementSelectExpression) {
             auto& sel = e->as<ElementSelectExpressionSyntax>();
             auto leftType = unwrapRegType(resolveAliasValueType(exprType(*sel.left)));
+            if (leftType.empty() && mod) {
+                auto leftBase = assignedBase(*sel.left);
+                auto it = mod->types.find(leftBase);
+                if (it != mod->types.end()) {
+                    leftType = unwrapRegType(resolveAliasValueType(it->second));
+                }
+                else if (mod->outputPortCppNames.count(leftBase)) {
+                    leftType = unwrapRegType(resolveAliasValueType(outputStorageType(*mod, leftBase, mod->outputPortCppNames[leftBase])));
+                }
+            }
             auto arrayArgs = templateArgsFor(leftType, "array");
             if (arrayArgs.empty()) {
                 arrayArgs = templateArgsFor(leftType, "std::array");
             }
             if (!arrayArgs.empty()) {
-                return "";
+                auto elemWidth = foldWidth(resolvedTypeWidth(arrayArgs[0]));
+                if (elemWidth.empty()) {
+                    elemWidth = foldWidth(resolvedTypeWidth(resolveAliasValueType(arrayArgs[0])));
+                }
+                if (elemWidth.empty() && !trim(arrayArgs[0]).empty()) {
+                    elemWidth = "cpphdl::type_width<" + trim(arrayArgs[0]) + ">()";
+                }
+                if (!elemWidth.empty() && sel.select && RangeSelectSyntax::isKind(sel.select->selector->kind)) {
+                    auto count = foldWidth(selectTemplateWidth(*sel.select));
+                    if (count.empty()) {
+                        count = selectTemplateWidth(*sel.select);
+                    }
+                    if (!count.empty()) {
+                        return foldWidth("(" + elemWidth + ") * (" + count + ")");
+                    }
+                }
+                return elemWidth;
             }
             return sel.select ? widthForSelect(*sel.select) : std::string();
         }
@@ -1600,7 +1650,7 @@
             }
             auto castWidth = emittedConcatOperandCastWidth(emitted);
             if (!castWidth.empty() &&
-                rangeSelectWidth.empty() &&
+                (rangeSelectWidth.empty() || emitted.find("__cpphdl_slice_out") != std::string::npos) &&
                 (width.empty() ||
                  (width == "1" && !isBitSelectOperand(*e) && !emittedOneBitValueExpr(emitted)) ||
                  emitted.find("__cpphdl_slice_out") != std::string::npos)) {
@@ -1624,6 +1674,9 @@
             }
         }
         if (!numeric) {
+            if (parts.size() == 1) {
+                return "logic<" + parts.front().first + ">(" + parts.front().second + ")";
+            }
             std::string args;
             for (auto& p : parts) {
                 if (!args.empty()) {
@@ -1729,7 +1782,7 @@
         if (width == "1" && (value & 1ull) == 1ull) {
             return maskForWidth(count);
         }
-        return "([]() { uint64_t __cpphdl_rep = 0; for (size_t __cpphdl_i = 0; __cpphdl_i < (size_t)(" +
+        return "([]() { uint64_t __cpphdl_rep = 0; for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" +
                count + "); ++__cpphdl_i) { __cpphdl_rep = ((__cpphdl_rep << (unsigned)(" + width +
                ")) | (" + valueText + " & " + maskForWidth(width) + ")); } return __cpphdl_rep; }())";
     }
@@ -1772,6 +1825,9 @@
             }
         }
         if (!numericWidths || total >= 64) {
+            if (parts.size() == 1) {
+                return "logic<" + parts.front().first + ">(" + parts.front().second + ")";
+            }
             std::string args;
             for (auto& p : parts) {
                 if (!args.empty()) {
@@ -2350,6 +2406,34 @@
         return s;
     }
 
+    std::string emitUntypedNumericArgumentList(const ArgumentListSyntax& args)
+    {
+        std::string s = "(";
+        for (auto arg : args.parameters) {
+            if (s.size() > 1) {
+                s += ", ";
+            }
+            if (arg->kind == SyntaxKind::OrderedArgument) {
+                auto& ordered = arg->as<OrderedArgumentSyntax>();
+                if (ordered.expr && ExpressionSyntax::isKind(ordered.expr->kind)) {
+                    s += emitUntypedNumericExpr(ordered.expr->as<ExpressionSyntax>());
+                    continue;
+                }
+                if (ordered.expr && ordered.expr->kind == SyntaxKind::SimplePropertyExpr) {
+                    auto& prop = ordered.expr->as<SimplePropertyExprSyntax>();
+                    if (prop.expr && prop.expr->kind == SyntaxKind::SimpleSequenceExpr) {
+                        auto& expr = *prop.expr->as<SimpleSequenceExprSyntax>().expr;
+                        s += emitUntypedNumericExpr(expr);
+                        continue;
+                    }
+                }
+            }
+            s += cppExprText(arg->toString());
+        }
+        s += ")";
+        return s;
+    }
+
     std::string emitPredicate(const ConditionalPredicateSyntax& p)
     {
         std::string s;
@@ -2466,6 +2550,247 @@
         return lhs + " " + op + " " + rhs;
     }
 
+    struct PackedArrayElementWrite {
+        std::string target;
+        std::string leafType;
+    };
+
+    struct PackedArrayFieldWrite {
+        std::string target;
+        std::string elementType;
+        std::string field;
+    };
+
+    std::optional<PackedArrayElementWrite> packedArrayElementWriteTarget(const ExpressionSyntax& lhsExpr, bool nextValue)
+    {
+        if (!mod) {
+            return std::nullopt;
+        }
+        std::string base;
+        std::vector<const ElementSelectSyntax*> selectors;
+        std::function<bool(const ExpressionSyntax&)> collect = [&](const ExpressionSyntax& expr) -> bool {
+            if (expr.kind == SyntaxKind::IdentifierName) {
+                base = tok(expr.as<IdentifierNameSyntax>().identifier);
+                return true;
+            }
+            if (expr.kind == SyntaxKind::IdentifierSelectName) {
+                auto& n = expr.as<IdentifierSelectNameSyntax>();
+                base = tok(n.identifier);
+                for (auto sel : n.selectors) {
+                    selectors.push_back(sel);
+                }
+                return true;
+            }
+            if (expr.kind == SyntaxKind::ElementSelectExpression) {
+                auto& e = expr.as<ElementSelectExpressionSyntax>();
+                if (!collect(*e.left)) {
+                    return false;
+                }
+                selectors.push_back(e.select);
+                return true;
+            }
+            return false;
+        };
+        if (!collect(lhsExpr) || selectors.size() < 2 || base.empty()) {
+            return std::nullopt;
+        }
+        std::string currentType;
+        if (mod->types.count(base)) {
+            currentType = mod->types[base];
+        }
+        else if (mod->outputPortCppNames.count(base)) {
+            currentType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
+        }
+        else if (mod->portCppNames.count(base)) {
+            for (const auto& port : mod->ports) {
+                if (port.name == base || port.name == mod->portCppNames[base]) {
+                    currentType = port.type;
+                    break;
+                }
+            }
+        }
+        else {
+            currentType = lookupLocalType(base);
+        }
+        currentType = unwrapRegType(resolveAliasValueType(currentType));
+        if (currentType.empty()) {
+            return std::nullopt;
+        }
+
+        auto baseExpr = mod->outputPortCppNames.count(base) ? base :
+            (mod->portCppNames.count(base) ? mod->portCppNames[base] : base);
+        if (nextValue) {
+            baseExpr += "._next";
+        }
+
+        struct Dimension {
+            std::string index;
+            std::string count;
+        };
+        std::vector<Dimension> dimensions;
+        std::string leafType;
+        for (auto sel : selectors) {
+            if (!sel || !sel->selector || sel->selector->kind != SyntaxKind::BitSelect) {
+                return std::nullopt;
+            }
+            auto args = templateArgsFor(currentType, "array");
+            if (args.empty()) {
+                args = templateArgsFor(currentType, "std::array");
+            }
+            if (args.size() < 3 || trim(args[2]) != "true") {
+                return std::nullopt;
+            }
+            auto index = arrayIndexExpr(base, dimensions.size(), *sel->selector->as<BitSelectSyntax>().expr);
+            dimensions.push_back({index, trim(args[1])});
+            leafType = trim(args[0]);
+            currentType = unwrapRegType(resolveAliasValueType(leafType));
+        }
+        if (dimensions.size() < 2 || leafType.empty()) {
+            return std::nullopt;
+        }
+
+        auto flat = "(uint64_t)(" + dimensions.front().index + ")";
+        for (size_t i = 1; i < dimensions.size(); ++i) {
+            flat = "((" + flat + ") * (uint64_t)(" + dimensions[i].count + ") + (uint64_t)(" + dimensions[i].index + "))";
+        }
+        auto width = foldWidth(resolvedTypeWidth(leafType));
+        if (width.empty()) {
+            width = "cpphdl::type_width<" + leafType + ">()";
+        }
+        auto first = "((" + flat + ") * (uint64_t)(" + width + "))";
+        auto last = "(" + first + " + (uint64_t)(" + width + ") - 1)";
+        return PackedArrayElementWrite{baseExpr + ".data.bits(" + last + "," + first + ")", leafType};
+    }
+
+    std::optional<PackedArrayFieldWrite> packedArrayFieldWriteTarget(const ExpressionSyntax& lhsExpr, bool nextValue)
+    {
+        if (!mod) {
+            return std::nullopt;
+        }
+        auto lhsText = emitLValue(lhsExpr);
+        auto dot = lhsText.rfind('.');
+        if (dot != std::string::npos) {
+            auto target = trim(lhsText.substr(0, dot));
+            auto field = trim(lhsText.substr(dot + 1));
+            if (!target.empty() && target.find('[') != std::string::npos && !field.empty() &&
+                field.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") == std::string::npos) {
+                auto base = assignedBase(lhsExpr);
+                if (base.empty()) {
+                    base = baseFromLValueText(lhsText);
+                }
+                std::string currentType;
+                if (mod->types.count(base)) {
+                    currentType = mod->types[base];
+                }
+                else if (mod->outputPortCppNames.count(base)) {
+                    currentType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
+                }
+                else {
+                    currentType = lookupLocalType(base);
+                }
+                currentType = unwrapRegType(resolveAliasValueType(currentType));
+                auto args = templateArgsFor(currentType, "array");
+                if (args.empty()) {
+                    args = templateArgsFor(currentType, "std::array");
+                }
+                if (args.size() >= 3 && trim(args[2]) == "true") {
+                    if (nextValue && target.rfind(base, 0) == 0) {
+                        target = base + "._next" + target.substr(base.size());
+                    }
+                    return PackedArrayFieldWrite{target, trim(args[0]), field};
+                }
+            }
+        }
+
+        if (lhsExpr.kind != SyntaxKind::MemberAccessExpression) {
+            return std::nullopt;
+        }
+        auto& member = lhsExpr.as<MemberAccessExpressionSyntax>();
+        auto field = cppIdent(tok(member.name));
+        if (field.empty()) {
+            return std::nullopt;
+        }
+
+        std::string base;
+        std::vector<const ElementSelectSyntax*> selectors;
+        std::function<bool(const ExpressionSyntax&)> collect = [&](const ExpressionSyntax& expr) -> bool {
+            if (expr.kind == SyntaxKind::IdentifierName) {
+                base = tok(expr.as<IdentifierNameSyntax>().identifier);
+                return true;
+            }
+            if (expr.kind == SyntaxKind::IdentifierSelectName) {
+                auto& n = expr.as<IdentifierSelectNameSyntax>();
+                base = tok(n.identifier);
+                for (auto sel : n.selectors) {
+                    selectors.push_back(sel);
+                }
+                return true;
+            }
+            if (expr.kind == SyntaxKind::ElementSelectExpression) {
+                auto& e = expr.as<ElementSelectExpressionSyntax>();
+                if (!collect(*e.left)) {
+                    return false;
+                }
+                selectors.push_back(e.select);
+                return true;
+            }
+            return false;
+        };
+        if (!collect(*member.left) || selectors.empty() || base.empty()) {
+            return std::nullopt;
+        }
+
+        std::string currentType;
+        if (mod->types.count(base)) {
+            currentType = mod->types[base];
+        }
+        else if (mod->outputPortCppNames.count(base)) {
+            currentType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
+        }
+        else if (mod->portCppNames.count(base)) {
+            for (const auto& port : mod->ports) {
+                if (port.name == base || port.name == mod->portCppNames[base]) {
+                    currentType = port.type;
+                    break;
+                }
+            }
+        }
+        else {
+            currentType = lookupLocalType(base);
+        }
+        currentType = unwrapRegType(resolveAliasValueType(currentType));
+        if (currentType.empty()) {
+            return std::nullopt;
+        }
+
+        bool selectedPackedElement = false;
+        std::string elementType;
+        for (auto sel : selectors) {
+            if (!sel || !sel->selector || sel->selector->kind != SyntaxKind::BitSelect) {
+                return std::nullopt;
+            }
+            auto args = templateArgsFor(currentType, "array");
+            if (args.empty()) {
+                args = templateArgsFor(currentType, "std::array");
+            }
+            if (args.size() < 2) {
+                return std::nullopt;
+            }
+            selectedPackedElement = args.size() >= 3 && trim(args[2]) == "true";
+            elementType = trim(args[0]);
+            currentType = unwrapRegType(resolveAliasValueType(elementType));
+        }
+        if (!selectedPackedElement || elementType.empty()) {
+            return std::nullopt;
+        }
+
+        auto target = emitLValue(*member.left);
+        if (nextValue && target.rfind(base, 0) == 0) {
+            target = base + "._next" + target.substr(base.size());
+        }
+        return PackedArrayFieldWrite{target, elementType, field};
+    }
+
     std::string emitStatementExpr(const ExpressionSyntax& expr, bool comb)
     {
         if (isCompoundAssignmentKind(expr.kind)) {
@@ -2510,6 +2835,7 @@
                 return namedAggregateToTypedExpression(targetType, value);
             };
             rhs = wrapDesignatedAggregate(std::move(rhs));
+            auto packedArrayWriteInfo = packedArrayElementWriteTarget(*b.left, false);
             auto lhsPartSelectWidth = [&]() -> std::string {
                 const ElementSelectSyntax* select = nullptr;
                 if (b.left->kind == SyntaxKind::ElementSelectExpression) {
@@ -2531,7 +2857,11 @@
                 return selectTemplateWidth(*select);
             }();
             bool rhsConditionalSized = false;
-            if (b.right->kind == SyntaxKind::ConditionalExpression && !lhsPartSelectWidth.empty()) {
+            if (b.right->kind == SyntaxKind::ConditionalExpression && packedArrayWriteInfo) {
+                rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWriteInfo->leafType);
+                rhsConditionalSized = true;
+            }
+            else if (b.right->kind == SyntaxKind::ConditionalExpression && !lhsPartSelectWidth.empty()) {
                 rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), "logic<" + lhsPartSelectWidth + ">");
                 rhsConditionalSized = true;
             }
@@ -2608,12 +2938,31 @@
             if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
                 sequentialStorageType = regTypeFor(sequentialStorageType);
             }
+            auto writeNextValue = ((isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) ||
+                 ((!comb && mod->varNames.count(base)) &&
+                  sequentialStorageType.rfind("reg<", 0) == 0 &&
+                  !memoryLikeType(sequentialStorageType)));
+            auto packedArrayWrite = packedArrayElementWriteTarget(*b.left, writeNextValue);
+            if (!packedArrayWrite && packedArrayWriteInfo && !writeNextValue) {
+                packedArrayWrite = packedArrayWriteInfo;
+            }
+            auto packedArrayFieldWrite = packedArrayFieldWriteTarget(*b.left, writeNextValue);
+            if (packedArrayWrite && b.right->kind == SyntaxKind::ConditionalExpression) {
+                rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWrite->leafType);
+                rhsConditionalSized = true;
+            }
             auto targetStorageType = unwrapRegType(sequentialStorageType);
             auto lvalueStorageType = mod ? unwrapRegType(expressionStorageType(*mod, lhs)) : std::string();
             auto unbasedTargetType = !lvalueStorageType.empty() ? lvalueStorageType : targetStorageType;
-            if (lvalueStorageType.empty() && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
+            if (packedArrayWrite) {
+                unbasedTargetType = packedArrayWrite->leafType;
+            }
+            if (!packedArrayWrite && lvalueStorageType.empty() && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
                 lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
-                unbasedTargetType = "std::remove_cvref_t<decltype(" + lhs + ")>";
+                unbasedTargetType = "cpphdl::value_type_for_ref_t<decltype(" + lhs + ")>";
+                if (lhs.find('[') != std::string::npos) {
+                    unbasedTargetType = "logic<1>";
+                }
             }
             if (auto unbasedValue = emitUnbasedUnsizedAssignmentValue(*b.right, unbasedTargetType);
                 !unbasedValue.empty()) {
@@ -2809,12 +3158,22 @@
                         targetStorageType + ">()>(" + rhs + "))";
                 }
             }
-            if (((isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) ||
-                 ((!comb && mod->varNames.count(base)) &&
-                  sequentialStorageType.rfind("reg<", 0) == 0 &&
-                  !memoryLikeType(sequentialStorageType)))) {
+            if (packedArrayWrite) {
+                if (b.right->kind == SyntaxKind::ConditionalExpression) {
+                    rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWrite->leafType);
+                }
+                return packedArrayWrite->target + " = " + rhs;
+            }
+            if (packedArrayFieldWrite) {
+                return "([&]() { auto __cpphdl_elem = cpphdl::unpack_value<" +
+                    packedArrayFieldWrite->elementType + ">(cpphdl::pack_value<cpphdl::type_width<" +
+                    packedArrayFieldWrite->elementType + ">()>(" + packedArrayFieldWrite->target +
+                    ")); __cpphdl_elem." + packedArrayFieldWrite->field + " = " + rhs + "; " +
+                    packedArrayFieldWrite->target + " = __cpphdl_elem; }())";
+            }
+            if (writeNextValue) {
                 if (b.left->kind == SyntaxKind::ElementSelectExpression || lhs.find('[') != std::string::npos ||
-                    lhs.find(".bits(") != std::string::npos) {
+                    lhs.find('.') != std::string::npos || lhs.find(".bits(") != std::string::npos) {
                     lhs.replace(0, base.size(), base + "._next");
                 }
                 else {
@@ -3032,8 +3391,8 @@
                 }
                 return "pow(" + left + ", " + right + ")";
             }
-            auto left = emitNumericExpr(*b.left);
-            auto rhs = emitNumericExpr(*b.right);
+            auto left = emitUntypedNumericExpr(*b.left);
+            auto rhs = emitUntypedNumericExpr(*b.right);
             if (op == "<<" || op == ">>") {
                 rhs = "(unsigned)(" + rhs + ")";
             }
@@ -3078,7 +3437,17 @@
             if (callee == "$bits") {
                 return emitSystemBitsValue(i);
             }
-            return callee + (i.arguments ? emitArgumentList(*i.arguments, false, callee) : "()");
+            if (callee == "$high") {
+                return emitSystemHighValue(i);
+            }
+            if (callee == "$isunknown") {
+                return emitSystemIsUnknownValue(i);
+            }
+            return callee + (i.arguments ? emitUntypedNumericArgumentList(*i.arguments) : "()");
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            auto& m = expr.as<MemberAccessExpressionSyntax>();
+            return emitUntypedNumericExpr(*m.left) + "." + cppIdent(tok(m.name));
         }
         auto emitted = emitExpr(expr);
         auto width = foldWidth(exprWidth(expr));
@@ -3221,6 +3590,7 @@
             lhsType = lvalueBaseType;
         }
         if (!lhsType.empty() && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos)) {
+            replaceAll(lhsType, "std::remove_cvref_t<decltype(", "cpphdl::value_type_for_ref_t<decltype(");
             return emitConditionalAsType(c, lhsType);
         }
         if (lhsType.empty() && lhs.find('.') != std::string::npos) {
@@ -3254,7 +3624,7 @@
 
     std::string emitConditionalAsDecltype(const ConditionalExpressionSyntax& c, const std::string& lhs)
     {
-        auto targetType = "std::remove_cvref_t<decltype(" + lhs + ")>";
+        auto targetType = "cpphdl::value_type_for_ref_t<decltype(" + lhs + ")>";
         auto leadingTemplateCallType = [](const std::string& value) -> std::string {
             auto v = trim(value);
             auto findTypeStart = [&](const std::string& prefix) -> size_t {
@@ -3337,8 +3707,10 @@
         return emitPredicate(*c.predicate) + " ? " + emitBranch(*c.left) + " : " + emitBranch(*c.right);
     }
 
-    std::string emitConditionalAsType(const ConditionalExpressionSyntax& c, const std::string& targetType)
+    std::string emitConditionalAsType(const ConditionalExpressionSyntax& c, const std::string& targetTypeIn)
     {
+        auto targetType = targetTypeIn;
+        replaceAll(targetType, "std::remove_cvref_t<decltype(", "cpphdl::value_type_for_ref_t<decltype(");
         auto numericTarget = isNumericValueType(targetType);
         auto emitBranch = [&](const ExpressionSyntax& branch) -> std::string {
             auto expr = &branch;
@@ -3397,6 +3769,10 @@
             return args;
         };
         auto currentType = resolveAliasType(mod->types.count(base) ? mod->types[base] : lookupLocalType(base));
+        auto constBaseType = constantType(base);
+        if (currentType.empty() && !constBaseType.empty()) {
+            currentType = resolveAliasType(constBaseType);
+        }
         if (currentType.empty() && mod && mod->outputPortCppNames.count(base)) {
             currentType = resolveAliasType(outputStorageType(*mod, base, mod->outputPortCppNames[base]));
         }
@@ -3454,7 +3830,7 @@
             auto localBaseType = lookupLocalType(base);
             bool unknownSingleSelectScalar = currentType.empty() && n.selectors.size() == 1 &&
                 (!mod || (!mod->portCppNames.count(base) && !mod->outputPortCppNames.count(base) && !isAssignDrivenVar(*mod, base)));
-            if (loopVars.count(base) || unknownSingleSelectScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
+            if (loopVars.count(base) || !constBaseType.empty() || unknownSingleSelectScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
                 localBaseType == "unsigned" || localBaseType == "u32" || localBaseType == "uint32_t" || localBaseType == "u64" || localBaseType == "uint64_t") {
                 return "(((uint64_t)(" + s + ") >> (unsigned)(" + index + ")) & 1ull)";
             }
@@ -3479,7 +3855,7 @@
             auto localBaseType = lookupLocalType(base);
             bool unknownSingleRangeScalar = currentType.empty() && n.selectors.size() == 1 &&
                 (!mod || (!mod->portCppNames.count(base) && !mod->outputPortCppNames.count(base) && !isAssignDrivenVar(*mod, base)));
-            if (loopVars.count(base) || unknownSingleRangeScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
+            if (loopVars.count(base) || !constBaseType.empty() || unknownSingleRangeScalar || currentType == "unsigned" || currentType == "u32" || currentType == "uint32_t" || currentType == "u64" || currentType == "uint64_t" ||
                 localBaseType == "unsigned" || localBaseType == "u32" || localBaseType == "uint32_t" || localBaseType == "u64" || localBaseType == "uint64_t") {
                 auto value = "(((uint64_t)(" + s + ")) >> (unsigned)(" + bounds.second + "))";
                 auto width = foldWidth(selectWidth(*last));
@@ -3626,6 +4002,15 @@
             if (rawCallee == "$signed" || rawCallee == "$unsigned") {
                 return emitSystemSignednessCast(i, rawCallee);
             }
+            if (rawCallee == "$bits") {
+                return emitSystemBitsValue(i);
+            }
+            if (rawCallee == "$high") {
+                return emitSystemHighValue(i);
+            }
+            if (rawCallee == "$isunknown") {
+                return emitSystemIsUnknownValue(i);
+            }
         }
         if (expr.kind == SyntaxKind::IdentifierSelectName) {
             auto numericSelect = emitNumericIdentifierSelectExpr(expr.as<IdentifierSelectNameSyntax>());
@@ -3642,6 +4027,10 @@
             if (!numericRange.empty()) {
                 return numericRange;
             }
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            auto& m = expr.as<MemberAccessExpressionSyntax>();
+            return emitUntypedNumericExpr(*m.left) + "." + cppIdent(tok(m.name));
         }
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             auto& p = expr.as<ParenthesizedExpressionSyntax>();

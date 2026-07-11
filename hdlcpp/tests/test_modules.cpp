@@ -201,7 +201,7 @@ endmodule
 
     auto h = convertModule(argv0, "resolved_generate_output", sv, "top.USE_CHILD\t1\n");
     expectNotContains(h, "reg<logic<8>> routed;");
-    expectContains(h, "static constexpr unsigned USE_TAG =");
+    expectContains(h, "static constexpr uint64_t USE_TAG =");
     expectContains(h, "producer<USE_TAG> p;");
     expectContains(h, "_LAZY_COMB(routed_comb, logic<8>)");
     expectContains(h, "routed_comb_func()");
@@ -867,9 +867,9 @@ endmodule
 
     auto h = convertModule(argv0, "function_localparam_replicate", sv, "");
     expectContains(h, "static constexpr unsigned OFFW =");
-    expectContains(h, "__cpphdl_rep");
+    expectContains(h, "cpphdl::repeat");
     expectNotContains(h, "W/8{");
-    expectNotContains(h, "cpphdl::repeat");
+    expectNotContains(h, "__cpphdl_rep{}; for");
 }
 
 static void testConfiguredDottedGenerateSelectsOneBranch(const char* argv0)
@@ -1019,7 +1019,9 @@ endmodule
     auto h = convertModule(argv0, "child_alias_port_type", sv, "");
     expectNotContains(h, "__port_bind_child_i_val_i_in_comb, in_t");
     expectContains(h, "__port_bind_child_i_val_i_in_comb_func()");
-    expectContains(h, "_LAZY_COMB(__port_bind_child_i_val_i_in_comb");
+    expectContains(h, "_LAZY_COMB(__port_bind_child_i_val_i_in_comb, std::remove_cvref_t<decltype(child_i.val_i_in())>)");
+    expectContains(h, "child_i.val_i_in = _ASSIGN_COMB(__port_bind_child_i_val_i_in_comb_func());");
+    expectNotContains(h, "__port_bind_child_i_val_i_in_packed_to_array_comb_func()");
 }
 
 static void testLogicCombInputUsesDirectCombBinding(const char* argv0)
@@ -1173,7 +1175,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "indexed_parent_port_input", sv, "");
-    expectContains(h, "child_i.req_i_in = _ASSIGN_COMB((reqs_i_in())[(unsigned)((uint64_t)(((uint64_t)(2) & ((1ull << 32) - 1ull))))]);");
+    expectContains(h, "child_i.req_i_in = _ASSIGN(cpphdl::sv_cast<std::remove_cvref_t<decltype(child_i.req_i_in())>>((reqs_i_in())[(unsigned)((uint64_t)(((uint64_t)(2) & ((1ull << 32) - 1ull))))]));");
 }
 
 static void testPackedParentPortElementInputUsesValueBinding(const char* argv0)
@@ -1225,11 +1227,12 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_comb_array_element_input", sv, "");
-    expectContains(h, ".word_i_in = _ASSIGN_I(logic<32>(cpphdl::pack_value");
+    expectContains(h, ".word_i_in = _ASSIGN_I( words_comb_func()[");
+    expectNotContains(h, ".word_i_in = _ASSIGN_I(logic<32>(cpphdl::pack_value");
     expectNotContains(h, ".word_i_in = _ASSIGN_COMB_I(logic<32>(cpphdl::pack_value");
 }
 
-static void testCombVectorBitInputUsesValueBinding(const char* argv0)
+static void testCombVectorBitInputUsesCombBinding(const char* argv0)
 {
     const std::string sv = R"sv(
 module bit_sink (
@@ -1373,7 +1376,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "indexed_local_comb_input", sv, "");
-    expectContains(h, ".req_i_in = _ASSIGN_COMB_I( routed_comb_func()[(unsigned)(uint64_t)((uint64_t)(i))] );");
+    expectContains(h, ".req_i_in = _ASSIGN_I( routed_comb_func()[(unsigned)(uint64_t)((uint64_t)(i))] );");
 }
 
 static void testIndexedCombArrayInputUsesCombBinding(const char* argv0)
@@ -1406,8 +1409,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "indexed_comb_array_input", sv, "");
-    expectContains(h, ".in_i_in = _ASSIGN_COMB_I( routed_comb_func()[(unsigned)(uint64_t)((uint64_t)(i))] );");
-    expectNotContains(h, ".in_i_in = _ASSIGN_I(");
+    expectContains(h, ".in_i_in = _ASSIGN_I( routed_comb_func()[(unsigned)(uint64_t)((uint64_t)(i))] );");
 }
 
 static void testScalarParentPortToArrayChildPortUsesAdapter(const char* argv0)
@@ -1432,8 +1434,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "scalar_parent_port_to_array_child", sv, "");
-    expectContains(h, ".addr_i_in = _ASSIGN_I(array<logic<6>,1>(addr_i_in()));");
-    expectNotContains(h, ".addr_i_in = _ASSIGN_COMB_I(array<logic<6>,1>(addr_i_in()));");
+    expectContains(h, ".addr_i_in = _ASSIGN_I( std::remove_cvref_t<decltype(child_i[");
+    expectContains(h, "].addr_i_in())>(addr_i_in()) );");
+    expectNotContains(h, ".addr_i_in = _ASSIGN_COMB_I( addr_i_in() );");
 }
 
 static void testGeneratedChildArrayKeepsStructuredPortType(const char* argv0)
@@ -1527,6 +1530,34 @@ endmodule
     expectContains(h, "routed_comb_func()");
 }
 
+static void testGeneratedIndexedBitExtractUsesValueBinding(const char* argv0)
+{
+    const std::string sv = R"sv(
+module bit_sink (
+    input logic bit_i
+);
+endmodule
+
+module generated_indexed_bit_extract (
+    input logic [1:0] src_i
+);
+  logic [1:0] routed;
+  assign routed = src_i;
+
+  for (genvar i = 0; i < 2; i++) begin : gen_bits
+    bit_sink child_i (
+      .bit_i(routed[i])
+    );
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "generated_indexed_bit_extract", sv, "");
+    expectContains(h, ".bit_i_in = _ASSIGN_I(");
+    expectNotContains(h, ".bit_i_in = _ASSIGN_COMB_I( logic<1>(");
+    expectContains(h, "routed_comb_func()");
+}
+
 static void testArrayInputPortCombBindingIsComplete(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -1560,10 +1591,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "array_input_port_comb_binding", sv, "");
-    expectContains(h, "__port_bind_child_i_vals_i_in_packed_to_array_comb_func()");
-    expectContains(h, "std::remove_cvref_t<decltype(child_i.vals_i_in())> __port_bind_child_i_vals_i_in_packed_to_array_comb;");
-    expectContains(h, "cpphdl::pack_value<__cpphdl_target_count * __cpphdl_target_elem_bits>(__cpphdl_src)");
-    expectContains(h, "child_i.vals_i_in = _ASSIGN_COMB(__port_bind_child_i_vals_i_in_packed_to_array_comb_func());");
+    expectContains(h, "child_i.vals_i_in = _ASSIGN_COMB(vals_comb_func());");
+    expectNotContains(h, "child_i.vals_i_in = _ASSIGN(vals_comb_func());");
+    expectNotContains(h, "__port_bind_child_i_vals_i_in_packed_to_array_comb_func()");
     expectNotContains(h, "_ASSIGN_COMB(array__port_bind");
 }
 
@@ -1593,8 +1623,8 @@ endmodule
 
     auto h = convertModule(argv0, "array_logic_to_struct_child", sv, "");
     expectContains(h, "_LAZY_COMB(__port_bind_child_i_vals_i_in_unpacked_array_comb, std::remove_cvref_t<decltype(child_i.vals_i_in())>)");
-    expectContains(h, "using __cpphdl_target_elem_t = std::remove_cvref_t<decltype(std::declval<const __cpphdl_target_array_t&>()[0])>;");
-    expectContains(h, "cpphdl::unpack_value<__cpphdl_target_elem_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_elem_t>()>(__cpphdl_src[__cpphdl_i]))");
+    expectContains(h, "using __cpphdl_target_array_t = std::remove_cvref_t<decltype(child_i.vals_i_in())>;");
+    expectContains(h, "__port_bind_child_i_vals_i_in_unpacked_array_comb[__cpphdl_i] = cpphdl::unpack_value<__cpphdl_target_elem_t>");
     expectContains(h, "auto __cpphdl_src = vals_i_in();");
     expectNotContains(h, "array<logic<64>,2> __port_bind_child_i_vals_i_in_unpacked_array_comb;");
     expectNotContains(h, "auto __cpphdl_src = std::remove_cvref_t<decltype(child_i.vals_i_in())>(vals_i_in());");
@@ -1773,8 +1803,58 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "templ_same_struct_parent", sv, "");
-    expectContains(h, "std::is_assignable_v<templ_same_struct_pkg::req_t&, std::remove_cvref_t<decltype((child_i.data_o_out()))>>");
+    expectContains(h, "std::is_assignable_v<templ_same_struct_pkg::req_t&, std::remove_cvref_t<decltype((tmp_comb_func()))>>");
     expectNotContains(h, "tmp_comb = cpphdl::unpack_value<templ_same_struct_pkg::req_t>(cpphdl::pack_value<cpphdl::type_width<templ_same_struct_pkg::req_t>()>(child_i.data_o_out()));");
+}
+
+static void testParameterizedInterfacePortInfersChildTemplateAndBindsByRef(const char* argv0)
+{
+    const std::string sv = R"sv(
+interface IFACE #(
+  parameter int AW = -1,
+  parameter int DW = -1
+)(
+  input logic clk_i
+);
+  logic [AW-1:0] addr;
+  logic [DW-1:0] data;
+  modport out (output addr, data);
+endinterface
+
+module iface_child (
+  input logic rst_ni,
+  IFACE.out bus
+);
+  always_comb begin
+    bus.addr = '0;
+    bus.data = '1;
+  end
+endmodule
+
+module iface_parent (
+  input logic clk_i,
+  input logic rst_ni
+);
+  IFACE #(
+    .AW(32),
+    .DW(64)
+  ) bus(clk_i);
+
+  iface_child child_i (
+    .rst_ni(rst_ni),
+    .bus(bus)
+  );
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "iface_parent", sv, "");
+    expectContains(h, "template<int AW = -1, int DW = -1>");
+    expectContains(h, "_PORT(::IFACE<AW,DW>) bus;");
+    expectContains(h, "::IFACE<32,64> bus;");
+    expectContains(h, "::iface_child<32,64> child_i;");
+    expectContains(h, "child_i.bus = _ASSIGN_REG(bus);");
+    expectNotContains(h, "::iface_child child_i;");
+    expectNotContains(h, "child_i.bus = _ASSIGN(bus);");
 }
 
 static void testReplicationOfPackedAggregateUsesPackValue(const char* argv0)
@@ -2040,6 +2120,9 @@ endmodule
 
     auto h = convertModule(argv0, "replication_in_concat", sv, "");
     expectContains(h, "cat{([&]() { logic<");
+    expectContains(h, "() { logic<");
+    expectContains(h, "std::size_t __cpphdl_i");
+    expectNotContains(h, "logic<64> __cpphdl_rep");
     expectNotContains(h, "}())))), logic<");
 }
 
@@ -2080,6 +2163,78 @@ endmodule
     expectContains(h, "static constexpr unsigned ONES =");
     expectNotContains(h, "__cpphdl_rep{}; for");
     expectNotContains(h, "logic<((uint64_t)(W))");
+}
+
+static void testPackageArrayReplicationConstantUsesCppLambda(const char* argv0)
+{
+    const std::string sv = R"sv(
+package package_array_replication_const;
+  localparam NB = 3;
+  localparam NR = 1;
+  localparam logic [NR-1:0][NB-1:0] VALID = {{NR * NB}{1'b1}};
+endpackage
+)sv";
+
+    auto h = convertModule(argv0, "package_array_replication_const", sv, "");
+    expectContains(h, "inline constexpr std::array<uint64_t");
+    expectContains(h, "cpphdl::repeat");
+    expectNotContains(h, "{{{NR * NB}{");
+}
+
+static void testImportedPackageValueIsQualified(const char* argv0)
+{
+    const std::string sv = R"sv(
+package value_pkg_a;
+  localparam int unsigned TOKEN = 3;
+endpackage
+
+package value_pkg_b;
+  localparam int unsigned TOKEN = 7;
+endpackage
+
+module imported_value_qualify (
+    output logic [3:0] out_o
+);
+  import value_pkg_a::*;
+
+  function automatic logic [3:0] pick();
+    pick = TOKEN;
+  endfunction
+
+  assign out_o = pick();
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "imported_value_qualify", sv, "");
+    expectContains(h, "value_pkg_a::TOKEN");
+    expectNotContains(h, "pick = TOKEN;");
+}
+
+static void testLocalEnumValueBeatsSingleImportedPackageFallback(const char* argv0)
+{
+    const std::string sv = R"sv(
+package fallback_pkg;
+  localparam int unsigned TOKEN = 7;
+endpackage
+
+module local_enum_value_beats_import (
+    output logic [1:0] out_o
+);
+  import fallback_pkg::*;
+
+  typedef enum logic [1:0] {
+    TOKEN_IDLE,
+    TOKEN_BUSY
+  } state_t;
+
+  state_t state_q;
+  assign out_o = TOKEN_BUSY;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "local_enum_value_beats_import", sv, "");
+    expectContains(h, "TOKEN_BUSY");
+    expectNotContains(h, "fallback_pkg::TOKEN_BUSY");
 }
 
 static void testNumericConcatConstantUsesIntegerExpr(const char* argv0)
@@ -2230,6 +2385,33 @@ endmodule
     expectContains(h, "logic<((uint64_t)(((uint64_t)(INDEX_WIDTH)");
     expectContains(h, "((uint64_t)(OFFSET_WIDTH)");
     expectNotContains(h, "logic<(uint64_t)((uint64_t)(VLEN))>((uint64_t)(logic<");
+}
+
+static void testConcatPackedArraySliceUsesElementWidth(const char* argv0)
+{
+    const std::string sv = R"sv(
+module concat_packed_array_slice #(
+    parameter int unsigned W = 64,
+    parameter int unsigned N = 2
+) (
+    input  logic [W-1:0] in_i,
+    output logic [W-1:0] out_o [N]
+);
+  logic [W-1:0] shift_q [N];
+  logic [W-1:0] shift_d [N];
+
+  always_comb begin
+    shift_d = shift_q;
+    shift_d = {in_i, shift_q[N-1:1]};
+    out_o = shift_d;
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "concat_packed_array_slice", sv, "concat_packed_array_slice.W\t64\nconcat_packed_array_slice.N\t2\n");
+    expectContains(h, "__cpphdl_slice_out");
+    expectContains(h, "logic<((uint64_t)(((uint64_t)(W) & ((1ull << 32) - 1ull)))) *");
+    expectNotContains(h, "logic<1>((uint64_t)(logic<((uint64_t)(((uint64_t)(W) & ((1ull << 32) - 1ull)))) *");
 }
 
 static void testIntegerLocalparamConcatIsConstexprNumeric(const char* argv0)
@@ -2750,8 +2932,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "unsigned_genvar_cast", sv, "");
-    expectContains(h, "cpphdl::sv_unsigned<(size_t)(32)>((uint64_t)(");
-    expectNotContains(h, "cpphdl::sv_unsigned<(size_t)(1)>((uint64_t)(");
+    expectContains(h, "cpphdl::sv_unsigned<(std::size_t)(32)>((uint64_t)(");
+    expectNotContains(h, "cpphdl::sv_unsigned<(std::size_t)(1)>((uint64_t)(");
 }
 
 static void testImplicitPackedArrayOutputPassThroughKeepsArrayShape(const char* argv0)
@@ -2991,7 +3173,7 @@ endmodule
 
     auto h = convertModule(argv0, "packed_vector_to_array_port", sv, "");
     expectContains(h, "__port_bind_u_mux_data_i_in_packed_to_array_comb_func");
-    expectContains(h, "constexpr size_t __cpphdl_target_elem_bits = cpphdl::type_width<__cpphdl_target_elem_t>();");
+    expectContains(h, "constexpr std::size_t __cpphdl_target_elem_bits = cpphdl::type_width<__cpphdl_target_elem_t>();");
     expectContains(h, "cpphdl::pack_value<__cpphdl_target_count * __cpphdl_target_elem_bits>(__cpphdl_src)");
     expectContains(h, "logic<__cpphdl_target_elem_bits>(__cpphdl_packed.bits((__cpphdl_i + 1) * __cpphdl_target_elem_bits - 1, __cpphdl_i * __cpphdl_target_elem_bits))");
     expectContains(h, "cpphdl::unpack_value<__cpphdl_target_elem_t>");
@@ -3040,9 +3222,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "same_struct_array_input_port", sv, "");
-    expectContains(h, "__port_bind_u_sink_req_i_in_packed_to_array_comb_func");
-    expectContains(h, "if constexpr (!cpphdl::is_logic_v<__cpphdl_src_t> && std::is_assignable_v<__cpphdl_target_array_t&, __cpphdl_src_t>)");
-    expectContains(h, "__port_bind_u_sink_req_i_in_packed_to_array_comb = __cpphdl_src;");
+    expectContains(h, "u_sink.req_i_in = _ASSIGN_COMB");
+    expectContains(h, "reqs_comb_func()");
+    expectNotContains(h, "__port_bind_u_sink_req_i_in_packed_array_comb_func");
 }
 
 static void testSamePackedArrayCombAssignKeepsArrayShape(const char* argv0)
@@ -3377,11 +3559,58 @@ endmodule
 
     auto h = convertModule(argv0, "packed_struct_to_logic_input", sv, "");
     expectContains(h, "__port_bind_u_sink_data_i_in_comb = cpphdl::pack_value<cpphdl::type_width<std::remove_cvref_t<decltype(u_sink.data_i_in())>>()");
-    expectContains(h, "(resp_comb_func());");
+    expectContains(h, ">(resp_comb_func());");
     expectContains(h, "u_sink.data_i_in = _ASSIGN_COMB(__port_bind_u_sink_data_i_in_comb_func());");
     expectNotContains(h, "u_sink.data_i_in = _ASSIGN(cpphdl::pack_value<");
     expectNotContains(h, "__port_bind_u_sink_data_i_in_comb = logic<");
     expectNotContains(h, "u_sink.data_i_in = _ASSIGN(resp_comb_func());");
+}
+
+static void testPackedStructInputToLogicAliasPortUsesPackValue(const char* argv0)
+{
+    const std::string sv = R"sv(
+module packed_struct_logic_alias_sink #(
+    parameter int unsigned DATA_WIDTH = 1
+) (
+    input  data_t       data_i,
+    output logic [63:0] data_o
+);
+  typedef logic [DATA_WIDTH-1:0] data_t;
+  assign data_o = data_i[64:1];
+endmodule
+
+module packed_struct_to_logic_alias_input(
+    input  logic [63:0] raw_i,
+    output logic [63:0] raw_o
+);
+  typedef struct packed {
+    logic [1:0]  error;
+    logic [3:0]  id;
+    logic [63:0] data;
+    logic        last;
+  } resp_t;
+
+  resp_t resp;
+  assign resp.error = '0;
+  assign resp.id = '0;
+  assign resp.data = raw_i;
+  assign resp.last = 1'b1;
+
+  packed_struct_logic_alias_sink #(
+    .DATA_WIDTH($bits(resp_t))
+  ) u_sink (
+    .data_i(resp),
+    .data_o(raw_o)
+  );
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "packed_struct_to_logic_alias_input", sv, "");
+    expectContains(h, "__port_bind_u_sink_data_i_in_comb = cpphdl::pack_value<cpphdl::type_width<std::remove_cvref_t<decltype(u_sink.data_i_in())>>()");
+    expectContains(h, ">(resp_comb_func());");
+    expectContains(h, "u_sink.data_i_in = _ASSIGN_COMB(__port_bind_u_sink_data_i_in_comb_func());");
+    expectNotContains(h, "__port_bind_u_sink_data_i_in_comb = logic<");
+    expectNotContains(h, "std::remove_cvref_t<decltype(u_sink.data_i_in())>(resp_comb_func())");
 }
 
 static void testPackedStructCastAssignedToVectorUsesPackValue(const char* argv0)
@@ -3490,11 +3719,10 @@ endmodule
 
     auto h = convertModule(argv0, "logic_alias_input_field_binding", sv, "");
     expectContains(h, "__port_bind_u_sink_data_i_in_comb_func()");
-    expectContains(h, "_LAZY_COMB(__port_bind_u_sink_data_i_in_comb");
     expectContains(h, "__port_bind_u_sink_data_i_in_comb = std::remove_cvref_t<decltype(u_sink.data_i_in())>(resp_data_comb_func());");
     expectContains(h, "u_sink.data_i_in = _ASSIGN_COMB(__port_bind_u_sink_data_i_in_comb_func());");
     expectNotContains(h, "u_sink.data_i_in = _ASSIGN(cpphdl::pack_value<");
-    expectNotContains(h, "__port_bind_u_sink_data_i_in_comb = cpphdl::unpack_value<std::remove_cvref_t<decltype(u_sink.data_i_in())>>");
+    expectNotContains(h, "__port_bind_u_sink_data_i_in_packed_to_array_comb");
 }
 
 static void testArrayOutputPacksIntoPackedField(const char* argv0)
@@ -4603,6 +4831,7 @@ endmodule
 
     auto h = convertModule(argv0, "comb_vector_child_input_binding", sv, "");
     expectContains(h, "u_sink.valid_i_in = _ASSIGN_COMB(valid_comb_func());");
+    expectNotContains(h, "__port_bind_u_sink_valid_i_in_packed_to_array_comb_func()");
     expectNotContains(h, "__port_bind_u_sink_valid_i_in_comb_func()");
     expectNotContains(h, "_LAZY_COMB(__port_bind_u_sink_valid_i_in_comb");
 }
@@ -4723,7 +4952,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generate_bound_division_expression", sv, "");
-    expectContains(h, "array<leaf,");
+    expectContains(h, "array<::leaf,");
     expectContains(h, "for (unsigned i = 0;");
     expectNotContains(h, "))));k++)");
     expectNotContains(h, "))));i++)");
@@ -4807,6 +5036,170 @@ endmodule
     expectNotContains(h, "void merge_byte(logic<8> ret_data");
 }
 
+static void testParameterizedInterfaceArrayUsesUnpackedDimension(const char* argv0)
+{
+    const std::string sv = R"sv(
+package dim_pkg;
+  parameter int unsigned N = 4;
+endpackage
+
+interface simple_bus #(parameter int unsigned W = 8);
+  logic [W-1:0] data;
+endinterface
+
+module iface_array_dim;
+  simple_bus #(.W(8)) master[dim_pkg::N-1:0]();
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "iface_array_dim", sv, "");
+    expectContains(h, "array<::simple_bus<8>,");
+    expectContains(h, "dim_pkg::N");
+    expectContains(h, "> master;");
+    expectContains(h, "master[(unsigned)(uint64_t)((uint64_t)(i))]._work(reset);");
+    expectContains(h, "master[(unsigned)(uint64_t)((uint64_t)(i))]._assign();");
+    expectNotContains(h, ":N-1:0");
+    expectNotContains(h, "dim_pkg >= ");
+}
+
+static void testDefaultParameterizedChildInstantiationUsesEmptyTemplateArgs(const char* argv0)
+{
+    const std::string sv = R"sv(
+module default_param_child #(
+    parameter int unsigned STAGES = 2
+) (
+    input  logic serial_i,
+    output logic serial_o
+);
+  assign serial_o = serial_i;
+endmodule
+
+module default_param_parent (
+    input  logic serial_i,
+    output logic serial_o
+);
+  default_param_child i_child (
+    .serial_i(serial_i),
+    .serial_o(serial_o)
+  );
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "default_param_parent", sv, "");
+    expectContains(h, "::default_param_child<> i_child;");
+    expectNotContains(h, "::default_param_child i_child;");
+}
+
+static void testContinuousConcatOutputAssignSplitsIntoCombOutputs(const char* argv0)
+{
+    const std::string sv = R"sv(
+module concat_output_assign (
+    input  logic [7:0] bus_i,
+    output logic [3:0] high_o,
+    output logic [3:0] low_o
+);
+  assign {high_o, low_o} = bus_i;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "concat_output_assign", sv, "");
+    expectNotContains(h, "{high_o, low_o} = _ASSIGN");
+    expectContains(h, "_PORT(logic<4>) high_o_out = _ASSIGN_COMB( high_o_comb_func() );");
+    expectContains(h, "_PORT(logic<4>) low_o_out = _ASSIGN_COMB( low_o_comb_func() );");
+    expectContains(h, "low_o_comb = logic<4>(bus_i_in().bits");
+    expectContains(h, "(uint64_t)(0)));");
+    expectContains(h, "high_o_comb = logic<4>(bus_i_in().bits");
+    expectContains(h, "(uint64_t)(((0) + (4)))));");
+}
+
+static void testMemberAccessRangeBoundsKeepMemberBeforeNumericCast(const char* argv0)
+{
+    const std::string sv = R"sv(
+module member_range_bound #(
+    parameter type cfg_t = struct packed {
+      int unsigned N;
+      int unsigned W;
+    },
+    parameter cfg_t Cfg = '{N: 2, W: 4}
+) (
+    input  logic [Cfg.N-1:0][Cfg.W-1:0] issue_pointer_i,
+    output logic [7:0] issue_pointer_o
+);
+  assign issue_pointer_o = issue_pointer_i[Cfg.N-1:0];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "member_range_bound", sv, "");
+    expectContains(h, "__cpphdl_slice_i < (uint64_t)((uint64_t)(Cfg.N))");
+    expectContains(h, "array<std::remove_cvref_t<decltype(std::as_const(__cpphdl_slice_src)[0])>,(uint64_t)((uint64_t)(Cfg.N))>");
+    expectNotContains(h, "(uint64_t)(Cfg).N");
+    expectNotContains(h, "(uint64_t)((uint64_t)(Cfg)).N");
+    expectNotContains(h, ")))); ++__cpphdl_slice_i");
+}
+
+static void testFunctionMemberAccessRangeBoundKeepsMemberInsideCall(const char* argv0)
+{
+    const std::string sv = R"sv(
+module function_member_range_bound #(
+    parameter type cfg_t = struct packed {
+      int unsigned Depth;
+      int unsigned W;
+    },
+    parameter cfg_t Cfg = '{Depth: 4, W: 8}
+) (
+    input  logic [Cfg.W-1:0] rows_i [Cfg.Depth],
+    input  logic [Cfg.W-1:0] data_i,
+    output logic [Cfg.W-1:0] data_o
+);
+  assign data_o = rows_i[data_i[$clog2(Cfg.Depth)-1:0]];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "function_member_range_bound", sv, "");
+    expectContains(h, "clog2(Cfg.Depth)");
+    expectNotContains(h, "clog2(Cfg).Depth");
+    expectNotContains(h, "sv_bits_runtime(");
+    expectNotContains(h, "),(uint64_t)((uint64_t)(0))");
+    expectNotContains(h, "sv_bits<");
+    expectNotContains(h, "),(uint64_t)((uint64_t)(");
+}
+
+static void testChildClockPortAliasesAreNotBound(const char* argv0)
+{
+    const std::string sv = R"sv(
+module clocked_child (
+    input  logic HCLK,
+    input  logic s_axi_aclk,
+    input  logic dst_clk_i,
+    input  logic d_i,
+    output logic q_o
+);
+  assign q_o = d_i;
+endmodule
+
+module clock_alias_parent (
+    input  logic clk_i,
+    input  logic d_i,
+    output logic q_o
+);
+  clocked_child u_child (
+    .HCLK(clk_i),
+    .s_axi_aclk(clk_i),
+    .dst_clk_i(clk_i),
+    .d_i(d_i),
+    .q_o(q_o)
+  );
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "clock_alias_parent", sv, "");
+    expectNotContains(h, "u_child.HCLK_in");
+    expectNotContains(h, "u_child.s_axi_aclk_in");
+    expectNotContains(h, "u_child.dst_clk_i_in");
+    expectNotContains(h, "_ASSIGN(clk_i");
+    expectContains(h, "u_child.d_i_in = _ASSIGN_COMB(d_i_in());");
+}
+
 int main(int argc, char** argv)
 {
     assert(argc >= 1);
@@ -4846,7 +5239,7 @@ int main(int argc, char** argv)
     testIndexedParentPortInputUsesCombBinding(argv[0]);
     testPackedParentPortElementInputUsesValueBinding(argv[0]);
     testPackedCombArrayElementInputUsesValueBinding(argv[0]);
-    testCombVectorBitInputUsesValueBinding(argv[0]);
+    testCombVectorBitInputUsesCombBinding(argv[0]);
     testParentPortFieldInputUsesValueBindingAfterAdapter(argv[0]);
     testDynamicStructInputBindingsStayComb(argv[0]);
     testIndexedLocalCombInputUsesValueBinding(argv[0]);
@@ -4855,6 +5248,7 @@ int main(int argc, char** argv)
     testGeneratedChildArrayKeepsStructuredPortType(argv[0]);
     testGeneratedChildArrayScalarPortUsesCombBinding(argv[0]);
     testWrappedIndexedCombInputUsesCombBinding(argv[0]);
+    testGeneratedIndexedBitExtractUsesValueBinding(argv[0]);
     testArrayInputPortCombBindingIsComplete(argv[0]);
     testArrayInputStructPortAdapterUsesChildPortType(argv[0]);
     testChildInputPortUsesActualTypeForAliasNarrowing(argv[0]);
@@ -4876,12 +5270,16 @@ int main(int argc, char** argv)
     testParameterizedReplicationInConcatIsValidCatItem(argv[0]);
     testBracedReplicationCountIsNumeric(argv[0]);
     testNumericReplicationConstantUsesIntegerMask(argv[0]);
+    testPackageArrayReplicationConstantUsesCppLambda(argv[0]);
+    testImportedPackageValueIsQualified(argv[0]);
+    testLocalEnumValueBeatsSingleImportedPackageFallback(argv[0]);
     testNumericConcatConstantUsesIntegerExpr(argv[0]);
     testParameterizedNumericConcatUsesCat(argv[0]);
     testConcatCaseKeepsOperandWidths(argv[0]);
     testConcatCaseStructFieldsKeepOperandWidths(argv[0]);
     testConcatArrayElementBitSelectUsesOneBitWidth(argv[0]);
     testConcatPartSelectKeepsSelectedWidth(argv[0]);
+    testConcatPackedArraySliceUsesElementWidth(argv[0]);
     testIntegerLocalparamConcatIsConstexprNumeric(argv[0]);
     testKnownWidthFunctionDoesNotForceStructArgumentNumeric(argv[0]);
     testParenthesizedWidthCastIsLogicCast(argv[0]);
@@ -4918,6 +5316,7 @@ int main(int argc, char** argv)
     testPackedArrayOutputToStructArrayUsesElementUnpack(argv[0]);
     testIndexedUnpackedArrayOutputToPackedVectorUsesPackValue(argv[0]);
     testPackedStructInputToLogicPortUsesPackValue(argv[0]);
+    testPackedStructInputToLogicAliasPortUsesPackValue(argv[0]);
     testPackedStructCastAssignedToVectorUsesPackValue(argv[0]);
     testPackedStructInputPortUsesPackUnpackForDistinctStructTypes(argv[0]);
     testChildLogicAliasInputFieldBindingDoesNotUseStructUnpack(argv[0]);
@@ -4961,5 +5360,12 @@ int main(int argc, char** argv)
     testOneBitUnaryNotInConcatAvoidsLogicOperatorNot(argv[0]);
     testWideConditionalLogicBranchDoesNotNarrowToUint64(argv[0]);
     testFunctionOutputArgumentIsReference(argv[0]);
+    testParameterizedInterfaceArrayUsesUnpackedDimension(argv[0]);
+    testParameterizedInterfacePortInfersChildTemplateAndBindsByRef(argv[0]);
+    testDefaultParameterizedChildInstantiationUsesEmptyTemplateArgs(argv[0]);
+    testContinuousConcatOutputAssignSplitsIntoCombOutputs(argv[0]);
+    testMemberAccessRangeBoundsKeepMemberBeforeNumericCast(argv[0]);
+    testFunctionMemberAccessRangeBoundKeepsMemberInsideCall(argv[0]);
+    testChildClockPortAliasesAreNotBound(argv[0]);
     return 0;
 }
