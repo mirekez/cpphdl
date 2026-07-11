@@ -6,6 +6,7 @@ struct PortGen {
     std::string direction;
     std::string array;
     std::string init;
+    bool isInterface = false;
 };
 
 struct MethodGen {
@@ -40,11 +41,14 @@ struct PendingCombGen {
 struct ModuleGen {
     std::string name;
     bool isPackage = false;
+    bool isInterface = false;
     std::vector<std::string> params;
     std::vector<PortGen> ports;
     std::vector<std::string> typeDecls;
     std::vector<std::string> preClassDecls;
     std::vector<std::string> packageDecls;
+    std::set<std::string> valueNames;
+    std::set<std::string> packageValueNames;
     std::vector<std::string> imports;
     std::vector<std::pair<std::string, std::string>> vars;
     std::vector<std::pair<std::string, std::string>> constants;
@@ -147,8 +151,8 @@ static std::string regTypeFor(std::string type)
     if (type.rfind("reg<", 0) == 0 || type.rfind("memory<", 0) == 0) {
         return type;
     }
-    if (type == "bool" || type == "u1") {
-        return "reg<u1>";
+    if (type == "bool" || type == "u1" || type == "logic<1>") {
+        return "reg<logic<1>>";
     }
     return "reg<" + type + ">";
 }
@@ -278,9 +282,12 @@ static bool isClockPortName(const std::string& name)
     auto n = name;
     std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return n == "clk" || n == "clk_i" || n == "clock" || n == "clock_i" ||
-           n == "aclk" || n == "clk_in" || n == "clock_in" ||
+           n == "hclk" || n == "aclk" || n == "clk_in" || n == "clock_in" ||
            n.rfind("clk_", 0) == 0 || n.rfind("clock_", 0) == 0 ||
            (n.size() > 4 && n.substr(n.size() - 4) == "_clk") ||
+           (n.size() > 6 && n.substr(n.size() - 6) == "_clk_i") ||
+           (n.size() > 5 && n.substr(n.size() - 5) == "_hclk") ||
+           (n.size() > 5 && n.substr(n.size() - 5) == "_aclk") ||
            (n.size() > 6 && n.substr(n.size() - 6) == "_clock");
 }
 
@@ -338,7 +345,21 @@ static bool isNumericValueType(const std::string& type);
 static bool isZeroLiteralText(const std::string& expr)
 {
     auto s = trim(expr);
-    return s == "0" || s == "0b0" || s == "1'b0" || s == "logic<1>{}" || s == "false";
+    if (s == "0" || s == "0b0" || s == "1'b0" || s == "logic<1>{}" || s == "false") {
+        return true;
+    }
+    auto typedZero = [&](const std::string& prefix) {
+        if (s.rfind(prefix, 0) != 0 || s.empty() || s.back() != ')') {
+            return false;
+        }
+        auto gt = s.find('>');
+        if (gt == std::string::npos || gt + 1 >= s.size() || s[gt + 1] != '(') {
+            return false;
+        }
+        auto inner = trim(s.substr(gt + 2, s.size() - gt - 3));
+        return inner == "0" || inner == "0b0" || inner == "1'b0" || inner == "false";
+    };
+    return typedZero("logic<") || typedZero("u<");
 }
 
 static bool needsTypedZero(const std::string& type)
@@ -372,6 +393,31 @@ static std::string templateParamDefault(const std::string& param)
         return "";
     }
     return trim(param.substr(eq + 1));
+}
+
+static std::string cppTemplateBaseName(std::string type)
+{
+    type = trim(std::move(type));
+    if (type.rfind("::", 0) == 0) {
+        type = type.substr(2);
+    }
+    auto lt = type.find('<');
+    if (lt != std::string::npos) {
+        type = trim(type.substr(0, lt));
+    }
+    auto scope = type.rfind("::");
+    if (scope != std::string::npos) {
+        type = type.substr(scope + 2);
+    }
+    while (!type.empty() && (type.back() == '&' || type.back() == '*')) {
+        type.pop_back();
+        type = trim(type);
+    }
+    const std::string constPrefix = "const ";
+    if (type.rfind(constPrefix, 0) == 0) {
+        type = trim(type.substr(constPrefix.size()));
+    }
+    return type;
 }
 
 static std::vector<std::string> splitTopLevelArgs(const std::string& text)
@@ -478,6 +524,29 @@ static std::string templateParamValueType(const std::string& param)
         return type;
     }
     return "";
+}
+
+static std::string normalizeTemplateParamDecl(std::string param)
+{
+    auto eq = param.find('=');
+    if (eq == std::string::npos) {
+        return param;
+    }
+    auto lhs = trim(param.substr(0, eq));
+    auto rhs = trim(param.substr(eq + 1));
+    if (!rhs.empty() && rhs.front() == '"' &&
+        (lhs.rfind("unsigned ", 0) == 0 || lhs.rfind("uint64_t ", 0) == 0 ||
+         lhs.rfind("uint32_t ", 0) == 0 || lhs.rfind("int ", 0) == 0)) {
+        auto name = templateParamName(lhs);
+        if (!name.empty()) {
+            return "hdlcpp_fixed_string " + name + " = " + rhs;
+        }
+    }
+    if (lhs.rfind("unsigned ", 0) == 0 && !rhs.empty() && rhs.front() == '-' &&
+        rhs.rfind("static_cast<unsigned>", 0) != 0) {
+        param = param.substr(0, eq + 1) + " static_cast<unsigned>(" + rhs + ")";
+    }
+    return param;
 }
 
 static std::string castTemplateParamValue(const std::string& declared, const std::string& value)
@@ -1527,6 +1596,210 @@ static std::string bridgeBoundName(const ModuleGen& m, const std::string& expr)
 }
 
 static std::string repairDottedLogicWidthCasts(std::string s);
+static std::string repairNumericCastSplitMemberAccess(std::string s)
+{
+    auto isFieldChar = [](char ch) {
+        return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+    };
+    auto matchingOpenParen = [](const std::string& text, size_t close) -> size_t {
+        int depth = 0;
+        for (size_t i = close + 1; i > 0; --i) {
+            auto pos = i - 1;
+            if (text[pos] == ')') {
+                ++depth;
+            }
+            else if (text[pos] == '(') {
+                --depth;
+                if (depth == 0) {
+                    return pos;
+                }
+            }
+        }
+        return std::string::npos;
+    };
+    auto matchingCloseParen = [](const std::string& text, size_t open) -> size_t {
+        int depth = 0;
+        for (size_t i = open; i < text.size(); ++i) {
+            if (text[i] == '(') {
+                ++depth;
+            }
+            else if (text[i] == ')') {
+                --depth;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return std::string::npos;
+    };
+    auto appendMemberToCastedContent = [&](const std::string& content, const std::string& field) {
+        auto inner = trim(content);
+        if (!inner.empty() && inner.back() == ')') {
+            auto open = matchingOpenParen(inner, inner.size() - 1);
+            if (open != std::string::npos) {
+                auto callee = trim(inner.substr(0, open));
+                bool simpleCallee = !callee.empty();
+                for (char ch : callee) {
+                    if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' && ch != ':' && ch != '.') {
+                        simpleCallee = false;
+                        break;
+                    }
+                }
+                auto args = splitTopLevelArgs(inner.substr(open + 1, inner.size() - open - 2));
+                if (simpleCallee && args.size() == 1 && !args[0].empty()) {
+                    return callee + "(" + args[0] + "." + field + ")";
+                }
+            }
+        }
+        return inner + "." + field;
+    };
+    const std::string castPrefix = "(uint64_t)(";
+    for (size_t pos = 0; (pos = s.find(castPrefix, pos)) != std::string::npos;) {
+        auto open = pos + std::string("(uint64_t)").size();
+        auto close = matchingCloseParen(s, open);
+        if (close == std::string::npos) {
+            pos += castPrefix.size();
+            continue;
+        }
+        auto dot = close + 1;
+        size_t extraCloseBegin = dot;
+        while (dot < s.size() && std::isspace(static_cast<unsigned char>(s[dot]))) {
+            ++dot;
+        }
+        while (dot < s.size() && s[dot] == ')') {
+            ++dot;
+            while (dot < s.size() && std::isspace(static_cast<unsigned char>(s[dot]))) {
+                ++dot;
+            }
+        }
+        if (dot >= s.size() || s[dot] != '.' || dot + 1 >= s.size() ||
+            !std::isalpha(static_cast<unsigned char>(s[dot + 1])) && s[dot + 1] != '_') {
+            pos = close + 1;
+            continue;
+        }
+        auto fieldStart = dot + 1;
+        auto fieldEnd = fieldStart;
+        while (fieldEnd < s.size() && isFieldChar(s[fieldEnd])) {
+            ++fieldEnd;
+        }
+        auto content = s.substr(open + 1, close - open - 1);
+        auto extraCloses = s.substr(extraCloseBegin, dot - extraCloseBegin);
+        auto replacement = "(uint64_t)(" + appendMemberToCastedContent(content, s.substr(fieldStart, fieldEnd - fieldStart)) + ")" + extraCloses;
+        s.replace(pos, fieldEnd - pos, replacement);
+        pos += replacement.size();
+    }
+    static const std::regex tripleCastSplit(
+        R"(\(uint64_t\)\(\(uint64_t\)\(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)\)\)\)\.([A-Za-z_][A-Za-z0-9_]*)\))");
+    static const std::regex doubleCastSplit(
+        R"(\(uint64_t\)\(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)\)\)\)\.([A-Za-z_][A-Za-z0-9_]*)\)\))");
+    static const std::regex doubleCastSplitOneClose(
+        R"(\(uint64_t\)\(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)\)\)\)\.([A-Za-z_][A-Za-z0-9_]*)\))");
+    static const std::regex singleCastSplit(
+        R"(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)\)\.([A-Za-z_][A-Za-z0-9_]*)\))");
+    s = std::regex_replace(s, tripleCastSplit, "(uint64_t)((uint64_t)((uint64_t)($1.$2)))");
+    s = std::regex_replace(s, doubleCastSplit, "(uint64_t)((uint64_t)($1.$2))");
+    s = std::regex_replace(s, doubleCastSplitOneClose, "(uint64_t)((uint64_t)($1.$2))");
+    s = std::regex_replace(s, singleCastSplit, "(uint64_t)($1.$2)");
+    return s;
+}
+
+static std::string repairSplitSvBitsCall(std::string s)
+{
+    auto matchingCloseParen = [](const std::string& text, size_t open) -> size_t {
+        int depth = 0;
+        for (size_t i = open; i < text.size(); ++i) {
+            if (text[i] == '(') {
+                ++depth;
+            }
+            else if (text[i] == ')') {
+                --depth;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return std::string::npos;
+    };
+    auto repairOneName = [&](const std::string& name) {
+        for (size_t pos = 0; (pos = s.find(name, pos)) != std::string::npos;) {
+            auto open = s.find('(', pos + name.size());
+            if (open == std::string::npos) {
+                break;
+            }
+            auto close = matchingCloseParen(s, open);
+            if (close == std::string::npos) {
+                pos = open + 1;
+                continue;
+            }
+            auto comma = close + 1;
+            while (comma < s.size() && std::isspace(static_cast<unsigned char>(s[comma]))) {
+                ++comma;
+            }
+            if (comma >= s.size() || s[comma] != ',') {
+                pos = close + 1;
+                continue;
+            }
+            auto argStart = comma + 1;
+            while (argStart < s.size() && std::isspace(static_cast<unsigned char>(s[argStart]))) {
+                ++argStart;
+            }
+            if (argStart >= s.size() || s[argStart] != '(') {
+                pos = close + 1;
+                continue;
+            }
+            auto argEnd = matchingCloseParen(s, argStart);
+            if (argEnd == std::string::npos) {
+                pos = close + 1;
+                continue;
+            }
+            auto third = s.substr(argStart, argEnd - argStart + 1);
+            s.replace(close, argEnd - close + 1, "," + third + ")");
+            pos = close + third.size() + 2;
+        }
+    };
+    repairOneName("cpphdl::sv_bits_runtime");
+    for (size_t pos = 0; (pos = s.find("cpphdl::sv_bits<", pos)) != std::string::npos;) {
+        auto templ = matchingTemplateCloseLocal(s, pos + std::string("cpphdl::sv_bits").size());
+        if (templ == std::string::npos) {
+            break;
+        }
+        auto open = templ + 1;
+        if (open >= s.size() || s[open] != '(') {
+            pos = templ + 1;
+            continue;
+        }
+        auto close = matchingCloseParen(s, open);
+        if (close == std::string::npos) {
+            pos = open + 1;
+            continue;
+        }
+        auto comma = close + 1;
+        while (comma < s.size() && std::isspace(static_cast<unsigned char>(s[comma]))) {
+            ++comma;
+        }
+        if (comma >= s.size() || s[comma] != ',') {
+            pos = close + 1;
+            continue;
+        }
+        auto argStart = comma + 1;
+        while (argStart < s.size() && std::isspace(static_cast<unsigned char>(s[argStart]))) {
+            ++argStart;
+        }
+        if (argStart >= s.size() || s[argStart] != '(') {
+            pos = close + 1;
+            continue;
+        }
+        auto argEnd = matchingCloseParen(s, argStart);
+        if (argEnd == std::string::npos) {
+            pos = close + 1;
+            continue;
+        }
+        auto third = s.substr(argStart, argEnd - argStart + 1);
+        s.replace(close, argEnd - close + 1, "," + third + ")");
+        pos = close + third.size() + 2;
+    }
+    return s;
+}
 
 static void replaceAll(std::string& s, const std::string& from, const std::string& to)
 {
@@ -1758,6 +2031,7 @@ static std::string normalizeSvLiterals(const std::string& s)
             while (i < s.size() && std::isdigit((unsigned char)s[i])) {
                 ++i;
             }
+            size_t widthEnd = i;
             if (i < s.size() && s[i] == '\'') {
                 ++i;
                 if (i < s.size() && (s[i] == 's' || s[i] == 'S')) {
@@ -1772,11 +2046,7 @@ static std::string normalizeSvLiterals(const std::string& s)
                             digits += (c == 'x' || c == 'X' || c == 'z' || c == 'Z' || c == '?') ? '0' : c;
                         }
                     }
-                    auto width = s.substr(start, (i - digits.size() - 1) - start);
-                    auto sq = width.find('\'');
-                    if (sq != std::string::npos) {
-                        width = width.substr(0, sq);
-                    }
+                    auto width = s.substr(start, widthEnd - start);
                     if (base == 'b') {
                         out += "logic<" + width + ">(0b" + digits + ")";
                         continue;
@@ -1862,9 +2132,56 @@ static std::string valueAssignCombFunctionPorts(std::string line)
     return line;
 }
 
+static bool replicationNeedsCaptureText(const std::string& text);
+
 static std::string postProcessCppLine(std::string line)
 {
     line = valueAssignCombFunctionPorts(std::move(line));
+    for (size_t pos = 0; (pos = line.find(">(0b) ", pos)) != std::string::npos;) {
+        auto digitPos = pos + std::string(">(0b) ").size();
+        if (digitPos < line.size() && (line[digitPos] == '0' || line[digitPos] == '1')) {
+            line.replace(pos, digitPos - pos + 1, ">(0b" + std::string(1, line[digitPos]) + ")");
+            pos += 5;
+        }
+        else {
+            pos = digitPos;
+        }
+    }
+    for (size_t open = 0; (open = line.find("{logic<", open)) != std::string::npos;) {
+        if (open >= 3 && line.compare(open - 3, 3, "cat") == 0) {
+            open += 1;
+            continue;
+        }
+        int depth = 0;
+        bool hasTopComma = false;
+        size_t close = std::string::npos;
+        for (size_t i = open; i < line.size(); ++i) {
+            char c = line[i];
+            if (c == '{' || c == '(' || c == '[') {
+                ++depth;
+            }
+            else if (c == '}' || c == ')' || c == ']') {
+                --depth;
+                if (depth == 0 && c == '}') {
+                    close = i;
+                    break;
+                }
+            }
+            else if (c == ',' && depth == 1) {
+                hasTopComma = true;
+            }
+        }
+        if (close == std::string::npos) {
+            break;
+        }
+        if (hasTopComma) {
+            line.replace(open, 1, "cat{");
+            open = close + 3;
+        }
+        else {
+            open = close + 1;
+        }
+    }
     for (size_t pos = 0; pos < line.size();) {
         if (!std::isdigit(static_cast<unsigned char>(line[pos]))) {
             ++pos;
@@ -1881,12 +2198,16 @@ static std::string postProcessCppLine(std::string line)
             pos = start + repl.size();
         }
     }
-    replaceAll(line, "<<<", "<<");
-    replaceAll(line, ">>>", ">>");
-    line = repairDottedLogicWidthCasts(std::move(line));
-    applyConfiguredLinePatches(line);
-    repairPatchedConcatOperandWidths(line);
-    repairPatchedConcatOperandWidths(line);
+	    replaceAll(line, "<<<", "<<");
+	    replaceAll(line, ">>>", ">>");
+	    if (line.find(".data.bits(") == std::string::npos) {
+	        line = repairDottedLogicWidthCasts(std::move(line));
+	    }
+	    line = repairNumericCastSplitMemberAccess(std::move(line));
+	    line = repairSplitSvBitsCall(std::move(line));
+	    applyConfiguredLinePatches(line);
+	    repairPatchedConcatOperandWidths(line);
+	    repairPatchedConcatOperandWidths(line);
     auto repairOneBitCastsBeforeFields = [&]() {
         const std::string prefix = "logic<1>(";
         for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
@@ -1913,6 +2234,8 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     repairOneBitCastsBeforeFields();
+    line = repairNumericCastSplitMemberAccess(std::move(line));
+    line = repairSplitSvBitsCall(std::move(line));
     auto repairRuntimeLogicWidths = [&]() {
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
@@ -1937,6 +2260,43 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     repairRuntimeLogicWidths();
+    line = repairNumericCastSplitMemberAccess(std::move(line));
+    line = repairSplitSvBitsCall(std::move(line));
+    auto repairForHeaderExtraClosingParens = [&]() {
+        for (size_t pos = 0; (pos = line.find("for (", pos)) != std::string::npos;) {
+            auto firstSemi = line.find(';', pos);
+            if (firstSemi == std::string::npos) {
+                break;
+            }
+            auto semi = line.find(';', firstSemi + 1);
+            if (semi == std::string::npos) {
+                break;
+            }
+            int balance = 0;
+            for (size_t i = pos; i < semi; ++i) {
+                if (line[i] == '(') {
+                    ++balance;
+                }
+                else if (line[i] == ')') {
+                    --balance;
+                }
+            }
+            while (balance < 1 && semi > pos) {
+                auto rm = semi;
+                while (rm > pos && std::isspace(static_cast<unsigned char>(line[rm - 1]))) {
+                    --rm;
+                }
+                if (rm == pos || line[rm - 1] != ')') {
+                    break;
+                }
+                line.erase(rm - 1, 1);
+                --semi;
+                ++balance;
+            }
+            pos = semi + 1;
+        }
+    };
+    repairForHeaderExtraClosingParens();
     auto dropExtraClosingParensBeforeDelimiters = [&]() {
         auto parenBalance = [&]() {
             int balance = 0;
@@ -2039,6 +2399,9 @@ static std::string postProcessCppLine(std::string line)
         line.insert(insertAt, closes);
     };
     balanceCompletedLogicStatement();
+    line = repairNumericCastSplitMemberAccess(std::move(line));
+    line = repairSplitSvBitsCall(std::move(line));
+    repairForHeaderExtraClosingParens();
     auto unwrapCatReplicationLambdaCasts = [&]() {
         for (size_t catPos = 0; (catPos = line.find("cat{", catPos)) != std::string::npos;) {
             auto pos = line.find("logic<", catPos + 4);
@@ -2061,7 +2424,7 @@ static std::string postProcessCppLine(std::string line)
                 inner = trim(inner.substr(castPrefix.size(), inner.size() - castPrefix.size() - 1));
             }
             if (inner.find("__cpphdl_rep") == std::string::npos ||
-                inner.rfind("([&]()", 0) != 0) {
+                (inner.rfind("([&]()", 0) != 0 && inner.rfind("([]()", 0) != 0)) {
                 catPos = outerClose + 1;
                 continue;
             }
@@ -2070,46 +2433,77 @@ static std::string postProcessCppLine(std::string line)
         }
     };
     unwrapCatReplicationLambdaCasts();
+    auto promoteDynamicReplicationLambdaCaptures = [&]() {
+        const std::string needle = "([]() { logic<";
+        for (size_t pos = 0; (pos = line.find(needle, pos)) != std::string::npos;) {
+            auto end = line.find("}())", pos + needle.size());
+            if (end == std::string::npos) {
+                pos += needle.size();
+                continue;
+            }
+            if (replicationNeedsCaptureText(line.substr(pos, end - pos))) {
+                line.replace(pos + 1, 2, "[&]");
+                pos = end + 2;
+            }
+            else {
+                pos = end + 4;
+            }
+        }
+    };
+    promoteDynamicReplicationLambdaCaptures();
     auto repairReplicationResultWidths = [&]() {
-        const std::string prefix = "([&]() { logic<64> __cpphdl_rep{}; for (size_t __cpphdl_i = 0; __cpphdl_i < (size_t)(";
-        for (size_t pos = 0; (pos = line.find(prefix, pos)) != std::string::npos;) {
-            auto countStart = pos + prefix.size();
-            auto countMarker = line.find("; ++__cpphdl_i) {", countStart);
-            if (countMarker == std::string::npos) {
-                pos += prefix.size();
+        auto castArg = [&](size_t searchFrom, const std::string& marker, std::string& arg, size_t& close) {
+            auto markerPos = line.find(marker, searchFrom);
+            if (markerPos == std::string::npos) {
+                return false;
+            }
+            static const std::array<std::string, 2> casts = {"(std::size_t)(", "(size_t)("};
+            size_t castPos = std::string::npos;
+            std::string cast;
+            for (const auto& candidate : casts) {
+                auto p = line.find(candidate, markerPos + marker.size());
+                if (p != std::string::npos && (castPos == std::string::npos || p < castPos)) {
+                    castPos = p;
+                    cast = candidate;
+                }
+            }
+            if (castPos == std::string::npos) {
+                return false;
+            }
+            auto open = castPos + cast.size() - 1;
+            close = matchingParenClose(line, open);
+            if (close == std::string::npos) {
+                return false;
+            }
+            arg = trim(line.substr(open + 1, close - open - 1));
+            return true;
+        };
+        const std::string oldLogic = "logic<64>";
+        const std::string repDecl = oldLogic + " __cpphdl_rep{}; for (";
+        for (size_t logicPos = 0; (logicPos = line.find(repDecl, logicPos)) != std::string::npos;) {
+            std::string count;
+            size_t countClose = std::string::npos;
+            if (!castArg(logicPos, "__cpphdl_i <", count, countClose)) {
+                logicPos += repDecl.size();
                 continue;
             }
-            auto count = trim(line.substr(countStart, countMarker - countStart));
-            if (!count.empty() && count.back() == ')') {
-                count.pop_back();
-                count = trim(std::move(count));
-            }
-            const std::string bitsPrefix = "__cpphdl_rep.bits((__cpphdl_i + 1) * (size_t)(";
-            auto bitsPos = line.find(bitsPrefix, countMarker);
-            if (bitsPos == std::string::npos) {
-                pos = countMarker + 1;
+            std::string width;
+            size_t widthClose = std::string::npos;
+            if (!castArg(countClose, "__cpphdl_rep.bits((__cpphdl_i + 1) *", width, widthClose)) {
+                logicPos = countClose + 1;
                 continue;
             }
-            auto widthOpen = bitsPos + bitsPrefix.size() - 1;
-            auto widthClose = matchingParenClose(line, widthOpen);
-            if (widthClose == std::string::npos) {
-                pos = bitsPos + bitsPrefix.size();
-                continue;
-            }
-            auto width = trim(line.substr(widthOpen + 1, widthClose - widthOpen - 1));
             if (count.empty() || width.empty() || width == "64") {
-                pos = widthClose + 1;
+                logicPos = widthClose + 1;
                 continue;
             }
-            auto logicPos = pos + std::string("([&]() { ").size();
-            const std::string oldLogic = "logic<64>";
             if (line.compare(logicPos, oldLogic.size(), oldLogic) != 0) {
-                pos = widthClose + 1;
+                logicPos = widthClose + 1;
                 continue;
             }
             auto replacement = "logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))>";
             line.replace(logicPos, oldLogic.size(), replacement);
-            pos = logicPos + replacement.size();
+            logicPos += replacement.size();
         }
     };
     repairReplicationResultWidths();
@@ -2544,11 +2938,12 @@ static std::string postProcessCppLine(std::string line)
     if (eq == std::string::npos) {
         return line;
     }
-    auto lhs = line.substr(0, eq + 1);
-    auto rhs = line.substr(eq + 1);
-    auto lhsTrim = trim(lhs.substr(0, lhs.size() - 1));
+	    auto lhs = line.substr(0, eq + 1);
+	    auto rhs = line.substr(eq + 1);
+	    auto lhsTrim = trim(lhs.substr(0, lhs.size() - 1));
+	    const bool packedStorageBitsAssign = lhsTrim.find(".data.bits(") != std::string::npos;
 
-    auto unwrapTypedTargetConstructors = [&](std::string text) {
+	    auto unwrapTypedTargetConstructors = [&](std::string text) {
         auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
         bool changed = false;
         for (size_t pos = 0; (pos = text.find(target + "(", pos)) != std::string::npos; ) {
@@ -2642,9 +3037,11 @@ static std::string postProcessCppLine(std::string line)
     };
 
     auto rhsTrim = trim(rhs);
-    if (rhsTrim.find("std::remove_cvref_t<decltype") == std::string::npos &&
-        !lhsTrim.empty() && lhsTrim.rfind("static constexpr", 0) != 0 &&
-        !rhsTrim.empty() && rhsTrim.back() == ';') {
+	    if (!packedStorageBitsAssign &&
+	        rhsTrim.find("std::remove_cvref_t<decltype") == std::string::npos &&
+	        rhsTrim.find("cpphdl::value_type_for_ref_t<decltype") == std::string::npos &&
+	        !lhsTrim.empty() && lhsTrim.rfind("static constexpr", 0) != 0 &&
+	        !rhsTrim.empty() && rhsTrim.back() == ';') {
         size_t qpos = std::string::npos;
         size_t cpos = std::string::npos;
         auto expr = trim(rhsTrim.substr(0, rhsTrim.size() - 1));
@@ -2652,7 +3049,7 @@ static std::string postProcessCppLine(std::string line)
             auto pred = trim(expr.substr(0, qpos));
             auto left = trim(expr.substr(qpos + 1, cpos - qpos - 1));
             auto right = trim(expr.substr(cpos + 1));
-            auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
+            auto target = "cpphdl::value_type_for_ref_t<decltype(" + lhsTrim + ")>";
             auto leadingTemplateCallType = [](const std::string& value) -> std::string {
                 auto v = trim(value);
                 auto findTypeStart = [&](const std::string& prefix) -> size_t {
@@ -2912,6 +3309,7 @@ static std::string exprText(const std::string& in)
     replaceAll(s, "'1", "1");
     replaceAll(s, "$clog2", "clog2");
     replaceAll(s, "$random", "random");
+    replaceAll(s, "$isunknown", "cpphdl::sv_isunknown");
     replaceAll(s, "$signed", "");
     replaceAll(s, "$unsigned", "");
     s = rewritePowerOfTwo(std::move(s));
@@ -3112,8 +3510,184 @@ static std::string replaceAssignmentPatternFieldConcats(std::string s)
     return s;
 }
 
+static bool replicationNeedsCaptureText(const std::string& text)
+{
+    static const std::set<std::string> safe = {
+        "alignas", "alignof", "auto", "bool", "cat", "const", "constexpr", "cpphdl",
+        "__cpphdl_i", "__cpphdl_rep", "b0", "b1", "decltype", "false", "logic", "long",
+        "remove_cvref_t", "signed", "size_t", "static_cast", "std", "true",
+        "type_width", "uint64_t", "ull", "unsigned"
+    };
+    for (size_t pos = 0; pos < text.size();) {
+        if (!(std::isalpha(static_cast<unsigned char>(text[pos])) || text[pos] == '_')) {
+            ++pos;
+            continue;
+        }
+        auto start = pos++;
+        while (pos < text.size() &&
+               (std::isalnum(static_cast<unsigned char>(text[pos])) || text[pos] == '_')) {
+            ++pos;
+        }
+        auto ident = text.substr(start, pos - start);
+        if (safe.count(ident) != 0) {
+            continue;
+        }
+        if (ident.size() > 1 && ident.front() == 'b' &&
+            std::all_of(ident.begin() + 1, ident.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
+            continue;
+        }
+        bool allUpper = true;
+        bool hasAlpha = false;
+        for (char c : ident) {
+            if (std::isalpha(static_cast<unsigned char>(c))) {
+                hasAlpha = true;
+                if (!std::isupper(static_cast<unsigned char>(c))) {
+                    allUpper = false;
+                    break;
+                }
+            }
+        }
+        if (hasAlpha && allUpper) {
+            continue;
+        }
+        auto next = pos;
+        while (next < text.size() && std::isspace(static_cast<unsigned char>(text[next]))) {
+            ++next;
+        }
+        if (next + 1 < text.size() && text[next] == ':' && text[next + 1] == ':') {
+            continue;
+        }
+        if (start >= 2 && text[start - 1] == ':' && text[start - 2] == ':') {
+            continue;
+        }
+        if (std::isupper(static_cast<unsigned char>(ident.front()))) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
 static std::string replaceTextReplications(std::string s)
 {
+    auto templateArgAfter = [](const std::string& text, size_t namePos, const std::string& name) -> std::string {
+        auto open = namePos + name.size();
+        auto close = matchingTemplateCloseLocal(text, open);
+        if (close == std::string::npos) {
+            return "";
+        }
+        return trim(text.substr(open + 1, close - open - 1));
+    };
+    auto firstTemplateArg = [&](const std::string& text, const std::string& name) -> std::string {
+        for (size_t namePos = 0; (namePos = text.find(name, namePos)) != std::string::npos; ++namePos) {
+            if (namePos > 0) {
+                auto prev = text[namePos - 1];
+                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_') {
+                    continue;
+                }
+            }
+            auto arg = templateArgAfter(text, namePos, name);
+            if (!arg.empty()) {
+                return arg;
+            }
+        }
+        return "";
+    };
+    auto replicatedWidth = [&](const std::string& expr) {
+        std::string width = "64";
+        auto exprTrim = trim(expr);
+        if (exprTrim.rfind("logic<", 0) == 0) {
+            auto close = matchingTemplateCloseLocal(exprTrim, std::string("logic").size());
+            if (close != std::string::npos) {
+                width = exprTrim.substr(std::string("logic<").size(), close - std::string("logic<").size());
+            }
+        }
+        else if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
+            width = packedWidth;
+        }
+        else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
+            width = packedWidth;
+        }
+        else if (exprTrim.rfind("cat{", 0) == 0) {
+            if (auto logicWidth = firstTemplateArg(exprTrim, "logic"); !logicWidth.empty()) {
+                width = logicWidth;
+            }
+            if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
+                width = packedWidth;
+            }
+            else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
+                width = packedWidth;
+            }
+        }
+        return width;
+    };
+    auto replicationReplacement = [&](const std::string& count, const std::string& expr) {
+        auto width = replicatedWidth(expr);
+        bool needsCapture = replicationNeedsCaptureText(count) || replicationNeedsCaptureText(expr);
+        if (!needsCapture) {
+            return "cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" + width + ")>(logic<" + width + ">(" + expr + "))";
+        }
+        std::string capture = "[&]";
+        return std::string("(") + capture + "() { logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))> __cpphdl_rep{}; "
+            "for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" + count + "); ++__cpphdl_i) { "
+            "__cpphdl_rep.bits((__cpphdl_i + 1) * (std::size_t)(" + width + ") - 1, __cpphdl_i * (std::size_t)(" + width + ")) = logic<" + width + ">(" + expr + "); "
+            "} return __cpphdl_rep; }())";
+    };
+    auto topLevelBalancedClose = [](const std::string& text, size_t open) -> size_t {
+        if (open >= text.size() || text[open] != '{') {
+            return std::string::npos;
+        }
+        int depth = 1;
+        int paren = 0;
+        int bracket = 0;
+        int angle = 0;
+        for (size_t i = open + 1; i < text.size(); ++i) {
+            char c = text[i];
+            if (c == '(') ++paren;
+            else if (c == ')' && paren > 0) --paren;
+            else if (c == '[') ++bracket;
+            else if (c == ']' && bracket > 0) --bracket;
+            else if (c == '<' && i + 1 < text.size() && text[i + 1] == '<') ++i;
+            else if (c == '<') ++angle;
+            else if (c == '>' && angle > 0) --angle;
+            else if (paren == 0 && bracket == 0 && angle == 0) {
+                if (c == '{') ++depth;
+                else if (c == '}') {
+                    --depth;
+                    if (depth == 0) {
+                        return i;
+                    }
+                }
+            }
+        }
+        return std::string::npos;
+    };
+    for (size_t pos = 0; (pos = s.find('{', pos)) != std::string::npos;) {
+        auto countClose = topLevelBalancedClose(s, pos);
+        if (countClose == std::string::npos || countClose + 1 >= s.size() || s[countClose + 1] != '{') {
+            ++pos;
+            continue;
+        }
+        auto count = trim(s.substr(pos + 1, countClose - pos - 1));
+        if (count.empty() || count.find(',') != std::string::npos || count.find(':') != std::string::npos) {
+            ++pos;
+            continue;
+        }
+        auto exprOpen = countClose + 1;
+        auto exprClose = topLevelBalancedClose(s, exprOpen);
+        if (exprClose == std::string::npos) {
+            ++pos;
+            continue;
+        }
+        auto expr = trim(s.substr(exprOpen + 1, exprClose - exprOpen - 1));
+        if (expr.empty()) {
+            ++pos;
+            continue;
+        }
+        auto replacement = replicationReplacement(count, expr);
+        s.replace(pos, exprClose - pos + 1, replacement);
+        pos += replacement.size();
+    }
     for (size_t pos = 0; (pos = s.find('{', pos)) != std::string::npos;) {
         int paren = 0;
         int bracket = 0;
@@ -3168,58 +3742,7 @@ static std::string replaceTextReplications(std::string s)
             continue;
         }
         auto expr = trim(s.substr(innerOpen + 1, innerClose - innerOpen - 1));
-        auto templateArgAfter = [](const std::string& text, size_t namePos, const std::string& name) -> std::string {
-            auto open = namePos + name.size();
-            auto close = matchingTemplateCloseLocal(text, open);
-            if (close == std::string::npos) {
-                return "";
-            }
-            return trim(text.substr(open + 1, close - open - 1));
-        };
-        auto firstTemplateArg = [&](const std::string& text, const std::string& name) -> std::string {
-            for (size_t namePos = 0; (namePos = text.find(name, namePos)) != std::string::npos; ++namePos) {
-                if (namePos > 0) {
-                    auto prev = text[namePos - 1];
-                    if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_') {
-                        continue;
-                    }
-                }
-                auto arg = templateArgAfter(text, namePos, name);
-                if (!arg.empty()) {
-                    return arg;
-                }
-            }
-            return "";
-        };
-        std::string width = "64";
-        auto exprTrim = trim(expr);
-        if (exprTrim.rfind("logic<", 0) == 0) {
-            auto close = matchingTemplateCloseLocal(exprTrim, std::string("logic").size());
-            if (close != std::string::npos) {
-                width = exprTrim.substr(std::string("logic<").size(), close - std::string("logic<").size());
-            }
-        }
-        else if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
-            width = packedWidth;
-        }
-        else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
-            width = packedWidth;
-        }
-        else if (exprTrim.rfind("cat{", 0) == 0) {
-            if (auto logicWidth = firstTemplateArg(exprTrim, "logic"); !logicWidth.empty()) {
-                width = logicWidth;
-            }
-            if (auto packedWidth = firstTemplateArg(exprTrim, "cpphdl::pack_value"); !packedWidth.empty()) {
-                width = packedWidth;
-            }
-            else if (auto packedWidth = firstTemplateArg(exprTrim, "pack_value"); !packedWidth.empty()) {
-                width = packedWidth;
-            }
-        }
-        auto replacement = "([&]() { logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))> __cpphdl_rep{}; "
-            "for (size_t __cpphdl_i = 0; __cpphdl_i < (size_t)(" + count + "); ++__cpphdl_i) { "
-            "__cpphdl_rep.bits((__cpphdl_i + 1) * (size_t)(" + width + ") - 1, __cpphdl_i * (size_t)(" + width + ")) = logic<" + width + ">(" + expr + "); "
-            "} return __cpphdl_rep; }())";
+        auto replacement = replicationReplacement(count, expr);
         s.replace(pos, innerClose + 2 - pos, replacement);
         pos += replacement.size();
     }
@@ -4184,6 +4707,10 @@ static size_t findRangeColon(const std::string& range)
                 ++ternary;
             }
             else if (c == ':') {
+                if ((i + 1 < range.size() && range[i + 1] == ':') ||
+                    (i > 0 && range[i - 1] == ':')) {
+                    continue;
+                }
                 if (ternary > 0) --ternary;
                 else return i;
             }
@@ -4239,20 +4766,24 @@ static std::string cppTypeFromSvText(std::string raw)
     if (!raw.empty() && raw.front() == '=') {
         raw = trim(raw.substr(1));
     }
-    if (raw.empty() || raw.find("struct packed") != std::string::npos ||
+    if (raw.empty()) {
+        return "logic<1>";
+    }
+    if (raw.find("struct packed") != std::string::npos ||
         raw.find("union packed") != std::string::npos) {
         return "bool";
     }
     if (raw == "logic" || raw == "bit") {
-        return "bool";
+        return "logic<1>";
     }
-    if (raw.rfind("logic ", 0) != 0 && raw.rfind("bit ", 0) != 0) {
+    if (raw.rfind("logic ", 0) != 0 && raw.rfind("logic[", 0) != 0 &&
+        raw.rfind("bit ", 0) != 0 && raw.rfind("bit[", 0) != 0) {
         return raw;
     }
 
     auto widths = bracketWidths(raw);
     if (widths.empty()) {
-        return "bool";
+        return "logic<1>";
     }
     auto type = "logic<" + widths.back() + ">";
     for (auto i = widths.size() - 1; i-- > 0;) {
@@ -4310,8 +4841,8 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
     }
     std::string line;
     if (!fields.empty()) {
-        line += "    static constexpr size_t _size_bits() { return " + width + "; }\n";
-        line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
+        line += "    static constexpr std::size_t _size_bits() { return " + width + "; }\n";
+        line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
         for (auto& field : fields) {
             auto next = isUnion ? field.width : addWidthExpr(offset, field.width);
@@ -4323,6 +4854,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
             }
         }
         line += "        return *this; }\n";
+        line += "    template<typename T, typename std::enable_if_t<!std::is_integral_v<std::remove_cvref_t<T>> && !std::is_enum_v<std::remove_cvref_t<T>> && cpphdl::detail::has_pack_method<std::remove_cvref_t<T>>::value, int> = 0> " + name + "& operator=(const T& v) { return this->template operator=<" + width + ">(logic<" + width + ">(v.pack())); }\n";
         line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return this->template operator=<" + width + ">(logic<" + width + ">(v)); }\n";
         line += "    logic<" + width + "> pack() const { logic<" + width + "> packed = 0;\n";
         offset = "0";
@@ -4345,35 +4877,36 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
             }
         }
         line += "        return packed; }\n";
-        line += "    struct _bits_ref { " + name + "& owner; size_t last; size_t first;\n";
+        line += "    struct _bits_ref { " + name + "& owner; std::size_t last; std::size_t first;\n";
         line += "        template<typename V> _bits_ref& operator=(const V& v) { auto packed = owner.pack(); packed.bits(last, first) = v; owner.template operator=<" + width + ">(packed); return *this; }\n";
-        line += "        template<size_t W> operator logic<W>() const { return logic<W>(owner.pack().bits(last, first)); }\n";
+        line += "        template<std::size_t W> operator logic<W>() const { return logic<W>(owner.pack().bits(last, first)); }\n";
         line += "        explicit operator uint64_t() const { return (uint64_t)(owner.pack().bits(last, first)); }\n";
         line += "    };\n";
-        line += "    struct _bit_ref { " + name + "& owner; size_t index;\n";
+        line += "    struct _bit_ref { " + name + "& owner; std::size_t index;\n";
         line += "        template<typename V> _bit_ref& operator=(const V& v) { auto packed = owner.pack(); packed.bits(index, index) = logic<1>(v); owner.template operator=<" + width + ">(packed); return *this; }\n";
         line += "        operator logic<1>() const { return logic<1>((((uint64_t)(owner.pack())) >> (unsigned)(index)) & 1ull); }\n";
         line += "        explicit operator bool() const { return (bool)(logic<1>(*this)); }\n";
         line += "    };\n";
-        line += "    _bits_ref bits(size_t last, size_t first) { return _bits_ref{*this, last, first}; }\n";
-        line += "    auto bits(size_t last, size_t first) const { return pack().bits(last, first); }\n";
-        line += "    _bit_ref operator[](size_t index) { return _bit_ref{*this, index}; }\n";
-        line += "    auto operator[](size_t index) const { return logic<1>((((uint64_t)(pack())) >> (unsigned)(index)) & 1ull); }\n";
+        line += "    _bits_ref bits(std::size_t last, std::size_t first) { return _bits_ref{*this, last, first}; }\n";
+        line += "    auto bits(std::size_t last, std::size_t first) const { return pack().bits(last, first); }\n";
+        line += "    _bit_ref operator[](std::size_t index) { return _bit_ref{*this, index}; }\n";
+        line += "    auto operator[](std::size_t index) const { return logic<1>((((uint64_t)(pack())) >> (unsigned)(index)) & 1ull); }\n";
     }
     else {
-        line += "    template<size_t W> " + name + "& operator=(const logic<W>& v) { (*(logic<" + width + ">*)this) = v; return *this; }\n";
+        line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { (*(logic<" + width + ">*)this) = v; return *this; }\n";
+        line += "    template<typename T, typename std::enable_if_t<!std::is_integral_v<std::remove_cvref_t<T>> && !std::is_enum_v<std::remove_cvref_t<T>> && cpphdl::detail::has_pack_method<std::remove_cvref_t<T>>::value, int> = 0> " + name + "& operator=(const T& v) { (*(logic<" + width + ">*)this) = logic<" + width + ">(v.pack()); return *this; }\n";
         line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { (*(logic<" + width + ">*)this) = logic<" + width + ">(v); return *this; }\n";
-        line += "    auto bits(size_t last, size_t first) { return (*(logic<" + width + ">*)this).bits(last, first); }\n";
-        line += "    auto bits(size_t last, size_t first) const { return const_cast<" + name + "*>(this)->bits(last, first); }\n";
+        line += "    auto bits(std::size_t last, std::size_t first) { return (*(logic<" + width + ">*)this).bits(last, first); }\n";
+        line += "    auto bits(std::size_t last, std::size_t first) const { return const_cast<" + name + "*>(this)->bits(last, first); }\n";
     }
     if (!fields.empty()) {
-        line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return pack() | rhs; }\n";
-        line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return pack() & rhs; }\n";
+        line += "    template<std::size_t W> auto operator|(const logic<W>& rhs) const { return pack() | rhs; }\n";
+        line += "    template<std::size_t W> auto operator&(const logic<W>& rhs) const { return pack() & rhs; }\n";
         line += "    explicit operator uint64_t() const { return pack().to_ullong(); }\n";
     }
     else {
-        line += "    template<size_t W> auto operator|(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) | rhs; }\n";
-        line += "    template<size_t W> auto operator&(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) & rhs; }\n";
+        line += "    template<std::size_t W> auto operator|(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) | rhs; }\n";
+        line += "    template<std::size_t W> auto operator&(const logic<W>& rhs) const { return (*(const logic<" + width + ">*)this) & rhs; }\n";
         line += "    explicit operator uint64_t() const { return ((const logic<" + width + ">&)*this).to_ullong(); }\n";
     }
     return line;
@@ -4428,7 +4961,7 @@ static std::vector<std::string> memoryArgs(const std::string& type)
         if (c == '<' && prev != '<' && next != '<' && next != '=') {
             ++nested;
         }
-        else if (c == '>' && prev != '>' && prev != '=' && next != '>') {
+        else if (c == '>' && prev != '>' && prev != '=' && next != '>' && next != '=') {
             --nested;
         }
         if (c == ',' && nested == 0) {
@@ -4459,7 +4992,7 @@ static std::vector<std::string> templateArgsFor(const std::string& type, const s
         if (c == '<' && prev != '<' && next != '<' && next != '=') {
             ++depth;
         }
-        else if (c == '>' && prev != '>' && prev != '=' && next != '>') {
+        else if (c == '>' && prev != '>' && prev != '=' && next != '>' && next != '=') {
             --depth;
         }
         if (c == ',' && depth == 0) {

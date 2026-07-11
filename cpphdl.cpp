@@ -2048,6 +2048,10 @@ int main(int argc, const char **argv)
     std::deque<std::string> owned_args;
     std::string generated_dir = "generated";
     std::string json_output;
+    // JSON extraction previously forced SYNTHESIS and hid test-only modules.
+    // Callers need to select whether preprocessing follows synthesis guards.
+    // Keep synthesis as the default while recording an explicit opt-out here.
+    bool add_synthesis_flag = true;
     bool saw_double_dash = false;
     bool injected_double_dash = false;
     std::filesystem::path cpphdl_source_include;
@@ -2065,6 +2069,14 @@ int main(int argc, const char **argv)
 
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;
+            continue;
+        }
+
+        // This option belongs to cpphdl rather than the forwarded compiler args.
+        // Consuming it before "--" prevents Clang from seeing an unknown option.
+        // It disables only cpphdl's implicit SYNTHESIS definition.
+        if (!saw_double_dash && std::strcmp(arg, "--no-synthesis-flag") == 0) {
+            add_synthesis_flag = false;
             continue;
         }
 
@@ -2137,10 +2149,15 @@ int main(int argc, const char **argv)
 #endif
     appendCompilerProbeIncludeDirs(cpphdl_include_args);
 
+    // The old unconditional define made non-synthesis source invisible to JSON.
+    // Preserve the established command-line behavior unless opted out above.
+    // Build the common arguments first and append the define conditionally.
     std::vector<std::string> args{
         "-x", "c++",
-        "-std=c++26",
-        "-DSYNTHESIS"};
+        "-std=c++26"};
+    if (add_synthesis_flag) {
+        args.push_back("-DSYNTHESIS");
+    }
     args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
 
     if (!saw_double_dash && !injected_double_dash) {

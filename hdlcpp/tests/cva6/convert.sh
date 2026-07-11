@@ -7,9 +7,14 @@ OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl}"
 SUPPORT="$SCRIPT_DIR/support/cpphdl"
 TARGET="${TARGET:-cv32a6_imac_sv32}"
 RISCV="${RISCV:-/home/me/riscv}"
-JOBS="${JOBS:-2}"
-HDLCPP_JOBS="${HDLCPP_JOBS:-2}"
+JOBS="${JOBS:-1}"
+HDLCPP_JOBS="${HDLCPP_JOBS:-1}"
 HDLCPP="${HDLCPP:-/home/me/cpphdl/hdlcpp/build/hdlcpp}"
+CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
+
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" && "${CPPHDL_OUT:-}" == "" ]]; then
+    OUT="$SCRIPT_DIR/cpphdl_native"
+fi
 
 if [[ ! -d "$SRC/core" ]]; then
     echo "missing CVA6 source core directory: $SRC/core" >&2
@@ -22,11 +27,22 @@ fi
 if [[ ! -x "$HDLCPP" ]]; then
     make -C /home/me/cpphdl/hdlcpp/build -j"$JOBS" hdlcpp
 fi
+export HDLCPP
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -a "$SUPPORT"/. "$OUT"/
 touch "$OUT/cva6_assign_suffix_code.tsv"
+python3 - "$OUT" <<'PY'
+from pathlib import Path
+import sys
+
+out = Path(sys.argv[1]).resolve()
+for path in out.glob("*.tsv"):
+    text = path.read_text()
+    text = text.replace("/home/me/cva6/cpphdl", str(out))
+    path.write_text(text)
+PY
 
 HELPER_DIR="$SRC/.cpphdl_convert/tools"
 mkdir -p "$HELPER_DIR"
@@ -61,6 +77,7 @@ ln -s "$OUT" "$SRC_CPPHDL"
     export HDLCPP_SKIP_PARAMS="${HDLCPP_SKIP_PARAMS:-cva6.AccCfg}"
     export HDLCPP_LOCAL_TYPE_MODULES="${HDLCPP_LOCAL_TYPE_MODULES:-cva6}"
     export HDLCPP_LOCAL_TYPE_NAMES="${HDLCPP_LOCAL_TYPE_NAMES:-branchpredict_sbe_t,exception_t,icache_areq_t,icache_arsp_t,icache_dreq_t,fetch_entry_t,jvt_t,scoreboard_entry_t,writeback_t,bp_resolve_t,irq_ctrl_t,lsu_ctrl_t,cbo_t,fu_data_t,icache_req_t,icache_rtrn_t,dcache_req_i_t,dcache_req_o_t,accelerator_req_t,accelerator_resp_t,acc_mmu_req_t,acc_mmu_resp_t,acc_cfg_t}"
+    export HDLCPP_ADDRESSABLE_PACKED_ARRAY_TYPES="${HDLCPP_ADDRESSABLE_PACKED_ARRAY_TYPES:-branchpredict_sbe_t,exception_t,icache_areq_t,icache_arsp_t,icache_dreq_t,icache_drsp_t,fetch_entry_t,jvt_t,bht_prediction_t,scoreboard_entry_t,writeback_t,bp_resolve_t,irq_ctrl_t,lsu_ctrl_t,cbo_t,fu_data_t,icache_req_t,icache_rtrn_t,dcache_req_i_t,dcache_req_o_t,accelerator_req_t,accelerator_resp_t,acc_mmu_req_t,acc_mmu_resp_t,acc_cfg_t,forwarding_t,hpdcache_req_t,hpdcache_rsp_t,hpdcache_mem_req_t,hpdcache_mem_req_w_t,hpdcache_mem_resp_r_t,hpdcache_mem_resp_w_t,hpdcache_dir_entry_t,hpdcache_pma_t,hpdcache_rtab_deps_t,rtab_entry_t,hwpf_stride_base_t,hwpf_stride_param_t,hwpf_stride_throttle_t,hwpf_stride_status_t,pte_cva6_t,tlb_update_cva6_t,pmpcfg_t,instruction_t,ras_t}"
     export HDLCPP_FALSE_CONSTANT_TYPES="${HDLCPP_FALSE_CONSTANT_TYPES:-cva6.acc_cfg_t}"
     export HDLCPP_CONSTEXPR_GENERATE_MODULES="${HDLCPP_CONSTEXPR_GENERATE_MODULES:-cva6_fifo_v3,cva6_shared_tlb}"
     export HDLCPP_NAMED_PARAM_ORDER="$OUT/cva6_named_param_order.tsv"
@@ -97,15 +114,17 @@ ln -s "$OUT" "$SRC_CPPHDL"
     RISCV="$RISCV" \
     HDLCPP="$HDLCPP" \
     HDLCPP_JOBS="$HDLCPP_JOBS" \
+    CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" \
     python3 "$HELPER_DIR/convert_cva6.py"
 )
 
-(
-    cd "$OUT"
-    "$HDLCPP" --optimize run_cpphdl_matrix.cpp
-)
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" != "1" ]]; then
+    (
+        cd "$OUT"
+        "$HDLCPP" --optimize run_cpphdl_matrix.cpp
+    )
 
-python3 - "$OUT/generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h" <<'PY'
+    python3 - "$OUT/generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h" <<'PY'
 from pathlib import Path
 import sys
 
@@ -121,6 +140,7 @@ text = text.replace(
 )
 path.write_text(text)
 PY
+fi
 
 echo "converted CVA6 source: $SRC/core"
 echo "cpphdl output: $OUT"

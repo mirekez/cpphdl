@@ -45,6 +45,12 @@ foreach(src ${TEST_SOURCES})
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
+    # This regression defines its module only outside SYNTHESIS guards.
+    # It must exercise cpphdl's new opt-out rather than the default preprocessing mode.
+    # Append the frontend option only for that targeted JSON extraction test.
+    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp")
+        string(APPEND cpphdl_json_args " --no-synthesis-flag")
+    endif()
 
     add_custom_command(
         TARGET ${target_name}
