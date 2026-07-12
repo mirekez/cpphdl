@@ -14,6 +14,41 @@ REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
 SKIP = 77
 
 
+def checkout_revision(checkout: pathlib.Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def prepare_work_dir(work: pathlib.Path, checkout: pathlib.Path) -> None:
+    # riscv-arch-test generated makefiles contain absolute checkout paths. Drop
+    # stale outputs when a build tree is reused after either checkout moves.
+    identity = f"runner={pathlib.Path(__file__).resolve()}\ncheckout={checkout.resolve()}\n"
+    stamp = work / ".cpphdl-source-identity"
+    if work.exists() and (not stamp.exists() or stamp.read_text(encoding="utf-8") != identity):
+        print(f"removing stale riscv-arch-test work directory: {work}")
+        shutil.rmtree(work)
+    work.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(identity, encoding="utf-8")
+
+
+def print_tool_version(tool: str, env: dict[str, str]) -> None:
+    resolved = shutil.which(tool, path=env["PATH"]) or tool
+    result = subprocess.run(
+        [resolved, "--version"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+    first_line = result.stdout.splitlines()[0] if result.stdout else "version unavailable"
+    print(f"tool: {resolved}: {first_line}")
+
+
 def run(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> int:
     print("+", " ".join(cmd))
     return subprocess.run(cmd, cwd=cwd, env=env).returncode
@@ -184,13 +219,14 @@ def main(argv: list[str]) -> int:
     tribe = pathlib.Path(argv[1]).resolve()
     checkout = pathlib.Path(argv[2]).resolve()
     work = pathlib.Path(argv[3]).resolve()
-    work.mkdir(parents=True, exist_ok=True)
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
     ensure_result = subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "tests"])
     if ensure_result.returncode != 0:
         print(f"SKIP: riscv-arch-test checkout is not available: {checkout}")
         return SKIP
+
+    prepare_work_dir(work, checkout)
 
     env = os.environ.copy()
     riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
@@ -231,6 +267,18 @@ def main(argv: list[str]) -> int:
     if not tribe.exists():
         print(f"SKIP: Tribe binary not found: {tribe}")
         return SKIP
+
+    print(f"riscv-arch-test checkout: {checkout} ({checkout_revision(checkout)})")
+    print_tool_version(gcc, env)
+    assembler = subprocess.run(
+        [shutil.which(gcc, path=env["PATH"]) or gcc, "-print-prog-name=as"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    ).stdout.strip()
+    if assembler:
+        print_tool_version(assembler, env)
 
     backend = os.environ.get("TRIBE_ARCH_TEST_BACKEND", "cpphdl")
     if backend not in ("cpphdl", "verilator"):
