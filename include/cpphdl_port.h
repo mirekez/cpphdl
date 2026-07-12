@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <functional>
+#include <memory>
 #include <stdio.h>
 
 #if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>) && \
@@ -110,7 +111,8 @@ public:
         func2_ = std::move(f);
         func1_ = [&]() -> A* {
             a_tmp = func2_();
-            return &a_tmp;
+            // Port value types may overload operator& for raw storage access.
+            return std::addressof(a_tmp);
         };
         assigned = true;
     }
@@ -129,7 +131,8 @@ public:
         func2_ = f;
         func1_ = [&]() -> A* {
             a_tmp = func2_();
-            return &a_tmp;
+            // Port value types may overload operator& for raw storage access.
+            return std::addressof(a_tmp);
         };
         assigned = true;
         return *this;
