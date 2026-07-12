@@ -486,6 +486,7 @@ union Instr
                     case 0b101: return "j     ";
                     case 0b110: return "beqz  ";
                     case 0b111: return "bnez  ";
+                    default:    return "rsrvd ";
                 }
             case 0b10:
                 switch (f3) {

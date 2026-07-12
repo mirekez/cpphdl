@@ -122,13 +122,10 @@ struct cat : logic<SUM<N...>()>
     }
 
     template<typename... Args>
-    constexpr cat(const Args&... args)
+    constexpr cat(const Args&... args) : logic<WIDTH>(0)
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
-        for (size_t i = 0; i < sizeof(this->bytes); ++i) {
-            this->bytes[i] = 0;
-        }
         size_t high_offset = WIDTH;
         append(high_offset, cat_to_logic(args)...);
     }
