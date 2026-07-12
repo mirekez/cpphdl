@@ -123,11 +123,31 @@ std::string localDeclInitializer(const Expr& expr)
     return indent + escapeIdentifier(decl->value) + " = " + init.str() + ";\n";
 }
 
+std::vector<std::string> formattedBufferNames(const std::vector<Expr>& statements)
+{
+    std::vector<std::string> names;
+    for (const auto& statement : statements) {
+        Expr copy = statement;
+        copy.traverseIf([&](Expr& expr) {
+            if (expr.type == Expr::EXPR_CALL && (expr.value == "sprintf" || expr.value == "snprintf") && !expr.sub.empty()) {
+                const std::string name = expr.sub[0].type == Expr::EXPR_VAR
+                    ? expr.sub[0].value : expr.sub[0].str();
+                if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) {
+                    names.push_back(name);
+                }
+            }
+            return false;
+        });
+    }
+    return names;
+}
+
 }
 
 bool Method::print(std::ofstream& out)
 {
     currMethod = this;
+    const std::vector<std::string> formatted_buffers = formattedBufferNames(statements);
 
     if (name == "_strobe") {
         return true;
@@ -180,6 +200,10 @@ bool Method::print(std::ofstream& out)
         }
         Expr decl = *topLevelLocalDecl(stmt);
         decl.indent = 2;
+        if (std::find(formatted_buffers.begin(), formatted_buffers.end(), decl.value) != formatted_buffers.end()) {
+            // C character buffers written by sprintf-family calls become native SV strings.
+            decl.sub[0] = Expr{"std::string", Expr::EXPR_TYPE};
+        }
         if (decl.sub.size() > 1) {
             decl.sub[1] = Expr{};
         }
