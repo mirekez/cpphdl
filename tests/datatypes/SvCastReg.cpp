@@ -31,10 +31,10 @@ int main()
     }
 
     array<4, logic<4>, true> packed_array = sv_cast<array<4, logic<4>, true>>(3);
-    for (size_t i = 0; i < 4; ++i) {
-        if ((uint64_t)packed_array[i] != 3) {
-            return 4;
-        }
+    // A scalar cast assigns the complete packed field; it does not replicate
+    // the scalar independently into every packed-array element.
+    if ((uint64_t)packed_array.pack() != 0x0003) {
+        return 4;
     }
 
     return 0;
