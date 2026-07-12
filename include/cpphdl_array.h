@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -14,6 +15,21 @@ namespace cpphdl
 
 namespace detail
 {
+
+// Packed element access returns a proxy whose width was not visible to traits.
+// Generic packing therefore treated wide proxies as uint64_t and dropped upper bits.
+// Identify the proxy and expose its element width for width-preserving conversions.
+template<typename TYPE, size_t TOTAL_BITS, size_t ELEMENT_BITS>
+struct array_packed_ref;
+
+template<typename T>
+struct is_array_packed_ref : std::false_type {};
+
+template<typename TYPE, size_t TOTAL_BITS, size_t ELEMENT_BITS>
+struct is_array_packed_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>> : std::true_type {
+    using element_type = TYPE;
+    static constexpr size_t element_bits = ELEMENT_BITS;
+};
 
 template<typename TYPE, typename = void>
 struct is_packed_array : std::false_type {};
@@ -36,14 +52,31 @@ struct array_packed_size_bits<TYPE, std::void_t<decltype(std::remove_cv_t<std::r
     constexpr static size_t value = std::remove_cv_t<std::remove_reference_t<TYPE>>::_size_bits();
 };
 
+template<typename TYPE, typename = void>
+struct has_to_string_method : std::false_type {};
+
+// Array formatting delegates to an element's textual representation when the
+// element provides one, including nested cpphdl::array and logic objects.
+template<typename TYPE>
+struct has_to_string_method<TYPE,
+    std::void_t<decltype(std::declval<const TYPE&>().to_string())>>
+    : std::is_convertible<decltype(std::declval<const TYPE&>().to_string()), std::string> {};
+
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
 {
+    // A packed-array proxy represents ELEMENT_BITS even when it converts to uint64_t.
+    // Selecting the integer path first truncated elements wider than 64 bits.
+    // Materialize the proxy as logic at its full declared width before resizing.
     if constexpr (has_pack_method<TYPE>::value) {
         return logic<WIDTH>(value.pack());
     }
     else if constexpr (is_logic_v<TYPE>) {
         return logic<WIDTH>(value);
+    }
+    else if constexpr (is_array_packed_ref<std::remove_cv_t<std::remove_reference_t<TYPE>>>::value) {
+        using ref_t = std::remove_cv_t<std::remove_reference_t<TYPE>>;
+        return logic<WIDTH>(static_cast<logic<is_array_packed_ref<ref_t>::element_bits>>(value));
     }
     else if constexpr (can_static_cast_uint64<TYPE>::value) {
         return logic<WIDTH>(static_cast<uint64_t>(value));
@@ -90,8 +123,15 @@ struct array_packed_ref
     template<typename T>
     array_packed_ref& operator=(const T& value)
     {
+        // Assigning one packed proxy to another previously used a narrow scalar cast.
+        // Proxy-to-proxy copies must preserve every bit of the viewed element.
+        // Convert the source through its full-width logic view before writing ref.
         if constexpr (has_pack_method<T>::value) {
             ref = value.pack();
+        }
+        else if constexpr (is_array_packed_ref<std::remove_cv_t<std::remove_reference_t<T>>>::value) {
+            using ref_t = std::remove_cv_t<std::remove_reference_t<T>>;
+            ref = static_cast<logic<is_array_packed_ref<ref_t>::element_bits>>(value);
         }
         else if constexpr (can_static_cast_uint64<T>::value && !is_logic_v<T> && !is_logic_bits_v<T>) {
             ref = static_cast<uint64_t>(value);
@@ -232,7 +272,25 @@ struct array_packed_ref
     }
 };
 
+// Generated code needs the stored type rather than a proxy's implementation type.
+// The generic decay rule is correct for values but not packed-array references.
+// Map packed proxies back to TYPE while retaining normal decay for other inputs.
+template<typename T>
+struct value_type_for_ref
+{
+    using type = std::remove_cv_t<std::remove_reference_t<T>>;
+};
+
+template<typename TYPE, size_t TOTAL_BITS, size_t ELEMENT_BITS>
+struct value_type_for_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>>
+{
+    using type = TYPE;
+};
+
 } // namespace detail
+
+template<typename T>
+using value_type_for_ref_t = typename detail::value_type_for_ref<T>::type;
 
 template<size_t COUNT, typename TYPE, bool PACKED>
 struct array;
@@ -267,6 +325,14 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
 
     array(const array<COUNT, TYPE, false>& other) = default;
 
+    // Generated unpacked-array literals use C++ initializer-list construction.
+    // The previous generic constructor could not express ordered element assignment.
+    // Copy provided values in order and zero-fill omitted SystemVerilog elements.
+    array(std::initializer_list<TYPE> init)
+    {
+        *this = init;
+    }
+
     template<typename T>
     array(const T& other)
     {
@@ -274,6 +340,21 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
     }
 
     array& operator=(const array<COUNT, TYPE, false>& other) = default;
+
+    array& operator=(std::initializer_list<TYPE> init)
+    {
+        size_t i = 0;
+        for (const auto& value : init) {
+            if (i >= COUNT) {
+                break;
+            }
+            data[i++] = value;
+        }
+        for (; i < COUNT; ++i) {
+            data[i] = TYPE{};
+        }
+        return *this;
+    }
 
     template<size_t WIDTH>
     array& operator=(const logic<WIDTH>& value)
@@ -357,13 +438,18 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         return (array&)(*this = *this ^ other);
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
         std::string str;
         for (int i=COUNT-1; i >= 0; --i) {
-            char buf[10] = {};
-            std::snprintf(buf, 10, "%.02lx", (uint64_t)data[i]);
-            str += buf;
+            if constexpr (detail::has_to_string_method<TYPE>::value) {
+                str += data[i].to_string();
+            }
+            else {
+                char buf[10] = {};
+                std::snprintf(buf, sizeof(buf), "%.02lx", (uint64_t)data[i]);
+                str += buf;
+            }
         }
         return str;
     }
@@ -389,6 +475,14 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
     array() = default;
     array(const array<COUNT, TYPE, true>& other) = default;
 
+    // Packed-array literals also require ordered element initialization.
+    // Direct list construction was unavailable and selected unsuitable conversions.
+    // Assign through element proxies and zero-fill the remaining packed elements.
+    array(std::initializer_list<TYPE> init)
+    {
+        *this = init;
+    }
+
     template<typename T>
     array(const T& other)
     {
@@ -396,6 +490,21 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
     }
 
     array& operator=(const array<COUNT, TYPE, true>& other) = default;
+
+    array& operator=(std::initializer_list<TYPE> init)
+    {
+        size_t i = 0;
+        for (const auto& value : init) {
+            if (i >= COUNT) {
+                break;
+            }
+            (*this)[i++] = value;
+        }
+        for (; i < COUNT; ++i) {
+            (*this)[i] = TYPE{};
+        }
+        return *this;
+    }
 
     template<typename T>
     array& operator=(const T& other)
@@ -480,8 +589,15 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_ullong();
     }
 
-    std::string to_string()
+    std::string to_string() const
     {
+        if constexpr (detail::has_to_string_method<TYPE>::value) {
+            std::string str;
+            for (int i = COUNT - 1; i >= 0; --i) {
+                str += (*this)[i].to_string();
+            }
+            return str;
+        }
         return data.to_hex();
     }
 };

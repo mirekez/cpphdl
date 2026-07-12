@@ -746,7 +746,7 @@ void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl
         return;
     }
 
-    const auto substitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    const auto substitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
     if (substitutions.empty()) {
         return;
     }
@@ -1202,7 +1202,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     if (CRD && CRD->isDerivedFrom(ModuleClass)) {  // check if template is derived from cpphdl::Module
         isMember = true;
     }
-    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(), [&](auto& m){ return m.name == fieldName; } ) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
+    // Abstract dependent base members may not resolve to a concrete Module
+    // type. Match the name already installed by the concrete base, including
+    // the base prefix used inside a derived module.
+    std::string memberLookupName = fieldName;
+    if (hlp.mod->origName.find(hlp.parent->getQualifiedNameAsString()) != 0) {
+        memberLookupName = genTypeName(hlp.parent->getQualifiedNameAsString()) + "___" + fieldName;
+    }
+    if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(),
+        [&](auto& m){ return m.name == fieldName || m.name == memberLookupName; }) != hlp.mod->members.end()) {  // we cant see if it's of Module in abstract decl
         isMember = true;
     }
 
@@ -1276,16 +1284,47 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 if (TST && TST->getTemplateName().getAsTemplateDecl()) {
                     const clang::TemplateDecl *TD = TST->getTemplateName().getAsTemplateDecl();
                     const clang::TemplateParameterList *params = TD->getTemplateParameters();  // getting port names
-                    size_t i=0;
-                    for (const clang::NamedDecl *param : *params) {  // looking for parameters of Interface struct used in SubFields
-                        DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
-                        field->expr.traverseIf( [&](auto& e) {
-                                if (e.type == cpphdl::Expr::EXPR_VAR && e.value == param->getNameAsString() && expr.sub.size() > i) {
-                                    e = expr.sub[i];  // get parameter expression from Interface parameters if one of parameters names is used in fields of the Interface
+                    // Rebuild the flattened sub-port from the Interface primary template;
+                    // the existing field contains only the first concrete specialization.
+                    const auto* classTemplate = dyn_cast<ClassTemplateDecl>(TD);
+                    const CXXRecordDecl* primary = classTemplate ? classTemplate->getTemplatedDecl() : nullptr;
+                    if (primary) {
+                        for (Decl* D : primary->decls()) {
+                            auto* FD = dyn_cast<FieldDecl>(D);
+                            if (!FD) {
+                                continue;
+                            }
+                            std::string ending = FD->getNameAsString();
+                            if (str_ending(fieldName, "_out")) {
+                                if (str_ending(ending, "_out")) {
+                                    ending.replace(ending.length() - 4, 4, "_in");
+                                } else if (str_ending(ending, "_in")) {
+                                    ending.replace(ending.length() - 3, 3, "_out");
                                 }
-                                return false;
-                            });
-                        ++i;
+                            }
+                            if (field->name != fieldName + "__" + ending) {
+                                continue;
+                            }
+
+                            QualType subQT = FD->getType().getNonReferenceType();
+                            hlp.skipStdFunctionType(subQT);
+                            cpphdl::Expr abstractSub = hlp.digQT(subQT);
+                            size_t i = 0;
+                            for (const clang::NamedDecl *param : *params) {
+                                DEBUG_EXPR1(" checking param " << param->getNameAsString() << " ");
+                                abstractSub.traverseIf([&](auto& e) {
+                                    if (e.type == cpphdl::Expr::EXPR_VAR
+                                        && e.value == param->getNameAsString()
+                                        && expr.sub.size() > i) {
+                                        e = expr.sub[i];
+                                    }
+                                    return false;
+                                });
+                                ++i;
+                            }
+                            updateExpr(field->expr, abstractSub);
+                            break;
+                        }
                     }
                 }
                 DEBUG_AST(debugIndent, "SubField: " << field->name << ": " << field->expr.debug(debugIndent)
@@ -1521,7 +1560,12 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             // extracting parameters of the template
             std::vector<cpphdl::Field> params;
             hlp.followSpecialization(MD->getParent(), parentName, &params);
-            appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            // A concrete helper already contributes its fixed type arguments
+            // through followSpecialization(); only a primary template needs the
+            // enclosing module's type substitution appended to its name.
+            if (!dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
+                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+            }
             externalThisTypeName = parentName;
             DEBUG_AST1(" - not Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
             hlp.flags |= Helpers::FLAG_EXTERNAL_THIS;
@@ -1550,7 +1594,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             if (MD->isStatic()) {
                 parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
                 hlp.followSpecialization(MD->getParent(), parentName);
-                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                if (!dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
+                    appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                }
             }
             else {
                 parentName = genTypeName(MD->getParent()->getNameAsString());
@@ -1590,7 +1636,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
     }
 
-    const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);
+    const auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
     for (auto& ret : method.ret) {
         applyTemplateTypeSubstitutions(ret, typeSubstitutions);
     }
@@ -1836,11 +1882,22 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
                 DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
+                // Parse primary-template fields in their own dependent context.
+                // Reusing the concrete specialization helper substitutes the
+                // first actual (for example WAYS=1) back into inherited array
+                // dimensions and freezes an otherwise parameterized module.
+                Helpers abstractHlp(context, &mod, aRD);
+                // Keep numeric expressions dependent on the primary template,
+                // while nested method calls still resolve its fixed type arguments
+                // from the concrete module specialization being assembled.
+                abstractHlp.specializationParent = RD;
+
                 for (Decl* D : aRD->decls()) {  // need fields from abstract class to get its port width parametrict expressions (not numbers)
                     if (auto* FD = dyn_cast<FieldDecl>(D)) {
-                        hlp.flags |= Helpers::FLAG_ABSTRACT;
-                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(), FD->getInClassInitializer(), hlp, FD);
-                        hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                        abstractHlp.flags |= Helpers::FLAG_ABSTRACT;
+                        putField(FD->getType().getNonReferenceType(), FD->getNameAsString(),
+                            FD->getInClassInitializer(), abstractHlp, FD);
+                        abstractHlp.flags &= ~Helpers::FLAG_ABSTRACT;
                     } else
                     if (auto* VD = dyn_cast<VarDecl>(D)) {
                         if (putStaticConstexpr(VD)) {
@@ -1850,9 +1907,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                             continue;
                         }
                         if (VD->isStaticDataMember() && !VD->isConstexpr()) {
-                            hlp.flags |= Helpers::FLAG_ABSTRACT;
-                            putField(VD->getType().getNonReferenceType(), VD->getNameAsString(), VD->getInit(), hlp);
-                            hlp.flags &= ~Helpers::FLAG_ABSTRACT;
+                            abstractHlp.flags |= Helpers::FLAG_ABSTRACT;
+                            putField(VD->getType().getNonReferenceType(), VD->getNameAsString(),
+                                VD->getInit(), abstractHlp);
+                            abstractHlp.flags &= ~Helpers::FLAG_ABSTRACT;
                         }
                     }
 // else  // no need to update code because of SubstNonTypeTemplateParmExpr replacements
@@ -2001,6 +2059,10 @@ int main(int argc, const char **argv)
     std::deque<std::string> owned_args;
     std::string generated_dir = "generated";
     std::string json_output;
+    // JSON extraction previously forced SYNTHESIS and hid test-only modules.
+    // Callers need to select whether preprocessing follows synthesis guards.
+    // Keep synthesis as the default while recording an explicit opt-out here.
+    bool add_synthesis_flag = true;
     bool saw_double_dash = false;
     bool injected_double_dash = false;
     std::filesystem::path cpphdl_source_include;
@@ -2018,6 +2080,14 @@ int main(int argc, const char **argv)
 
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;
+            continue;
+        }
+
+        // This option belongs to cpphdl rather than the forwarded compiler args.
+        // Consuming it before "--" prevents Clang from seeing an unknown option.
+        // It disables only cpphdl's implicit SYNTHESIS definition.
+        if (!saw_double_dash && std::strcmp(arg, "--no-synthesis-flag") == 0) {
+            add_synthesis_flag = false;
             continue;
         }
 
@@ -2090,10 +2160,15 @@ int main(int argc, const char **argv)
 #endif
     appendCompilerProbeIncludeDirs(cpphdl_include_args);
 
+    // The old unconditional define made non-synthesis source invisible to JSON.
+    // Preserve the established command-line behavior unless opted out above.
+    // Build the common arguments first and append the define conditionally.
     std::vector<std::string> args{
         "-x", "c++",
-        "-std=c++26",
-        "-DSYNTHESIS"};
+        "-std=c++26"};
+    if (add_synthesis_flag) {
+        args.push_back("-DSYNTHESIS");
+    }
     args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
 
     if (!saw_double_dash && !injected_double_dash) {

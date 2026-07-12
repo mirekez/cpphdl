@@ -497,7 +497,6 @@ public:
         ++_system_clock;
 
         check("slice widen", read_slice_widen(), expected_slice_widen());
-
         for (uint8_t i=0; i < 32; ++i) {
             seed = (uint8_t)(i * 7 + 3);
             addr = (uint8_t)(i & 0xf);

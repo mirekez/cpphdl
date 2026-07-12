@@ -31,6 +31,12 @@ foreach(src ${TEST_SOURCES})
         endif()
     endforeach()
 
+    # Public constexpr helpers must remain usable by C++17 projects even though
+    # converter regressions normally compile in the newest supported language mode.
+    if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp")
+        target_compile_options(${target_name} PRIVATE "-std=c++17")
+    endif()
+
     cpphdl_link_stdcxxexp_if_available(${target_name})
 
     set_target_properties(${target_name} PROPERTIES
@@ -45,6 +51,12 @@ foreach(src ${TEST_SOURCES})
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
+    # This regression defines its module only outside SYNTHESIS guards.
+    # It must exercise cpphdl's new opt-out rather than the default preprocessing mode.
+    # Append the frontend option only for that targeted JSON extraction test.
+    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp")
+        string(APPEND cpphdl_json_args " --no-synthesis-flag")
+    endif()
 
     add_custom_command(
         TARGET ${target_name}
@@ -57,7 +69,7 @@ foreach(src ${TEST_SOURCES})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     cpphdl_strip_gnu_property_after_build(${target_name})
 
-    add_dependencies(${target_name} cpphdl)
+    cpphdl_add_converter_dependency(${target_name})
 
     add_test(
         NAME ${target_name}

@@ -145,6 +145,45 @@ static bool check(bool condition, const char* text)
     return true;
 }
 
+struct ArrayStringElement
+{
+    const char* text;
+
+    std::string to_string() const
+    {
+        return text;
+    }
+};
+
+struct PackedArrayStringElement
+{
+    uint8_t raw = 0;
+
+    PackedArrayStringElement() = default;
+
+    explicit PackedArrayStringElement(uint64_t value)
+        : raw((uint8_t)value)
+    {
+    }
+
+    static constexpr size_t _size_bits()
+    {
+        return 8;
+    }
+
+    explicit operator uint64_t() const
+    {
+        return raw;
+    }
+
+    std::string to_string() const
+    {
+        char text[3] = {};
+        std::snprintf(text, sizeof(text), "%02x", raw);
+        return text;
+    }
+};
+
 static bool check_direct_arrays()
 {
     bool ok = true;
@@ -164,6 +203,20 @@ static bool check_direct_arrays()
     array4D<2, 3, 4, 5, u8> alias4d{};
     alias4d[1][2][3][4] = u8(0x7c);
     ok &= check((uint8_t)alias4d[1][2][3][4] == 0x7c, "array4D unpacked alias index");
+
+    array<3, ArrayStringElement> string_elements;
+    string_elements[0].text = "low";
+    string_elements[1].text = "mid";
+    string_elements[2].text = "high";
+    ok &= check(string_elements.to_string() == "highmidlow",
+        "unpacked array delegates formatting to element to_string");
+
+    array<3, PackedArrayStringElement, true> packed_string_elements;
+    packed_string_elements[0] = PackedArrayStringElement(0x0a);
+    packed_string_elements[1] = PackedArrayStringElement(0x0b);
+    packed_string_elements[2] = PackedArrayStringElement(0x0c);
+    ok &= check(packed_string_elements.to_string() == "0c0b0a",
+        "packed array delegates formatting to reconstructed element to_string");
 
     array<3,logic<9>> unpacked_logic;
     unpacked_logic = 0;

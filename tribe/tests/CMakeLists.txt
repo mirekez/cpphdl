@@ -176,7 +176,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
 
     cpphdl_link_stdcxxexp_if_available(${target_name})
 
-    add_dependencies(${target_name} cpphdl)
+    cpphdl_add_converter_dependency(${target_name})
     if(target_name STREQUAL "Accelerator_test"
         OR target_name STREQUAL "Checkpoint_test"
         OR target_name STREQUAL "CLINT_test"

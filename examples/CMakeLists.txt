@@ -55,6 +55,6 @@ foreach(src ${EXAMPLE_SOURCES})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
     cpphdl_strip_gnu_property_after_build(${target_name})
 
-    add_dependencies(${target_name} cpphdl)
+    cpphdl_add_converter_dependency(${target_name})
 
 endforeach()

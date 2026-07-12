@@ -165,7 +165,6 @@ public:
 //        dec.state_in       = _ASSIGN_REG( state_reg[0] );  // execute stage input is same
         dec.pc_in          = _ASSIGN_REG( pc );
         dec.instr_valid_in = _ASSIGN(fetch_valid_comb_func());
-        dec.instr_in       = icache.read_data_out;
         dec.regs_data0_in  = _ASSIGN( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = _ASSIGN( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
@@ -176,8 +175,6 @@ public:
         exe_mem.state_in = _ASSIGN_COMB(exe_state_comb_func());
         exe_mem.alu_result_in = exe.alu_result_out;
 #ifdef ENABLE_RV32IA
-        exe_mem.dcache_read_valid_in = dcache.read_valid_out;
-        exe_mem.dcache_read_addr_in = dcache.read_addr_out;
 #ifdef ENABLE_MMU_TLB
         // AMO read responses are tagged by the physical D-cache address; match
         // them against the translated MMU address, not the architectural VA.
@@ -185,9 +182,7 @@ public:
 #else
         exe_mem.dcache_read_expected_addr_in = exe_mem.mem_read_addr_out;
 #endif
-        exe_mem.dcache_read_data_in = dcache.read_data_out;
 #endif
-        exe_mem.mem_stall_in = dcache.busy_out;
         exe_mem.hold_in = _ASSIGN( memory_wait_comb_func() );
         exe_mem.__inst_name = __inst_name + "/exe_mem";
         exe_mem._assign();
@@ -203,9 +198,6 @@ public:
         wb_mem.split_load_in = exe_mem.split_load_out;
         wb_mem.split_load_low_addr_in = exe_mem.split_load_low_out;
         wb_mem.split_load_high_addr_in = exe_mem.split_load_high_out;
-        wb_mem.dcache_read_valid_in = dcache.read_valid_out;
-        wb_mem.dcache_read_addr_in = dcache.read_addr_out;
-        wb_mem.dcache_read_data_in = dcache.read_data_out;
         wb_mem.store_forward_enable_in = _ASSIGN(
             (uint32_t)wb_mem.alu_result_in() < memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
         wb_mem.hold_in = _ASSIGN(memory_wait_comb_func());
@@ -368,6 +360,17 @@ public:
         dcache.debugen_in = debugen_in;
         dcache.__inst_name = __inst_name + "/dcache";
         dcache._assign();
+        // L1 output ports are installed by L1Cache::_assign(); copy them only
+        // after that call so consumers do not retain empty function_ref objects.
+#ifdef ENABLE_RV32IA
+        exe_mem.dcache_read_valid_in = dcache.read_valid_out;
+        exe_mem.dcache_read_addr_in = dcache.read_addr_out;
+        exe_mem.dcache_read_data_in = dcache.read_data_out;
+#endif
+        exe_mem.mem_stall_in = dcache.busy_out;
+        wb_mem.dcache_read_valid_in = dcache.read_valid_out;
+        wb_mem.dcache_read_addr_in = dcache.read_addr_out;
+        wb_mem.dcache_read_data_in = dcache.read_data_out;
         // dcache.mem_out is populated by dcache._assign(); bind these after it
         // so WritebackMem does not capture empty interface port functions.
         wb_mem.dcache_write_valid_in = dcache.mem_out.write_in;
@@ -408,6 +411,8 @@ public:
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
+        // Decode must copy the now-bound instruction response function.
+        dec.instr_in = icache.read_data_out;
 
         l2cache.i_mem_in.read_in = icache.mem_out.read_in;
         l2cache.i_mem_in.write_in = _ASSIGN(false);

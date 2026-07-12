@@ -178,7 +178,6 @@ struct logic : public bitops<logic<WIDTH>>
     using bitops<logic<WIDTH>>::operator&;
     using bitops<logic<WIDTH>>::operator|;
     using bitops<logic<WIDTH>>::operator^;
-    using bitops<logic<WIDTH>>::operator~;
     using bitops<logic<WIDTH>>::operator<<;
     using bitops<logic<WIDTH>>::operator>>;
     using bitops<logic<WIDTH>>::operator+;
@@ -244,6 +243,18 @@ struct logic : public bitops<logic<WIDTH>>
     logic& operator^=(const logic<WIDTH1>& in)
     {
         return *this = *this ^ in;
+    }
+
+    // The inherited bitops complement was not constexpr for logic constants.
+    // SystemVerilog requires width-limited inversion rather than host integer promotion.
+    // Invert each declared bit into a same-width logic result.
+    constexpr logic operator~() const
+    {
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) ? 0 : 1);
+        }
+        return result;
     }
 
     constexpr uint64_t to_uint64_constexpr() const
