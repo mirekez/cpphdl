@@ -46,26 +46,29 @@ struct u
     constexpr operator uint64_t () { return value; }
     constexpr operator uint64_t () const { return value; }
 
+    // Keep one implicit integral conversion for switch and overload resolution.
+    // Older GCC incorrectly tries to deduce every disabled conversion template
+    // in a switch condition; these exact-width convenience casts remain explicit.
     template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator unsigned char() const { return static_cast<unsigned char>(value); }
+    explicit constexpr operator unsigned char() const { return static_cast<unsigned char>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator unsigned short() const { return static_cast<unsigned short>(value); }
+    explicit constexpr operator unsigned short() const { return static_cast<unsigned short>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator unsigned int() const { return static_cast<unsigned int>(value); }
+    explicit constexpr operator unsigned int() const { return static_cast<unsigned int>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator signed char() const { return static_cast<signed char>(value); }
+    explicit constexpr operator signed char() const { return static_cast<signed char>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator signed short() const { return static_cast<signed short>(value); }
+    explicit constexpr operator signed short() const { return static_cast<signed short>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator signed int() const { return static_cast<signed int>(value); }
+    explicit constexpr operator signed int() const { return static_cast<signed int>(value); }
 
     template<size_t W = WIDTH, typename std::enable_if_t<W == 64, int> = 0>
-    constexpr operator signed long() const { return static_cast<signed long>(value); }
+    explicit constexpr operator signed long() const { return static_cast<signed long>(value); }
 
     logic<1> operator[](size_t bit) const
     {
