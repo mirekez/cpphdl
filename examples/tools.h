@@ -12,8 +12,6 @@ inline std::string HostOptCflags()
     return extra ? std::string(" ") + extra : std::string();
 }
 
-const std::string compilerParams = HostOptCflags() + " -g -O2 -std=c++26 -fno-strict-aliasing -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter";
-
 inline std::string VerilatorExtraCflags()
 {
     const char* extra = std::getenv("CPPHDL_VERILATOR_CFLAGS");
@@ -300,6 +298,27 @@ inline std::string VerilatorCxx()
     return "c++";
 }
 
+inline std::string VerilatorCxxStandardFlag(const std::string& cxx)
+{
+    // The Verilator make runs outside CMake, so probe the compiler selected for
+    // that run instead of assuming it accepts the host build's newest spelling.
+    for (const char* flag : {"-std=c++26", "-std=c++2c", "-std=c++23", "-std=c++20", "-std=c++17"}) {
+        const std::string command = ToolShellQuoteString(cxx) + " " + flag
+            + " -x c++ -fsyntax-only /dev/null >/dev/null 2>&1";
+        if (std::system(command.c_str()) == 0) {
+            return flag;
+        }
+    }
+    return "-std=c++17";
+}
+
+inline std::string VerilatorCompilerParams(const std::string& cxx)
+{
+    return HostOptCflags() + " -g -O2 " + VerilatorCxxStandardFlag(cxx)
+        + " -fno-strict-aliasing -Wno-unknown-warning-option"
+          " -Wno-deprecated-missing-comma-variadic-parameter";
+}
+
 #if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES_CONFIG) && defined(TRIBE_IO_REGION_SIZE_CONFIG)
 inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_root, const std::filesystem::path& generated_dir)
 {
@@ -391,12 +410,14 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
         "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
     // running Verilator
     const std::string verilator = ToolShellQuoteString(VerilatorTool());
+    const std::string verilator_cxx_raw = VerilatorCxx();
+    const std::string compiler_params = VerilatorCompilerParams(verilator_cxx_raw);
     if (SystemEcho((std::string("cd ") + folder_name +
             "; " + verilator + " -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
-            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compilerParams + VerilatorExtraCflags() + "\"").c_str()) != 0) {
+            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorExtraCflags() + "\"").c_str()) != 0) {
         return false;
     }
-    const std::string verilator_cxx = ToolShellQuoteString(VerilatorCxx());
+    const std::string verilator_cxx = ToolShellQuoteString(verilator_cxx_raw);
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
         "; make -j4 -f V" + top_name + ".mk CXX=" + verilator_cxx + " LINK=\"" + verilator_cxx + " -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };
