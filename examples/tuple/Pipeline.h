@@ -87,7 +87,8 @@ template <template<__PARAMS__> class... Ts>
 struct Pipeline<PipelineStages<Ts...>> : public Module
 {
     using BIG_STATE = MakeBigState<typename Ts<int,int,0,0>::State...>;
-    using STAGES = PipelineStages<Ts...>::type;
+    // C++17 requires typename when selecting a type from a dependent helper.
+    using STAGES = typename PipelineStages<Ts...>::type;
 
     static constexpr std::size_t LENGTH = sizeof...(Ts);
     STAGES members;
@@ -165,4 +166,3 @@ public:
         }, members);
     }
 };
-

@@ -58,6 +58,18 @@ static std::string shell_quote(const std::filesystem::path& path)
     return quoted;
 }
 
+static bool write_file(const std::filesystem::path& path, const std::string& text)
+{
+    FILE* file = fopen(path.c_str(), "wb");
+    if (!file) {
+        std::print("can't write {}\n", path.string());
+        return false;
+    }
+    fwrite(text.data(), 1, text.size(), file);
+    fclose(file);
+    return true;
+}
+
 static bool build_ethgig_elf()
 {
     const auto code_dir = tribe_code_dir();
@@ -86,9 +98,13 @@ static bool build_ethgig_elf()
 
 static bool run_ethgig_cpu(bool debug)
 {
+    const auto expected = std::filesystem::current_path() / "ethgig_test.expected";
+    if (!write_file(expected, "ETHGIG\nDONE\n")) {
+        return false;
+    }
     setenv("TRIBE_ETH_LOOPBACK", "1", 1);
     return TestTribe(debug).run((std::filesystem::current_path() / "ethgig_test.elf").string(),
-        0, (tribe_code_dir() / "ethgig_test.log").string(), 400000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, expected.string(), 400000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "EthGig CPU loopback");
 }
 

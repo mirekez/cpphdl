@@ -704,11 +704,17 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                     QT = QT.getDesugaredType(*ctx);
                     auto* CRD = resolveCXXRecordDecl(QT);
-                    if (CRD && (CRD->getQualifiedNameAsString().find("std::") == (size_t)0)) {
-                        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};  // we dont want any std type to be translated to SV
+                    const bool stdString = CRD &&
+                        CRD->getQualifiedNameAsString().find("std::basic_string") == 0;
+                    if (CRD && CRD->getQualifiedNameAsString().find("std::") == 0 && !stdString) {
+                        continue;  // unsupported standard-library locals have no SV declaration
                     }
 
-                    expr.sub.emplace_back(digQT(QT));
+                    // std::string is a native SystemVerilog string and must remain
+                    // visible when it carries an intermediate formatting result.
+                    expr.sub.emplace_back(stdString
+                        ? cpphdl::Expr{"std::string", cpphdl::Expr::EXPR_TYPE}
+                        : digQT(QT));
                     if (VD->getInit()) {
                         const clang::Expr* init = VD->getInit()->IgnoreImplicit();
                         const auto* constructor = dyn_cast<CXXConstructExpr>(init);
@@ -726,7 +732,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     }
 
                     CRD = resolveCXXRecordDecl(QT);
-                    if (cpphdlRecordShouldExportAsStruct(CRD, *this)
+                    if (!stdString && cpphdlRecordShouldExportAsStruct(CRD, *this)
                         && CRD->getQualifiedNameAsString().find("IO_FILE") == (size_t)-1) {
                         auto st = exportStruct(CRD, *this);
                         if (std::find_if(mod->imports.begin(), mod->imports.end(), [&](auto& imp){ return imp.name == st.name; }) == mod->imports.end()) {

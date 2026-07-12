@@ -23,7 +23,7 @@ public:
     static L2CacheRegionResult<GEOM::MEM_PORT_BITS> route(uint32_t addr, uint32_t memory_base,
         const uint32_t (&region_size)[GEOM::MEM_PORTS], const bool (&region_uncached)[GEOM::MEM_PORTS])
     {
-        size_t i;
+        uint32_t i;
         uint64_t base;
         uint64_t local;
         L2CacheRegionResult<GEOM::MEM_PORT_BITS> result;

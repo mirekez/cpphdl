@@ -214,11 +214,14 @@ inline bool VerilatorCompileValidReady(std::string cpp_name, std::string top, st
         " ) sub(/^.*parameter +[^ ]+/, \"& = " + std::to_string(datawidth) + "\"); print }' " +
         folder_name + "/" + top + ".sv").c_str());
 
+    // Probe the same compiler that the generated Verilator makefile will use.
+    const std::string verilator_cxx_raw = VerilatorCxx();
+    const std::string compiler_params = VerilatorCompilerParams(verilator_cxx_raw);
     SystemEcho((std::string("cd ") + folder_name +
         "; verilator -cc Predef_pkg.sv " + top + ".sv --exe " + cpp_name + " --top-module " + top +
         " --Wno-fatal --CFLAGS \"-DVERILATOR -I../../../../include -DVERILATOR_MODEL=V" + top + " " +
-        model_define + " " + compilerParams + "\"").c_str());
-    const std::string verilator_cxx = ToolShellQuoteString(VerilatorCxx());
+        model_define + " " + compiler_params + "\"").c_str());
+    const std::string verilator_cxx = ToolShellQuoteString(verilator_cxx_raw);
     return SystemEcho((std::string("cd ") + folder_name + "/obj_dir" +
         "; make -j4 -f V" + top + ".mk CXX=" + verilator_cxx + " LINK=\"" + verilator_cxx + " -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 }

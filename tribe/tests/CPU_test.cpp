@@ -336,22 +336,30 @@ static bool run_cpu_bytecopy_cpp(bool debug)
 
 static bool run_cpu_unaligned_wordcopy_cpp(bool debug)
 {
+    const auto expected = std::filesystem::current_path() / "cpu_unaligned_wordcopy.expected";
+    if (!write_file(expected, "UNALIGNED_WORDCOPY\n")) {
+        return false;
+    }
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_unaligned_wordcopy.elf").string(),
-        0, (tribe_code_dir() / "cpu_unaligned_wordcopy.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU unaligned wordcopy");
 }
 
 static bool run_cpu_sbi_return_cpp(bool debug)
 {
+    const auto expected = std::filesystem::current_path() / "cpu_sbi_return.expected";
+    if (!write_file(expected, "SBI\n")) {
+        return false;
+    }
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_sbi_return.elf").string(),
-        0, (tribe_code_dir() / "cpu_sbi_return.log").string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU SBI return");
 }
 
 static bool run_cpu_irq_load_hazard_cpp(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "cpu_irq_load_hazard.elf";
-    const auto expected = tribe_code_dir() / "cpu_irq_load_hazard.log";
+    const auto expected = std::filesystem::current_path() / "cpu_irq_load_hazard.expected";
     const std::string input = cpu_irq_input();
     const std::string ready_marker = "READY\n";
     const std::string expected_text = ready_marker + input + "IRQLOAD\nDONE\n";
@@ -373,7 +381,7 @@ static bool run_cpu_irq_load_hazard_cpp(bool debug)
 static bool run_cpu_irq_atomic_hazard_cpp(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "cpu_irq_atomic_hazard.elf";
-    const auto expected = tribe_code_dir() / "cpu_irq_atomic_hazard.log";
+    const auto expected = std::filesystem::current_path() / "cpu_irq_atomic_hazard.expected";
     const std::string input = cpu_irq_input();
     const std::string ready_marker = "READY\n";
     const std::string expected_text = ready_marker + input + "IRQATOMIC\nDONE\n";
@@ -394,7 +402,7 @@ static bool run_cpu_irq_atomic_hazard_cpp(bool debug)
 
 static bool run_cpu_time_csr_cpp(bool debug)
 {
-    const auto log = tribe_code_dir() / "cpu_time_csr.log";
+    const auto log = std::filesystem::current_path() / "cpu_time_csr.expected";
     if (!write_file(log, "TIMECSR\n")) {
         return false;
     }

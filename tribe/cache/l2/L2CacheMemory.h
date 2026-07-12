@@ -40,7 +40,7 @@ protected:
     _LAZY_COMB(io_write_payload_comb, L2IoWritePayloadComb)
         uint32_t byte;
         uint32_t word;
-        size_t i;
+        uint32_t i;
         io_write_payload_comb = {};
         if (req_reg.from_slave) {
             io_write_payload_comb.data = req_reg.write_beat;
@@ -63,7 +63,7 @@ protected:
 
     // Compute both read and write AXI address routes in one place so later layers consume route fields instead of scalar AXI combs.
     _LAZY_COMB(axi_route_comb, L2AxiRouteComb)
-        size_t i;
+        uint32_t i;
         uint64_t base;
         uint32_t ar_total_local;
         uint32_t ar_region_base;
@@ -139,7 +139,7 @@ protected:
 
     // Gather the response side of the currently selected AXI memory/device ports into one responder bundle.
     _LAZY_COMB(axi_out_selected_resp_comb, Axi4Responder<4, 256>)
-        size_t i;
+        uint32_t i;
         axi_out_selected_resp_comb.aw.ready = false;
         axi_out_selected_resp_comb.w.ready = false;
         axi_out_selected_resp_comb.b.valid = false;
@@ -170,9 +170,9 @@ protected:
     // Read all metadata and data for the selected replacement way together so
     // lookup decisions and the registered writeback snapshot cannot diverge.
     _LAZY_COMB(evict_candidate_comb, L2EvictCandidateComb)
-        size_t i;
-        size_t way;
-        size_t word;
+        uint32_t i;
+        uint32_t way;
+        uint32_t word;
         evict_candidate_comb = {};
         way = 0;
         word = 0;
@@ -199,7 +199,7 @@ protected:
 
     // Pack the evicted cache way snapshot into the current PORT_BITWIDTH AXI write beat.
     _LAZY_COMB(evict_line_comb, logic<PORT_BITWIDTH>)
-        size_t word;
+        uint32_t word;
         size_t beat_word;
         word = 0;
         beat_word = 0;
@@ -218,7 +218,7 @@ protected:
     _LAZY_COMB(req_uncached_region_comb, bool)
         uint32_t local;
         uint64_t base;
-        size_t i;
+        uint32_t i;
         local = (uint32_t)req_reg.addr - memory_base_in();
         base = 0;
         req_uncached_region_comb = false;

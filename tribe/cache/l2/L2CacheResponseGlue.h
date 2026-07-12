@@ -12,7 +12,7 @@ public:
     // Slice one port-width beat from a full cache line; called by future read-hit and refill response datapaths.
     static logic<GEOM::PORT_BITWIDTH> beat_from_line(logic<GEOM::CACHE_LINE_SIZE * 8> line, uint32_t beat)
     {
-        size_t word;
+        uint32_t word;
         size_t beat_word;
         logic<GEOM::PORT_BITWIDTH> ret;
 

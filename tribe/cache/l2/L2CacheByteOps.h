@@ -12,7 +12,7 @@ public:
     // Merge a masked unaligned store into the addressed word; called by L2CachePrimitives and future write-hit control.
     static uint32_t store_word(uint32_t old_data, uint32_t write_data, uint8_t write_mask, uint32_t byte_offset)
     {
-        size_t i;
+        uint32_t i;
         uint32_t new_data;
         uint32_t mask;
 
@@ -29,7 +29,7 @@ public:
     // Merge the spill bytes of an unaligned store into the next word; called by cross-line/cross-word write handling.
     static uint32_t store_next_word(uint32_t old_data, uint32_t write_data, uint8_t write_mask, uint32_t byte_offset)
     {
-        size_t i;
+        uint32_t i;
         uint32_t new_data;
         uint32_t mask;
 
@@ -52,7 +52,7 @@ public:
     // Extract spill byte mask for the next word of an unaligned store; called by L2CachePrimitives and future write-split control.
     static uint8_t cross_write_mask(uint8_t write_mask, uint32_t byte_offset)
     {
-        size_t i;
+        uint32_t i;
         uint8_t ret;
 
         ret = 0;

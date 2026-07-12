@@ -6,6 +6,7 @@
 #include "Struct.h"
 
 #include <cctype>
+#include <cstring>
 
 using namespace cpphdl;
 
@@ -435,6 +436,17 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (func == "fclose") {
                 func = "$fclose";
             }
+            if ((func == "sprintf" && sub.size() >= 2) || (func == "snprintf" && sub.size() >= 3)) {
+                const std::string destination = sub[0].str();
+                const size_t format_index = func == "snprintf" ? 2 : 1;
+                sub.erase(sub.begin(), sub.begin() + format_index);
+                sub[0].value = replacePrintFormat(sub, false);
+                std::string call = destination + " = $sformatf(";
+                for (size_t i = 0; i < sub.size(); ++i) {
+                    call += (i ? ", " : "") + sub[i].str();
+                }
+                return indent_str + prefix + call + ")";
+            }
             bool fprint = sub.size()>1 && (func == "fprintf" || sub[0].value == "stdout" || sub[0].value == "stderr");
             if (sub.size() && (func == "printf" || func == "print" || func == "format" || func == "fprintf")) {
                 sub[(int)fprint].value = replacePrintFormat(sub, fprint);
@@ -609,7 +621,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub.size() >= 2 && value == "set" && sub[0].value != "_this") {
                 return indent_str + sub[0].str() + "_tmp = " + sub[1].str();
             }
-            if (sub.size() >= 1 && value == "format" && sub[0].value != "_this") {
+            if (sub.size() >= 1 && value == "format" && sub[0].type != EXPR_NONE && sub[0].value != "_this") {
+                return indent_str + sub[0].str();
+            }
+            if (sub.size() >= 1 && value == "c_str") {
+                // SystemVerilog strings are values, so the C++ pointer-view call has no RTL equivalent.
                 return indent_str + sub[0].str();
             }
             if (sub.size() >= 3 && value == "bits" && sub[0].value != "_this") {
@@ -1265,6 +1281,26 @@ std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint)
         params[(int)fprint] = params[(int)fprint].sub[0];
         str = params[(int)fprint].value;
         stdPrint = true;
+    }
+    if (!stdPrint) {
+        // C printf uses %u for unsigned decimal, while SystemVerilog uses %d;
+        // preserve flags and field widths such as %2u while translating the conversion.
+        for (size_t i = 0; i < str.size(); ++i) {
+            if (str[i] != '%' || i + 1 >= str.size()) {
+                continue;
+            }
+            if (str[i + 1] == '%') {
+                ++i;
+                continue;
+            }
+            size_t conversion = i + 1;
+            while (conversion < str.size() && std::strchr("-+ #0.123456789hljztL", str[conversion])) {
+                ++conversion;
+            }
+            if (conversion < str.size() && str[conversion] == 'u') {
+                str[conversion] = 'd';
+            }
+        }
     }
     size_t pos = -1, pos1 = -1;
     for (size_t i=((int)fprint)+1; i < params.size(); ++i) {
