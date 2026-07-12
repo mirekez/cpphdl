@@ -63,7 +63,7 @@ private:
     // Build all AXI slave-side responder bundles and return the array so comb users depend on the driven values.
     Axi4Responder<4,256> (&axi_in_comb_func())[MEM_PORTS]
     {
-        size_t index;
+        uint32_t index;
         L2ActiveRequestComb active_request;
 
         active_request = active_request_comb_func();
@@ -89,7 +89,7 @@ private:
     // Build all AXI master-side driver bundles and return the array so comb users depend on the driven values.
     Axi4Driver<32,4,256> (&axi_out_comb_func())[MEM_PORTS]
     {
-        size_t index;
+        uint32_t index;
 
         for (index = 0; index < MEM_PORTS; ++index) {
             axi_out_comb[index].aw.valid = axi_out_driver_comb_func().aw.valid && (uint32_t)axi_route_comb_func().aw_sel == index;
@@ -108,8 +108,8 @@ private:
         return axi_out_comb;
     }
 
-    // AXI slave read responses are emitted by the controller FSM after a hit, fill, IO read, or cross-line read completes.
-    void send_slave_read_response(size_t index, u<4> id, logic<256> data)
+    // AXI slave read responses use the exact 3-bit bookkeeping index so generated SV does not widen an eight-slot array selector.
+    void send_slave_read_response(u<3> index, u<4> id, logic<256> data)
     {
         slave_r_reg._next[index].valid = true;
         slave_r_reg._next[index].id = id;
@@ -117,8 +117,8 @@ private:
         slave_r_reg._next[index].last = true;
     }
 
-    // AXI slave write responses are emitted by the controller FSM after the accepted write is committed or forwarded.
-    void send_slave_write_response(size_t index, u<4> id)
+    // AXI slave write responses use the same exact-width index after the accepted write is committed or forwarded.
+    void send_slave_write_response(u<3> index, u<4> id)
     {
         slave_b_reg._next[index].valid = true;
         slave_b_reg._next[index].id = id;
@@ -127,7 +127,7 @@ private:
 public:
     void _assign()
     {
-        size_t i;
+        uint32_t i;
         this->i_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
         this->i_mem_in.wait_out = _ASSIGN_COMB(cpu_wait_comb_func().instruction);
         d_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
@@ -141,8 +141,8 @@ public:
 
     void _work(bool reset)
     {
-        size_t i;
-        size_t way;
+        uint32_t i;
+        uint32_t way;
         uint32_t bank_addr;
         uint32_t data_ram_index;
         uint32_t tag_ram_index;

@@ -50,7 +50,7 @@ public:
     static L2CacheHitResult<GEOM::WAY_BITS> find_hit(const array<GEOM::WAYS, logic<GEOM::TAG_RAM_BITS>, true>& tags,
         u<GEOM::TAG_BITS> request_tag)
     {
-        size_t i;
+        uint32_t i;
         L2CacheHitResult<GEOM::WAY_BITS> result;
 
         result.hit = false;

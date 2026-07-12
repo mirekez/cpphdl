@@ -29,8 +29,8 @@ protected:
     // Compare tags once, select one way, and derive all hit data from that same
     // selection so hit control, read data, and store merging cannot disagree.
     _LAZY_COMB(hit_lookup_comb, L2HitLookupComb)
-        size_t i;
-        size_t way;
+        uint32_t i;
+        uint32_t way;
         size_t word_index;
         size_t beat_word;
         uint32_t byte;
@@ -77,7 +77,7 @@ protected:
     // Merge both words of a cache-hit store together from one byte offset and
     // one selected-way snapshot.
     _LAZY_COMB(hit_write_pair_comb, L2WordPairComb)
-        size_t i;
+        uint32_t i;
         uint32_t byte;
         uint32_t word_mask;
         uint32_t next_word_mask;
@@ -106,7 +106,7 @@ protected:
     // Merge both words of a store-miss fill together from one AXI beat and one
     // byte-offset decode.
     _LAZY_COMB(fill_write_pair_comb, L2WordPairComb)
-        size_t i;
+        uint32_t i;
         uint32_t byte;
         uint32_t word;
         uint32_t next_word;

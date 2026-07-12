@@ -30,7 +30,7 @@ protected:
     // Arbitrate one live request and derive its complete payload once. External
     // AXI writes retain priority over AXI reads, then D precedes I.
     _LAZY_COMB(active_request_comb, L2ActiveRequestComb)
-        size_t port_index;
+        uint32_t port_index;
         size_t byte_index;
         size_t word_index;
         uint32_t selected_slave;
