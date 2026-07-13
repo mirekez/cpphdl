@@ -1913,7 +1913,16 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
 bool Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
 {
     if (!onlyTypes || param.type != cpphdl::Expr::EXPR_NUM) {
-        std::string str = param.str();  // first place we call str() in Clang part (to make a string value)
+        cpphdl::Expr nameParam = param;
+        nameParam.traverseIf([](cpphdl::Expr& expr) {
+            if (expr.type == cpphdl::Expr::EXPR_TYPE && expr.declSize == 0) {
+                // Specialization identity needs the type spelling, not its RTL
+                // layout. The struct may not have been exported yet at this point.
+                expr.declSize = (size_t)-1;
+            }
+            return false;
+        });
+        std::string str = nameParam.str();
         if (!first) {
             name += "_";
         }
