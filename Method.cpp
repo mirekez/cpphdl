@@ -375,40 +375,22 @@ bool Method::printAssigns(std::ofstream& out)
                     }
                     if ((e.type == Expr::EXPR_OPERATORCALL || e.type == Expr::EXPR_MEMBERCALL ) && e.value == "assignIf" && e.sub.size() > 4) {  // Port structure
                         auto tmp = Expr{"gen", Expr::EXPR_BODY};
-                        std::string left = e.sub[3].str();
-                        if (e.sub[3].type == Expr::EXPR_MEMBER && e.sub[3].sub[0].type == Expr::EXPR_INDEX) {
-                            left = indexedRootName(e.sub[3].sub[0]) + "__" + e.sub[3].value;
-                        } else
-                        if (e.sub[3].type == Expr::EXPR_INDEX) {
-                            left = indexedRootName(e.sub[3]);
-                        }
-                        std::string right = e.sub[4].str();
-                        if (e.sub[4].type == Expr::EXPR_MEMBER && e.sub[4].sub[0].type == Expr::EXPR_INDEX) {
-                            right = indexedRootName(e.sub[4].sub[0]) + "__" + e.sub[4].value;
-                        } else
-                        if (e.sub[4].type == Expr::EXPR_INDEX) {
-                            right = indexedRootName(e.sub[4]);
-                        }
+                        IndexedSignalRef leftRef = indexedSignalRef(e.sub[3]);
+                        IndexedSignalRef rightRef = indexedSignalRef(e.sub[4]);
+                        const std::string& left = leftRef.name;
+                        const std::string& right = rightRef.name;
                         for (auto& wire : currModule->wires) {
                             if (wire.name.find(left) == 0 && str_ending(wire.name, "_in")) {
-                                std::string left1 = e.sub[3].str();
-                                std::string array1 = left1.find("[") != (size_t)-1 ? left1.substr(left1.find("[")) : "";
-                                std::string right1 = e.sub[4].str();
-                                std::string array2 = right1.find("[") != (size_t)-1 ? right1.substr(right1.find("[")) : "";
                                 std::string peer = wire.name;
                                 str_replace(peer, left.c_str(), right.c_str());
                                 peer.replace(peer.length() - 3, 3, "_out");
-                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{wire.name + array1, Expr::EXPR_VAR}, Expr{peer + array2, Expr::EXPR_VAR}}});
+                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{wire.name + leftRef.indices, Expr::EXPR_VAR}, Expr{peer + rightRef.indices, Expr::EXPR_VAR}}});
                             }
                             if (wire.name.find(left) == 0 && str_ending(wire.name, "_out")) {
-                                std::string left1 = e.sub[3].str();
-                                std::string array1 = left1.find("[") != (size_t)-1 ? left1.substr(left1.find("[")) : "";
-                                std::string right1 = e.sub[4].str();
-                                std::string array2 = right1.find("[") != (size_t)-1 ? right1.substr(right1.find("[")) : "";
                                 std::string peer = wire.name;
                                 str_replace(peer, left.c_str(), right.c_str());
                                 peer.replace(peer.length() - 4, 4, "_in");
-                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{peer + array2, Expr::EXPR_VAR}, Expr{wire.name + array1, Expr::EXPR_VAR}}});
+                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{peer + rightRef.indices, Expr::EXPR_VAR}, Expr{wire.name + leftRef.indices, Expr::EXPR_VAR}}});
                             }
                         }
                         e = tmp;
