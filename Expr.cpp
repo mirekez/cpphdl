@@ -262,10 +262,25 @@ std::string moduleArrayMemberRef(const Expr& expr, const std::string& suffix, bo
             any_of(currModule->ports.begin(), currModule->ports.end(), matches);
     };
 
+    bool directionResolved = false;
+    if (allowInterface && members.size() >= 2 && str_ending(members[members.size() - 2], "_out")) {
+        // An output-facing interface reverses its leaf directions in the parent,
+        // matching interface port flattening and memberArrayPortRef().
+        auto& leaf = members.back();
+        if (str_ending(leaf, "_out")) {
+            leaf.replace(leaf.length() - 4, 4, "_in");
+            directionResolved = true;
+        }
+        else if (str_ending(leaf, "_in")) {
+            leaf.replace(leaf.length() - 3, 3, "_out");
+            directionResolved = true;
+        }
+    }
+
     std::string text = flattenedName();
-    if (allowInterface && !declaredSignal(text)) {
-        // Resolve direction from the wire produced for the child module port;
-        // the parent-side interface direction may reverse the leaf suffix.
+    if (allowInterface && !directionResolved && !declaredSignal(text)) {
+        // If the expression does not expose the containing interface direction,
+        // use the declared child port as a fallback for the reversed leaf name.
         auto& leaf = members.back();
         if (str_ending(leaf, "_out")) {
             leaf.replace(leaf.length() - 4, 4, "_in");

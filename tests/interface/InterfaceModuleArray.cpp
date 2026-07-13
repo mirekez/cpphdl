@@ -9,10 +9,12 @@ using namespace cpphdl;
 
 struct ModuleArrayIf : public Interface
 {
+    _PORT(logic<32>) data_in;
     _PORT(logic<32>) data_out;
 
     ModuleArrayIf& operator=(ModuleArrayIf& other)
     {
+        data_in = other.data_in;
         data_out = other.data_out;
         return *this;
     }
@@ -126,6 +128,8 @@ static bool check_generated_sv()
 
     require("wire[32-1:0] direct_children__port_out__data_in[4];",
         "flattened module-array interface declaration");
+    require("wire[32-1:0] direct_children__port_out__data_out[4];",
+        "opposite-direction flattened module-array interface declaration");
     require("assign direct_children__port_out__data_in[gi] = 'h11;",
         "conditional interface assignment for index 1");
     require("assign direct_children__port_out__data_in[gi] = 'h33;",
@@ -138,8 +142,13 @@ static bool check_generated_sv()
         std::print("\nERROR: module-array index was emitted before the flattened interface member\n");
         ok = false;
     }
-    if (child.find("input wire[32-1:0] port_out__data_in") == std::string::npos) {
-        std::print("\nERROR: child interface member direction was not resolved as an input\n");
+    if (top.find("assign direct_children__port_out__data_out[gi]") != std::string::npos) {
+        std::print("\nERROR: output-facing interface assignment used the child-driven data_out signal\n");
+        ok = false;
+    }
+    if (child.find("input wire[32-1:0] port_out__data_in") == std::string::npos ||
+        child.find("output wire[32-1:0] port_out__data_out") == std::string::npos) {
+        std::print("\nERROR: child interface member directions were not resolved correctly\n");
         ok = false;
     }
     return ok;
