@@ -84,6 +84,69 @@ bool moduleHasAssignableName(const Module& module, const std::string& name)
         any_of(module.members.begin(), module.members.end(), flippedMatches);
 }
 
+struct IndexedSignalRef
+{
+    std::string name;
+    std::string indices;
+};
+
+IndexedSignalRef indexedSignalRef(Expr expr)
+{
+    std::string text = expr.str();
+    size_t firstIndex = text.find('[');
+    if (firstIndex == std::string::npos) {
+        return {text, {}};
+    }
+    return {text.substr(0, firstIndex), text.substr(firstIndex)};
+}
+
+bool moduleHasExactSignal(const Module& module, const std::string& name)
+{
+    auto matches = [&](const Field& field) { return field.name == name; };
+    return any_of(module.wires.begin(), module.wires.end(), matches) ||
+        any_of(module.ports.begin(), module.ports.end(), matches) ||
+        any_of(module.vars.begin(), module.vars.end(), matches);
+}
+
+bool expandIndexedInterfaceAssignment(const Expr& leftExpr, const Expr& rightExpr, Expr& expanded)
+{
+    IndexedSignalRef left = indexedSignalRef(leftExpr);
+    IndexedSignalRef right = indexedSignalRef(rightExpr);
+    if (left.name.empty() || right.name.empty() || moduleHasExactSignal(*currModule, left.name)) {
+        return false;
+    }
+
+    const std::string leftPrefix = left.name + "__";
+    auto body = Expr{"interface assignment", Expr::EXPR_BODY};
+    for (const auto& wire : currModule->wires) {
+        if (wire.name.find(leftPrefix) != 0 ||
+            (!str_ending(wire.name, "_in") && !str_ending(wire.name, "_out"))) {
+            continue;
+        }
+
+        std::string peer = right.name + wire.name.substr(left.name.length());
+        peer = flippedInterfaceDirectionName(peer);
+        if (!moduleHasExactSignal(*currModule, peer)) {
+            continue;
+        }
+
+        Expr leftSignal{wire.name + left.indices, Expr::EXPR_VAR};
+        Expr rightSignal{peer + right.indices, Expr::EXPR_VAR};
+        if (str_ending(wire.name, "_in")) {
+            body.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {std::move(leftSignal), std::move(rightSignal)}});
+        }
+        else {
+            body.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {std::move(rightSignal), std::move(leftSignal)}});
+        }
+    }
+
+    if (body.sub.empty()) {
+        return false;
+    }
+    expanded = std::move(body);
+    return true;
+}
+
 const Expr* topLevelLocalDecl(const Expr& expr)
 {
     if (expr.type == Expr::EXPR_DECL) {
@@ -298,6 +361,13 @@ bool Method::printAssigns(std::ofstream& out)
         stmt.traverseIf( [&](Expr& e) {
                     if ((e.type == Expr::EXPR_OPERATORCALL && e.value == "=") ||
                         (e.type == Expr::EXPR_BINARY && e.value == "=")) {
+                        if (e.sub.size() >= 2) {
+                            Expr expanded;
+                            if (expandIndexedInterfaceAssignment(e.sub[0], e.sub[1], expanded)) {
+                                e = std::move(expanded);
+                                return false;
+                            }
+                        }
                         std::string wname = assignedWireName(e.sub[0]);
                         if (!moduleHasAssignableName(*currModule, wname) && wname.length() > 2) {
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";

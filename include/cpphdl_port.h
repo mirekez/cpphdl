@@ -5,7 +5,7 @@
 #include <memory>
 #include <stdio.h>
 
-#if defined(CPPHDL_HAVE_STACKTRACE) && __cplusplus >= 202302L && __has_include(<stacktrace>) && \
+#if __cplusplus >= 202302L && __has_include(<stacktrace>) && \
     !defined(SYNTHESIS) && !defined(VERILATOR)
 // Record that this translation unit can use stacktrace; CMake's capability
 // result alone is insufficient when a consumer selects C++17.
