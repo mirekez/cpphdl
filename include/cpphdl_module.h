@@ -17,11 +17,11 @@ public:
 
     template<typename ModA, typename ModB, typename A, typename B>
 #ifdef SYNTHESIS
-    void assignIf(ModA& /*modA*/, ModB& /*modB*/, A&& /*a*/, B&& /*b*/)
+    void assignIf(ModA&& /*modA*/, ModB&& /*modB*/, A&& /*a*/, B&& /*b*/)
     {
         // CppHDL expands this structural call directly from its AST arguments.
-        // Forwarding references keep indexed proxy expressions well-formed so
-        // Clang does not replace the call with an unusable RecoveryExpr.
+        // Forwarding references keep indexed module and interface expressions
+        // well-formed so Clang does not replace the call with RecoveryExpr.
     }
 #else
     void assignIf(ModA& modA, ModB& modB, A& a, B& b)

@@ -49,11 +49,16 @@ class AssignIfIndexedProxy : public Module
     static constexpr size_t PORTS_CNT = 4;
     AssignIfIndexedSource source;
     AssignIfIndexedSink sink;
+    AssignIfIndexedSink sinks[PORTS_CNT];
 
 public:
     void _assign()
     {
+        size_t i;
         assignIf(source, sink, source.ports_in[PORTS_CNT * 2], sink.port_out);
+        for (i = 0; i < PORTS_CNT; ++i) {
+            assignIf(source, sinks[i], source.ports_in[i], sinks[i].port_out);
+        }
     }
 
     void _work(bool reset) {}
@@ -106,6 +111,10 @@ static bool check_generated_sv()
         "indexed input-side interface assignment");
     require("assign sink__port_out__data_in=source__ports_in__data_out[PORTS_CNT*'h2];",
         "indexed output-side interface assignment");
+    require("assign source__ports_in__data_in[gi]=sinks__port_out__data_out[gi];",
+        "loop-indexed input-side interface assignment");
+    require("assign sinks__port_out__data_in[gi]=source__ports_in__data_out[gi];",
+        "loop-indexed output-side interface assignment");
     if (sv.find("RecoveryExpr") != std::string::npos || sv.find("unknown:") != std::string::npos ||
         sv.find("assignIf(") != std::string::npos) {
         std::print("\nERROR: unresolved assignIf AST expression leaked into generated SV\n");
