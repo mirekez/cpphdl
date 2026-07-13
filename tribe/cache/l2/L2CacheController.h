@@ -21,6 +21,7 @@ private:
     using Base::LINE_BEATS;
     using Base::SETS;
     using Base::DATA_BANKS;
+    using Base::CPU_RESPONSE_INDEX;
     using Base::data_ram;
     using Base::tag_ram;
     using Base::data_q_reg;
@@ -30,17 +31,17 @@ private:
     using Base::victim_reg;
     using Base::fill_way_reg;
     using Base::init_set_reg;
-    using Base::last_data_reg;
-    using Base::slave_fill_data_reg;
+    using Base::response_reg;
     using Base::cross_low_reg;
     using Base::cross_high_reg;
     using Base::fill_beat_reg;
     using Base::evict_beat_reg;
     using Base::evict_tag_reg;
     using Base::evict_line_reg;
-    using Base::slave_b_reg;
-    using Base::slave_r_reg;
     using Base::slave_aw_reg;
+    using Base::slave_aw_seen_reg;
+    using Base::slave_ar_seen_reg;
+    using Base::slave_request_novelty_comb_func;
     using Base::active_request_comb_func;
     using Base::request_geometry_comb_func;
     using Base::axi_route_comb_func;
@@ -69,19 +70,17 @@ private:
         active_request = active_request_comb_func();
         for (index = 0; index < MEM_PORTS; ++index) {
             axi_in_comb[index].aw.ready = state_reg == ST_IDLE && !slave_aw_reg[index].valid &&
-                !slave_b_reg[index].valid && axi_in[index].awvalid_in();
+                slave_request_novelty_comb_func().aw[index] &&
+                (!response_reg[index].b.valid || axi_in[index].bready_in()) && axi_in[index].awvalid_in();
             axi_in_comb[index].w.ready = state_reg == ST_IDLE &&
                 active_request.request.from_slave && active_request.request.write &&
                 active_request.request.slave_index == index;
-            axi_in_comb[index].b.valid = slave_b_reg[index].valid;
-            axi_in_comb[index].b.id = slave_b_reg[index].id;
+            axi_in_comb[index].b = response_reg[index].b;
             axi_in_comb[index].ar.ready = state_reg == ST_IDLE &&
+                slave_request_novelty_comb_func().ar[index] &&
                 active_request.request.from_slave && active_request.request.read &&
                 active_request.request.slave_index == index;
-            axi_in_comb[index].r.valid = slave_r_reg[index].valid;
-            axi_in_comb[index].r.data = (logic<256>)slave_r_reg[index].data;
-            axi_in_comb[index].r.last = slave_r_reg[index].last;
-            axi_in_comb[index].r.id = slave_r_reg[index].id;
+            axi_in_comb[index].r = response_reg[index].r;
         }
         return axi_in_comb;
     }
@@ -111,17 +110,29 @@ private:
     // AXI slave read responses use the exact 3-bit bookkeeping index so generated SV does not widen an eight-slot array selector.
     void send_slave_read_response(u<3> index, u<4> id, logic<256> data)
     {
-        slave_r_reg._next[index].valid = true;
-        slave_r_reg._next[index].id = id;
-        slave_r_reg._next[index].data = data;
-        slave_r_reg._next[index].last = true;
+        response_reg._next[index].r.valid = true;
+        response_reg._next[index].r.id = id;
+        response_reg._next[index].r.data = data;
+        response_reg._next[index].r.last = true;
     }
 
     // AXI slave write responses use the same exact-width index after the accepted write is committed or forwarded.
     void send_slave_write_response(u<3> index, u<4> id)
     {
-        slave_b_reg._next[index].valid = true;
-        slave_b_reg._next[index].id = id;
+        response_reg._next[index].b.valid = true;
+        response_reg._next[index].b.id = id;
+    }
+
+    // CPU/L1 completions capture request identity and data together so wait is
+    // released only for the request that produced this registered response.
+    void send_cpu_response(logic<256> data)
+    {
+        response_reg._next[CPU_RESPONSE_INDEX].valid = true;
+        response_reg._next[CPU_RESPONSE_INDEX].read = req_reg.read;
+        response_reg._next[CPU_RESPONSE_INDEX].write = req_reg.write;
+        response_reg._next[CPU_RESPONSE_INDEX].data_port = req_reg.port;
+        response_reg._next[CPU_RESPONSE_INDEX].addr = req_reg.addr;
+        response_reg._next[CPU_RESPONSE_INDEX].data = data;
     }
 
 public:
@@ -166,6 +177,7 @@ public:
         L2HitLookupComb hit_lookup;
         L2WordPairComb hit_write_pair;
         L2WordPairComb fill_write_pair;
+        logic<256> completion_data;
         logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8> tag_bank_data;
         active_request = active_request_comb_func();
         request_geometry = request_geometry_comb_func();
@@ -173,6 +185,7 @@ public:
         hit_lookup = hit_lookup_comb_func();
         hit_write_pair = hit_write_pair_comb_func();
         fill_write_pair = fill_write_pair_comb_func();
+        completion_data = 0;
         trace_line = 0;
         trace_line_enabled = false;
         trace_req_line = false;
@@ -195,6 +208,10 @@ public:
 #endif
         trace_word0 = 0;
         trace_word1 = 0;
+
+        // CPU/L1 has no response-ready input: expose its registered response
+        // for exactly this clock, then free the slot for the next completion.
+        response_reg._next[CPU_RESPONSE_INDEX].valid = false;
 
         bank_addr = (state_reg == ST_IDLE) ? active_request.set : request_geometry.set;
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
@@ -262,17 +279,31 @@ public:
         }
 
         for (i = 0; i < MEM_PORTS; ++i) {
-            if (slave_b_reg[i].valid && axi_in[i].bready_in()) {
-                slave_b_reg._next[i].valid = false;
+            if (!axi_in[i].awvalid_in()) {
+                slave_aw_seen_reg._next[i].valid = false;
             }
-            if (slave_r_reg[i].valid && axi_in[i].rready_in()) {
-                slave_r_reg._next[i].valid = false;
-                slave_r_reg._next[i].last = false;
+            if (!axi_in[i].arvalid_in()) {
+                slave_ar_seen_reg._next[i].valid = false;
+            }
+            if (response_reg[i].b.valid && axi_in[i].bready_in()) {
+                response_reg._next[i].b.valid = false;
+            }
+            if (response_reg[i].r.valid && axi_in[i].rready_in()) {
+                response_reg._next[i].r.valid = false;
+                response_reg._next[i].r.last = false;
             }
             if (state_reg == ST_IDLE && axi_in[i].awvalid_in() && axi_in[i].awready_out()) {
                 slave_aw_reg._next[i].valid = true;
                 slave_aw_reg._next[i].addr = axi_in[i].awaddr_in();
                 slave_aw_reg._next[i].id = axi_in[i].awid_in();
+                slave_aw_seen_reg._next[i].valid = true;
+                slave_aw_seen_reg._next[i].addr = axi_in[i].awaddr_in();
+                slave_aw_seen_reg._next[i].id = axi_in[i].awid_in();
+            }
+            if (state_reg == ST_IDLE && axi_in[i].arvalid_in() && axi_in[i].arready_out()) {
+                slave_ar_seen_reg._next[i].valid = true;
+                slave_ar_seen_reg._next[i].addr = axi_in[i].araddr_in();
+                slave_ar_seen_reg._next[i].id = axi_in[i].arid_in();
             }
         }
 
@@ -285,7 +316,12 @@ public:
             }
         }
         else if (state_reg == ST_IDLE) {
-            if (active_request.valid) {
+            if (active_request.valid &&
+                !(response_reg[CPU_RESPONSE_INDEX].valid && !active_request.request.from_slave &&
+                  response_reg[CPU_RESPONSE_INDEX].data_port == active_request.request.port &&
+                  response_reg[CPU_RESPONSE_INDEX].read == active_request.request.read &&
+                  response_reg[CPU_RESPONSE_INDEX].write == active_request.request.write &&
+                  response_reg[CPU_RESPONSE_INDEX].addr == active_request.request.addr)) {
                 if (trace_active_line) {
                     std::print("trace-l2 cycle={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
                         _system_clock, (uint32_t)active_request.request.addr,
@@ -330,10 +366,8 @@ public:
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    if (req_reg.read) {
-                        last_data_reg._next = 0;
-                    }
-                    state_reg._next = ST_DONE;
+                    send_cpu_response(0);
+                    state_reg._next = ST_IDLE;
                 }
             }
             else if (req_uncached_region_comb_func()) {
@@ -365,18 +399,6 @@ public:
                         }
                     }
                 }
-                else if (req_reg.read) {
-                    last_data_reg._next = 0;
-                }
-                if (!req_reg.from_slave && req_reg.read) {
-                    if (request_geometry.cross_beat_read) {
-                        last_data_reg._next = 0;
-                        last_data_reg._next.bits(31, 0) = hit_lookup.read_word;
-                    }
-                    else {
-                        last_data_reg._next = hit_lookup.beat;
-                    }
-                }
                 if (request_geometry.cross_line_write) {
                     // Finish the part of an unaligned store that spills into the first word of the next line.
                     req_reg._next.addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) + CACHE_LINE_SIZE;
@@ -386,9 +408,17 @@ public:
                     state_reg._next = ST_CROSS_WRITE_LOOKUP;
                 }
                 else {
-                    // CPU/L1 hits are completed from ST_DONE so read data comes from
-                    // a registered beat, not a same-cycle RAM lookup that can be stale after fills.
-                    state_reg._next = req_reg.from_slave ? ST_IDLE : ((req_reg.read || req_reg.write) ? ST_DONE : ST_IDLE);
+                    if (!req_reg.from_slave) {
+                        completion_data = 0;
+                        if (req_reg.read && request_geometry.cross_beat_read) {
+                            completion_data.bits(31, 0) = hit_lookup.read_word;
+                        }
+                        else if (req_reg.read) {
+                            completion_data = hit_lookup.beat;
+                        }
+                        send_cpu_response(completion_data);
+                    }
+                    state_reg._next = ST_IDLE;
                 }
             }
             else {
@@ -418,7 +448,8 @@ public:
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    state_reg._next = ST_DONE;
+                    send_cpu_response(0);
+                    state_reg._next = ST_IDLE;
                 }
             }
             else if (hit_lookup.hit) {
@@ -431,7 +462,8 @@ public:
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    state_reg._next = ST_DONE;
+                    send_cpu_response(0);
+                    state_reg._next = ST_IDLE;
                 }
             }
             else {
@@ -487,13 +519,10 @@ public:
                         trace_word0, trace_word1, (uint32_t)request_geometry.word,
                         (uint32_t)request_geometry.beat);
                 }
-                if (!req_reg.from_slave && req_reg.read && fill_beat_reg == request_geometry.beat) {
-                    last_data_reg._next = axi_out_selected_resp_comb_func().r.data;
-                }
-                if (req_reg.from_slave && req_reg.read && fill_beat_reg == request_geometry.beat) {
-                    // Do not answer from hit_lookup.beat after the final fill beat:
-                    // that path can observe stale RAM output for the requested beat.
-                    slave_fill_data_reg._next = axi_out_selected_resp_comb_func().r.data;
+                if (req_reg.read && fill_beat_reg == request_geometry.beat) {
+                    // Preserve an early requested beat in the unified response
+                    // stage until the complete cache line has been installed.
+                    response_reg._next[CPU_RESPONSE_INDEX].data = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -511,10 +540,11 @@ public:
                                 if (req_reg.slave_index == i) {
                                     if (req_reg.read) {
                                         // If the requested beat arrived before the final
-                                        // fill beat, return the latched refill data.
+                                        // fill beat, return data retained in the response stage.
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == request_geometry.beat) ?
-                                                axi_out_selected_resp_comb_func().r.data : slave_fill_data_reg);
+                                                axi_out_selected_resp_comb_func().r.data :
+                                                response_reg[CPU_RESPONSE_INDEX].data);
                                     }
                                     if (req_reg.write) {
                                         send_slave_write_response(i, req_reg.slave_id);
@@ -524,7 +554,12 @@ public:
                             state_reg._next = ST_IDLE;
                         }
                         else {
-                            state_reg._next = ST_DONE;
+                            completion_data = req_reg.read ?
+                                ((fill_beat_reg == request_geometry.beat) ?
+                                    axi_out_selected_resp_comb_func().r.data :
+                                    response_reg[CPU_RESPONSE_INDEX].data) : logic<256>(0);
+                            send_cpu_response(completion_data);
+                            state_reg._next = ST_IDLE;
                         }
                     }
                 }
@@ -569,8 +604,8 @@ public:
                 state_reg._next = ST_IDLE;
             }
             else {
-                last_data_reg._next = cross_read_data_comb_func();
-                state_reg._next = ST_DONE;
+                send_cpu_response(cross_read_data_comb_func());
+                state_reg._next = ST_IDLE;
             }
         }
         else if (state_reg == ST_IO_AW) {
@@ -594,7 +629,8 @@ public:
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    state_reg._next = ST_DONE;
+                    send_cpu_response(0);
+                    state_reg._next = ST_IDLE;
                 }
             }
         }
@@ -614,24 +650,14 @@ public:
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    last_data_reg._next = axi_out_selected_resp_comb_func().r.data;
-                    state_reg._next = ST_DONE;
+                    send_cpu_response(axi_out_selected_resp_comb_func().r.data);
+                    state_reg._next = ST_IDLE;
                 }
             }
         }
         else if (state_reg == ST_DONE) {
-            if (req_reg.from_slave) {
-                for (i = 0; i < MEM_PORTS; ++i) {
-                    if (req_reg.slave_index == i) {
-                        if (req_reg.read) {
-                            send_slave_read_response(i, req_reg.slave_id, last_data_reg);
-                        }
-                        if (req_reg.write) {
-                            send_slave_write_response(i, req_reg.slave_id);
-                        }
-                    }
-                }
-            }
+            // Retained for checkpoint/state-number compatibility; all new
+            // completions enter the registered CacheResponse stage directly.
             state_reg._next = ST_IDLE;
         }
 
@@ -641,25 +667,37 @@ public:
             victim_reg.clr();
             fill_way_reg.clr();
             init_set_reg.clr();
-            last_data_reg.clr();
-            slave_fill_data_reg.clr();
             cross_low_reg.clr();
             cross_high_reg.clr();
             fill_beat_reg.clr();
             evict_beat_reg.clr();
             evict_tag_reg.clr();
             evict_line_reg.clr();
+            for (i = 0; i < 9; ++i) {
+                // Clear by field because whole struct-array clr() is not generator-safe.
+                response_reg._next[i].valid = false;
+                response_reg._next[i].read = false;
+                response_reg._next[i].write = false;
+                response_reg._next[i].data_port = false;
+                response_reg._next[i].addr = 0;
+                response_reg._next[i].data = 0;
+                response_reg._next[i].b.valid = false;
+                response_reg._next[i].b.id = 0;
+                response_reg._next[i].r.valid = false;
+                response_reg._next[i].r.id = 0;
+                response_reg._next[i].r.data = 0;
+                response_reg._next[i].r.last = false;
+            }
             for (i = 0; i < MEM_PORTS; ++i) {
-                // Clear AXI slave bookkeeping by channel field; whole struct-array clr() is not generator-safe.
-                slave_b_reg._next[i].valid = false;
-                slave_b_reg._next[i].id = 0;
-                slave_r_reg._next[i].valid = false;
-                slave_r_reg._next[i].id = 0;
-                slave_r_reg._next[i].data = 0;
-                slave_r_reg._next[i].last = false;
                 slave_aw_reg._next[i].valid = false;
                 slave_aw_reg._next[i].addr = 0;
                 slave_aw_reg._next[i].id = 0;
+                slave_aw_seen_reg._next[i].valid = false;
+                slave_aw_seen_reg._next[i].addr = 0;
+                slave_aw_seen_reg._next[i].id = 0;
+                slave_ar_seen_reg._next[i].valid = false;
+                slave_ar_seen_reg._next[i].addr = 0;
+                slave_ar_seen_reg._next[i].id = 0;
             }
             data_q_reg.clr();
             tag_q_reg.clr();
@@ -678,10 +716,7 @@ public:
         victim_reg.strobe(checkpoint_fd);
         fill_way_reg.strobe(checkpoint_fd);
         init_set_reg.strobe(checkpoint_fd);
-        last_data_reg.strobe(checkpoint_fd);
-        // Transient refill response data is omitted from checkpoints; old
-        // checkpoint streams remain load-compatible.
-        slave_fill_data_reg.strobe();
+        response_reg.strobe(checkpoint_fd);
         cross_low_reg.strobe(checkpoint_fd);
         cross_high_reg.strobe(checkpoint_fd);
         fill_beat_reg.strobe(checkpoint_fd);
@@ -690,8 +725,8 @@ public:
         // checkpoint stream to keep existing checkpoint files compatible.
         evict_tag_reg.strobe();
         evict_line_reg.strobe();
-        slave_b_reg.strobe(checkpoint_fd);
-        slave_r_reg.strobe(checkpoint_fd);
         slave_aw_reg.strobe(checkpoint_fd);
+        slave_aw_seen_reg.strobe();
+        slave_ar_seen_reg.strobe();
     }
 };

@@ -62,15 +62,14 @@ Request-facing actions that can directly answer an input request:
         space; request_geometry_comb_func().addr_in_memory compares req_reg.addr with
         memory_base_in()/memory_size_in().
    2.2. Complete an unmapped external read so the AXI slave port cannot hang;
-        write slave_r_reg[i].valid, slave_r_reg[i].id, and zero
-        slave_r_reg[i].data with the original request ID.
+        write response_reg[i].r.valid/id and zero response_reg[i].r.data.
    2.3. Complete an unmapped external write so the AXI slave port cannot hang;
-        write slave_b_reg[i].valid and slave_b_reg[i].id with the
+        write response_reg[i].b.valid and response_reg[i].b.id with the
         original request ID.
    2.4. Complete an unmapped CPU read with zero so the CPU can continue; write
-        last_data_reg and let ST_DONE return read_data_comb_func().
+        the CPU CacheResponse slot and let read_data_comb_func() return it.
    2.5. Complete an unmapped CPU write as a no-op so the CPU can continue;
-        enter ST_DONE without touching tag_ram[], data_ram[], or axi_out[].
+        register a CPU CacheResponse without touching tag_ram[], data_ram[], or axi_out[].
 
 3. A cached read hit is initiated by a registered read request in ST_LOOKUP,
    with the goal of returning the requested beat without external memory,
@@ -82,13 +81,12 @@ Request-facing actions that can directly answer an input request:
         hit_lookup_comb_func().beat reads data_ram[] at
         request_geometry_comb_func().set/beat using that same way.
    3.3. Return an external AXI read hit directly so no memory refill is issued;
-        write slave_r_reg[i].valid, slave_r_reg[i].id, and
-        slave_r_reg[i].data from hit_lookup_comb_func().beat and the request ID.
-   3.4. Return an aligned CPU/L1 read hit through ST_DONE so the CPU wait
-        protocol stays uniform; write last_data_reg with
+        write response_reg[i].r from hit_lookup_comb_func().beat and the request ID.
+   3.4. Return an aligned CPU/L1 read hit through the response register so the CPU wait
+        protocol stays uniform; write response_reg[CPU_RESPONSE_INDEX].data with
         hit_lookup_comb_func().beat.
    3.5. Preserve the low word of an intra-line cross-beat CPU read so the
-        delayed half can be assembled later; write last_data_reg[31:0] from
+        delayed half can be assembled later; write the CPU response data[31:0] from
         hit_lookup_comb_func().read_word.
    3.6. Leave cache contents unchanged on read hits because no ownership state
         changes; do not write tag_ram[], data_ram[], or axi_out[].
@@ -108,8 +106,8 @@ Request-facing actions that can directly answer an input request:
    4.4. Mark the written line dirty so later replacement writes it back; write
         tag_ram[] with tag_write_data_comb_func().
    4.5. Acknowledge the writer so the input port can retire the request;
-        external writes set slave_b_reg[i].valid/slave_b_reg[i].id
-        and CPU writes move to ST_DONE.
+        external writes set response_reg[i].b.valid/id and CPU writes set the
+        registered CPU CacheResponse valid bit.
    4.6. Avoid external memory traffic on write hits because the cache owns the
         updated line; defer axi_out[] writeback until eviction.
 
@@ -125,19 +123,19 @@ Request-facing actions that can directly answer an input request:
         and hit_lookup_comb_func().hit/way.
    5.3. Write the second-line bytes on hit so the whole original CPU store is
         represented; update data_ram[], mark tag_ram[] dirty, and release the
-        CPU port through ST_DONE without axi_out[].
+        CPU port through its registered CacheResponse without axi_out[].
 
-6. ST_DONE is initiated after a CPU request has prepared its final result, with
-   the goal of releasing the selected CPU port, achieved by driving
-   read_data_comb_func() from last_data_reg and deasserting that port's wait.
+6. A CacheResponse is registered after a CPU request prepares its final result,
+   with the goal of isolating L1 timing from cache lookup and memory return,
+   achieved by driving read data and wait only from the CPU response slot.
    6.1. Drive the prepared CPU read data so the selected requester can sample
-        it; read_data_comb_func() returns last_data_reg on both CPU data
-        outputs while req_reg.port identifies the completed port.
+        it; read_data_comb_func() returns response_reg[CPU_RESPONSE_INDEX].data
+        while the response identity selects the completed port.
    6.2. Release only the completed CPU port so arbitration remains precise;
         cpu_wait_comb_func().instruction/data deassert wait according to
-        req_reg.port and keep unrelated pending requests held.
-   6.3. Avoid new cache or memory activity in ST_DONE because the response is
-        already prepared; do not access tag_ram[], data_ram[], or axi_out[].
+        the registered address, operation, and data-port flag.
+   6.3. Clear the CPU valid bit after one clock while permitting an unrelated
+        AXI request to enter the request pipeline in parallel.
 
 Background and delayed activities:
 
@@ -157,9 +155,9 @@ Background and delayed activities:
    the goal of keeping slave response slots reusable, achieved by bready/rready
    cleanup and slave_aw_reg address latching.
    2.1. Retire completed B responses so another external write can use the
-        slot; clear slave_b_reg[i].valid when axi_in[i].bready_in() is true.
+        slot; clear response_reg[i].b.valid when axi_in[i].bready_in() is true.
    2.2. Retire completed R responses so another external read can use the
-        slot; clear slave_r_reg[i].valid when axi_in[i].rready_in() is true.
+        slot; clear response_reg[i].r.valid when axi_in[i].rready_in() is true.
    2.3. Stage accepted AW handshakes so split AXI writes keep their address;
         latch slave_aw_reg[i].valid, slave_aw_reg[i].addr, and
         slave_aw_reg[i].id in ST_IDLE.
@@ -214,16 +212,14 @@ Background and delayed activities:
         lost; use fill_write_word_comb() for CPU writes or
         req_reg.write_beat/req_reg.write_strobe for external writes.
    5.5. Preserve early requested read data so the response can be emitted after
-        the full line is valid; update last_data_reg for CPU reads or
-        slave_fill_data_reg for external reads when fill_beat_reg matches the
-        requested beat.
+        the full line is valid; retain the selected beat in the unified
+        response stage when fill_beat_reg matches the requested beat.
    5.6. Install the final tag so future lookups can hit; write
         tag_ram[fill_way_reg] with tag_write_data_comb_func() and advance
         victim_reg round-robin.
    5.7. Complete the stalled requester after the full line is installed so
-        coherent state is visible first; emit slave_r_reg[i].* or
-        slave_b_reg[i].* for external requests or continue CPU requests to
-        ST_DONE.
+        coherent state is visible first; set response_reg[i].r/b for external
+        requests or register the CPU response slot.
 
 6. An unaligned I-side read crossing a beat or line initiates a two-beat read
    sequence, with the goal of assembling one 32-bit instruction word, achieved
@@ -235,8 +231,8 @@ Background and delayed activities:
    6.3. Fetch the following beat so the high bytes are available; ST_CROSS_AR1
         and ST_CROSS_R1 read through axi_out[] and latch cross_high_reg.
    6.4. Assemble the 32-bit result so the CPU receives one instruction word;
-        ST_CROSS_DONE uses cross_read_data_comb_func(), then writes
-        last_data_reg and completes through ST_DONE.
+        ST_CROSS_DONE uses cross_read_data_comb_func(), then registers the CPU
+        CacheResponse data and returns to request arbitration.
    6.5. Avoid cache allocation on this bypass path so no partial-line ownership
         is created; do not allocate, dirty, or evict cache lines.
 
@@ -263,9 +259,8 @@ Background and delayed activities:
         value is not cached; ST_IO_AR/ST_IO_R route req_reg.addr through
         axi_route_comb_func().ar_*.
    8.3. Return uncached read data to the original requester so the bypass path
-        completes like a normal response; update last_data_reg for CPU reads or
-        slave_r_reg[i].valid/slave_r_reg[i].data for external slave
-        reads.
+        completes like a normal response; update the CPU CacheResponse data or
+        response_reg[i].r for external slave reads.
    8.4. Issue uncached writes directly to the selected device so stores take
         effect outside cache state; ST_IO_AW/ST_IO_W/ST_IO_B drive
         io_write_payload_comb_func().data/strobe.

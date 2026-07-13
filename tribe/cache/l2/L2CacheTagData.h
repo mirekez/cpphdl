@@ -20,7 +20,8 @@ protected:
     using Base::tag_q_reg;
     using Base::state_reg;
     using Base::req_reg;
-    using Base::last_data_reg;
+    using Base::CPU_RESPONSE_INDEX;
+    using Base::response_reg;
     using Base::cross_low_reg;
     using Base::cross_high_reg;
     using Base::request_geometry_comb_func;
@@ -176,28 +177,11 @@ protected:
         return tag_write_data_comb;
     }
 
-    // Read data mux for held responses, cross-line reads, cache hits, or live AXI fill data.
+    // Return only the registered CPU response beat so no live RAM, FSM, or AXI
+    // path reaches either L1 read-data output.
     _LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
-        if (state_reg != ST_IDLE && req_reg.from_slave) {
-            // External AXI-master completions are returned through axi_in[*];
-            // never expose their live memory beat on the CPU/L1 read-data port.
-            read_data_comb = 0;
-        }
-        else if (state_reg == ST_DONE) {
-            read_data_comb = last_data_reg;
-        }
-        else if (state_reg == ST_CROSS_DONE) {
-            read_data_comb = cross_read_data_comb_func();
-        }
-        else if (state_reg == ST_LOOKUP && hit_lookup_comb_func().hit) {
-            read_data_comb = hit_lookup_comb_func().beat;
-        }
-        else if (state_reg == ST_AXI_R || state_reg == ST_IO_R || state_reg == ST_CROSS_R0 || state_reg == ST_CROSS_R1) {
-            read_data_comb = axi_out_selected_resp_comb_func().r.data;
-        }
-        else {
-            read_data_comb = 0;
-        }
+        read_data_comb = response_reg[CPU_RESPONSE_INDEX].valid ?
+            (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_INDEX].data : logic<PORT_BITWIDTH>(0);
         return read_data_comb;
     }
 

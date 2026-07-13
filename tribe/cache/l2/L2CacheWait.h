@@ -14,61 +14,42 @@ public:
     using Base::d_mem_in;
 
 protected:
+    using Base::CPU_RESPONSE_INDEX;
+    using Base::response_reg;
     using Base::state_reg;
-    using Base::req_reg;
-    using Base::active_request_comb_func;
 
-    // Resolve both CPU wait outputs from one ownership snapshot so D-side
-    // priority and completion release cannot be evaluated inconsistently.
+    // Resolve both CPU waits only from the registered response identity. This
+    // keeps the cache lookup and memory-return paths out of the L1 timing path.
     _LAZY_COMB(cpu_wait_comb, L2CpuWaitComb)
         bool done_i_read;
         bool done_d_read;
         bool done_d_write;
-        done_i_read = state_reg == ST_DONE && !req_reg.from_slave && !req_reg.port && req_reg.read &&
-            i_mem_in.read_in() && (uint32_t)i_mem_in.addr_in() == (uint32_t)req_reg.addr;
-        done_d_read = state_reg == ST_DONE && !req_reg.from_slave && req_reg.port && req_reg.read &&
-            d_mem_in.read_in() && (uint32_t)d_mem_in.addr_in() == (uint32_t)req_reg.addr;
-        done_d_write = state_reg == ST_DONE && !req_reg.from_slave && req_reg.port && req_reg.write &&
-            d_mem_in.write_in() && (uint32_t)d_mem_in.addr_in() == (uint32_t)req_reg.addr;
+        done_i_read = response_reg[CPU_RESPONSE_INDEX].valid && !response_reg[CPU_RESPONSE_INDEX].data_port &&
+            response_reg[CPU_RESPONSE_INDEX].read && i_mem_in.read_in() &&
+            (uint32_t)i_mem_in.addr_in() == (uint32_t)response_reg[CPU_RESPONSE_INDEX].addr;
+        done_d_read = response_reg[CPU_RESPONSE_INDEX].valid && response_reg[CPU_RESPONSE_INDEX].data_port &&
+            response_reg[CPU_RESPONSE_INDEX].read && d_mem_in.read_in() &&
+            (uint32_t)d_mem_in.addr_in() == (uint32_t)response_reg[CPU_RESPONSE_INDEX].addr;
+        done_d_write = response_reg[CPU_RESPONSE_INDEX].valid && response_reg[CPU_RESPONSE_INDEX].data_port &&
+            response_reg[CPU_RESPONSE_INDEX].write && d_mem_in.write_in() &&
+            (uint32_t)d_mem_in.addr_in() == (uint32_t)response_reg[CPU_RESPONSE_INDEX].addr;
         cpu_wait_comb = {};
         if (i_mem_in.read_in()) {
-            cpu_wait_comb.instruction = true;
-            // Only release the wait for the live I-side request that owns this completed response.
-            if (done_i_read) {
-                cpu_wait_comb.instruction = false;
-            }
-        }
-        if (state_reg != ST_IDLE &&
-            !done_i_read) {
-            cpu_wait_comb.instruction = true;
-        }
-        if (d_mem_in.read_in() || d_mem_in.write_in()) {
-            cpu_wait_comb.instruction = true;
-        }
-        if (active_request_comb_func().request.from_slave &&
-            !done_i_read) {
-            cpu_wait_comb.instruction = true;
+            cpu_wait_comb.instruction = !done_i_read;
         }
         if (d_mem_in.write_in()) {
-            cpu_wait_comb.data = true;
-            // Do not let a previous completed D-side transaction acknowledge a new write.
-            if (done_d_write) {
-                cpu_wait_comb.data = false;
-            }
+            cpu_wait_comb.data = !done_d_write;
         }
         if (d_mem_in.read_in()) {
-            cpu_wait_comb.data = true;
-            // Do not let a previous completed D-side transaction acknowledge a new read.
-            if (done_d_read) {
-                cpu_wait_comb.data = false;
-            }
+            cpu_wait_comb.data = !done_d_read;
         }
-        if (state_reg != ST_IDLE &&
-            !(done_d_read || done_d_write)) {
-            cpu_wait_comb.data = true;
+        // Advertise initialization and an occupied request pipeline even when
+        // the corresponding L1 valid is low; L1 and testbench clients use this
+        // registered busy indication before presenting their first request.
+        if (state_reg != ST_IDLE && !done_i_read) {
+            cpu_wait_comb.instruction = true;
         }
-        if (active_request_comb_func().request.from_slave &&
-            !(done_d_read || done_d_write)) {
+        if (state_reg != ST_IDLE && !(done_d_read || done_d_write)) {
             cpu_wait_comb.data = true;
         }
         return cpu_wait_comb;

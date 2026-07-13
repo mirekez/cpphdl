@@ -573,6 +573,16 @@ public:
 #endif
     }
 
+    u<4> slave_rid(size_t port)
+    {
+#ifdef VERILATOR
+        eval_l2(false);
+        return (u<4>)(uint32_t)l2.axi_in___05Frid_out[port];
+#else
+        return l2.axi_in[port].rid_out();
+#endif
+    }
+
     logic<PORT_BITS> axi_read_beat(size_t port, uint32_t request_addr)
     {
         slave_axi[port].ar.valid = true;
@@ -748,6 +758,113 @@ public:
         slave_axi[1].b.ready = false;
         cycle(false);
         read_check(0x0000010cu, 0x99aabbccu);
+    }
+
+    void slave_response_turnover_check()
+    {
+        uint32_t base;
+        size_t lane;
+        uint32_t data;
+        bool sticky_replayed;
+
+        base = 0x00000600u;
+        write_only(base, 0x10203040u, 0xf);
+        write_only(base + (uint32_t)(PORT_BITS / 8), 0x50607080u, 0xf);
+
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = base;
+        slave_axi[0].ar.id = 9;
+        slave_axi[0].r.ready = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(0); ++i) {
+            cycle(false);
+        }
+        cycle(false);
+        // Keep the next AR and response ready asserted before the first R
+        // appears, as a real AXI master does for back-to-back transactions.
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = base + (uint32_t)(PORT_BITS / 8);
+        slave_axi[0].ar.id = 10;
+        slave_axi[0].r.ready = true;
+        for (size_t i = 0; i < WAIT_LIMIT && (!slave_rvalid(0) || !slave_arready(0)); ++i) {
+            cycle(false);
+        }
+        // Retire the first R response while accepting the next AR into the
+        // request register, proving the response stage adds no idle bubble.
+        if (!slave_rvalid(0) || !slave_arready(0)) {
+            std::print("\nAXI response turnover ERROR rvalid={} arready={}\n",
+                slave_rvalid(0), slave_arready(0));
+            error = true;
+        }
+        cycle(false);
+        slave_axi[0].ar.valid = false;
+        slave_axi[0].r.ready = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
+            cycle(false);
+        }
+        lane = ((base + (uint32_t)(PORT_BITS / 8)) % (PORT_BITS / 8)) / 4;
+        data = port_word(slave_rdata(0), lane);
+        if (!slave_rvalid(0) || slave_rid(0) != 10 || data != 0x50607080u) {
+            std::print("\nAXI response turnover data ERROR valid={} id={} data={:#x}\n",
+                slave_rvalid(0), (uint32_t)slave_rid(0), data);
+            error = true;
+        }
+        slave_axi[0].r.ready = true;
+        cycle(false);
+        slave_axi[0].r.ready = false;
+        cycle(false);
+
+        // A master may retain the accepted AR payload until R arrives. It is
+        // not a second request unless VALID drops or the payload changes.
+        base += (uint32_t)(2 * (PORT_BITS / 8));
+        write_only(base, 0x90abcdefu, 0xf);
+        slave_axi[0].ar.valid = true;
+        slave_axi[0].ar.addr = base;
+        slave_axi[0].ar.id = 11;
+        slave_axi[0].r.ready = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(0); ++i) {
+            cycle(false);
+        }
+        cycle(false);
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
+            cycle(false);
+        }
+        slave_axi[0].r.ready = true;
+        sticky_replayed = slave_arready(0);
+        cycle(false);
+        for (size_t i = 0; i < 3; ++i) {
+            sticky_replayed = sticky_replayed || slave_arready(0);
+            cycle(false);
+        }
+        if (sticky_replayed) {
+            std::print("\nsticky AXI AR replay ERROR\n");
+            error = true;
+        }
+        slave_axi[0].ar.valid = false;
+        slave_axi[0].r.ready = false;
+        cycle(false);
+        slave_axi[0].ar.valid = true;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(0); ++i) {
+            cycle(false);
+        }
+        if (!slave_arready(0)) {
+            std::print("\nsticky AXI AR rearm ERROR\n");
+            error = true;
+        }
+        cycle(false);
+        slave_axi[0].ar.valid = false;
+        for (size_t i = 0; i < WAIT_LIMIT && !slave_rvalid(0); ++i) {
+            cycle(false);
+        }
+        lane = (base % (PORT_BITS / 8)) / 4;
+        data = port_word(slave_rdata(0), lane);
+        if (!slave_rvalid(0) || data != 0x90abcdefu) {
+            std::print("\nsticky AXI AR rearm data ERROR valid={} data={:#x}\n", slave_rvalid(0), data);
+            error = true;
+        }
+        slave_axi[0].r.ready = true;
+        cycle(false);
+        slave_axi[0].r.ready = false;
+        cycle(false);
     }
 
     void slave_full_width_write_check()
@@ -1382,6 +1499,7 @@ public:
             L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
 #endif
         std::print("\n  features under test:"
+                   "\n    - one-clock unified request/response pipeline"
                    "\n    - cached CPU read fill and hit"
                    "\n    - instruction-port direct read crossing a cache-line end"
                    "\n    - data-port direct read crossing an L2 beat end"
@@ -1392,6 +1510,8 @@ public:
                    "\n    - external AXI master read of CPU-written cache line"
                    "\n    - CPU read of external AXI-master-written cache line"
                    "\n    - full-width external AXI-master writes"
+                   "\n    - same-clock AXI response retirement and next-request capture"
+                   "\n    - sticky AXI request payloads are not replayed at response retirement"
                    "\n    - simultaneous CPU/private and two external masters on one line"
                    "\n    - external AXI completion does not release CPU instruction port"
                    "\n    - external AXI request does not hide CPU write completion"
@@ -1422,6 +1542,7 @@ public:
         cpu_byte_store_visible_to_axi_master_check(false, true);
         dirty_eviction_check();
         slave_coherence_check();
+        slave_response_turnover_check();
         slave_full_width_write_check();
         slave_write_strobe_preserves_neighbor_words_check();
         slave_completion_does_not_release_cpu_iport_check();

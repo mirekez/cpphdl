@@ -36,7 +36,7 @@ enum L2CacheFsmState : uint64_t
 // Captured L2 request payload after arbitration. Widths use the cache-supported
 // maxima so the struct package is concrete even when the Module keeps
 // PORT_BITWIDTH and MEM_PORTS as SystemVerilog parameters.
-struct L2MemDriver
+struct CacheRequest
 {
     u32 addr;                    // Full physical address selected from I, D, or AXI slave input.
     u32 write_data;              // Low 32-bit CPU/L1 store data before byte-lane alignment.
@@ -56,10 +56,34 @@ struct L2MemDriver
 // one request, keeping all values derived from the same live inputs together.
 struct L2ActiveRequestComb
 {
-    L2MemDriver request;          // Complete request payload selected from AXI, D, or I input.
+    CacheRequest request;         // Complete request payload selected from AXI, D, or I input.
     u32 set;                      // Cache set derived from the selected live request address.
     u1 valid;                     // At least one read or write operation was selected.
     u1 cross_line_read;           // Selected instruction read crosses the cache-line boundary.
+};
+
+// Groups per-port AXI address-channel novelty checks so arbitration and ready
+// generation agree about whether a continuously asserted payload is new.
+struct L2AxiRequestNoveltyComb
+{
+    logic<8> aw;                  // AW payload differs from the last accepted AW, or AWVALID previously dropped.
+    logic<8> ar;                  // AR payload differs from the last accepted AR, or ARVALID previously dropped.
+};
+
+// One registered completion record type serves every L2 input endpoint. AXI read
+// and write channels are independent so one endpoint can retain both replies
+// under backpressure, while the CPU fields identify the live L1 request that
+// may observe the registered data and released wait signal.
+struct CacheResponse
+{
+    u1 valid;                     // CPU/L1 response in this record is ready for one clock.
+    u1 read;                      // CPU/L1 response completes a read request.
+    u1 write;                     // CPU/L1 response completes a write request.
+    u1 data_port;                 // CPU/L1 response belongs to d_mem_in rather than i_mem_in.
+    u32 addr;                     // Original CPU/L1 address used to reject stale acknowledgements.
+    logic<256> data;              // Registered CPU/L1 read beat; lower PORT_BITWIDTH bits are used.
+    Axi4WriteResponse<4> b;       // Registered AXI write response held until bready.
+    Axi4ReadData<4, 256> r;       // Registered AXI read response held until rready.
 };
 
 // Carries all address decomposition and cross-line properties derived from the
@@ -162,6 +186,8 @@ protected:
     static constexpr size_t TAG_RAM_BITS = ((TAG_BITS + 2 + 7) / 8) * 8;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
+    // Fixed ninth response slot used by CPU read-data and wait combs and by controller completion writes.
+    static constexpr size_t CPU_RESPONSE_INDEX = 8;
     static constexpr uint64_t MEM_ADDR_MASK64 = (MEM_ADDR_BITS >= 64) ? ~0ull : ((1ull << MEM_ADDR_BITS) - 1ull);
 
 public:
@@ -193,14 +219,13 @@ protected:
     reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
 
     reg<u<5>> state_reg;
-    reg<L2MemDriver> req_reg;
+    reg<CacheRequest> req_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> victim_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> fill_way_reg;
     reg<u<clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS)>> init_set_reg;
-    reg<logic<PORT_BITWIDTH>> last_data_reg;
-    // External AXI reads can request an early fill beat; latch it until the
-    // complete line is installed and the slave response is emitted.
-    reg<logic<PORT_BITWIDTH>> slave_fill_data_reg;
+    // Slots 0..7 hold AXI input responses and slot 8 holds the CPU/L1 response.
+    // A fixed count keeps the package concrete while MEM_PORTS remains an SV parameter.
+    reg<array<9, CacheResponse>> response_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> fill_beat_reg;
@@ -208,15 +233,12 @@ protected:
     reg<u<ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE)>> evict_tag_reg;
     reg<logic<CACHE_LINE_SIZE * 8>> evict_line_reg;
     static_assert(MEM_PORTS <= 8, "L2Cache AXI slave bookkeeping storage supports up to 8 ports");
-    // Keep slave write responses as AXI channel structs so valid and ID are updated together.
-    // The storage is fixed at 8 entries because the SV generator currently specializes struct-array
-    // lengths from the first module instance; unused entries stay idle when MEM_PORTS is smaller.
-    reg<array<8, Axi4WriteResponse<4>>> slave_b_reg;
-    // Keep slave read responses as AXI channel structs. The data field is fixed at 256 bits because
-    // generated SV keeps PORT_BITWIDTH as a module parameter, while package structs need a concrete width.
-    reg<array<8, Axi4ReadData<4, 256>>> slave_r_reg;
     // Keep split AW state as one AXI address payload so delayed W handshakes retain address and ID together.
     reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_reg;
+    // Remember the last accepted AW payload until AWVALID drops or changes, preventing a sticky master from replaying it at B retirement.
+    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_seen_reg;
+    // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
+    reg<array<8, Axi4ReadAddress<ADDR_BITS, 4>>> slave_ar_seen_reg;
 
     // True when any external AXI master is offering a one-beat write.
 };
