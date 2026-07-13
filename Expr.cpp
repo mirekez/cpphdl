@@ -213,6 +213,79 @@ std::string memberArrayPortRef(Expr indexed, std::string member, const std::stri
     return text;
 }
 
+bool collectModuleArrayMemberChain(const Expr& expr, std::string& root,
+    std::vector<std::string>& members, std::vector<Expr>& indices)
+{
+    if (expr.type == Expr::EXPR_INDEX && expr.sub.size() == 2) {
+        if (!collectModuleArrayMemberChain(expr.sub[0], root, members, indices)) {
+            return false;
+        }
+        indices.push_back(expr.sub[1]);
+        return true;
+    }
+
+    if (expr.type == Expr::EXPR_MEMBER && expr.sub.size() == 1) {
+        if (expr.sub[0].type == Expr::EXPR_NONE) {
+            root = expr.value;
+            return true;
+        }
+        if (!collectModuleArrayMemberChain(expr.sub[0], root, members, indices)) {
+            return false;
+        }
+        members.push_back(expr.value);
+        return true;
+    }
+
+    return false;
+}
+
+std::string moduleArrayMemberRef(const Expr& expr, const std::string& suffix, bool allowInterface)
+{
+    std::string root;
+    std::vector<std::string> members;
+    std::vector<Expr> indices;
+    if (!collectModuleArrayMemberChain(expr, root, members, indices) || indices.empty() ||
+        !isMemberName(root) || members.empty()) {
+        return {};
+    }
+
+    auto flattenedName = [&]() {
+        std::string name = root;
+        for (const auto& member : members) {
+            name += "__" + escapeIdentifier(member);
+        }
+        return name;
+    };
+    auto declaredSignal = [&](const std::string& name) {
+        auto matches = [&](const Field& field) { return field.name == name; };
+        return any_of(currModule->wires.begin(), currModule->wires.end(), matches) ||
+            any_of(currModule->ports.begin(), currModule->ports.end(), matches);
+    };
+
+    std::string text = flattenedName();
+    if (allowInterface && !declaredSignal(text)) {
+        // Resolve direction from the wire produced for the child module port;
+        // the parent-side interface direction may reverse the leaf suffix.
+        auto& leaf = members.back();
+        if (str_ending(leaf, "_out")) {
+            leaf.replace(leaf.length() - 4, 4, "_in");
+        }
+        else if (str_ending(leaf, "_in")) {
+            leaf.replace(leaf.length() - 3, 3, "_out");
+        }
+        std::string flipped = flattenedName();
+        if (declaredSignal(flipped)) {
+            text = std::move(flipped);
+        }
+    }
+
+    text += suffix;
+    for (auto index : indices) {
+        text += "[" + index.str() + "]";
+    }
+    return text;
+}
+
 }
 
 std::string Expr::str(std::string prefix, std::string suffix)
@@ -688,6 +761,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
             ASSERT1(sub.size()==1, std::string("member sub size zero: ") + debug());
 
             deparenth();  // we dont want parentheses to be on left side of =
+
+            std::string flattenedMember = moduleArrayMemberRef(*this, suffix, interface);
+            if (!flattenedMember.empty()) {
+                return indent_str + prefix + flattenedMember;
+            }
 
             if ((flags&FLAG_ANON)&&value=="") {
                 value = "_";

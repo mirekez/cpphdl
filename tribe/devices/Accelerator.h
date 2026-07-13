@@ -214,7 +214,8 @@ public:
         uint32_t beat_base;
         uint32_t word;
         uint32_t mem_index;
-        size_t i;
+        // MEM_WORDS is a 32-bit hardware bound; avoid emitting a 64-bit SV array selector.
+        uint32_t i;
         // cpphdl emits local logic default construction as an assignment in SV;
         // keep it after scalar locals so Verilator still sees declarations first.
         logic<DATA_WIDTH> read_data;

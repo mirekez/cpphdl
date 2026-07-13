@@ -1352,9 +1352,14 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
 
         if (CRD && CRD->isDerivedFrom(InterfaceClass)) {  // Interface struct
             // for Interface structs we need Abstract declaration to know expressions of template parameters in subfields (and port cames too)
-            ClassTemplateDecl *CTD = dyn_cast<ClassTemplateSpecializationDecl>(CRD)->getSpecializedTemplate();
+            // Non-template interfaces have no specialization node; flatten their
+            // concrete declaration directly instead of dereferencing a null cast.
+            auto* interfaceSpecialization = dyn_cast<ClassTemplateSpecializationDecl>(CRD);
+            ClassTemplateDecl *CTD = interfaceSpecialization ? interfaceSpecialization->getSpecializedTemplate() : nullptr;
             const clang::TemplateParameterList *interfaceParams = CTD ? CTD->getTemplateParameters() : nullptr;
-            CRD = CTD->getTemplatedDecl();
+            if (CTD) {
+                CRD = CTD->getTemplatedDecl();
+            }
             for (Decl* D : CRD->decls()) {
                 if (auto* FD = dyn_cast<FieldDecl>(D)) {
                     QualType QT = FD->getType().getNonReferenceType();

@@ -467,6 +467,14 @@ SystemVerilog datatype. Currently, the list of CppHDL datatypes includes:
 * *memory`<TYPE,SIZE>`* - special registered container implementing optimal memory access with strobing
 * *Cat`{...}`* - concatenation helper that maps to SystemVerilog `{...}` expressions
 
+### RTL index widths
+
+&nbsp;&nbsp;&nbsp;&nbsp;Indexes and loop variables that are converted into RTL must not be 64-bit. Some synthesis and RTL-processing tools
+cannot reliably elaborate 64-bit array selectors and may report width errors, fail optimization, or terminate with an internal error.
+Use `uint32_t`, a narrower native unsigned type, or an explicitly sized CppHDL type such as `u<WIDTH>` according to the required
+index range. In particular, do not use `size_t` for synthesizable array indexes or loop variables on 64-bit hosts. `size_t` remains
+appropriate for compile-time template parameters and other C++ elaboration-only values that do not become RTL signals.
+
 ### logic`<WIDTH>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;logic`<>` is the basic type of the CppHDL toolchain, representing the SystemVerilog `logic` type.
