@@ -132,7 +132,7 @@ private:
         response_reg._next[CPU_RESPONSE_INDEX].write = req_reg.write;
         response_reg._next[CPU_RESPONSE_INDEX].data_port = req_reg.port;
         response_reg._next[CPU_RESPONSE_INDEX].addr = req_reg.addr;
-        response_reg._next[CPU_RESPONSE_INDEX].data = data;
+        response_reg._next[CPU_RESPONSE_INDEX].r.data = data;
     }
 
 public:
@@ -522,7 +522,7 @@ public:
                 if (req_reg.read && fill_beat_reg == request_geometry.beat) {
                     // Preserve an early requested beat in the unified response
                     // stage until the complete cache line has been installed.
-                    response_reg._next[CPU_RESPONSE_INDEX].data = axi_out_selected_resp_comb_func().r.data;
+                    response_reg._next[CPU_RESPONSE_INDEX].r.data = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -544,7 +544,7 @@ public:
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == request_geometry.beat) ?
                                                 axi_out_selected_resp_comb_func().r.data :
-                                                response_reg[CPU_RESPONSE_INDEX].data);
+                                                response_reg[CPU_RESPONSE_INDEX].r.data);
                                     }
                                     if (req_reg.write) {
                                         send_slave_write_response(i, req_reg.slave_id);
@@ -557,7 +557,7 @@ public:
                             completion_data = req_reg.read ?
                                 ((fill_beat_reg == request_geometry.beat) ?
                                     axi_out_selected_resp_comb_func().r.data :
-                                    response_reg[CPU_RESPONSE_INDEX].data) : logic<256>(0);
+                                    response_reg[CPU_RESPONSE_INDEX].r.data) : logic<256>(0);
                             send_cpu_response(completion_data);
                             state_reg._next = ST_IDLE;
                         }
@@ -680,7 +680,6 @@ public:
                 response_reg._next[i].write = false;
                 response_reg._next[i].data_port = false;
                 response_reg._next[i].addr = 0;
-                response_reg._next[i].data = 0;
                 response_reg._next[i].b.valid = false;
                 response_reg._next[i].b.id = 0;
                 response_reg._next[i].r.valid = false;

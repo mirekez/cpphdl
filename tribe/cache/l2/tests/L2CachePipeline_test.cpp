@@ -32,7 +32,7 @@ int L2CachePipeline_test_main()
     response_reg._next.addr = request_reg.addr;
     response_reg._next.read = request_reg.read;
     response_reg._next.data_port = request_reg.port;
-    response_reg._next.data = 0x89abcdefu;
+    response_reg._next.r.data = 0x89abcdefu;
     l2test::expect_false(ctx, "response before edge", response_reg.valid);
     response_reg.strobe();
     l2test::expect_true(ctx, "response after edge", response_reg.valid);
@@ -41,7 +41,7 @@ int L2CachePipeline_test_main()
     l2test::expect_eq(ctx, "response address", response_reg.addr, 0x12345678u);
     l2test::expect_true(ctx, "response read", response_reg.read);
     l2test::expect_true(ctx, "response data port", response_reg.data_port);
-    l2test::expect_eq(ctx, "response data", (uint32_t)response_reg.data, 0x89abcdefu);
+    l2test::expect_eq(ctx, "response data", (uint32_t)response_reg.r.data, 0x89abcdefu);
 
     l2test::section("4. independent AXI response channels");
     response_reg._next.b.valid = true;

@@ -181,7 +181,7 @@ protected:
     // path reaches either L1 read-data output.
     _LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
         read_data_comb = response_reg[CPU_RESPONSE_INDEX].valid ?
-            (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_INDEX].data : logic<PORT_BITWIDTH>(0);
+            (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_INDEX].r.data : logic<PORT_BITWIDTH>(0);
         return read_data_comb;
     }
 

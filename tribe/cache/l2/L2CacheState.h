@@ -73,7 +73,8 @@ struct L2AxiRequestNoveltyComb
 // One registered completion record type serves every L2 input endpoint. AXI read
 // and write channels are independent so one endpoint can retain both replies
 // under backpressure, while the CPU fields identify the live L1 request that
-// may observe the registered data and released wait signal.
+// may observe r.data and the released wait signal. CPU and AXI records never
+// occupy the same slot, so sharing r.data avoids a duplicate 256-bit payload.
 struct CacheResponse
 {
     u1 valid;                     // CPU/L1 response in this record is ready for one clock.
@@ -81,9 +82,8 @@ struct CacheResponse
     u1 write;                     // CPU/L1 response completes a write request.
     u1 data_port;                 // CPU/L1 response belongs to d_mem_in rather than i_mem_in.
     u32 addr;                     // Original CPU/L1 address used to reject stale acknowledgements.
-    logic<256> data;              // Registered CPU/L1 read beat; lower PORT_BITWIDTH bits are used.
     Axi4WriteResponse<4> b;       // Registered AXI write response held until bready.
-    Axi4ReadData<4, 256> r;       // Registered AXI read response held until rready.
+    Axi4ReadData<4, 256> r;       // Registered AXI or CPU/L1 read beat; AXI valid is held until rready.
 };
 
 // Carries all address decomposition and cross-line properties derived from the

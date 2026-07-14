@@ -83,7 +83,7 @@ Request-facing actions that can directly answer an input request:
    3.3. Return an external AXI read hit directly so no memory refill is issued;
         write response_reg[i].r from hit_lookup_comb_func().beat and the request ID.
    3.4. Return an aligned CPU/L1 read hit through the response register so the CPU wait
-        protocol stays uniform; write response_reg[CPU_RESPONSE_INDEX].data with
+        protocol stays uniform; write response_reg[CPU_RESPONSE_INDEX].r.data with
         hit_lookup_comb_func().beat.
    3.5. Preserve the low word of an intra-line cross-beat CPU read so the
         delayed half can be assembled later; write the CPU response data[31:0] from
@@ -129,7 +129,7 @@ Request-facing actions that can directly answer an input request:
    with the goal of isolating L1 timing from cache lookup and memory return,
    achieved by driving read data and wait only from the CPU response slot.
    6.1. Drive the prepared CPU read data so the selected requester can sample
-        it; read_data_comb_func() returns response_reg[CPU_RESPONSE_INDEX].data
+        it; read_data_comb_func() returns response_reg[CPU_RESPONSE_INDEX].r.data
         while the response identity selects the completed port.
    6.2. Release only the completed CPU port so arbitration remains precise;
         cpu_wait_comb_func().instruction/data deassert wait according to
