@@ -389,6 +389,24 @@ class SystemTest : public Module
         ram[addr / 4] = (ram[addr / 4] & ~(0xffu << shift)) | (uint32_t(value) << shift);
     }
 
+    // Stop log-based tests once the complete expected output has arrived; called periodically by run().
+    bool output_file_reached_expected(const std::string& expected_output)
+    {
+        if (tohost_addr || expected_output.empty()) {
+            return false;
+        }
+        std::ifstream out_file("out.txt", std::ios::binary);
+        if (!out_file) {
+            return false;
+        }
+        std::string current_output((std::istreambuf_iterator<char>(out_file)), std::istreambuf_iterator<char>());
+        if (current_output.size() < expected_output.size()) {
+            return false;
+        }
+        error = current_output != expected_output;
+        return true;
+    }
+
     bool load_elf(FILE* fbin, std::vector<uint32_t>& ram, size_t& read_bytes, uint32_t mem_base, uint32_t mem_size_bytes, uint32_t& entry, bool elf_phys_override, uint32_t elf_phys_offset)
     {
         static constexpr uint32_t PT_LOAD = 1;
@@ -617,6 +635,7 @@ public:
 
     bool run(std::string filename, size_t start_offset, std::string expected_log = "rv32i.log", int max_cycles = 2000000, uint32_t tohost = 0, uint32_t mem_base = 0, uint32_t ram_words = DEFAULT_RAM_SIZE, bool raw_program = false, uint32_t boot_hartid_arg = 0, uint32_t boot_dtb_addr_arg = 0, uint32_t boot_priv_arg = 3, bool elf_phys_override = false, uint32_t elf_phys_offset = 0)
     {
+        std::string expected_output;
 #ifdef VERILATOR
         std::print("VERILATOR SystemTest...");
 #else
@@ -629,6 +648,15 @@ public:
         tohost_addr = tohost;
         tohost_value = 0;
         tohost_done = false;
+        error = false;
+        if (!tohost_addr) {
+            std::ifstream expected_file(expected_log, std::ios::binary);
+            if (!expected_file) {
+                std::print("can't open expected output '{}'\n", expected_log);
+                return false;
+            }
+            expected_output.assign(std::istreambuf_iterator<char>(expected_file), std::istreambuf_iterator<char>());
+        }
         start_mem_addr = mem_base;
         reset_pc = mem_base;
         boot_hartid = boot_hartid_arg;
@@ -702,6 +730,9 @@ public:
             }
             drive_uart_rx(false);
             _work(0);
+            if (!tohost_addr && (perf_clocks & 0xffu) == 0 && output_file_reached_expected(expected_output)) {
+                break;
+            }
             if (tohost_addr && SYSTEM_PORT_VALUE(system.dmem_write_out) && SYSTEM_PORT_VALUE(system.dmem_addr_out) == tohost_addr &&
                 SYSTEM_PORT_VALUE(system.dmem_write_mask_out) && SYSTEM_PORT_VALUE(system.dmem_write_data_out)) {
                 tohost_value = SYSTEM_PORT_VALUE(system.dmem_write_data_out);
