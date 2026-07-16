@@ -948,7 +948,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (sub[i-1].type != EXPR_NONE) {
                         if (first) {
                             first = false;
-                            ret = indent_str + "{";
+                            // Aggregate fields need assignment-pattern context sizing; children are reversed for packed C++ layout.
+                            ret = indent_str + "'{";
+                        }
+                        else {
+                            ret += ", ";
                         }
                         sub[i-1].flags |= flags;
                         ret += sub[i-1].str();
