@@ -194,18 +194,13 @@ struct array_packed_ref
     operator T() const
     {
         logic<ELEMENT_BITS> tmp(ref);
-        if constexpr (std::is_assignable_v<T&, logic<ELEMENT_BITS>>) {
+        if constexpr (can_assign_from<T, logic<ELEMENT_BITS>>::value) {
             T value{};
             value = tmp;
             return value;
         }
         else if constexpr (std::is_integral_v<T> || std::is_enum_v<T> || std::is_constructible_v<T, uint64_t>) {
             return T(static_cast<uint64_t>(tmp));
-        }
-        else if constexpr (can_assign_from<T, logic<ELEMENT_BITS>>::value) {
-            T value{};
-            value = tmp;
-            return value;
         }
         else {
             T value{};
@@ -529,13 +524,13 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         if constexpr (is_logic_v<TYPE>) {
             return TYPE(tmp);
         }
-        else if constexpr (std::is_integral_v<TYPE> || std::is_enum_v<TYPE> || std::is_constructible_v<TYPE, uint64_t>) {
-            return TYPE(static_cast<uint64_t>(tmp));
-        }
         else if constexpr (detail::can_assign_from<TYPE, logic<ELEMENT_BITS>>::value) {
             TYPE value{};
             value = tmp;
             return value;
+        }
+        else if constexpr (std::is_integral_v<TYPE> || std::is_enum_v<TYPE> || std::is_constructible_v<TYPE, uint64_t>) {
+            return TYPE(static_cast<uint64_t>(tmp));
         }
         else {
             TYPE value{};

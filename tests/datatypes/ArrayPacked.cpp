@@ -64,6 +64,39 @@ struct WidePackedStruct
     }
 };
 
+// C++20 aggregate initialization makes this constructible from uint64_t even
+// though packed-array extraction must use its full-width logic assignment.
+struct AggregatePackedStruct
+{
+    logic<4> idx;
+    logic<64> start_addr;
+    logic<64> end_addr;
+
+    constexpr static size_t _size_bits()
+    {
+        return 132;
+    }
+
+    template<size_t W>
+    AggregatePackedStruct& operator=(const logic<W>& value)
+    {
+        logic<132> packed = value;
+        idx = logic<4>(packed.bits(131, 128));
+        start_addr = logic<64>(packed.bits(127, 64));
+        end_addr = logic<64>(packed.bits(63, 0));
+        return *this;
+    }
+
+    logic<132> pack() const
+    {
+        logic<132> packed = 0;
+        packed.bits(131, 128) = idx;
+        packed.bits(127, 64) = start_addr;
+        packed.bits(63, 0) = end_addr;
+        return packed;
+    }
+};
+
 class ArrayPacked : public Module
 {
 public:
@@ -288,6 +321,24 @@ static bool check_direct_arrays()
     WidePackedStruct assigned = wide_struct_array[0];
     ok &= check((uint64_t)assigned.data == 0xfc02721301320213ull, "wide packed ref to packed struct ref assignment keeps bit 63 of data field");
     ok &= check((bool)assigned.pack()[64], "wide packed ref to packed struct ref assignment keeps packed bit 64");
+
+    static_assert(std::is_aggregate_v<AggregatePackedStruct>);
+    static_assert(std::is_constructible_v<AggregatePackedStruct, uint64_t>);
+    AggregatePackedStruct aggregate{};
+    aggregate.idx = 9;
+    aggregate.start_addr = logic<64>(0x1000);
+    aggregate.end_addr = logic<64>(0x2000);
+    array<2, AggregatePackedStruct, true> aggregate_array{};
+    aggregate_array[0] = aggregate;
+    AggregatePackedStruct proxy_read = aggregate_array[0];
+    const auto& const_aggregate_array = aggregate_array;
+    AggregatePackedStruct const_read = const_aggregate_array[0];
+    ok &= check((uint64_t)proxy_read.idx == 9 && (uint64_t)proxy_read.start_addr == 0x1000 &&
+        (uint64_t)proxy_read.end_addr == 0x2000,
+        "aggregate packed proxy extraction prefers full-width assignment");
+    ok &= check((uint64_t)const_read.idx == 9 && (uint64_t)const_read.start_addr == 0x1000 &&
+        (uint64_t)const_read.end_addr == 0x2000,
+        "aggregate packed const extraction prefers full-width assignment");
 
     return ok;
 }

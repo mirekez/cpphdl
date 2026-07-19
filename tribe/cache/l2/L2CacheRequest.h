@@ -23,9 +23,26 @@ protected:
     using Base::SET_BITS;
     using Base::LINE_BITS;
     using Base::req_reg;
-    using Base::slave_b_reg;
-    using Base::slave_r_reg;
+    using Base::response_reg;
     using Base::slave_aw_reg;
+    using Base::slave_aw_seen_reg;
+    using Base::slave_ar_seen_reg;
+
+    // Derive AW and AR novelty together so every request/ready consumer applies
+    // the same sticky-valid replay rule for all external ports.
+    _LAZY_COMB(slave_request_novelty_comb, L2AxiRequestNoveltyComb)
+        uint32_t index;
+        slave_request_novelty_comb = {};
+        for (index = 0; index < MEM_PORTS; ++index) {
+            slave_request_novelty_comb.aw[index] = !slave_aw_seen_reg[index].valid ||
+                slave_aw_seen_reg[index].addr != axi_in[index].awaddr_in() ||
+                slave_aw_seen_reg[index].id != axi_in[index].awid_in();
+            slave_request_novelty_comb.ar[index] = !slave_ar_seen_reg[index].valid ||
+                slave_ar_seen_reg[index].addr != axi_in[index].araddr_in() ||
+                slave_ar_seen_reg[index].id != axi_in[index].arid_in();
+        }
+        return slave_request_novelty_comb;
+    }
 
     // Arbitrate one live request and derive its complete payload once. External
     // AXI writes retain priority over AXI reads, then D precedes I.
@@ -52,21 +69,26 @@ protected:
 
         for (port_index = 0; port_index < MEM_PORTS; ++port_index) {
             if (((slave_aw_reg[port_index].valid && axi_in[port_index].wvalid_in()) ||
-                 (axi_in[port_index].awvalid_in() && axi_in[port_index].wvalid_in())) &&
-                !slave_b_reg[port_index].valid) {
+                 (axi_in[port_index].awvalid_in() && slave_request_novelty_comb_func().aw[port_index] &&
+                  axi_in[port_index].wvalid_in())) &&
+                (!response_reg[port_index].b.valid || axi_in[port_index].bready_in())) {
                 slave_write_pending = true;
             }
-            if (axi_in[port_index].arvalid_in() && !slave_r_reg[port_index].valid) {
+            if (axi_in[port_index].arvalid_in() && slave_request_novelty_comb_func().ar[port_index] &&
+                (!response_reg[port_index].r.valid || axi_in[port_index].rready_in())) {
                 slave_read_pending = true;
             }
         }
         for (port_index = 0; port_index < MEM_PORTS; ++port_index) {
-            if (!slave_write_pending && axi_in[port_index].arvalid_in() && !slave_r_reg[port_index].valid) {
+            if (!slave_write_pending && axi_in[port_index].arvalid_in() &&
+                slave_request_novelty_comb_func().ar[port_index] &&
+                (!response_reg[port_index].r.valid || axi_in[port_index].rready_in())) {
                 selected_slave = port_index;
             }
             if (((slave_aw_reg[port_index].valid && axi_in[port_index].wvalid_in()) ||
-                 (axi_in[port_index].awvalid_in() && axi_in[port_index].wvalid_in())) &&
-                !slave_b_reg[port_index].valid) {
+                 (axi_in[port_index].awvalid_in() && slave_request_novelty_comb_func().aw[port_index] &&
+                  axi_in[port_index].wvalid_in())) &&
+                (!response_reg[port_index].b.valid || axi_in[port_index].bready_in())) {
                 selected_slave = port_index;
             }
         }
