@@ -2,12 +2,12 @@
 
 #include "L2CacheWait.h"
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Final port-compatible L2 cache controller: wires RAM/AXI ports, advances FSM state, and checkpoints registers.
-class L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>
+class L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
-    using Base = L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>;
+    using Base = L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
 public:
     using Base::i_mem_in;
     using Base::d_mem_in;
@@ -21,13 +21,15 @@ private:
     using Base::LINE_BEATS;
     using Base::SETS;
     using Base::DATA_BANKS;
-    using Base::CPU_RESPONSE_INDEX;
+    using Base::CPU_RESPONSE_BASE;
+    using Base::RESPONSE_SLOTS;
     using Base::data_ram;
     using Base::tag_ram;
     using Base::data_q_reg;
     using Base::tag_q_reg;
     using Base::state_reg;
     using Base::req_reg;
+    using Base::cpu_rr_reg;
     using Base::victim_reg;
     using Base::fill_way_reg;
     using Base::init_set_reg;
@@ -127,22 +129,25 @@ private:
     // released only for the request that produced this registered response.
     void send_cpu_response(logic<256> data)
     {
-        response_reg._next[CPU_RESPONSE_INDEX].valid = true;
-        response_reg._next[CPU_RESPONSE_INDEX].read = req_reg.read;
-        response_reg._next[CPU_RESPONSE_INDEX].write = req_reg.write;
-        response_reg._next[CPU_RESPONSE_INDEX].data_port = req_reg.port;
-        response_reg._next[CPU_RESPONSE_INDEX].addr = req_reg.addr;
-        response_reg._next[CPU_RESPONSE_INDEX].r.data = data;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].valid = true;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].read = req_reg.read;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].write = req_reg.write;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].data_port = req_reg.port;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].addr = req_reg.addr;
+        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = data;
     }
 
 public:
     void _assign()
     {
         uint32_t i;
-        this->i_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
-        this->i_mem_in.wait_out = _ASSIGN_COMB(cpu_wait_comb_func().instruction);
-        d_mem_in.read_data_out = _ASSIGN_COMB(read_data_comb_func());
-        d_mem_in.wait_out = _ASSIGN_COMB(cpu_wait_comb_func().data);
+
+        for (i = 0; i < CPU_PORTS; ++i) {
+            this->i_mem_in[i].read_data_out = _ASSIGN_COMB_I(read_data_comb_func()[i]);
+            this->i_mem_in[i].wait_out = _ASSIGN_COMB_I(cpu_wait_comb_func()[i].instruction);
+            d_mem_in[i].read_data_out = _ASSIGN_COMB_I(read_data_comb_func()[i]);
+            d_mem_in[i].wait_out = _ASSIGN_COMB_I(cpu_wait_comb_func()[i].data);
+        }
 
         for (i = 0; i < MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
@@ -211,7 +216,9 @@ public:
 
         // CPU/L1 has no response-ready input: expose its registered response
         // for exactly this clock, then free the slot for the next completion.
-        response_reg._next[CPU_RESPONSE_INDEX].valid = false;
+        for (i = 0; i < CPU_PORTS; ++i) {
+            response_reg._next[CPU_RESPONSE_BASE + i].valid = false;
+        }
 
         bank_addr = (state_reg == ST_IDLE) ? active_request.set : request_geometry.set;
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
@@ -317,14 +324,16 @@ public:
         }
         else if (state_reg == ST_IDLE) {
             if (active_request.valid &&
-                !(response_reg[CPU_RESPONSE_INDEX].valid && !active_request.request.from_slave &&
-                  response_reg[CPU_RESPONSE_INDEX].data_port == active_request.request.port &&
-                  response_reg[CPU_RESPONSE_INDEX].read == active_request.request.read &&
-                  response_reg[CPU_RESPONSE_INDEX].write == active_request.request.write &&
-                  response_reg[CPU_RESPONSE_INDEX].addr == active_request.request.addr)) {
+                !(response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].valid &&
+                  !active_request.request.from_slave &&
+                  response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].data_port == active_request.request.port &&
+                  response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].read == active_request.request.read &&
+                  response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].write == active_request.request.write &&
+                  response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].addr == active_request.request.addr)) {
                 if (trace_active_line) {
-                    std::print("trace-l2 cycle={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
-                        _system_clock, (uint32_t)active_request.request.addr,
+                    std::print("trace-l2 cycle={} cpu={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
+                        _system_clock, (uint32_t)active_request.request.cpu_index,
+                        (uint32_t)active_request.request.addr,
                         (bool)active_request.request.read, (bool)active_request.request.write,
                         (uint32_t)active_request.request.write_data,
                         (uint32_t)active_request.request.write_mask,
@@ -332,6 +341,10 @@ public:
                         (bool)active_request.request.port, (uint32_t)victim_reg);
                 }
                 req_reg._next = active_request.request;
+                if (!active_request.request.from_slave) {
+                    cpu_rr_reg._next = active_request.request.cpu_index == CPU_PORTS - 1 ?
+                        (uint32_t)0 : (uint32_t)active_request.request.cpu_index + 1u;
+                }
                 for (i = 0; i < MEM_PORTS; ++i) {
                     if (active_request.request.from_slave && active_request.request.write &&
                         active_request.request.slave_index == i) {
@@ -522,7 +535,7 @@ public:
                 if (req_reg.read && fill_beat_reg == request_geometry.beat) {
                     // Preserve an early requested beat in the unified response
                     // stage until the complete cache line has been installed.
-                    response_reg._next[CPU_RESPONSE_INDEX].r.data = axi_out_selected_resp_comb_func().r.data;
+                    response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = axi_out_selected_resp_comb_func().r.data;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -544,7 +557,7 @@ public:
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == request_geometry.beat) ?
                                                 axi_out_selected_resp_comb_func().r.data :
-                                                response_reg[CPU_RESPONSE_INDEX].r.data);
+                                                response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data);
                                     }
                                     if (req_reg.write) {
                                         send_slave_write_response(i, req_reg.slave_id);
@@ -557,7 +570,7 @@ public:
                             completion_data = req_reg.read ?
                                 ((fill_beat_reg == request_geometry.beat) ?
                                     axi_out_selected_resp_comb_func().r.data :
-                                    response_reg[CPU_RESPONSE_INDEX].r.data) : logic<256>(0);
+                                    response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data) : logic<256>(0);
                             send_cpu_response(completion_data);
                             state_reg._next = ST_IDLE;
                         }
@@ -664,6 +677,7 @@ public:
         if (reset) {
             state_reg.clr();
             req_reg.clr();
+            cpu_rr_reg.clr();
             victim_reg.clr();
             fill_way_reg.clr();
             init_set_reg.clr();
@@ -673,7 +687,7 @@ public:
             evict_beat_reg.clr();
             evict_tag_reg.clr();
             evict_line_reg.clr();
-            for (i = 0; i < 9; ++i) {
+            for (i = 0; i < RESPONSE_SLOTS; ++i) {
                 // Clear by field because whole struct-array clr() is not generator-safe.
                 response_reg._next[i].valid = false;
                 response_reg._next[i].read = false;
@@ -712,6 +726,8 @@ public:
         tag_q_reg.strobe(checkpoint_fd);
         state_reg.strobe(checkpoint_fd);
         req_reg.strobe(checkpoint_fd);
+        // Arbitration order is transient and must not change the checkpoint stream format.
+        cpu_rr_reg.strobe();
         victim_reg.strobe(checkpoint_fd);
         fill_way_reg.strobe(checkpoint_fd);
         init_set_reg.strobe(checkpoint_fd);

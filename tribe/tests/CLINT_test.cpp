@@ -179,7 +179,8 @@ static bool run_clint_elf_verilator(bool debug)
 {
     const auto build_root = build_root_dir();
     const auto runner = build_root / "tribe64" / "tribe64";
-    const auto verilator_runner = build_root / "tribe64" / "Tribe" / "obj_dir" / "VTribe";
+    // The single-core system model is the TribeTest<1> specialization.
+    const auto verilator_runner = build_root / "tribe64" / "TribeTest_1" / "obj_dir" / "VTribeTest";
     const auto code_dir = tribe_code_dir();
     const auto elf = std::filesystem::current_path() / "clint.elf";
     if (!std::filesystem::exists(runner)) {

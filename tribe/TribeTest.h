@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Tribe.h"
+#include "TribeTestModule.h"
 #include "devices/net/ethgig/ethgig_dma.h"
 #include "devices/net/ethgig/ethgig_mac.h"
 #include "devices/net/ethgig/ethgig_pcs.h"
@@ -168,6 +168,12 @@ static void verilator_logic_to_wide(QData& out, const logic<64>& bits)
 #define PERF_VALUE(port) (port())
 #endif
 
+#ifdef MULTICORE
+static constexpr size_t TEST_TRIBE_CPU_CORES = CPUS_PER_L2_CACHE;
+#else
+static constexpr size_t TEST_TRIBE_CPU_CORES = 1;
+#endif
+
 class TestTribe : public Module
 {
     static constexpr size_t AXI_RAM0_DEPTH = TRIBE_MEM_REGION0_SIZE / (TRIBE_L2_AXI_WIDTH/8);
@@ -192,7 +198,7 @@ class TestTribe : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL tribe;
 #else
-    Tribe tribe;
+    TribeTest<TEST_TRIBE_CPU_CORES> tribe;
 #endif
 
     bool error;
@@ -351,6 +357,9 @@ class TestTribe : public Module
     TribeDecodeDebug debug_decode_value();
     TribeSbiDebug debug_sbi_value();
     void trace_pc_tick(const TraceConfig& trace);
+#if defined(MULTICORE) && !defined(VERILATOR) && defined(ENABLE_MMU_TLB)
+    void trace_multicore_pc_tick(const TraceConfig& trace, FILE* trace_pc_out);
+#endif
     void trace_wb_tick(const TraceConfig& trace);
     void trace_csr_tick(const TraceConfig& trace);
     void trace_clint_tick(const TraceConfig& trace);
@@ -793,11 +802,21 @@ public:
         AXI4_DRIVER_FROM_IF(tribe.axi_in[1], sdcard.dma_out);
         AXI4_DRIVER_FROM_IF(tribe.axi_in[2], ethgig_dma.dma_out);
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+#ifdef MULTICORE
+		for (i = 0; i < TEST_TRIBE_CPU_CORES; ++i) {
+			// Per-hart device outputs are bound later in this parent _assign(); defer
+			// their evaluation so the cluster does not copy an empty function_ref.
+			tribe.clint_msip_per_core_in[i] = _ASSIGN_I(clint.msip_per_hart_out[i]());
+			tribe.clint_mtip_per_core_in[i] = _ASSIGN_I(clint.mtip_per_hart_out[i]());
+			tribe.external_irq_per_core_in[i] = _ASSIGN_I(plic.external_irq_per_hart_out[i]());
+		}
+#else
         tribe.clint_msip_in = clint.msip_out;
         tribe.clint_mtip_in = clint.mtip_out;
+        tribe.external_irq_in = plic.external_irq_out;
+#endif
         tribe.time_lo_in = clint.debug_mtime_lo_out;
         tribe.time_hi_in = clint.debug_mtime_hi_out;
-        tribe.external_irq_in = plic.external_irq_out;
 #endif
         tribe.__inst_name = __inst_name + "/tribe";
         tribe._assign();
@@ -882,9 +901,17 @@ public:
         sdcard_verif.sd_rsp_ready_in = sdcard.sd_rsp_ready_out;
         uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
+#ifdef MULTICORE
+        for (i = 0; i < TEST_TRIBE_CPU_CORES; ++i) {
+            clint.set_mtimecmp_per_hart_in[i] = tribe.sbi_set_timer_per_core_out[i];
+            clint.set_mtimecmp_lo_per_hart_in[i] = tribe.sbi_timer_lo_per_core_out[i];
+            clint.set_mtimecmp_hi_per_hart_in[i] = tribe.sbi_timer_hi_per_core_out[i];
+        }
+#else
         clint.set_mtimecmp_in = tribe.sbi_set_timer_out;
         clint.set_mtimecmp_lo_in = tribe.sbi_timer_lo_out;
         clint.set_mtimecmp_hi_in = tribe.sbi_timer_hi_out;
+#endif
         for (i = 0; i < 32; ++i) {
             plic.source_irq_in[i] = _ASSIGN(false);
         }
@@ -960,11 +987,21 @@ public:
             tribe.axi_in___05Frready_in[i] = false;
         }
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+#ifdef MULTICORE
+		for (i = 0; i < TEST_TRIBE_CPU_CORES; ++i) {
+			// Device models are not assigned yet. _work() drives the current values
+			// before the first Verilator evaluation.
+			tribe.clint_msip_per_core_in[i] = false;
+			tribe.clint_mtip_per_core_in[i] = false;
+			tribe.external_irq_per_core_in[i] = false;
+		}
+#else
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.external_irq_in = plic.external_irq_out();
+#endif
         tribe.time_lo_in = clint.debug_mtime_lo_out();
         tribe.time_hi_in = clint.debug_mtime_hi_out();
-        tribe.external_irq_in = plic.external_irq_out();
 #endif
         AXI4_DRIVER_FROM_VERILATOR_CONST(mem0.axi_in, tribe, 0, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
         AXI4_DRIVER_FROM_VERILATOR_CONST(mem1.axi_in, tribe, 1, u<clog2(MAX_RAM_SIZE)>, verilator_wide_to_logic);
@@ -998,9 +1035,17 @@ public:
         AXI4_DRIVER_FROM(plic.axi_in, iospace.masters_out[5]);
         uart.uart_rx_valid_in = _ASSIGN((bool)uart_rx_valid_reg);
         uart.uart_rx_data_in = _ASSIGN((uint8_t)uart_rx_data_reg);
+#ifdef MULTICORE
+        for (i = 0; i < TEST_TRIBE_CPU_CORES; ++i) {
+            clint.set_mtimecmp_per_hart_in[i] = _ASSIGN_I((bool)tribe.sbi_set_timer_per_core_out[i]);
+            clint.set_mtimecmp_lo_per_hart_in[i] = _ASSIGN_I((uint32_t)tribe.sbi_timer_lo_per_core_out[i]);
+            clint.set_mtimecmp_hi_per_hart_in[i] = _ASSIGN_I((uint32_t)tribe.sbi_timer_hi_per_core_out[i]);
+        }
+#else
         clint.set_mtimecmp_in = _ASSIGN((bool)tribe.sbi_set_timer_out);
         clint.set_mtimecmp_lo_in = _ASSIGN((uint32_t)tribe.sbi_timer_lo_out);
         clint.set_mtimecmp_hi_in = _ASSIGN((uint32_t)tribe.sbi_timer_hi_out);
+#endif
         for (i = 0; i < 32; ++i) {
             plic.source_irq_in[i] = _ASSIGN(false);
         }
@@ -1093,6 +1138,9 @@ public:
     {
         bool sd_dma_cache_invalidate_ready;
         bool eth_dma_cache_invalidate_ready;
+#ifdef VERILATOR
+        size_t i;
+#endif
         sd_dma_cache_invalidate_ready = true;
         eth_dma_cache_invalidate_ready = true;
 #ifndef VERILATOR
@@ -1123,11 +1171,19 @@ public:
         AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(tribe, axi_in, 1, sdcard.dma_out);
         AXI4_DRIVER_POKE_VERILATOR_IF_FROM_IF(tribe, axi_in, 2, ethgig_dma.dma_out);
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
+#ifdef MULTICORE
+        for (i = 0; i < TEST_TRIBE_CPU_CORES; ++i) {
+            tribe.clint_msip_per_core_in[i] = clint.msip_per_hart_out[i]();
+            tribe.clint_mtip_per_core_in[i] = clint.mtip_per_hart_out[i]();
+            tribe.external_irq_per_core_in[i] = plic.external_irq_per_hart_out[i]();
+        }
+#else
         tribe.clint_msip_in = clint.msip_out();
         tribe.clint_mtip_in = clint.mtip_out();
+        tribe.external_irq_in = plic.external_irq_out();
+#endif
         tribe.time_lo_in = clint.debug_mtime_lo_out();
         tribe.time_hi_in = clint.debug_mtime_hi_out();
-        tribe.external_irq_in = plic.external_irq_out();
 #endif
 
         tribe.clk = 0;

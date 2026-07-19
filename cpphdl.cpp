@@ -19,6 +19,7 @@
 #include "Struct.h"
 #include "Enum.h"
 #include "json_output.h"
+#include "Combs.h"
 
 #include <algorithm>
 #include <array>
@@ -1206,7 +1207,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     // type. Match the name already installed by the concrete base, including
     // the base prefix used inside a derived module.
     std::string memberLookupName = fieldName;
-    if (hlp.mod->origName.find(hlp.parent->getQualifiedNameAsString()) != 0) {
+    if (hlp.mod->origName != hlp.parent->getQualifiedNameAsString()) {
         memberLookupName = genTypeName(hlp.parent->getQualifiedNameAsString()) + "___" + fieldName;
     }
     if (std::find_if(hlp.mod->members.begin(), hlp.mod->members.end(),
@@ -1365,6 +1366,36 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                     QualType QT = FD->getType().getNonReferenceType();
                     hlp.skipStdFunctionType(QT);
                     cpphdl::Expr exprSub = hlp.digQT(QT);
+                    // Interface fields are flattened directly into module ports, so
+                    // their struct types do not pass through the normal field import
+                    // path below. Export/import the concrete nested type explicitly.
+                    // For template Interfaces, use the instantiated field declaration;
+                    // exporting the primary's dependent type would create the wrong
+                    // package instead of (for example) Payload16_pkg.
+                    const FieldDecl* concreteFD = FD;
+                    if (interfaceSpecialization) {
+                        const CXXRecordDecl* definition = interfaceSpecialization->getDefinition();
+                        if (definition) {
+                            for (Decl* concreteD : definition->decls()) {
+                                auto* candidate = dyn_cast<FieldDecl>(concreteD);
+                                if (candidate && candidate->getName() == FD->getName()) {
+                                    concreteFD = candidate;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    QualType concreteQT = concreteFD->getType().getNonReferenceType();
+                    hlp.skipStdFunctionType(concreteQT);
+                    auto* subCRD = hlp.resolveCXXRecordDecl(concreteQT);
+                    if (cpphdlRecordShouldExportAsStruct(subCRD, hlp)) {
+                        auto st = exportStruct(subCRD, hlp);
+                        if (std::find_if(hlp.mod->imports.begin(), hlp.mod->imports.end(),
+                                [&](auto& imp){ return imp.name == st.name; }) == hlp.mod->imports.end()) {
+                            hlp.mod->imports.emplace_back(st.name);
+                            currProject->structs.emplace_back(std::move(st));
+                        }
+                    }
                     if (interfaceParams) {
                         size_t i = 0;
                         for (const clang::NamedDecl *param : *interfaceParams) {
@@ -1410,7 +1441,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         }
     }
     else {
-        if (hlp.mod->origName.find(hlp.parent->getQualifiedNameAsString()) != 0) {  // add base class name, ports dont get this prefix
+        if (hlp.mod->origName != hlp.parent->getQualifiedNameAsString()) {  // add base class name, ports dont get this prefix
             fieldName = genTypeName(hlp.parent->getQualifiedNameAsString()) + "___" + fieldName;
         }
 
@@ -1555,7 +1586,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     // - module object's methods
     // - base module object's methods
     // - external object's methods (require _this)
-    if (hlp.mod->origName.find(MD->getParent()->getQualifiedNameAsString()) != 0) {  // method of base class or external object (not current mod)
+    // Class-name prefixes do not imply ownership: a member module named Tribe
+    // must remain external while converting a parent named TribeTest.
+    if (hlp.mod->origName != MD->getParent()->getQualifiedNameAsString()) {  // method of base class or external object (not current mod)
         std::string parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
         if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
             if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_assign") {
@@ -1884,7 +1917,9 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         for (auto* aRD : abstractDefs) {  // we take from abstract: 1) initializers for members, 2) template numeric parameters names, 3) numeric template parameter expressions in all code
-            if (/*hlp.mod->name*/RD->getQualifiedNameAsString().find(aRD->getQualifiedNameAsString()) == 0) {
+            // Apply an abstract declaration only to that class or a real base.
+            // Textual prefixes also match unrelated modules such as Tribe/TribeTest.
+            if (isCurrentOrBaseRecord(RD, aRD)) {
                 DEBUG_AST(debugIndent, "*** Applying abstract: " << aRD->getQualifiedNameAsString() << " to " << hlp.mod->name);  // get original parameters substitution form abstract, need only for numbers
 
                 // Parse primary-template fields in their own dependent context.
@@ -2027,20 +2062,29 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
 struct MethodConsumer : public ASTConsumer
 {
-    explicit MethodConsumer(ASTContext* context) : Visitor(context) {}
+    explicit MethodConsumer(ASTContext* context, cpphdl::CombsOptimizer* combsOptimizer)
+        : Visitor(context), combsOptimizer(combsOptimizer) {}
 
     void HandleTranslationUnit(ASTContext &context) override
     {
-        Visitor.TraverseDecl(context.getTranslationUnitDecl());
+        if (combsOptimizer) {
+            combsOptimizer->collect(context);
+        } else {
+            Visitor.TraverseDecl(context.getTranslationUnitDecl());
+        }
     }
 
     MethodVisitor Visitor;
+    cpphdl::CombsOptimizer* combsOptimizer;
 };
 
 static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
 struct MyFrontendAction : public ASTFrontendAction
 {
+    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr)
+        : combsOptimizer(combsOptimizer) {}
+
     bool BeginSourceFileAction(CompilerInstance &CI) override
     {
         // Fetched Clang 21 can report failed include-search candidates here
@@ -2054,8 +2098,23 @@ struct MyFrontendAction : public ASTFrontendAction
 
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override
     {
-        return std::make_unique<MethodConsumer>(&CI.getASTContext());
+        return std::make_unique<MethodConsumer>(&CI.getASTContext(), combsOptimizer);
     }
+
+    cpphdl::CombsOptimizer* combsOptimizer;
+};
+
+struct MyFrontendActionFactory : public tooling::FrontendActionFactory
+{
+    explicit MyFrontendActionFactory(cpphdl::CombsOptimizer* combsOptimizer)
+        : combsOptimizer(combsOptimizer) {}
+
+    std::unique_ptr<FrontendAction> create() override
+    {
+        return std::make_unique<MyFrontendAction>(combsOptimizer);
+    }
+
+    cpphdl::CombsOptimizer* combsOptimizer;
 };
 
 int main(int argc, const char **argv)
@@ -2064,6 +2123,7 @@ int main(int argc, const char **argv)
     std::deque<std::string> owned_args;
     std::string generated_dir = "generated";
     std::string json_output;
+    std::string optimize_combs_root;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2092,6 +2152,26 @@ int main(int argc, const char **argv)
         // Consuming it before "--" prevents Clang from seeing an unknown option.
         // It disables only cpphdl's implicit SYNTHESIS definition.
         if (!saw_double_dash && std::strcmp(arg, "--no-synthesis-flag") == 0) {
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_root = argv[++i];
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs=", 17) == 0) {
+            optimize_combs_root = arg + 17;
+            if (optimize_combs_root.empty()) {
+                llvm::errs() << "--optimize-combs requires a root module class\n";
+                return 1;
+            }
             add_synthesis_flag = false;
             continue;
         }
@@ -2170,7 +2250,8 @@ int main(int argc, const char **argv)
     // Build the common arguments first and append the define conditionally.
     std::vector<std::string> args{
         "-x", "c++",
-        "-std=c++26"};
+        "-std=c++26",
+        "-Wno-ambiguous-reversed-operator"};
     if (add_synthesis_flag) {
         args.push_back("-DSYNTHESIS");
     }
@@ -2205,8 +2286,20 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    int ret = Tool.run(tooling::newFrontendActionFactory<MyFrontendAction>().get());
-    currProject->generate(generated_dir);
+    cpphdl::CombsOptimizer combsOptimizer;
+    MyFrontendActionFactory actionFactory(
+        optimize_combs_root.empty() ? nullptr : &combsOptimizer);
+    int ret = Tool.run(&actionFactory);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!optimize_combs_root.empty()) {
+        if (!combsOptimizer.generate(optimize_combs_root, generated_dir)) {
+            return 1;
+        }
+    } else {
+        currProject->generate(generated_dir);
+    }
     if (!json_output.empty() && !cpphdl::writeJsonOutput(*currProject, json_output)) {
         return 1;
     }

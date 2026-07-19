@@ -64,7 +64,7 @@ template<size_t WIDTH>
 // Concatenations are used in constant expressions for widths and parameters.
 // Non-constexpr conversion helpers prevented otherwise constant cat expressions.
 // Keep conversion bit-accurate while making logic and integer paths constexpr.
-constexpr logic<WIDTH> cat_to_logic(const logic<WIDTH>& value)
+constexpr const logic<WIDTH>& cat_to_logic(const logic<WIDTH>& value)
 {
     return value;
 }
@@ -93,7 +93,7 @@ logic<array<COUNT, TYPE, PACKED>::_size_bits()> cat_to_logic(const array<COUNT, 
 }
 
 template<typename T>
-auto cat_to_logic(const reg<T>& value)
+constexpr decltype(auto) cat_to_logic(const reg<T>& value)
 {
     return cat_to_logic(static_cast<const T&>(value));
 }
@@ -106,19 +106,37 @@ struct cat : logic<SUM<N...>()>
     // cat construction previously depended on memset, memcpy, and runtime conversion.
     // Those operations prevented valid SystemVerilog constant concatenations in C++.
     // Use constexpr loops and logic's constexpr scalar conversion throughout the type.
-    constexpr void append(size_t& high_offset)
+    template<size_t HIGH_OFFSET>
+    constexpr void append()
     {
-        (void)high_offset;
+        static_assert(HIGH_OFFSET == 0, "cat width accounting mismatch");
     }
 
-    template<size_t ARG_WIDTH, typename... Args>
-    constexpr void append(size_t& high_offset, const logic<ARG_WIDTH>& arg, const Args&... args)
+    template<size_t HIGH_OFFSET, size_t ARG_WIDTH, typename... Args>
+    constexpr void append(const logic<ARG_WIDTH>& arg, const Args&... args)
     {
-        high_offset -= ARG_WIDTH;
-        for (size_t i = 0; i < ARG_WIDTH; ++i) {
-            (*static_cast<logic<WIDTH>*>(this)).set(high_offset + i, arg.get(i));
+        static_assert(HIGH_OFFSET >= ARG_WIDTH, "cat argument exceeds result width");
+        constexpr size_t nextOffset = HIGH_OFFSET - ARG_WIDTH;
+        auto& result = *static_cast<logic<WIDTH>*>(this);
+        constexpr size_t byteOffset = nextOffset / 8;
+        constexpr size_t bitOffset = nextOffset % 8;
+        constexpr size_t argBytes = logic<ARG_WIDTH>::SIZE;
+
+        // The destination starts at zero and concatenated fields never overlap.
+        // Copy whole bytes and merge only the two boundary bytes when a field is
+        // not byte-aligned.  This keeps large concatenations linear in bytes.
+        for (size_t i = 0; i < argBytes; ++i) {
+            uint16_t byte = arg.bytes[i];
+            if constexpr ((ARG_WIDTH % 8) != 0) {
+                if (i + 1 == argBytes)
+                    byte &= static_cast<uint16_t>((1u << (ARG_WIDTH % 8)) - 1u);
+            }
+            const uint16_t shifted = static_cast<uint16_t>(byte << bitOffset);
+            result.bytes[byteOffset + i] |= static_cast<uint8_t>(shifted);
+            if (bitOffset != 0 && byteOffset + i + 1 < logic<WIDTH>::SIZE)
+                result.bytes[byteOffset + i + 1] |= static_cast<uint8_t>(shifted >> 8);
         }
-        append(high_offset, args...);
+        append<nextOffset>(args...);
     }
 
     template<typename... Args>
@@ -126,8 +144,7 @@ struct cat : logic<SUM<N...>()>
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
-        size_t high_offset = WIDTH;
-        append(high_offset, cat_to_logic(args)...);
+        append<WIDTH>(cat_to_logic(args)...);
     }
 
     constexpr const cat& operator=(const cat& other)

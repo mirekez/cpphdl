@@ -2,12 +2,12 @@
 
 #include "L2CacheMemory.h"
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Implements tag lookup, word merging, fill merging, hit-beat packing, and two-beat/cross-line response glue.
-class L2CacheTagData : public L2CacheMemory<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>
+class L2CacheTagData : public L2CacheMemory<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
-    using Base = L2CacheMemory<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>;
+    using Base = L2CacheMemory<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
 public:
 
 protected:
@@ -20,7 +20,7 @@ protected:
     using Base::tag_q_reg;
     using Base::state_reg;
     using Base::req_reg;
-    using Base::CPU_RESPONSE_INDEX;
+    using Base::CPU_RESPONSE_BASE;
     using Base::response_reg;
     using Base::cross_low_reg;
     using Base::cross_high_reg;
@@ -179,9 +179,16 @@ protected:
 
     // Return only the registered CPU response beat so no live RAM, FSM, or AXI
     // path reaches either L1 read-data output.
-    _LAZY_COMB(read_data_comb, logic<PORT_BITWIDTH>)
-        read_data_comb = response_reg[CPU_RESPONSE_INDEX].valid ?
-            (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_INDEX].r.data : logic<PORT_BITWIDTH>(0);
+    logic<PORT_BITWIDTH> read_data_comb[CPU_PORTS];
+
+    // Reconstruct every CPU read-data output from only that CPU's registered response slot.
+    logic<PORT_BITWIDTH> (&read_data_comb_func())[CPU_PORTS]
+    {
+        uint32_t index;
+        for (index = 0; index < CPU_PORTS; ++index) {
+            read_data_comb[index] = response_reg[CPU_RESPONSE_BASE + index].valid ?
+                (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_BASE + index].r.data : logic<PORT_BITWIDTH>(0);
+        }
         return read_data_comb;
     }
 

@@ -85,6 +85,8 @@ class TestL1Cache : public Module
     uint8_t write_mask = 0;
     bool stall = false;
     bool flush = false;
+    bool invalidate_line = false;
+    uint32_t invalidate_addr = 0;
     bool direct_mode = false;
     uint32_t direct_mem_data = 0;
     bool error = false;
@@ -104,6 +106,8 @@ public:
         cache.stall_in = _ASSIGN_REG(stall);
         cache.flush_in = _ASSIGN_REG(flush);
         cache.invalidate_in = _ASSIGN(false);
+        cache.invalidate_line_in = _ASSIGN_REG(invalidate_line);
+        cache.invalidate_addr_in = _ASSIGN_REG(invalidate_addr);
         cache.cache_disable_in = _ASSIGN_REG(direct_mode);
         cache.debugen_in = false;
         cache.__inst_name = __inst_name + "/cache";
@@ -238,6 +242,8 @@ public:
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.invalidate_in = false;
+        cache.invalidate_line_in = invalidate_line;
+        cache.invalidate_addr_in = invalidate_addr;
         cache.cache_disable_in = direct_mode;
         cache.debugen_in = false;
         cache.clk = clk;
@@ -300,6 +306,8 @@ public:
         addr = 0;
         stall = false;
         flush = false;
+        invalidate_line = false;
+        invalidate_addr = 0;
         cycle(true);
         cycle(false);
         for (size_t i = 0; i < SETS + 8 && busy(); ++i) {
@@ -427,6 +435,64 @@ public:
         write_word(request_addr, 0xa55a33cc);
         read_check("focused store reload miss", request_addr, false);
         read_check("focused store reload hit", request_addr, true);
+    }
+
+    void focused_peer_line_invalidate_check()
+    {
+        uint32_t invalidated_addr = 13 * SETS * LINE_SIZE + 2 * LINE_SIZE + 8;
+        uint32_t preserved_addr = 14 * SETS * LINE_SIZE + 3 * LINE_SIZE + 8;
+        read_check("focused peer invalidate fill", invalidated_addr, false);
+        read_check("focused peer preserve fill", preserved_addr, false);
+
+        idle();
+        invalidate_addr = invalidated_addr;
+        invalidate_line = true;
+        cycle(false);
+        invalidate_line = false;
+        cycle(false);
+        // Adjacent peer stores can target the same cache set before this cache
+        // reloads. The generation must advance again rather than aliasing stale.
+        invalidate_line = true;
+        cycle(false);
+        invalidate_line = false;
+        cycle(false);
+
+        read_check("focused peer invalidated reload", invalidated_addr, false);
+        read_check("focused peer unrelated hit", preserved_addr, true);
+    }
+
+    void focused_peer_invalidate_active_poll_check()
+    {
+        uint32_t request_addr = 15 * SETS * LINE_SIZE + 5 * LINE_SIZE + 8;
+        uint32_t replacement = 0x4c31534du;
+        read_check("focused active peer fill", request_addr, false);
+        idle();
+
+        // Start a cached polling lookup, then publish the peer's backing-memory
+        // update while that lookup can still have sampled the old tag epoch.
+        addr = request_addr;
+        read = true;
+        cycle(false);
+        ram_image[request_addr >> 2] = replacement;
+        invalidate_addr = request_addr;
+        invalidate_line = true;
+        cycle(false);
+        invalidate_line = false;
+
+        bool saw_refill = false;
+        bool got_replacement = false;
+        for (size_t i = 0; i < 64 && !got_replacement; ++i) {
+            cycle(false);
+            saw_refill |= PORT_VALUE(L1_MEM_READ_IN);
+            got_replacement = valid() && raddr() == request_addr && rdata() == replacement;
+        }
+        if (!saw_refill || !got_replacement) {
+            std::print("\nfocused active peer invalidate ERROR addr={:#x}: refill={} valid={} raddr={:#x} data={:#x} expected={:#x}\n",
+                request_addr, saw_refill, valid(), raddr(), rdata(), replacement);
+            error = true;
+        }
+        read = false;
+        cycle(false);
     }
 
     void focused_cached_hit_stall_hold_check()
@@ -742,6 +808,12 @@ public:
         focused_refill_assembly_check();
         if (!error) {
             focused_store_invalidate_check();
+        }
+        if (!error) {
+            focused_peer_line_invalidate_check();
+        }
+        if (!error) {
+            focused_peer_invalidate_active_poll_check();
         }
         if (!error) {
             focused_cached_hit_stall_hold_check();

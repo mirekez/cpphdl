@@ -26,13 +26,16 @@ protected:
     using Base::stall_in;
     using Base::state_reg;
     using Base::tag_epoch_reg;
+    using Base::tag_set_epoch_reg;
     using Base::tag_ram;
 
     // Check valid, epoch, and tag together in C++ tests without exporting a specialization-bound SV helper.
 #ifndef SYNTHESIS
-    static bool tag_matches(const logic<256>& entry, uint32_t tag, bool epoch)
+    static bool tag_matches(const logic<256>& entry, uint32_t tag, bool epoch,
+        uint8_t set_epoch)
     {
-        return (bool)entry[TAG_BITS + 1] && (bool)entry[TAG_BITS] == epoch &&
+        return (bool)entry[TAG_BITS + 9] && (bool)entry[TAG_BITS + 8] == epoch &&
+            entry.bits(TAG_BITS + 7, TAG_BITS) == set_epoch &&
             entry.bits(TAG_BITS - 1, 0) == tag;
     }
 #endif
@@ -55,8 +58,10 @@ protected:
             for (i = 0; i < WAYS; ++i) {
                 tag_entry = tag_ram[i].q_out();
                 // Keep the parameter-dependent slices in this specialization's module body.
-                if ((bool)tag_entry[TAG_BITS + 1] &&
-                    (bool)tag_entry[TAG_BITS] == (bool)tag_epoch_reg &&
+                if ((bool)tag_entry[TAG_BITS + 9] &&
+                    (bool)tag_entry[TAG_BITS + 8] == (bool)tag_epoch_reg &&
+                    tag_entry.bits(TAG_BITS + 7, TAG_BITS) ==
+                        tag_set_epoch_reg[(uint32_t)request_geometry_comb_func().set] &&
                     tag_entry.bits(TAG_BITS - 1, 0) ==
                         (uint32_t)request_geometry_comb_func().tag) {
                     lookup_comb.hit = true;
@@ -88,10 +93,12 @@ protected:
     }
 
     // Build the valid/epoch/tag payload installed after the final refill beat.
-    _LAZY_COMB(refill_tag_comb, logic<ADDR_BITS - clog2(TOTAL_CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2>)
+    _LAZY_COMB(refill_tag_comb, logic<ADDR_BITS - clog2(TOTAL_CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 10>)
         refill_tag_comb = request_geometry_comb_func().tag;
-        refill_tag_comb[TAG_BITS] = (bool)tag_epoch_reg;
-        refill_tag_comb[TAG_BITS + 1] = true;
+        refill_tag_comb.bits(TAG_BITS + 7, TAG_BITS) =
+            tag_set_epoch_reg[(uint32_t)request_geometry_comb_func().set];
+        refill_tag_comb[TAG_BITS + 8] = (bool)tag_epoch_reg;
+        refill_tag_comb[TAG_BITS + 9] = true;
         return refill_tag_comb;
     }
 };

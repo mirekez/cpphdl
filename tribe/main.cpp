@@ -3,7 +3,7 @@
 #endif
 #define MAIN_FILE_INCLUDED
 
-#include "Tribe.h"
+#include "TribeTestModule.h"
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
@@ -351,12 +351,14 @@ bool TestTribe::capture_uart_output(const UartOutputConfig& config, UartOutputSt
             std::print(uart_rx_trace_out, "*** uart-rx-script-enabled after '{}' ***\n", *config.scripted_after);
         }
     }
+    // An explicit UART marker is a completion contract even when the harness
+    // also has a tohost address for normal bare-metal termination.
+    if (config.expected_contains && !config.expected_contains->empty() &&
+        state.captured_output.find(*config.expected_contains) != std::string::npos) {
+        state.expected_marker_seen = true;
+        return true;
+    }
     if (!tohost_addr) {
-        if (config.expected_contains && !config.expected_contains->empty() &&
-            state.captured_output.find(*config.expected_contains) != std::string::npos) {
-            state.expected_marker_seen = true;
-            return true;
-        }
         if (!state.expected_output.empty() && state.captured_output.size() >= state.expected_output.size()) {
             error = state.captured_output != state.expected_output;
             return true;
@@ -443,6 +445,45 @@ bool TestTribe::save_sd_image(const std::string& sd_image_file)
     return true;
 }
 
+#if defined(MULTICORE) && !defined(VERILATOR) && defined(ENABLE_MMU_TLB)
+void TestTribe::trace_multicore_pc_tick(const TraceConfig& trace, FILE* trace_pc_out)
+{
+    uint32_t core;
+
+    for (core = 1; core < TEST_TRIBE_CPU_CORES; ++core) {
+        TribeCoreDebug core_debug = tribe.cores[core].debug_core_out();
+        TribeCacheDebug cache_debug = tribe.cores[core].debug_cache_out();
+        TribeWritebackDebug wb_debug = tribe.cores[core].debug_wb_out();
+        TribePerf perf = tribe.cores[core].perf_out();
+        uint32_t pc = (uint32_t)core_debug.pc;
+
+        std::print(trace_pc_out,
+            "trace-core core={} cycle={} pc={:08x} sym={} dmem={:08x} rd={} wr={} data={:08x}"
+            " atomic_req={} atomic_grant={} hst={} dcw={} icw={} mw={} wblr={} wbmemw={}"
+            " dcr={} dcwr={} dca={:08x}\n",
+            core,
+            perf_clocks,
+            pc,
+            trace.pc_symbols->lookup(pc),
+            (uint32_t)tribe.cores[core].dmem_addr_out(),
+            (bool)tribe.cores[core].dmem_read_out(),
+            (bool)tribe.cores[core].dmem_write_out(),
+            (uint32_t)tribe.cores[core].dmem_write_data_out(),
+            (bool)tribe.cores[core].atomic_request_out(),
+            (bool)tribe.cores[core].atomic_grant_in(),
+            (bool)perf.hazard_stall,
+            (bool)perf.dcache_wait,
+            (bool)perf.icache_wait,
+            (bool)core_debug.memory_wait,
+            (bool)wb_debug.load_ready,
+            (bool)wb_debug.mem_wait,
+            (bool)cache_debug.dcache_cpu_read,
+            (bool)cache_debug.dcache_cpu_write,
+            (uint32_t)cache_debug.dcache_cpu_addr);
+    }
+}
+#endif
+
 void TestTribe::trace_pc_tick(const TraceConfig& trace)
 {
     if (!(trace_period_hit(trace))) {
@@ -487,6 +528,9 @@ void TestTribe::trace_pc_tick(const TraceConfig& trace)
         false, false, 0u, 0u, false, false, false, false, false, false, false
 #endif
         );
+#if defined(MULTICORE) && !defined(VERILATOR) && defined(ENABLE_MMU_TLB)
+    trace_multicore_pc_tick(trace, trace_pc_out);
+#endif
     if (trace.pc_file) {
         fflush(trace.pc_file);
     }
@@ -1610,6 +1654,9 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+#ifdef MULTICORE
+    command += " -DMULTICORE";
+#endif
     command += " -I " + shell_quote_path(source_root / "include");
     command += " -I " + shell_quote_path(source_root / "tribe" / "common");
     command += " -I " + shell_quote_path(source_root / "tribe" / "spec");
@@ -1632,13 +1679,13 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         return;
     }
 
-    if (fs::exists("generated/Tribe.sv") || fs::exists("rv32i.bin") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
+    if (fs::exists("generated/TribeTest.sv") || fs::exists("rv32i.bin") || fs::exists("uart.elf") || fs::exists("rv32i.bin")) {
         return;
     }
 
     fs::path exe = fs::absolute(argv0);
     fs::path exe_dir = exe.parent_path();
-    if (!exe_dir.empty() && (fs::exists(exe_dir / "generated" / "Tribe.sv") || fs::exists(exe_dir / "rv32i.bin") || fs::exists(exe_dir / "uart.elf") || fs::exists(exe_dir / "rv32i.bin"))) {
+    if (!exe_dir.empty() && (fs::exists(exe_dir / "generated" / "TribeTest.sv") || fs::exists(exe_dir / "rv32i.bin") || fs::exists(exe_dir / "uart.elf") || fs::exists(exe_dir / "rv32i.bin"))) {
         fs::current_path(exe_dir);
     }
 }
@@ -1870,7 +1917,7 @@ int main (int argc, char** argv)
             ok = false;
         }
         else {
-            ok &= VerilatorCompile(__FILE__, "Tribe", {"Predef_pkg",
+            ok &= VerilatorCompile(__FILE__, "TribeTest", {"Predef_pkg",
                   "Amo_pkg",
                   "Trap_pkg",
                   "State_pkg",
@@ -1912,6 +1959,7 @@ int main (int argc, char** argv)
                   "RAM",
                   "L1Cache",
                   "L2Cache",
+                  "Tribe",
                   "BranchPredictor",
                   "InterruptController",
 	                  "Decode",
@@ -1926,12 +1974,13 @@ int main (int argc, char** argv)
                           (source_root / "tribe" / "common").string(),
                           (source_root / "tribe" / "spec").string(),
                           (source_root / "tribe" / "cache").string(),
-                          (source_root / "tribe" / "devices").string()});
+                          (source_root / "tribe" / "devices").string()},
+                          TEST_TRIBE_CPU_CORES);
         }
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
         ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("Tribe/obj_dir/VTribe") + (debug?" --debug":"") + " 0").c_str()) == 0)
+            && ((only != -1 && only != 0) || std::system((std::string("TribeTest/obj_dir/VTribeTest") + (debug?" --debug":"") + " 0").c_str()) == 0)
         );
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }

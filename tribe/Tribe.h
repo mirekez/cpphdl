@@ -45,7 +45,6 @@ static constexpr size_t TRIBE_L2_AXI_WIDTH = 256;  // default
 #include "verif/SDCardVerif.h"
 #endif
 #include "cache/L1Cache.h"
-#include "cache/l2/L2Cache.h"
 
 #include <cstdlib>
 #include <csignal>
@@ -108,7 +107,6 @@ class Tribe: public Module
     File<32,32>     regs;
     L1Cache<L1_ICACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
     L1Cache<L1_DCACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
-    L2Cache<L2_CACHE_SIZE,TRIBE_L2_AXI_WIDTH,CACHE_LINE_SIZE,L2_CACHE_ASSOCIATIONS,ADDR_BITS,clog2(MAX_RAM_SIZE),L2_MEM_PORTS> l2cache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
     reg<u1> icache_invalidate_issued_reg;
 
@@ -120,6 +118,10 @@ public:
     _PORT(bool)      dmem_read_out;
     _PORT(uint32_t)  dmem_addr_out;
     _PORT(uint32_t)  imem_read_addr_out;
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+    _PORT(bool)      atomic_request_out = _ASSIGN_COMB(atomic_request_comb_func());
+    _PORT(bool)      atomic_grant_in = _ASSIGN(true);
+#endif
 #ifdef ENABLE_MMU_TLB
     _PORT(TribeCoreDebug)      debug_core_out = _ASSIGN_COMB(debug_core_comb_func());
     _PORT(TribeMmuDebug)       debug_mmu_out = _ASSIGN_COMB(debug_mmu_comb_func());
@@ -134,34 +136,47 @@ public:
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
     _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
+#ifdef MULTICORE
+    _PORT(bool)      sbi_send_ipi_out = _ASSIGN_COMB(sbi_send_ipi_comb_func());
+    _PORT(bool)      sbi_remote_fence_i_out = _ASSIGN_COMB(sbi_remote_fence_i_comb_func());
+    _PORT(bool)      sbi_remote_sfence_vma_out = _ASSIGN_COMB(sbi_remote_sfence_vma_comb_func());
+    _PORT(uint32_t)  sbi_hart_mask_out = _ASSIGN_COMB(sbi_hart_mask_comb_func());
+    _PORT(uint32_t)  sbi_hart_base_out = _ASSIGN_COMB(sbi_hart_base_comb_func());
+#endif
     _PORT(TribeSbiDebug) debug_sbi_out = _ASSIGN_COMB(debug_sbi_comb_func());
     _PORT(uint32_t)  reset_pc_in;
     _PORT(uint32_t)  boot_hartid_in;
     _PORT(uint32_t)  boot_dtb_addr_in;
     _PORT(u<2>)      boot_priv_in;
     _PORT(bool)      external_cache_invalidate_in;
+#ifdef MULTICORE
+    _PORT(bool)      peer_cache_invalidate_in = _ASSIGN(false);
+    _PORT(uint32_t)  peer_cache_invalidate_addr_in = _ASSIGN((uint32_t)0);
+#endif
     _PORT(uint32_t)  memory_base_in;
     _PORT(uint32_t)  memory_size_in;
     _PORT(uint32_t)  mem_region_size_in[L2_MEM_PORTS];
+    // The parent cluster connects these L1 miss/PTW channels to its shared L2 cache.
+    L1MemIf<TRIBE_L2_AXI_WIDTH> i_mem_out;
+    L1MemIf<TRIBE_L2_AXI_WIDTH> d_mem_out;
 #if defined(ENABLE_ZICSR) && defined(ENABLE_ISR)
     _PORT(bool)      clint_msip_in;
     _PORT(bool)      clint_mtip_in;
     _PORT(uint32_t)  time_lo_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t)  time_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool)      external_irq_in = _ASSIGN(false);
+#ifdef MULTICORE
+    _PORT(bool)      sbi_ipi_in = _ASSIGN(false);
+    _PORT(bool)      remote_fence_i_in = _ASSIGN(false);
+    _PORT(bool)      remote_sfence_vma_in = _ASSIGN(false);
 #endif
-
-    // External coherent masters use CPU physical addresses. L2 narrows only
-    // after region decode when driving axi_out[] toward memory/device regions.
-    Axi4If<32, 4, TRIBE_L2_AXI_WIDTH> axi_in[L2_MEM_PORTS];
-    Axi4If<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> axi_out[L2_MEM_PORTS];
+#endif
 
     _PORT(TribePerf) perf_out = _ASSIGN_COMB(perf_comb_func());
     bool              debugen_in;
 
     void _assign()
     {
-        size_t i;
 //        dec.state_in       = _ASSIGN_REG( state_reg[0] );  // execute stage input is same
         dec.pc_in          = _ASSIGN_REG( pc );
         dec.instr_valid_in = _ASSIGN(fetch_valid_comb_func());
@@ -181,6 +196,10 @@ public:
         exe_mem.dcache_read_expected_addr_in = dmmu.paddr_out;
 #else
         exe_mem.dcache_read_expected_addr_in = exe_mem.mem_read_addr_out;
+#endif
+#ifdef MULTICORE
+        exe_mem.reservation_invalidate_in = peer_cache_invalidate_in;
+        exe_mem.reservation_invalidate_addr_in = peer_cache_invalidate_addr_in;
 #endif
 #endif
         exe_mem.hold_in = _ASSIGN( memory_wait_comb_func() );
@@ -227,6 +246,9 @@ public:
         csr.interrupt_cause_in = irq.interrupt_cause_out;
         csr.interrupt_to_supervisor_in = irq.interrupt_to_supervisor_out;
         csr.irq_pending_bits_in = irq.mip_out;
+#ifdef MULTICORE
+        csr.software_irq_set_in = sbi_ipi_in;
+#endif
 #else
         csr.interrupt_valid_in = _ASSIGN(false);
         csr.interrupt_cause_in = _ASSIGN((uint32_t)0);
@@ -266,7 +288,7 @@ public:
         immu.fill_flags_in = _ASSIGN((uint8_t)0);
         immu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         immu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
-        immu.mem_wait_in = _ASSIGN(!immu_ptw_selected_comb_func() || l2cache.d_mem_in.wait_out());
+        immu.mem_wait_in = _ASSIGN(!immu_ptw_selected_comb_func() || d_mem_out.wait_out());
         immu.__inst_name = __inst_name + "/immu";
         immu._assign();
 
@@ -298,7 +320,7 @@ public:
         dmmu.fill_flags_in = _ASSIGN((uint8_t)0);
         dmmu.sfence_in = _ASSIGN(sfence_vma_comb_func());
         dmmu.mem_read_data_in = _ASSIGN_COMB(mmu_l2_read_word_comb_func());
-        dmmu.mem_wait_in = _ASSIGN(!dmmu_ptw_selected_comb_func() || l2cache.d_mem_in.wait_out());
+        dmmu.mem_wait_in = _ASSIGN(!dmmu_ptw_selected_comb_func() || d_mem_out.wait_out());
         dmmu.__inst_name = __inst_name + "/dmmu";
         dmmu._assign();
 #endif
@@ -333,11 +355,17 @@ public:
         regs._assign();
 
         dcache.read_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_read_out() && !dcache.busy_out()
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            && (!atomic_request_comb_func() || atomic_grant_in())
+#endif
 #ifdef ENABLE_MMU_TLB
             && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
 #endif
             );
         dcache.write_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_write_out() && !dcache.busy_out()
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            && (!atomic_request_comb_func() || atomic_grant_in())
+#endif
 #ifdef ENABLE_MMU_TLB
             && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
 #endif
@@ -352,9 +380,18 @@ public:
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
         dcache.stall_in = _ASSIGN(branch_stall_comb_func());
         dcache.flush_in = _ASSIGN(false);
+#ifdef MULTICORE
         dcache.invalidate_in = external_cache_invalidate_in;
+        dcache.invalidate_line_in = peer_cache_invalidate_in;
+        dcache.invalidate_addr_in = peer_cache_invalidate_addr_in;
+#else
+        dcache.invalidate_in = external_cache_invalidate_in;
+#endif
         // MMIO region bypasses L1 caching; RAM stays cacheable and coherent through L2.
         dcache.cache_disable_in = _ASSIGN(
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            atomic_request_comb_func() ||
+#endif
             (uint32_t)dcache.addr_in() >= memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]() &&
             (uint32_t)dcache.addr_in() < memory_base_in() + memory_size_in());
         dcache.debugen_in = debugen_in;
@@ -367,7 +404,11 @@ public:
         exe_mem.dcache_read_addr_in = dcache.read_addr_out;
         exe_mem.dcache_read_data_in = dcache.read_data_out;
 #endif
-        exe_mem.mem_stall_in = dcache.busy_out;
+        exe_mem.mem_stall_in = _ASSIGN(dcache.busy_out()
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            || (atomic_request_comb_func() && !atomic_grant_in())
+#endif
+            );
         wb_mem.dcache_read_valid_in = dcache.read_valid_out;
         wb_mem.dcache_read_addr_in = dcache.read_addr_out;
         wb_mem.dcache_read_data_in = dcache.read_data_out;
@@ -414,53 +455,35 @@ public:
         // Decode must copy the now-bound instruction response function.
         dec.instr_in = icache.read_data_out;
 
-        l2cache.i_mem_in.read_in = icache.mem_out.read_in;
-        l2cache.i_mem_in.write_in = _ASSIGN(false);
-        l2cache.i_mem_in.addr_in = icache.mem_out.addr_in;
-        l2cache.i_mem_in.write_data_in = _ASSIGN((uint32_t)0);
-        l2cache.i_mem_in.write_mask_in = _ASSIGN((uint8_t)0);
+        i_mem_out.read_in = icache.mem_out.read_in;
+        i_mem_out.write_in = _ASSIGN(false);
+        i_mem_out.addr_in = icache.mem_out.addr_in;
+        i_mem_out.write_data_in = _ASSIGN((uint32_t)0);
+        i_mem_out.write_mask_in = _ASSIGN((uint8_t)0);
+        i_mem_out.cache_disable_in = _ASSIGN(false);
         // CPU data misses and MMU page-table walks share the L2 data-side request path.
-        l2cache.d_mem_in.read_in = _ASSIGN(dcache.mem_out.read_in()
+        d_mem_out.read_in = _ASSIGN(dcache.mem_out.read_in()
 #ifdef ENABLE_MMU_TLB
             || dmmu_ptw_selected_comb_func() || immu_ptw_selected_comb_func()
 #endif
             );
-        l2cache.d_mem_in.write_in = dcache.mem_out.write_in;
-        l2cache.d_mem_in.addr_in =
-#ifdef ENABLE_MMU_TLB
-            _ASSIGN(dcache.mem_out.read_in() || dcache.mem_out.write_in() ? (uint32_t)dcache.mem_out.addr_in() :
-                (dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() : (uint32_t)immu.mem_addr_out()));
-#else
-            dcache.mem_out.addr_in;
-#endif
-        l2cache.d_mem_in.write_data_in = dcache.mem_out.write_data_in;
-        l2cache.d_mem_in.write_mask_in = dcache.mem_out.write_mask_in;
-        l2cache.memory_base_in = memory_base_in;
-        l2cache.memory_size_in = memory_size_in;
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            l2cache.mem_region_size_in[i] = mem_region_size_in[i];
-        }
-        // The last L2 region is IO/MMIO and is statically uncached.
-        l2cache.mem_region_uncached_in[0] = _ASSIGN(false);
-        l2cache.mem_region_uncached_in[1] = _ASSIGN(false);
-        l2cache.mem_region_uncached_in[2] = _ASSIGN(false);
-        l2cache.mem_region_uncached_in[3] = _ASSIGN(true);
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_DRIVER_FROM(l2cache.axi_in[i], axi_in[i]);
-            AXI4_RESPONDER_FROM_I(l2cache.axi_out[i], axi_out[i]);
-        }
-        l2cache.debugen_in = debugen_in;
-        l2cache.__inst_name = __inst_name + "/l2cache";
-        l2cache._assign();
-        // L2 populates L1MemIf response ports in l2cache._assign(); bind the
-        // L1 return path after that so caches do not capture empty functions.
-        dcache.mem_out.read_data_out = l2cache.d_mem_in.read_data_out;
-        dcache.mem_out.wait_out = l2cache.d_mem_in.wait_out;
-        icache.mem_out.read_data_out = l2cache.i_mem_in.read_data_out;
-        icache.mem_out.wait_out = l2cache.i_mem_in.wait_out;
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_RESPONDER_FROM(axi_in[i], l2cache.axi_in[i]);
-        }
+        d_mem_out.write_in = dcache.mem_out.write_in;
+        d_mem_out.addr_in = _ASSIGN_COMB(l2_data_addr_comb_func());
+        d_mem_out.write_data_in = dcache.mem_out.write_data_in;
+        d_mem_out.write_mask_in = dcache.mem_out.write_mask_in;
+        // L1 and L2 bypass are separate decisions. Multicore atomics bypass
+        // the private L1 but must still use the shared L2 coherence point;
+        // only device-space accesses bypass both cache levels.
+        d_mem_out.cache_disable_in = _ASSIGN(
+            l2_data_addr_comb_func() >= memory_base_in() + mem_region_size_in[0]() +
+                mem_region_size_in[1]() + mem_region_size_in[2]() &&
+            l2_data_addr_comb_func() < memory_base_in() + memory_size_in());
+        // The parent binds response functions before _assign(), allowing L1 to
+        // retain the complete shared-L2 return path during structural wiring.
+        dcache.mem_out.read_data_out = d_mem_out.read_data_out;
+        dcache.mem_out.wait_out = d_mem_out.wait_out;
+        icache.mem_out.read_data_out = i_mem_out.read_data_out;
+        icache.mem_out.wait_out = i_mem_out.wait_out;
 
         dmem_write_out      = dcache.mem_out.write_in;
         dmem_write_data_out = dcache.mem_out.write_data_in;
@@ -468,9 +491,6 @@ public:
         dmem_read_out       = dcache.mem_out.read_in;
         dmem_addr_out       = dcache.mem_out.addr_in;
         imem_read_addr_out  = icache.mem_out.addr_in;
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
-        }
     }
 
 #ifdef ENABLE_MMU_TLB
@@ -615,6 +635,16 @@ private:
     reg<u1>         sbi_ret_a1_valid_reg;
     reg<u32>        sbi_ret_a1_reg;
 
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+    // Request cluster ownership for the complete lifetime of an AMO instruction.
+    _LAZY_COMB(atomic_request_comb, bool)
+        return atomic_request_comb =
+            (state_reg[0].valid && state_reg[0].amo_op != Amo::AMONONE) ||
+            (state_reg[1].valid && state_reg[1].amo_op != Amo::AMONONE);
+    }
+
+#endif
+
     // Hold decode/execute when a pending load, split access, or atomic op would be observed too early.
     _LAZY_COMB(hazard_stall_comb, bool)
         hazard_stall_comb = false;
@@ -668,6 +698,20 @@ private:
         return perf_comb;
     }
 
+    // Select the shared-L2 data address once so the request and its cache-level
+    // bypass attribute always describe the same D-cache or page-table access.
+    _LAZY_COMB(l2_data_addr_comb, uint32_t)
+#ifdef ENABLE_MMU_TLB
+        l2_data_addr_comb = dcache.mem_out.read_in() || dcache.mem_out.write_in() ?
+            (uint32_t)dcache.mem_out.addr_in() :
+            (dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() :
+                (uint32_t)immu.mem_addr_out());
+#else
+        l2_data_addr_comb = dcache.mem_out.addr_in();
+#endif
+        return l2_data_addr_comb;
+    }
+
 #ifdef ENABLE_MMU_TLB
     // DMMU page-table walks share the L2 data port after normal CPU data requests.
     _LAZY_COMB(dmmu_ptw_selected_comb, bool)
@@ -694,7 +738,7 @@ private:
 #else
         lane = (addr % 32u) / 4u;
 #endif
-        mmu_l2_read_word_comb = (uint32_t)l2cache.d_mem_in.read_data_out().bits(lane * 32 + 31, lane * 32);
+        mmu_l2_read_word_comb = (uint32_t)d_mem_out.read_data_out().bits(lane * 32 + 31, lane * 32);
         return mmu_l2_read_word_comb;
     }
     // Do not let D-cache consume dmmu.paddr_out until the current translated access has a TLB hit.
@@ -724,6 +768,9 @@ private:
             (exe_mem.mem_read_out() || exe_mem.mem_write_out());
 #endif
         memory_wait_comb =
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            (atomic_request_comb_func() && !atomic_grant_in()) ||
+#endif
 #ifdef ENABLE_RV32IA
             (data_mem_access && !dmmu_faulted_access && exe_mem.atomic_busy_out()) ||
 #endif
@@ -735,11 +782,11 @@ private:
             (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
-            (data_mem_access && !dmmu_faulted_access && dcache.mem_out.read_in() && l2cache.d_mem_in.wait_out()) ||
+            (data_mem_access && !dmmu_faulted_access && dcache.mem_out.read_in() && d_mem_out.wait_out()) ||
             (data_mem_access && !dmmu_faulted_access &&
-                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && l2cache.d_mem_in.wait_out()) ||
+                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && d_mem_out.wait_out()) ||
             (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCE &&
-                (dcache.busy_out() || l2cache.d_mem_in.wait_out() || l2cache.i_mem_in.wait_out())) ||
+                (dcache.busy_out() || d_mem_out.wait_out() || i_mem_out.wait_out())) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !dmmu_faulted_access &&
             !wb_mem.load_ready_out());
@@ -823,6 +870,9 @@ private:
     static constexpr uint32_t SBI_EXT_BASE = 0x10;
     static constexpr uint32_t SBI_EXT_TIME = 0x54494d45;
     static constexpr uint32_t SBI_EXT_RFENCE = 0x52464e43;
+#ifdef MULTICORE
+    static constexpr uint32_t SBI_EXT_IPI = 0x735049;
+#endif
     static constexpr uint32_t SBI_SUCCESS = 0;
 
     // SBI ECALLs are handled locally because this model has no M-mode firmware.
@@ -864,7 +914,11 @@ private:
         uint32_t ext;
         ext = sbi_arg_value(17);
         return sbi_noop_comb = sbi_legacy_ecall_comb_func() &&
-            (ext == 5 || ext == 6 || ext == 7 || ext == SBI_EXT_RFENCE);
+            (ext == 5 || ext == 6 || ext == 7
+#ifndef MULTICORE
+             || ext == SBI_EXT_RFENCE
+#endif
+            );
     }
 
     bool sbi_base_comb;
@@ -906,7 +960,11 @@ private:
             else if (fid == 3) {
                 sbi_ret_value_comb = (probe_ext == SBI_EXT_BASE ||
                     probe_ext == SBI_EXT_TIME ||
-                    probe_ext == SBI_EXT_RFENCE) ? 1 : 0;
+                    probe_ext == SBI_EXT_RFENCE
+#ifdef MULTICORE
+                    || probe_ext == SBI_EXT_IPI
+#endif
+                    ) ? 1 : 0;
             }
             else {
                 sbi_ret_value_comb = 0;
@@ -918,15 +976,55 @@ private:
     bool sbi_writes_a1_comb;
     bool& sbi_writes_a1_comb_func()
     {
-        return sbi_writes_a1_comb = sbi_base_comb_func() || sbi_set_timer_comb_func();
+        return sbi_writes_a1_comb = sbi_base_comb_func() || sbi_set_timer_comb_func()
+#ifdef MULTICORE
+            || sbi_send_ipi_comb_func() || sbi_remote_fence_i_comb_func() ||
+                sbi_remote_sfence_vma_comb_func()
+#endif
+            ;
     }
 
     // All locally handled SBI calls retire as successful calls with a0=0.
     bool sbi_handled_comb;
     bool& sbi_handled_comb_func()
     {
-        return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func() || sbi_base_comb_func();
+        return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func() || sbi_base_comb_func()
+#ifdef MULTICORE
+            || sbi_send_ipi_comb_func() || sbi_remote_fence_i_comb_func() ||
+                sbi_remote_sfence_vma_comb_func()
+#endif
+            ;
     }
+
+#ifdef MULTICORE
+    // SBI v0.2 IPI requests carry a direct hart mask and base in a0/a1.
+    _LAZY_COMB(sbi_send_ipi_comb, bool)
+        return sbi_send_ipi_comb = sbi_legacy_ecall_comb_func() &&
+            sbi_arg_value(17) == SBI_EXT_IPI && sbi_arg_value(16) == 0;
+    }
+
+    // Remote FENCE.I invalidates instruction caches selected by the SBI hart mask.
+    _LAZY_COMB(sbi_remote_fence_i_comb, bool)
+        return sbi_remote_fence_i_comb = sbi_legacy_ecall_comb_func() &&
+            sbi_arg_value(17) == SBI_EXT_RFENCE && sbi_arg_value(16) == 0;
+    }
+
+    // Both remote SFENCE.VMA variants can conservatively invalidate the full target TLB.
+    _LAZY_COMB(sbi_remote_sfence_vma_comb, bool)
+        uint32_t function_id;
+        function_id = sbi_arg_value(16);
+        return sbi_remote_sfence_vma_comb = sbi_legacy_ecall_comb_func() &&
+            sbi_arg_value(17) == SBI_EXT_RFENCE && (function_id == 1 || function_id == 2);
+    }
+
+    _LAZY_COMB(sbi_hart_mask_comb, uint32_t)
+        return sbi_hart_mask_comb = sbi_arg_value(10);
+    }
+
+    _LAZY_COMB(sbi_hart_base_comb, uint32_t)
+        return sbi_hart_base_comb = sbi_arg_value(11);
+    }
+#endif
 
     // Low word of the SBI timer value is passed in a0 on RV32.
     uint32_t sbi_timer_lo_comb;
@@ -1126,14 +1224,22 @@ private:
 
     // FENCE.I and SFENCE.VMA both discard I-cache contents before fetching translated code again.
     _LAZY_COMB(icache_invalidate_comb, bool)
-        return icache_invalidate_comb = state_reg[0].valid &&
+        return icache_invalidate_comb =
+#ifdef MULTICORE
+            remote_fence_i_in() ||
+#endif
+            (state_reg[0].valid &&
             (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
-            !memory_wait_comb_func() && !icache_invalidate_issued_reg;
+            !memory_wait_comb_func() && !icache_invalidate_issued_reg);
     }
 
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
     _LAZY_COMB(sfence_vma_comb, bool)
-        return sfence_vma_comb = state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func();
+        return sfence_vma_comb =
+#ifdef MULTICORE
+            remote_sfence_vma_in() ||
+#endif
+            (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func());
     }
 
     void forward()
@@ -1632,7 +1738,6 @@ public:
 #endif
         icache._work(reset);
         dcache._work(reset);
-        l2cache._work(reset);
         bp._work(reset);
 
         if (state_reg[0].valid &&
@@ -1753,7 +1858,6 @@ public:
         icache._strobe(checkpoint_fd);
         dcache._strobe(checkpoint_fd);
         bp._strobe(checkpoint_fd);
-        l2cache._strobe(checkpoint_fd);
     }
 
 
