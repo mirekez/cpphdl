@@ -14,6 +14,7 @@ public:
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
     _PORT(uint32_t) irq_pending_bits_in;
+    _PORT(bool) software_irq_set_in = _ASSIGN(false);
     _PORT(uint32_t) read_data_out = _ASSIGN_COMB(read_data_comb_func());
     _PORT(uint32_t) time_lo_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t) time_hi_in = _ASSIGN((uint32_t)0);
@@ -31,7 +32,7 @@ public:
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
     _PORT(uint32_t) mie_out = _ASSIGN_COMB(interrupt_enable_comb_func());
     _PORT(uint32_t) mideleg_out = _ASSIGN_REG(mideleg_reg);
-    _PORT(uint32_t) mip_sw_out = _ASSIGN_REG(mip_reg);
+    _PORT(uint32_t) mip_sw_out = _ASSIGN_COMB(software_pending_comb_func());
 #ifdef ENABLE_MMU_TLB
     _PORT(uint32_t) satp_out = _ASSIGN_REG(satp_reg);
 #else
@@ -121,6 +122,11 @@ private:
     uint32_t sanitize_mstatus(uint32_t value)
     {
         return value & MSTATUS_WRITABLE;
+    }
+
+    // SBI IPIs latch SSIP until the supervisor clears sip in its interrupt handler.
+    _LAZY_COMB(software_pending_comb, uint32_t)
+        return software_pending_comb = (uint32_t)mip_reg | (uint32_t)sip_reg;
     }
 
     _LAZY_COMB(interrupt_enable_comb, uint32_t)
@@ -593,6 +599,10 @@ public:
             mcause_reg._next = 11;
         }
 #endif
+
+        if (software_irq_set_in()) {
+            sip_reg._next = (uint32_t)sip_reg | IRQ_SSIP;
+        }
 
         if (reset) {
             mstatus_reg.clr();

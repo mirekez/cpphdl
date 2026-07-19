@@ -24,6 +24,7 @@ private:
     u<32> value_comb;
     u<32> task_value_comb;
     u<32> function_value_comb;
+    reg<u32> indexed_reg[2];
 
     void value_task(u<32>& task_out)
     {
@@ -35,12 +36,12 @@ private:
         task_out = second_in() + u<32>(0x1aa);
     }
 
-    u<32> value_function()
+    u<32> value_function(u<32> context)
     {
         if (early_in()) {
             return first_in() + u<32>(0x255);
         }
-        return second_in() + u<32>(0x2aa);
+        return context + u<32>(0x2aa);
     }
 
     u<32>& value_comb_func()
@@ -61,16 +62,28 @@ private:
 
     u<32>& function_value_comb_func()
     {
-        function_value_comb = value_function();
+        function_value_comb = value_function(second_in());
         return function_value_comb;
     }
 
 public:
     void _work(bool reset)
     {
+        size_t i;
+        if (reset) {
+            for (i = 0; i < 2; ++i) {
+                indexed_reg[i].clr();
+            }
+        }
     }
 
-    void _strobe() {}
+    void _strobe()
+    {
+        size_t i;
+        for (i = 0; i < 2; ++i) {
+            indexed_reg[i].strobe();
+        }
+    }
     void _assign() {}
 };
 
@@ -134,15 +147,21 @@ static bool generated_sv_has_comb_return_disable()
     const bool has_disable = text.find("disable value_comb_func") != std::string::npos;
     const bool has_task = text.find("task value_task") != std::string::npos;
     const bool has_task_disable = text.find("disable value_task") != std::string::npos;
-    const bool has_function = text.find("function logic[32-1:0] value_function") != std::string::npos;
+    const bool has_function = text.find(
+        "function logic[32-1:0] value_function (input logic[32-1:0] _context);") != std::string::npos;
+    const bool has_escaped_keyword_argument = text.find("_context +") != std::string::npos;
+    const bool has_indexed_reg_clear = text.find("indexed_reg_tmp[i] = '0;") != std::string::npos &&
+        text.find("indexed_reg[i]_tmp") == std::string::npos;
     const bool has_function_return = text.find("return ") != std::string::npos;
     const bool has_no_function_disable = text.find("disable value_function") == std::string::npos;
     if (!has_always_comb || !has_named_block || !has_disable || !has_task || !has_task_disable ||
-        !has_function || !has_function_return || !has_no_function_disable) {
+        !has_function || !has_escaped_keyword_argument || !has_indexed_reg_clear ||
+        !has_function_return || !has_no_function_disable) {
         std::print("\nERROR: early comb return was not emitted as named-block disable\n");
         std::print("       always_comb: {}, named block: {}, disable: {}\n", has_always_comb, has_named_block, has_disable);
-        std::print("       task: {}, task disable: {}, function: {}, function return: {}, no function disable: {}\n",
-            has_task, has_task_disable, has_function, has_function_return, has_no_function_disable);
+        std::print("       task: {}, task disable: {}, function: {}, escaped argument: {}, indexed clear: {}, function return: {}, no function disable: {}\n",
+            has_task, has_task_disable, has_function, has_escaped_keyword_argument,
+            has_indexed_reg_clear, has_function_return, has_no_function_disable);
         return false;
     }
     return true;

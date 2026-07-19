@@ -704,10 +704,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //            }
             // can we now remove clr and set completely?
             if (sub.size() >= 1 && value == "clr" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_tmp = '0";
+                // Apply the next-state suffix to the indexed signal root, not
+                // after its indices: reg[i].clr() becomes reg_tmp[i] = '0.
+                return indent_str + sub[0].str("", "_tmp") + " = '0";
             }
             if (sub.size() >= 2 && value == "set" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_tmp = " + sub[1].str();
+                return indent_str + sub[0].str("", "_tmp") + " = " + sub[1].str();
             }
             if (sub.size() >= 1 && value == "format" && sub[0].type != EXPR_NONE && sub[0].value != "_this") {
                 return indent_str + sub[0].str();

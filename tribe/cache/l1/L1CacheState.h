@@ -52,6 +52,7 @@ struct L1MemDriver
     u32 addr;                    // Refill, direct-read, or live CPU byte address.
     u32 write_data;              // CPU store data forwarded without reinterpretation.
     u8 write_mask;               // Byte enables associated with write_data.
+    u1 cache_disable;            // Preserve an explicit CPU bypass request through the shared L2.
 };
 
 // Carries both split-bank images produced from the same accepted refill beat.
@@ -161,6 +162,8 @@ public:
     _PORT(bool) stall_in;
     _PORT(bool) flush_in;
     _PORT(bool) invalidate_in;
+    _PORT(bool) invalidate_line_in = _ASSIGN(false);
+    _PORT(uint32_t) invalidate_addr_in = _ASSIGN((uint32_t)0);
     _PORT(bool) cache_disable_in;
     L1MemIf<PORT_BITWIDTH> mem_out;
     _PORT(L1CachePerf) perf_out;
@@ -169,11 +172,12 @@ public:
 protected:
     RAM<HALF_LINE_BITS, SETS> even_ram[WAYS];
     RAM<HALF_LINE_BITS, SETS> odd_ram[WAYS];
-    RAM<TAG_BITS + 2, SETS> tag_ram[WAYS];
+    RAM<TAG_BITS + 10, SETS> tag_ram[WAYS];
 
     reg<u<3>> state_reg;
     reg<L1RequestState> req_reg;
     reg<u1> tag_epoch_reg;
+    reg<array<SETS, u8>> tag_set_epoch_reg;
     reg<L1RefillState> refill_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<SET_BITS>> init_set_reg;

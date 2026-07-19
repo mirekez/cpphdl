@@ -9,6 +9,7 @@
 #endif
 #include L2CACHE_TEST_DUT_HEADER
 #include "Axi4Ram.h"
+#include "Config.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -112,41 +113,62 @@ static constexpr size_t WAIT_LIMIT = 128;
 #ifdef VERILATOR
 #define PORT_VALUE(val) val
 #define L2_VALUE(val) (eval_l2(false), val)
-#define L2_I_READ_IN l2.i_mem_in___05Fread_in
-#define L2_I_WRITE_IN l2.i_mem_in___05Fwrite_in
-#define L2_I_ADDR_IN l2.i_mem_in___05Faddr_in
-#define L2_I_WRITE_DATA_IN l2.i_mem_in___05Fwrite_data_in
-#define L2_I_WRITE_MASK_IN l2.i_mem_in___05Fwrite_mask_in
-#define L2_I_READ_DATA_OUT l2.i_mem_in___05Fread_data_out
-#define L2_I_WAIT_OUT l2.i_mem_in___05Fwait_out
-#define L2_D_READ_IN l2.d_mem_in___05Fread_in
-#define L2_D_WRITE_IN l2.d_mem_in___05Fwrite_in
-#define L2_D_ADDR_IN l2.d_mem_in___05Faddr_in
-#define L2_D_WRITE_DATA_IN l2.d_mem_in___05Fwrite_data_in
-#define L2_D_WRITE_MASK_IN l2.d_mem_in___05Fwrite_mask_in
-#define L2_D_READ_DATA_OUT l2.d_mem_in___05Fread_data_out
-#define L2_D_WAIT_OUT l2.d_mem_in___05Fwait_out
+#define L2_I_READ_IN l2.i_mem_in___05Fread_in[0]
+#define L2_I_WRITE_IN l2.i_mem_in___05Fwrite_in[0]
+#define L2_I_ADDR_IN l2.i_mem_in___05Faddr_in[0]
+#define L2_I_WRITE_DATA_IN l2.i_mem_in___05Fwrite_data_in[0]
+#define L2_I_WRITE_MASK_IN l2.i_mem_in___05Fwrite_mask_in[0]
+#define L2_I_CACHE_DISABLE_IN l2.i_mem_in___05Fcache_disable_in[0]
+#define L2_I_READ_DATA_OUT l2.i_mem_in___05Fread_data_out[0]
+#define L2_I_WAIT_OUT l2.i_mem_in___05Fwait_out[0]
+#define L2_D_READ_IN l2.d_mem_in___05Fread_in[0]
+#define L2_D_WRITE_IN l2.d_mem_in___05Fwrite_in[0]
+#define L2_D_ADDR_IN l2.d_mem_in___05Faddr_in[0]
+#define L2_D_WRITE_DATA_IN l2.d_mem_in___05Fwrite_data_in[0]
+#define L2_D_WRITE_MASK_IN l2.d_mem_in___05Fwrite_mask_in[0]
+#define L2_D_CACHE_DISABLE_IN l2.d_mem_in___05Fcache_disable_in[0]
+#define L2_D_READ_DATA_OUT l2.d_mem_in___05Fread_data_out[0]
+#define L2_D_WAIT_OUT l2.d_mem_in___05Fwait_out[0]
+#define L2_I_READ_DATA_OUT_AT(index) l2.i_mem_in___05Fread_data_out[index]
+#define L2_I_WAIT_OUT_AT(index) l2.i_mem_in___05Fwait_out[index]
+#define L2_D_WAIT_OUT_AT(index) l2.d_mem_in___05Fwait_out[index]
 #else
 #define PORT_VALUE(val) val()
 #define L2_VALUE(val) val()
-#define L2_I_READ_IN l2.i_mem_in.read_in
-#define L2_I_WRITE_IN l2.i_mem_in.write_in
-#define L2_I_ADDR_IN l2.i_mem_in.addr_in
-#define L2_I_WRITE_DATA_IN l2.i_mem_in.write_data_in
-#define L2_I_WRITE_MASK_IN l2.i_mem_in.write_mask_in
-#define L2_I_READ_DATA_OUT l2.i_mem_in.read_data_out
-#define L2_I_WAIT_OUT l2.i_mem_in.wait_out
-#define L2_D_READ_IN l2.d_mem_in.read_in
-#define L2_D_WRITE_IN l2.d_mem_in.write_in
-#define L2_D_ADDR_IN l2.d_mem_in.addr_in
-#define L2_D_WRITE_DATA_IN l2.d_mem_in.write_data_in
-#define L2_D_WRITE_MASK_IN l2.d_mem_in.write_mask_in
-#define L2_D_READ_DATA_OUT l2.d_mem_in.read_data_out
-#define L2_D_WAIT_OUT l2.d_mem_in.wait_out
+#define L2_I_READ_IN l2.i_mem_in[0].read_in
+#define L2_I_WRITE_IN l2.i_mem_in[0].write_in
+#define L2_I_ADDR_IN l2.i_mem_in[0].addr_in
+#define L2_I_WRITE_DATA_IN l2.i_mem_in[0].write_data_in
+#define L2_I_WRITE_MASK_IN l2.i_mem_in[0].write_mask_in
+#define L2_I_CACHE_DISABLE_IN l2.i_mem_in[0].cache_disable_in
+#define L2_I_READ_DATA_OUT l2.i_mem_in[0].read_data_out
+#define L2_I_WAIT_OUT l2.i_mem_in[0].wait_out
+#define L2_D_READ_IN l2.d_mem_in[0].read_in
+#define L2_D_WRITE_IN l2.d_mem_in[0].write_in
+#define L2_D_ADDR_IN l2.d_mem_in[0].addr_in
+#define L2_D_WRITE_DATA_IN l2.d_mem_in[0].write_data_in
+#define L2_D_WRITE_MASK_IN l2.d_mem_in[0].write_mask_in
+#define L2_D_CACHE_DISABLE_IN l2.d_mem_in[0].cache_disable_in
+#define L2_D_READ_DATA_OUT l2.d_mem_in[0].read_data_out
+#define L2_D_WAIT_OUT l2.d_mem_in[0].wait_out
+#define L2_I_READ_DATA_OUT_AT(index) l2.i_mem_in[index].read_data_out
+#define L2_I_WAIT_OUT_AT(index) l2.i_mem_in[index].wait_out
+#define L2_D_WAIT_OUT_AT(index) l2.d_mem_in[index].wait_out
 #endif
 #define PORT_EXPR(val) _ASSIGN(PORT_VALUE(val))
 
-template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS, size_t WAYS>
+struct L2CpuTestInput
+{
+    bool i_read;
+    bool d_read;
+    bool d_write;
+    uint32_t i_addr;
+    uint32_t d_addr;
+    uint32_t write_data;
+    uint8_t write_mask;
+};
+
+template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS, size_t WAYS, size_t CPU_PORTS>
 class TestL2Cache : public Module
 {
     static constexpr size_t SETS = L2_SIZE / LINE_SIZE / WAYS;
@@ -159,7 +181,7 @@ class TestL2Cache : public Module
 #ifdef VERILATOR
     VERILATOR_MODEL l2;
 #else
-    L2CACHE_TEST_DUT<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS> l2;
+    L2CACHE_TEST_DUT<L2_SIZE, PORT_BITS, LINE_SIZE, WAYS, 32, 32, MEM_PORTS, CPU_PORTS> l2;
 #endif
     Axi4Ram<32, 4, PORT_BITS, RAM_DEPTH_PER_PORT> ram[MEM_PORTS];
 
@@ -170,6 +192,7 @@ class TestL2Cache : public Module
     uint32_t d_addr = 0;
     uint32_t wdata = 0;
     uint8_t wmask = 0;
+    L2CpuTestInput extra_cpu[CPU_PORTS] = {};
     Axi4Driver<32, 4, PORT_BITS> slave_axi[MEM_PORTS] = {};
     bool region_uncached[MEM_PORTS] = {};
     uint32_t region_size[MEM_PORTS] = {};
@@ -185,12 +208,28 @@ public:
         L2_I_ADDR_IN = _ASSIGN_REG(i_addr);
         L2_I_WRITE_DATA_IN = _ASSIGN((uint32_t)0);
         L2_I_WRITE_MASK_IN = _ASSIGN((uint8_t)0);
+        L2_I_CACHE_DISABLE_IN = _ASSIGN(false);
 
         L2_D_READ_IN = _ASSIGN_REG(d_read);
         L2_D_WRITE_IN = _ASSIGN_REG(write);
         L2_D_ADDR_IN = _ASSIGN_REG(d_addr);
         L2_D_WRITE_DATA_IN = _ASSIGN_REG(wdata);
         L2_D_WRITE_MASK_IN = _ASSIGN_REG(wmask);
+        L2_D_CACHE_DISABLE_IN = _ASSIGN(false);
+        for (size_t i = 1; i < CPU_PORTS; ++i) {
+            l2.i_mem_in[i].read_in = _ASSIGN_REG_I(extra_cpu[i].i_read);
+            l2.i_mem_in[i].write_in = _ASSIGN(false);
+            l2.i_mem_in[i].addr_in = _ASSIGN_REG_I(extra_cpu[i].i_addr);
+            l2.i_mem_in[i].write_data_in = _ASSIGN((uint32_t)0);
+            l2.i_mem_in[i].write_mask_in = _ASSIGN((uint8_t)0);
+            l2.i_mem_in[i].cache_disable_in = _ASSIGN(false);
+            l2.d_mem_in[i].read_in = _ASSIGN_REG_I(extra_cpu[i].d_read);
+            l2.d_mem_in[i].write_in = _ASSIGN_REG_I(extra_cpu[i].d_write);
+            l2.d_mem_in[i].addr_in = _ASSIGN_REG_I(extra_cpu[i].d_addr);
+            l2.d_mem_in[i].write_data_in = _ASSIGN_REG_I(extra_cpu[i].write_data);
+            l2.d_mem_in[i].write_mask_in = _ASSIGN_REG_I(extra_cpu[i].write_mask);
+            l2.d_mem_in[i].cache_disable_in = _ASSIGN(false);
+        }
         l2.memory_base_in = _ASSIGN_REG(memory_base);
         l2.memory_size_in = _ASSIGN((uint32_t)0xffffffffu);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
@@ -230,11 +269,27 @@ public:
         L2_I_ADDR_IN = i_addr;
         L2_I_WRITE_DATA_IN = 0;
         L2_I_WRITE_MASK_IN = 0;
+        L2_I_CACHE_DISABLE_IN = 0;
         L2_D_READ_IN = d_read;
         L2_D_WRITE_IN = write;
         L2_D_ADDR_IN = d_addr;
         L2_D_WRITE_DATA_IN = wdata;
         L2_D_WRITE_MASK_IN = wmask;
+        L2_D_CACHE_DISABLE_IN = 0;
+        for (size_t i = 1; i < CPU_PORTS; ++i) {
+            l2.i_mem_in___05Fread_in[i] = extra_cpu[i].i_read;
+            l2.i_mem_in___05Fwrite_in[i] = false;
+            l2.i_mem_in___05Faddr_in[i] = extra_cpu[i].i_addr;
+            l2.i_mem_in___05Fwrite_data_in[i] = 0;
+            l2.i_mem_in___05Fwrite_mask_in[i] = 0;
+            l2.i_mem_in___05Fcache_disable_in[i] = 0;
+            l2.d_mem_in___05Fread_in[i] = extra_cpu[i].d_read;
+            l2.d_mem_in___05Fwrite_in[i] = extra_cpu[i].d_write;
+            l2.d_mem_in___05Faddr_in[i] = extra_cpu[i].d_addr;
+            l2.d_mem_in___05Fwrite_data_in[i] = extra_cpu[i].write_data;
+            l2.d_mem_in___05Fwrite_mask_in[i] = extra_cpu[i].write_mask;
+            l2.d_mem_in___05Fcache_disable_in[i] = 0;
+        }
         l2.memory_base_in = memory_base;
         l2.memory_size_in = 0xffffffffu;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
@@ -250,6 +305,32 @@ public:
         l2.eval();
     }
 #endif
+
+    bool cpu_i_wait(size_t index)
+    {
+#ifdef VERILATOR
+        eval_l2(false);
+#endif
+        return L2_VALUE(L2_I_WAIT_OUT_AT(index));
+    }
+
+    bool cpu_d_wait(size_t index)
+    {
+#ifdef VERILATOR
+        eval_l2(false);
+#endif
+        return L2_VALUE(L2_D_WAIT_OUT_AT(index));
+    }
+
+    logic<PORT_BITS> cpu_i_data(size_t index)
+    {
+#ifdef VERILATOR
+        eval_l2(false);
+        return copy_to_logic<PORT_BITS>(L2_I_READ_DATA_OUT_AT(index));
+#else
+        return L2_I_READ_DATA_OUT_AT(index)();
+#endif
+    }
 
     void cycle(bool reset = false)
     {
@@ -1489,17 +1570,149 @@ public:
         }
     }
 
+    void set_cpu_d_write(size_t index, bool valid, uint32_t addr, uint32_t data)
+    {
+        if (index == 0) {
+            read = false;
+            d_read = false;
+            write = valid;
+            d_addr = addr;
+            wdata = data;
+            wmask = 0xf;
+        }
+        else {
+            extra_cpu[index].i_read = false;
+            extra_cpu[index].d_read = false;
+            extra_cpu[index].d_write = valid;
+            extra_cpu[index].d_addr = addr;
+            extra_cpu[index].write_data = data;
+            extra_cpu[index].write_mask = 0xf;
+        }
+    }
+
+    void set_cpu_i_read(size_t index, bool valid, uint32_t addr)
+    {
+        if (index == 0) {
+            read = valid;
+            d_read = false;
+            write = false;
+            i_addr = addr;
+        }
+        else {
+            extra_cpu[index].i_read = valid;
+            extra_cpu[index].d_read = false;
+            extra_cpu[index].d_write = false;
+            extra_cpu[index].i_addr = addr;
+        }
+    }
+
+    void multi_cpu_port_pairs_check()
+    {
+        bool write_pending[CPU_PORTS];
+        bool read_pending[CPU_PORTS];
+        uint32_t addr[CPU_PORTS];
+        uint32_t expected[CPU_PORTS];
+        size_t index;
+        size_t cycle_count;
+        size_t remaining;
+        size_t word;
+        uint32_t data;
+        bool last_cpu_done;
+
+        if (CPU_PORTS <= 1) {
+            return;
+        }
+
+        remaining = CPU_PORTS;
+        for (index = 0; index < CPU_PORTS; ++index) {
+            addr[index] = 0x00018004u + (uint32_t)index * 0x40u;
+            expected[index] = 0x51000000u | ((uint32_t)index * 0x010101u + 0x1234u);
+            write_pending[index] = true;
+            read_pending[index] = true;
+            set_cpu_d_write(index, true, addr[index], expected[index]);
+        }
+        for (cycle_count = 0; cycle_count < WAIT_LIMIT * CPU_PORTS * 4 && remaining; ++cycle_count) {
+            cycle(false);
+            for (index = 0; index < CPU_PORTS; ++index) {
+                if (write_pending[index] && !cpu_d_wait(index)) {
+                    write_pending[index] = false;
+                    set_cpu_d_write(index, false, addr[index], expected[index]);
+                    --remaining;
+                }
+            }
+        }
+        if (remaining) {
+            std::print("\nmulti-CPU D-write arbitration ERROR pending={} CPUs={}\n", remaining, CPU_PORTS);
+            error = true;
+        }
+        cycle(false);
+
+        remaining = CPU_PORTS;
+        for (index = 0; index < CPU_PORTS; ++index) {
+            set_cpu_i_read(index, true, addr[index]);
+        }
+        for (cycle_count = 0; cycle_count < WAIT_LIMIT * CPU_PORTS * 4 && remaining; ++cycle_count) {
+            cycle(false);
+            for (index = 0; index < CPU_PORTS; ++index) {
+                if (read_pending[index] && !cpu_i_wait(index)) {
+                    word = (addr[index] % (PORT_BITS / 8)) / 4;
+                    data = port_word(cpu_i_data(index), word);
+                    if (data != expected[index]) {
+                        std::print("\nmulti-CPU I-read ERROR cpu={} addr={:#x} data={:#x} expected={:#x}\n",
+                            index, addr[index], data, expected[index]);
+                        error = true;
+                    }
+                    read_pending[index] = false;
+                    set_cpu_i_read(index, false, addr[index]);
+                    --remaining;
+                }
+            }
+        }
+        if (remaining) {
+            std::print("\nmulti-CPU I-read arbitration ERROR pending={} CPUs={}\n", remaining, CPU_PORTS);
+            error = true;
+        }
+        cycle(false);
+
+        // Keep CPU 0 continuously valid while the last CPU waits. The last CPU
+        // must still complete, proving arbitration advances instead of using fixed priority.
+        last_cpu_done = false;
+        set_cpu_i_read(0, true, addr[0]);
+        set_cpu_i_read(CPU_PORTS - 1, true, addr[CPU_PORTS - 1]);
+        for (cycle_count = 0; cycle_count < WAIT_LIMIT * CPU_PORTS && !last_cpu_done; ++cycle_count) {
+            cycle(false);
+            if (!cpu_i_wait(CPU_PORTS - 1)) {
+                word = (addr[CPU_PORTS - 1] % (PORT_BITS / 8)) / 4;
+                data = port_word(cpu_i_data(CPU_PORTS - 1), word);
+                if (data != expected[CPU_PORTS - 1]) {
+                    std::print("\nmulti-CPU fairness last CPU data ERROR data={:#x} expected={:#x}\n",
+                        data, expected[CPU_PORTS - 1]);
+                    error = true;
+                }
+                last_cpu_done = true;
+            }
+        }
+        if (!last_cpu_done) {
+            std::print("\nmulti-CPU round-robin ERROR: last CPU was starved\n");
+            error = true;
+        }
+        set_cpu_i_read(0, false, addr[0]);
+        set_cpu_i_read(CPU_PORTS - 1, false, addr[CPU_PORTS - 1]);
+        cycle(false);
+    }
+
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...",
-            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
+        std::print("VERILATOR Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
+            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);
 #else
-        std::print("CppHDL Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={}>...",
-            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS);
+        std::print("CppHDL Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
+            L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);
 #endif
         std::print("\n  features under test:"
                    "\n    - one-clock unified request/response pipeline"
+                   "\n    - independent arbitration and responses for every CPU I/D port pair"
                    "\n    - cached CPU read fill and hit"
                    "\n    - instruction-port direct read crossing a cache-line end"
                    "\n    - data-port direct read crossing an L2 beat end"
@@ -1550,6 +1763,7 @@ public:
         slave_request_does_not_drop_cpu_dport_read_check();
         local_slave_address_with_nonzero_memory_base_check();
         uncached_device_region_check();
+        multi_cpu_port_pairs_check();
         cycle_prbs_test();
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
@@ -1562,10 +1776,17 @@ public:
 int main(int argc, char** argv)
 {
     bool noveril = false;
+    bool configured_cpu_ports = false;
     int only = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--noveril") == 0) {
             noveril = true;
+        }
+        if (strcmp(argv[i], "--cpu-ports=configured") == 0) {
+            configured_cpu_ports = true;
+        }
+        if (strcmp(argv[i], "--cpu-ports=1") == 0) {
+            configured_cpu_ports = false;
         }
         if (argv[i][0] != '-') {
             only = atoi(argv[i]);
@@ -1573,94 +1794,105 @@ int main(int argc, char** argv)
     }
 
     bool ok = true;
+    size_t cpu_ports = configured_cpu_ports ? CPUS_PER_L2_CACHE : 1;
 #ifndef VERILATOR
     if (!noveril) {
         const auto source_root = CpphdlSourceRootFrom(__FILE__);
         const std::string verilator_source = L2CACHE_TEST_SOURCE_FILE;
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();
-        auto compile_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
+        auto compile_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways, size_t cpu_ports) {
             if (only != -1 && only != index) {
                 return true;
             }
             return VerilatorCompile(verilator_source, L2CACHE_TEST_TOP_NAME, {},
                 {(source_root / "include").string(),
+                 (source_root / "tribe").string(),
                  (source_root / "tribe" / "common").string(),
                  (source_root / "tribe" / "cache").string()},
-                cache_size, port_bits, LINE_SIZE, ways, 32, 32, mem_ports);
+                cache_size, port_bits, LINE_SIZE, ways, 32, 32, mem_ports, cpu_ports);
         };
-        ok &= compile_l2(0, 16384, 64, 4, 1);
-        ok &= compile_l2(1, 16384, 64, 4, 2);
-        ok &= compile_l2(2, 16384, 64, 4, 4);
+        ok &= compile_l2(0, 16384, 64, 4, 1, cpu_ports);
+        ok &= compile_l2(1, 16384, 64, 4, 2, cpu_ports);
+        ok &= compile_l2(2, 16384, 64, 4, 4, cpu_ports);
         // CppHDL currently emits one L2Cache SV module name, and flattened
         // interface widths are fixed by the first specialization. Keep the
         // Verilator sweep on 64-bit ports; the C++ model below still covers
         // the 256-bit configurations.
-        ok &= compile_l2(6, 16384, 64, 8, 1);
-        ok &= compile_l2(7, 16384, 64, 8, 2);
-        ok &= compile_l2(8, 16384, 64, 8, 4);
-        ok &= compile_l2(12, 65536, 64, 4, 1);
-        ok &= compile_l2(13, 65536, 64, 4, 2);
-        ok &= compile_l2(14, 65536, 64, 4, 4);
-        ok &= compile_l2(18, 65536, 64, 8, 1);
-        ok &= compile_l2(19, 65536, 64, 8, 2);
-        ok &= compile_l2(20, 65536, 64, 8, 4);
+        ok &= compile_l2(6, 16384, 64, 8, 1, cpu_ports);
+        ok &= compile_l2(7, 16384, 64, 8, 2, cpu_ports);
+        ok &= compile_l2(8, 16384, 64, 8, 4, cpu_ports);
+        ok &= compile_l2(12, 65536, 64, 4, 1, cpu_ports);
+        ok &= compile_l2(13, 65536, 64, 4, 2, cpu_ports);
+        ok &= compile_l2(14, 65536, 64, 4, 4, cpu_ports);
+        ok &= compile_l2(18, 65536, 64, 8, 1, cpu_ports);
+        ok &= compile_l2(19, 65536, 64, 8, 2, cpu_ports);
+        ok &= compile_l2(20, 65536, 64, 8, 4, cpu_ports);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
-        auto run_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways) {
+        auto run_l2 = [&](int index, size_t cache_size, size_t port_bits, size_t mem_ports, size_t ways, size_t cpu_ports) {
             if (only != -1 && only != index) {
                 return true;
             }
             std::ostringstream command;
             command << L2CACHE_TEST_TOP_NAME << "_" << cache_size << "_" << port_bits << "_"
                     << LINE_SIZE << "_" << ways << "_32_32_" << mem_ports
-                    << "/obj_dir/V" << L2CACHE_TEST_TOP_NAME << " " << index;
+                    << "_" << cpu_ports
+                    << "/obj_dir/V" << L2CACHE_TEST_TOP_NAME << " --cpu-ports="
+                    << (configured_cpu_ports ? "configured" : "1") << " " << index;
             return std::system(command.str().c_str()) == 0;
         };
         ok = ok &&
-            run_l2(0, 16384, 64, 4, 1) &&
-            run_l2(1, 16384, 64, 4, 2) &&
-            run_l2(2, 16384, 64, 4, 4) &&
-            run_l2(6, 16384, 64, 8, 1) &&
-            run_l2(7, 16384, 64, 8, 2) &&
-            run_l2(8, 16384, 64, 8, 4) &&
-            run_l2(12, 65536, 64, 4, 1) &&
-            run_l2(13, 65536, 64, 4, 2) &&
-            run_l2(14, 65536, 64, 4, 4) &&
-            run_l2(18, 65536, 64, 8, 1) &&
-            run_l2(19, 65536, 64, 8, 2) &&
-            run_l2(20, 65536, 64, 8, 4);
+            run_l2(0, 16384, 64, 4, 1, cpu_ports) &&
+            run_l2(1, 16384, 64, 4, 2, cpu_ports) &&
+            run_l2(2, 16384, 64, 4, 4, cpu_ports) &&
+            run_l2(6, 16384, 64, 8, 1, cpu_ports) &&
+            run_l2(7, 16384, 64, 8, 2, cpu_ports) &&
+            run_l2(8, 16384, 64, 8, 4, cpu_ports) &&
+            run_l2(12, 65536, 64, 4, 1, cpu_ports) &&
+            run_l2(13, 65536, 64, 4, 2, cpu_ports) &&
+            run_l2(14, 65536, 64, 4, 4, cpu_ports) &&
+            run_l2(18, 65536, 64, 8, 1, cpu_ports) &&
+            run_l2(19, 65536, 64, 8, 2, cpu_ports) &&
+            run_l2(20, 65536, 64, 8, 4, cpu_ports);
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else
     Verilated::commandArgs(argc, argv);
 #endif
 
-    ok = ok && ((only != -1 && only != 0) || TestL2Cache<16384,64,4,1>().run());
-    ok = ok && ((only != -1 && only != 1) || TestL2Cache<16384,64,4,2>().run());
-    ok = ok && ((only != -1 && only != 2) || TestL2Cache<16384,64,4,4>().run());
-    ok = ok && ((only != -1 && only != 3) || TestL2Cache<16384,256,4,1>().run());
-    ok = ok && ((only != -1 && only != 4) || TestL2Cache<16384,256,4,2>().run());
-    ok = ok && ((only != -1 && only != 5) || TestL2Cache<16384,256,4,4>().run());
-    ok = ok && ((only != -1 && only != 6) || TestL2Cache<16384,64,8,1>().run());
-    ok = ok && ((only != -1 && only != 7) || TestL2Cache<16384,64,8,2>().run());
-    ok = ok && ((only != -1 && only != 8) || TestL2Cache<16384,64,8,4>().run());
-    ok = ok && ((only != -1 && only != 9) || TestL2Cache<16384,256,8,1>().run());
-    ok = ok && ((only != -1 && only != 10) || TestL2Cache<16384,256,8,2>().run());
-    ok = ok && ((only != -1 && only != 11) || TestL2Cache<16384,256,8,4>().run());
-    ok = ok && ((only != -1 && only != 12) || TestL2Cache<65536,64,4,1>().run());
-    ok = ok && ((only != -1 && only != 13) || TestL2Cache<65536,64,4,2>().run());
-    ok = ok && ((only != -1 && only != 14) || TestL2Cache<65536,64,4,4>().run());
-    ok = ok && ((only != -1 && only != 15) || TestL2Cache<65536,256,4,1>().run());
-    ok = ok && ((only != -1 && only != 16) || TestL2Cache<65536,256,4,2>().run());
-    ok = ok && ((only != -1 && only != 17) || TestL2Cache<65536,256,4,4>().run());
-    ok = ok && ((only != -1 && only != 18) || TestL2Cache<65536,64,8,1>().run());
-    ok = ok && ((only != -1 && only != 19) || TestL2Cache<65536,64,8,2>().run());
-    ok = ok && ((only != -1 && only != 20) || TestL2Cache<65536,64,8,4>().run());
-    ok = ok && ((only != -1 && only != 21) || TestL2Cache<65536,256,8,1>().run());
-    ok = ok && ((only != -1 && only != 22) || TestL2Cache<65536,256,8,2>().run());
-    ok = ok && ((only != -1 && only != 23) || TestL2Cache<65536,256,8,4>().run());
+#define RUN_L2(index, cache_size, port_bits, mem_ports, ways) \
+    if (only == -1 || only == index) { \
+        ok = ok && (configured_cpu_ports ? \
+            TestL2Cache<cache_size, port_bits, mem_ports, ways, CPUS_PER_L2_CACHE>().run() : \
+            TestL2Cache<cache_size, port_bits, mem_ports, ways, 1>().run()); \
+    }
+    RUN_L2(0, 16384, 64, 4, 1);
+    RUN_L2(1, 16384, 64, 4, 2);
+    RUN_L2(2, 16384, 64, 4, 4);
+    RUN_L2(3, 16384, 256, 4, 1);
+    RUN_L2(4, 16384, 256, 4, 2);
+    RUN_L2(5, 16384, 256, 4, 4);
+    RUN_L2(6, 16384, 64, 8, 1);
+    RUN_L2(7, 16384, 64, 8, 2);
+    RUN_L2(8, 16384, 64, 8, 4);
+    RUN_L2(9, 16384, 256, 8, 1);
+    RUN_L2(10, 16384, 256, 8, 2);
+    RUN_L2(11, 16384, 256, 8, 4);
+    RUN_L2(12, 65536, 64, 4, 1);
+    RUN_L2(13, 65536, 64, 4, 2);
+    RUN_L2(14, 65536, 64, 4, 4);
+    RUN_L2(15, 65536, 256, 4, 1);
+    RUN_L2(16, 65536, 256, 4, 2);
+    RUN_L2(17, 65536, 256, 4, 4);
+    RUN_L2(18, 65536, 64, 8, 1);
+    RUN_L2(19, 65536, 64, 8, 2);
+    RUN_L2(20, 65536, 64, 8, 4);
+    RUN_L2(21, 65536, 256, 8, 1);
+    RUN_L2(22, 65536, 256, 8, 2);
+    RUN_L2(23, 65536, 256, 8, 4);
+#undef RUN_L2
     return !ok;
 }
 

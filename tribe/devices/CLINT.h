@@ -18,6 +18,11 @@ class CLINT : public Module
     static constexpr uint32_t REG_MTIME_LO = 0xBFF8;
     static constexpr uint32_t REG_MTIME_HI = 0xBFFC;
     static constexpr uint32_t DATA_BYTES = DATA_WIDTH / 8;
+#ifdef MULTICORE
+    static constexpr size_t HART_COUNT = CPUS_PER_L2_CACHE;
+#else
+    static constexpr size_t HART_COUNT = 1;
+#endif
 
 public:
     Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH> axi_in;
@@ -27,10 +32,17 @@ public:
     _PORT(uint32_t) set_mtimecmp_hi_in = _ASSIGN((uint32_t)0);
     _PORT(bool) msip_out = _ASSIGN_COMB(msip_comb_func());
     _PORT(bool) mtip_out = _ASSIGN_COMB(mtip_comb_func());
+#ifdef MULTICORE
+    _PORT(bool) set_mtimecmp_per_hart_in[HART_COUNT];
+    _PORT(uint32_t) set_mtimecmp_lo_per_hart_in[HART_COUNT];
+    _PORT(uint32_t) set_mtimecmp_hi_per_hart_in[HART_COUNT];
+    _PORT(bool) msip_per_hart_out[HART_COUNT];
+    _PORT(bool) mtip_per_hart_out[HART_COUNT];
+#endif
     _PORT(uint32_t) debug_mtime_lo_out = _ASSIGN((uint32_t)mtime_reg);
     _PORT(uint32_t) debug_mtime_hi_out = _ASSIGN((uint32_t)((uint64_t)mtime_reg >> 32));
-    _PORT(uint32_t) debug_mtimecmp_lo_out = _ASSIGN((uint32_t)mtimecmp_reg);
-    _PORT(uint32_t) debug_mtimecmp_hi_out = _ASSIGN((uint32_t)((uint64_t)mtimecmp_reg >> 32));
+    _PORT(uint32_t) debug_mtimecmp_lo_out = _ASSIGN((uint32_t)mtimecmp_reg[0]);
+    _PORT(uint32_t) debug_mtimecmp_hi_out = _ASSIGN((uint32_t)((uint64_t)mtimecmp_reg[0] >> 32));
 
 private:
     reg<u<ADDR_WIDTH>> read_addr_reg;
@@ -42,7 +54,7 @@ private:
     reg<u1> write_resp_valid_reg;
     reg<u32> msip_reg;
     reg<u64> mtime_reg;
-    reg<u64> mtimecmp_reg;
+    reg<u64> mtimecmp_reg[HART_COUNT];
     reg<u32> mtime_div_reg;
 
     // AXI data beat lane corresponding to the saved local register address.
@@ -53,16 +65,22 @@ private:
     // Value of the addressed CLINT register before it is inserted into its AXI lane.
     _LAZY_COMB(read_word_comb, uint32_t)
         uint32_t addr;
+        uint32_t hart;
         addr = (uint32_t)read_addr_reg;
         read_word_comb = 0;
-        if (addr == REG_MSIP) {
-            read_word_comb = msip_reg;
+        hart = 0;
+        if (addr >= REG_MSIP && addr < REG_MSIP + HART_COUNT * 4u) {
+            hart = (addr - REG_MSIP) / 4u;
+            read_word_comb = ((uint32_t)msip_reg >> hart) & 1u;
         }
-        else if (addr == REG_MTIMECMP_LO) {
-            read_word_comb = (uint32_t)mtimecmp_reg;
-        }
-        else if (addr == REG_MTIMECMP_HI) {
-            read_word_comb = (uint32_t)((uint64_t)mtimecmp_reg >> 32);
+        else if (addr >= REG_MTIMECMP_LO && addr < REG_MTIMECMP_LO + HART_COUNT * 8u) {
+            hart = (addr - REG_MTIMECMP_LO) / 8u;
+            if (((addr - REG_MTIMECMP_LO) & 4u) == 0) {
+                read_word_comb = (uint32_t)mtimecmp_reg[hart];
+            }
+            else {
+                read_word_comb = (uint32_t)((uint64_t)mtimecmp_reg[hart] >> 32);
+            }
         }
         else if (addr == REG_MTIME_LO) {
             read_word_comb = (uint32_t)mtime_reg;
@@ -101,12 +119,15 @@ private:
     }
 
     _LAZY_COMB(mtip_comb, bool)
-        return mtip_comb = mtime_reg >= mtimecmp_reg;
+        return mtip_comb = mtime_reg >= mtimecmp_reg[0];
     }
 
 public:
     void _assign()
     {
+#ifdef MULTICORE
+        size_t i;
+#endif
         axi_in.awready_out = _ASSIGN(!write_addr_valid_reg && !write_resp_valid_reg);
         axi_in.wready_out = _ASSIGN(write_addr_valid_reg && !write_resp_valid_reg);
         axi_in.bvalid_out = _ASSIGN_REG(write_resp_valid_reg);
@@ -116,12 +137,20 @@ public:
         axi_in.rdata_out = _ASSIGN_COMB(read_data_comb_func());
         axi_in.rlast_out = _ASSIGN_REG(read_valid_reg);
         axi_in.rid_out = _ASSIGN_REG(read_id_reg);
+#ifdef MULTICORE
+        for (i = 0; i < HART_COUNT; ++i) {
+            msip_per_hart_out[i] = _ASSIGN_I((((uint32_t)msip_reg >> i) & 1u) != 0);
+            mtip_per_hart_out[i] = _ASSIGN_I(mtime_reg >= mtimecmp_reg[i]);
+        }
+#endif
     }
 
     void _work(bool reset)
     {
         uint32_t addr;
+        uint32_t hart;
         uint32_t word;
+        uint32_t msip_next;
         // mtime is a platform timer, not necessarily the CPU core clock. The
         // divider lets long-running Linux simulation keep timer interrupts at
         // a feasible rate while ordinary unit tests keep one tick per cycle.
@@ -138,8 +167,16 @@ public:
         }
 
         if (set_mtimecmp_in()) {
-            mtimecmp_reg._next = ((uint64_t)set_mtimecmp_hi_in() << 32) | (uint64_t)set_mtimecmp_lo_in();
+            mtimecmp_reg[0]._next = ((uint64_t)set_mtimecmp_hi_in() << 32) | (uint64_t)set_mtimecmp_lo_in();
         }
+#ifdef MULTICORE
+        for (hart = 0; hart < HART_COUNT; ++hart) {
+            if (set_mtimecmp_per_hart_in[hart]()) {
+                mtimecmp_reg[hart]._next = ((uint64_t)set_mtimecmp_hi_per_hart_in[hart]() << 32) |
+                    (uint64_t)set_mtimecmp_lo_per_hart_in[hart]();
+            }
+        }
+#endif
 
         if (axi_in.arvalid_in() && axi_in.arready_out()) {
             read_addr_reg._next = axi_in.araddr_in();
@@ -160,14 +197,27 @@ public:
             word = write_word_comb_func();
             write_addr_valid_reg._next = false;
             write_resp_valid_reg._next = true;
-            if (addr == REG_MSIP) {
-                msip_reg._next = word & 1u;
+            if (addr >= REG_MSIP && addr < REG_MSIP + HART_COUNT * 4u) {
+                hart = (addr - REG_MSIP) / 4u;
+                msip_next = (uint32_t)msip_reg;
+                if ((word & 1u) != 0) {
+                    msip_next |= 1u << hart;
+                }
+                else {
+                    msip_next &= ~(1u << hart);
+                }
+                msip_reg._next = msip_next;
             }
-            else if (addr == REG_MTIMECMP_LO) {
-                mtimecmp_reg._next = (uint64_t(uint32_t(uint64_t(mtimecmp_reg) >> 32)) << 32) | (uint64_t)word;
-            }
-            else if (addr == REG_MTIMECMP_HI) {
-                mtimecmp_reg._next = ((uint64_t)word << 32) | (uint64_t)(uint32_t)mtimecmp_reg;
+            else if (addr >= REG_MTIMECMP_LO && addr < REG_MTIMECMP_LO + HART_COUNT * 8u) {
+                hart = (addr - REG_MTIMECMP_LO) / 8u;
+                if (((addr - REG_MTIMECMP_LO) & 4u) == 0) {
+                    mtimecmp_reg[hart]._next =
+                        (uint64_t(uint32_t(uint64_t(mtimecmp_reg[hart]) >> 32)) << 32) | (uint64_t)word;
+                }
+                else {
+                    mtimecmp_reg[hart]._next =
+                        ((uint64_t)word << 32) | (uint64_t)(uint32_t)mtimecmp_reg[hart];
+                }
             }
             else if (addr == REG_MTIME_LO) {
                 mtime_reg._next = (uint64_t(uint32_t(uint64_t(mtime_reg) >> 32)) << 32) | (uint64_t)word;
@@ -191,12 +241,15 @@ public:
             msip_reg.clr();
             mtime_reg.clr();
             mtime_div_reg.clr();
-            mtimecmp_reg._next = ~0ull;
+            for (hart = 0; hart < HART_COUNT; ++hart) {
+                mtimecmp_reg[hart]._next = ~0ull;
+            }
         }
     }
 
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
+        size_t hart;
         read_addr_reg.strobe(checkpoint_fd);
         read_id_reg.strobe(checkpoint_fd);
         read_valid_reg.strobe(checkpoint_fd);
@@ -206,7 +259,9 @@ public:
         write_resp_valid_reg.strobe(checkpoint_fd);
         msip_reg.strobe(checkpoint_fd);
         mtime_reg.strobe(checkpoint_fd);
-        mtimecmp_reg.strobe(checkpoint_fd);
+        for (hart = 0; hart < HART_COUNT; ++hart) {
+            mtimecmp_reg[hart].strobe(checkpoint_fd);
+        }
         mtime_div_reg.strobe(checkpoint_fd);
     }
 };

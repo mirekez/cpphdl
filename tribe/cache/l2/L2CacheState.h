@@ -48,6 +48,8 @@ struct CacheRequest
     u1 write;                    // Request is a write transaction.
     u1 port;                     // Request came from the CPU/L1 data port rather than instruction port.
     u1 from_slave;               // Request came from an external coherent AXI slave port.
+    u1 cache_disable;            // CPU/L1 explicitly requests an uncached backing-memory transaction.
+    u<3> cpu_index;              // CPU/L1 pair that originated the request; supports up to eight pairs without 64-bit RTL indexing.
     u8 slave_index;              // External AXI slave port index; lower MEM_PORT_BITS bits are used.
     u<4> slave_id;               // External AXI transaction ID to echo in the response.
 };
@@ -158,7 +160,7 @@ struct L2AxiRouteComb
     u8 aw_sel;                   // Selected write memory/device port; lower MEM_PORT_BITS bits are used.
 };
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Owns the external L2 protocol ports, RAM arrays, state registers, and geometry constants.
 class L2CacheState : public Module
 {
@@ -171,6 +173,8 @@ protected:
     static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
     static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
     static_assert(PORT_BITWIDTH <= 256, "L2Cache AXI read response struct storage is sized for up to 256-bit ports");
+    static_assert(CPU_PORTS >= 1, "L2Cache must have at least one CPU port pair");
+    static_assert(CPU_PORTS <= 8, "L2Cache CPU response bookkeeping supports up to 8 CPU port pairs");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
     static constexpr size_t PORT_BYTES = PORT_BITWIDTH / 8;
@@ -186,13 +190,15 @@ protected:
     static constexpr size_t TAG_RAM_BITS = ((TAG_BITS + 2 + 7) / 8) * 8;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
-    // Fixed ninth response slot used by CPU read-data and wait combs and by controller completion writes.
-    static constexpr size_t CPU_RESPONSE_INDEX = 8;
+    // Slots 0..7 are AXI endpoints and slots 8..15 independently acknowledge CPU port pairs.
+    static constexpr uint32_t CPU_RESPONSE_BASE = 8;
+    // Fixed response storage covers the eight supported AXI and eight supported CPU endpoints.
+    static constexpr uint32_t RESPONSE_SLOTS = 16;
     static constexpr uint64_t MEM_ADDR_MASK64 = (MEM_ADDR_BITS >= 64) ? ~0ull : ((1ull << MEM_ADDR_BITS) - 1ull);
 
 public:
-    L1MemIf<PORT_BITWIDTH> i_mem_in;
-    L1MemIf<PORT_BITWIDTH> d_mem_in;
+    L1MemIf<PORT_BITWIDTH> i_mem_in[CPU_PORTS];
+    L1MemIf<PORT_BITWIDTH> d_mem_in[CPU_PORTS];
 
     _PORT(uint32_t) memory_base_in;
     _PORT(uint32_t) memory_size_in;
@@ -220,12 +226,13 @@ protected:
 
     reg<u<5>> state_reg;
     reg<CacheRequest> req_reg;
+    // Round-robin start pair prevents a continuously requesting low index from starving another CPU.
+    reg<u<3>> cpu_rr_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> victim_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> fill_way_reg;
     reg<u<clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS)>> init_set_reg;
-    // Slots 0..7 hold AXI input responses and slot 8 holds the CPU/L1 response.
-    // A fixed count keeps the package concrete while MEM_PORTS remains an SV parameter.
-    reg<array<9, CacheResponse>> response_reg;
+    // A fixed count keeps the package concrete while MEM_PORTS and CPU_PORTS remain SV parameters.
+    reg<array<16, CacheResponse>> response_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> fill_beat_reg;
@@ -240,5 +247,4 @@ protected:
     // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
     reg<array<8, Axi4ReadAddress<ADDR_BITS, 4>>> slave_ar_seen_reg;
 
-    // True when any external AXI master is offering a one-beat write.
 };

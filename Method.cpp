@@ -244,14 +244,15 @@ bool Method::print(std::ofstream& out)
         if (arg.name != "clk") {
 //        out << "\n" << arg.expr.debug() << " " << arg.name << "\n";
             out << (args_cnt > 1 ? (first ? "        " : ",       ") : (first ? "" : ", "))
-                << (str_ending(arg.name, "_out") ? "output " : "input ") << arg.expr.str() << " " << arg.name << (args_cnt > 1 ? "\n" : "");
+                << (str_ending(arg.name, "_out") ? "output " : "input ") << arg.expr.str() << " "
+                << escapeIdentifier(arg.name) << (args_cnt > 1 ? "\n" : "");
             first = false;
         }
     }
     out << (args_cnt>1?"    ":"") << ");" << "\n";
 
     if (ret.size() == 0) {
-        out << "    begin: " << name << "\n";
+        out << "    begin: " << escapeIdentifier(name) << "\n";
     }
 
     // Tasks and functions have the same SystemVerilog declaration-order rule
@@ -369,7 +370,11 @@ bool Method::printAssigns(std::ofstream& out)
                             }
                         }
                         std::string wname = assignedWireName(e.sub[0]);
-                        if (!moduleHasAssignableName(*currModule, wname) && wname.length() > 2) {
+                        // Generate-loop induction variables are local genvars, not module wires.
+                        bool isGenvar = any_of(vars.begin(), vars.end(), [&](const std::string& var) {
+                            return wname == "g" + var;
+                        });
+                        if (!isGenvar && !moduleHasAssignableName(*currModule, wname) && wname.length() > 2) {
                              std::cout << "!!! WARNING: can't find wire: " << wname << ": " << e.debug() << " in '" << currModule->name << "'\n";
                         }
                     }

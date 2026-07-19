@@ -305,7 +305,7 @@ prepare_config()
 
     if [[ -x "${KERNEL_SRC}/scripts/config" ]]; then
         for option in \
-            SMP HOTPLUG_CPU MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
+            MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
             BPF_SYSCALL BPF_JIT BPF_PRELOAD CGROUPS NAMESPACES \
             FTRACE RCU_TRACE DEBUG_MISC DEBUG_BUGVERBOSE SLUB_DEBUG \
             VT VT_CONSOLE INPUT INPUT_KEYBOARD INPUT_MOUSE HID_SUPPORT HID HID_GENERIC \
@@ -317,9 +317,10 @@ prepare_config()
             "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -d "${option}"
         done
         "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val LOG_BUF_SHIFT 14
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val NR_CPUS 4
 
         for option in \
-            FUTEX TMPFS PROC_FS SYSFS DEVTMPFS NET INET \
+            SMP RISCV_BOOT_SPINWAIT FUTEX TMPFS PROC_FS SYSFS DEVTMPFS NET INET \
             RISCV_ISA_C BLK_DEV_TRIBE_SD EXT2_FS NETDEVICES ETHERNET \
             NET_VENDOR_XILINX DMADEVICES XILINX_DMA XILINX_AXI_EMAC PHYLINK FIXED_PHY; do
             "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -e "${option}"
@@ -340,7 +341,7 @@ prepare_config()
 
     if [[ -x "${KERNEL_SRC}/scripts/config" ]]; then
         for option in \
-            SMP HOTPLUG_CPU MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
+            MODULES KALLSYMS IKCONFIG IKCONFIG_PROC \
             BPF_SYSCALL BPF_JIT BPF_PRELOAD CGROUPS NAMESPACES \
             FTRACE RCU_TRACE DEBUG_MISC DEBUG_BUGVERBOSE SLUB_DEBUG \
             VT VT_CONSOLE INPUT INPUT_KEYBOARD INPUT_MOUSE HID_SUPPORT HID HID_GENERIC \
@@ -352,6 +353,7 @@ prepare_config()
             "${KERNEL_SRC}/scripts/config" --file "${dst_config}" -d "${option}"
         done
         "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val LOG_BUF_SHIFT 14
+        "${KERNEL_SRC}/scripts/config" --file "${dst_config}" --set-val NR_CPUS 4
         kernel_make olddefconfig
     fi
 }

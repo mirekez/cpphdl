@@ -19,6 +19,8 @@ public:
     using Base::debugen_in;
     using Base::flush_in;
     using Base::invalidate_in;
+    using Base::invalidate_line_in;
+    using Base::invalidate_addr_in;
     using Base::mem_out;
     using Base::perf_out;
     using Base::read_addr_out;
@@ -52,6 +54,7 @@ private:
     using Base::request_geometry_comb_func;
     using Base::state_reg;
     using Base::tag_epoch_reg;
+    using Base::tag_set_epoch_reg;
     using Base::tag_ram;
     using Base::victim_reg;
 
@@ -71,6 +74,7 @@ public:
         mem_out.addr_in = _ASSIGN_COMB(mem_driver_comb_func().addr);
         mem_out.write_data_in = _ASSIGN_COMB(mem_driver_comb_func().write_data);
         mem_out.write_mask_in = _ASSIGN_COMB(mem_driver_comb_func().write_mask);
+        mem_out.cache_disable_in = _ASSIGN_COMB(mem_driver_comb_func().cache_disable);
 
         for (i = 0; i < WAYS; ++i) {
             even_ram[i].addr_in = _ASSIGN((state_reg == L1_ST_REFILL ||
@@ -102,7 +106,7 @@ public:
                 (uint32_t)request_geometry_comb_func().set :
                 (uint32_t)input_request_comb_func().set)));
             tag_ram[i].data_in = _ASSIGN(state_reg == L1_ST_REFILL ?
-                refill_tag_comb_func() : logic<TAG_BITS + 2>(0));
+                refill_tag_comb_func() : logic<TAG_BITS + 10>(0));
             tag_ram[i].wr_in = _ASSIGN_I(state_reg == L1_ST_INIT ||
                 (state_reg == L1_ST_REFILL && req_reg.read && req_reg.cacheable &&
                 refill_reg.beat == REFILL_BEATS - 1 && victim_reg == i) || write_in());
@@ -119,11 +123,29 @@ public:
         L1InputRequestComb input_request;
         L1LookupComb lookup;
         L1RefillLinesComb refill_lines;
+        uint32_t invalidate_set;
+        bool invalidate_conflict;
         input_request = input_request_comb_func();
         lookup = lookup_comb_func();
         refill_lines = refill_lines_comb_func();
+        invalidate_set = ((uint32_t)invalidate_addr_in() / CACHE_LINE_SIZE) % SETS;
+        invalidate_conflict = invalidate_line_in() && req_reg.read &&
+            (uint32_t)request_geometry_comb_func().set == invalidate_set;
 
-        if (invalidate_in()) {
+        if (invalidate_line_in()) {
+            // A per-set generation counter invalidates peer data without taking the
+            // single-port tag RAM away from an unrelated local lookup/refill.
+            tag_set_epoch_reg._next[invalidate_set] = tag_set_epoch_reg[invalidate_set] + 1;
+        }
+
+        if (invalidate_conflict) {
+            // A request for the snooped set may have sampled the old generation.
+            req_reg._next.read = false;
+            response_reg._next.valid = false;
+            refill_reg._next.req_data_valid = false;
+            state_reg._next = L1_ST_IDLE;
+        }
+        else if (invalidate_in()) {
             req_reg._next.read = false;
             response_reg._next.valid = false;
             refill_reg._next.req_data_valid = false;
@@ -244,6 +266,7 @@ public:
             state_reg.clr();
             req_reg.clr();
             tag_epoch_reg.clr();
+            tag_set_epoch_reg.clr();
             refill_reg.clr();
             victim_reg.clr();
             init_set_reg.clr();
@@ -259,6 +282,7 @@ public:
         state_reg.strobe(checkpoint_fd);
         req_reg.strobe(checkpoint_fd);
         tag_epoch_reg.strobe(checkpoint_fd);
+        tag_set_epoch_reg.strobe(checkpoint_fd);
         refill_reg.strobe(checkpoint_fd);
         victim_reg.strobe(checkpoint_fd);
         init_set_reg.strobe(checkpoint_fd);

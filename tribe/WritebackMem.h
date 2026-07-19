@@ -265,9 +265,6 @@ private:
 public:
     void _work(bool reset)
     {
-        bool captured_load;
-        captured_load = false;
-
         if (dcache_write_valid_in() && dcache_write_mask_in()) {
             bool same_head = store_forward_valid_reg[0] &&
                 (uint32_t)store_forward_addr_reg[0] == dcache_write_addr_in() &&
@@ -284,17 +281,21 @@ public:
             store_forward_mask_reg._next[0] = dcache_write_mask_in();
             store_forward_valid_reg._next[0] = true;
         }
+        else {
+            // A completed write is already visible through L1/L2; retaining it
+            // would overwrite a later coherent load with stale forwarded data.
+            store_forward_valid_reg._next[0] = false;
+            store_forward_valid_reg._next[1] = false;
+        }
 
         if (split_load_in()) {
             if (split_load_current_low_valid_comb_func()) {
                 split_load_low_reg._next = dcache_read_data_in();
                 split_load_low_valid_reg._next = true;
-                captured_load = true;
             }
             if (split_load_current_high_valid_comb_func()) {
                 split_load_high_reg._next = dcache_read_data_in();
                 split_load_high_valid_reg._next = true;
-                captured_load = true;
             }
         }
         else if (state_in().valid && state_in().wb_op == Wb::MEM &&
@@ -308,10 +309,12 @@ public:
             load_pc_reg._next = state_in().pc;
             load_rd_reg._next = state_in().rd;
             load_data_valid_reg._next = true;
-            captured_load = true;
         }
 
-        if (!hold_in() && !captured_load) {
+        // A response consumed without a pipeline hold must not survive into a
+        // later dynamic execution of the same load instruction. PC/RD identify
+        // the held instruction, but loop iterations can legitimately reuse both.
+        if (!hold_in()) {
             load_data_valid_reg._next = false;
             split_load_low_valid_reg._next = false;
             split_load_high_valid_reg._next = false;

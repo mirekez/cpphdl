@@ -21,11 +21,13 @@ int L2CachePipeline_test_main()
     request_reg._next.addr = 0x12345678u;
     request_reg._next.read = true;
     request_reg._next.port = true;
+    request_reg._next.cpu_index = 3;
     l2test::expect_eq(ctx, "request before edge", request_reg.addr, 0u);
     request_reg.strobe();
     l2test::expect_eq(ctx, "request address after edge", request_reg.addr, 0x12345678u);
     l2test::expect_true(ctx, "request read after edge", request_reg.read);
     l2test::expect_true(ctx, "request port after edge", request_reg.port);
+    l2test::expect_eq(ctx, "request CPU index after edge", request_reg.cpu_index, 3u);
 
     l2test::section("2. one-clock response latency");
     response_reg._next.valid = true;

@@ -92,7 +92,7 @@ class System : public Module
 #endif
 
 public:
-    Tribe tribe;
+    TribeTest<1> tribe;
     Axi4Ram<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH, SOC_AXI_RAM2_DEPTH> mem2;
     Axi4RegionMux<5, clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> iospace;
     NS16550A<clog2(MAX_RAM_SIZE), 4, TRIBE_L2_AXI_WIDTH> uart;
@@ -909,7 +909,7 @@ int main(int argc, char** argv)
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
                 "File", "RAM", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
-                "Tribe", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
+                "Tribe", "TribeTest", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),
                     (source_root / "tribe").string(),
                     (source_root / "tribe" / "common").string(),

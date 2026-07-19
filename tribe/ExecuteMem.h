@@ -18,6 +18,11 @@ public:
     // Address expected for the active atomic read; physical when MMU is enabled.
     _PORT(uint32_t) dcache_read_expected_addr_in;
     _PORT(uint32_t) dcache_read_data_in;
+#ifdef MULTICORE
+    // A committed peer store clears an overlapping LR reservation.
+    _PORT(bool)     reservation_invalidate_in = _ASSIGN(false);
+    _PORT(uint32_t) reservation_invalidate_addr_in = _ASSIGN((uint32_t)0);
+#endif
 #endif
     // Holds the current memory request stable while dcache/L2 cannot accept it.
     _PORT(bool)     mem_stall_in;
@@ -61,7 +66,10 @@ private:
     reg<u32> split_load_high_addr_reg;
 #ifdef ENABLE_RV32IA
     reg<u1>  reservation_valid_reg;
+    // Architectural LR/SC matching uses the instruction's virtual address.
     reg<u32> reservation_addr_reg;
+    // Coherent peer-store snoops carry the translated physical address.
+    reg<u32> reservation_physical_addr_reg;
     reg<u1>  atomic_pending_reg;
     reg<u32> atomic_addr_reg;
     reg<u32> atomic_operand_reg;
@@ -203,6 +211,7 @@ private:
 #ifdef ENABLE_RV32IA
             reservation_valid_reg._next = reservation_valid_reg;
             reservation_addr_reg._next = reservation_addr_reg;
+            reservation_physical_addr_reg._next = reservation_physical_addr_reg;
             atomic_pending_reg._next = atomic_pending_reg;
             atomic_addr_reg._next = atomic_addr_reg;
             atomic_operand_reg._next = atomic_operand_reg;
@@ -217,6 +226,8 @@ private:
                 if ((uint8_t)atomic_op_reg == Amo::LR_W) {
                     reservation_valid_reg._next = true;
                     reservation_addr_reg._next = atomic_addr_reg;
+                    reservation_physical_addr_reg._next =
+                        dcache_read_expected_addr_in() & ~3u;
                 }
                 else {
                     mem_addr_reg._next = atomic_addr_reg;
@@ -329,7 +340,25 @@ private:
 public:
     void _work(bool reset)
     {
+#if defined(ENABLE_RV32IA) && defined(MULTICORE)
+        bool completing_lr;
+        completing_lr = atomic_pending_reg && (uint8_t)atomic_op_reg == Amo::LR_W &&
+            atomic_read_ready_comb_func();
+#endif
         do_memory();
+#if defined(ENABLE_RV32IA) && defined(MULTICORE)
+        // A store accepted by the shared L2 invalidates an older reservation
+        // and also wins over an LR response completing in this same cycle.
+        if (reservation_invalidate_in() &&
+            ((reservation_valid_reg &&
+                (uint32_t)reservation_physical_addr_reg ==
+                    (reservation_invalidate_addr_in() & ~3u)) ||
+             (completing_lr &&
+                (dcache_read_expected_addr_in() & ~3u) ==
+                    (reservation_invalidate_addr_in() & ~3u)))) {
+            reservation_valid_reg._next = false;
+        }
+#endif
         if (reset) {
             mem_write_reg.clr();
             mem_read_reg.clr();
@@ -362,6 +391,7 @@ public:
 #ifdef ENABLE_RV32IA
         reservation_valid_reg.strobe(checkpoint_fd);
         reservation_addr_reg.strobe(checkpoint_fd);
+        reservation_physical_addr_reg.strobe(checkpoint_fd);
         atomic_pending_reg.strobe(checkpoint_fd);
         atomic_addr_reg.strobe(checkpoint_fd);
         atomic_operand_reg.strobe(checkpoint_fd);

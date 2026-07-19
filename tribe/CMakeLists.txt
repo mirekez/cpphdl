@@ -74,12 +74,23 @@ file(CHMOD "${TRIBE_BUILD_BAREMETAL_SCRIPT}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 function(add_tribe_target target_name l2_axi_width output_subdir)
+    cmake_parse_arguments(TRIBE_TARGET "MULTICORE" "" "" ${ARGN})
+
+    if(TRIBE_TARGET_MULTICORE)
+        set(multicore_compile_definition MULTICORE)
+        set(multicore_cpphdl_argument -DMULTICORE)
+    else()
+        set(multicore_compile_definition)
+        set(multicore_cpphdl_argument)
+    endif()
+
     add_executable(${target_name} main.cpp)
 
     target_compile_definitions(${target_name} PRIVATE
         L2_AXI_WIDTH=${l2_axi_width}
         TRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG}
         TRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG}
+        ${multicore_compile_definition}
     )
 
     target_include_directories(${target_name} PRIVATE
@@ -101,7 +112,7 @@ function(add_tribe_target target_name l2_axi_width output_subdir)
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} -I ${CMAKE_SOURCE_DIR}/include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices ${CPPHDL_TOOLCHAIN_ARGS}"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -DL2_AXI_WIDTH=${l2_axi_width} -DTRIBE_RAM_BYTES_CONFIG=${TRIBE_RAM_BYTES_CONFIG} -DTRIBE_IO_REGION_SIZE_CONFIG=${TRIBE_IO_REGION_SIZE_CONFIG} ${multicore_cpphdl_argument} -I ${CMAKE_SOURCE_DIR}/include -I ${CMAKE_CURRENT_SOURCE_DIR}/common -I ${CMAKE_CURRENT_SOURCE_DIR}/spec -I ${CMAKE_CURRENT_SOURCE_DIR}/devices ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND "${TRIBE_BUILD_BAREMETAL_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/${output_subdir}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/${output_subdir}
     )
@@ -115,6 +126,9 @@ endfunction()
 add_tribe_target(tribe256 256 tribe256)
 add_tribe_target(tribe128 128 tribe128)
 add_tribe_target(tribe64 64 tribe64)
+add_tribe_target(tribe256_multicore 256 tribe256_multicore MULTICORE)
+add_tribe_target(tribe128_multicore 128 tribe128_multicore MULTICORE)
+add_tribe_target(tribe64_multicore 64 tribe64_multicore MULTICORE)
 
 function(add_soc_target target_name l2_axi_width output_subdir)
     add_executable(${target_name} SoC/System.cpp)
@@ -167,6 +181,9 @@ foreach(flag -std=c++26 -std=c++2c)
         target_compile_options(tribe256 PRIVATE "${flag}")
         target_compile_options(tribe128 PRIVATE "${flag}")
         target_compile_options(tribe64 PRIVATE "${flag}")
+        target_compile_options(tribe256_multicore PRIVATE "${flag}")
+        target_compile_options(tribe128_multicore PRIVATE "${flag}")
+        target_compile_options(tribe64_multicore PRIVATE "${flag}")
         target_compile_options(SoC256 PRIVATE "${flag}")
         target_compile_options(SoC128 PRIVATE "${flag}")
         target_compile_options(SoC64 PRIVATE "${flag}")

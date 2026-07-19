@@ -4,7 +4,6 @@ ulimit -s unlimited 2>/dev/null || true
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe/linux}"
-TRIBE_BIN="${TRIBE_BIN:-${ROOT_DIR}/build/tribe_linux/tribe64_linux}"
 KERNEL_IMAGE="${KERNEL_IMAGE:-${LINUX_DIR}/Image}"
 KERNEL_ELF="${KERNEL_ELF:-${LINUX_DIR}/vmlinux}"
 VMLINUX_ARCHIVE="${VMLINUX_ARCHIVE:-${LINUX_DIR}/vmlinux.tgz}"
@@ -28,6 +27,19 @@ TRIBE_LINUX_SD_IMAGE="${TRIBE_LINUX_SD_IMAGE:-}"
 TRIBE_LINUX_ETH_TAP_SOCKET="${TRIBE_LINUX_ETH_TAP_SOCKET:-}"
 TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-50000000}"
 TRIBE_TIMEBASE_HZ="${TRIBE_TIMEBASE_HZ:-$((TRIBE_CPU_CLOCK_HZ / TRIBE_CLINT_TICK_DIV))}"
+TRIBE_LINUX_MULTICORE="${TRIBE_LINUX_MULTICORE:-0}"
+TRIBE_LINUX_BUS_WIDTH="${TRIBE_LINUX_BUS_WIDTH:-64}"
+
+usage()
+{
+    cat <<'EOF'
+Usage: run_linux_probe.sh [options]
+  --multicore                 Build and run with -DMULTICORE.
+  --bus_width 64|128|256      Select the L2 AXI bus width (default: 64).
+  --sd-image FILE             Attach an SD-card image.
+  --eth-tap-socket PATH       Connect Ethernet to a TAP socket.
+EOF
+}
 
 if [[ -n "${TRIBE_UART_INPUT_FILE:-}" ]]; then
     TRIBE_UART_INPUT="$(cat "${TRIBE_UART_INPUT_FILE}")"$'\n'
@@ -36,6 +48,18 @@ fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --multicore)
+            TRIBE_LINUX_MULTICORE=1
+            shift
+            ;;
+        --bus_width|--bus-width)
+            if [[ $# -lt 2 ]]; then
+                echo "$1 requires 64, 128, or 256" >&2
+                exit 1
+            fi
+            TRIBE_LINUX_BUS_WIDTH="$2"
+            shift 2
+            ;;
         --sd-image)
             if [[ $# -lt 2 ]]; then
                 echo "--sd-image requires a file path" >&2
@@ -52,12 +76,44 @@ while [[ $# -gt 0 ]]; do
             TRIBE_LINUX_ETH_TAP_SOCKET="$2"
             shift 2
             ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
         *)
             echo "unknown run_linux_probe.sh option: $1" >&2
             exit 1
             ;;
     esac
 done
+
+case "${TRIBE_LINUX_BUS_WIDTH}" in
+    64|128|256)
+        ;;
+    *)
+        echo "--bus_width must be 64, 128, or 256 (got '${TRIBE_LINUX_BUS_WIDTH}')" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "${TRIBE_LINUX_MULTICORE}" != "0" && "${TRIBE_LINUX_MULTICORE}" != "1" ]]; then
+    echo "TRIBE_LINUX_MULTICORE must be 0 or 1" >&2
+    exit 1
+fi
+
+tribe_binary_name="tribe${TRIBE_LINUX_BUS_WIDTH}_linux"
+if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
+    tribe_binary_name="tribe${TRIBE_LINUX_BUS_WIDTH}_multicore_linux"
+fi
+TRIBE_BIN="${TRIBE_BIN:-${ROOT_DIR}/build/tribe_linux/${tribe_binary_name}}"
+TRIBE_LINUX_CPU_CORES=1
+if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
+    TRIBE_LINUX_CPU_CORES="$(awk '$2 == "CPUS_PER_L2_CACHE" { print $3; exit }' "${ROOT_DIR}/tribe/Config.h")"
+    if [[ ! "${TRIBE_LINUX_CPU_CORES}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "can't read CPUS_PER_L2_CACHE from tribe/Config.h" >&2
+        exit 1
+    fi
+fi
 
 find_objcopy()
 {
@@ -183,7 +239,7 @@ PY
 )"
 
     if true; then
-        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" "${TRIBE_LINUX_BOOTARGS}" "${TRIBE_LINUX_BAUD}" "${TRIBE_TIMEBASE_HZ}" "${TRIBE_CPU_CLOCK_HZ}" <<'PY'
+        python3 - "${DTS}" "${DTS_WITH_INITRD}" "${INITRAMFS_ADDR}" "${initramfs_end}" "${TRIBE_LINUX_BOOTARGS}" "${TRIBE_LINUX_BAUD}" "${TRIBE_TIMEBASE_HZ}" "${TRIBE_CPU_CLOCK_HZ}" "${TRIBE_LINUX_CPU_CORES}" <<'PY'
 import pathlib
 import sys
 
@@ -195,7 +251,44 @@ bootargs = sys.argv[5]
 baud = int(sys.argv[6], 0)
 timebase = int(sys.argv[7], 0)
 cpu_clock = int(sys.argv[8], 0)
+cpu_cores = int(sys.argv[9], 0)
 text = src.read_text(encoding="utf-8")
+
+lines = text.splitlines(keepends=True)
+cpu_start = next((i for i, line in enumerate(lines) if line.strip() == "cpu@0 {"), None)
+if cpu_start is None:
+    raise SystemExit("failed to find cpu@0 in DTS")
+depth = 0
+cpu_end = None
+for i in range(cpu_start, len(lines)):
+    depth += lines[i].count("{") - lines[i].count("}")
+    if depth == 0:
+        cpu_end = i + 1
+        break
+if cpu_end is None:
+    raise SystemExit("unterminated cpu@0 node in DTS")
+cpu_template = "".join(lines[cpu_start:cpu_end])
+cpu_nodes = []
+for hart in range(cpu_cores):
+    node = cpu_template.replace("cpu@0 {", f"cpu@{hart} {{", 1)
+    node = node.replace("reg = <0>;", f"reg = <{hart}>;", 1)
+    node = node.replace("cpu_intc:", f"cpu{hart}_intc:", 1)
+    cpu_nodes.append(node)
+lines[cpu_start:cpu_end] = cpu_nodes
+text = "".join(lines)
+
+clint_interrupts = " ".join(
+    f"&cpu{hart}_intc 3 &cpu{hart}_intc 7" for hart in range(cpu_cores)
+)
+plic_interrupts = " ".join(f"&cpu{hart}_intc 9" for hart in range(cpu_cores))
+text = text.replace(
+    "interrupts-extended = <&cpu_intc 3 &cpu_intc 7>;",
+    f"interrupts-extended = <{clint_interrupts}>;",
+)
+text = text.replace(
+    "interrupts-extended = <&cpu_intc 9>;",
+    f"interrupts-extended = <{plic_interrupts}>;",
+)
 insert = (
     f"\t\tbootargs = \"{bootargs}\";\n"
     f"\t\tstdout-path = \"/soc/serial@82000000:{baud}n8\";\n"
@@ -249,21 +342,35 @@ PY
 if [[ "${TRIBE_LINUX_INPUTS_PREPARED:-0}" != "1" ]]; then
     prepare_linux_inputs
     export TRIBE_LINUX_INPUTS_PREPARED=1
+    export TRIBE_LINUX_MULTICORE
+    export TRIBE_LINUX_BUS_WIDTH
     export TRIBE_LINUX_SD_IMAGE
+    export TRIBE_LINUX_ETH_TAP_SOCKET
     exec "${BASH}" "${BASH_SOURCE[0]}"
 fi
 
 newer_tribe_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
-    newer_tribe_header="$(find "${ROOT_DIR}/tribe" -maxdepth 6 -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
+    newer_tribe_header="$(find "${ROOT_DIR}/tribe" \
+        -path "${LINUX_DIR}" -prune -o \
+        -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
 fi
 TRIBE_BIN_CONFIG="${TRIBE_BIN}.config"
-TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=64 TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"
+TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=${TRIBE_LINUX_BUS_WIDTH} MULTICORE=${TRIBE_LINUX_MULTICORE} TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"
 if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" || ! -f "${TRIBE_BIN_CONFIG}" || "$(cat "${TRIBE_BIN_CONFIG}")" != "${TRIBE_COMPILE_CONFIG}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     TRIBE_BIN_TMP="${TRIBE_BIN}.new.$$"
     rm -f "${TRIBE_BIN_TMP}"
     read -r -a CXX_CMD <<< "${CXX:-clang++}"
+    TRIBE_COMPILE_DEFINITIONS=(
+        -DL2_AXI_WIDTH="${TRIBE_LINUX_BUS_WIDTH}"
+        -DTRIBE_RAM_BYTES_CONFIG="${TRIBE_RAM_BYTES}"
+        -DTRIBE_IO_REGION_SIZE_CONFIG="${TRIBE_IO_BYTES}"
+        -DTRIBE_CLINT_TICK_DIV_CONFIG="${TRIBE_CLINT_TICK_DIV}"
+    )
+    if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
+        TRIBE_COMPILE_DEFINITIONS+=(-DMULTICORE)
+    fi
     "${CXX_CMD[@]}" "${ROOT_DIR}/tribe/main.cpp" \
         -std=c++26 -O3 -g ${CPPHDL_HOST_OPT_FLAGS:-} -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
@@ -274,10 +381,7 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || 
         -I"${ROOT_DIR}/tribe/cache" \
         -I"${ROOT_DIR}/tribe/devices" \
         -I"${ROOT_DIR}/examples/axi" \
-        -DL2_AXI_WIDTH=64 \
-        -DTRIBE_RAM_BYTES_CONFIG="${TRIBE_RAM_BYTES}" \
-        -DTRIBE_IO_REGION_SIZE_CONFIG="${TRIBE_IO_BYTES}" \
-        -DTRIBE_CLINT_TICK_DIV_CONFIG="${TRIBE_CLINT_TICK_DIV}" \
+        "${TRIBE_COMPILE_DEFINITIONS[@]}" \
         -o "${TRIBE_BIN_TMP}" \
         -lstdc++exp
     mv -f "${TRIBE_BIN_TMP}" "${TRIBE_BIN}"
