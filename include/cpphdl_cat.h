@@ -151,7 +151,7 @@ struct cat : logic<SUM<N...>()>
     }
 
     template<typename... Args>
-    constexpr cat(const Args&... args)
+    constexpr cat(const Args&... args) : logic<WIDTH>()
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");

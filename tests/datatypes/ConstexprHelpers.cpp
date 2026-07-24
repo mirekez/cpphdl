@@ -57,8 +57,8 @@ int main()
     logic<96> slice = sv_bits<96>(source, 127, 32);
     ok &= expect((bool)slice[68], "sv_bits truncated a selected bit above bit 63");
 
-    auto wide_cat = cat(logic<5>(8), logic<64>(0x10000), logic<13>(0));
-    logic<82> packed_cat = pack_value<82>(wide_cat);
+    auto packed_wide_cat = cat(logic<5>(8), logic<64>(0x10000), logic<13>(0));
+    logic<82> packed_cat = pack_value<82>(packed_wide_cat);
     ok &= expect((bool)packed_cat[80], "pack_value truncated a wide concatenation above bit 63");
 
     ConstexprWidePacked packed{};
