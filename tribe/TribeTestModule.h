@@ -310,7 +310,6 @@ public:
         uint32_t i;
 #ifdef MULTICORE
         bool atomic_selected;
-        bool atomic_bus_idle;
 #endif
 #ifdef SYNTHESIS
         // These calls are removed from the parent SV task, but keep each child
@@ -339,18 +338,16 @@ public:
         }
 #ifdef MULTICORE
         atomic_selected = false;
-        atomic_bus_idle = true;
-        for (i = 0; i < CPU_CORES; ++i) {
-            if (cores[i].d_mem_out.read_in() || cores[i].d_mem_out.write_in()) {
-                atomic_bus_idle = false;
-            }
-        }
         if (atomic_owner_valid_reg) {
             if (!cores[(uint32_t)atomic_owner_reg].atomic_request_out()) {
                 atomic_owner_valid_reg._next = false;
             }
         }
-        else if (atomic_bus_idle) {
+        else {
+            // L2 serializes requests captured before this clock. Select an AMO
+            // requester immediately; waiting for every live request level to
+            // fall can deadlock when another core is held by an unrelated
+            // instruction-side stall after its data request was accepted.
             for (i = 0; i < CPU_CORES; ++i) {
                 if (!atomic_selected && cores[i].atomic_request_out()) {
                     atomic_owner_valid_reg._next = true;

@@ -189,6 +189,7 @@ public:
 
         exe_mem.state_in = _ASSIGN_COMB(exe_state_comb_func());
         exe_mem.alu_result_in = exe.alu_result_out;
+        exe_mem.transaction_owner_valid_in = _ASSIGN((bool)state_reg[1].valid);
 #ifdef ENABLE_RV32IA
 #ifdef ENABLE_MMU_TLB
         // AMO read responses are tagged by the physical D-cache address; match
@@ -750,7 +751,7 @@ private:
     }
 #endif
 
-    // Global pipeline memory wait, including split accesses, atomics, cache waits, and page-table walks.
+    // Pipeline wait for operations already in decode/execute or memory/writeback.
     _LAZY_COMB(memory_wait_comb, bool)
         bool data_mem_access;
         bool next_data_mem_access;
@@ -775,7 +776,11 @@ private:
             (data_mem_access && !dmmu_faulted_access && exe_mem.atomic_busy_out()) ||
 #endif
 #ifdef ENABLE_MMU_TLB
-            ((bool)valid && immu.busy_out()) ||
+            // Hold prefetched instructions while an instruction translation is
+            // pending. An older data-memory operation is the exception: it must
+            // retire so the shared D-memory path remains available to the page
+            // table walk that will resume instruction fetch.
+            ((bool)valid && immu.busy_out() && !data_mem_access) ||
             (data_mem_access && !dmmu_faulted_access && dmmu.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && !dmmu_access_ready_comb_func()) ||
 #endif
@@ -1079,7 +1084,13 @@ private:
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out());
         return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
-            !interrupt_entry_guard_reg && !trap_redirect && !memory_wait_comb_func() &&
+            !interrupt_entry_guard_reg && !trap_redirect
+#ifdef ENABLE_RV32IA
+            // Do not flush an atomic instruction in the cycle before
+            // ExecuteMem's registered atomic_busy indication becomes visible.
+            && state_reg[0].amo_op == Amo::AMONONE
+#endif
+            && !memory_wait_comb_func() &&
             !hazard_stall_comb_func();
 #else
         return interrupt_accept_comb = false;

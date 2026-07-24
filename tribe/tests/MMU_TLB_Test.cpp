@@ -81,11 +81,11 @@ static std::string shell_quote(const std::filesystem::path& path)
     return quoted;
 }
 
-static bool build_mmu_tlb_elf()
+static bool build_mmu_tlb_elf(const std::string& source_name, const std::string& elf_name)
 {
     const auto code_dir = tribe_code_dir();
     const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
-    const auto elf = std::filesystem::current_path() / "mmu_tlb.elf";
+    const auto elf = std::filesystem::current_path() / elf_name;
 
     if (!std::filesystem::exists(gcc)) {
         std::print("missing RISC-V compiler: {}\n", gcc.string());
@@ -98,7 +98,7 @@ static bool build_mmu_tlb_elf()
     cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
     cmd += " -nostdlib -nostartfiles -Wl,-Ttext=0";
     cmd += " -I " + shell_quote(code_dir);
-    cmd += " " + shell_quote(code_dir / "mmu_tlb.c");
+    cmd += " " + shell_quote(code_dir / source_name);
     cmd += " -o " + shell_quote(elf);
     return std::system(cmd.c_str()) == 0;
 }
@@ -503,17 +503,27 @@ int main(int argc, char** argv)
     return TestMMUTLBDirect().run() ? 0 : 1;
 #elif defined(VERILATOR)
     Verilated::commandArgs(argc, argv);
-    return TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
+    bool ok = build_mmu_tlb_elf("mmu_tlb.c", "mmu_tlb.elf");
+    ok = ok && build_mmu_tlb_elf("mmu_satp_trampoline.c", "mmu_satp_trampoline.elf");
+    ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
         0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
-        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_TLB\n", "MMU/TLB ELF") ? 0 : 1;
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_TLB\n", "MMU/TLB ELF");
+    ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_satp_trampoline.elf").string(),
+        0, "", 20000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_SATP\n", "MMU satp trampoline");
+    return ok ? 0 : 1;
 #else
     bool ok = TestMMUTLBDirect().run();
-    ok = ok && build_mmu_tlb_elf();
+    ok = ok && build_mmu_tlb_elf("mmu_tlb.c", "mmu_tlb.elf");
+    ok = ok && build_mmu_tlb_elf("mmu_satp_trampoline.c", "mmu_satp_trampoline.elf");
     // Scenario: the ELF first exercises direct Sv32 translation, then a lazy
     // page-fault handler installs a missing PTE and returns to retry the load.
     ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_tlb.elf").string(),
         0, (tribe_code_dir() / "mmu_tlb.log").string(), 100000, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_TLB\n", "MMU/TLB ELF");
+    ok = ok && TestTribe(debug).run((std::filesystem::current_path() / "mmu_satp_trampoline.elf").string(),
+        0, "", 20000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 1, false, 0, "", false, "", 0, "", "", 0, false, "", false, "MMU_SATP\n", "MMU satp trampoline");
 
 #ifndef VERILATOR
     if (ok && !noveril) {

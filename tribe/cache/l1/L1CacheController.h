@@ -130,7 +130,8 @@ public:
         refill_lines = refill_lines_comb_func();
         invalidate_set = ((uint32_t)invalidate_addr_in() / CACHE_LINE_SIZE) % SETS;
         invalidate_conflict = invalidate_line_in() && req_reg.read &&
-            (uint32_t)request_geometry_comb_func().set == invalidate_set;
+            ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) ==
+                ((uint32_t)invalidate_addr_in() & ~(uint32_t)(CACHE_LINE_SIZE - 1));
 
         if (invalidate_line_in()) {
             // A per-set generation counter invalidates peer data without taking the
@@ -139,7 +140,9 @@ public:
         }
 
         if (invalidate_conflict) {
-            // A request for the snooped set may have sampled the old generation.
+            // Only abort a request for the snooped line. The set generation also
+            // invalidates unrelated resident lines, but aborting unrelated
+            // in-flight refills lets a store stream starve another core forever.
             req_reg._next.read = false;
             response_reg._next.valid = false;
             refill_reg._next.req_data_valid = false;

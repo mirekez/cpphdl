@@ -495,6 +495,36 @@ public:
         cycle(false);
     }
 
+    void focused_peer_invalidate_same_set_progress_check()
+    {
+        uint32_t request_addr = 16 * SETS * LINE_SIZE + 6 * LINE_SIZE + 8;
+        uint32_t peer_addr = 17 * SETS * LINE_SIZE + 6 * LINE_SIZE + 12;
+        uint32_t expected = expected_ram_read(request_addr);
+        bool got_response = false;
+
+        idle();
+        addr = request_addr;
+        read = true;
+        invalidate_addr = peer_addr;
+        // A peer can continuously write a different tag with the same set
+        // index. Its conservative set invalidations must not restart this
+        // unrelated refill on every cycle.
+        for (size_t i = 0; i < 64 && !got_response; ++i) {
+            invalidate_line = true;
+            cycle(false);
+            got_response = valid() && raddr() == request_addr && rdata() == expected;
+        }
+        invalidate_line = false;
+        read = false;
+        cycle(false);
+
+        if (!got_response) {
+            std::print("\nfocused same-set peer progress ERROR addr={:#x} peer={:#x}: valid={} raddr={:#x} data={:#x} expected={:#x}\n",
+                request_addr, peer_addr, valid(), raddr(), rdata(), expected);
+            error = true;
+        }
+    }
+
     void focused_cached_hit_stall_hold_check()
     {
         uint32_t request_addr = 12 * SETS * LINE_SIZE + 4 * LINE_SIZE + 8;
@@ -814,6 +844,9 @@ public:
         }
         if (!error) {
             focused_peer_invalidate_active_poll_check();
+        }
+        if (!error) {
+            focused_peer_invalidate_same_set_progress_check();
         }
         if (!error) {
             focused_cached_hit_stall_hold_check();

@@ -140,6 +140,10 @@ int main(void)
             : [tmp] "=&r"(tmp), [status] "=&r"(status)
             : [addr] "r"(&atomic_word)
             : "memory");
+        // Exercise the single-cycle AMO entry path as well as the LR/SC
+        // retry path while UART interrupts arrive continuously.
+        __asm__ volatile("amoadd.w zero, %0, (%1)"
+            : : "r"(1u), "r"(&atomic_word) : "memory");
         finish_if_done();
     }
 }

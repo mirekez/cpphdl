@@ -15,7 +15,8 @@
 // 3. Native C++ and generated Verilator RTL both complete the same barriers.
 // 4. Concurrent AMOs on one word are globally serialized across private L1 caches.
 // 5. A peer store invalidates an LR reservation so the following SC fails.
-// 6. An explicit UART success marker works even when a tohost address is configured.
+// 6. An AMO acquires ownership while another hart continuously issues stores.
+// 7. An explicit UART success marker works even when a tohost address is configured.
 
 static std::filesystem::path multicore_source_root()
 {

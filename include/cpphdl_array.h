@@ -604,8 +604,17 @@ template<size_t COUNT, typename TYPE>
 array<COUNT, TYPE, true> array<COUNT, TYPE, false>::pack() const
 {
     array<COUNT, TYPE, true> packed;
-    for (size_t i = 0; i < COUNT; ++i) {
-        packed[i] = data[i];
+    if constexpr (ELEMENT_BITS == 8 && sizeof(TYPE) == 1 &&
+                  std::is_trivially_copyable_v<TYPE>) {
+        // Element zero is the low packed byte.  One-byte elements therefore
+        // already have the packed representation in memory; proxy assignment
+        // would repeatedly materialize the entire destination for every byte.
+        std::memcpy(packed.data.bytes, data, COUNT);
+    }
+    else {
+        for (size_t i = 0; i < COUNT; ++i) {
+            packed[i] = data[i];
+        }
     }
     return packed;
 }

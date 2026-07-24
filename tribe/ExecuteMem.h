@@ -28,6 +28,9 @@ public:
     _PORT(bool)     mem_stall_in;
     // Preserves issued-request metadata while the pipeline waits for writeback.
     _PORT(bool)     hold_in;
+    // Indicates that the memory-stage instruction which owns a pending
+    // multi-cycle request has not been removed by a trap or pipeline flush.
+    _PORT(bool)     transaction_owner_valid_in = _ASSIGN(true);
 
     // Registered request driven to dcache in the memory stage.
     _PORT(bool)     mem_write_out      = _ASSIGN_REG(mem_write_reg);
@@ -192,6 +195,25 @@ private:
         mem_write_reg._next = 0;
         mem_read_reg._next = 0;
         mem_mask_reg._next = 0;
+        // A trap can flush the pipeline while an already-issued split or
+        // atomic request is pending. Cancel that orphan before honoring the
+        // normal stall path, which deliberately preserves pending requests.
+        if (!transaction_owner_valid_in() &&
+            (mem_split_pending_reg
+#ifdef ENABLE_RV32IA
+             || atomic_pending_reg
+#endif
+            )) {
+            mem_split_pending_reg._next = false;
+            mem_split_write_reg._next = false;
+            mem_split_read_reg._next = false;
+            split_load_reg._next = false;
+#ifdef ENABLE_RV32IA
+            atomic_pending_reg._next = false;
+            atomic_op_reg._next = Amo::AMONONE;
+#endif
+            return;
+        }
         if (mem_stall_in()) {
             mem_addr_reg._next = mem_addr_reg;
             mem_data_reg._next = mem_data_reg;

@@ -107,13 +107,13 @@ struct cat : logic<SUM<N...>()>
     // Those operations prevented valid SystemVerilog constant concatenations in C++.
     // Use constexpr loops and logic's constexpr scalar conversion throughout the type.
     template<size_t HIGH_OFFSET>
-    constexpr void append()
+    constexpr void appendPacked()
     {
         static_assert(HIGH_OFFSET == 0, "cat width accounting mismatch");
     }
 
     template<size_t HIGH_OFFSET, size_t ARG_WIDTH, typename... Args>
-    constexpr void append(const logic<ARG_WIDTH>& arg, const Args&... args)
+    constexpr void appendPacked(const logic<ARG_WIDTH>& arg, const Args&... args)
     {
         static_assert(HIGH_OFFSET >= ARG_WIDTH, "cat argument exceeds result width");
         constexpr size_t nextOffset = HIGH_OFFSET - ARG_WIDTH;
@@ -121,30 +121,68 @@ struct cat : logic<SUM<N...>()>
         constexpr size_t byteOffset = nextOffset / 8;
         constexpr size_t bitOffset = nextOffset % 8;
         constexpr size_t argBytes = logic<ARG_WIDTH>::SIZE;
+        constexpr size_t outputBytes = (bitOffset + ARG_WIDTH + 7) / 8;
+        constexpr bool sharesTopByte = HIGH_OFFSET < WIDTH && HIGH_OFFSET % 8 != 0;
 
-        // The destination starts at zero and concatenated fields never overlap.
-        // Copy whole bytes and merge only the two boundary bytes when a field is
-        // not byte-aligned.  This keeps large concatenations linear in bytes.
-        for (size_t i = 0; i < argBytes; ++i) {
-            uint16_t byte = arg.bytes[i];
+        auto sourceByte = [&](size_t index) constexpr {
+            uint8_t byte = arg.bytes[index];
             if constexpr ((ARG_WIDTH % 8) != 0) {
-                if (i + 1 == argBytes)
-                    byte &= static_cast<uint16_t>((1u << (ARG_WIDTH % 8)) - 1u);
+                if (index + 1 == argBytes)
+                    byte &= static_cast<uint8_t>((1u << (ARG_WIDTH % 8)) - 1u);
             }
-            const uint16_t shifted = static_cast<uint16_t>(byte << bitOffset);
-            result.bytes[byteOffset + i] |= static_cast<uint8_t>(shifted);
-            if (bitOffset != 0 && byteOffset + i + 1 < logic<WIDTH>::SIZE)
-                result.bytes[byteOffset + i + 1] |= static_cast<uint8_t>(shifted >> 8);
+            return byte;
+        };
+        for (size_t i = 0; i < outputBytes; ++i) {
+            uint16_t byte = i < argBytes
+                                ? static_cast<uint16_t>(sourceByte(i)) << bitOffset
+                                : 0;
+            if constexpr (bitOffset != 0) {
+                if (i != 0)
+                    byte |= static_cast<uint16_t>(sourceByte(i - 1)) >>
+                            (8 - bitOffset);
+            }
+            const size_t destination = byteOffset + i;
+            if (sharesTopByte && i + 1 == outputBytes)
+                result.bytes[destination] |= static_cast<uint8_t>(byte);
+            else
+                result.bytes[destination] = static_cast<uint8_t>(byte);
         }
-        append<nextOffset>(args...);
+        appendPacked<nextOffset>(args...);
     }
 
     template<typename... Args>
-    constexpr cat(const Args&... args) : logic<WIDTH>(0)
+    constexpr cat(const Args&... args)
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
-        append<WIDTH>(cat_to_logic(args)...);
+        auto& result = *static_cast<logic<WIDTH>*>(this);
+        if constexpr (((N == 1) && ...)) {
+            // FIRRTL commonly forms masks and lookup tables by concatenating
+            // dozens or hundreds of individual bits.  A fold avoids the deep
+            // recursive append call chain used by the general implementation.
+            for (size_t byte = 0; byte < logic<WIDTH>::SIZE; ++byte)
+                result.bytes[byte] = 0;
+            size_t bit = WIDTH;
+            ((result.set(--bit, cat_to_logic(args).get(0))), ...);
+        }
+        else if constexpr (((N % 8 == 0) && ...)) {
+            // Byte-aligned fields have no shared boundary bytes.  Copy them
+            // directly instead of shifting and merging every byte.
+            size_t byteOffset = logic<WIDTH>::SIZE;
+            auto copyField = [&](const auto& value) constexpr {
+                const auto& field = cat_to_logic(value);
+                using Field = std::remove_cv_t<std::remove_reference_t<decltype(field)>>;
+                byteOffset -= Field::SIZE;
+                for (size_t i = 0; i < Field::SIZE; ++i)
+                    result.bytes[byteOffset + i] = field.bytes[i];
+            };
+            (copyField(args), ...);
+        }
+        else {
+            // Process fields from most to least significant. Each output byte
+            // is assigned once; only a byte shared by adjacent fields is merged.
+            appendPacked<WIDTH>(cat_to_logic(args)...);
+        }
     }
 
     constexpr const cat& operator=(const cat& other)
