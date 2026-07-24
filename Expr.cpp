@@ -704,10 +704,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //            }
             // can we now remove clr and set completely?
             if (sub.size() >= 1 && value == "clr" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_tmp = '0";
+                // Apply the next-state suffix to the indexed signal root, not
+                // after its indices: reg[i].clr() becomes reg_tmp[i] = '0.
+                return indent_str + sub[0].str("", "_tmp") + " = '0";
             }
             if (sub.size() >= 2 && value == "set" && sub[0].value != "_this") {
-                return indent_str + sub[0].str() + "_tmp = " + sub[1].str();
+                return indent_str + sub[0].str("", "_tmp") + " = " + sub[1].str();
             }
             if (sub.size() >= 1 && value == "format" && sub[0].type != EXPR_NONE && sub[0].value != "_this") {
                 return indent_str + sub[0].str();
@@ -948,7 +950,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (sub[i-1].type != EXPR_NONE) {
                         if (first) {
                             first = false;
-                            ret = indent_str + "{";
+                            // Aggregate fields need assignment-pattern context sizing; children are reversed for packed C++ layout.
+                            ret = indent_str + "'{";
+                        }
+                        else {
+                            ret += ", ";
                         }
                         sub[i-1].flags |= flags;
                         ret += sub[i-1].str();

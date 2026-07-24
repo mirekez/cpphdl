@@ -18,11 +18,19 @@ public:
     // Address expected for the active atomic read; physical when MMU is enabled.
     _PORT(uint32_t) dcache_read_expected_addr_in;
     _PORT(uint32_t) dcache_read_data_in;
+#ifdef MULTICORE
+    // A committed peer store clears an overlapping LR reservation.
+    _PORT(bool)     reservation_invalidate_in = _ASSIGN(false);
+    _PORT(uint32_t) reservation_invalidate_addr_in = _ASSIGN((uint32_t)0);
+#endif
 #endif
     // Holds the current memory request stable while dcache/L2 cannot accept it.
     _PORT(bool)     mem_stall_in;
     // Preserves issued-request metadata while the pipeline waits for writeback.
     _PORT(bool)     hold_in;
+    // Indicates that the memory-stage instruction which owns a pending
+    // multi-cycle request has not been removed by a trap or pipeline flush.
+    _PORT(bool)     transaction_owner_valid_in = _ASSIGN(true);
 
     // Registered request driven to dcache in the memory stage.
     _PORT(bool)     mem_write_out      = _ASSIGN_REG(mem_write_reg);
@@ -61,7 +69,10 @@ private:
     reg<u32> split_load_high_addr_reg;
 #ifdef ENABLE_RV32IA
     reg<u1>  reservation_valid_reg;
+    // Architectural LR/SC matching uses the instruction's virtual address.
     reg<u32> reservation_addr_reg;
+    // Coherent peer-store snoops carry the translated physical address.
+    reg<u32> reservation_physical_addr_reg;
     reg<u1>  atomic_pending_reg;
     reg<u32> atomic_addr_reg;
     reg<u32> atomic_operand_reg;
@@ -184,6 +195,25 @@ private:
         mem_write_reg._next = 0;
         mem_read_reg._next = 0;
         mem_mask_reg._next = 0;
+        // A trap can flush the pipeline while an already-issued split or
+        // atomic request is pending. Cancel that orphan before honoring the
+        // normal stall path, which deliberately preserves pending requests.
+        if (!transaction_owner_valid_in() &&
+            (mem_split_pending_reg
+#ifdef ENABLE_RV32IA
+             || atomic_pending_reg
+#endif
+            )) {
+            mem_split_pending_reg._next = false;
+            mem_split_write_reg._next = false;
+            mem_split_read_reg._next = false;
+            split_load_reg._next = false;
+#ifdef ENABLE_RV32IA
+            atomic_pending_reg._next = false;
+            atomic_op_reg._next = Amo::AMONONE;
+#endif
+            return;
+        }
         if (mem_stall_in()) {
             mem_addr_reg._next = mem_addr_reg;
             mem_data_reg._next = mem_data_reg;
@@ -203,6 +233,7 @@ private:
 #ifdef ENABLE_RV32IA
             reservation_valid_reg._next = reservation_valid_reg;
             reservation_addr_reg._next = reservation_addr_reg;
+            reservation_physical_addr_reg._next = reservation_physical_addr_reg;
             atomic_pending_reg._next = atomic_pending_reg;
             atomic_addr_reg._next = atomic_addr_reg;
             atomic_operand_reg._next = atomic_operand_reg;
@@ -217,6 +248,8 @@ private:
                 if ((uint8_t)atomic_op_reg == Amo::LR_W) {
                     reservation_valid_reg._next = true;
                     reservation_addr_reg._next = atomic_addr_reg;
+                    reservation_physical_addr_reg._next =
+                        dcache_read_expected_addr_in() & ~3u;
                 }
                 else {
                     mem_addr_reg._next = atomic_addr_reg;
@@ -329,7 +362,25 @@ private:
 public:
     void _work(bool reset)
     {
+#if defined(ENABLE_RV32IA) && defined(MULTICORE)
+        bool completing_lr;
+        completing_lr = atomic_pending_reg && (uint8_t)atomic_op_reg == Amo::LR_W &&
+            atomic_read_ready_comb_func();
+#endif
         do_memory();
+#if defined(ENABLE_RV32IA) && defined(MULTICORE)
+        // A store accepted by the shared L2 invalidates an older reservation
+        // and also wins over an LR response completing in this same cycle.
+        if (reservation_invalidate_in() &&
+            ((reservation_valid_reg &&
+                (uint32_t)reservation_physical_addr_reg ==
+                    (reservation_invalidate_addr_in() & ~3u)) ||
+             (completing_lr &&
+                (dcache_read_expected_addr_in() & ~3u) ==
+                    (reservation_invalidate_addr_in() & ~3u)))) {
+            reservation_valid_reg._next = false;
+        }
+#endif
         if (reset) {
             mem_write_reg.clr();
             mem_read_reg.clr();
@@ -362,6 +413,7 @@ public:
 #ifdef ENABLE_RV32IA
         reservation_valid_reg.strobe(checkpoint_fd);
         reservation_addr_reg.strobe(checkpoint_fd);
+        reservation_physical_addr_reg.strobe(checkpoint_fd);
         atomic_pending_reg.strobe(checkpoint_fd);
         atomic_addr_reg.strobe(checkpoint_fd);
         atomic_operand_reg.strobe(checkpoint_fd);

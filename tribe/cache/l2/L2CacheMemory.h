@@ -2,12 +2,12 @@
 
 #include "L2CacheRequest.h"
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Routes refill, eviction, and uncached transactions between the cache controller and memory/device AXI ports.
-class L2CacheMemory : public L2CacheRequest<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>
+class L2CacheMemory : public L2CacheRequest<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
-    using Base = L2CacheRequest<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>;
+    using Base = L2CacheRequest<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
 public:
     using Base::memory_base_in;
     using Base::mem_region_size_in;
@@ -228,7 +228,8 @@ protected:
             }
             base += mem_region_size_in[i]();
         }
-        return req_uncached_region_comb = request_geometry_comb_func().addr_in_memory && req_uncached_region_comb;
+        return req_uncached_region_comb = request_geometry_comb_func().addr_in_memory &&
+            (req_reg.cache_disable || req_uncached_region_comb);
     }
 
     // Associative tag compare for the registered request.

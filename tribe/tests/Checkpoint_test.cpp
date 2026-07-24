@@ -252,7 +252,7 @@ static bool run_checkpoint_verilator(bool debug,
     ScopedEnv scripted_uart("TRIBE_UART_INPUT", input);
     ScopedEnv scripted_uart_after("TRIBE_UART_INPUT_AFTER", ready_marker);
     ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
-    std::string command = "Checkpoint/obj_dir/VTribe --program " + shell_quote(elf) +
+    std::string command = "Checkpoint/obj_dir/VTribeTest --program " + shell_quote(elf) +
         " --log " + shell_quote(expected) +
         " --cycles 300000 --boot-priv m";
     if (debug) {

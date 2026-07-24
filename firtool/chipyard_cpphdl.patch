@@ -1,0 +1,926 @@
+diff --git a/scripts/build-cpphdl-rocket64.sh b/scripts/build-cpphdl-rocket64.sh
+new file mode 100755
+index 00000000..36c3f1c0
+--- /dev/null
++++ b/scripts/build-cpphdl-rocket64.sh
+@@ -0,0 +1,104 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++export RISCV=${RISCV:-"$root/.conda-env/riscv-tools"}
++export PATH="$RISCV/bin:$root/.conda-env/bin:$PATH"
++
++config=RocketConfig
++long_name="chipyard.harness.TestHarness.${config}"
++generated_root="$root/sims/verilator/generated-src/$long_name"
++fir_file="$generated_root/$long_name.fir"
++output_dir=${CPPHDL_OUTPUT_DIR:-"$root/cpphdl-build/$config/generated"}
++build_dir=${CPPHDL_BUILD_DIR:-"$root/cpphdl-build/$config/runtime"}
++program=${1:-"$root/tests/build/rocket64-mmul.riscv"}
++cpphdl_include=${CPPHDL_INCLUDE_DIR:-${HOME:?HOME must be set}/cpphdl/include}
++cpphdl_opt_level=${CPPHDL_OPT_LEVEL:--O2}
++cpphdl_use_pch=${CPPHDL_USE_OPTIMIZED_PCH:-ON}
++
++if [[ ! -f "$fir_file" ]]; then
++  make -C "$root/sims/verilator" CONFIG="$config" firrtl
++fi
++if [[ ! -f "$program" ]]; then
++  cmake -S "$root/tests" -B "$root/tests/build" -DCMAKE_BUILD_TYPE=Release
++  cmake --build "$root/tests/build" --target rocket64-mmul \
++    --parallel "${CPPHDL_BUILD_JOBS:-2}"
++fi
++
++circt_source=${CIRCT_CPPHDL_SOURCE_DIR:-"$root/tools/circt-cpphdl"}
++firtool_build_dir=${CPPHDL_FIRTOOL_BUILD_DIR:-"$root/tools/firtool-cpphdl/build"}
++CPPHDL_FIRTOOL_BUILD_DIR="$firtool_build_dir" \
++  CIRCT_CPPHDL_SOURCE_DIR="$circt_source" \
++  JOBS="${CPPHDL_FIRTOOL_JOBS:-1}" \
++  "$root/scripts/build-firtool-cpphdl.sh"
++firtool="$firtool_build_dir/firtool-cpphdl"
++
++mkdir -p "$output_dir"
++if [[ "${CPPHDL_REGENERATE:-1}" == 1 || ! -f "$output_dir/CMakeLists.txt" ]]; then
++  "$firtool" --split-cpphdl -o="$output_dir" "$fir_file"
++fi
++
++if [[ "${CPPHDL_OPTIMIZE_COMBS:-1}" == 1 ]]; then
++  cpphdl_tool=${CPPHDL_TOOL:-${HOME:?HOME must be set}/cpphdl/build/cpphdl}
++  if [[ ! -x "$cpphdl_tool" ]]; then
++    echo "error: cpphdl comb optimizer is not executable: $cpphdl_tool" >&2
++    exit 1
++  fi
++  if [[ "${CPPHDL_REOPTIMIZE_COMBS:-1}" == 1 || \
++        ! -f "$output_dir/TestHarness_optimized_combs.cpp" ]]; then
++    mapfile -d '' cpphdl_model_sources < <(
++      find "$output_dir" -maxdepth 1 -type f -name '*.cpp' \
++        ! -name '*_optimized_combs*.cpp' -print0 | sort -z)
++    "$cpphdl_tool" --optimize-combs TestHarness \
++      --generated-dir="$output_dir" "${cpphdl_model_sources[@]}" -- \
++      -I"$output_dir" -I"$cpphdl_include" \
++      -I"$root/tools/firtool-cpphdl/runtime"
++    mapfile -d '' optimized_outputs < <(
++      find "$output_dir" -maxdepth 1 -type f \
++        -name 'TestHarness_optimized_combs*' -print0)
++    if [[ ${#optimized_outputs[@]} -eq 0 ]]; then
++      echo "error: cpphdl comb optimizer produced no output files" >&2
++      exit 1
++    fi
++    for optimized_output in "${optimized_outputs[@]}"; do
++      if [[ ! -s "$optimized_output" ]]; then
++        echo "error: empty cpphdl comb optimizer output: $optimized_output" >&2
++        exit 1
++      fi
++      case $(basename "$optimized_output") in
++        TestHarness_optimized_combs_[0-9]*.cpp)
++          if grep -qF '_clock = _system_clock;' "$optimized_output"; then
++            echo "error: optimized comb chunk writes memoization clocks: $optimized_output" >&2
++            exit 1
++          fi
++          ;;
++      esac
++    done
++  fi
++fi
++
++optimized_api="$output_dir/TestHarness_optimized_combs.cpp"
++if [[ ! -s "$optimized_api" ]] || \
++   ! grep -qF 'void bind_optimized_ports(TestHarness& obj)' "$optimized_api" || \
++   ! grep -qF 'void calc_all(TestHarness& obj)' "$optimized_api" || \
++   ! grep -qF 'void commit_optimized_regs(TestHarness& obj)' "$optimized_api"; then
++  echo "error: complete optimized TestHarness API was not generated" >&2
++  exit 1
++fi
++if grep -Eq -- '->_(work|assign)\(|\._(work|assign)\(' \
++    "$output_dir"/TestHarness_optimized_combs*.cpp; then
++  echo "error: optimized TestHarness sources call _work or _assign" >&2
++  exit 1
++fi
++
++cmake -S "$root/tools/firtool-cpphdl/runtime" -B "$build_dir" \
++  -DCPPHDL_GENERATED_DIR="$output_dir" \
++  -DCHIPYARD_DIR="$root" \
++  -DCPPHDL_INCLUDE_DIR="$cpphdl_include" \
++  -DCPPHDL_OPT_LEVEL="$cpphdl_opt_level" \
++  -DCPPHDL_USE_OPTIMIZED_PCH="$cpphdl_use_pch"
++cmake --build "$build_dir" --target cpphdl-rocket64-optimized-sim \
++  --parallel "${CPPHDL_BUILD_JOBS:-2}"
++
++echo "Optimized C++HDL simulator: $build_dir/cpphdl-rocket64-optimized-sim"
++echo "RV64 matrix ELF: $program"
+diff --git a/scripts/build-firtool-cpphdl.sh b/scripts/build-firtool-cpphdl.sh
+new file mode 100755
+index 00000000..5d11df2e
+--- /dev/null
++++ b/scripts/build-firtool-cpphdl.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++prefix=${RISCV:-"$root/.conda-env/riscv-tools"}
++build_dir=${CPPHDL_FIRTOOL_BUILD_DIR:-"$root/tools/firtool-cpphdl/build"}
++source_dir=${CIRCT_CPPHDL_SOURCE_DIR:-"$root/tools/circt"}
++
++cmake -S "$root/tools/firtool-cpphdl" -B "$build_dir" \
++  -DCMAKE_BUILD_TYPE=Release \
++  -DCIRCT_CPPHDL_SOURCE_DIR="$source_dir" \
++  -DLLVM_DIR="$prefix/lib/cmake/llvm" \
++  -DMLIR_DIR="$prefix/lib/cmake/mlir" \
++  -DCIRCT_DIR="$prefix/lib/cmake/circt"
++cmake --build "$build_dir" --target firtool-cpphdl --parallel "${JOBS:-2}"
++
++echo "$build_dir/firtool-cpphdl"
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 27b2d7e1..9a35becc 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -83,6 +83,7 @@ add_executable(spiflashwrite spiflashwrite.c)
+ add_executable(fft fft.c)
+ add_executable(gcd gcd.c)
+ add_executable(hello hello.c)
++add_executable(rocket64-mmul rocket64_mmul.c)
+ add_executable(mt-hello mt-hello.c)
+ add_executable(symmetric symmetric.c)
+ add_executable(ctc-test ctc-test.c)
+@@ -124,6 +125,7 @@ add_dump_target(spiflashwrite)
+ add_dump_target(fft)
+ add_dump_target(gcd)
+ add_dump_target(hello)
++add_dump_target(rocket64-mmul)
+ add_dump_target(mt-hello)
+ add_dump_target(symmetric)
+ add_dump_target(ctc-test)
+diff --git a/tests/rocket64_mmul.c b/tests/rocket64_mmul.c
+new file mode 100644
+index 00000000..08fe5b8e
+--- /dev/null
++++ b/tests/rocket64_mmul.c
+@@ -0,0 +1,148 @@
++#include <inttypes.h>
++#include <stdint.h>
++#include <stdio.h>
++
++static volatile uint64_t memory_words[4] __attribute__((aligned(64)));
++
++enum { MATRIX_SIZE = 16, MATRIX_ROUNDS = 8 };
++static volatile uint64_t matrix_a[MATRIX_SIZE][MATRIX_SIZE];
++static volatile uint64_t matrix_b[MATRIX_SIZE][MATRIX_SIZE];
++static volatile uint64_t matrix_c[MATRIX_SIZE][MATRIX_SIZE];
++
++static uint64_t rv64_add(uint64_t lhs, uint64_t rhs) {
++  uint64_t result;
++  __asm__ volatile("add %0, %1, %2" : "=r"(result) : "r"(lhs), "r"(rhs));
++  return result;
++}
++
++static uint64_t rv64_mul(uint64_t lhs, uint64_t rhs) {
++  uint64_t result;
++  __asm__ volatile("mul %0, %1, %2" : "=r"(result) : "r"(lhs), "r"(rhs));
++  return result;
++}
++
++static uint64_t rv64_divu(uint64_t lhs, uint64_t rhs) {
++  uint64_t result;
++  __asm__ volatile("divu %0, %1, %2" : "=r"(result) : "r"(lhs), "r"(rhs));
++  return result;
++}
++
++static uint64_t rv64_sll(uint64_t value, uint64_t amount) {
++  uint64_t result;
++  __asm__ volatile("sll %0, %1, %2" : "=r"(result) : "r"(value), "r"(amount));
++  return result;
++}
++
++static int64_t rv64_addiw(int64_t value) {
++  int64_t result;
++  __asm__ volatile("addiw %0, %1, 1" : "=r"(result) : "r"(value));
++  return result;
++}
++
++static uint64_t rv64_load_store(uint64_t value) {
++  uint64_t result;
++  volatile uint64_t *address = &memory_words[0];
++  __asm__ volatile(
++      "sd %1, 0(%2)\n\t"
++      "ld %0, 0(%2)"
++      : "=r"(result), "+r"(value)
++      : "r"(address)
++      : "memory");
++  return result;
++}
++
++static int check(const char *operation, uint64_t actual, uint64_t expected) {
++  if (actual == expected)
++    return 0;
++  printf("ROCKET RV64 MMUL TEST FAILED: %s actual=0x%016" PRIx64
++         " expected=0x%016" PRIx64 "\n",
++         operation, actual, expected);
++  return 1;
++}
++
++static int run_matrix_multiply(uint64_t *aggregate_result) {
++  for (unsigned i = 0; i < MATRIX_SIZE; ++i) {
++    for (unsigned j = 0; j < MATRIX_SIZE; ++j) {
++      matrix_a[i][j] = (i * 17U + j * 13U + 1U) & 0xffU;
++      matrix_b[i][j] = (i * 7U + j * 19U + 3U) & 0x7fU;
++      matrix_c[i][j] = 0;
++    }
++  }
++
++  printf("RV64 matrix workload: %ux%u, %u rounds\n",
++         MATRIX_SIZE, MATRIX_SIZE, MATRIX_ROUNDS);
++
++  uint64_t aggregate = 0;
++  for (unsigned round = 0; round < MATRIX_ROUNDS; ++round) {
++    for (unsigned i = 0; i < MATRIX_SIZE; ++i) {
++      for (unsigned j = 0; j < MATRIX_SIZE; ++j) {
++        uint64_t sum = 0;
++        for (unsigned k = 0; k < MATRIX_SIZE; ++k)
++          sum += matrix_a[i][k] * matrix_b[k][j];
++        matrix_c[i][j] = sum;
++      }
++    }
++
++    uint64_t checksum = UINT64_C(1469598103934665603);
++    for (unsigned i = 0; i < MATRIX_SIZE; ++i) {
++      for (unsigned j = 0; j < MATRIX_SIZE; ++j) {
++        checksum ^= matrix_c[i][j];
++        checksum *= UINT64_C(1099511628211);
++      }
++    }
++    aggregate ^= checksum + round * UINT64_C(0x9e3779b97f4a7c15);
++
++    if ((round & 1U) == 1U)
++      printf("RV64 matrix progress: %u/%u rounds\n", round + 1U,
++             MATRIX_ROUNDS);
++  }
++
++  if (check("matrix C[0][0]", matrix_c[0][0], UINT64_C(118408)) ||
++      check("matrix C[15][15]", matrix_c[15][15], UINT64_C(114504)) ||
++      check("matrix aggregate", aggregate, UINT64_C(0x7c4069f402f40058)))
++    return 1;
++
++  *aggregate_result = aggregate;
++  return 0;
++}
++
++int main(void) {
++  const uint64_t a = UINT64_C(0xfedcba9876543210);
++  const uint64_t b = UINT64_C(0x0123456789abcdef);
++  uint64_t signature = UINT64_C(0x525636344e415449);
++
++  if (sizeof(uintptr_t) != 8) {
++    printf("ROCKET RV64 MMUL TEST FAILED: sizeof(uintptr_t)=%u\n",
++           (unsigned)sizeof(uintptr_t));
++    return 1;
++  }
++
++  const uint64_t sum = rv64_add(a, b);
++  const uint64_t product = rv64_mul(UINT64_C(0x123456789), UINT64_C(0x10203));
++  const uint64_t quotient = rv64_divu(UINT64_C(0xfedcba9876543210), UINT64_C(0x12345));
++  const uint64_t shifted = rv64_sll(UINT64_C(0x12345678), 40);
++  const uint64_t loaded = rv64_load_store(a);
++  const uint64_t word_sign_extended = (uint64_t)rv64_addiw(INT64_C(0x7fffffff));
++  uint64_t matrix_aggregate = 0;
++
++  if (check("add", sum, UINT64_C(0xffffffffffffffff)) ||
++      check("mul", product, UINT64_C(0x1258f5c28489b)) ||
++      check("divu", quotient, UINT64_C(0xe0004fa01c4d)) ||
++      check("sll", shifted, UINT64_C(0x3456780000000000)) ||
++      check("sd/ld", loaded, a) ||
++      check("addiw", word_sign_extended, UINT64_C(0xffffffff80000000)) ||
++      run_matrix_multiply(&matrix_aggregate))
++    return 1;
++
++  signature ^= sum;
++  signature ^= product;
++  signature ^= quotient;
++  signature ^= shifted;
++  signature ^= loaded;
++  signature ^= word_sign_extended;
++  signature ^= matrix_aggregate;
++
++  printf("ROCKET RV64 MMUL TEST PASSED: signature=0x%016" PRIx64 "\n",
++         signature);
++  return 0;
++}
+diff --git a/tools/firtool-cpphdl/CMakeLists.txt b/tools/firtool-cpphdl/CMakeLists.txt
+new file mode 100644
+index 00000000..5cf08068
+--- /dev/null
++++ b/tools/firtool-cpphdl/CMakeLists.txt
+@@ -0,0 +1,52 @@
++cmake_minimum_required(VERSION 3.20)
++project(firtool_cpphdl LANGUAGES CXX)
++
++set(CMAKE_CXX_STANDARD 17)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++set(CIRCT_CPPHDL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../circt" CACHE PATH
++    "CIRCT source tree containing the C++HDL exporter patch")
++
++find_package(LLVM REQUIRED CONFIG)
++find_package(MLIR REQUIRED CONFIG)
++find_package(CIRCT REQUIRED CONFIG)
++
++add_executable(firtool-cpphdl
++  ${CIRCT_CPPHDL_SOURCE_DIR}/tools/firtool/firtool.cpp
++  ${CIRCT_CPPHDL_SOURCE_DIR}/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
++)
++
++# Installed headers come first because they contain TableGen output. The
++# modified CIRCT source tree then contributes the new ExportCppHDL interface.
++target_include_directories(firtool-cpphdl PRIVATE
++  ${CIRCT_INCLUDE_DIRS}
++  ${MLIR_INCLUDE_DIRS}
++  ${LLVM_INCLUDE_DIRS}
++  ${CIRCT_CPPHDL_SOURCE_DIR}/include
++)
++target_compile_definitions(firtool-cpphdl PRIVATE ${LLVM_DEFINITIONS})
++
++target_link_libraries(firtool-cpphdl PRIVATE
++  CIRCTExportVerilog
++  CIRCTImportFIRFile
++  CIRCTFIRRTLTransforms
++  CIRCTHWTransforms
++  CIRCTOMTransforms
++  CIRCTSeq
++  CIRCTSim
++  CIRCTSVTransforms
++  CIRCTTransforms
++  CIRCTFirtool
++  CIRCTTargetDebugInfo
++  MLIRBytecodeReader
++  MLIRBytecodeWriter
++  MLIRParser
++  MLIRSupport
++  MLIRIR
++  MLIROptLib
++  MLIRFuncDialect
++  MLIRTransforms
++)
++
++if(NOT LLVM_ENABLE_RTTI)
++  target_compile_options(firtool-cpphdl PRIVATE -fno-rtti)
++endif()
+diff --git a/tools/firtool-cpphdl/runtime/CMakeLists.txt b/tools/firtool-cpphdl/runtime/CMakeLists.txt
+new file mode 100644
+index 00000000..c5d6dd40
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/CMakeLists.txt
+@@ -0,0 +1,57 @@
++cmake_minimum_required(VERSION 3.20)
++project(chipyard_cpphdl_runtime LANGUAGES CXX)
++
++set(CMAKE_CXX_STANDARD 17)
++set(CPPHDL_GENERATED_DIR "" CACHE PATH "Generated C++HDL source directory")
++set(CHIPYARD_DIR "" CACHE PATH "Chipyard source directory")
++set(CPPHDL_INCLUDE_DIR "$ENV{HOME}/cpphdl/include" CACHE PATH
++    "C++HDL include directory")
++set(CPPHDL_OPT_LEVEL "-O2" CACHE STRING "C++HDL simulator optimization flag")
++option(CPPHDL_USE_OPTIMIZED_PCH
++  "Precompile the shared optimized C++HDL model declarations" ON)
++
++if(NOT CPPHDL_GENERATED_DIR OR NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness.h")
++  message(FATAL_ERROR "CPPHDL_GENERATED_DIR must name firtool --split-cpphdl output")
++endif()
++if(NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp" OR
++   NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.h")
++  message(FATAL_ERROR "Rocket runtime requires cpphdl --optimize-combs output")
++endif()
++if(NOT CHIPYARD_DIR)
++  message(FATAL_ERROR "CHIPYARD_DIR is required")
++endif()
++
++set(COLLATERAL
++    "${CHIPYARD_DIR}/generators/testchipip/src/main/resources/testchipip/csrc")
++add_executable(cpphdl-rocket64-optimized-sim
++  sim_main.cpp
++  cpphdl_runtime.cpp
++  cpphdl_external_models.cpp
++  "${COLLATERAL}/mm.cc"
++  "${COLLATERAL}/testchip_tsi.cc"
++  "${COLLATERAL}/testchip_htif.cc")
++file(GLOB CPPHDL_OPTIMIZED_SOURCES CONFIGURE_DEPENDS
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_bind_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_work_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_strobe_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_model_[0-9]*.cpp")
++target_sources(cpphdl-rocket64-optimized-sim PRIVATE ${CPPHDL_OPTIMIZED_SOURCES})
++target_compile_options(cpphdl-rocket64-optimized-sim PRIVATE ${CPPHDL_OPT_LEVEL})
++if(CPPHDL_USE_OPTIMIZED_PCH)
++  target_precompile_headers(cpphdl-rocket64-optimized-sim PRIVATE
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_internal.h")
++endif()
++target_include_directories(cpphdl-rocket64-optimized-sim PRIVATE
++  "${CMAKE_CURRENT_SOURCE_DIR}"
++  "${CPPHDL_GENERATED_DIR}"
++  "${CPPHDL_INCLUDE_DIR}"
++  "${COLLATERAL}"
++  "${CHIPYARD_DIR}/.conda-env/riscv-tools/include")
++target_link_directories(cpphdl-rocket64-optimized-sim PRIVATE
++  "${CHIPYARD_DIR}/.conda-env/riscv-tools/lib")
++target_link_libraries(cpphdl-rocket64-optimized-sim PRIVATE
++  fesvr riscv dl pthread)
++target_link_options(cpphdl-rocket64-optimized-sim PRIVATE
++  "-Wl,-rpath,${CHIPYARD_DIR}/.conda-env/riscv-tools/lib")
+diff --git a/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp b/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp
+new file mode 100644
+index 00000000..fee64ada
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp
+@@ -0,0 +1,98 @@
++#include "cpphdl_external_models.h"
++
++#include "ClockSourceAtFreqMHz.h"
++#include "ClockSourceAtFreqMHz_1.h"
++#include "EICG_wrapper.h"
++#include "GenericDigitalInIOCell.h"
++#include "GenericDigitalOutIOCell.h"
++#include "SimDRAM.h"
++#include "SimTSI.h"
++#include "SimUART.h"
++#include "cpphdl_runtime.h"
++
++#include <cstdio>
++
++namespace firtool_cpphdl_external {
++
++void work(ClockSourceAtFreqMHz &module, bool) {
++  module.cpphdl_drive_clk(module.power() && !module.gate());
++}
++
++void work(ClockSourceAtFreqMHz_1 &module, bool) {
++  module.cpphdl_drive_clk(module.power() && !module.gate());
++}
++
++void work(EICG_wrapper &module, bool) {
++  module.cpphdl_drive_out(module.in() && (module.en() || module.test_en()));
++}
++
++void work(GenericDigitalInIOCell &module, bool) {
++  module.cpphdl_drive_i(module.ie() ? module.pad() : cpphdl::logic<1>(0));
++}
++
++void work(GenericDigitalOutIOCell &module, bool) {
++  module.cpphdl_drive_pad(module.oe() ? module.o() : cpphdl::logic<1>(0));
++}
++
++void work(SimUART &module, bool) {
++  module.cpphdl_drive_serial_in_valid(0);
++  module.cpphdl_drive_serial_in_bits(0);
++  module.cpphdl_drive_serial_out_ready(!module.reset());
++  if (!module.reset() && module.serial_out_valid()) {
++    std::putchar(
++        static_cast<unsigned>(static_cast<uint64_t>(module.serial_out_bits())));
++    std::fflush(stdout);
++  }
++}
++
++void work(SimTSI &module, bool) {
++  auto &model =
++      module.cpphdl_external_state<firtool_cpphdl_runtime::TSIModel>();
++  firtool_cpphdl_runtime::TSIOutputs out;
++  model.tick(module.reset(), module.tsi_out_valid(),
++             static_cast<uint64_t>(module.tsi_out_bits()),
++             module.tsi_in_ready(), out);
++  module.cpphdl_drive_tsi_in_valid(out.inValid);
++  module.cpphdl_drive_tsi_in_bits(out.inBits);
++  module.cpphdl_drive_tsi_out_ready(out.outReady);
++  module.cpphdl_drive_exit(out.exit);
++}
++
++void work(SimDRAM &module, bool) {
++  auto &model =
++      module.cpphdl_external_state<firtool_cpphdl_runtime::DRAMModel>();
++  firtool_cpphdl_runtime::DRAMInputs in;
++  in.reset = module.reset();
++  in.arValid = module.axi_ar_valid();
++  in.arAddr = static_cast<uint64_t>(module.axi_ar_bits_addr());
++  in.arId = static_cast<uint64_t>(module.axi_ar_bits_id());
++  in.arSize = static_cast<uint64_t>(module.axi_ar_bits_size());
++  in.arLen = static_cast<uint64_t>(module.axi_ar_bits_len());
++  in.awValid = module.axi_aw_valid();
++  in.awAddr = static_cast<uint64_t>(module.axi_aw_bits_addr());
++  in.awId = static_cast<uint64_t>(module.axi_aw_bits_id());
++  in.awSize = static_cast<uint64_t>(module.axi_aw_bits_size());
++  in.awLen = static_cast<uint64_t>(module.axi_aw_bits_len());
++  in.wValid = module.axi_w_valid();
++  in.wStrb = static_cast<uint64_t>(module.axi_w_bits_strb());
++  in.wData = static_cast<uint64_t>(module.axi_w_bits_data());
++  in.wLast = module.axi_w_bits_last();
++  in.rReady = module.axi_r_ready();
++  in.bReady = module.axi_b_ready();
++
++  firtool_cpphdl_runtime::DRAMOutputs out;
++  model.tick(in, out);
++  module.cpphdl_drive_axi_ar_ready(out.arReady);
++  module.cpphdl_drive_axi_aw_ready(out.awReady);
++  module.cpphdl_drive_axi_w_ready(out.wReady);
++  module.cpphdl_drive_axi_b_valid(out.bValid);
++  module.cpphdl_drive_axi_b_bits_id(out.bId);
++  module.cpphdl_drive_axi_b_bits_resp(out.bResp);
++  module.cpphdl_drive_axi_r_valid(out.rValid);
++  module.cpphdl_drive_axi_r_bits_id(out.rId);
++  module.cpphdl_drive_axi_r_bits_data(out.rData);
++  module.cpphdl_drive_axi_r_bits_resp(out.rResp);
++  module.cpphdl_drive_axi_r_bits_last(out.rLast);
++}
++
++} // namespace firtool_cpphdl_external
+diff --git a/tools/firtool-cpphdl/runtime/cpphdl_external_models.h b/tools/firtool-cpphdl/runtime/cpphdl_external_models.h
+new file mode 100644
+index 00000000..6f0698fe
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/cpphdl_external_models.h
+@@ -0,0 +1,25 @@
++#pragma once
++
++class ClockSourceAtFreqMHz;
++class ClockSourceAtFreqMHz_1;
++class EICG_wrapper;
++class GenericDigitalInIOCell;
++class GenericDigitalOutIOCell;
++class SimUART;
++class SimTSI;
++class SimDRAM;
++
++namespace firtool_cpphdl_external {
++
++template <typename Module> inline void work(Module &, bool) {}
++
++void work(ClockSourceAtFreqMHz &module, bool edge);
++void work(ClockSourceAtFreqMHz_1 &module, bool edge);
++void work(EICG_wrapper &module, bool edge);
++void work(GenericDigitalInIOCell &module, bool edge);
++void work(GenericDigitalOutIOCell &module, bool edge);
++void work(SimUART &module, bool edge);
++void work(SimTSI &module, bool edge);
++void work(SimDRAM &module, bool edge);
++
++} // namespace firtool_cpphdl_external
+diff --git a/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp b/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp
+new file mode 100644
+index 00000000..8aa42068
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp
+@@ -0,0 +1,172 @@
++#include "cpphdl_runtime.h"
++
++#include <cpphdl.h>
++#include "mm.h"
++#include "testchip_tsi.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <sys/mman.h>
++#include <vector>
++
++namespace firtool_cpphdl_runtime {
++namespace {
++int runtimeArgc = 0;
++char **runtimeArgv = nullptr;
++uint32_t runtimeExit = 0;
++uint8_t *dramData = nullptr;
++constexpr uint64_t dramBase = 0x80000000ULL;
++constexpr size_t dramSize = 256ULL * 1024 * 1024;
++}
++
++void configure(int argc, char **argv) {
++  runtimeArgc = argc;
++  runtimeArgv = argv;
++}
++
++uint32_t exitCode() { return runtimeExit; }
++
++struct TSIModel::Impl {
++  testchip_tsi_t *tsi = nullptr;
++  uint64_t cycles = 0;
++  uint64_t wordsToTarget = 0;
++  uint64_t wordsFromTarget = 0;
++};
++
++class DirectMemoryTSI : public testchip_tsi_t {
++public:
++  DirectMemoryTSI(int argc, char **argv) : testchip_tsi_t(argc, argv, true) {}
++
++protected:
++  void load_mem_write(addr_t address, size_t size, const void *source) override {
++    if (!dramData || address < dramBase || address + size > dramBase + dramSize)
++      throw cpphdl_exception{"FESVR loadmem write is outside C++HDL DRAM"};
++    std::memcpy(dramData + address - dramBase, source, size);
++  }
++  void load_mem_read(addr_t address, size_t size, void *destination) override {
++    if (!dramData || address < dramBase || address + size > dramBase + dramSize)
++      throw cpphdl_exception{"FESVR loadmem read is outside C++HDL DRAM"};
++    std::memcpy(destination, dramData + address - dramBase, size);
++  }
++};
++
++TSIModel::TSIModel() : impl(new Impl) {}
++TSIModel::~TSIModel() { delete impl->tsi; delete impl; }
++
++void TSIModel::tick(bool reset, bool outValid, uint32_t outBits, bool inReady,
++                    TSIOutputs &outputs) {
++  if (reset) {
++    outputs = {};
++    return;
++  }
++  if (!impl->tsi) {
++    if (!runtimeArgv)
++      throw cpphdl_exception{"C++HDL runtime was not configured"};
++    impl->tsi = new DirectMemoryTSI(runtimeArgc, runtimeArgv);
++  }
++  impl->tsi->tick(outValid, outBits, inReady);
++  impl->tsi->switch_to_host();
++  outputs.inValid = impl->tsi->in_valid();
++  outputs.inBits = impl->tsi->in_bits();
++  outputs.outReady = impl->tsi->out_ready();
++  outputs.exit = impl->tsi->done() ? (impl->tsi->exit_code() << 1 | 1) : 0;
++  runtimeExit = outputs.exit;
++  ++impl->cycles;
++  if (outputs.inValid && inReady) {
++    ++impl->wordsToTarget;
++    if (std::getenv("CPPHDL_TSI_TRACE") && impl->wordsToTarget <= 64)
++      std::fprintf(stderr, "[CPPHDL TSI] -> %08x at %llu\n", outputs.inBits,
++                   static_cast<unsigned long long>(impl->cycles));
++  }
++  if (outValid && outputs.outReady) {
++    ++impl->wordsFromTarget;
++    if (std::getenv("CPPHDL_TSI_TRACE") && impl->wordsFromTarget <= 64)
++      std::fprintf(stderr, "[CPPHDL TSI] <- %08x at %llu\n", outBits,
++                   static_cast<unsigned long long>(impl->cycles));
++  }
++  if (std::getenv("CPPHDL_TSI_TRACE") && impl->cycles % 10000 == 0)
++    std::fprintf(stderr,
++                 "[CPPHDL TSI] cycles=%llu to_target=%llu from_target=%llu in_valid=%d in_ready=%d out_valid=%d out_ready=%d\n",
++                 static_cast<unsigned long long>(impl->cycles),
++                 static_cast<unsigned long long>(impl->wordsToTarget),
++                 static_cast<unsigned long long>(impl->wordsFromTarget),
++                 outputs.inValid, inReady, outValid, outputs.outReady);
++}
++
++struct DRAMModel::Impl {
++  uint8_t *data = nullptr;
++  mm_magic_t *memory = nullptr;
++  uint64_t cycles = 0, reads = 0, writes = 0, writeData = 0;
++
++  Impl() {
++    data = static_cast<uint8_t *>(mmap(nullptr, dramSize, PROT_READ | PROT_WRITE,
++                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
++    if (data == MAP_FAILED)
++      throw cpphdl_exception{"cannot allocate C++HDL DRAM backing memory"};
++    dramData = data;
++    backing_data_t backing{data, dramSize};
++    memory = new mm_magic_t(dramBase, dramSize, 8, 64, backing);
++  }
++  ~Impl() {
++    delete memory;
++    if (dramData == data)
++      dramData = nullptr;
++    munmap(data, dramSize);
++  }
++};
++
++DRAMModel::DRAMModel() : impl(new Impl) {}
++DRAMModel::~DRAMModel() { delete impl; }
++
++void DRAMModel::tick(const DRAMInputs &in, DRAMOutputs &out) {
++  uint64_t writeData = in.wData;
++  impl->memory->tick(in.reset, in.arValid, in.arAddr, in.arId, in.arSize,
++                     in.arLen, in.awValid, in.awAddr, in.awId, in.awSize,
++                     in.awLen, in.wValid, in.wStrb, &writeData, in.wLast,
++                     in.rReady, in.bReady);
++  out.arReady = impl->memory->ar_ready();
++  out.awReady = impl->memory->aw_ready();
++  out.wReady = impl->memory->w_ready();
++  out.bValid = impl->memory->b_valid();
++  out.bResp = impl->memory->b_resp();
++  out.bId = impl->memory->b_id();
++  out.rValid = impl->memory->r_valid();
++  out.rResp = impl->memory->r_resp();
++  out.rId = impl->memory->r_id();
++  std::memcpy(&out.rData, impl->memory->r_data(), sizeof(out.rData));
++  out.rLast = impl->memory->r_last();
++  ++impl->cycles;
++  if (in.arValid && out.arReady) ++impl->reads;
++  if (in.awValid && out.awReady) ++impl->writes;
++  if (in.wValid && out.wReady) ++impl->writeData;
++  if (std::getenv("CPPHDL_DRAM_TRACE") && in.arValid && out.arReady &&
++      impl->reads <= 64)
++    std::fprintf(stderr,
++                 "[CPPHDL DRAM] AR count=%llu addr=%016llx id=%llu size=%u len=%u\n",
++                 static_cast<unsigned long long>(impl->reads),
++                 static_cast<unsigned long long>(in.arAddr),
++                 static_cast<unsigned long long>(in.arId),
++                 static_cast<unsigned>(in.arSize),
++                 static_cast<unsigned>(in.arLen));
++  if (std::getenv("CPPHDL_DRAM_TRACE") && out.rValid && in.rReady &&
++      impl->reads <= 64)
++    std::fprintf(stderr,
++                 "[CPPHDL DRAM] R addr_count=%llu id=%llu resp=%u last=%u data=%016llx\n",
++                 static_cast<unsigned long long>(impl->reads),
++                 static_cast<unsigned long long>(out.rId),
++                 static_cast<unsigned>(out.rResp),
++                 static_cast<unsigned>(out.rLast),
++                 static_cast<unsigned long long>(out.rData));
++  if (std::getenv("CPPHDL_DRAM_TRACE") && impl->cycles % 10000 == 0)
++    std::fprintf(stderr,
++                 "[CPPHDL DRAM] cycles=%llu ar=%llu aw=%llu w=%llu ar_valid=%d ar_ready=%d\n",
++                 static_cast<unsigned long long>(impl->cycles),
++                 static_cast<unsigned long long>(impl->reads),
++                 static_cast<unsigned long long>(impl->writes),
++                 static_cast<unsigned long long>(impl->writeData), in.arValid,
++                 out.arReady);
++}
++
++} // namespace firtool_cpphdl_runtime
+diff --git a/tools/firtool-cpphdl/runtime/cpphdl_runtime.h b/tools/firtool-cpphdl/runtime/cpphdl_runtime.h
+new file mode 100644
+index 00000000..ee288d3d
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/cpphdl_runtime.h
+@@ -0,0 +1,74 @@
++#pragma once
++
++#include <cstdint>
++
++namespace firtool_cpphdl_runtime {
++
++void configure(int argc, char **argv);
++uint32_t exitCode();
++
++struct TSIOutputs {
++  bool inValid = false;
++  uint32_t inBits = 0;
++  bool outReady = false;
++  uint32_t exit = 0;
++};
++
++class TSIModel {
++public:
++  TSIModel();
++  ~TSIModel();
++  void tick(bool reset, bool outValid, uint32_t outBits, bool inReady,
++            TSIOutputs &outputs);
++
++private:
++  struct Impl;
++  Impl *impl;
++};
++
++struct DRAMInputs {
++  bool reset = false;
++  bool arValid = false;
++  uint64_t arAddr = 0;
++  uint64_t arId = 0;
++  uint64_t arSize = 0;
++  uint64_t arLen = 0;
++  bool awValid = false;
++  uint64_t awAddr = 0;
++  uint64_t awId = 0;
++  uint64_t awSize = 0;
++  uint64_t awLen = 0;
++  bool wValid = false;
++  uint64_t wStrb = 0;
++  uint64_t wData = 0;
++  bool wLast = false;
++  bool rReady = false;
++  bool bReady = false;
++};
++
++struct DRAMOutputs {
++  bool arReady = false;
++  bool awReady = false;
++  bool wReady = false;
++  bool bValid = false;
++  uint64_t bResp = 0;
++  uint64_t bId = 0;
++  bool rValid = false;
++  uint64_t rResp = 0;
++  uint64_t rId = 0;
++  uint64_t rData = 0;
++  bool rLast = false;
++};
++
++class DRAMModel {
++public:
++  DRAMModel();
++  ~DRAMModel();
++  void tick(const DRAMInputs &inputs, DRAMOutputs &outputs);
++
++private:
++  struct Impl;
++  Impl *impl;
++};
++
++} // namespace firtool_cpphdl_runtime
+diff --git a/tools/firtool-cpphdl/runtime/sim_main.cpp b/tools/firtool-cpphdl/runtime/sim_main.cpp
+new file mode 100644
+index 00000000..577f937c
+--- /dev/null
++++ b/tools/firtool-cpphdl/runtime/sim_main.cpp
+@@ -0,0 +1,67 @@
++#include "cpphdl_support.h"
++#include "TestHarness.h"
++#include "TestHarness_optimized_combs.h"
++#include "cpphdl_runtime.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <string>
++#include <vector>
++
++long _system_clock = 0;
++
++int main(int argc, char **argv) {
++  if (argc < 2) {
++    std::fprintf(stderr, "usage: %s program.riscv [FESVR options]\n", argv[0]);
++    return 2;
++  }
++  std::vector<std::string> argumentStorage;
++  std::vector<char *> runtimeArguments;
++  argumentStorage.reserve(argc + 1);
++  for (int index = 0; index < argc; ++index)
++    argumentStorage.emplace_back(argv[index]);
++  argumentStorage.emplace_back(std::string("+loadmem=") + argv[1]);
++  for (auto &argument : argumentStorage)
++    runtimeArguments.push_back(argument.data());
++  firtool_cpphdl_runtime::configure(runtimeArguments.size(),
++                                    runtimeArguments.data());
++
++  TestHarness top;
++  cpphdl::logic<1> clock = 1;
++  cpphdl::logic<1> reset = 1;
++  top.clock = [&clock]() { return std::addressof(clock); };
++  top.reset = [&reset]() { return std::addressof(reset); };
++  bind_optimized_ports(top);
++
++  uint64_t maxCycles = 50000000;
++  if (const char *value = std::getenv("CPPHDL_MAX_CYCLES"))
++    maxCycles = std::strtoull(value, nullptr, 0);
++  uint64_t progressCycles = 0;
++  if (const char *value = std::getenv("CPPHDL_PROGRESS_CYCLES"))
++    progressCycles = std::strtoull(value, nullptr, 0);
++
++  try {
++    for (uint64_t cycle = 0; cycle < maxCycles; ++cycle) {
++      reset = cycle < 10;
++      ++_system_clock;
++      calc_all(top);
++      commit_optimized_regs(top);
++      if (progressCycles && (cycle + 1) % progressCycles == 0)
++        std::fprintf(stderr, "[CPPHDL] cycle %llu\n",
++                     static_cast<unsigned long long>(cycle + 1));
++      uint32_t exit = firtool_cpphdl_runtime::exitCode();
++      if (exit) {
++        int code = exit >> 1;
++        std::fprintf(stderr, "\nC++HDL simulation finished after %llu cycles (code %d)\n",
++                     static_cast<unsigned long long>(cycle + 1), code);
++        return code;
++      }
++    }
++  } catch (const cpphdl_exception &error) {
++    std::fprintf(stderr, "C++HDL simulation error: %s\n", error.text.c_str());
++    return 2;
++  }
++  std::fprintf(stderr, "C++HDL simulation timed out after %llu cycles\n",
++               static_cast<unsigned long long>(maxCycles));
++  return 124;
++}
+diff --git a/tools/firtool-cpphdl/test/register.fir b/tools/firtool-cpphdl/test/register.fir
+new file mode 100644
+index 00000000..c029ab77
+--- /dev/null
++++ b/tools/firtool-cpphdl/test/register.fir
+@@ -0,0 +1,11 @@
++circuit Counter:
++  module Counter:
++    input clock: Clock
++    input reset: UInt<1>
++    input enable: UInt<1>
++    output count: UInt<8>
++
++    reg value: UInt<8>, clock with: (reset => (reset, UInt<8>(0)))
++    node next = add(value, UInt<8>(1))
++    value <= mux(enable, next, value)
++    count <= value
+diff --git a/tools/firtool-cpphdl/test/simple.fir b/tools/firtool-cpphdl/test/simple.fir
+new file mode 100644
+index 00000000..64f1e172
+--- /dev/null
++++ b/tools/firtool-cpphdl/test/simple.fir
+@@ -0,0 +1,9 @@
++circuit Simple:
++  module Simple:
++    input a: UInt<8>
++    input b: UInt<8>
++    input select: UInt<1>
++    output y: UInt<8>
++
++    node sum = add(a, b)
++    y <= mux(select, sum, a)

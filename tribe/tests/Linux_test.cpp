@@ -549,7 +549,7 @@ int main(int argc, char** argv)
         if (verilator_build_only) {
             return ok ? 0 : 1;
         }
-        std::string command = "Linux/obj_dir/VTribe --cycles " + std::to_string(cycles) +
+        std::string command = "Linux/obj_dir/VTribeTest --cycles " + std::to_string(cycles) +
             " --marker " + shell_quote(marker);
         if (debug) {
             command += " --debug";

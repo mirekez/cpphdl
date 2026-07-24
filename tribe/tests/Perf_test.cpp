@@ -137,7 +137,9 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     constexpr double expected_issue_pct = 27.30;
     constexpr double expected_total_stall_pct = 56.74;
     constexpr double expected_hazard_pct = 0.01;
-    constexpr double expected_dcache_wait_pct = 12.53;
+    // The registered L2 request/response boundary adds one measured wait cycle
+    // to D-cache transactions in both the C++ and Verilator models.
+    constexpr double expected_dcache_wait_pct = 15.97;
     constexpr double expected_icache_wait_pct = 15.64;
     constexpr double expected_branch_pct = 1.58;
     constexpr double expected_icache_refill_pct = 13.91;
@@ -148,7 +150,8 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     constexpr double expected_issue_pct = 27.30;
     constexpr double expected_total_stall_pct = 56.74;
     constexpr double expected_hazard_pct = 0.01;
-    constexpr double expected_dcache_wait_pct = 12.53;
+    // Keep the software model baseline identical to the RTL pipeline contract.
+    constexpr double expected_dcache_wait_pct = 15.97;
     constexpr double expected_icache_wait_pct = 15.64;
     constexpr double expected_branch_pct = 1.58;
     constexpr double expected_icache_refill_pct = 13.91;
@@ -218,7 +221,7 @@ int main(int argc, char** argv)
         // another run's Verilator dependency files under obj_dir.
         std::string verilator_dir = "Perf_" + std::to_string((long long)getpid());
         ok &= VerilatorCompileTribeInFolder(__FILE__, verilator_dir, source_root);
-        ok &= std::system((verilator_dir + "/obj_dir/VTribe" + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= std::system((verilator_dir + "/obj_dir/VTribeTest" + (debug ? " --debug" : "")).c_str()) == 0;
     }
     return ok ? 0 : 1;
 #endif

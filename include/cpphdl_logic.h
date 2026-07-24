@@ -161,6 +161,8 @@ struct logic : public bitops<logic<WIDTH>>
 
     logic_bits<WIDTH> bits(size_t last, size_t first);
     constexpr logic<WIDTH> bits(size_t last, size_t first) const;
+    template<size_t LAST, size_t FIRST>
+    constexpr logic<LAST - FIRST + 1> slice() const;
     logic_bits<WIDTH> operator[](size_t bitnum);
     constexpr logic<1> operator[](size_t bitnum) const;
 
@@ -390,6 +392,32 @@ constexpr logic<WIDTH>& logic<WIDTH>::operator=(const logic_bits<WIDTH1>& other)
         bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
     }
     return *this;
+}
+
+template<size_t WIDTH>
+template<size_t LAST, size_t FIRST>
+constexpr logic<LAST - FIRST + 1> logic<WIDTH>::slice() const
+{
+    static_assert(FIRST <= LAST, "slice first bit must not exceed last bit");
+    static_assert(LAST < WIDTH, "slice exceeds source width");
+    constexpr size_t RESULT_WIDTH = LAST - FIRST + 1;
+    constexpr size_t SOURCE_BYTE = FIRST / 8;
+    constexpr size_t SHIFT = FIRST % 8;
+    logic<RESULT_WIDTH> result{};
+
+    for (size_t dst = 0; dst < logic<RESULT_WIDTH>::SIZE; ++dst) {
+        const size_t src = SOURCE_BYTE + dst;
+        uint16_t pair = src < SIZE ? bytes[src] : 0;
+        if constexpr (SHIFT != 0) {
+            if (src + 1 < SIZE)
+                pair |= static_cast<uint16_t>(bytes[src + 1]) << 8;
+        }
+        result.bytes[dst] = static_cast<uint8_t>(pair >> SHIFT);
+    }
+    if constexpr ((RESULT_WIDTH % 8) != 0)
+        result.bytes[logic<RESULT_WIDTH>::SIZE - 1] &=
+            static_cast<uint8_t>((1u << (RESULT_WIDTH % 8)) - 1u);
+    return result;
 }
 
 template<size_t WIDTH>

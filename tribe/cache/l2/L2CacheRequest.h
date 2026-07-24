@@ -2,12 +2,12 @@
 
 #include "L2CacheState.h"
 
-template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1>
+template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Selects and captures CPU/AXI input requests, address decode, masks, and cross-line request properties.
-class L2CacheRequest : public L2CacheState<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>
+class L2CacheRequest : public L2CacheState<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
-    using Base = L2CacheState<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS>;
+    using Base = L2CacheState<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
 public:
     using Base::i_mem_in;
     using Base::d_mem_in;
@@ -23,6 +23,7 @@ protected:
     using Base::SET_BITS;
     using Base::LINE_BITS;
     using Base::req_reg;
+    using Base::cpu_rr_reg;
     using Base::response_reg;
     using Base::slave_aw_reg;
     using Base::slave_aw_seen_reg;
@@ -48,24 +49,31 @@ protected:
     // AXI writes retain priority over AXI reads, then D precedes I.
     _LAZY_COMB(active_request_comb, L2ActiveRequestComb)
         uint32_t port_index;
+        uint32_t cpu_index;
         size_t byte_index;
         size_t word_index;
         uint32_t selected_slave;
+        uint32_t selected_cpu;
+        uint32_t candidate_cpu;
         uint32_t slave_addr;
         uint32_t lane;
         uint32_t byte;
         uint32_t word;
         bool slave_write_pending;
         bool slave_read_pending;
+        bool cpu_request_pending;
 
         active_request_comb = {};
         selected_slave = 0;
+        selected_cpu = 0;
+        candidate_cpu = 0;
         slave_addr = 0;
         lane = 0;
         byte = 0;
         word = 0;
         slave_write_pending = false;
         slave_read_pending = false;
+        cpu_request_pending = false;
 
         for (port_index = 0; port_index < MEM_PORTS; ++port_index) {
             if (((slave_aw_reg[port_index].valid && axi_in[port_index].wvalid_in()) ||
@@ -93,25 +101,42 @@ protected:
             }
         }
 
+        // Select one CPU pair deterministically. Data traffic has priority over
+        // instruction traffic inside that pair, matching the original one-CPU contract.
+        for (cpu_index = 0; cpu_index < CPU_PORTS; ++cpu_index) {
+            candidate_cpu = ((uint32_t)cpu_rr_reg + cpu_index) % CPU_PORTS;
+            if (!cpu_request_pending && (d_mem_in[candidate_cpu].write_in() || d_mem_in[candidate_cpu].read_in() ||
+                i_mem_in[candidate_cpu].write_in() || i_mem_in[candidate_cpu].read_in())) {
+                selected_cpu = candidate_cpu;
+                cpu_request_pending = true;
+            }
+        }
+
         active_request_comb.request.from_slave = slave_write_pending || slave_read_pending;
+        active_request_comb.request.cpu_index = (u<3>)selected_cpu;
         active_request_comb.request.port = !active_request_comb.request.from_slave &&
-            (d_mem_in.write_in() || d_mem_in.read_in());
+            cpu_request_pending && (d_mem_in[selected_cpu].write_in() || d_mem_in[selected_cpu].read_in());
         active_request_comb.request.read =
             (active_request_comb.request.from_slave && !slave_write_pending) ||
-            (!active_request_comb.request.from_slave && d_mem_in.read_in()) ||
-            (!d_mem_in.write_in() && !d_mem_in.read_in() && !slave_write_pending &&
-             !slave_read_pending && i_mem_in.read_in());
+            (!active_request_comb.request.from_slave && cpu_request_pending && d_mem_in[selected_cpu].read_in()) ||
+            (!active_request_comb.request.from_slave && cpu_request_pending &&
+             !d_mem_in[selected_cpu].write_in() && !d_mem_in[selected_cpu].read_in() &&
+             i_mem_in[selected_cpu].read_in());
         active_request_comb.request.write =
             (active_request_comb.request.from_slave && slave_write_pending) ||
-            (!active_request_comb.request.from_slave && d_mem_in.write_in()) ||
-            (!d_mem_in.read_in() && !d_mem_in.write_in() && !slave_write_pending &&
-             !slave_read_pending && i_mem_in.write_in());
+            (!active_request_comb.request.from_slave && cpu_request_pending && d_mem_in[selected_cpu].write_in()) ||
+            (!active_request_comb.request.from_slave && cpu_request_pending &&
+             !d_mem_in[selected_cpu].read_in() && !d_mem_in[selected_cpu].write_in() &&
+             i_mem_in[selected_cpu].write_in());
         active_request_comb.request.addr = active_request_comb.request.port ?
-            d_mem_in.addr_in() : i_mem_in.addr_in();
+            d_mem_in[selected_cpu].addr_in() : i_mem_in[selected_cpu].addr_in();
         active_request_comb.request.write_data = active_request_comb.request.port ?
-            d_mem_in.write_data_in() : i_mem_in.write_data_in();
+            d_mem_in[selected_cpu].write_data_in() : i_mem_in[selected_cpu].write_data_in();
         active_request_comb.request.write_mask = active_request_comb.request.from_slave ? (uint8_t)0xf :
-            (active_request_comb.request.port ? d_mem_in.write_mask_in() : i_mem_in.write_mask_in());
+            (active_request_comb.request.port ? d_mem_in[selected_cpu].write_mask_in() : i_mem_in[selected_cpu].write_mask_in());
+        active_request_comb.request.cache_disable = !active_request_comb.request.from_slave &&
+            (active_request_comb.request.port ? d_mem_in[selected_cpu].cache_disable_in() :
+                i_mem_in[selected_cpu].cache_disable_in());
         active_request_comb.request.slave_index = selected_slave;
 
         for (port_index = 0; port_index < MEM_PORTS; ++port_index) {

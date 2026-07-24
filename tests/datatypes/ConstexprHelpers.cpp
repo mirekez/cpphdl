@@ -14,7 +14,7 @@ using namespace cpphdl;
 // 5. Packed/unpacked array initializer lists preserve order and zero-fill.
 // 6. Packed array proxies expose their stored value type to generic code.
 // 7. Packed-aggregate shifts do not intercept scalar-like cpphdl registers.
-// 8. Packing a wide concatenation retains bits above the host integer width.
+// 8. Fixed-width slices, optimized concatenations, and wide packing preserve bit order.
 
 struct ConstexprWidePacked
 {
@@ -27,10 +27,14 @@ struct ConstexprWidePacked
 constexpr logic<8> constexpr_input(0x0f);
 constexpr logic<8> constexpr_inverse = ~constexpr_input;
 constexpr auto constexpr_cat = cat(logic<4>(0xa), logic<4>(0x5));
+constexpr auto constexpr_bit_cat = cat(logic<1>(1), logic<1>(0), logic<1>(1));
+constexpr auto constexpr_byte_cat = cat(logic<8>(0x12), logic<16>(0x3456));
 
 static_assert(SUM<>() == 0, "empty concatenation width must be zero");
 static_assert((uint64_t)constexpr_inverse == 0xf0, "logic complement must retain width");
 static_assert((uint64_t)constexpr_cat == 0xa5, "concatenation must be constexpr");
+static_assert((uint64_t)constexpr_bit_cat == 0x5, "one-bit concatenation order must be preserved");
+static_assert((uint64_t)constexpr_byte_cat == 0x123456, "byte-aligned concatenation order must be preserved");
 static_assert((uint64_t)(constexpr_cat + 1) == 0xa6, "cat arithmetic must be unambiguous");
 
 static bool expect(bool condition, const char* message)
@@ -45,6 +49,11 @@ int main()
 
     logic<160> source = 0;
     source[100] = 1;
+    source[63] = 1;
+    source[70] = 1;
+    logic<9> fixed_slice = source.slice<71, 63>();
+    ok &= expect((uint64_t)fixed_slice == 0x81,
+        "fixed-width slice did not preserve bits across a byte boundary");
     logic<96> slice = sv_bits<96>(source, 127, 32);
     ok &= expect((bool)slice[68], "sv_bits truncated a selected bit above bit 63");
 
@@ -58,6 +67,28 @@ int main()
     ok &= expect((bool)shifted[71], "packed aggregate shift truncated a bit above bit 63");
     logic<32> packed_slice = sv_bits<32>(packed, 79, 48);
     ok &= expect((bool)packed_slice[22], "sv_bits did not use a packed aggregate's pack() value");
+
+    logic<103> cat_high = 0;
+    cat_high[0] = 1;
+    cat_high[64] = 1;
+    cat_high[102] = 1;
+    logic<11> cat_middle(0x5a3);
+    logic<2> cat_low(2);
+    logic<116> wide_cat = cat(cat_high, cat_middle, cat_low);
+    for (size_t bit = 0; bit < 103; ++bit) {
+        ok &= expect(wide_cat.get(bit + 13) == cat_high.get(bit),
+            "non-byte-aligned concatenation corrupted its high field");
+    }
+    for (size_t bit = 0; bit < 11; ++bit) {
+        ok &= expect(wide_cat.get(bit + 2) == cat_middle.get(bit),
+            "non-byte-aligned concatenation corrupted its middle field");
+    }
+    for (size_t bit = 0; bit < 2; ++bit) {
+        ok &= expect(wide_cat.get(bit) == cat_low.get(bit),
+            "non-byte-aligned concatenation corrupted its low field");
+    }
+    ok &= expect((wide_cat.bytes[logic<116>::SIZE - 1] & 0xf0u) == 0,
+        "non-byte-aligned concatenation left nonzero padding bits");
 
     packed.value = 0;
     for (size_t byte = 0; byte < 12; ++byte) {
@@ -75,6 +106,8 @@ int main()
         (uint64_t)unpacked_array[2] == 0 &&
         (uint64_t)unpacked_array[3] == 0,
         "unpacked initializer list did not preserve order and zero-fill");
+    ok &= expect((uint64_t)unpacked_array.pack() == 0x0201,
+        "one-byte unpacked array pack used the wrong byte order");
 
     array<4, logic<4>, true> packed_array = {logic<4>(1), logic<4>(2)};
     ok &= expect((uint64_t)packed_array.pack() == 0x21,

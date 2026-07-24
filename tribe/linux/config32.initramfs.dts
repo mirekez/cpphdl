@@ -33,7 +33,58 @@
 			mmu-type = "riscv,sv32";
 			clock-frequency = <50000000>;
 
-			cpu_intc: interrupt-controller {
+			cpu0_intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+			};
+		};
+		cpu@1 {
+			device_type = "cpu";
+			reg = <1>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv32imac";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "c";
+			mmu-type = "riscv,sv32";
+			clock-frequency = <50000000>;
+
+			cpu1_intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+			};
+		};
+		cpu@2 {
+			device_type = "cpu";
+			reg = <2>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv32imac";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "c";
+			mmu-type = "riscv,sv32";
+			clock-frequency = <50000000>;
+
+			cpu2_intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+			};
+		};
+		cpu@3 {
+			device_type = "cpu";
+			reg = <3>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv32imac";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "c";
+			mmu-type = "riscv,sv32";
+			clock-frequency = <50000000>;
+
+			cpu3_intc: interrupt-controller {
 				#interrupt-cells = <1>;
 				interrupt-controller;
 				compatible = "riscv,cpu-intc";
@@ -68,7 +119,7 @@
 		clint0: clint@82000100 {
 			compatible = "sifive,clint0", "riscv,clint0";
 			reg = <0x82000100 0x0000c000>;
-			interrupts-extended = <&cpu_intc 3 &cpu_intc 7>;
+			interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7 &cpu1_intc 3 &cpu1_intc 7 &cpu2_intc 3 &cpu2_intc 7 &cpu3_intc 3 &cpu3_intc 7>;
 		};
 
 		sd0: sd@8200d100 {
@@ -104,7 +155,7 @@
 			compatible = "riscv,plic0";
 			reg = <0x82010000 0x00210000>;
 			riscv,ndev = <31>;
-			interrupts-extended = <&cpu_intc 9>;
+			interrupts-extended = <&cpu0_intc 9 &cpu1_intc 9 &cpu2_intc 9 &cpu3_intc 9>;
 		};
 	};
 };

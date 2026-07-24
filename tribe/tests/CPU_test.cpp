@@ -546,6 +546,51 @@ static bool check_writeback_mem_address_tags()
         return false;
     }
 
+    // A response retired without a hold belongs only to this dynamic load.
+    // A polling loop can execute the same PC/RD/address again after memory has
+    // changed, and the fresh response must not be hidden by the prior value.
+    wb._work(false);
+    wb._strobe();
+    dcache_read_valid = false;
+    ++_system_clock;
+    if (wb.load_ready_out()) {
+        std::print("WritebackMem retained an immediately retired load response\n");
+        return false;
+    }
+    dcache_read_valid = true;
+    dcache_read_data = 0x87654321;
+    ++_system_clock;
+    if (!wb.load_ready_out() || wb.load_result_out() != 0x87654321) {
+        std::print("WritebackMem reused stale same-instruction response: ready={} data={:08x}\n",
+            (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());
+        return false;
+    }
+
+    // A live write may forward its bytes, but the entry must expire when the
+    // write retires. Otherwise an earlier AMO/store can hide a peer CPU update
+    // from a later polling load at the same address.
+    dcache_write_valid = true;
+    dcache_write_addr = alu_addr;
+    dcache_write_data = 3;
+    dcache_write_mask = 0xf;
+    wb._work(false);
+    wb._strobe();
+    ++_system_clock;
+    if (wb.load_result_out() != 3) {
+        std::print("WritebackMem did not forward live store data: data={:08x}\n",
+            (uint32_t)wb.load_result_out());
+        return false;
+    }
+    dcache_write_valid = false;
+    wb._work(false);
+    wb._strobe();
+    ++_system_clock;
+    if (wb.load_result_out() != 0x87654321) {
+        std::print("WritebackMem retained completed store data: data={:08x}\n",
+            (uint32_t)wb.load_result_out());
+        return false;
+    }
+
     // While held, only a matching response may be latched for later writeback.
     hold = true;
     dcache_read_addr = 0x2000;
@@ -674,7 +719,7 @@ int main(int argc, char** argv)
         std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
         setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
         ok &= VerilatorCompileTribeInFolder(__FILE__, "CPU", source_root);
-        ok &= std::system((std::string("CPU/obj_dir/VTribe") + (debug ? " --debug" : "")).c_str()) == 0;
+        ok &= std::system((std::string("CPU/obj_dir/VTribeTest") + (debug ? " --debug" : "")).c_str()) == 0;
     }
 #else
     Verilated::commandArgs(argc, argv);

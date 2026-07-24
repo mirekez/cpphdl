@@ -270,6 +270,13 @@ static bool check_direct_arrays()
     ok &= check((uint64_t)packed_u[4] == 5, "unpacked u pack index 4");
     ok &= check((uint64_t)logic<3>(packed_u.bits(14, 12)) == 5, "unpacked u pack compact final object");
 
+    array<3, u8> unpacked_bytes = {u8(0x12), u8(0x34), u8(0x56)};
+    auto packed_bytes = unpacked_bytes.pack();
+    ok &= check((uint64_t)packed_bytes[0] == 0x12, "unpacked byte pack index 0");
+    ok &= check((uint64_t)packed_bytes[2] == 0x56, "unpacked byte pack index 2");
+    ok &= check((uint64_t)logic<24>(packed_bytes) == 0x563412,
+        "unpacked byte pack keeps byte fast path ordering");
+
     return ok;
 }
 

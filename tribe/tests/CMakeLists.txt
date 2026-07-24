@@ -126,6 +126,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         EthGigMac_test
         IOUART_test
         MMU_TLB_Test
+        Multicore_test
         NS16550A_test
         Perf_test
     )
@@ -150,6 +151,10 @@ foreach(src ${TRIBE_TEST_SOURCES})
             set(test_l2_axi_width 64)
         endif()
         set(test_args --noveril)
+    endif()
+    if(target_name STREQUAL "L2Cache_test")
+        # Keep the legacy one-pair run independent from the configured multi-CPU run.
+        list(APPEND test_args --cpu-ports=1)
     endif()
 
     if(test_l2_axi_width)
@@ -186,6 +191,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         OR target_name STREQUAL "IOUART_test"
         OR target_name STREQUAL "Linux_test"
         OR target_name STREQUAL "MMU_TLB_Test"
+        OR target_name STREQUAL "Multicore_test"
         OR target_name STREQUAL "NS16550A_test"
         OR target_name STREQUAL "Perf_test")
         add_dependencies(${target_name} tribe64)
@@ -219,6 +225,20 @@ foreach(src ${TRIBE_TEST_SOURCES})
         SKIP_RETURN_CODE 77
         ENVIRONMENT "${TRIBE_CTEST_ENVIRONMENT}"
     )
+    if(target_name STREQUAL "L2Cache_test")
+        set(l2_multi_ctest_work_dir "${CMAKE_CURRENT_BINARY_DIR}/ctest/L2CacheMulti_test")
+        file(MAKE_DIRECTORY "${l2_multi_ctest_work_dir}")
+        add_test(
+            NAME L2CacheMulti_test
+            COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "$<TARGET_FILE:${target_name}>"
+                --noveril --cpu-ports=configured
+            WORKING_DIRECTORY "${l2_multi_ctest_work_dir}"
+        )
+        set_tests_properties(L2CacheMulti_test PROPERTIES
+            SKIP_RETURN_CODE 77
+            ENVIRONMENT "${TRIBE_CTEST_ENVIRONMENT}"
+        )
+    endif()
     if(target_name STREQUAL "Perf_test")
         set_tests_properties(${target_name} PROPERTIES RUN_SERIAL TRUE)
     endif()
@@ -237,6 +257,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         L2Cache_test
         Linux_test
         MMU_TLB_Test
+        Multicore_test
         NS16550A_test
         Perf_test
         PLIC_test
@@ -246,6 +267,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         set(verilator_test_args)
         set(verilator_test_timeout 600)
         if(target_name STREQUAL "L2Cache_test")
+            set(verilator_test_args --cpu-ports=1)
             set(verilator_test_timeout 1800)
         endif()
         if(target_name STREQUAL "Linux_test")
@@ -256,6 +278,9 @@ foreach(src ${TRIBE_TEST_SOURCES})
         endif()
         if(target_name STREQUAL "MMU_TLB_Test")
             set(verilator_test_args --direct-verilator-only)
+        endif()
+        if(target_name STREQUAL "Multicore_test")
+            set(verilator_test_timeout 1200)
         endif()
         set(verilator_ctest_work_dir "${CMAKE_CURRENT_BINARY_DIR}/ctest/${target_name}_verilator")
         file(MAKE_DIRECTORY "${verilator_ctest_work_dir}")
@@ -269,6 +294,22 @@ foreach(src ${TRIBE_TEST_SOURCES})
             TIMEOUT ${verilator_test_timeout}
             ENVIRONMENT "${TRIBE_CTEST_ENVIRONMENT}"
         )
+        if(target_name STREQUAL "L2Cache_test")
+            set(l2_multi_verilator_ctest_work_dir
+                "${CMAKE_CURRENT_BINARY_DIR}/ctest/L2CacheMulti_test_verilator")
+            file(MAKE_DIRECTORY "${l2_multi_verilator_ctest_work_dir}")
+            add_test(
+                NAME L2CacheMulti_test_verilator
+                COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "$<TARGET_FILE:${target_name}>"
+                    --cpu-ports=configured
+                WORKING_DIRECTORY "${l2_multi_verilator_ctest_work_dir}"
+            )
+            set_tests_properties(L2CacheMulti_test_verilator PROPERTIES
+                SKIP_RETURN_CODE 77
+                TIMEOUT ${verilator_test_timeout}
+                ENVIRONMENT "${TRIBE_CTEST_ENVIRONMENT}"
+            )
+        endif()
         if(target_name STREQUAL "Perf_test")
             set_tests_properties(${target_name}_verilator PROPERTIES RUN_SERIAL TRUE)
         endif()

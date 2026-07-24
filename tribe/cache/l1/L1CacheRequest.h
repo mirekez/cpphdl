@@ -64,6 +64,7 @@ protected:
         mem_driver_comb.write = write_in();
         mem_driver_comb.write_data = write_data_in();
         mem_driver_comb.write_mask = write_mask_in();
+        mem_driver_comb.cache_disable = write_in() ? cache_disable_in() : (bool)req_reg.cache_disable;
         mem_driver_comb.read = state_reg == L1_ST_REFILL && req_reg.read;
         if (state_reg == L1_ST_REFILL && req_reg.read && req_reg.cacheable) {
             mem_driver_comb.addr = ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) +

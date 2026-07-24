@@ -319,8 +319,11 @@ inline std::string VerilatorCompilerParams(const std::string& cxx)
           " -Wno-deprecated-missing-comma-variadic-parameter";
 }
 
-#if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES_CONFIG) && defined(TRIBE_IO_REGION_SIZE_CONFIG)
-inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_root, const std::filesystem::path& generated_dir)
+#if (defined(TRIBE_L2_AXI_WIDTH_IS_64) || defined(TRIBE_L2_AXI_WIDTH_IS_128) || \
+    defined(TRIBE_L2_AXI_WIDTH_IS_256)) && defined(TRIBE_RAM_BYTES_CONFIG) && \
+    defined(TRIBE_IO_REGION_SIZE_CONFIG)
+inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_root,
+    const std::filesystem::path& generated_dir, size_t cpu_cores = 1)
 {
     namespace fs = std::filesystem;
 
@@ -337,6 +340,9 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+    if (cpu_cores > 1) {
+        command += " -DMULTICORE";
+    }
     command += " -I " + ToolShellQuote(source_root / "include");
     command += " -I " + ToolShellQuote(source_root / "tribe" / "common");
     command += " -I " + ToolShellQuote(source_root / "tribe" / "spec");
@@ -422,18 +428,21 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
         "; make -j4 -f V" + top_name + ".mk CXX=" + verilator_cxx + " LINK=\"" + verilator_cxx + " -L$CONDA_PREFIX/lib -static-libstdc++ -static-libgcc\"").c_str()) == 0;
 };
 
-inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string folder_base, const std::filesystem::path& source_root)
+inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string folder_base,
+    const std::filesystem::path& source_root, size_t cpu_cores = 1)
 {
     namespace fs = std::filesystem;
 
-#if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES_CONFIG) && defined(TRIBE_IO_REGION_SIZE_CONFIG)
+#if (defined(TRIBE_L2_AXI_WIDTH_IS_64) || defined(TRIBE_L2_AXI_WIDTH_IS_128) || \
+    defined(TRIBE_L2_AXI_WIDTH_IS_256)) && defined(TRIBE_RAM_BYTES_CONFIG) && \
+    defined(TRIBE_IO_REGION_SIZE_CONFIG)
     // Full or parallel CTest runs may execute several Tribe Verilator tests at
     // once. Keep regenerated SV per test so one test cannot overwrite another
-    // test's generated/Tribe.sv while Verilator is copying imports.
+    // test's generated/TribeTest.sv while Verilator is copying imports.
     const fs::path generated_dir = fs::current_path() / (folder_base + "_generated");
     fs::remove_all(generated_dir);
     fs::create_directories(generated_dir);
-    if (!RegenerateTribeSvForVerilator(source_root, generated_dir)) {
+    if (!RegenerateTribeSvForVerilator(source_root, generated_dir, cpu_cores)) {
         return false;
     }
 #endif
@@ -441,6 +450,7 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
               "RAM",
               "L1Cache",
               "L2Cache",
+              "Tribe",
               "BranchPredictor",
               "InterruptController",
               "Decode",
@@ -451,17 +461,19 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
               "Writeback",
               "WritebackMem"};
     std::string folder_name = folder_base;
-#if defined(TRIBE_L2_AXI_WIDTH) && defined(TRIBE_RAM_BYTES_CONFIG) && defined(TRIBE_IO_REGION_SIZE_CONFIG)
-    return VerilatorCompileInExactFolderFromGenerated(cpp_name, folder_name, "Tribe", generated_dir, modules, {
+#if (defined(TRIBE_L2_AXI_WIDTH_IS_64) || defined(TRIBE_L2_AXI_WIDTH_IS_128) || \
+    defined(TRIBE_L2_AXI_WIDTH_IS_256)) && defined(TRIBE_RAM_BYTES_CONFIG) && \
+    defined(TRIBE_IO_REGION_SIZE_CONFIG)
+    return VerilatorCompileInExactFolderFromGenerated(cpp_name, folder_name, "TribeTest", generated_dir, modules, {
 #else
-    return VerilatorCompileInFolder(cpp_name, folder_name, "Tribe", modules, {
+    return VerilatorCompileInFolder(cpp_name, folder_name, "TribeTest", modules, {
 #endif
                   (source_root / "include").string(),
                   (source_root / "tribe").string(),
                   (source_root / "tribe" / "common").string(),
                   (source_root / "tribe" / "spec").string(),
                   (source_root / "tribe" / "cache").string(),
-                  (source_root / "tribe" / "devices").string()});
+                  (source_root / "tribe" / "devices").string()}, cpu_cores);
 }
 
 #define STRINGIFY_IMPL(x) #x
