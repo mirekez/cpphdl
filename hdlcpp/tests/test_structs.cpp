@@ -99,6 +99,59 @@ static std::string convertModule(const char* argv0, const std::string& section,
     return readFile(dir / "generated" / (section + ".h"));
 }
 
+static void testStructFieldsAreExportedAsCrossFileMetadata(const char* argv0)
+{
+    auto dir = makeTempDir("hdlcpp_structs_field_metadata");
+    auto input = dir / "field_metadata.sv";
+    auto traits = dir / "module_traits.tsv";
+    writeFile(input, R"sv(
+package field_metadata_pkg;
+  localparam int WIDTH = 16;
+  typedef struct packed {
+    logic [7:0] code;
+  } header_t;
+  typedef struct packed {
+    header_t header;
+    logic [WIDTH-1:0] payload;
+    logic [15:8] window;
+  } entry_t;
+endpackage
+)sv");
+
+    auto command = "cd " + shellQuote(dir) + " && " +
+                   "HDLCPP_WRITE_MODULE_TRAITS=" + shellQuote(traits) + " " +
+                   "HDLCPP_METADATA_ONLY=1 " + shellQuote(hdlcppPath(argv0)) + " " +
+                   shellQuote(input);
+    auto rc = std::system(command.c_str());
+    assert(rc == 0);
+    auto metadata = readFile(traits);
+    expectContains(metadata,
+                   "field_metadata_pkg\ttype_field.entry_t.header=field_metadata_pkg::header_t\n");
+    expectContains(metadata,
+                   "field_metadata_pkg\ttype_field.entry_t.payload=logic<");
+    expectContains(metadata, "field_metadata_pkg::WIDTH");
+    expectContains(metadata,
+                   "field_metadata_pkg\ttype_field_lower.entry_t.window.0=8\n");
+
+    auto consumer = dir / "field_metadata_consumer.sv";
+    writeFile(consumer, R"sv(
+module field_metadata_consumer(
+    input  field_metadata_pkg::entry_t entry_i,
+    input  logic [2:0] index_i,
+    output logic       value_o
+);
+  assign value_o = entry_i.window[{1'b1, index_i}];
+endmodule
+)sv");
+    command = "cd " + shellQuote(dir) + " && " +
+              "HDLCPP_MODULE_TRAITS=" + shellQuote(traits) + " " +
+              shellQuote(hdlcppPath(argv0)) + " " + shellQuote(consumer);
+    rc = std::system(command.c_str());
+    assert(rc == 0);
+    auto consumerHeader = readFile(dir / "generated" / "field_metadata_consumer.h");
+    expectContains(consumerHeader, "- (uint64_t)((8))");
+}
+
 static void testPackedTypedefStructEmitsCppStruct(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -196,10 +249,44 @@ endmodule
 
     auto h = convertModule(argv0, "packed_struct_array_field", sv);
     expectContains(h, "struct packet_t");
-    expectContains(h, "array<logic<4>,2,true> lanes;");
+    expectContains(h, "array<2,logic<4>,true> lanes;");
+    expectNotContains(h, ",logic<4>>=");
     expectContains(h, "logic<8> tag;");
     expectContains(h, "pack() const");
     expectNotContains(h, "struct packed");
+}
+
+static void testPackedStructFieldKeepsNonzeroIndexBounds(const char* argv0)
+{
+    const std::string sv = R"sv(
+package shifted_field_pkg;
+  typedef struct packed {
+    logic [31:16] upper;
+    logic [15:0]  lower;
+  } shifted_t;
+endpackage
+
+module packed_struct_shifted_field(
+    input  logic [4:0] index_i,
+    input  logic       value_i,
+    output logic       value_o
+);
+  import shifted_field_pkg::*;
+  shifted_t state;
+  always_comb begin
+    state = '0;
+    state.upper[index_i] = value_i;
+  end
+  assign value_o = state.upper[index_i];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "packed_struct_shifted_field", sv);
+    expectContains(h, "logic<16> upper;");
+    expectContains(h, "- (uint64_t)((16))");
+    expectContains(h, "state_upper_comb[(unsigned)(");
+    expectNotContains(h, "state_upper_comb[index_i_in()] = value_i_in();");
+    expectNotContains(h, "state_comb.upper[(unsigned)(uint64_t)((uint64_t)(index_i_in()))]");
 }
 
 static void testMacroPackedTypedefStructKeepsFieldPacking(const char* argv0)
@@ -368,8 +455,8 @@ endmodule
 
     auto h = convertModule(argv0, "typedef_element_multi_unpacked_dims", sv);
     expectContains(h, "using word_t = logic<64>;");
-    expectContains(h, "array<array<word_t,(((uint64_t)(1)");
-    expectNotContains(h, "_LAZY_COMB(buf_q_comb, array<array<word_t,(((uint64_t)(0)");
+    expectContains(h, ",array<(((uint64_t)(1)");
+    expectNotContains(h, "_LAZY_COMB(buf_q_comb, array<array<");
     expectContains(h, "buf_q_comb_func()");
 }
 
@@ -484,7 +571,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "unbased_one_param_field", sv);
-    expectContains(h, "resp.id = cpphdl::sv_cast<cpphdl::value_type_for_ref_t<decltype(resp.id)>>");
+    expectContains(h, "resp.id = logic<cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(resp.id)>>()>");
     expectContains(h, "cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(resp.id)>>()");
     expectNotContains(h, "resp.id = cpphdl::sv_cast<resp_t>");
     expectNotContains(h, "resp.id = 1");
@@ -551,11 +638,12 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_wide_bitwise_merge", sv);
-    expectContains(h, "_LAZY_COMB(merged_comb, array<word_t,");
-    expectContains(h, "logic<cpphdl::type_width<array<word_t,");
+    expectContains(h, "_LAZY_COMB(merged_comb, array<");
+    expectContains(h, ",word_t,true>)");
+    expectContains(h, "logic<cpphdl::type_width<array<");
     expectNotContains(h, "merged_comb = logic<1>");
     expectNotContains(h, "logic<1>((((uint64_t)");
-    expectNotContains(h, "~((uint64_t)(cpphdl::pack_value<cpphdl::type_width<array<word_t,2,true>>()");
+    expectNotContains(h, "~((uint64_t)(cpphdl::pack_value<cpphdl::type_width<array<2,word_t,true>>()");
 }
 
 static void testPackedArrayMemoryRowBitwiseMergeDoesNotTruncate(const char* argv0)
@@ -587,8 +675,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_memory_row_bitwise_merge", sv);
-    expectContains(h, "reg<array<array<word_t,");
-    expectContains(h, "logic<cpphdl::type_width<array<word_t,");
+    expectContains(h, "memory<array<");
+    expectContains(h, "logic<cpphdl::type_width<array<");
     expectNotContains(h, "cpphdl::pack_value<1>(mem");
     expectNotContains(h, "logic<1>((((uint64_t)(mem");
     expectNotContains(h, "~((uint64_t)(cpphdl::pack_value");
@@ -615,10 +703,30 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "named_typedef_packed_array", sv);
-    expectContains(h, "using words_t = array<word_t,");
+    expectContains(h, "using words_t = array<");
+    expectContains(h, ",word_t,true>;");
     expectContains(h, ",true>;");
-    expectContains(h, "words_comb = cpphdl::pack_value<cpphdl::type_width<array<word_t,");
-    expectNotContains(h, "using words_t = array<word_t,2>;");
+    expectContains(h, "words_comb = cpphdl::pack_value<cpphdl::type_width<array<");
+    expectNotContains(h, "using words_t = array<2,word_t>;");
+}
+
+static void testSymbolicNamedTypedefPackedArrayKeepsPackedFlag(const char* argv0)
+{
+    const std::string sv = R"sv(
+module symbolic_named_typedef_packed_array #(
+    parameter int WORDS = 2,
+    parameter type word_t = logic [31:0]
+);
+  typedef word_t [WORDS-1:0] words_t;
+
+  words_t words;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "symbolic_named_typedef_packed_array", sv);
+    expectContains(h, "using words_t = array<");
+    expectContains(h, ",word_t,true>;");
+    expectNotContains(h, ",word_t>;");
 }
 
 static void testNamedStructPackedArrayKeepsAddressableElements(const char* argv0)
@@ -645,8 +753,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "named_struct_packed_array", sv);
-    expectContains(h, "using entries_t = array<entry_t,");
-    expectNotContains(h, "using entries_t = array<entry_t,2,true>;");
+    expectContains(h, "using entries_t = array<");
+    expectContains(h, ",entry_t>;");
+    expectNotContains(h, "using entries_t = array<2,entry_t,true>;");
     expectNotContains(h, ",true> entries");
     expectContains(h, "entries_comb[0].hi");
 }
@@ -665,11 +774,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "configured_aggregate_packed_array", sv, "", "", "item_t");
-    expectContains(h, "_PORT(array<item_t,");
-    expectNotContains(h, "_PORT(array<item_t,2,true>)");
-    expectNotContains(h, "_PORT(array<item_t,(((uint64_t)(1) >= (uint64_t)(0) ? ((uint64_t)(1) - (uint64_t)(0)) : ((uint64_t)(0) - (uint64_t)(1))) + 1),true>)");
-    expectContains(h, "(items_i_in())[(unsigned)");
-    expectContains(h, ".id");
+    expectContains(h, "_PORT(array<");
+    expectContains(h, ",item_t>)");
+    expectNotContains(h, "_PORT(array<2,item_t,true>)");
+    expectContains(h, "items_i_in__field_id()[(unsigned)");
 }
 
 static void testPackedStructArrayFieldWriteUsesElementTemporary(const char* argv0)
@@ -698,11 +806,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_struct_array_field_write", sv);
-    expectContains(h, "array<item_t,");
-    expectNotContains(h, "array<item_t,(((uint64_t)(0) >= (uint64_t)(0) ? ((uint64_t)(0) - (uint64_t)(0)) : ((uint64_t)(0) - (uint64_t)(0))) + 1),true>");
+    expectContains(h, ",item_t>");
+    expectNotContains(h, "array<1,item_t,true>");
     expectContains(h, "out_comb[0].id = id_i_in();");
-    expectContains(h, "out_comb_func()[(unsigned)");
-    expectContains(h, ".id");
+    expectContains(h, "out_id_comb_func()[(unsigned)");
 }
 
 static void testPackedArrayElementConditionalCastsToValueType(const char* argv0)
@@ -727,8 +834,65 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_element_conditional", sv);
-    expectContains(h, "cpphdl::value_type_for_ref_t<decltype(data_comb[");
+    expectContains(h, "cpphdl::sv_cast<byte_t>");
+    expectNotContains(h, "cpphdl::value_type_for_ref_t<decltype(data_comb[");
     expectNotContains(h, "cpphdl::sv_cast<std::remove_cvref_t<decltype(data_comb[");
+}
+
+static void testPackedStructNestedArrayBitConditionalUsesActualFieldType(const char* argv0)
+{
+    const std::string sv = R"sv(
+module packed_struct_nested_array_bit_conditional #(
+    parameter type state_t = struct packed {
+      logic [1:0][2:0] bits;
+    }
+) (
+    input  logic sel_i,
+    input  logic x_i,
+    output logic bit_o
+);
+  state_t state;
+  always_comb begin
+    state = '0;
+    state.bits[0][1] = sel_i ? x_i : 1'b0;
+  end
+
+  assign bit_o = state.bits[0][1];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "packed_struct_nested_array_bit_conditional", sv);
+    expectContains(h, "state_comb.bits[0][1] = sel_i_in() ?");
+    expectContains(h, "sv_cast<cpphdl::value_type_for_ref_t<decltype(state_comb.bits[0][1])>>");
+    expectNotContains(h, "state_comb.bits[0][1] = sel_i_in() ? logic<1>(");
+}
+
+static void testDependentPackedFieldConditionalUsesActualDestinationType(const char* argv0)
+{
+    const std::string sv = R"sv(
+module dependent_packed_field_conditional #(
+    parameter type item_t = logic [7:0],
+    parameter type state_t = struct packed {
+      item_t [1:0][1:0] data;
+    }
+) (
+    input logic  sel_i,
+    input item_t item_i,
+    output item_t item_o
+);
+  state_t state;
+  always_comb begin
+    state = '0;
+    state.data[0][1] = sel_i ? item_i : item_t'(0);
+  end
+  assign item_o = state.data[0][1];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "dependent_packed_field_conditional", sv);
+    expectContains(h, "state_comb.data[0][1] = sel_i_in() ?");
+    expectContains(h, "sv_cast<item_t>");
+    expectContains(h, "sv_cast<cpphdl::value_type_for_ref_t<decltype(state_comb.data[0][1])>>");
 }
 
 static void testPackedStorageWriteBindsCrossCombSources(const char* argv0)
@@ -765,13 +929,65 @@ endmodule
     expectNotContains(h, "sv_cast<nibble_t>(payload)");
 }
 
+static void testPackedStructWidthDoesNotTreatIdentifierPrefixAsRuntimeIndex(const char* argv0)
+{
+    const std::string sv = R"sv(
+module packed_struct_identifier_width #(
+    parameter int iwidth = 128
+);
+  typedef struct packed {
+    logic [63:0]       cycles;
+    logic [iwidth-1:0] instruction;
+    logic [127:0]      payload;
+  } trace_t;
+
+  trace_t trace;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "packed_struct_identifier_width", sv);
+    expectContains(h, "struct trace_t");
+    expectContains(h, "iwidth");
+    expectNotContains(h, "logic<64> pack() const");
+    expectNotContains(h, "auto packed = logic<64>(v);");
+}
+
+static void testWideTypeParameterizedStructMemberConcatKeepsUpperBits(const char* argv0)
+{
+    const std::string sv = R"sv(
+module wide_type_parameter_member_concat #(
+    parameter type chan_t = logic [96:0],
+    parameter type req_t = struct packed {
+      chan_t ar;
+      logic  valid;
+    }
+) (
+    input  req_t         req_i,
+    input  logic [3:0]   select_i,
+    output logic [100:0] packed_o
+);
+  assign packed_o = {req_i.ar, select_i};
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "wide_type_parameter_member_concat", sv);
+    expectContains(h, "cpphdl::pack_value<");
+    expectContains(h, "type_width<chan_t>()");
+    expectContains(h, ">(req_i_in__field_ar())");
+    expectNotContains(h, "(uint64_t)(req_i_in__field_ar())");
+}
+
 int main(int argc, char** argv)
 {
     assert(argc >= 1);
+    testStructFieldsAreExportedAsCrossFileMetadata(argv[0]);
+    testPackedStructWidthDoesNotTreatIdentifierPrefixAsRuntimeIndex(argv[0]);
+    testWideTypeParameterizedStructMemberConcatKeepsUpperBits(argv[0]);
     testPackedTypedefStructEmitsCppStruct(argv[0]);
     testPackedStructFieldBitsCanDriveLocalparam(argv[0]);
     testLocalparamTypeStructInParameterList(argv[0]);
     testPackedStructWithArrayField(argv[0]);
+    testPackedStructFieldKeepsNonzeroIndexBounds(argv[0]);
     testMacroPackedTypedefStructKeepsFieldPacking(argv[0]);
     testTypeDeclOverridePackedTokenUsesOverrideFields(argv[0]);
     testTypeDeclOverridePackedFieldsUseAliasOverrides(argv[0]);
@@ -786,10 +1002,13 @@ int main(int argc, char** argv)
     testPackedArrayWideBitwiseMergeDoesNotTruncate(argv[0]);
     testPackedArrayMemoryRowBitwiseMergeDoesNotTruncate(argv[0]);
     testNamedTypedefPackedArrayKeepsPackedFlag(argv[0]);
+    testSymbolicNamedTypedefPackedArrayKeepsPackedFlag(argv[0]);
     testNamedStructPackedArrayKeepsAddressableElements(argv[0]);
     testConfiguredAggregatePackedArrayKeepsAddressableElements(argv[0]);
     testPackedStructArrayFieldWriteUsesElementTemporary(argv[0]);
     testPackedArrayElementConditionalCastsToValueType(argv[0]);
+    testPackedStructNestedArrayBitConditionalUsesActualFieldType(argv[0]);
+    testDependentPackedFieldConditionalUsesActualDestinationType(argv[0]);
     testPackedStorageWriteBindsCrossCombSources(argv[0]);
     return 0;
 }

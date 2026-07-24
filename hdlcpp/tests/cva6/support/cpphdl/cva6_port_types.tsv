@@ -1,0 +1,29 @@
+tc_sram_wrapper.rdata_o	output:array<logic<1>,1>
+instr_queue.fetch_entry_o	output:array<fetch_entry_t,CVA6Cfg.NrIssuePorts>
+instr_queue.fetch_entry_valid_o	output:logic<(uint64_t)((uint64_t)(CVA6Cfg.NrIssuePorts))>
+frontend.ex_valid_i	input:logic<1>
+controller.ex_valid_i	input:logic<1>
+cva6.i_frontend.ex_valid_i	input:logic<1>
+instr_realign.flush_i	input:logic<1>
+wt_axi_adapter.i_b_fifo.data_i	input:logic<(uint64_t)(CVA6Cfg.AxiIdWidth)+1>
+cva6_fifo_v3.data_i	input:dtype
+cva6_fifo_v3.push_i	input:logic<1>
+cva6_fifo_v3.pop_i	input:logic<1>
+issue_stage.orig_instr_aes_bits	output:logic<6>
+issue_read_operands.orig_instr_aes_bits	output:logic<6>
+cvxif_issue_register_commit_if_driver.register_i	input:logic<(uint64_t)(((uint64_t)(CVA6Cfg.NrRgprPorts) / (uint64_t)(CVA6Cfg.NrIssuePorts)))*(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+cvxif_issue_register_commit_if_driver.rs_valid_i	input:logic<(uint64_t)(((uint64_t)(CVA6Cfg.NrRgprPorts) / (uint64_t)(CVA6Cfg.NrIssuePorts)))>
+ariane_regfile.wdata_i	input:array<logic<(uint64_t)((uint64_t)(DATA_WIDTH))>,(uint64_t)((uint64_t)(CVA6Cfg.NrCommitPorts)),true>
+ariane_regfile_fpga.wdata_i	input:array<logic<(uint64_t)((uint64_t)(DATA_WIDTH))>,(uint64_t)((uint64_t)(CVA6Cfg.NrCommitPorts)),true>
+unread.d_i	input:logic<1>
+trigger_module.tselect_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata1_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata2_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata3_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tselect_we	input:logic<1>
+trigger_module.tdata1_we	input:logic<1>
+trigger_module.tdata2_we	input:logic<1>
+trigger_module.tdata3_we	input:logic<1>
+serdiv.opcode_i	input:logic<2>
+load_store_unit.i_pipe_reg_load.d_i	input:logic<1 + (uint64_t)((uint64_t)(CVA6Cfg.TRANS_ID_BITS)) + (uint64_t)((uint64_t)(CVA6Cfg.XLEN)) + (sizeof(exception_t)*8)>
+load_store_unit.i_pipe_reg_store.d_i	input:logic<1 + (uint64_t)((uint64_t)(CVA6Cfg.TRANS_ID_BITS)) + (uint64_t)((uint64_t)(CVA6Cfg.XLEN)) + (sizeof(exception_t)*8)>

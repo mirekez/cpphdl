@@ -14,6 +14,7 @@ using namespace cpphdl;
 // 5. Packed/unpacked array initializer lists preserve order and zero-fill.
 // 6. Packed array proxies expose their stored value type to generic code.
 // 7. Packed-aggregate shifts do not intercept scalar-like cpphdl registers.
+// 8. Packing a wide concatenation retains bits above the host integer width.
 
 struct ConstexprWidePacked
 {
@@ -46,6 +47,10 @@ int main()
     source[100] = 1;
     logic<96> slice = sv_bits<96>(source, 127, 32);
     ok &= expect((bool)slice[68], "sv_bits truncated a selected bit above bit 63");
+
+    auto wide_cat = cat(logic<5>(8), logic<64>(0x10000), logic<13>(0));
+    logic<82> packed_cat = pack_value<82>(wide_cat);
+    ok &= expect((bool)packed_cat[80], "pack_value truncated a wide concatenation above bit 63");
 
     ConstexprWidePacked packed{};
     packed.value[70] = 1;

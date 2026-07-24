@@ -1,0 +1,5 @@
+build_config|config_pkg::cva6_cfg_t	@/home/me/cva6/cpphdl/cva6_build_config_body.cpp
+range_check|logic<1>	@/home/me/cva6/cpphdl/cva6_range_check_body.cpp
+is_inside_nonidempotent_regions|logic<1>	@/home/me/cva6/cpphdl/cva6_is_inside_nonidempotent_regions_body.cpp
+is_inside_execute_regions|logic<1>	@/home/me/cva6/cpphdl/cva6_is_inside_execute_regions_body.cpp
+is_inside_cacheable_regions|logic<1>	@/home/me/cva6/cpphdl/cva6_is_inside_cacheable_regions_body.cpp

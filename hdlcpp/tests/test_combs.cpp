@@ -393,6 +393,14 @@ static void testFieldExtractionHandlesIndexedField()
         "}",
     });
 
+    auto wholeFieldLines = hdlcpp::extractTargetFieldCombLines(
+        lines, "fwd_o", "sbe", "__field", "");
+    expectVector(wholeFieldLines, {
+        "for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(ENTRIES);i++) {",
+        "__field[i] = mem_q[i].sbe;",
+        "}",
+    });
+
     auto allLines = hdlcpp::extractTargetCombLines(lines, {"fwd_o"}, "fwd_o");
     expectVector(allLines, lines);
 }
@@ -418,6 +426,126 @@ static void testFieldExtractionKeepsNestedFieldUpdates()
     });
 }
 
+static void testIndexedNestedMemberProjection()
+{
+    auto accesses = hdlcpp::projectedMemberAccesses(
+        "consume(req_comb_func()[i][k].aw.id);", "req_comb_func()");
+    assert(accesses.size() == 1);
+    assert(accesses[0].indices == "[i][k]");
+    assert(accesses[0].field == "aw.id");
+
+    auto grouped = hdlcpp::projectedMemberAccesses(
+        "consume((req_comb_func()[i][k]).aw.id);", "req_comb_func()");
+    assert(grouped.size() == 1);
+    assert(grouped[0].indices == "[i][k]");
+    assert(grouped[0].field == "aw.id");
+    assert(grouped[0].begin == std::string("consume(").size());
+
+    auto groupedBeforeIndex = hdlcpp::projectedMemberAccesses(
+        "consume((req_comb_func())[i].aw.id);", "req_comb_func()");
+    assert(groupedBeforeIndex.size() == 1);
+    assert(groupedBeforeIndex[0].indices == "[i]");
+    assert(groupedBeforeIndex[0].field == "aw.id");
+
+    auto groupedInsideCast = hdlcpp::projectedMemberAccesses(
+        "logic<8>((req_comb_func())[i].aw.id)", "req_comb_func()");
+    assert(groupedInsideCast.size() == 1);
+    assert(groupedInsideCast[0].indices == "[i]");
+    assert(groupedInsideCast[0].field == "aw.id");
+
+    std::vector<std::string> lines = {
+        "for (unsigned i = 0; i < PORTS; ++i) {",
+        "    req_comb[i].aw.id = source[i].aw_id();",
+        "    req_comb[i].aw.addr = source[i].aw_addr();",
+        "}",
+    };
+    auto projected = hdlcpp::extractProjectedArrayFieldCombLines(
+        lines, "req_comb", "aw.id", "req_aw_id_comb");
+    expectVector(projected, {
+        "for (unsigned i = 0; i < PORTS; ++i) {",
+        "req_aw_id_comb[i] = source[i].aw_id();",
+        "}",
+    });
+}
+
+static void testIndexedNestedMemberProjectionFromWholeAggregateAssignment()
+{
+    std::vector<std::string> lines = {
+        "for (unsigned i = 0; i < PORTS; ++i) {",
+        "    for (unsigned k = 0; k < SOURCES; ++k) {",
+        "        req_comb[i][k] = source_i_in()[k];",
+        "    }",
+        "}",
+    };
+    auto projected = hdlcpp::extractProjectedArrayFieldCombLines(
+        lines, "req_comb", "aw.id", "req_aw_id_comb");
+    expectVector(projected, {
+        "for (unsigned i = 0; i < PORTS; ++i) {",
+        "    for (unsigned k = 0; k < SOURCES; ++k) {",
+        "req_aw_id_comb[i][k] = (source_i_in()[k]).aw.id;",
+        "    }",
+        "}",
+    });
+}
+
+static void testWholeArrayElementProjectionSelectsFromCompleteExpression()
+{
+    std::vector<std::string> lines = {
+        "for (unsigned i = 0; i < ENTRIES; ++i) {",
+        "    entry_comb[i] = decode_entry(raw_i_in()[i], low_bound());",
+        "}",
+    };
+    auto projected = hdlcpp::extractProjectedArrayFieldCombLines(
+        lines, "entry_comb", "valid", "entry_valid_comb");
+    expectVector(projected, {
+        "for (unsigned i = 0; i < ENTRIES; ++i) {",
+        "entry_valid_comb[i] = (decode_entry(raw_i_in()[i], low_bound())).valid;",
+        "}",
+    });
+}
+
+static void testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration()
+{
+    std::vector<std::string> lines = {
+        "{",
+        "    unsigned id;",
+        "    for (id = 0; id < PORTS; ++id) {",
+        "        ([&]() { auto __cpphdl_elem = unpack(req_comb[id]); __cpphdl_elem.req = valid_i[id]; req_comb[id] = __cpphdl_elem; }());",
+        "        ([&]() { auto __cpphdl_elem = unpack(req_comb[id]); __cpphdl_elem.addr = addr_i[id]; req_comb[id] = __cpphdl_elem; }());",
+        "    }",
+        "    req_comb[id] = tail_req;",
+        "}",
+    };
+    auto projected = hdlcpp::extractProjectedArrayFieldCombLines(
+        lines, "req_comb", "req", "req_valid_comb");
+    expectVector(projected, {
+        "{",
+        "    unsigned id;",
+        "    for (id = 0; id < PORTS; ++id) {",
+        "req_valid_comb[id] = valid_i[id];",
+        "    }",
+        "req_valid_comb[id] = (tail_req).req;",
+        "}",
+    });
+}
+
+static void testPackedTreeCombAliasesPreserveLoopDependency()
+{
+    const std::vector<std::string> headers = {
+        "for (unsigned i = 0;(uint64_t)(i) < (uint64_t)(NumLevels);++i) {",
+        "for (unsigned k = 0;(uint64_t)(k) < (1ull << i);++k) {",
+    };
+    const auto ordered = hdlcpp::dependencyOrderedContinuousLoopHeaders(
+        headers,
+        "request_nodes",
+        "request_nodes_comb[(1ull << i) - 1 + k]",
+        "request_nodes_comb_func()[(1ull << (i + 1)) - 1 + k * 2]");
+    expectVector(ordered, {
+        "for (unsigned i = (unsigned)((uint64_t)(NumLevels)); i-- > 0;) {",
+        headers[1],
+    });
+}
+
 int main()
 {
     testStandaloneIndependent();
@@ -438,5 +566,10 @@ int main()
     testFieldExtractionAvoidsUnneededFields();
     testFieldExtractionHandlesIndexedField();
     testFieldExtractionKeepsNestedFieldUpdates();
+    testIndexedNestedMemberProjection();
+    testIndexedNestedMemberProjectionFromWholeAggregateAssignment();
+    testWholeArrayElementProjectionSelectsFromCompleteExpression();
+    testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration();
+    testPackedTreeCombAliasesPreserveLoopDependency();
     return 0;
 }

@@ -7,6 +7,7 @@ struct PortGen {
     std::string array;
     std::string init;
     bool isInterface = false;
+    std::string interfaceModport;
 };
 
 struct MethodGen {
@@ -14,6 +15,11 @@ struct MethodGen {
     std::string ret = "void";
     std::string args;
     std::vector<std::string> body;
+    // Continuous assignments are concurrent with procedural comb blocks. Keep
+    // them separate while parsing so source order cannot evaluate them before
+    // the procedural value they consume has been produced.
+    std::vector<std::string> deferredContinuousBody;
+    bool continuousBodyAppended = false;
     std::set<std::string> localNames;
     std::string returnName;
     std::string returnBase;
@@ -30,6 +36,7 @@ struct InstanceConnGen {
     bool connected = true;
     std::string params;
     std::vector<std::string> guards;
+    char unbasedUnsizedValue = '\0';
 };
 
 struct PendingCombGen {
@@ -38,12 +45,24 @@ struct PendingCombGen {
     std::set<std::string> localNames;
 };
 
+struct PortFieldProjectionGen {
+    std::string sourcePort;
+    std::string sourceCppPort;
+    std::string field;
+    std::string projectedCppPort;
+    std::string projectedType;
+};
+
 struct ModuleGen {
     std::string name;
     bool isPackage = false;
     bool isInterface = false;
+    std::map<std::string, std::map<std::string, std::string>> interfaceModports;
     std::vector<std::string> params;
     std::vector<PortGen> ports;
+    // Preserve SystemVerilog declaration order, including ports such as clocks
+    // that are represented implicitly and therefore omitted from C++ ports.
+    std::vector<std::string> sourcePortOrder;
     std::vector<std::string> typeDecls;
     std::vector<std::string> preClassDecls;
     std::vector<std::string> packageDecls;
@@ -51,11 +70,13 @@ struct ModuleGen {
     std::set<std::string> packageValueNames;
     std::vector<std::string> imports;
     std::vector<std::pair<std::string, std::string>> vars;
+    std::map<std::string, std::string> varInitializers;
     std::vector<std::pair<std::string, std::string>> constants;
     std::vector<std::string> members;
     std::vector<std::string> memberTypes;
     std::vector<std::string> memberNames;
     std::map<std::string, std::string> memberArraySizes;
+    std::map<std::string, std::vector<std::string>> memberArrayDimensions;
     std::vector<InstanceConnGen> instanceConns;
     std::vector<MethodGen> methods;
     std::vector<std::pair<std::string, std::string>> assigns;
@@ -64,10 +85,17 @@ struct ModuleGen {
     std::set<std::string> varNames;
     std::set<std::string> combAssignedVars;
     std::set<std::string> seqAssignedVars;
+    // Clocked blocking assignments must be visible immediately after the process runs.
+    // Track explicit <= targets separately so only true nonblocking state uses reg<>
+    // storage, _next seeding, and strobe commits in the generated CppHDL model.
+    std::set<std::string> nonblockingAssignedVars;
+    std::set<std::string> partialSeqAssignedVars;
     std::set<std::string> assignDrivenVars;
     std::set<std::string> partialAssignDrivenVars;
     std::set<std::string> bridgeAssignVars;
     std::set<std::string> typeParamNames;
+    std::set<std::string> aggregateTypeParamNames;
+    std::set<std::string> syntheticInterfaceParamNames;
     std::map<std::string, std::string> assignExprByBase;
     std::map<std::string, std::string> portCppNames;
     std::map<std::string, std::string> outputPortCppNames;
@@ -78,16 +106,26 @@ struct ModuleGen {
     std::map<std::string, std::string> preferredCombDriver;
     std::map<std::string, size_t> combMethodByBase;
     std::map<std::pair<std::string, std::string>, size_t> combMethodByField;
+    std::map<std::pair<std::string, std::string>, PortFieldProjectionGen> inputFieldProjections;
+    std::map<std::pair<std::string, std::string>, PortFieldProjectionGen> outputFieldProjections;
+    std::set<std::tuple<std::string, std::string, std::string>> externalOutputFieldDemands;
+    std::set<std::pair<std::string, std::string>> requestedCombFields;
     std::set<std::string> noCacheCombBases;
     std::map<std::string, PendingCombGen> pendingCombByBase;
     std::map<std::string, std::vector<std::string>> structuralAssignGuards;
     std::map<std::string, std::string> combReturnTypes;
     std::map<std::string, std::string> functionReturnTypes;
+    std::map<std::string, std::vector<std::string>> functionArgumentDirections;
     std::map<std::string, std::string> outputRegTypes;
     std::map<std::string, std::string> types;
+    std::map<std::string, std::string> typeAliases;
     std::map<std::string, std::string> typeWidths;
     std::map<std::string, std::map<std::string, std::string>> typeFields;
     std::map<std::string, std::vector<std::string>> typeFieldOrder;
+    // C++ logic and array indices are zero based, while packed SV struct fields can
+    // retain arbitrary declared bounds. Keep those bounds with the field metadata so
+    // every later read or write can translate the source index to storage coordinates.
+    std::map<std::pair<std::string, std::string>, std::vector<std::string>> typeFieldLowerBounds;
     std::map<std::string, std::vector<std::string>> arrayLowerBounds;
     int alwaysNo = 0;
     bool hasWorkTask = false;
@@ -111,6 +149,7 @@ static void mergePendingComb(ModuleGen& mod, const std::string& base, const Pend
 }
 
 static std::string trim(std::string s);
+static bool parseCppIntegralLiteral(std::string s, uint64_t& out);
 
 static bool isCombOnlyOutput(const ModuleGen& m, const std::string& svName)
 {
@@ -277,6 +316,32 @@ static bool isIdentifierChar(char c)
     return std::isalnum((unsigned char)c) || c == '_';
 }
 
+static bool isValidProjectedFieldPath(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    size_t segmentStart = 0;
+    while (segmentStart < path.size()) {
+        const auto segmentEnd = path.find('.', segmentStart);
+        const auto end = segmentEnd == std::string::npos ? path.size() : segmentEnd;
+        if (end == segmentStart ||
+            std::isdigit(static_cast<unsigned char>(path[segmentStart]))) {
+            return false;
+        }
+        for (size_t pos = segmentStart; pos < end; ++pos) {
+            if (!isIdentifierChar(path[pos])) {
+                return false;
+            }
+        }
+        if (segmentEnd == std::string::npos) {
+            return true;
+        }
+        segmentStart = segmentEnd + 1;
+    }
+    return false;
+}
+
 static bool isClockPortName(const std::string& name)
 {
     auto n = name;
@@ -330,6 +395,9 @@ static std::string zeroAssignmentRhsForLValue(const std::string& lhs)
         return "";
     }
     if (lhs.find('.') != std::string::npos) {
+        if (lhs.find('[') != std::string::npos) {
+            return "cpphdl::sv_cast<cpphdl::value_type_for_ref_t<decltype(" + lhs + ")>>(0)";
+        }
         return "std::remove_cvref_t<decltype(" + lhs + ")>{}";
     }
     if (lhs.find('[') != std::string::npos) {
@@ -612,6 +680,91 @@ static std::vector<std::string> configuredModuleParams(const std::string& type)
     return it == params.end() ? std::vector<std::string>{} : it->second;
 }
 
+static std::map<std::string, std::string> configuredTextMap(const char* envName);
+
+static std::string configuredPortType(const std::string& module,
+                                      const std::string& port,
+                                      const std::string& direction)
+{
+    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    auto found = ports.find(module + "." + port);
+    if (found == ports.end()) {
+        return {};
+    }
+    auto spec = found->second;
+    auto sep = spec.find(':');
+    auto configuredDirection = trim(
+        sep == std::string::npos ? std::string() : spec.substr(0, sep));
+    if (!direction.empty() && configuredDirection != direction) {
+        return {};
+    }
+    return trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+}
+
+static bool configuredPortTypeDependsOnTypeParameter(const std::string& module,
+                                                     const std::string& port,
+                                                     const std::string& direction)
+{
+    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    auto found = ports.find(module + "." + port);
+    if (found == ports.end()) {
+        return false;
+    }
+    auto spec = found->second;
+    auto sep = spec.find(':');
+    auto configuredDirection = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
+    auto type = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+    if (!direction.empty() && configuredDirection != direction) {
+        return false;
+    }
+    for (const auto& param : configuredModuleParams(module)) {
+        auto declaration = trim(param);
+        if (declaration.rfind("typename ", 0) != 0 && declaration.rfind("class ", 0) != 0) {
+            continue;
+        }
+        auto name = templateParamName(declaration);
+        if (!name.empty() && isIdentifierUsed(type, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool configuredPortTypeRejectsNamedFields(const std::string& module,
+                                                 const std::string& port,
+                                                 const std::string& direction)
+{
+    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    auto found = ports.find(module + "." + port);
+    if (found == ports.end()) {
+        return false;
+    }
+    auto spec = found->second;
+    auto sep = spec.find(':');
+    auto configuredDirection = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
+    auto type = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
+    if (!direction.empty() && configuredDirection != direction) {
+        return false;
+    }
+    auto aliases = configuredTextMap("HDLCPP_TYPE_ALIAS_OVERRIDES");
+    std::set<std::string> visited;
+    while (visited.insert(type).second) {
+        auto alias = aliases.find(module + "." + type);
+        if (alias == aliases.end()) {
+            break;
+        }
+        type = trim(alias->second);
+    }
+    const std::set<std::string> scalarTypes = {
+        "bool", "char", "signed char", "unsigned char", "short", "unsigned short",
+        "int", "unsigned", "unsigned int", "long", "unsigned long", "long long",
+        "unsigned long long", "int8_t", "uint8_t", "int16_t", "uint16_t",
+        "int32_t", "uint32_t", "int64_t", "uint64_t", "bit"
+    };
+    return type.rfind("logic<", 0) == 0 || type.rfind("u<", 0) == 0 ||
+           scalarTypes.count(type) != 0;
+}
+
 static bool configuredModuleTrait(const std::string& type, const std::string& trait)
 {
     static bool loaded = false;
@@ -652,6 +805,262 @@ static bool configuredModuleTrait(const std::string& type, const std::string& tr
     }
     return it->second.count(trait) != 0 || it->second.count(trait + "=1") != 0 ||
            it->second.count(trait + "=true") != 0;
+}
+
+struct ConfiguredTypeFields {
+    std::map<std::pair<std::string, std::string>, std::vector<std::string>> order;
+    std::map<std::tuple<std::string, std::string, std::string>, std::string> types;
+    std::map<std::tuple<std::string, std::string, std::string>, std::map<size_t, std::string>> lowerBounds;
+    std::map<std::pair<std::string, std::string>, std::string> aliases;
+};
+
+static const ConfiguredTypeFields& configuredTypeFields()
+{
+    static const ConfiguredTypeFields fields = [] {
+        ConfiguredTypeFields result;
+        auto* path = std::getenv("HDLCPP_MODULE_TRAITS");
+        if (!path) {
+            return result;
+        }
+        std::ifstream in(path);
+        std::string line;
+        constexpr std::string_view fieldPrefix = "type_field.";
+        constexpr std::string_view lowerPrefix = "type_field_lower.";
+        constexpr std::string_view aliasPrefix = "type_alias.";
+        while (std::getline(in, line)) {
+            line = trim(line);
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+            auto tab = line.find('\t');
+            if (tab == std::string::npos) {
+                continue;
+            }
+            auto scope = trim(line.substr(0, tab));
+            auto item = trim(line.substr(tab + 1));
+            if (scope.empty()) {
+                continue;
+            }
+            if (item.rfind(aliasPrefix, 0) == 0) {
+                auto equals = item.find('=', aliasPrefix.size());
+                if (equals == std::string::npos) {
+                    continue;
+                }
+                auto type = trim(item.substr(aliasPrefix.size(), equals - aliasPrefix.size()));
+                auto target = trim(item.substr(equals + 1));
+                if (!type.empty() && !target.empty()) {
+                    result.aliases[{scope, type}] = target;
+                }
+                continue;
+            }
+            if (item.rfind(lowerPrefix, 0) == 0) {
+                auto equals = item.find('=', lowerPrefix.size());
+                auto levelSep = item.rfind('.', equals == std::string::npos ? item.size() : equals);
+                auto fieldSep = levelSep == std::string::npos ? std::string::npos :
+                    item.rfind('.', levelSep == 0 ? 0 : levelSep - 1);
+                if (equals == std::string::npos || levelSep == std::string::npos ||
+                    fieldSep == std::string::npos || fieldSep < lowerPrefix.size()) {
+                    continue;
+                }
+                auto type = trim(item.substr(lowerPrefix.size(), fieldSep - lowerPrefix.size()));
+                auto field = trim(item.substr(fieldSep + 1, levelSep - fieldSep - 1));
+                auto levelText = trim(item.substr(levelSep + 1, equals - levelSep - 1));
+                auto bound = trim(item.substr(equals + 1));
+                uint64_t level = 0;
+                if (type.empty() || field.empty() || bound.empty() ||
+                    !parseCppIntegralLiteral(levelText, level)) {
+                    continue;
+                }
+                result.lowerBounds[{scope, type, field}][static_cast<size_t>(level)] = bound;
+                continue;
+            }
+            if (item.rfind(fieldPrefix, 0) != 0) {
+                continue;
+            }
+            auto equals = item.find('=', fieldPrefix.size());
+            auto fieldSep = item.rfind('.', equals == std::string::npos ? item.size() : equals);
+            if (equals == std::string::npos || fieldSep == std::string::npos ||
+                fieldSep < fieldPrefix.size()) {
+                continue;
+            }
+            auto type = trim(item.substr(fieldPrefix.size(), fieldSep - fieldPrefix.size()));
+            auto field = trim(item.substr(fieldSep + 1, equals - fieldSep - 1));
+            auto fieldType = trim(item.substr(equals + 1));
+            if (type.empty() || field.empty() || fieldType.empty()) {
+                continue;
+            }
+            auto key = std::make_pair(scope, type);
+            auto& order = result.order[key];
+            if (std::find(order.begin(), order.end(), field) == order.end()) {
+                order.push_back(field);
+            }
+            result.types[{scope, type, field}] = fieldType;
+        }
+        return result;
+    }();
+    return fields;
+}
+
+static std::vector<std::string> configuredTypeFieldOrder(const std::string& scope,
+                                                         const std::string& type)
+{
+    const auto& fields = configuredTypeFields();
+    auto found = fields.order.find({scope, type});
+    return found == fields.order.end() ? std::vector<std::string>{} : found->second;
+}
+
+static std::string configuredTypeFieldType(const std::string& scope,
+                                           const std::string& type,
+                                           const std::string& field)
+{
+    const auto& fields = configuredTypeFields();
+    auto found = fields.types.find({scope, type, field});
+    return found == fields.types.end() ? std::string{} : found->second;
+}
+
+static std::vector<std::string> configuredTypeFieldLowerBounds(const std::string& scope,
+                                                               const std::string& type,
+                                                               const std::string& field)
+{
+    const auto& fields = configuredTypeFields();
+    auto found = fields.lowerBounds.find({scope, type, field});
+    if (found == fields.lowerBounds.end() || found->second.empty()) {
+        return {};
+    }
+    std::vector<std::string> result(found->second.rbegin()->first + 1, "0");
+    for (const auto& [level, bound] : found->second) {
+        result[level] = bound;
+    }
+    return result;
+}
+
+static std::string configuredTypeAlias(const std::string& scope, const std::string& type)
+{
+    const auto& fields = configuredTypeFields();
+    auto found = fields.aliases.find({scope, type});
+    return found == fields.aliases.end() ? std::string{} : found->second;
+}
+
+static std::map<std::string, std::string> configuredModportDirections(
+    const std::string& type, const std::string& modport)
+{
+    std::map<std::string, std::string> directions;
+    auto* path = std::getenv("HDLCPP_MODULE_TRAITS");
+    if (!path || type.empty() || modport.empty()) {
+        return directions;
+    }
+    std::ifstream in(path);
+    std::string line;
+    const auto prefix = "modport." + modport + ".";
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        auto sep = line.find('\t');
+        if (sep == std::string::npos || trim(line.substr(0, sep)) != type) {
+            continue;
+        }
+        auto rest = line.substr(sep + 1);
+        for (size_t start = 0; start <= rest.size();) {
+            auto end = rest.find('\t', start);
+            auto item = trim(rest.substr(start, end == std::string::npos ? std::string::npos : end - start));
+            if (item.rfind(prefix, 0) == 0) {
+                auto fieldAndDirection = item.substr(prefix.size());
+                auto directionSep = fieldAndDirection.rfind('.');
+                if (directionSep != std::string::npos) {
+                    auto field = fieldAndDirection.substr(0, directionSep);
+                    auto direction = fieldAndDirection.substr(directionSep + 1);
+                    if (!field.empty() && !direction.empty()) {
+                        directions[field] = direction;
+                    }
+                }
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+    }
+    return directions;
+}
+
+static std::set<std::string> configuredInputPortFields(const std::string& type,
+                                                       const std::string& port)
+{
+    std::set<std::string> fields;
+    auto* path = std::getenv("HDLCPP_MODULE_TRAITS");
+    if (!path || type.empty() || port.empty()) {
+        return fields;
+    }
+    std::ifstream in(path);
+    std::string line;
+    const auto prefix = "input_field." + port + ".";
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        auto sep = line.find('\t');
+        if (sep == std::string::npos || trim(line.substr(0, sep)) != type) {
+            continue;
+        }
+        auto rest = line.substr(sep + 1);
+        for (size_t start = 0; start <= rest.size();) {
+            auto end = rest.find('\t', start);
+            auto item = trim(rest.substr(start, end == std::string::npos ? std::string::npos : end - start));
+            if (item.rfind(prefix, 0) == 0 && item.size() > prefix.size()) {
+                auto field = item.substr(prefix.size());
+                if (isValidProjectedFieldPath(field)) {
+                    fields.insert(std::move(field));
+                }
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+    }
+    return fields;
+}
+
+static std::set<std::string> configuredOutputPortFields(const std::string& type,
+                                                        const std::string& port)
+{
+    std::set<std::string> fields;
+    auto* path = std::getenv("HDLCPP_MODULE_TRAITS");
+    if (!path || type.empty() || port.empty()) {
+        return fields;
+    }
+    std::ifstream in(path);
+    std::string line;
+    const auto prefix = "output_field." + port + ".";
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        auto sep = line.find('\t');
+        if (sep == std::string::npos || trim(line.substr(0, sep)) != type) {
+            continue;
+        }
+        auto rest = line.substr(sep + 1);
+        for (size_t start = 0; start <= rest.size();) {
+            auto end = rest.find('\t', start);
+            auto item = trim(rest.substr(start, end == std::string::npos ? std::string::npos : end - start));
+            if (item.rfind(prefix, 0) == 0 && item.size() > prefix.size()) {
+                auto field = item.substr(prefix.size());
+                if (isValidProjectedFieldPath(field)) {
+                    fields.insert(std::move(field));
+                }
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+    }
+    return fields;
 }
 
 static std::string templateParamDefaultValue(const std::string& decl)
@@ -1071,6 +1480,21 @@ static std::map<std::string, std::string> configuredTextMap(const char* envName)
     }
     cache[key] = out;
     return out;
+}
+
+static std::vector<std::string> configuredModulePortOrder(const std::string& module)
+{
+    auto metadata = configuredTextMap("HDLCPP_PORT_TYPES");
+    std::vector<std::string> ports;
+    for (size_t index = 0;; ++index) {
+        auto key = module + ".$port." + std::to_string(index);
+        auto found = metadata.find(key);
+        if (found == metadata.end()) {
+            break;
+        }
+        ports.push_back(trim(found->second));
+    }
+    return ports;
 }
 
 static std::optional<uint64_t> parseConfiguredUint(std::string value)
@@ -1662,15 +2086,8 @@ static std::string repairNumericCastSplitMemberAccess(std::string s)
             continue;
         }
         auto dot = close + 1;
-        size_t extraCloseBegin = dot;
         while (dot < s.size() && std::isspace(static_cast<unsigned char>(s[dot]))) {
             ++dot;
-        }
-        while (dot < s.size() && s[dot] == ')') {
-            ++dot;
-            while (dot < s.size() && std::isspace(static_cast<unsigned char>(s[dot]))) {
-                ++dot;
-            }
         }
         if (dot >= s.size() || s[dot] != '.' || dot + 1 >= s.size() ||
             !std::isalpha(static_cast<unsigned char>(s[dot + 1])) && s[dot + 1] != '_') {
@@ -1683,10 +2100,9 @@ static std::string repairNumericCastSplitMemberAccess(std::string s)
             ++fieldEnd;
         }
         auto content = s.substr(open + 1, close - open - 1);
-        auto extraCloses = s.substr(extraCloseBegin, dot - extraCloseBegin);
-        auto replacement = "(uint64_t)(" + appendMemberToCastedContent(content, s.substr(fieldStart, fieldEnd - fieldStart)) + ")" + extraCloses;
+        auto replacement = "(uint64_t)(" + appendMemberToCastedContent(content, s.substr(fieldStart, fieldEnd - fieldStart)) + ")";
         s.replace(pos, fieldEnd - pos, replacement);
-        pos += replacement.size();
+        pos += castPrefix.size();
     }
     static const std::regex tripleCastSplit(
         R"(\(uint64_t\)\(\(uint64_t\)\(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)\)\)\)\.([A-Za-z_][A-Za-z0-9_]*)\))");
@@ -1700,11 +2116,25 @@ static std::string repairNumericCastSplitMemberAccess(std::string s)
     s = std::regex_replace(s, doubleCastSplit, "(uint64_t)((uint64_t)($1.$2))");
     s = std::regex_replace(s, doubleCastSplitOneClose, "(uint64_t)((uint64_t)($1.$2))");
     s = std::regex_replace(s, singleCastSplit, "(uint64_t)($1.$2)");
+    static const std::regex castClosedBeforeMember(
+        R"(\(uint64_t\)\(([A-Za-z_][A-Za-z0-9_:]*)(\)\)+)\.([A-Za-z_][A-Za-z0-9_]*))");
+    for (size_t pass = 0; pass < 4; ++pass) {
+        auto repaired = std::regex_replace(s, castClosedBeforeMember, "(uint64_t)($1.$3)$2");
+        if (repaired == s) {
+            break;
+        }
+        s = std::move(repaired);
+    }
     return s;
 }
 
 static std::string repairSplitSvBitsCall(std::string s)
 {
+    const std::string malformedCast = ",(uint64_t))(";
+    for (size_t pos = 0; (pos = s.find(malformedCast, pos)) != std::string::npos;) {
+        s.erase(pos + std::string(",(uint64_t)").size(), 1);
+        pos += malformedCast.size() - 1;
+    }
     auto matchingCloseParen = [](const std::string& text, size_t open) -> size_t {
         int depth = 0;
         for (size_t i = open; i < text.size(); ++i) {
@@ -2107,6 +2537,111 @@ static size_t matchingTemplateClose(const std::string& s, size_t open)
     return std::string::npos;
 }
 
+// hdlcpp keeps array dimensions internally as element, count, packed because that
+// matches SystemVerilog type construction. CppHDL's public array template now uses
+// count, element, packed, so reorder only the final emitted C++ representation.
+static std::string emitCurrentCpphdlArrayOrder(std::string text)
+{
+    auto matchingArrayClose = [](const std::string& value, size_t open) {
+        int angle = 1;
+        int paren = 0;
+        int bracket = 0;
+        int brace = 0;
+        for (size_t i = open + 1; i < value.size(); ++i) {
+            char c = value[i];
+            if (c == '(') ++paren;
+            else if (c == ')' && paren > 0) --paren;
+            else if (c == '[') ++bracket;
+            else if (c == ']' && bracket > 0) --bracket;
+            else if (c == '{') ++brace;
+            else if (c == '}' && brace > 0) --brace;
+            else if (paren == 0 && bracket == 0 && brace == 0 && c == '<') ++angle;
+            else if (paren == 0 && bracket == 0 && brace == 0 && c == '>') {
+                if (i + 1 < value.size() && value[i + 1] == '=') {
+                    continue;
+                }
+                if (--angle == 0) {
+                    return i;
+                }
+            }
+        }
+        return std::string::npos;
+    };
+    auto arrayArgs = [](const std::string& value) {
+        std::vector<std::string> args;
+        size_t begin = 0;
+        int angle = 0;
+        int paren = 0;
+        int bracket = 0;
+        int brace = 0;
+        for (size_t i = 0; i < value.size(); ++i) {
+            char c = value[i];
+            if (c == '(') ++paren;
+            else if (c == ')' && paren > 0) --paren;
+            else if (c == '[') ++bracket;
+            else if (c == ']' && bracket > 0) --bracket;
+            else if (c == '{') ++brace;
+            else if (c == '}' && brace > 0) --brace;
+            else if (paren == 0 && bracket == 0 && brace == 0 && c == '<') ++angle;
+            else if (paren == 0 && bracket == 0 && brace == 0 && c == '>' && angle > 0) --angle;
+            else if (c == ',' && angle == 0 && paren == 0 && bracket == 0 && brace == 0) {
+                args.push_back(trim(value.substr(begin, i - begin)));
+                begin = i + 1;
+            }
+        }
+        args.push_back(trim(value.substr(begin)));
+        return args;
+    };
+    for (size_t pos = 0; (pos = text.find("array<", pos)) != std::string::npos;) {
+        if (pos >= 5 && text.compare(pos - 5, 5, "std::") == 0) {
+            pos += 6;
+            continue;
+        }
+        if (pos > 0 && (std::isalnum(static_cast<unsigned char>(text[pos - 1])) || text[pos - 1] == '_')) {
+            pos += 6;
+            continue;
+        }
+        auto open = pos + 5;
+        auto close = matchingArrayClose(text, open);
+        if (close == std::string::npos) {
+            break;
+        }
+        auto args = arrayArgs(text.substr(open + 1, close - open - 1));
+        if (args.size() < 2) {
+            pos = close + 1;
+            continue;
+        }
+        for (auto& arg : args) {
+            arg = emitCurrentCpphdlArrayOrder(std::move(arg));
+        }
+        std::string replacement = "array<" + args[1] + "," + args[0];
+        for (size_t i = 2; i < args.size(); ++i) {
+            replacement += "," + args[i];
+        }
+        replacement += ">";
+        text.replace(pos, close - pos + 1, replacement);
+        pos += replacement.size();
+    }
+    return text;
+}
+
+static bool rewriteGeneratedCpphdlArrayOrder(const std::filesystem::path& path)
+{
+    std::ifstream in(path);
+    if (!in) {
+        return false;
+    }
+    std::ostringstream contents;
+    contents << in.rdbuf();
+    in.close();
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+    out << emitCurrentCpphdlArrayOrder(contents.str());
+    return true;
+}
+
 static size_t matchingParenClose(const std::string& s, size_t open)
 {
     if (open >= s.size() || s[open] != '(') {
@@ -2134,7 +2669,7 @@ static std::string valueAssignCombFunctionPorts(std::string line)
 
 static bool replicationNeedsCaptureText(const std::string& text);
 
-static std::string postProcessCppLine(std::string line)
+static std::string postProcessCppLineImpl(std::string line)
 {
     line = valueAssignCombFunctionPorts(std::move(line));
     for (size_t pos = 0; (pos = line.find(">(0b) ", pos)) != std::string::npos;) {
@@ -2237,6 +2772,20 @@ static std::string postProcessCppLine(std::string line)
     line = repairNumericCastSplitMemberAccess(std::move(line));
     line = repairSplitSvBitsCall(std::move(line));
     auto repairRuntimeLogicWidths = [&]() {
+        auto stripUnevaluatedOperands = [](std::string text) {
+            for (const auto* keyword : {"decltype(", "sizeof("}) {
+                for (size_t pos = 0; (pos = text.find(keyword, pos)) != std::string::npos;) {
+                    auto open = pos + std::char_traits<char>::length(keyword) - 1;
+                    auto close = matchingParenClose(text, open);
+                    if (close == std::string::npos) {
+                        break;
+                    }
+                    text.replace(pos, close + 1 - pos, "unevaluated_operand");
+                    pos += std::string("unevaluated_operand").size();
+                }
+            }
+            return text;
+        };
         for (size_t pos = 0; (pos = line.find("logic<", pos)) != std::string::npos;) {
             auto start = pos + 6;
             auto end = matchingTemplateClose(line, pos + 5);
@@ -2244,12 +2793,10 @@ static std::string postProcessCppLine(std::string line)
                 break;
             }
             auto width = line.substr(start, end - start);
-            bool runtimeWidth =
-                width.find("(i") != std::string::npos || width.find("(j") != std::string::npos ||
-                width.find("(k") != std::string::npos || width.find("* i") != std::string::npos ||
-                width.find("* j") != std::string::npos || width.find("* k") != std::string::npos ||
-                width.find(" i ") != std::string::npos || width.find(" j ") != std::string::npos ||
-                width.find(" k ") != std::string::npos;
+            auto evaluatedWidth = stripUnevaluatedOperands(width);
+            bool runtimeWidth = isIdentifierUsed(evaluatedWidth, "i") ||
+                                isIdentifierUsed(evaluatedWidth, "j") ||
+                                isIdentifierUsed(evaluatedWidth, "k");
             if (runtimeWidth) {
                 line.replace(start, end - start, "64");
                 pos = start + 2;
@@ -3052,6 +3599,21 @@ static std::string postProcessCppLine(std::string line)
             auto target = "cpphdl::value_type_for_ref_t<decltype(" + lhsTrim + ")>";
             auto leadingTemplateCallType = [](const std::string& value) -> std::string {
                 auto v = trim(value);
+                for (const auto& prefix : {std::string("cpphdl::sv_cast<"), std::string("sv_cast<")}) {
+                    if (v.rfind(prefix, 0) != 0) {
+                        continue;
+                    }
+                    auto close = matchingTemplateCloseLocal(v, prefix.size() - 1);
+                    if (close != std::string::npos) {
+                        auto next = close + 1;
+                        while (next < v.size() && std::isspace(static_cast<unsigned char>(v[next]))) {
+                            ++next;
+                        }
+                        if (next < v.size() && v[next] == '(') {
+                            return trim(v.substr(prefix.size(), close - prefix.size()));
+                        }
+                    }
+                }
                 auto findTypeStart = [&](const std::string& prefix) -> size_t {
                     for (size_t pos = 0; (pos = v.find(prefix, pos)) != std::string::npos; ++pos) {
                         auto topLevelCtor = true;
@@ -3176,11 +3738,6 @@ static std::string postProcessCppLine(std::string line)
                     }
                 }
             }
-            else if (lhsTrim.find('[') != std::string::npos &&
-                (lhsTrim.find("][") != std::string::npos ||
-                 (left.find("logic<1>") != std::string::npos && right.find("logic<1>") != std::string::npos))) {
-                target = "logic<1>";
-            }
             auto wrapBranch = [&](const std::string& branch) {
                 if (isNumericValueType(target)) {
                     return target + "(" + branch + ")";
@@ -3193,6 +3750,8 @@ static std::string postProcessCppLine(std::string line)
 	            balanceReplicationAssignments();
 	            replaceAll(line, "; }()))," , "; }()),");
 	            replaceAll(line, "; }()))}", "; }())}");
+	            line = repairNumericCastSplitMemberAccess(std::move(line));
+	            line = repairSplitSvBitsCall(std::move(line));
 	            return line;
 	        }
 	    }
@@ -3204,7 +3763,17 @@ static std::string postProcessCppLine(std::string line)
 	balanceReplicationAssignments();
 	replaceAll(line, "; }()))," , "; }()),");
 	replaceAll(line, "; }()))}", "; }())}");
+	line = repairNumericCastSplitMemberAccess(std::move(line));
+	line = repairSplitSvBitsCall(std::move(line));
 	return line;
+}
+
+static std::string postProcessCppLine(std::string line)
+{
+    line = postProcessCppLineImpl(std::move(line));
+    line = repairNumericCastSplitMemberAccess(std::move(line));
+    line = repairSplitSvBitsCall(std::move(line));
+    return line;
 }
 
 static std::string exprText(const std::string& in)

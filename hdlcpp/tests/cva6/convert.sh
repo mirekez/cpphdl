@@ -9,11 +9,27 @@ TARGET="${TARGET:-cv32a6_imac_sv32}"
 RISCV="${RISCV:-/home/me/riscv}"
 JOBS="${JOBS:-1}"
 HDLCPP_JOBS="${HDLCPP_JOBS:-1}"
-HDLCPP="${HDLCPP:-/home/me/cpphdl/hdlcpp/build/hdlcpp}"
+# Large explicit-instantiation units make GCC retain several gigabytes of template state.
+# Group small specializations by generated definition size while leaving large modules alone.
+# This preserves the generated model and keeps the serial CVA6 build below the host memory limit.
+HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="${HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE:-32}"
+HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="${HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE:-85000}"
+DEFAULT_HDLCPP="/home/me/cpphdl/hdlcpp/build/hdlcpp"
+HDLCPP="${HDLCPP:-$DEFAULT_HDLCPP}"
 CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
+CPPHDL_CVA6_ONLY="${CPPHDL_CVA6_ONLY:-}"
+CPPHDL_CVA6_FINALIZE_ONLY="${CPPHDL_CVA6_FINALIZE_ONLY:-0}"
+CPPHDL_CVA6_RESUME_TRAITS="${CPPHDL_CVA6_RESUME_TRAITS:-0}"
+CPPHDL_CVA6_KEEP_METADATA="${CPPHDL_CVA6_KEEP_METADATA:-0}"
+CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN="${CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN:-0}"
 
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" && "${CPPHDL_OUT:-}" == "" ]]; then
-    OUT="$SCRIPT_DIR/cpphdl_native"
+    OUT="$SCRIPT_DIR/cpphdl_testharness"
+fi
+
+RUNNER="run_cpphdl_matrix.cpp"
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+    RUNNER="run_cpphdl_testharness.cpp"
 fi
 
 if [[ ! -d "$SRC/core" ]]; then
@@ -24,16 +40,23 @@ if [[ ! -d "$SUPPORT/tools" ]]; then
     echo "missing conversion support directory: $SUPPORT" >&2
     exit 2
 fi
-if [[ ! -x "$HDLCPP" ]]; then
+hdlcpp_source_newer=0
+if [[ "$HDLCPP" == "$DEFAULT_HDLCPP" && -x "$HDLCPP" ]] &&
+   find /home/me/cpphdl/hdlcpp -maxdepth 1 -type f \
+       \( -name '*.cc' -o -name '*.h' \) -newer "$HDLCPP" -print -quit | grep -q .; then
+    hdlcpp_source_newer=1
+fi
+if [[ ! -x "$HDLCPP" || "$hdlcpp_source_newer" == "1" ]]; then
     make -C /home/me/cpphdl/hdlcpp/build -j"$JOBS" hdlcpp
 fi
 export HDLCPP
 
-rm -rf "$OUT"
-mkdir -p "$OUT"
-cp -a "$SUPPORT"/. "$OUT"/
-touch "$OUT/cva6_assign_suffix_code.tsv"
-python3 - "$OUT" <<'PY'
+if [[ -z "$CPPHDL_CVA6_ONLY" && "$CPPHDL_CVA6_FINALIZE_ONLY" != "1" && "$CPPHDL_CVA6_RESUME_TRAITS" != "1" ]]; then
+    rm -rf "$OUT"
+    mkdir -p "$OUT"
+    cp -a "$SUPPORT"/. "$OUT"/
+    touch "$OUT/cva6_assign_suffix_code.tsv"
+    python3 - "$OUT" <<'PY'
 from pathlib import Path
 import sys
 
@@ -43,6 +66,19 @@ for path in out.glob("*.tsv"):
     text = text.replace("/home/me/cva6/cpphdl", str(out))
     path.write_text(text)
 PY
+elif [[ ! -d "$OUT/generated" ]]; then
+    echo "incremental conversion requires existing output: $OUT" >&2
+    exit 2
+else
+    # Incremental optimization must use the maintained runner, not a stale copy
+    # left in the output directory by an earlier full conversion.
+    cp "$SUPPORT/$RUNNER" "$OUT/$RUNNER"
+    cp "$SUPPORT/cva6_generate_param_values.tsv" "$OUT/cva6_generate_param_values.tsv"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        cp "$SUPPORT"/run_cpphdl_testharness_model* "$OUT"/
+        cp "$SUPPORT/run_cpphdl_testharness_optimize_seed.cpp" "$OUT"/
+    fi
+fi
 
 HELPER_DIR="$SRC/.cpphdl_convert/tools"
 mkdir -p "$HELPER_DIR"
@@ -85,7 +121,7 @@ ln -s "$OUT" "$SRC_CPPHDL"
     export HDLCPP_ENUM_WIDTH_PREFIXES="$OUT/cva6_enum_width_prefixes.tsv"
     export HDLCPP_SKIP_USING_NAMESPACE_IMPORTS="${HDLCPP_SKIP_USING_NAMESPACE_IMPORTS:-cvxif_instr_pkg}"
     export HDLCPP_VAR_TYPE_PATCHES="$OUT/cva6_var_type_patches.tsv"
-    export HDLCPP_INLINE_COMB_MODULES="${HDLCPP_INLINE_COMB_MODULES:-rr_arb_tree}"
+    export HDLCPP_INLINE_COMB_MODULES="${HDLCPP_INLINE_COMB_MODULES:-}"
     export HDLCPP_INLINE_COMB_BODIES="$OUT/cva6_inline_comb_bodies.tsv"
     export HDLCPP_WORK_PRECOMB_CALLS="$OUT/cva6_work_precomb_calls.tsv"
     export HDLCPP_BEFORE_STROBE_LINE_CALLS="$OUT/cva6_strobe_hooks.tsv"
@@ -93,7 +129,7 @@ ln -s "$OUT" "$SRC_CPPHDL"
     export HDLCPP_ASSIGN_PREFIX_CODE="$OUT/cva6_assign_prefix_code.tsv"
     export HDLCPP_ASSIGN_SUFFIX_CODE="$OUT/cva6_assign_suffix_code.tsv"
     export HDLCPP_ASSIGN_LINE_PATCHES="$OUT/cva6_assign_line_patches.tsv"
-    export HDLCPP_SKIP_ASSIGN_MODULES="${HDLCPP_SKIP_ASSIGN_MODULES:-rr_arb_tree}"
+    export HDLCPP_SKIP_ASSIGN_MODULES="${HDLCPP_SKIP_ASSIGN_MODULES:-}"
     export HDLCPP_SKIP_ASSIGN_LINE_PREFIXES="${HDLCPP_SKIP_ASSIGN_LINE_PREFIXES:-issue_stage|issue_instr_o_out,issue_stage|issue_instr_hs_o_out}"
     export HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES="${HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES:-instr_tracer}"
     export HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES="${HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES:-acc_dispatcher,fpu_wrap}"
@@ -115,15 +151,73 @@ ln -s "$OUT" "$SRC_CPPHDL"
     HDLCPP="$HDLCPP" \
     HDLCPP_JOBS="$HDLCPP_JOBS" \
     CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" \
+    CPPHDL_CVA6_ONLY="$CPPHDL_CVA6_ONLY" \
+    CPPHDL_CVA6_FINALIZE_ONLY="$CPPHDL_CVA6_FINALIZE_ONLY" \
+    CPPHDL_CVA6_RESUME_TRAITS="$CPPHDL_CVA6_RESUME_TRAITS" \
+    CPPHDL_CVA6_KEEP_METADATA="$CPPHDL_CVA6_KEEP_METADATA" \
+    CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN="$CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN" \
     python3 "$HELPER_DIR/convert_cva6.py"
 )
 
-if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" != "1" ]]; then
-    (
-        cd "$OUT"
-        "$HDLCPP" --optimize run_cpphdl_matrix.cpp
-    )
+rename_cpp_global_collisions() {
+    python3 - "$OUT" <<'PY'
+from pathlib import Path
+import re
+import sys
 
+out = Path(sys.argv[1])
+for path in out.rglob("*"):
+    if path.suffix not in {".h", ".hh", ".hpp", ".cc", ".cpp"} or not path.is_file():
+        continue
+    text = path.read_text()
+    updated = re.sub(r"\bsync\b", "cpphdl_sv_sync", text)
+    updated = updated.replace("cpphdl_sv_sync.h\"", "sync.h\"")
+    if updated != text:
+        path.write_text(updated)
+PY
+}
+
+rename_cpp_global_collisions
+
+(
+    cd "$OUT"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        cp "$RUNNER" "$RUNNER.runtime"
+        cp "run_cpphdl_testharness_optimize_seed.cpp" "$RUNNER"
+        trap 'if [[ -f "$RUNNER.runtime" ]]; then mv "$RUNNER.runtime" "$RUNNER"; fi' EXIT
+    fi
+    HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="$HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE" \
+    HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="$HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE" \
+        "$HDLCPP" --optimize "$RUNNER"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        mv "$RUNNER.runtime" "$RUNNER"
+        trap - EXIT
+        cp "$RUNNER" cpphdl_optimized_main.cpp
+        python3 - <<'PY'
+from pathlib import Path
+
+# Keep the non-templated runner and narrow model bridges in separate translation units.
+# The optimization seed still supplies the concrete top hierarchy to hdlcpp.
+# Splitting here bounds GCC memory without changing the generated RTL model.
+makefile = Path("Makefile.optimize")
+text = makefile.read_text()
+model_sources = [
+    "run_cpphdl_testharness_model_create.cpp",
+    "run_cpphdl_testharness_model_bind.cpp",
+    "run_cpphdl_testharness_model_cycle.cpp",
+    "run_cpphdl_testharness_model_memory.cpp",
+    "run_cpphdl_testharness_model_observe.cpp",
+]
+model_objects = " \\\n        ".join(f"build/opt/{Path(source).stem}.o" for source in model_sources)
+text = text.replace("OBJS := ", f"MODEL_OBJS := {model_objects}\nOBJS := $(MODEL_OBJS) ", 1)
+makefile.write_text(text)
+PY
+    fi
+)
+
+rename_cpp_global_collisions
+
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" != "1" ]]; then
     python3 - "$OUT/generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h" <<'PY'
 from pathlib import Path
 import sys

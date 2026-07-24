@@ -1,0 +1,3 @@
+rvfi_probes_instr_t	cpphdl_rvfi::probes_instr_t<CVA6Cfg>
+rvfi_probes_csr_t	cpphdl_rvfi::probes_csr_t<CVA6Cfg>
+rvfi_probes_t	cpphdl_rvfi::probes_t<CVA6Cfg>

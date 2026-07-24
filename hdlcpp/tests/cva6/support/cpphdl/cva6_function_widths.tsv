@@ -1,0 +1,11 @@
+aes_sbox_fwd	8
+aes_sbox_inv	8
+aes_mixcolumn_fwd	32
+aes_mixcolumn_inv	32
+aes_mixcolumn_inv8	32
+sext32to64	64
+toSize64	2
+ariane_pkg::hs_deleg_interrupts	32
+ariane_pkg::vs_deleg_interrupts	32
+hs_deleg_interrupts	32
+vs_deleg_interrupts	32

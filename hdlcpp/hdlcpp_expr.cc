@@ -74,12 +74,11 @@
         return text.size() == 2 && text[0] == '\'' && text[1] == value;
     }
 
-    std::string emitUnbasedUnsizedAssignmentValue(const ExpressionSyntax& expr, const std::string& targetType)
+    std::string emitUnbasedUnsizedAssignmentValue(char value, const std::string& targetType)
     {
-        if (!isUnbasedUnsizedLiteralExpr(expr, '0') && !isUnbasedUnsizedLiteralExpr(expr, '1')) {
+        if (value != '0' && value != '1') {
             return "";
         }
-        auto value = isUnbasedUnsizedLiteralExpr(expr, '1') ? '1' : '0';
         auto type = unwrapRegType(trim(targetType));
         if (type.empty() || type == "bool" || type == "u1") {
             return value == '1' ? "true" : "false";
@@ -94,6 +93,9 @@
         if (width.empty()) {
             return value == '1' ? "1" : "0";
         }
+        if (type.rfind("cpphdl::value_type_for_ref_t<decltype(", 0) == 0) {
+            return "logic<" + width + ">(" + (value == '1' ? widthMaskExpr(width) : "0") + ")";
+        }
         if (value == '0') {
             if (isNumericValueType(type)) {
                 return type + "(0)";
@@ -104,6 +106,17 @@
             return type + "(" + widthMaskExpr(width) + ")";
         }
         return "cpphdl::sv_cast<" + type + ">(" + widthMaskExpr(width) + ")";
+    }
+
+    std::string emitUnbasedUnsizedAssignmentValue(const ExpressionSyntax& expr, const std::string& targetType)
+    {
+        if (isUnbasedUnsizedLiteralExpr(expr, '0')) {
+            return emitUnbasedUnsizedAssignmentValue('0', targetType);
+        }
+        if (isUnbasedUnsizedLiteralExpr(expr, '1')) {
+            return emitUnbasedUnsizedAssignmentValue('1', targetType);
+        }
+        return "";
     }
 
     std::string emitLogicBitSelectValue(const std::string& value, const std::string& width, const std::string& index)
@@ -194,6 +207,13 @@
         if (expr.kind == SyntaxKind::ElementSelectExpression) {
             auto& e = expr.as<ElementSelectExpressionSyntax>();
             auto type = unwrapRegType(resolveAliasValueType(exprType(*e.left)));
+            auto memoryArgsForType = memoryArgs(type);
+            if (memoryArgsForType.size() == 3) {
+                if (trim(memoryArgsForType[1]) == "1") {
+                    return memoryArgsForType[0];
+                }
+                return "array<" + memoryArgsForType[0] + "," + memoryArgsForType[1] + ",true>";
+            }
             auto args = templateArgsFor(type, "array");
             if (args.empty()) {
                 args = templateArgsFor(type, "std::array");
@@ -213,6 +233,12 @@
             }
             for (size_t idx = 0; idx < n.selectors.size(); ++idx) {
                 type = unwrapRegType(resolveAliasValueType(type));
+                auto memoryArgsForType = memoryArgs(type);
+                if (memoryArgsForType.size() == 3) {
+                    type = trim(memoryArgsForType[1]) == "1" ? memoryArgsForType[0] :
+                        "array<" + memoryArgsForType[0] + "," + memoryArgsForType[1] + ",true>";
+                    continue;
+                }
                 auto args = templateArgsFor(type, "array");
                 if (args.empty()) {
                     args = templateArgsFor(type, "std::array");
@@ -372,6 +398,12 @@
     {
         auto type = exprType(expr);
         auto base = assignedBase(expr);
+        if (expr.kind == SyntaxKind::IdentifierName && mod && !base.empty()) {
+            auto storage = mod->types.find(base);
+            if (storage != mod->types.end()) {
+                type = storage->second;
+            }
+        }
         if (type.empty() && mod && !base.empty()) {
             auto it = mod->types.find(base);
             if (it != mod->types.end()) {
@@ -382,7 +414,15 @@
             type = lookupLocalType(base);
         }
         auto resolvedType = resolveAliasValueType(type);
-        if (resolvedType.empty() || isNumericValueType(resolvedType) || !isAggregateValueType(type)) {
+        bool aggregateRegister = false;
+        if (mod && !base.empty()) {
+            auto storage = mod->types.find(base);
+            aggregateRegister = (mod->nonblockingAssignedVars.count(base) ||
+                (storage != mod->types.end() && storage->second.rfind("reg<", 0) == 0)) &&
+                !resolvedType.empty() && !isNumericValueType(resolvedType);
+        }
+        if (resolvedType.empty() || isNumericValueType(resolvedType) ||
+            (!isAggregateValueType(type) && !aggregateRegister)) {
             return "";
         }
         auto width = usableTemplateLogicWidth(exprWidth(expr));
@@ -427,22 +467,15 @@
 
     std::string bitwiseExprWidth(const ExpressionSyntax& expr)
     {
-        auto width = usableTemplateLogicWidth(exprWidth(expr));
-        if (!width.empty() && width != "1") {
-            return width;
-        }
-
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             return bitwiseExprWidth(*expr.as<ParenthesizedExpressionSyntax>().expression);
         }
 
-        auto typeWidthFromExpr = [&]() -> std::string {
-            auto type = unwrapRegType(resolveAliasValueType(exprType(expr)));
-            auto w = usableTemplateLogicWidth(typeWidth(type));
-            return w == "1" ? std::string() : w;
-        };
-        if (auto w = typeWidthFromExpr(); !w.empty()) {
-            return w;
+        // A bit-select is self-determined as one bit. Slang can expose the width
+        // propagated from an enclosing assignment on the syntax node; accepting
+        // that first changes unary complement and therefore arbitration choices.
+        if (isBitSelectOperand(expr)) {
+            return "1";
         }
 
         if (BinaryExpressionSyntax::isKind(expr.kind)) {
@@ -477,7 +510,13 @@
             }
         }
 
-        return "";
+        auto width = usableTemplateLogicWidth(exprWidth(expr));
+        if (!width.empty()) {
+            return width;
+        }
+
+        auto type = unwrapRegType(resolveAliasValueType(exprType(expr)));
+        return usableTemplateLogicWidth(typeWidth(type));
     }
 
     std::string usableTemplateLogicWidth(std::string width)
@@ -540,6 +579,21 @@
             width = "64";
         }
         return width;
+    }
+
+    std::string systemFunctionReturnWidth(const std::string& callee) const
+    {
+        static const std::unordered_set<std::string> integerResultFunctions = {
+            "$bits", "$clog2", "$countbits", "$countones", "$dimensions", "$high",
+            "$increment", "$left", "$low", "$right", "$size", "$unpacked_dimensions"
+        };
+        if (integerResultFunctions.count(callee)) {
+            return "32";
+        }
+        if (callee == "$isunknown" || callee == "$onehot" || callee == "$onehot0") {
+            return "1";
+        }
+        return "";
     }
 
     std::string emitSystemSignednessCast(const InvocationExpressionSyntax& call, const std::string& rawCallee)
@@ -621,6 +675,23 @@
     {
         path = trim(exprText(std::move(path)));
         if (path.find("::") != std::string::npos) {
+            auto separator = path.rfind("::");
+            auto scope = trim(path.substr(0, separator));
+            auto name = trim(path.substr(separator + 2));
+            if (!scope.empty() && !name.empty() &&
+                name.find_first_of(".[(") == std::string::npos) {
+                if (auto* package = findModule(scope)) {
+                    for (const auto& constant : package->constants) {
+                        auto declaration = trim(constant.second);
+                        auto equals = declaration.find('=');
+                        auto constantName = trim(equals == std::string::npos ? declaration :
+                                                 declaration.substr(0, equals));
+                        if (constantName == name) {
+                            return constant.first;
+                        }
+                    }
+                }
+            }
             return "";
         }
         std::vector<std::string> names;
@@ -681,6 +752,33 @@
             }
         }
         return type;
+    }
+
+    std::vector<std::string> expressionFieldLowerBounds(const ExpressionSyntax& expr)
+    {
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            return expressionFieldLowerBounds(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        }
+        if (expr.kind == SyntaxKind::MemberAccessExpression) {
+            auto& member = expr.as<MemberAccessExpressionSyntax>();
+            return fieldLowerBoundsFor(exprType(*member.left), tok(member.name));
+        }
+        auto path = trim(exprText(expr.toString()));
+        auto dot = path.rfind('.');
+        if (dot == std::string::npos) {
+            return {};
+        }
+        auto parent = trim(path.substr(0, dot));
+        auto field = trim(path.substr(dot + 1));
+        auto select = field.find('[');
+        if (select != std::string::npos) {
+            field = trim(field.substr(0, select));
+        }
+        if (parent.empty() || field.empty() ||
+            field.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != std::string::npos) {
+            return {};
+        }
+        return fieldLowerBoundsFor(pathType(parent), field);
     }
 
     std::string pathValueExpr(std::string path)
@@ -744,6 +842,27 @@
             out = base;
         }
         out += replaceKeywordMemberAccess(segments.front().second);
+        if (mod && segments.size() > 1 && !segments.front().second.empty()) {
+            auto typeIt = mod->types.find(base);
+            if (typeIt != mod->types.end() && scheduledMemoryType(typeIt->second) &&
+                scalarMemory(typeIt->second)) {
+                size_t selectorCount = 0;
+                int depth = 0;
+                for (char ch : segments.front().second) {
+                    if (ch == '[') {
+                        if (depth++ == 0) {
+                            ++selectorCount;
+                        }
+                    }
+                    else if (ch == ']' && depth > 0) {
+                        --depth;
+                    }
+                }
+                if (selectorCount == 1) {
+                    out += "[0]";
+                }
+            }
+        }
         for (size_t i = 1; i < segments.size(); ++i) {
             out += "." + cppIdent(segments[i].first);
             out += replaceKeywordMemberAccess(segments[i].second);
@@ -826,8 +945,13 @@
             }
             return foldWidth(replaceKeywordMemberAccess(exprText(target)));
         };
-        if (auto castWidth = sizedCastWidthFromText(simple); !castWidth.empty()) {
-            return castWidth;
+        // An invocation can contain sized casts in its argument list. Those casts describe
+        // argument widths, not the function result, so only inspect the whole expression as
+        // a textual cast when the syntax node itself is not a function invocation.
+        if (expr.kind != SyntaxKind::InvocationExpression) {
+            if (auto castWidth = sizedCastWidthFromText(simple); !castWidth.empty()) {
+                return castWidth;
+            }
         }
         if (expr.kind == SyntaxKind::CastExpression) {
             auto& c = expr.as<CastExpressionSyntax>();
@@ -881,6 +1005,10 @@
             if (!width.empty()) {
                 return width;
             }
+            auto scopedValue = replaceKeywordMemberAccess(cppExprText(expr.toString()));
+            if (!scopedValue.empty() && scopedValue.find("::") != std::string::npos) {
+                return "cpphdl::type_width<std::remove_cvref_t<decltype(" + scopedValue + ")>>()";
+            }
         }
         auto finalDottedSegmentHasSelect = [](const std::string& path) {
             auto dot = path.rfind('.');
@@ -909,7 +1037,8 @@
                     }
                     baseType = unwrappedValueType(baseType);
                     if (!baseType.empty()) {
-                        return "cpphdl::type_width<std::remove_cvref_t<decltype(std::declval<" + baseType + ">()." + field + ")>>()";
+                        auto accessor = isInterfaceSignalAccess(expr) ? "()" : "";
+                        return "cpphdl::type_width<std::remove_cvref_t<decltype(std::declval<" + baseType + ">()." + field + accessor + ")>>()";
                     }
                 }
             }
@@ -1011,10 +1140,31 @@
             if (!width.empty()) {
                 return width;
             }
+            auto selectedBase = assignedBase(*member.left);
+            if (mod && !selectedBase.empty()) {
+                auto selectedType = mod->types.find(selectedBase);
+                if (selectedType != mod->types.end() && scheduledMemoryType(selectedType->second) &&
+                    scalarMemory(selectedType->second)) {
+                    bool directElementSelect = false;
+                    if (member.left->kind == SyntaxKind::IdentifierSelectName) {
+                        directElementSelect = member.left->as<IdentifierSelectNameSyntax>().selectors.size() == 1;
+                    }
+                    else if (member.left->kind == SyntaxKind::ElementSelectExpression) {
+                        auto& element = member.left->as<ElementSelectExpressionSyntax>();
+                        directElementSelect = element.left &&
+                            element.left->kind == SyntaxKind::IdentifierName;
+                    }
+                    if (directElementSelect) {
+                        auto addressable = emitMemberBaseExpr(*member.left) + "[0]." + cppIdent(tok(member.name));
+                        return "cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(" + addressable + ")>>()";
+                    }
+                }
+            }
             auto baseType = unwrappedValueType(exprType(*member.left));
             auto field = tok(member.name);
             if (!baseType.empty() && !field.empty()) {
-                return "cpphdl::type_width<std::remove_cvref_t<decltype(std::declval<" + baseType + ">()." + field + ")>>()";
+                auto accessor = isInterfaceSignalMemberAccess(member) ? "()" : "";
+                return "cpphdl::type_width<std::remove_cvref_t<decltype(std::declval<" + baseType + ">()." + field + accessor + ")>>()";
             }
             auto emitted = pathValueExpr(expr.toString());
             if (emitted.find('.') != std::string::npos) {
@@ -1118,14 +1268,8 @@
                 }
                 return "64";
             }
-            if (rawCallee == "$bits") {
-                return "32";
-            }
-            if (rawCallee == "$high") {
-                return "32";
-            }
-            if (rawCallee == "$isunknown") {
-                return "1";
+            if (auto width = systemFunctionReturnWidth(rawCallee); !width.empty()) {
+                return width;
             }
             auto width = knownFunctionReturnWidth(exprText(i.left->toString()));
             if (!width.empty()) {
@@ -1162,6 +1306,15 @@
             auto op = tok(u.operatorToken);
             if (op == "!" || op == "&" || op == "|" || op == "^" || op == "~&" || op == "~|" || op == "~^" || op == "^~") {
                 return "1";
+            }
+            // Unary bitwise complement is self-determined from its operand in SV.
+            // Slang can report the width propagated by the enclosing assignment,
+            // which must not widen a bit-select used as a concatenation operand.
+            if (op == "~") {
+                auto operand = bitwiseExprWidth(*u.operand);
+                if (!operand.empty()) {
+                    return operand;
+                }
             }
             auto operand = foldWidth(exprWidth(*u.operand));
             if (!operand.empty()) {
@@ -1528,6 +1681,30 @@
             if (n.selectors.empty()) {
                 return false;
             }
+            auto selectedType = lookupLocalType(tok(n.identifier));
+            if (selectedType.empty() && mod) {
+                auto it = mod->types.find(tok(n.identifier));
+                if (it != mod->types.end()) {
+                    selectedType = it->second;
+                }
+            }
+            selectedType = unwrapRegType(resolveAliasValueType(selectedType));
+            for (size_t index = 0; index < n.selectors.size(); ++index) {
+                auto selector = n.selectors[index];
+                auto arrayArgs = templateArgsFor(selectedType, "array");
+                if (arrayArgs.empty()) {
+                    arrayArgs = templateArgsFor(selectedType, "std::array");
+                }
+                if (arrayArgs.size() >= 2) {
+                    selectedType = unwrapRegType(resolveAliasValueType(arrayArgs[0]));
+                    continue;
+                }
+                return index + 1 == n.selectors.size() && selector && selector->selector &&
+                       selector->selector->kind == SyntaxKind::BitSelect;
+            }
+            if (!selectedType.empty()) {
+                return false;
+            }
             auto last = n.selectors.back();
             return last && last->selector &&
                    last->selector->kind == SyntaxKind::BitSelect;
@@ -1541,6 +1718,18 @@
         return false;
     }
 
+    std::string runtimeRangeSelectWidth(const ElementSelectSyntax& select)
+    {
+        if (!select.selector || !RangeSelectSyntax::isKind(select.selector->kind)) {
+            return "";
+        }
+        auto bounds = indexedRangeBounds(select.selector->as<RangeSelectSyntax>());
+        if (!textMentionsRuntimeIndex(bounds.first) && !textMentionsRuntimeIndex(bounds.second)) {
+            return "";
+        }
+        return "(" + bounds.first + ")-(" + bounds.second + ")+1";
+    }
+
     std::string rangeSelectOperandWidth(const ExpressionSyntax& expr)
     {
         const ExpressionSyntax* e = &expr;
@@ -1550,6 +1739,10 @@
         auto widthForSelect = [&](const ElementSelectSyntax& select) -> std::string {
             if (!select.selector || !RangeSelectSyntax::isKind(select.selector->kind)) {
                 return "";
+            }
+            auto runtimeWidth = runtimeRangeSelectWidth(select);
+            if (!runtimeWidth.empty()) {
+                return runtimeWidth;
             }
             auto width = foldWidth(selectTemplateWidth(select));
             if (width.empty()) {
@@ -1583,7 +1776,7 @@
                     elemWidth = "cpphdl::type_width<" + trim(arrayArgs[0]) + ">()";
                 }
                 if (!elemWidth.empty() && sel.select && RangeSelectSyntax::isKind(sel.select->selector->kind)) {
-                    auto count = foldWidth(selectTemplateWidth(*sel.select));
+                    auto count = widthForSelect(*sel.select);
                     if (count.empty()) {
                         count = selectTemplateWidth(*sel.select);
                     }
@@ -1617,30 +1810,70 @@
         std::vector<std::pair<std::string, std::string>> parts;
         size_t total = 0;
         bool numeric = true;
+        bool runtimeWidth = false;
+        auto isRuntimeWidth = [&](const std::string& width) {
+            if (textMentionsRuntimeIndex(width)) {
+                return true;
+            }
+            return std::any_of(loopVars.begin(), loopVars.end(), [&](const std::string& name) {
+                return isIdentifierUsed(width, name);
+            });
+        };
         for (auto e : c.expressions) {
             auto rawWidth = exprWidth(*e);
             auto width = foldWidth(rawWidth);
             if (width.empty() && !rawWidth.empty()) {
                 width = rawWidth;
             }
+            // Imported package functions may be declared in a separately converted source.
+            // Preserve their generated C++ result type instead of borrowing a cast width
+            // from an argument or defaulting the concatenation operand to 64 bits.
+            if (e->kind == SyntaxKind::InvocationExpression) {
+                auto& invocation = e->as<InvocationExpressionSyntax>();
+                auto callee = trim(exprText(invocation.left->toString()));
+                auto knownLocally = mod && (mod->functionReturnTypes.count(callee) ||
+                    (callee.find("::") != std::string::npos &&
+                     mod->functionReturnTypes.count(callee.substr(callee.rfind("::") + 2))));
+                if (callee.rfind("$", 0) != 0 && !knownLocally &&
+                    knownFunctionReturnWidth(callee).empty()) {
+                    width = "cpphdl::type_width<std::remove_cvref_t<decltype(" + emitExpr(*e) + ")>>()";
+                }
+            }
+            if (isBitSelectOperand(*e)) {
+                width = "1";
+            }
             auto rangeSelectWidth = rangeSelectOperandWidth(*e);
             if (!rangeSelectWidth.empty()) {
                 width = rangeSelectWidth;
             }
+            auto operandRuntimeWidth = isRuntimeWidth(width);
+            runtimeWidth = runtimeWidth || operandRuntimeWidth;
             auto valueType = unwrappedValueType(exprType(*e));
             auto primitive = valueType.empty() || valueType == "bool" || valueType == "unsigned" ||
                 valueType == "u8" || valueType == "u16" || valueType == "u32" || valueType == "u64" ||
                 valueType == "uint8_t" || valueType == "uint16_t" || valueType == "uint32_t" || valueType == "uint64_t" ||
                 valueType.rfind("logic<", 0) == 0 || valueType.rfind("u<", 0) == 0;
-            if ((width.empty() || width == "1") && !primitive) {
+            auto numericEmitted = emitNumericExpr(*e);
+            const bool numericIsOneBit = emittedOneBitValueExpr(numericEmitted) &&
+                (width.empty() || width == "1");
+            if (numericIsOneBit) {
+                width = "1";
+            }
+            // A bit-select is self-determined at one bit even when slang reports
+            // its enclosing unpacked array as the expression type. Do not let the
+            // aggregate fallback widen that selected bit to the container width.
+            if ((width.empty() || width == "1") && !primitive &&
+                !isBitSelectOperand(*e) && !numericIsOneBit) {
                 auto resolvedValueWidth = foldWidth(resolvedTypeWidth(resolveAliasValueType(exprType(*e))));
                 if (!resolvedValueWidth.empty()) {
                     width = resolvedValueWidth;
                 }
             }
-            auto emitted = (!primitive && !width.empty())
+            const bool widthDescribesValueType = width.find("type_width<") != std::string::npos;
+            auto emitted = (!numericIsOneBit && !operandRuntimeWidth &&
+                            (!primitive || widthDescribesValueType) && !width.empty())
                 ? "cpphdl::pack_value<" + width + ">(" + emitExpr(*e) + ")"
-                : emitNumericExpr(*e);
+                : numericEmitted;
             auto bitsWidth = emittedBitsCallWidth(emitted);
             if (!bitsWidth.empty()) {
                 width = bitsWidth;
@@ -1673,31 +1906,26 @@
                 total += std::stoul(width);
             }
         }
-        if (!numeric) {
-            if (parts.size() == 1) {
-                return "logic<" + parts.front().first + ">(" + parts.front().second + ")";
+        if (runtimeWidth) {
+            std::string out = "([&]() { uint64_t __cpphdl_cat_value = 0; "
+                "auto __cpphdl_cat_append = [&](uint64_t value, uint64_t width) { "
+                "if (width == 0) return; if (width >= 64) { __cpphdl_cat_value = value; } "
+                "else { __cpphdl_cat_value = (__cpphdl_cat_value << width) | "
+                "(value & ((1ull << width) - 1ull)); } }; ";
+            for (const auto& part : parts) {
+                out += "__cpphdl_cat_append((uint64_t)(" + part.second + "), (uint64_t)(" + part.first + ")); ";
             }
-            std::string args;
-            for (auto& p : parts) {
-                if (!args.empty()) {
-                    args += ", ";
-                }
-                args += "logic<" + p.first + ">(" + p.second + ")";
-            }
-            return "cat{" + args + "}";
+            out += "return logic<64>(__cpphdl_cat_value); }())";
+            return out;
         }
-        std::string out = "logic<" + std::to_string(total) + ">(0)";
-        size_t remaining = total;
+        std::string args;
         for (auto& p : parts) {
-            auto width = std::stoul(p.first);
-            remaining -= width;
-            auto term = "logic<" + std::to_string(total) + ">(" + p.second + ")";
-            if (remaining != 0) {
-                term = "(" + term + " << " + std::to_string(remaining) + ")";
+            if (!args.empty()) {
+                args += ", ";
             }
-            out = "(" + out + " | " + term + ")";
+            args += "logic<" + p.first + ">(" + p.second + ")";
         }
-        return out;
+        return "cat{" + args + "}";
     }
 
     std::string emitNumericReplication(const MultipleConcatenationExpressionSyntax& m)
@@ -1798,7 +2026,21 @@
             if (width.empty() && !rawWidth.empty()) {
                 width = rawWidth;
             }
+            if (e->kind == SyntaxKind::InvocationExpression) {
+                auto& invocation = e->as<InvocationExpressionSyntax>();
+                auto callee = trim(exprText(invocation.left->toString()));
+                auto knownLocally = mod && (mod->functionReturnTypes.count(callee) ||
+                    (callee.find("::") != std::string::npos &&
+                     mod->functionReturnTypes.count(callee.substr(callee.rfind("::") + 2))));
+                if (callee.rfind("$", 0) != 0 && !knownLocally &&
+                    knownFunctionReturnWidth(callee).empty()) {
+                    width = "cpphdl::type_width<std::remove_cvref_t<decltype(" + emitExpr(*e) + ")>>()";
+                }
+            }
             auto emitted = emitNumericExpr(*e);
+            if (!width.empty() && width.find("type_width<") != std::string::npos) {
+                emitted = "cpphdl::pack_value<" + width + ">(" + emitExpr(*e) + ")";
+            }
             auto bitsWidth = emittedBitsCallWidth(emitted);
             if (!bitsWidth.empty()) {
                 width = bitsWidth;
@@ -1824,33 +2066,14 @@
                 total += std::stoul(width);
             }
         }
-        if (!numericWidths || total >= 64) {
-            if (parts.size() == 1) {
-                return "logic<" + parts.front().first + ">(" + parts.front().second + ")";
+        std::string args;
+        for (const auto& part : parts) {
+            if (!args.empty()) {
+                args += ", ";
             }
-            std::string args;
-            for (auto& p : parts) {
-                if (!args.empty()) {
-                    args += ", ";
-                }
-                args += "logic<" + p.first + ">(" + p.second + ")";
-            }
-            return "cat{" + args + "}";
+            args += "logic<" + part.first + ">(" + part.second + ")";
         }
-        auto maskForWidth = [](const std::string& w) {
-            return "(((uint64_t)(" + w + ") >= 64) ? ~0ull : ((1ull << (uint64_t)(" + w + ")) - 1ull))";
-        };
-        std::string out = "0ull";
-        std::string shift;
-        for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
-            auto term = "((uint64_t)(" + it->second + ") & " + maskForWidth(it->first) + ")";
-            if (!shift.empty()) {
-                term = "(" + term + " << (unsigned)(" + shift + "))";
-            }
-            out = "(" + out + " | " + term + ")";
-            shift = shift.empty() ? it->first : "(" + shift + ")+(" + it->first + ")";
-        }
-        return out;
+        return "cat{" + args + "}";
     }
 
     std::string emitCaseLabelExpr(const ExpressionSyntax& expr)
@@ -2369,12 +2592,27 @@
         return s;
     }
 
-    std::string emitArgument(const ArgumentSyntax& arg, bool numericArg = false)
+    std::string emitArgument(const ArgumentSyntax& arg, bool numericArg = false, bool lvalueArg = false)
     {
+        auto emitArgumentLValue = [&](const ExpressionSyntax& expr) {
+            auto emitted = emitLValue(expr);
+            if (sequentialProceduralDepth == 0 || !mod) {
+                return emitted;
+            }
+            auto base = assignedBase(expr);
+            auto type = mod->types.count(base) ? mod->types[base] : lookupLocalType(base);
+            // Function, task, and DPI output arguments use blocking copy-out semantics.
+            // Even in a clocked process they update the current object immediately;
+            // only an explicit SystemVerilog nonblocking assignment targets _next.
+            return emitted;
+        };
         if (arg.kind == SyntaxKind::OrderedArgument) {
             auto& ordered = arg.as<OrderedArgumentSyntax>();
             if (ordered.expr && ExpressionSyntax::isKind(ordered.expr->kind)) {
                 auto& expr = ordered.expr->as<ExpressionSyntax>();
+                if (lvalueArg) {
+                    return emitArgumentLValue(expr);
+                }
                 auto emitted = emitExpr(expr);
                 return numericArg ? emitNumericExpr(expr, emitted) : emitted;
             }
@@ -2382,6 +2620,9 @@
                 auto& prop = ordered.expr->as<SimplePropertyExprSyntax>();
                 if (prop.expr->kind == SyntaxKind::SimpleSequenceExpr) {
                     auto& expr = *prop.expr->as<SimpleSequenceExprSyntax>().expr;
+                    if (lvalueArg) {
+                        return emitArgumentLValue(expr);
+                    }
                     auto emitted = emitExpr(expr);
                     return numericArg ? emitNumericExpr(expr, emitted) : emitted;
                 }
@@ -2395,11 +2636,15 @@
     {
         std::string s = "(";
         size_t index = 0;
+        auto directions = functionArgumentDirections(callee);
         for (auto arg : args.parameters) {
             if (s.size() > 1) {
                 s += ", ";
             }
-            s += emitArgument(*arg, wantsNumericFunctionArg(callee, index, numericArgs));
+            const bool lvalueArg = directions && index < directions->size() &&
+                ((*directions)[index] == "output" || (*directions)[index] == "inout" ||
+                 (*directions)[index] == "ref");
+            s += emitArgument(*arg, wantsNumericFunctionArg(callee, index, numericArgs), lvalueArg);
             ++index;
         }
         s += ")";
@@ -2416,14 +2661,29 @@
             if (arg->kind == SyntaxKind::OrderedArgument) {
                 auto& ordered = arg->as<OrderedArgumentSyntax>();
                 if (ordered.expr && ExpressionSyntax::isKind(ordered.expr->kind)) {
-                    s += emitUntypedNumericExpr(ordered.expr->as<ExpressionSyntax>());
+                    auto& expr = ordered.expr->as<ExpressionSyntax>();
+                    auto argType = trim(resolveAliasValueType(exprType(expr)));
+                    if (!argType.empty() && !isNumericValueType(argType) &&
+                        expr.kind != SyntaxKind::ScopedName) {
+                        s += emitExpr(expr);
+                    }
+                    else {
+                        s += emitUntypedNumericExpr(expr);
+                    }
                     continue;
                 }
                 if (ordered.expr && ordered.expr->kind == SyntaxKind::SimplePropertyExpr) {
                     auto& prop = ordered.expr->as<SimplePropertyExprSyntax>();
                     if (prop.expr && prop.expr->kind == SyntaxKind::SimpleSequenceExpr) {
                         auto& expr = *prop.expr->as<SimpleSequenceExprSyntax>().expr;
-                        s += emitUntypedNumericExpr(expr);
+                        auto argType = trim(resolveAliasValueType(exprType(expr)));
+                        if (!argType.empty() && !isNumericValueType(argType) &&
+                            expr.kind != SyntaxKind::ScopedName) {
+                            s += emitExpr(expr);
+                        }
+                        else {
+                            s += emitUntypedNumericExpr(expr);
+                        }
                         continue;
                     }
                 }
@@ -2791,6 +3051,114 @@
         return PackedArrayFieldWrite{target, elementType, field};
     }
 
+    struct ArraySliceAssignmentTarget {
+        std::string container;
+        std::string first;
+        std::string count;
+        std::string base;
+    };
+
+    std::optional<ArraySliceAssignmentTarget> arraySliceAssignmentTarget(const ExpressionSyntax& expr)
+    {
+        auto arrayArgsForType = [&](std::string type) {
+            type = unwrapRegType(resolveAliasValueType(std::move(type)));
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) {
+                args = templateArgsFor(type, "std::array");
+            }
+            return args;
+        };
+        auto storageType = [&](const std::string& base) {
+            auto type = lookupLocalType(base);
+            if (type.empty() && mod && mod->types.count(base)) {
+                type = mod->types[base];
+            }
+            if (type.empty() && mod && mod->outputPortCppNames.count(base)) {
+                type = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
+            }
+            return unwrapRegType(resolveAliasValueType(std::move(type)));
+        };
+
+        if (expr.kind == SyntaxKind::IdentifierSelectName) {
+            auto& selected = expr.as<IdentifierSelectNameSyntax>();
+            if (selected.selectors.empty()) {
+                return std::nullopt;
+            }
+            auto finalSelect = selected.selectors.back();
+            if (!finalSelect || !finalSelect->selector ||
+                !RangeSelectSyntax::isKind(finalSelect->selector->kind)) {
+                return std::nullopt;
+            }
+
+            auto base = tok(selected.identifier);
+            auto container = mod && mod->outputPortCppNames.count(base) ? base :
+                (mod && mod->portCppNames.count(base) ? mod->portCppNames[base] : base);
+            auto currentType = storageType(base);
+            size_t arrayLevel = 0;
+            for (size_t index = 0; index + 1 < selected.selectors.size(); ++index) {
+                auto select = selected.selectors[index];
+                auto args = arrayArgsForType(currentType);
+                if (args.size() < 2 || !select || !select->selector ||
+                    select->selector->kind != SyntaxKind::BitSelect) {
+                    return std::nullopt;
+                }
+                auto item = arrayIndexExpr(base, arrayLevel,
+                    *select->selector->as<BitSelectSyntax>().expr);
+                container += "[(unsigned)(" + item + ")]";
+                currentType = args[0];
+                ++arrayLevel;
+            }
+            if (arrayArgsForType(currentType).size() < 2) {
+                return std::nullopt;
+            }
+            auto& range = finalSelect->selector->as<RangeSelectSyntax>();
+            return ArraySliceAssignmentTarget{
+                container,
+                arrayIndexExpr(base, arrayLevel, emitIndexExpr(*range.right)),
+                selectTemplateWidth(*finalSelect),
+                base
+            };
+        }
+
+        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+            auto& selected = expr.as<ElementSelectExpressionSyntax>();
+            if (!selected.select || !selected.select->selector ||
+                !RangeSelectSyntax::isKind(selected.select->selector->kind)) {
+                return std::nullopt;
+            }
+            auto parentType = unwrapRegType(resolveAliasValueType(exprType(*selected.left)));
+            auto base = assignedBase(*selected.left);
+            if (arrayArgsForType(parentType).size() < 2 &&
+                (base.empty() || arrayArgsForType(storageType(base)).size() < 2)) {
+                return std::nullopt;
+            }
+            auto& range = selected.select->selector->as<RangeSelectSyntax>();
+            return ArraySliceAssignmentTarget{
+                emitLValue(*selected.left),
+                arrayIndexExpr(base, 0, emitIndexExpr(*range.right)),
+                selectTemplateWidth(*selected.select),
+                base
+            };
+        }
+        return std::nullopt;
+    }
+
+    std::string emitArraySliceAssignment(const ArraySliceAssignmentTarget& target,
+                                         const std::string& rhs, bool writeNextValue)
+    {
+        auto container = target.container;
+        if (writeNextValue && !target.base.empty() && container.rfind(target.base, 0) == 0) {
+            container.replace(0, target.base.size(), target.base + "._next");
+        }
+        return "([&]() { using __cpphdl_slice_array_t = std::remove_cvref_t<decltype(" + container +
+            ")>; using __cpphdl_slice_elem_t = cpphdl::value_type_for_ref_t<decltype((" +
+            container + ")[0])>; array<__cpphdl_slice_elem_t," + target.count +
+            ",__cpphdl_slice_array_t::PACKED> __cpphdl_slice_rhs{}; __cpphdl_slice_rhs = " + rhs +
+            "; for (uint64_t __cpphdl_slice_i = 0; __cpphdl_slice_i < (uint64_t)(" +
+            target.count + "); ++__cpphdl_slice_i) { (" + container + ")[((uint64_t)(" +
+            target.first + ")) + __cpphdl_slice_i] = __cpphdl_slice_rhs[__cpphdl_slice_i]; } }())";
+    }
+
     std::string emitStatementExpr(const ExpressionSyntax& expr, bool comb)
     {
         if (isCompoundAssignmentKind(expr.kind)) {
@@ -2835,7 +3203,21 @@
                 return namedAggregateToTypedExpression(targetType, value);
             };
             rhs = wrapDesignatedAggregate(std::move(rhs));
+            auto arraySliceTarget = arraySliceAssignmentTarget(*b.left);
+            if (arraySliceTarget) {
+                auto sequentialStorageType = mod->types.count(base) ? mod->types[base] : lookupLocalType(base);
+                if (mod->outputPortCppNames.count(base)) {
+                    sequentialStorageType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
+                }
+                if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
+                    sequentialStorageType = regTypeFor(sequentialStorageType);
+                }
+                auto writeNextValue = !scheduledMemoryType(sequentialStorageType) &&
+                    isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
+                return emitArraySliceAssignment(*arraySliceTarget, rhs, writeNextValue);
+            }
             auto packedArrayWriteInfo = packedArrayElementWriteTarget(*b.left, false);
+            auto packedArrayFieldWriteInfo = packedArrayFieldWriteTarget(*b.left, false);
             auto lhsPartSelectWidth = [&]() -> std::string {
                 const ElementSelectSyntax* select = nullptr;
                 if (b.left->kind == SyntaxKind::ElementSelectExpression) {
@@ -2857,23 +3239,51 @@
                 return selectTemplateWidth(*select);
             }();
             bool rhsConditionalSized = false;
-            if (b.right->kind == SyntaxKind::ConditionalExpression && packedArrayWriteInfo) {
+            if (b.right->kind == SyntaxKind::ConditionalExpression && !lhsPartSelectWidth.empty()) {
+                // An explicit part-select is the assignment context in SV. Its width
+                // must take precedence over a storage-type inference for the selected
+                // expression, which can conservatively collapse a dynamic select to one bit.
+                rhs = emitConditionalAsType(
+                    b.right->as<ConditionalExpressionSyntax>(), "logic<" + lhsPartSelectWidth + ">");
+                rhsConditionalSized = true;
+            }
+            else if (b.right->kind == SyntaxKind::ConditionalExpression && packedArrayFieldWriteInfo) {
+                // Packed array indexing yields an addressable proxy rather than the
+                // declared element object. Derive a selected field's assignment type
+                // from the array element type so conditional casts never name proxy fields.
+                auto fieldType = "std::remove_cvref_t<decltype(std::declval<" +
+                    packedArrayFieldWriteInfo->elementType + ">()." +
+                    packedArrayFieldWriteInfo->field + ")>";
+                rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), fieldType);
+                rhsConditionalSized = true;
+            }
+            else if (b.right->kind == SyntaxKind::ConditionalExpression && mod) {
+                auto conditionalTargetType = unwrapRegType(
+                    expressionStorageType(*mod, exprText(b.left->toString())));
+                if (!conditionalTargetType.empty()) {
+                    rhs = emitConditionalAsType(
+                        b.right->as<ConditionalExpressionSyntax>(), conditionalTargetType);
+                    rhsConditionalSized = true;
+                }
+            }
+            if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression && packedArrayWriteInfo) {
                 rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWriteInfo->leafType);
                 rhsConditionalSized = true;
             }
-            else if (b.right->kind == SyntaxKind::ConditionalExpression && !lhsPartSelectWidth.empty()) {
-                rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), "logic<" + lhsPartSelectWidth + ">");
-                rhsConditionalSized = true;
-            }
-            else if (b.right->kind == SyntaxKind::ConditionalExpression &&
+            else if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression &&
                 b.left->kind == SyntaxKind::ElementSelectExpression) {
                 auto& selExpr = b.left->as<ElementSelectExpressionSyntax>();
-                auto selectBase = assignedBase(*selExpr.left);
+                auto selectBase = assignedBase(*b.left);
                 auto selectBaseType = (mod && !selectBase.empty() && mod->types.count(selectBase)) ?
                     unwrapRegType(mod->types[selectBase]) : std::string();
                 auto selectIsMemoryElement = !selectBaseType.empty() &&
                     (memoryLikeType(selectBaseType) || selectBaseType.rfind("array<", 0) == 0 ||
                      selectBaseType.rfind("std::array<", 0) == 0);
+                auto selectedTargetType = mod ?
+                    expressionStorageType(*mod, exprText(b.left->toString())) : std::string();
+                auto selectedTargetWidth = foldWidth(typeWidth(resolveAliasValueType(selectedTargetType)));
+                auto selectedIsOneBit = selectedTargetType == "bool" || selectedTargetType == "u1" ||
+                    selectedTargetWidth == "1";
                 if (selExpr.select && selExpr.select->selector && RangeSelectSyntax::isKind(selExpr.select->selector->kind)) {
                     auto width = foldWidth(selectWidth(*selExpr.select));
                     if (!width.empty()) {
@@ -2882,7 +3292,8 @@
                     }
                 }
                 else if (selExpr.select && selExpr.select->selector &&
-                    selExpr.select->selector->kind == SyntaxKind::BitSelect && !selectIsMemoryElement) {
+                    selExpr.select->selector->kind == SyntaxKind::BitSelect &&
+                    (selectedIsOneBit || (selectedTargetType.empty() && !selectIsMemoryElement))) {
                     rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), "logic<1>");
                     rhsConditionalSized = true;
                 }
@@ -2938,10 +3349,8 @@
             if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
                 sequentialStorageType = regTypeFor(sequentialStorageType);
             }
-            auto writeNextValue = ((isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) ||
-                 ((!comb && mod->varNames.count(base)) &&
-                  sequentialStorageType.rfind("reg<", 0) == 0 &&
-                  !memoryLikeType(sequentialStorageType)));
+            auto writeNextValue = !scheduledMemoryType(sequentialStorageType) &&
+                isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
             auto packedArrayWrite = packedArrayElementWriteTarget(*b.left, writeNextValue);
             if (!packedArrayWrite && packedArrayWriteInfo && !writeNextValue) {
                 packedArrayWrite = packedArrayWriteInfo;
@@ -2950,6 +3359,32 @@
             if (packedArrayWrite && b.right->kind == SyntaxKind::ConditionalExpression) {
                 rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWrite->leafType);
                 rhsConditionalSized = true;
+            }
+            // A type-parameter array element can have no independently recoverable source width.
+            // For replication into a packed array element, the assignment target supplies both
+            // the repetition count and exact element width required by SystemVerilog context.
+            if (packedArrayWrite && b.right->kind == SyntaxKind::MultipleConcatenationExpression) {
+                const auto& replication = b.right->as<MultipleConcatenationExpressionSyntax>();
+                auto packedTarget = unwrapRegType(resolveAliasValueType(packedArrayWrite->leafType));
+                auto packedArgs = templateArgsFor(packedTarget, "array");
+                if (packedArgs.empty()) {
+                    packedArgs = templateArgsFor(packedTarget, "std::array");
+                }
+                if (replication.expression && replication.concatenation &&
+                    replication.concatenation->expressions.size() == 1 && packedArgs.size() >= 3 &&
+                    trim(packedArgs[2]) == "true") {
+                    auto count = emitUntypedNumericExpr(*replication.expression);
+                    if (canonicalArrayBound(count) == canonicalArrayBound(packedArgs[1])) {
+                        auto value = emitExpr(*replication.concatenation->expressions[0]);
+                        auto targetWidth = "cpphdl::type_width<" + packedArrayWrite->leafType + ">()";
+                        auto elementWidth = "(" + targetWidth + " / (" + packedArgs[1] + "))";
+                        rhs = "([&]() { logic<" + targetWidth + "> __cpphdl_rep{}; "
+                            "for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" +
+                            packedArgs[1] + "); ++__cpphdl_i) { __cpphdl_rep.bits((__cpphdl_i + 1) * " +
+                            elementWidth + " - 1, __cpphdl_i * " + elementWidth + ") = "
+                            "cpphdl::pack_value<" + elementWidth + ">(" + value + "); } return __cpphdl_rep; }())";
+                    }
+                }
             }
             auto targetStorageType = unwrapRegType(sequentialStorageType);
             auto lvalueStorageType = mod ? unwrapRegType(expressionStorageType(*mod, lhs)) : std::string();
@@ -2960,9 +3395,6 @@
             if (!packedArrayWrite && lvalueStorageType.empty() && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
                 lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
                 unbasedTargetType = "cpphdl::value_type_for_ref_t<decltype(" + lhs + ")>";
-                if (lhs.find('[') != std::string::npos) {
-                    unbasedTargetType = "logic<1>";
-                }
             }
             if (auto unbasedValue = emitUnbasedUnsizedAssignmentValue(*b.right, unbasedTargetType);
                 !unbasedValue.empty()) {
@@ -2970,7 +3402,7 @@
             }
             if (!lhsPartSelectWidth.empty() && !rhsConditionalSized && !isUnbasedUnsizedLiteralExpr(*b.right, '0') &&
                 !isUnbasedUnsizedLiteralExpr(*b.right, '1')) {
-                rhs = "logic<" + lhsPartSelectWidth + ">(" + emitNumericExpr(*b.right, rhs) + ")";
+                rhs = logicValueExpr(*b.right, lhsPartSelectWidth, rhs);
             }
             if (!rhsConditionalSized && b.right->kind == SyntaxKind::ConditionalExpression && targetStorageType != "bool" &&
                 targetStorageType != "u1" && targetStorageType != "reg<u1>") {
@@ -2998,7 +3430,7 @@
                     rhs = primitiveCast(primitiveForWidth(targetWidth), emitNumericExpr(*b.right, rhs));
                 }
             }
-            if (isZeroLiteralExpr(*b.right) &&
+            if (isZeroLiteralExpr(*b.right) && !isUnbasedUnsizedLiteralExpr(*b.right, '0') &&
                 (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
                 lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
                 if (auto zeroRhs = zeroAssignmentRhsForLValue(lhs); !zeroRhs.empty()) {
@@ -3128,11 +3560,59 @@
                 }
                 return false;
             };
+            auto isPackedArrayElementRead = [&](const ExpressionSyntax& source) {
+                const ExpressionSyntax* selected = &source;
+                while (selected->kind == SyntaxKind::ParenthesizedExpression) {
+                    selected = selected->as<ParenthesizedExpressionSyntax>().expression;
+                }
+                bool bitSelect = false;
+                if (selected->kind == SyntaxKind::IdentifierSelectName) {
+                    const auto& name = selected->as<IdentifierSelectNameSyntax>();
+                    bitSelect = name.selectors.size() == 1 && name.selectors[0] &&
+                        name.selectors[0]->selector &&
+                        name.selectors[0]->selector->kind == SyntaxKind::BitSelect;
+                }
+                else if (selected->kind == SyntaxKind::ElementSelectExpression) {
+                    const auto& element = selected->as<ElementSelectExpressionSyntax>();
+                    bitSelect = element.select && element.select->selector &&
+                        element.select->selector->kind == SyntaxKind::BitSelect;
+                }
+                if (!bitSelect || !mod) {
+                    return false;
+                }
+                auto base = assignedBase(*selected);
+                std::string type;
+                if (auto it = mod->types.find(base); it != mod->types.end()) {
+                    type = it->second;
+                }
+                else if (auto it = mod->outputPortCppNames.find(base); it != mod->outputPortCppNames.end()) {
+                    type = outputStorageType(*mod, base, it->second);
+                }
+                if (type.empty()) {
+                    type = lookupLocalType(base);
+                }
+                return isPackedArrayValueType(unwrapRegType(resolveAliasValueType(type)));
+            };
             if (auto cast = unpackSvCast(trimmedRhs); !cast.first.empty()) {
                 repackAggregateForPackedTarget(cast.first, cast.second);
             }
             if (auto packed = packedSourceFromUnpack(trimmedRhs); !packed.first.empty()) {
                 repackAggregateForPackedTarget(packed.first, packed.second);
+            }
+            if (trim(rhs).rfind("cpphdl::pack_value<", 0) != 0 && isPackedArrayElementRead(*b.right)) {
+                auto assignTargetType = assignmentTargetType();
+                const bool assignTargetPacked = isNumericValueType(assignTargetType) ||
+                    assignTargetType.rfind("logic<", 0) == 0 || assignTargetType.rfind("u<", 0) == 0;
+                if (!assignTargetType.empty() && assignTargetPacked) {
+                    rhs = "cpphdl::pack_value<cpphdl::type_width<" + assignTargetType + ">()>(" + rhs + ")";
+                    trimmedRhs = trim(rhs);
+                }
+            }
+            if (trim(rhs).rfind("cpphdl::pack_value<", 0) != 0) {
+                auto sourceType = unwrapRegType(resolveAliasValueType(exprType(*b.right)));
+                if (!sourceType.empty() && isAggregateTarget(sourceType)) {
+                    repackAggregateForPackedTarget(sourceType, rhs);
+                }
             }
             if (!targetStorageType.empty() && isPackedArrayValueType(targetStorageType) &&
                 lhs.find('[') == std::string::npos && lhs.find('.') == std::string::npos &&
@@ -3158,6 +3638,29 @@
                         targetStorageType + ">()>(" + rhs + "))";
                 }
             }
+            // Addressable packed aggregates use an unpacked C++ array so element fields remain accessible.
+            // Whole-array bit conversion would use the C++ object size as its stride instead of the SV width.
+            // Equal-count SV replication is exact and width-safe when assigned one element at a time.
+            if (b.right->kind == SyntaxKind::MultipleConcatenationExpression &&
+                isUnpackedArrayValueType(targetStorageType) &&
+                lhs.find('[') == std::string::npos && lhs.find('.') == std::string::npos) {
+                const auto& replication = b.right->as<MultipleConcatenationExpressionSyntax>();
+                auto targetArgs = templateArgsFor(resolveAliasValueType(targetStorageType), "array");
+                if (targetArgs.empty()) {
+                    targetArgs = templateArgsFor(resolveAliasValueType(targetStorageType), "std::array");
+                }
+                if (replication.expression && replication.concatenation &&
+                    replication.concatenation->expressions.size() == 1 && targetArgs.size() >= 2) {
+                    auto count = emitUntypedNumericExpr(*replication.expression);
+                    if (canonicalArrayBound(count) == canonicalArrayBound(targetArgs[1])) {
+                        auto value = emitExpr(*replication.concatenation->expressions[0]);
+                        return "([&]() { auto __cpphdl_repeated_value = " + value +
+                            "; for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" +
+                            targetArgs[1] + "); ++__cpphdl_i) { " + lhs +
+                            "[__cpphdl_i] = __cpphdl_repeated_value; } }())";
+                    }
+                }
+            }
             if (packedArrayWrite) {
                 if (b.right->kind == SyntaxKind::ConditionalExpression) {
                     rhs = emitConditionalAsType(b.right->as<ConditionalExpressionSyntax>(), packedArrayWrite->leafType);
@@ -3170,6 +3673,57 @@
                     packedArrayFieldWrite->elementType + ">()>(" + packedArrayFieldWrite->target +
                     ")); __cpphdl_elem." + packedArrayFieldWrite->field + " = " + rhs + "; " +
                     packedArrayFieldWrite->target + " = __cpphdl_elem; }())";
+            }
+            if (isNonblockingAssignmentKind(expr.kind) && scheduledMemoryType(sequentialStorageType) &&
+                !base.empty() && lhs == base) {
+                auto args = memoryArgs(sequentialStorageType);
+                if (args.size() == 3) {
+                    if (isUnbasedUnsizedLiteralExpr(*b.right, '0')) {
+                        return "([&]() { for (uint64_t __cpphdl_mem_i = 0; __cpphdl_mem_i < (uint64_t)(" +
+                            args[2] + "); ++__cpphdl_mem_i) { " + base +
+                            "[__cpphdl_mem_i] = 0; } }())";
+                    }
+                    if (trim(args[1]) == "1") {
+                        return "([&]() { auto __cpphdl_mem_next = " + rhs +
+                            "; for (uint64_t __cpphdl_mem_i = 0; __cpphdl_mem_i < (uint64_t)(" +
+                            args[2] + "); ++__cpphdl_mem_i) { auto __cpphdl_mem_row = " + base +
+                            ".pending(__cpphdl_mem_i); __cpphdl_mem_row[0] = __cpphdl_mem_next[__cpphdl_mem_i]; " +
+                            base + "[__cpphdl_mem_i] = __cpphdl_mem_row; } }())";
+                    }
+                    return "([&]() { auto __cpphdl_mem_next = " + rhs +
+                        "; for (uint64_t __cpphdl_mem_i = 0; __cpphdl_mem_i < (uint64_t)(" +
+                        args[2] + "); ++__cpphdl_mem_i) { " + base +
+                        "[__cpphdl_mem_i] = __cpphdl_mem_next[__cpphdl_mem_i]; } }())";
+                }
+            }
+            if (scheduledMemoryType(sequentialStorageType) && !base.empty() &&
+                lhs.rfind(base + "[", 0) == 0) {
+                const auto open = base.size();
+                int depth = 0;
+                size_t close = std::string::npos;
+                for (size_t i = open; i < lhs.size(); ++i) {
+                    if (lhs[i] == '[') {
+                        ++depth;
+                    }
+                    else if (lhs[i] == ']' && --depth == 0) {
+                        close = i;
+                        break;
+                    }
+                }
+                if (close != std::string::npos && close + 1 < lhs.size()) {
+                    const auto row = lhs.substr(0, close + 1);
+                    const auto index = lhs.substr(open + 1, close - open - 1);
+                    auto suffix = lhs.substr(close + 1);
+                    if (scalarMemory(sequentialStorageType) &&
+                        !suffix.empty() && suffix.front() == '.' &&
+                        suffix.rfind(".bits(", 0) != 0 &&
+                        suffix.rfind("[0]", 0) != 0) {
+                        suffix = "[0]" + suffix;
+                    }
+                    return "([&]() { auto __cpphdl_mem_row = " + base + ".pending(" + index +
+                        "); __cpphdl_mem_row" + suffix + " = " + rhs + "; " + row +
+                        " = __cpphdl_mem_row; }())";
+                }
             }
             if (writeNextValue) {
                 if (b.left->kind == SyntaxKind::ElementSelectExpression || lhs.find('[') != std::string::npos ||
@@ -3199,6 +3753,87 @@
             }
         }
         return "";
+    }
+
+    std::string emitSelectedAggregateMemberRead(const ExpressionSyntax& selected, const std::string& field)
+    {
+        const bool debug = std::getenv("HDLCPP_DEBUG_ARRAY_MEMBER_READ") != nullptr;
+        if (debug) {
+            std::cerr << "HDLCPP_ARRAY_MEMBER candidate=" << selected.toString() << "." << field
+                      << " left-kind=" << static_cast<int>(selected.kind) << "\n";
+        }
+        std::function<bool(const ExpressionSyntax&)> hasElementSelect = [&](const ExpressionSyntax& expr) -> bool {
+            if (expr.kind == SyntaxKind::IdentifierSelectName) {
+                auto& name = expr.as<IdentifierSelectNameSyntax>();
+                return !name.selectors.empty();
+            }
+            if (expr.kind == SyntaxKind::ElementSelectExpression) {
+                return true;
+            }
+            if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+                return hasElementSelect(*expr.as<ParenthesizedExpressionSyntax>().expression);
+            }
+            if (expr.kind == SyntaxKind::MemberAccessExpression) {
+                return hasElementSelect(*expr.as<MemberAccessExpressionSyntax>().left);
+            }
+            return false;
+        };
+
+        if (!hasElementSelect(selected)) {
+            if (debug) {
+                std::cerr << "HDLCPP_ARRAY_MEMBER reject=no-element-select\n";
+            }
+            return {};
+        }
+        auto selectedBase = assignedBase(selected);
+        if (mod && !selectedBase.empty()) {
+            auto typeIt = mod->types.find(selectedBase);
+            if (typeIt != mod->types.end() && scheduledMemoryType(typeIt->second) &&
+                scalarMemory(typeIt->second)) {
+                bool directElementSelect = false;
+                if (selected.kind == SyntaxKind::IdentifierSelectName) {
+                    auto& name = selected.as<IdentifierSelectNameSyntax>();
+                    directElementSelect = name.selectors.size() == 1;
+                }
+                else if (selected.kind == SyntaxKind::ElementSelectExpression) {
+                    auto& element = selected.as<ElementSelectExpressionSyntax>();
+                    directElementSelect = element.left &&
+                        element.left->kind == SyntaxKind::IdentifierName;
+                }
+                if (directElementSelect) {
+                    return emitMemberBaseExpr(selected) + "[0]." + field;
+                }
+            }
+        }
+        auto elementType = unwrapRegType(resolveAliasValueType(exprType(selected)));
+        if (mod) {
+            auto selectedType = mod->types.find(selectedBase);
+            if (selectedType != mod->types.end()) {
+                auto containerType = unwrapRegType(resolveAliasValueType(selectedType->second));
+                auto arrayArgs = templateArgsFor(containerType, "array");
+                if (!arrayArgs.empty() &&
+                    (arrayArgs.size() < 3 || trim(arrayArgs.back()) != "true")) {
+                    return {};
+                }
+            }
+        }
+        auto width = foldWidth(resolvedTypeWidth(elementType));
+        if (debug) {
+            std::cerr << "HDLCPP_ARRAY_MEMBER element-type=" << elementType
+                      << " width=" << width << "\n";
+        }
+        if (elementType.empty() || width.empty()) {
+            return {};
+        }
+        auto base = emitMemberBaseExpr(selected);
+        return "(cpphdl::unpack_value<" + elementType +
+            ">(cpphdl::pack_value<cpphdl::type_width<" + elementType +
+            ">()>(" + base + ")))." + field;
+    }
+
+    std::string emitSelectedAggregateMemberRead(const MemberAccessExpressionSyntax& member)
+    {
+        return emitSelectedAggregateMemberRead(*member.left, cppIdent(tok(member.name)));
     }
 
     std::string emitLValue(const ExpressionSyntax& expr)
@@ -3286,6 +3921,35 @@
             }
             return s;
         }
+        if (expr.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expr.as<ScopedNameSyntax>();
+            if (tok(scoped.separator) == ".") {
+                std::string member;
+                std::vector<const ElementSelectSyntax*> selectors;
+                if (scoped.right->kind == SyntaxKind::IdentifierName) {
+                    member = cppIdent(tok(scoped.right->as<IdentifierNameSyntax>().identifier));
+                }
+                else if (scoped.right->kind == SyntaxKind::IdentifierSelectName) {
+                    auto& right = scoped.right->as<IdentifierSelectNameSyntax>();
+                    member = cppIdent(tok(right.identifier));
+                    for (auto select : right.selectors) {
+                        selectors.push_back(select);
+                    }
+                }
+                if (!member.empty()) {
+                    auto& left = scoped.left->as<ExpressionSyntax>();
+                    auto parentType = exprType(left);
+                    auto value = emitLValue(left) + "." + member;
+                    auto lowerBounds = fieldLowerBoundsFor(parentType, member);
+                    if (selectors.empty() || lowerBounds.empty()) {
+                        return replaceKeywordMemberAccess(replaceRawRangeSelects(exprText(expr.toString())));
+                    }
+                    return emitTypedSelectChain(value, member,
+                                                fieldTypeFor(parentType, member), selectors, true,
+                                                lowerBounds);
+                }
+            }
+        }
         if (expr.kind == SyntaxKind::ElementSelectExpression) {
             auto& e = expr.as<ElementSelectExpressionSyntax>();
             if (e.left->kind == SyntaxKind::IdentifierName) {
@@ -3355,6 +4019,19 @@
 
     std::string emitUntypedNumericExpr(const ExpressionSyntax& expr)
     {
+        if (expr.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expr.as<ScopedNameSyntax>();
+            auto right = trim(exprText(scoped.right->toString()));
+            bool simpleRight = !right.empty() &&
+                std::all_of(right.begin(), right.end(), [](char ch) {
+                    return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+                });
+            if (tok(scoped.separator) == "." && simpleRight) {
+                auto member = cppIdent(right);
+                auto selected = emitSelectedAggregateMemberRead(*scoped.left, member);
+                return selected.empty() ? emitMemberBaseExpr(*scoped.left) + "." + member : selected;
+            }
+        }
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             return "(" + emitUntypedNumericExpr(*expr.as<ParenthesizedExpressionSyntax>().expression) + ")";
         }
@@ -3394,6 +4071,9 @@
             auto left = emitUntypedNumericExpr(*b.left);
             auto rhs = emitUntypedNumericExpr(*b.right);
             if (op == "<<" || op == ">>") {
+                if (auto packed = packedValueExpr(*b.left, emitExpr(*b.left)); !packed.empty()) {
+                    left = packed;
+                }
                 rhs = "(unsigned)(" + rhs + ")";
             }
             return left + " " + op + " " + rhs;
@@ -3447,7 +4127,10 @@
         }
         if (expr.kind == SyntaxKind::MemberAccessExpression) {
             auto& m = expr.as<MemberAccessExpressionSyntax>();
-            return emitUntypedNumericExpr(*m.left) + "." + cppIdent(tok(m.name));
+            if (auto packedRead = emitSelectedAggregateMemberRead(m); !packedRead.empty()) {
+                return packedRead;
+            }
+            return emitLValue(*m.left) + "." + cppIdent(tok(m.name));
         }
         auto emitted = emitExpr(expr);
         auto width = foldWidth(exprWidth(expr));
@@ -3547,9 +4230,6 @@
 
     std::string emitConditionalForLValue(const ConditionalExpressionSyntax& c, const ExpressionSyntax& lhsExpr, const std::string& lhs)
     {
-        if (lhs.find("][") != std::string::npos) {
-            return emitConditionalAsType(c, "logic<1>");
-        }
         auto base = assignedBase(lhsExpr);
         if ((base.empty() || (mod && !mod->types.count(base))) && lhs.find('[') != std::string::npos) {
             auto textBase = baseFromLValueText(lhs);
@@ -3567,10 +4247,6 @@
                 baseType.rfind("std::array<", 0) != 0) {
                 return emitConditionalAsType(c, "logic<1>");
             }
-            auto lhsWidth = foldWidth(exprWidth(lhsExpr));
-            if (lhsWidth == "1" && lhs.find('.') == std::string::npos) {
-                return emitConditionalAsType(c, "logic<1>");
-            }
         }
         if (lvalueBaseType.empty() && !base.empty()) {
             lvalueBaseType = mod && mod->types.count(base) ? mod->types[base] : lookupLocalType(base);
@@ -3579,6 +4255,9 @@
         auto lhsType = std::string();
         if (mod && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos)) {
             lhsType = expressionStorageType(*mod, lhs);
+        }
+        if (lhsType.empty() && mod) {
+            lhsType = expressionStorageType(*mod, exprText(lhsExpr.toString()));
         }
         if (lhsType.empty()) {
             lhsType = exprType(lhsExpr);
@@ -3625,8 +4304,40 @@
     std::string emitConditionalAsDecltype(const ConditionalExpressionSyntax& c, const std::string& lhs)
     {
         auto targetType = "cpphdl::value_type_for_ref_t<decltype(" + lhs + ")>";
+        auto leftWidth = foldWidth(exprWidth(*c.left));
+        auto rightWidth = foldWidth(exprWidth(*c.right));
+        if (isNumber(leftWidth) && isNumber(rightWidth)) {
+            auto width = std::to_string(std::max(std::stoull(leftWidth), std::stoull(rightWidth)));
+            if (width != "1") {
+                return emitConditionalAsType(c, "logic<" + width + ">");
+            }
+        }
         auto leadingTemplateCallType = [](const std::string& value) -> std::string {
             auto v = trim(value);
+            auto svCastType = [&](const std::string& prefix) -> std::string {
+                if (v.rfind(prefix, 0) != 0) {
+                    return {};
+                }
+                auto open = prefix.size() - 1;
+                auto close = matchingTemplateClose(v, open);
+                if (close == std::string::npos) {
+                    return {};
+                }
+                auto next = close + 1;
+                while (next < v.size() && std::isspace(static_cast<unsigned char>(v[next]))) {
+                    ++next;
+                }
+                if (next >= v.size() || v[next] != '(') {
+                    return {};
+                }
+                return trim(v.substr(prefix.size(), close - prefix.size()));
+            };
+            if (auto type = svCastType("cpphdl::sv_cast<"); !type.empty()) {
+                return type;
+            }
+            if (auto type = svCastType("sv_cast<"); !type.empty()) {
+                return type;
+            }
             auto findTypeStart = [&](const std::string& prefix) -> size_t {
                 for (size_t pos = 0; (pos = v.find(prefix, pos)) != std::string::npos; ++pos) {
                     auto topLevelCtor = true;
@@ -3672,6 +4383,13 @@
         };
         std::function<std::string(const ExpressionSyntax&)> explicitBranchType;
         explicitBranchType = [&](const ExpressionSyntax& branch) -> std::string {
+            auto storageType = unwrapRegType(exprType(branch));
+            if (storageType.empty() && mod) {
+                storageType = unwrapRegType(expressionStorageType(*mod, exprText(branch.toString())));
+            }
+            if (!storageType.empty() && storageType.find("decltype(") == std::string::npos) {
+                return storageType;
+            }
             auto expr = &branch;
             while (expr->kind == SyntaxKind::ParenthesizedExpression) {
                 expr = expr->as<ParenthesizedExpressionSyntax>().expression;
@@ -3681,12 +4399,18 @@
             }
             return leadingTemplateCallType(emitExpr(*expr));
         };
-        if (auto explicitType = explicitBranchType(*c.left); !explicitType.empty()) {
-            targetType = explicitType;
-        }
-        else if (auto explicitType = explicitBranchType(*c.right); !explicitType.empty()) {
-            targetType = explicitType;
-        }
+        auto branchValue = [&](const ExpressionSyntax& branch) {
+            auto value = trim(emitExpr(branch));
+            while (value.rfind("logic<1>(", 0) == 0) {
+                auto open = value.find('(');
+                auto close = matchingParenClose(value, open);
+                if (close == std::string::npos || close + 1 != value.size()) {
+                    break;
+                }
+                value = trim(value.substr(open + 1, close - open - 1));
+            }
+            return value;
+        };
         auto emitBranch = [&](const ExpressionSyntax& branch) -> std::string {
             auto expr = &branch;
             while (expr->kind == SyntaxKind::ParenthesizedExpression) {
@@ -3695,14 +4419,10 @@
             if (expr->kind == SyntaxKind::ConditionalExpression) {
                 return "(" + emitConditionalAsDecltype(expr->as<ConditionalExpressionSyntax>(), lhs) + ")";
             }
-            auto emitted = emitExpr(*expr);
-            if (!leadingTemplateCallType(emitted).empty()) {
-                return emitted;
-            }
             if (isZeroLiteralExpr(*expr)) {
                 return targetType + "{}";
             }
-            return "cpphdl::sv_cast<" + targetType + ">(" + emitted + ")";
+            return "cpphdl::sv_cast<" + targetType + ">(" + branchValue(*expr) + ")";
         };
         return emitPredicate(*c.predicate) + " ? " + emitBranch(*c.left) + " : " + emitBranch(*c.right);
     }
@@ -3711,7 +4431,52 @@
     {
         auto targetType = targetTypeIn;
         replaceAll(targetType, "std::remove_cvref_t<decltype(", "cpphdl::value_type_for_ref_t<decltype(");
+        if (targetType.rfind("cpphdl::value_type_for_ref_t<decltype(", 0) == 0) {
+            auto branchValueType = [&](const ExpressionSyntax& branch) -> std::string {
+                auto type = unwrapRegType(exprType(branch));
+                if (type.empty() && mod) {
+                    type = unwrapRegType(expressionStorageType(*mod, exprText(branch.toString())));
+                }
+                if (!type.empty() && type.find("decltype(") == std::string::npos) {
+                    return type;
+                }
+                auto emitted = stripBalancedOuterParens(trim(emitExpr(branch)));
+                for (const auto& prefix : {std::string("cpphdl::sv_cast<"), std::string("sv_cast<")}) {
+                    if (emitted.rfind(prefix, 0) != 0) {
+                        continue;
+                    }
+                    auto close = matchingTemplateClose(emitted, prefix.size() - 1);
+                    if (close != std::string::npos) {
+                        return trim(emitted.substr(prefix.size(), close - prefix.size()));
+                    }
+                }
+                return {};
+            };
+            auto leftType = branchValueType(*c.left);
+            auto rightType = branchValueType(*c.right);
+            if (!leftType.empty() && leftType == rightType) {
+                targetType = leftType;
+            }
+            else if (!leftType.empty() && isZeroLiteralExpr(*c.right)) {
+                targetType = leftType;
+            }
+            else if (!rightType.empty() && isZeroLiteralExpr(*c.left)) {
+                targetType = rightType;
+            }
+        }
         auto numericTarget = isNumericValueType(targetType);
+        auto branchValue = [&](const ExpressionSyntax& branch) {
+            auto value = trim(emitExpr(branch));
+            while (value.rfind("logic<1>(", 0) == 0) {
+                auto open = value.find('(');
+                auto close = matchingParenClose(value, open);
+                if (close == std::string::npos || close + 1 != value.size()) {
+                    break;
+                }
+                value = trim(value.substr(open + 1, close - open - 1));
+            }
+            return value;
+        };
         auto emitBranch = [&](const ExpressionSyntax& branch) -> std::string {
             auto expr = &branch;
             while (expr->kind == SyntaxKind::ParenthesizedExpression) {
@@ -3725,14 +4490,14 @@
             }
             if (numericTarget) {
                 if (targetType.rfind("logic<", 0) == 0 || targetType.rfind("u<", 0) == 0) {
-                    return targetType + "(" + emitExpr(*expr) + ")";
+                    return targetType + "(" + branchValue(*expr) + ")";
                 }
                 return targetType + "(" + emitNumericExpr(*expr) + ")";
             }
             if (isZeroLiteralExpr(*expr)) {
                 return targetType + "{}";
             }
-            return "cpphdl::sv_cast<" + targetType + ">(" + emitExpr(*expr) + ")";
+            return "cpphdl::sv_cast<" + targetType + ">(" + branchValue(*expr) + ")";
         };
         return emitPredicate(*c.predicate) + " ? " + emitBranch(*c.left) + " : " + emitBranch(*c.right);
     }
@@ -3751,15 +4516,7 @@
             (isAssignOnlyOutput(*mod, base) ? mod->outputPortCppNames[base] + "()" : emitCombOutputRead(*mod, base)) :
             (mod->portCppNames.count(base) ? mod->portCppNames[base] + "()" : (isAssignDrivenVar(*mod, base) ? base + "()" : base));
         auto resolveAliasType = [&](std::string type) {
-            type = unwrapRegType(trim(std::move(type)));
-            for (size_t guard = 0; mod && guard < 16; ++guard) {
-                auto it = mod->types.find(type);
-                if (it == mod->types.end() || it->second == type) {
-                    break;
-                }
-                type = unwrapRegType(trim(it->second));
-            }
-            return type;
+            return resolveAliasValueType(std::move(type));
         };
         auto arrayArgsForType = [&](const std::string& type) {
             auto args = templateArgsFor(type, "array");
@@ -3864,6 +4621,10 @@
                 }
                 return value;
             }
+            auto runtimeWidth = runtimeRangeSelectWidth(*last);
+            if (!runtimeWidth.empty()) {
+                return "(uint64_t)(cpphdl::sv_bits_runtime(" + s + "," + bounds.first + "," + bounds.second + "))";
+            }
             auto width = selectTemplateWidth(*last);
             if (currentType.find("decltype(") != std::string::npos) {
                 return "(uint64_t)(logic<" + width + ">(logic<cpphdl::type_width<" + currentType + ">()>(" +
@@ -3940,6 +4701,10 @@
             }
             return value;
         }
+        if (!runtimeRangeSelectWidth(*e.select).empty()) {
+            return "(uint64_t)(cpphdl::sv_bits_runtime(" + emitExpr(*e.left) + "," +
+                   bounds.first + "," + bounds.second + "))";
+        }
         auto width = selectTemplateWidth(*e.select);
         return "(uint64_t)(logic<" + width + ">(" + emitExpr(*e.left) + ".bits(" + bounds.first + "," + bounds.second + ")))";
     }
@@ -3954,15 +4719,7 @@
             return "";
         }
         auto resolveAliasType = [&](std::string type) {
-            type = unwrapRegType(trim(std::move(type)));
-            for (size_t guard = 0; mod && guard < 16; ++guard) {
-                auto it = mod->types.find(type);
-                if (it == mod->types.end() || it->second == type) {
-                    break;
-                }
-                type = unwrapRegType(trim(it->second));
-            }
-            return type;
+            return resolveAliasValueType(std::move(type));
         };
         auto arrayArgsForType = [&](const std::string& type) {
             auto args = templateArgsFor(type, "array");
@@ -3996,6 +4753,16 @@
 
     std::string emitNumericExpr(const ExpressionSyntax& expr, const std::string& emitted = "")
     {
+        if (emitted.empty() && expr.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expr.as<ScopedNameSyntax>();
+            if (tok(scoped.separator) == ".") {
+                auto structured = emitExpr(expr);
+                if (auto packed = packedNumericOperandExpr(expr, structured); !packed.empty()) {
+                    return packed;
+                }
+                return "(uint64_t)(" + structured + ")";
+            }
+        }
         if (expr.kind == SyntaxKind::InvocationExpression) {
             auto& i = expr.as<InvocationExpressionSyntax>();
             auto rawCallee = invocationCalleeRaw(i);
@@ -4012,13 +4779,22 @@
                 return emitSystemIsUnknownValue(i);
             }
         }
-        if (expr.kind == SyntaxKind::IdentifierSelectName) {
+        if (emitted.empty() && expr.kind == SyntaxKind::IdentifierSelectName) {
             auto numericSelect = emitNumericIdentifierSelectExpr(expr.as<IdentifierSelectNameSyntax>());
             if (!numericSelect.empty()) {
                 return numericSelect;
             }
         }
-        if (expr.kind == SyntaxKind::ElementSelectExpression) {
+        if (emitted.empty() && expr.kind == SyntaxKind::ElementSelectExpression) {
+            auto& element = expr.as<ElementSelectExpressionSyntax>();
+            if (element.select && element.select->selector &&
+                RangeSelectSyntax::isKind(element.select->selector->kind)) {
+                auto structured = emitExpr(expr);
+                if (auto packed = packedNumericOperandExpr(expr, structured); !packed.empty()) {
+                    return packed;
+                }
+                return "(uint64_t)(" + structured + ")";
+            }
             auto numericBit = emitNumericBitSelectExpr(expr.as<ElementSelectExpressionSyntax>());
             if (!numericBit.empty()) {
                 return numericBit;
@@ -4030,7 +4806,10 @@
         }
         if (expr.kind == SyntaxKind::MemberAccessExpression) {
             auto& m = expr.as<MemberAccessExpressionSyntax>();
-            return emitUntypedNumericExpr(*m.left) + "." + cppIdent(tok(m.name));
+            if (auto packedRead = emitSelectedAggregateMemberRead(m); !packedRead.empty()) {
+                return packedRead;
+            }
+            return emitLValue(*m.left) + "." + cppIdent(tok(m.name));
         }
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             auto& p = expr.as<ParenthesizedExpressionSyntax>();
@@ -4141,10 +4920,15 @@
                 return "(" + emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right) + ")";
             }
             if (op == "<<" || op == ">>") {
-                return "(" + emitNumericExpr(*b.left) + " " + op + " (unsigned)(" + emitNumericExpr(*b.right) + "))";
+                auto left = emitNumericExpr(*b.left);
+                if (auto packed = packedValueExpr(*b.left, emitExpr(*b.left)); !packed.empty()) {
+                    left = packed;
+                }
+                return "(" + left + " " + op + " (unsigned)(" + emitNumericExpr(*b.right) + "))";
             }
         }
-        auto text = dropExtraTrailingClosingParens(emitted.empty() ? emitExpr(expr) : emitted);
+        auto rawText = emitted.empty() ? emitExpr(expr) : emitted;
+        auto text = dropExtraTrailingClosingParens(std::move(rawText));
         auto width = foldWidth(exprWidth(expr));
         if (auto packed = packedNumericOperandExpr(expr, text); !packed.empty()) {
             return packed;

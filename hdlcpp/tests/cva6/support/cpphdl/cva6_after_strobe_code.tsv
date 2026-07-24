@@ -1,0 +1,2 @@
+cva6_fifo_v3|status_cnt_q._next = 0;	if constexpr (!FPGA_EN) { if (~rst_ni_in()) { mem_q = 0; } }
+cva6_fifo_v3|status_cnt_q._next = status_cnt_n;	if constexpr (!FPGA_EN) { if (!gate_clock) { mem_q = mem_n; } }

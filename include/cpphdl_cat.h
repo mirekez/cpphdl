@@ -143,6 +143,14 @@ struct cat : logic<SUM<N...>()>
         return static_cast<const logic<WIDTH>*>(this)->to_uint64_constexpr();
     }
 
+    // cat derives from logic, but exact-type logic traits do not recognize it.
+    // Generic packing therefore selected cat's uint64_t conversion and lost high bits.
+    // Expose the complete packed value so wide concatenations remain bit-accurate.
+    constexpr logic<WIDTH> pack() const
+    {
+        return static_cast<const logic<WIDTH>&>(*this);
+    }
+
     template<typename T, typename std::enable_if_t<std::is_integral_v<T>, int> = 0>
     constexpr explicit operator T() const
     {
