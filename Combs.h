@@ -34,6 +34,11 @@ public:
   // single optimizer is intentionally shared by every translation unit.
   void collect(clang::ASTContext &context);
 
+  // Include cache-backed procedural comb methods in the global schedule.
+  // This removes their per-cycle memoization call path and evaluates each
+  // method body exactly once in dependency order.
+  void setL1Scheduling(bool enabled);
+
   // Generate the optimized API, internal state, and bounded comb/work C++
   // translation units in outputDirectory.  Returns false after printing a
   // precise graph/source diagnostic.

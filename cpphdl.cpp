@@ -2124,6 +2124,7 @@ int main(int argc, const char **argv)
     std::string generated_dir = "generated";
     std::string json_output;
     std::string optimize_combs_root;
+    bool optimize_combs_l1 = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2162,6 +2163,28 @@ int main(int argc, const char **argv)
                 return 1;
             }
             optimize_combs_root = argv[++i];
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-l1") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_root = argv[++i];
+            optimize_combs_l1 = true;
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-l1=", 20) == 0) {
+            optimize_combs_root = arg + 20;
+            if (optimize_combs_root.empty()) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_l1 = true;
             add_synthesis_flag = false;
             continue;
         }
@@ -2287,6 +2310,7 @@ int main(int argc, const char **argv)
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
     cpphdl::CombsOptimizer combsOptimizer;
+    combsOptimizer.setL1Scheduling(optimize_combs_l1);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
     int ret = Tool.run(&actionFactory);

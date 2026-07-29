@@ -114,3 +114,38 @@ set_target_properties(optimizer_nonblocking_memory PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
 add_test(NAME optimizer_nonblocking_memory
          COMMAND "$<TARGET_FILE:optimizer_nonblocking_memory>")
+
+set(CPPHDL_PROCEDURAL_TEST_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_procedural_comb")
+set(CPPHDL_PROCEDURAL_GENERATED
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.h"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_internal.h"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_work_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_strobe_0.cpp")
+add_custom_command(
+    OUTPUT ${CPPHDL_PROCEDURAL_GENERATED}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CPPHDL_PROCEDURAL_TEST_DIR}"
+    COMMAND "$<TARGET_FILE:cpphdl>"
+            --optimize-combs-l1 ProceduralComb
+            --generated-dir "${CPPHDL_PROCEDURAL_TEST_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralComb.h"
+            -I"${CMAKE_SOURCE_DIR}/include"
+    DEPENDS cpphdl "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralComb.h"
+    VERBATIM)
+
+add_executable(optimizer_procedural_comb
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralCombMain.cc"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_work_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_strobe_0.cpp")
+target_include_directories(optimizer_procedural_comb PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}")
+set_target_properties(optimizer_procedural_comb PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME optimizer_procedural_comb
+         COMMAND "$<TARGET_FILE:optimizer_procedural_comb>")

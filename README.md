@@ -30,6 +30,19 @@ ctest
 # you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe/tests/ if you want to run CPU tests
 ```
 
+## optimized simulation
+
+`--optimize-combs ROOT` generates a flattened `calc_all()` implementation for
+the concrete hierarchy rooted at `ROOT`. `--optimize-combs-l1 ROOT` additionally
+schedules cache-backed procedural comb methods once, resolves trivial port
+wrappers across module boundaries, and merges type-compatible exact comb
+expressions. The L1 mode avoids memoization calls and clock checks in the
+generated comb schedule.
+
+```sh
+build/cpphdl --optimize-combs-l1 Top --generated-dir generated Top.h -Iinclude
+```
+
 ## author
 
 This software is developed by Mike Reznikov (https://www.linkedin.com/in/mike-reznikov) based on the results of own research.
@@ -49,4 +62,3 @@ This work is not subsidized or paid.
 - this chapter is to collect verilog gotchas which are inexplicable for non verilog-guru and fixed for C++-native
 
 1. In verilog {a*b} has size of a or b, not size(a)+size(b). In C++ this works correctly. Cpphdl will explicitly widen both operands to act as C++ and try to save result
-

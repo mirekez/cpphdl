@@ -17,6 +17,8 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -129,12 +131,22 @@ struct FieldInfo {
   bool indexedStorage = false;
 };
 
+std::string bodyInterior(const std::string &body);
+std::optional<std::string> singleReturnExpression(const std::string &body);
+
+struct FreeHelper {
+  std::optional<std::string> receiverParameter;
+  std::string method;
+};
+
 struct ClassInfo {
   std::string name;
   std::string header;
   std::map<std::string, FieldInfo> fields;
   std::map<std::string, std::string> methods;
   std::map<std::string, std::string> combExpressions;
+  std::map<std::string, std::string> proceduralCombBodies;
+  std::map<std::string, std::string> inlineMethods;
   std::string constructorBody;
   std::string destructorBody;
   std::string assignBody;
@@ -144,9 +156,11 @@ struct ClassInfo {
 
 struct Collector : clang::RecursiveASTVisitor<Collector> {
   explicit Collector(std::map<std::string, ClassInfo> &classes,
+                     std::map<std::string, FreeHelper> &freeHelpers,
                      std::set<std::string> &sourceIncludes,
                      clang::ASTContext &context)
-      : classes(classes), sourceIncludes(sourceIncludes), context(context) {}
+      : classes(classes), freeHelpers(freeHelpers),
+        sourceIncludes(sourceIncludes), context(context) {}
 
   void collectMainFileIncludes() {
     const auto &sourceManager = context.getSourceManager();
@@ -267,7 +281,49 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     return true;
   }
 
+  bool VisitFunctionDecl(clang::FunctionDecl *declaration) {
+    if (clang::isa<clang::CXXMethodDecl>(declaration) ||
+        !declaration->doesThisDeclarationHaveABody()) {
+      return true;
+    }
+    const auto &sourceManager = context.getSourceManager();
+    const auto location = sourceManager.getSpellingLoc(declaration->getLocation());
+    if (!location.isValid() || !sourceManager.isWrittenInMainFile(location)) {
+      return true;
+    }
+    const auto expression =
+        singleReturnExpression(sourceText(declaration->getBody(), context));
+    if (!expression) {
+      return true;
+    }
+    static const std::regex wrapper(
+        R"(^\s*([A-Za-z_]\w*)\s*(?:\.|->)\s*([A-Za-z_]\w*)\s*\(\s*\)\s*$)");
+    std::smatch match;
+    if (!std::regex_match(*expression, match, wrapper)) {
+      return true;
+    }
+    FreeHelper helper;
+    const std::string receiver = match[1].str();
+    if (receiver != "_optimized_root_instance") {
+      bool parameter = false;
+      for (const clang::ParmVarDecl *argument : declaration->parameters()) {
+        if (argument->getNameAsString() == receiver) {
+          parameter = true;
+          break;
+        }
+      }
+      if (!parameter) {
+        return true;
+      }
+      helper.receiverParameter = receiver;
+    }
+    helper.method = match[2].str();
+    freeHelpers[declaration->getNameAsString()] = std::move(helper);
+    return true;
+  }
+
   std::map<std::string, ClassInfo> &classes;
+  std::map<std::string, FreeHelper> &freeHelpers;
   std::set<std::string> &sourceIncludes;
   clang::ASTContext &context;
 };
@@ -280,6 +336,20 @@ std::string bodyInterior(const std::string &body) {
     return body;
   }
   return body.substr(opening + 1, closing - opening - 1);
+}
+
+std::optional<std::string> singleReturnExpression(const std::string &body) {
+  std::string interior = trim(bodyInterior(body));
+  constexpr std::string_view prefix = "return ";
+  if (interior.empty() || !interior.starts_with(prefix) ||
+      interior.back() != ';') {
+    return std::nullopt;
+  }
+  interior = trim(interior.substr(prefix.size(), interior.size() - prefix.size() - 1));
+  if (interior.empty() || interior.find(';') != std::string::npos) {
+    return std::nullopt;
+  }
+  return interior;
 }
 
 std::optional<std::string> combExpression(const std::string &body,
@@ -367,6 +437,7 @@ struct Node {
   std::vector<size_t> dependencies;
   std::optional<size_t> aliasOf;
   std::optional<std::string> inlineExpression;
+  bool procedural = false;
   bool expressionReady = false;
   bool referenced = false;
   int visitState = 0;
@@ -394,6 +465,7 @@ std::string nodeKey(size_t instance, NodeKind kind, const std::string &name) {
 
 struct CombsOptimizer::Impl {
   std::map<std::string, ClassInfo> classes;
+  std::map<std::string, FreeHelper> freeHelpers;
   std::set<std::string> sourceIncludes;
   std::vector<std::unique_ptr<Instance>> instanceStorage;
   std::vector<Instance *> instances;
@@ -404,6 +476,7 @@ struct CombsOptimizer::Impl {
   std::vector<CombDeps> trees;
   std::vector<DeferredWrite> deferredWrites;
   std::string error;
+  bool l1Scheduling = false;
 
   std::optional<IndexedAssignment>
   indexedAssignment(const std::string &statement,
@@ -572,7 +645,9 @@ struct CombsOptimizer::Impl {
         field->second.kind == FieldKind::Port) {
       return getNode(instance, NodeKind::Port, name);
     }
-    if (instance.type->combExpressions.contains(name)) {
+    if (instance.type->combExpressions.contains(name) ||
+        (l1Scheduling &&
+         instance.type->proceduralCombBodies.contains(name))) {
       return getNode(instance, NodeKind::Comb, name);
     }
     return std::nullopt;
@@ -697,6 +772,75 @@ struct CombsOptimizer::Impl {
         output += child->second->alias;
         index = afterIdentifier + 2;
         continue;
+      }
+
+      if (!qualifiedBefore && !memberBefore && identifier == "this" &&
+          afterIdentifier + 2 <= input.size() &&
+          input.substr(afterIdentifier, 2) == "->") {
+        size_t methodStart = skipSpace(input, afterIdentifier + 2);
+        if (methodStart < input.size() && identifierStart(input[methodStart])) {
+          size_t methodEnd = methodStart + 1;
+          while (methodEnd < input.size() && identifierPart(input[methodEnd])) {
+            ++methodEnd;
+          }
+          const std::string method =
+              input.substr(methodStart, methodEnd - methodStart);
+          const size_t opening = skipSpace(input, methodEnd);
+          if (opening < input.size() && input[opening] == '(') {
+            const auto closing = matchingDelimiter(input, opening, '(', ')');
+            if (closing &&
+                trim(input.substr(opening + 1, *closing - opening - 1))
+                    .empty()) {
+              if (auto node = callableNode(context, method)) {
+                nodes[*node].referenced = true;
+                if (dependencies) {
+                  dependencies->push_back(*node);
+                }
+                output += nodeValue(*node);
+                index = *closing + 1;
+                continue;
+              }
+            }
+          }
+        }
+      }
+
+      if (l1Scheduling && !qualifiedBefore && !memberBefore &&
+          afterIdentifier < input.size() && input[afterIdentifier] == '(') {
+        const auto helper = freeHelpers.find(identifier);
+        const auto closing =
+            matchingDelimiter(input, afterIdentifier, '(', ')');
+        if (helper != freeHelpers.end() && closing) {
+          const std::string argument = trim(input.substr(
+              afterIdentifier + 1, *closing - afterIdentifier - 1));
+          Instance *receiver = nullptr;
+          if (!helper->second.receiverParameter) {
+            if (argument.empty() && !instances.empty()) {
+              receiver = instances.front();
+            }
+          } else if (argument == "this") {
+            receiver = &context;
+          } else {
+            const auto child = context.children.find(argument);
+            if (child != context.children.end()) {
+              receiver = child->second;
+            }
+          }
+          if (receiver) {
+            const auto method =
+                receiver->type->inlineMethods.find(helper->second.method);
+            if (method != receiver->type->inlineMethods.end()) {
+              std::string expanded =
+                  rewrite(method->second, *receiver, dependencies);
+              if (!error.empty()) {
+                return {};
+              }
+              output += "(" + expanded + ")";
+              index = *closing + 1;
+              continue;
+            }
+          }
+        }
       }
 
       if (!qualifiedBefore && !memberBefore && identifier == "this") {
@@ -845,11 +989,19 @@ struct CombsOptimizer::Impl {
     Instance *expressionContext = instance;
     if (kind == NodeKind::Comb) {
       const auto expression = instance->type->combExpressions.find(name);
-      if (expression == instance->type->combExpressions.end()) {
+      if (expression != instance->type->combExpressions.end()) {
+        expressionText = expression->second;
+      } else if (l1Scheduling) {
+        const auto body = instance->type->proceduralCombBodies.find(name);
+        if (body != instance->type->proceduralCombBodies.end()) {
+          expressionText = body->second;
+          nodes[id].procedural = true;
+        }
+      }
+      if (expressionText.empty()) {
         error = "missing comb expression for " + instance->path + "." + name;
         return false;
       }
-      expressionText = expression->second;
     } else {
       const std::string key = nodeKey(instance->id, NodeKind::Port, name);
       const auto binding = bindings.find(key);
@@ -867,7 +1019,11 @@ struct CombsOptimizer::Impl {
       }
     }
     std::vector<size_t> dependencies;
-    expressionText = rewrite(expressionText, *expressionContext, &dependencies);
+    const auto locals = nodes[id].procedural
+                            ? localVariables(expressionText)
+                            : std::unordered_set<std::string>{};
+    expressionText =
+        rewrite(expressionText, *expressionContext, &dependencies, locals);
     if (!error.empty()) {
       return false;
     }
@@ -1064,6 +1220,41 @@ struct CombsOptimizer::Impl {
       node.dependencies.erase(
           std::unique(node.dependencies.begin(), node.dependencies.end()),
           node.dependencies.end());
+    }
+
+    if (l1Scheduling) {
+      std::map<std::tuple<size_t, std::string, std::string>, size_t>
+          exactExpressions;
+      for (const size_t id : schedule) {
+        Node &node = nodes[id];
+        if (node.kind != NodeKind::Comb || node.procedural || node.aliasOf) {
+          continue;
+        }
+        const auto field =
+            node.instance->type->fields.find(node.name + "_cache");
+        if (field == node.instance->type->fields.end()) {
+          continue;
+        }
+        const auto key = std::make_tuple(node.instance->id, field->second.type,
+                                         node.expression);
+        const auto [existing, inserted] = exactExpressions.emplace(key, id);
+        if (!inserted) {
+          node.aliasOf = canonicalNode(existing->second);
+        }
+      }
+      for (Node &node : nodes) {
+        if (!node.expressionReady || node.aliasOf) {
+          continue;
+        }
+        node.expression = replaceAliases(node.expression);
+        for (size_t &dependency : node.dependencies) {
+          dependency = canonicalNode(dependency);
+        }
+        std::sort(node.dependencies.begin(), node.dependencies.end());
+        node.dependencies.erase(
+            std::unique(node.dependencies.begin(), node.dependencies.end()),
+            node.dependencies.end());
+      }
     }
     work = replaceAliases(work);
     schedule.erase(std::remove_if(schedule.begin(), schedule.end(),
@@ -1400,6 +1591,48 @@ struct CombsOptimizer::Impl {
         if (info.fields.contains(methodName + "_cache")) {
           if (auto expression = combExpression(body, methodName)) {
             info.combExpressions[methodName] = *expression;
+          } else if (l1Scheduling) {
+            std::vector<std::string> lines;
+            std::istringstream input(bodyInterior(body));
+            std::string line;
+            bool skipGuardReturn = false;
+            while (std::getline(input, line)) {
+              const std::string statement = trim(line);
+              const std::string cache = methodName + "_cache";
+              const std::string clock = methodName + "_clock";
+              if (statement.find(clock + " == _system_clock") !=
+                  std::string::npos) {
+                skipGuardReturn =
+                    statement.find("return " + cache) == std::string::npos;
+                continue;
+              }
+              if (skipGuardReturn && statement == "return " + cache + ";") {
+                skipGuardReturn = false;
+                continue;
+              }
+              if (statement == clock + " = _system_clock;") {
+                continue;
+              }
+              lines.push_back(line);
+            }
+            while (!lines.empty() && trim(lines.back()).empty()) {
+              lines.pop_back();
+            }
+            if (!lines.empty() &&
+                trim(lines.back()) == "return " + methodName + "_cache;") {
+              lines.pop_back();
+            }
+            std::ostringstream procedural;
+            for (const std::string &bodyLine : lines) {
+              procedural << bodyLine << '\n';
+            }
+            if (!trim(procedural.str()).empty()) {
+              info.proceduralCombBodies[methodName] = procedural.str();
+            }
+          }
+        } else if (l1Scheduling && methodName.starts_with("_optimized_")) {
+          if (auto expression = singleReturnExpression(body)) {
+            info.inlineMethods[methodName] = *expression;
           }
         }
       }
@@ -1777,7 +2010,19 @@ struct CombsOptimizer::Impl {
         // The flattened schedule evaluates every cache exactly once.  The
         // accessor timestamps are irrelevant because calc_all never calls the
         // memoized accessors.
-        body << "  " << nodeValue(id) << " = " << node.expression << ";\n";
+        if (node.procedural) {
+          body << "  {\n";
+          std::istringstream statements(node.expression);
+          std::string statement;
+          while (std::getline(statements, statement)) {
+            if (!trim(statement).empty()) {
+              body << "    " << statement << '\n';
+            }
+          }
+          body << "  }\n";
+        } else {
+          body << "  " << nodeValue(id) << " = " << node.expression << ";\n";
+        }
       }
       const std::filesystem::path chunkPath =
           std::filesystem::path(directory) /
@@ -1948,9 +2193,14 @@ CombsOptimizer::CombsOptimizer(CombsOptimizer &&) noexcept = default;
 CombsOptimizer &CombsOptimizer::operator=(CombsOptimizer &&) noexcept = default;
 
 void CombsOptimizer::collect(clang::ASTContext &context) {
-  Collector collector(impl->classes, impl->sourceIncludes, context);
+  Collector collector(impl->classes, impl->freeHelpers, impl->sourceIncludes,
+                      context);
   collector.collectMainFileIncludes();
   collector.TraverseDecl(context.getTranslationUnitDecl());
+}
+
+void CombsOptimizer::setL1Scheduling(bool enabled) {
+  impl->l1Scheduling = enabled;
 }
 
 bool CombsOptimizer::generate(const std::string &rootModule,
