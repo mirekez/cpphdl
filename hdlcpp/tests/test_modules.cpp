@@ -247,7 +247,7 @@ endmodule
     auto h = convertModule(argv0, "parameterized_generate_output", sv, "");
     expectContains(h, "_PORT(dtype) d_o_out = _ASSIGN_COMB( d_o_comb_func() );");
     expectContains(h, "reg<dtype> d_o;");
-    expectContains(h, "reg<array<dtype");
+    expectContains(h, "reg<array<Depth,dtype>> reg_q;");
     expectContains(h, "reg_q;");
     expectContains(h, "_LAZY_COMB(d_o_comb, dtype)");
     expectContains(h, "d_o_comb = d_o;");
@@ -767,7 +767,7 @@ endmodule
 
     auto h = convertModule(argv0, "packed_aggregate_bitwise_update", sv, "");
     expectContains(h, "cpphdl::pack_value<");
-    expectContains(h, "logic<cpphdl::type_width<array<dep_t,2>>()");
+    expectContains(h, "logic<cpphdl::type_width<array<2,dep_t>>()");
     expectNotContains(h, "(uint64_t)(deps_q)");
     expectNotContains(h, "((uint64_t)(deps_q))");
     expectNotContains(h, "(uint64_t)((uint64_t)(deps_q))");
@@ -2873,8 +2873,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generate_unpacked_array_order", sv, "");
-    expectContains(h, "reg<array<array<entry_t,(uint64_t)(((uint64_t)(COLS)");
-    expectContains(h, ">,(uint64_t)(((uint64_t)(ROWS)");
+    expectContains(h, "reg<array<(uint64_t)(((uint64_t)(ROWS)");
+    expectContains(h, ",array<(uint64_t)(((uint64_t)(COLS)");
     expectNotContains(h, "reg<array<array<entry_t,(uint64_t)(((uint64_t)(ROWS)");
 }
 
@@ -2970,7 +2970,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "implicit_packed_array_parent", sv, "");
-    expectContains(h, "array<logic<(uint64_t)(((uint64_t)(Cfg.W)");
+    expectContains(h, "array<(uint64_t)(((uint64_t)(Cfg.N)");
     expectContains(h, "data_o_out() { return child_i.data_o_out(); }");
     expectNotContains(h, "data_o_comb = child_i.data_o_out()[0];");
     expectNotContains(h, "_PORT(logic<(uint64_t)(((uint64_t)(Cfg.N)");
@@ -3247,7 +3247,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "same_packed_array_comb_assign", sv, "same_packed_array_comb_assign.N\t2\n");
-    expectContains(h, "_LAZY_COMB(tmp_comb, array<logic<32>");
+    expectContains(h, "_LAZY_COMB(tmp_comb, array<(uint64_t)(((uint64_t)(N)");
     expectContains(h, "tmp_comb = in_i_in();");
     expectNotContains(h, "tmp_comb = cpphdl::pack_value<cpphdl::type_width<array<logic<32>");
     expectContains(h, "out_o_comb = tmp_comb_func();");
@@ -3286,7 +3286,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "same_unpacked_struct_array_reg_assign", sv, "");
-    expectContains(h, "mem_n_comb = ([&]() -> array<item_t,2>");
+    expectContains(h, "mem_n_comb = ([&]() -> array<2,item_t>");
     expectContains(h, "__cpphdl_direct = mem_q;");
     expectContains(h, "mem_q._next = mem_n_comb_func();");
     expectNotContains(h, "mem_q._next = cpphdl::unpack_value<array<item_t,2>>");
@@ -3320,7 +3320,7 @@ endmodule
 
     auto h = convertModule(argv0, "packed_byte_array_from_unpacked_words", sv, "");
     expectContains(h, "bytes_comb = ([&]() ->");
-    expectContains(h, "using __cpphdl_target_t = array<logic<8>,8,true>;");
+    expectContains(h, "using __cpphdl_target_t = array<8,logic<8>,true>;");
     expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
     expectContains(h, "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val);");
     expectNotContains(h, "bytes_comb = words_comb_func();");
@@ -3349,7 +3349,7 @@ endmodule
 
     auto h = convertModule(argv0, "continuous_packed_byte_array_from_unpacked_words", sv, "");
     expectContains(h, "bytes_comb = ([&]() ->");
-    expectContains(h, "using __cpphdl_target_t = array<logic<8>,8,true>;");
+    expectContains(h, "using __cpphdl_target_t = array<8,logic<8>,true>;");
     expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
     expectContains(h, "__cpphdl_out = cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val);");
     expectNotContains(h, "bytes_comb = words_comb_func();");
@@ -3448,7 +3448,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "array_bit_to_struct_assign", sv, "");
-    expectContains(h, "using __cpphdl_target_array_t = array<resp_t,");
+    expectContains(h, "using __cpphdl_target_array_t = array<");
     expectContains(h, "cpphdl::unpack_value<resp_t>(cpphdl::pack_value<cpphdl::type_width<resp_t>()>(__cpphdl_src[__cpphdl_i]))");
     expectNotContains(h, "resp_comb = raw_comb_func();");
 }
@@ -3485,7 +3485,7 @@ endmodule
 
     auto h = convertModule(argv0, "array_output_struct_unpack", sv, "");
     expectContains(h, "__port_bind_u_source_raw_o_out_unpacked_array_comb_func");
-    expectContains(h, "using __cpphdl_target_array_t = array<resp_t,");
+    expectContains(h, "using __cpphdl_target_array_t = array<");
     expectContains(h, "if constexpr (std::is_assignable_v<__cpphdl_target_elem_t&, __cpphdl_src_elem_t>)");
     expectContains(h, "__port_bind_u_source_raw_o_out_unpacked_array_comb[__cpphdl_i] = __cpphdl_src[__cpphdl_i];");
     expectNotContains(h, "resp_comb = u_source.raw_o_out();");
@@ -4251,7 +4251,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_compare", sv, "");
-    expectContains(h, "== (uint64_t)(cpphdl::pack_value<cpphdl::type_width<array<logic<32>");
+    expectContains(h, "== (uint64_t)(cpphdl::pack_value<cpphdl::type_width<array<N,logic<32>>");
     expectNotContains(h, "== cpphdl::pack_value<cpphdl::type_width<array<logic<32>");
 }
 
@@ -4952,7 +4952,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generate_bound_division_expression", sv, "");
-    expectContains(h, "array<::leaf,");
+    expectContains(h, "array<((uint64_t)(");
+    expectContains(h, ",::leaf> u_leaf;");
     expectContains(h, "for (unsigned i = 0;");
     expectNotContains(h, "))));k++)");
     expectNotContains(h, "))));i++)");
@@ -5053,7 +5054,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "iface_array_dim", sv, "");
-    expectContains(h, "array<::simple_bus<8>,");
+    expectContains(h, ",::simple_bus<8>> master;");
     expectContains(h, "dim_pkg::N");
     expectContains(h, "> master;");
     expectContains(h, "master[(unsigned)(uint64_t)((uint64_t)(i))]._work(reset);");
@@ -5131,7 +5132,7 @@ endmodule
 
     auto h = convertModule(argv0, "member_range_bound", sv, "");
     expectContains(h, "__cpphdl_slice_i < (uint64_t)((uint64_t)(Cfg.N))");
-    expectContains(h, "array<std::remove_cvref_t<decltype(std::as_const(__cpphdl_slice_src)[0])>,(uint64_t)((uint64_t)(Cfg.N))>");
+    expectContains(h, "array<(uint64_t)((uint64_t)(Cfg.N)),std::remove_cvref_t<decltype(std::as_const(__cpphdl_slice_src)[0])>>");
     expectNotContains(h, "(uint64_t)(Cfg).N");
     expectNotContains(h, "(uint64_t)((uint64_t)(Cfg)).N");
     expectNotContains(h, ")))); ++__cpphdl_slice_i");
@@ -5198,6 +5199,117 @@ endmodule
     expectNotContains(h, "u_child.dst_clk_i_in");
     expectNotContains(h, "_ASSIGN(clk_i");
     expectContains(h, "u_child.d_i_in = _ASSIGN_COMB(d_i_in());");
+}
+
+static void testOneBitConditionalBranchesUseOneCppType(const char* argv0)
+{
+    const std::string sv = R"sv(
+module one_bit_conditional_types (
+    input  logic        select_i,
+    input  logic        valid_i,
+    input  logic        sync_i,
+    input  logic        ready_i,
+    input  logic [31:0] lhs_i,
+    input  logic [31:0] rhs_i,
+    output logic        handshake_o,
+    output logic        less_o
+);
+  logic [31:0] add_result;
+  wire handshake_internal;
+  wire less_internal;
+  assign add_result = lhs_i + rhs_i;
+  assign handshake_internal = (!select_i) ? (valid_i && sync_i) : ready_i;
+  assign less_internal = (lhs_i[31] == rhs_i[31]) ? add_result[31]
+                                                   : (select_i ? rhs_i[31] : lhs_i[31]);
+  assign handshake_o = handshake_internal;
+  assign less_o = less_internal;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "one_bit_conditional_types", sv, "");
+    expectContains(h, "handshake_internal_comb = ((!select_i_in()) ? logic<1>(");
+    expectContains(h, "less_internal_comb = (");
+    expectContains(h, "? logic<1>(");
+}
+
+static void testProceduralCombFeedingRegisterIsMaterialized(const char* argv0)
+{
+    const std::string sv = R"sv(
+module procedural_comb_to_reg (
+    input logic clk,
+    input logic reset,
+    input logic redo,
+    input logic jump,
+    input logic [31:0] redo_pc,
+    input logic [31:0] jump_pc
+);
+  reg   [31:0] pc;
+  logic [31:0] pc_reg;
+
+  always @(*) begin
+    pc = pc_reg + 32'd4;
+    if (redo) pc = redo_pc;
+    if (jump) pc = jump_pc;
+    pc[0] = 1'b0;
+    pc[1] = 1'b0;
+  end
+
+  always @(posedge clk) begin
+    if (reset) pc_reg <= 32'h80000000;
+    else pc_reg <= pc;
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "procedural_comb_to_reg", sv, "");
+    expectContains(h, "logic<32>& pc_comb_func()");
+    expectContains(h, "pc_reg._next = pc_comb_func();");
+    expectNotContains(h, "pc_reg._next = pc;");
+}
+
+static void testImplicitScalarNetsKeepOneBitConcatWidth(const char* argv0)
+{
+    const std::string sv = R"sv(
+module implicit_scalar_concat (
+    input wire [19:0] address_i,
+    input wire error_i,
+    input wire valid_i,
+    output wire [21:0] packed_o
+);
+  wire [19:0] address;
+  wire error;
+  wire valid;
+  assign address = address_i;
+  assign error = error_i;
+  assign valid = valid_i;
+  assign packed_o = {address, {error, valid}};
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "implicit_scalar_concat", sv, "");
+    expectContains(h, "_LAZY_COMB(error_comb, logic<1>)");
+    expectContains(h, "_LAZY_COMB(valid_comb, logic<1>)");
+    expectContains(h, "logic<22>(0)");
+    expectContains(h, "<< 2");
+    expectNotContains(h, "logic<84>");
+}
+
+static void testNestedConcatenationPreservesAccumulatedWidth(const char* argv0)
+{
+    const std::string sv = R"sv(
+module nested_concat_width (
+    input  wire [31:0] source_i,
+    output reg  [31:0] expanded_o
+);
+  always @(*) begin
+    expanded_o = {{{source_i[7:0], source_i[7:0]}, source_i[7:0]}, source_i[7:0]};
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "nested_concat_width", sv, "");
+    expectContains(h, "cat{logic<24>(cat{");
+    expectNotContains(h, "logic<8>(cat{");
 }
 
 int main(int argc, char** argv)
@@ -5367,5 +5479,9 @@ int main(int argc, char** argv)
     testMemberAccessRangeBoundsKeepMemberBeforeNumericCast(argv[0]);
     testFunctionMemberAccessRangeBoundKeepsMemberInsideCall(argv[0]);
     testChildClockPortAliasesAreNotBound(argv[0]);
+    testOneBitConditionalBranchesUseOneCppType(argv[0]);
+    testProceduralCombFeedingRegisterIsMaterialized(argv[0]);
+    testImplicitScalarNetsKeepOneBitConcatWidth(argv[0]);
+    testNestedConcatenationPreservesAccumulatedWidth(argv[0]);
     return 0;
 }

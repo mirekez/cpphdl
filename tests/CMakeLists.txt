@@ -80,3 +80,37 @@ foreach(src ${TEST_SOURCES})
     )
 
 endforeach()
+
+set(CPPHDL_NBA_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_nonblocking_memory")
+set(CPPHDL_NBA_GENERATED
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.h"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_internal.h"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_work_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_memory_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_strobe_0.cpp")
+add_custom_command(
+    OUTPUT ${CPPHDL_NBA_GENERATED}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CPPHDL_NBA_TEST_DIR}"
+    COMMAND "$<TARGET_FILE:cpphdl>"
+            --optimize-combs NonblockingMemory
+            --generated-dir "${CPPHDL_NBA_TEST_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemory.h"
+            -I"${CMAKE_SOURCE_DIR}/include"
+    DEPENDS cpphdl "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemory.h"
+    VERBATIM)
+
+add_executable(optimizer_nonblocking_memory
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemoryMain.cc"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_work_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_memory_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_strobe_0.cpp")
+target_include_directories(optimizer_nonblocking_memory PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+    "${CPPHDL_NBA_TEST_DIR}")
+set_target_properties(optimizer_nonblocking_memory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME optimizer_nonblocking_memory
+         COMMAND "$<TARGET_FILE:optimizer_nonblocking_memory>")

@@ -12,6 +12,7 @@ struct L1PeerStoreState
 struct L1PeerInvalidateComb
 {
     u1 valid; // Requests one targeted peer L1 invalidation this cycle.
+    u1 full;  // Falls back to a full private-cache invalidate when stores collide.
     u32 addr; // Supplies the store address used to select the peer tag set.
 };
 
@@ -38,11 +39,14 @@ public:
     L2Cache<L2_TOTAL_SIZE, L2_PORT_WIDTH, L2_LINE_SIZE, L2_WAYS,
         L2_ADDRESS_BITS, L2_RAM_ADDRESS_BITS, L2_PORT_COUNT, CPU_CORES> l2cache;
 
-private:
+protected:
     reg<L1PeerStoreState> peer_store_reg[CPU_CORES]; // Holds each store and address through L2 completion.
+
+private:
 #ifdef MULTICORE
     reg<u1> atomic_owner_valid_reg; // Holds the arbiter while one core completes an AMO read-modify-write.
     reg<u<ATOMIC_OWNER_BITS>> atomic_owner_reg; // Selects the only core allowed onto the data-side L2 path during an AMO.
+    reg<u<ATOMIC_OWNER_BITS>> atomic_rr_reg; // Starts the next AMO grant after the previous owner.
 #endif
 
 public:
@@ -103,17 +107,35 @@ public:
 
     // Selects one committed store per target so each affected peer set is invalidated once.
     L1PeerInvalidateComb peer_invalidate_comb[CPU_CORES];
+#ifndef SYNTHESIS
+    long prev_peer_invalidate_comb_clock = -1;
+#endif
     L1PeerInvalidateComb (&peer_invalidate_comb_func())[CPU_CORES]
     {
         uint32_t target;
         uint32_t source;
+#ifndef SYNTHESIS
+        if (prev_peer_invalidate_comb_clock == _system_clock) {
+            return peer_invalidate_comb;
+        }
+        prev_peer_invalidate_comb_clock = _system_clock;
+#endif
         for (target = 0; target < CPU_CORES; ++target) {
             peer_invalidate_comb[target] = {};
             for (source = 0; source < CPU_CORES; ++source) {
-                if (!peer_invalidate_comb[target].valid && target != source &&
-                    peer_store_reg[source].valid) {
-                    peer_invalidate_comb[target].valid = true;
-                    peer_invalidate_comb[target].addr = (uint32_t)peer_store_reg[source].addr;
+                if (target != source && peer_store_reg[source].valid) {
+                    if (peer_invalidate_comb[target].valid) {
+                        // One line-invalidate lane cannot represent two different
+                        // peer stores in the same cycle. Invalidate the complete
+                        // private D-cache instead of silently losing one store.
+                        peer_invalidate_comb[target].valid = false;
+                        peer_invalidate_comb[target].full = true;
+                    }
+                    else if (!peer_invalidate_comb[target].full) {
+                        peer_invalidate_comb[target].valid = true;
+                        peer_invalidate_comb[target].addr =
+                            (uint32_t)peer_store_reg[source].addr;
+                    }
                 }
             }
         }
@@ -232,7 +254,8 @@ public:
             cores[i].boot_hartid_in = _ASSIGN_I((uint32_t)boot_hartid_in() + (uint32_t)i);
             cores[i].boot_dtb_addr_in = boot_dtb_addr_in;
             cores[i].boot_priv_in = boot_priv_in;
-            cores[i].external_cache_invalidate_in = external_cache_invalidate_in;
+            cores[i].external_cache_invalidate_in = _ASSIGN_I(
+                external_cache_invalidate_in() || peer_invalidate_comb_func()[i].full);
 #ifdef MULTICORE
             cores[i].peer_cache_invalidate_in = _ASSIGN_I(peer_invalidate_comb_func()[i].valid);
             cores[i].peer_cache_invalidate_addr_in = _ASSIGN_I(peer_invalidate_comb_func()[i].addr);
@@ -310,6 +333,9 @@ public:
         uint32_t i;
 #ifdef MULTICORE
         bool atomic_selected;
+        bool ordinary_data_pending;
+        uint32_t atomic_candidate;
+        uint32_t atomic_offset;
 #endif
 #ifdef SYNTHESIS
         // These calls are removed from the parent SV task, but keep each child
@@ -338,20 +364,33 @@ public:
         }
 #ifdef MULTICORE
         atomic_selected = false;
-        if (atomic_owner_valid_reg) {
-            if (!cores[(uint32_t)atomic_owner_reg].atomic_request_out()) {
-                atomic_owner_valid_reg._next = false;
+        ordinary_data_pending = false;
+        for (i = 0; i < CPU_CORES; ++i) {
+            if ((cores[i].dmem_read_out() || cores[i].dmem_write_out()) &&
+                !cores[i].atomic_data_request_out()) {
+                ordinary_data_pending = true;
             }
         }
-        else {
-            // L2 serializes requests captured before this clock. Select an AMO
-            // requester immediately; waiting for every live request level to
-            // fall can deadlock when another core is held by an unrelated
-            // instruction-side stall after its data request was accepted.
-            for (i = 0; i < CPU_CORES; ++i) {
-                if (!atomic_selected && cores[i].atomic_request_out()) {
+        if (atomic_owner_valid_reg) {
+            if (cores[(uint32_t)atomic_owner_reg].atomic_complete_out() ||
+                !cores[(uint32_t)atomic_owner_reg].atomic_request_out()) {
+                atomic_owner_valid_reg._next = false;
+                atomic_rr_reg._next = (uint32_t)atomic_owner_reg == CPU_CORES - 1 ?
+                    (uint32_t)0 : (uint32_t)atomic_owner_reg + 1u;
+            }
+        }
+        else if (!ordinary_data_pending) {
+            // Tight lock polling keeps AMOs continuously present. Search from
+            // the round-robin cursor so the failed poller cannot starve the
+            // current lock holder's release operation.
+            for (atomic_offset = 0; atomic_offset < CPU_CORES; ++atomic_offset) {
+                atomic_candidate = (uint32_t)atomic_rr_reg + atomic_offset;
+                if (atomic_candidate >= CPU_CORES) {
+                    atomic_candidate -= CPU_CORES;
+                }
+                if (!atomic_selected && cores[atomic_candidate].atomic_request_out()) {
                     atomic_owner_valid_reg._next = true;
-                    atomic_owner_reg._next = i;
+                    atomic_owner_reg._next = atomic_candidate;
                     atomic_selected = true;
                 }
             }
@@ -367,6 +406,7 @@ public:
 #ifdef MULTICORE
             atomic_owner_valid_reg.clr();
             atomic_owner_reg.clr();
+            atomic_rr_reg.clr();
 #endif
         }
     }
@@ -394,6 +434,7 @@ public:
 #ifdef MULTICORE
         atomic_owner_valid_reg.strobe(checkpoint_fd);
         atomic_owner_reg.strobe(checkpoint_fd);
+        atomic_rr_reg.strobe(checkpoint_fd);
 #endif
     }
 };

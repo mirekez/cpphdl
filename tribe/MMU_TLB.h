@@ -257,9 +257,11 @@ private:
 
     // Stall the requester while a TLB miss is being walked through memory.
     _LAZY_COMB(busy_comb, bool)
+        bool current_walker_fault;
         busy_comb = false;
+        current_walker_fault = fault_reg && (uint32_t)req_vaddr_reg == vaddr_in();
         if (translation_enabled_comb_func() && (read_in() || write_in() || execute_in()) &&
-            !hit_comb_func() && !fault_reg) {
+            !hit_comb_func() && !current_walker_fault) {
             busy_comb = true;
         }
         if (state_reg == ST_READ_L1 || state_reg == ST_READ_L0) {
@@ -327,50 +329,52 @@ public:
             fault_reg.clr();
             state_reg._next = ST_IDLE;
         }
-        if (fill_in()) {
-            valid_reg._next[fill_index_in()] = true;
-            vpn_reg._next[fill_index_in()] = fill_vpn_in();
-            ppn_reg._next[fill_index_in()] = fill_ppn_in();
-            flags_reg._next[fill_index_in()] = fill_flags_in();
-            level_reg._next[fill_index_in()] = false;
-            satp_tag_reg._next[fill_index_in()] = satp_in();
-        }
-        if (state_reg == ST_IDLE) {
-            if (!miss_comb_func()) {
-                fault_reg.clr();
+        else {
+            if (fill_in()) {
+                valid_reg._next[fill_index_in()] = true;
+                vpn_reg._next[fill_index_in()] = fill_vpn_in();
+                ppn_reg._next[fill_index_in()] = fill_ppn_in();
+                flags_reg._next[fill_index_in()] = fill_flags_in();
+                level_reg._next[fill_index_in()] = false;
+                satp_tag_reg._next[fill_index_in()] = satp_in();
             }
-            if (miss_comb_func()) {
-                req_vaddr_reg._next = vaddr_in();
-                req_read_reg._next = read_in();
-                req_write_reg._next = write_in();
-                req_execute_reg._next = execute_in();
-                req_sum_reg._next = sum_in();
-                req_mxr_reg._next = mxr_in();
-                req_satp_reg._next = satp_in();
-                req_priv_reg._next = priv_in();
-                fault_reg.clr();
-                state_reg._next = ST_READ_L1;
+            if (state_reg == ST_IDLE) {
+                if (!miss_comb_func()) {
+                    fault_reg.clr();
+                }
+                if (miss_comb_func()) {
+                    req_vaddr_reg._next = vaddr_in();
+                    req_read_reg._next = read_in();
+                    req_write_reg._next = write_in();
+                    req_execute_reg._next = execute_in();
+                    req_sum_reg._next = sum_in();
+                    req_mxr_reg._next = mxr_in();
+                    req_satp_reg._next = satp_in();
+                    req_priv_reg._next = priv_in();
+                    fault_reg.clr();
+                    state_reg._next = ST_READ_L1;
+                }
             }
-        }
-        else if (state_reg == ST_READ_L1) {
-            if (!mem_wait_in()) {
-                debug_last_addr_reg._next = mem_addr_out();
-                debug_last_pte_reg._next = mem_read_data_in();
-                handle_pte(mem_read_data_in(), true);
+            else if (state_reg == ST_READ_L1) {
+                if (!mem_wait_in()) {
+                    debug_last_addr_reg._next = mem_addr_out();
+                    debug_last_pte_reg._next = mem_read_data_in();
+                    handle_pte(mem_read_data_in(), true);
+                }
             }
-        }
-        else if (state_reg == ST_READ_L0) {
-            if (!mem_wait_in()) {
-                debug_last_addr_reg._next = mem_addr_out();
-                debug_last_pte_reg._next = mem_read_data_in();
-                handle_pte(mem_read_data_in(), false);
+            else if (state_reg == ST_READ_L0) {
+                if (!mem_wait_in()) {
+                    debug_last_addr_reg._next = mem_addr_out();
+                    debug_last_pte_reg._next = mem_read_data_in();
+                    handle_pte(mem_read_data_in(), false);
+                }
             }
-        }
-        else if (state_reg == ST_FAULT) {
-            if (sfence_in() || !translation_enabled_comb_func() ||
-                !(read_in() || write_in() || execute_in()) || vaddr_in() != (uint32_t)req_vaddr_reg) {
-                fault_reg.clr();
-                state_reg._next = ST_IDLE;
+            else if (state_reg == ST_FAULT) {
+                if (!translation_enabled_comb_func() ||
+                    !(read_in() || write_in() || execute_in()) || vaddr_in() != (uint32_t)req_vaddr_reg) {
+                    fault_reg.clr();
+                    state_reg._next = ST_IDLE;
+                }
             }
         }
         if (reset) {

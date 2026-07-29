@@ -180,11 +180,20 @@ protected:
     // Return only the registered CPU response beat so no live RAM, FSM, or AXI
     // path reaches either L1 read-data output.
     logic<PORT_BITWIDTH> read_data_comb[CPU_PORTS];
+#ifndef SYNTHESIS
+    long prev_read_data_comb_clock = -1;
+#endif
 
     // Reconstruct every CPU read-data output from only that CPU's registered response slot.
     logic<PORT_BITWIDTH> (&read_data_comb_func())[CPU_PORTS]
     {
         uint32_t index;
+#ifndef SYNTHESIS
+        if (prev_read_data_comb_clock == _system_clock) {
+            return read_data_comb;
+        }
+        prev_read_data_comb_clock = _system_clock;
+#endif
         for (index = 0; index < CPU_PORTS; ++index) {
             read_data_comb[index] = response_reg[CPU_RESPONSE_BASE + index].valid ?
                 (logic<PORT_BITWIDTH>)response_reg[CPU_RESPONSE_BASE + index].r.data : logic<PORT_BITWIDTH>(0);

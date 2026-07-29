@@ -1311,7 +1311,8 @@ public:
         ethgig_pcs._strobe();
         ethgig_phy._strobe();
         ethgig_verif._strobe();
-        if (eth_tap_socket.active()) {
+        if (eth_tap_socket.active() &&
+            (ethgig_verif.has_tx_packet() || ((uint64_t)_system_clock & 0x3fu) == 0)) {
             eth_tap_socket.pump(ethgig_verif);
         }
         if (!eth_tap_socket.active() && eth_loopback_enabled && ethgig_verif.has_tx_packet()) {

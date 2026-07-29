@@ -62,6 +62,10 @@ private:
 
     Axi4Responder<4,256> axi_in_comb[MEM_PORTS];
     Axi4Driver<32,4,256> axi_out_comb[MEM_PORTS];
+#ifndef SYNTHESIS
+    long prev_axi_in_comb_clock = -1;
+    long prev_axi_out_comb_clock = -1;
+#endif
 
     // Build all AXI slave-side responder bundles and return the array so comb users depend on the driven values.
     Axi4Responder<4,256> (&axi_in_comb_func())[MEM_PORTS]
@@ -69,6 +73,12 @@ private:
         uint32_t index;
         L2ActiveRequestComb active_request;
 
+#ifndef SYNTHESIS
+        if (prev_axi_in_comb_clock == _system_clock) {
+            return axi_in_comb;
+        }
+        prev_axi_in_comb_clock = _system_clock;
+#endif
         active_request = active_request_comb_func();
         for (index = 0; index < MEM_PORTS; ++index) {
             axi_in_comb[index].aw.ready = state_reg == ST_IDLE && !slave_aw_reg[index].valid &&
@@ -92,6 +102,12 @@ private:
     {
         uint32_t index;
 
+#ifndef SYNTHESIS
+        if (prev_axi_out_comb_clock == _system_clock) {
+            return axi_out_comb;
+        }
+        prev_axi_out_comb_clock = _system_clock;
+#endif
         for (index = 0; index < MEM_PORTS; ++index) {
             axi_out_comb[index].aw.valid = axi_out_driver_comb_func().aw.valid && (uint32_t)axi_route_comb_func().aw_sel == index;
             axi_out_comb[index].aw.addr = axi_out_driver_comb_func().aw.addr;
@@ -203,8 +219,7 @@ public:
                 ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);
         }
 #ifndef SYNTHESIS
-        const char* trace_line_env;
-        trace_line_env = std::getenv("TRIBE_TRACE_L2_LINE");
+        static const char* trace_line_env = std::getenv("TRIBE_TRACE_L2_LINE");
         trace_line_enabled = trace_line_env != nullptr;
         trace_line = trace_line_env ? (uint32_t)std::strtoul(trace_line_env, nullptr, 0) & ~(uint32_t)(CACHE_LINE_SIZE - 1) : 0;
         trace_req_line = trace_line_env && (((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) == trace_line);

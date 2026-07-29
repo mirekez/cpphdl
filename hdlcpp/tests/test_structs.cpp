@@ -196,7 +196,8 @@ endmodule
 
     auto h = convertModule(argv0, "packed_struct_array_field", sv);
     expectContains(h, "struct packet_t");
-    expectContains(h, "array<logic<4>,2,true> lanes;");
+    expectContains(h, "array<2,logic<4>,true> lanes;");
+    expectNotContains(h, "array<logic<4>,2,true> lanes;");
     expectContains(h, "logic<8> tag;");
     expectContains(h, "pack() const");
     expectNotContains(h, "struct packed");
@@ -368,7 +369,7 @@ endmodule
 
     auto h = convertModule(argv0, "typedef_element_multi_unpacked_dims", sv);
     expectContains(h, "using word_t = logic<64>;");
-    expectContains(h, "array<array<word_t,(((uint64_t)(1)");
+    expectContains(h, "_LAZY_COMB(buf_q_comb, array<");
     expectNotContains(h, "_LAZY_COMB(buf_q_comb, array<array<word_t,(((uint64_t)(0)");
     expectContains(h, "buf_q_comb_func()");
 }
@@ -551,8 +552,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_wide_bitwise_merge", sv);
-    expectContains(h, "_LAZY_COMB(merged_comb, array<word_t,");
-    expectContains(h, "logic<cpphdl::type_width<array<word_t,");
+    expectContains(h, "_LAZY_COMB(merged_comb, array<");
+    expectContains(h, "logic<cpphdl::type_width<array<");
     expectNotContains(h, "merged_comb = logic<1>");
     expectNotContains(h, "logic<1>((((uint64_t)");
     expectNotContains(h, "~((uint64_t)(cpphdl::pack_value<cpphdl::type_width<array<word_t,2,true>>()");
@@ -587,8 +588,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_memory_row_bitwise_merge", sv);
-    expectContains(h, "reg<array<array<word_t,");
-    expectContains(h, "logic<cpphdl::type_width<array<word_t,");
+    expectContains(h, "reg<array<4,array<");
+    expectContains(h, "logic<cpphdl::type_width<array<");
     expectNotContains(h, "cpphdl::pack_value<1>(mem");
     expectNotContains(h, "logic<1>((((uint64_t)(mem");
     expectNotContains(h, "~((uint64_t)(cpphdl::pack_value");
@@ -615,9 +616,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "named_typedef_packed_array", sv);
-    expectContains(h, "using words_t = array<word_t,");
+    expectContains(h, "using words_t = array<");
     expectContains(h, ",true>;");
-    expectContains(h, "words_comb = cpphdl::pack_value<cpphdl::type_width<array<word_t,");
+    expectContains(h, "words_comb = cpphdl::pack_value<cpphdl::type_width<array<");
     expectNotContains(h, "using words_t = array<word_t,2>;");
 }
 
@@ -645,7 +646,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "named_struct_packed_array", sv);
-    expectContains(h, "using entries_t = array<entry_t,");
+    expectContains(h, "using entries_t = array<");
     expectNotContains(h, "using entries_t = array<entry_t,2,true>;");
     expectNotContains(h, ",true> entries");
     expectContains(h, "entries_comb[0].hi");
@@ -665,7 +666,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "configured_aggregate_packed_array", sv, "", "", "item_t");
-    expectContains(h, "_PORT(array<item_t,");
+    expectContains(h, "_PORT(array<");
     expectNotContains(h, "_PORT(array<item_t,2,true>)");
     expectNotContains(h, "_PORT(array<item_t,(((uint64_t)(1) >= (uint64_t)(0) ? ((uint64_t)(1) - (uint64_t)(0)) : ((uint64_t)(0) - (uint64_t)(1))) + 1),true>)");
     expectContains(h, "(items_i_in())[(unsigned)");
@@ -698,7 +699,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_struct_array_field_write", sv);
-    expectContains(h, "array<item_t,");
+    expectContains(h, "array<(((uint64_t)(0)");
     expectNotContains(h, "array<item_t,(((uint64_t)(0) >= (uint64_t)(0) ? ((uint64_t)(0) - (uint64_t)(0)) : ((uint64_t)(0) - (uint64_t)(0))) + 1),true>");
     expectContains(h, "out_comb[0].id = id_i_in();");
     expectContains(h, "out_comb_func()[(unsigned)");

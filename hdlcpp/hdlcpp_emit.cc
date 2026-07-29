@@ -1040,14 +1040,13 @@
             auto width = foldWidth(exprWidth(expr));
             auto leftWidth = foldWidth(exprWidth(*c.left));
             auto rightWidth = foldWidth(exprWidth(*c.right));
+            if (width == "1") {
+                return emitPredicate(*c.predicate) + " ? " +
+                    primitiveCast("bool", truthyExpr(emitExpr(*c.left), exprWidth(*c.left))) + " : " +
+                    primitiveCast("bool", truthyExpr(emitExpr(*c.right), exprWidth(*c.right)));
+            }
             if (isNumber(width) && isNumber(leftWidth) && isNumber(rightWidth) &&
                 primitiveCastableExpr(*c.left) && primitiveCastableExpr(*c.right)) {
-                if (width == "1" && leftWidth == "1" && rightWidth == "1") {
-                    return emitPredicate(*c.predicate) + " ? " + primitiveCast("bool", truthyExpr(emitExpr(*c.left), exprWidth(*c.left))) + " : " + primitiveCast("bool", truthyExpr(emitExpr(*c.right), exprWidth(*c.right)));
-                }
-                if (width == "1" && (leftWidth != "1" || rightWidth != "1")) {
-                    return emitPredicate(*c.predicate) + " ? " + primitiveCast("bool", truthyExpr(emitExpr(*c.left), exprWidth(*c.left))) + " : " + primitiveCast("bool", truthyExpr(emitExpr(*c.right), exprWidth(*c.right)));
-                }
                 auto prim = primitiveForWidth(width);
                 return emitPredicate(*c.predicate) + " ? " + primitiveCast(prim, emitNumericExpr(*c.left)) + " : " + primitiveCast(prim, emitNumericExpr(*c.right));
             }
@@ -1248,14 +1247,14 @@
                     }
                     auto emitted = emitNumericExpr(*e);
                     auto bitsWidth = emittedBitsCallWidth(emitted);
-                    if (!bitsWidth.empty()) {
+                    if (!bitsWidth.empty() && emitted.find("cat{") == std::string::npos) {
                         width = bitsWidth;
                     }
                     if (emittedOneBitValueExpr(emitted)) {
                         width = "1";
                     }
                     auto castWidth = emittedConcatOperandCastWidth(emitted);
-                    if (!castWidth.empty() &&
+                    if (!castWidth.empty() && emitted.find("cat{") == std::string::npos &&
                         (width.empty() ||
                          (width == "1" && !isBitSelectOperand(*e) && !emittedOneBitValueExpr(emitted)) ||
                          emitted.find("__cpphdl_slice_out") != std::string::npos)) {
@@ -1751,10 +1750,6 @@
                     if (!visiting.insert(base).second) {
                         continue;
                     }
-                    auto mixedCombSeq = m.seqAssignedVars.count(base) && m.combAssignedVars.count(base);
-                    if (m.types.count(base) && m.types[base].rfind("reg<", 0) == 0 && !mixedCombSeq) {
-                        continue;
-                    }
                     const auto pending = pendingIt->second;
                     auto extractionVariables = pending.variables;
                     extractionVariables.erase(
@@ -2124,7 +2119,7 @@
             if (!m.params.empty()) {
                 h << "template<";
                 for (size_t i = 0; i < m.params.size(); ++i) {
-                    h << (i ? ", " : "") << normalizeTemplateParamDecl(m.params[i]);
+                    h << (i ? ", " : "") << postProcessCppLine(normalizeTemplateParamDecl(m.params[i]));
                 }
                 h << ">\n";
 	            }
@@ -3815,7 +3810,7 @@
 			            }
 	            h << (m.isInterface ? "\npublic:\n" : "\nprivate:\n");
 	            for (auto& member : m.members) {
-	                h << "    " << postProcessCppLine(member) << "\n";
+	                h << "    " << postProcessCppLine(updateCpphdlArraySyntax(member)) << "\n";
 	            }
 	            if (!m.members.empty()) {
 	                h << "\n";
@@ -4201,7 +4196,7 @@
                     storageType = regTypeFor(storageType);
                 }
                 if (!storageName.empty() && !declaredPrivateNames.count(storageName)) {
-                    h << "    " << storageType << " " << storageName << ";\n";
+                    h << "    " << postProcessCppLine(storageType) << " " << storageName << ";\n";
                     declaredPrivateNames.insert(storageName);
                 }
             }
@@ -4252,10 +4247,10 @@
                 }
                 if (isAssignDrivenVar(m, v.second)) {
                     emittedType = unwrapRegType(emittedType);
-                    h << "    cpphdl::function_ref<" << emittedType << "> " << v.second;
+                    h << "    cpphdl::function_ref<" << postProcessCppLine(emittedType) << "> " << v.second;
                 }
                 else {
-                    h << "    " << emittedType << " " << v.second;
+                    h << "    " << postProcessCppLine(emittedType) << " " << v.second;
                 }
                 h << ";\n";
                 declaredPrivateNames.insert(v.second);
@@ -9175,10 +9170,10 @@
                 if (!readonlyCombOutput) {
                     out << "    " << postProcessCppLine(type) << " " << m.returnName << ";\n";
                 }
-		        out << "    " << type << "& " << m.name << "()\n    {\n";
+		        out << "    " << postProcessCppLine(type) << "& " << m.name << "()\n    {\n";
 		    }
 	            else {
-	                out << "    _LAZY_COMB(" << m.returnName << ", " << type << ")\n";
+	                out << "    _LAZY_COMB(" << m.returnName << ", " << postProcessCppLine(type) << ")\n";
 	            }
             for (auto& import : mod.imports) {
                 out << "        using namespace " << import << ";\n";
@@ -10112,7 +10107,7 @@
                 if (traceMethod) {
                     std::cerr << "HDLCPP_METHOD_LINE emit " << m.name << ": " << emittedLine << "\n";
                 }
-                emitBodyLine(out, emittedLine, true);
+                emitBodyLine(out, postProcessCppLine(std::move(emittedLine)), true);
             }
             if (tracePhases && m.body.size() >= 100) {
                 auto methodEnd = std::chrono::steady_clock::now();
@@ -10171,7 +10166,7 @@
             }
         }
         out << "    " << (mod.isPackage ? "inline constexpr " : (m.staticConstexpr ? "static constexpr " : ""))
-            << m.ret << " " << m.name << "(" << m.args << ")\n    {\n";
+            << postProcessCppLine(m.ret) << " " << m.name << "(" << postProcessCppLine(m.args) << ")\n    {\n";
         for (auto& import : mod.imports) {
             out << "        using namespace " << import << ";\n";
         }
@@ -10200,7 +10195,7 @@
                 if (m.name == "_work" && isStandaloneCombEvalStatement(emittedLine)) {
                         continue;
                 }
-                emitBodyLine(out, emittedLine, m.name == "_work");
+                emitBodyLine(out, postProcessCppLine(std::move(emittedLine)), m.name == "_work");
             }
         }
         if (!m.returnName.empty()) {

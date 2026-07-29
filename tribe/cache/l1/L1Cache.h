@@ -55,13 +55,14 @@ Request-facing actions that directly answer or retire a CPU request:
 
 Background and delayed activities:
 
-1. Reset clears every tag set before requests are accepted, while runtime
-   invalidate removes all visible entries in one cycle by changing tag epoch.
+1. Reset and full runtime invalidation clear every tag set before requests are
+   accepted; targeted peer invalidation normally advances only one set epoch.
    1.1. Reset enters L1_ST_INIT and tag_ram[] writes zero at init_set_reg.
    1.2. The controller advances init_set_reg until SETS - 1, then enters
         L1_ST_IDLE.
-   1.3. invalidate_in() flips tag_epoch_reg, clears pending response state, and
-        returns immediately to L1_ST_IDLE.
+   1.3. invalidate_in() clears pending response state and enters L1_ST_INIT so
+        repeated full invalidations cannot resurrect entries through epoch wrap.
+   1.4. A targeted set-generation wrap uses the same physical clear walk.
 
 2. Flush discards stale in-flight response state and redirects lookup, achieved
    by clearing last/refill valid registers and reloading req_* from live inputs.

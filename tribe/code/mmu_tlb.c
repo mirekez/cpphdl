@@ -109,6 +109,7 @@ static inline uint32_t amoswap_w(volatile uint32_t* addr, uint32_t value)
         : : : "memory")
 
 static uint32_t root_pt[1024] __attribute__((aligned(4096)));
+static uint32_t code_leaf_pt[1024] __attribute__((aligned(4096)));
 static uint32_t leaf_pt[1024] __attribute__((aligned(4096)));
 static uint32_t lazy_leaf_pt[1024] __attribute__((aligned(4096)));
 static volatile uint32_t value_a = 0x11112222u;
@@ -120,6 +121,97 @@ static volatile uint32_t lazy_trap_seen;
 static volatile uint32_t lazy_trap_frame[16];
 static volatile uint32_t handler_mem_probe = 0x2468ace0u;
 static volatile uint32_t handler_mem_seen;
+static volatile uint32_t sync_trap_fetch_wait_seen;
+
+/*
+ * Enter with t0 holding the continuation address. The ebreak lives at the
+ * final word of one Sv32 page, while its fallthrough is in the next page.
+ * Fetching that fallthrough therefore starts an I-TLB walk while
+ * the ebreak is in execute. Trap redirect and CSR privilege entry must wait
+ * for the same retirement boundary.
+ */
+__attribute__((naked, noinline)) static void run_sync_trap_fetch_wait_test(void)
+{
+    __asm__ volatile(
+        "la t1, 2f\n"
+        "csrw stvec, t1\n"
+        "la t0, 3f\n"
+        "li t1, 0x0000fffc\n"
+        "jr t1\n"
+        "2:\n"
+        "csrr t1, scause\n"
+        "li t2, 3\n"
+        "bne t1, t2, 4f\n"
+        "la t1, sync_trap_fetch_wait_seen\n"
+        "li t2, 1\n"
+        "sw t2, 0(t1)\n"
+        "li t1, 0x00010000\n"
+        "csrw sepc, t1\n"
+        "sret\n"
+        "3:\n"
+        "ret\n"
+        "4:\n"
+        "la t1, sync_trap_fetch_wait_seen\n"
+        "li t2, -1\n"
+        "sw t2, 0(t1)\n"
+        "la t1, 3b\n"
+        "csrw sepc, t1\n"
+        "sret\n");
+}
+
+__attribute__((naked, noinline, noreturn)) static void run_instruction_fault_link_test(void)
+{
+    __asm__ volatile(
+        "la t0, 1f\n"
+        "csrw stvec, t0\n"
+        "li a7, 0\n"
+        "li t0, 0x01000000\n"
+        "jalr a7, 0(t0)\n"
+        "2:\n"
+        "la t0, 2b\n"
+        "bne a7, t0, 3f\n"
+        "li t0, 0x70000\n"
+        "li t1, 'M'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'M'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'U'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, '_'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'T'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'L'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'B'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 10\n"
+        "sw t1, 0(t0)\n"
+        "j .\n"
+        "1:\n"
+        "csrr t1, scause\n"
+        "li t0, 12\n"
+        "bne t1, t0, 3f\n"
+        "csrr t1, stval\n"
+        "li t0, 0x01000000\n"
+        "bne t1, t0, 3f\n"
+        "la t0, 2b\n"
+        "csrw sepc, t0\n"
+        "sret\n"
+        "3:\n"
+        "li t0, 0x70000\n"
+        "li t1, 'F'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'A'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'I'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 'L'\n"
+        "sw t1, 0(t0)\n"
+        "li t1, 10\n"
+        "sw t1, 0(t0)\n"
+        "j .\n");
+}
 
 static void fail(const char* reason)
 {
@@ -140,6 +232,7 @@ void _start(void)
     uint32_t alias_base;
     uint32_t alias_offset;
     uint32_t flags;
+    uint32_t i;
 
     write_satp(0);
     sfence_vma();
@@ -150,11 +243,14 @@ void _start(void)
 
     /*
      * Scenario: enter Sv32 with a minimal address space. Code stays reachable
-     * through an identity superpage, while data is reached through a separate
+     * through identity leaf mappings, while data is reached through a separate
      * leaf page table so loads, stores, and AMOs exercise real translation.
      */
     flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-    root_pt[0] = pte(0, flags); // Identity-map the first 4 MiB as a superpage for code.
+    for (i = 0; i < 32; ++i) {
+        code_leaf_pt[i] = pte(i, flags);
+    }
+    root_pt[0] = pte(((uint32_t)code_leaf_pt) >> 12, PTE_V);
     root_pt[2] = pte(((uint32_t)leaf_pt) >> 12, PTE_V);
     root_pt[0x100] = pte(0, flags); // Execute the same code through a high virtual alias.
     // Keep this alias outside Tribe's direct MMIO bypass window so DMMU translation is required.
@@ -297,6 +393,25 @@ high_fetch_label:
         fail("high-fetch");
     }
 
-    tribe_uart_puts("MMU_TLB\n");
-    for (;;) {}
+    /*
+     * Put ebreak at one page's last instruction. The instruction at 0x00010000
+     * jumps through t0 to the helper continuation after the trap handler
+     * advances sepc.
+     */
+    sfence_vma();
+    *(volatile uint32_t*)0x0000fffcu = 0x00100073u; /* ebreak */
+    *(volatile uint32_t*)0x00010000u = 0x00028067u; /* jalr zero, 0(t0) */
+    __asm__ volatile(".word 0x0000100f" : : : "memory"); /* fence.i */
+    sync_trap_fetch_wait_seen = 0;
+    run_sync_trap_fetch_wait_test();
+    if (sync_trap_fetch_wait_seen != 1u) {
+        fail("sync-trap-fetch-wait");
+    }
+
+    /*
+     * Finish with an instruction page fault while the faulting JALR link is
+     * still in writeback. The helper emits the success marker only after the
+     * older link retires and the precise fault reaches its handler.
+     */
+    run_instruction_fault_link_test();
 }

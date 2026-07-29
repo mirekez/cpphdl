@@ -1494,7 +1494,7 @@
             if (node.type->kind == SyntaxKind::ImplicitType) {
                 auto& implicit = node.type->as<ImplicitTypeSyntax>();
                 if (dimensionWidths(implicit.dimensions).empty()) {
-                    type = "unsigned";
+                    type = "logic<1>";
                 }
             }
             if (mod->seqAssignedVars.count(svName)) {
@@ -2077,10 +2077,12 @@
             auto instanceDims = dimensionWidths(inst->decl->dimensions);
             if (!instanceDims.empty()) {
                 auto arrayType = memberType;
+                auto emittedArrayType = memberType;
                 for (auto it = instanceDims.rbegin(); it != instanceDims.rend(); ++it) {
                     arrayType = "array<" + arrayType + "," + *it + ">";
+                    emittedArrayType = "array<" + *it + "," + emittedArrayType + ">";
                 }
-                mod->members.push_back(arrayType + " " + name + ";");
+                mod->members.push_back(emittedArrayType + " " + name + ";");
                 mod->memberArraySizes[name] = instanceDims.front();
                 rememberMemberType(name, arrayType);
             }
@@ -2239,7 +2241,11 @@
                 if (mod->outputPortCppNames.count(base)) {
                     return true;
                 }
-                return mod->types.count(base) && mod->types[base].rfind("reg<", 0) != 0;
+                // Verilog `reg` only means that a variable can be assigned by a
+                // procedural block.  It is hardware state only when a clocked
+                // block drives it; an always @(*) target still needs a comb
+                // function even when its declaration uses `reg`.
+                return mod->types.count(base) != 0;
             };
 
             for (const auto& base : plan.independent) {
@@ -2678,7 +2684,7 @@
                 auto memberType = moduleMemberType(type, params);
                 if (!mod->memberArraySizes.count(name)) {
                     auto arrayType = "array<" + memberType + "," + indexLimit + ">";
-                    mod->members.push_back(arrayType + " " + name + ";");
+                    mod->members.push_back("array<" + indexLimit + "," + memberType + "> " + name + ";");
                     mod->memberTypes.push_back(arrayType);
                     mod->memberNames.push_back(name);
                     mod->memberArraySizes[name] = indexLimit;
@@ -3210,7 +3216,7 @@
                     if (mod->outputPortCppNames.count(base)) {
                         return true;
                     }
-                    return mod->types.count(base) && mod->types[base].rfind("reg<", 0) != 0;
+                    return mod->types.count(base) != 0;
                 };
 
                 for (const auto& base : plan.independent) {

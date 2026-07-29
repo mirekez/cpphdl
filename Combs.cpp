@@ -126,6 +126,7 @@ struct FieldInfo {
   std::string type;
   std::string childClass;
   FieldKind kind = FieldKind::Other;
+  bool indexedStorage = false;
 };
 
 struct ClassInfo {
@@ -191,6 +192,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       FieldInfo item;
       item.name = field->getNameAsString();
       item.type = field->getType().getAsString();
+      item.indexedStorage = field->getType()->isArrayType() ||
+                            item.type.find("array<") != std::string::npos;
       if (item.type.find("cpphdl::function_ref<") != std::string::npos) {
         item.kind = FieldKind::Port;
       } else if (item.type.find("cpphdl::reg<") != std::string::npos) {
@@ -369,6 +372,19 @@ struct Node {
   int visitState = 0;
 };
 
+struct DeferredWrite {
+  size_t id = 0;
+  Instance *instance = nullptr;
+  std::string field;
+  std::vector<std::string> indexes;
+};
+
+struct IndexedAssignment {
+  std::string field;
+  std::vector<std::string> indexes;
+  std::string value;
+};
+
 std::string nodeKey(size_t instance, NodeKind kind, const std::string &name) {
   return std::to_string(instance) + (kind == NodeKind::Port ? ":p:" : ":c:") +
          name;
@@ -386,7 +402,111 @@ struct CombsOptimizer::Impl {
   std::unordered_map<std::string, std::pair<Instance *, std::string>> bindings;
   std::vector<size_t> schedule;
   std::vector<CombDeps> trees;
+  std::vector<DeferredWrite> deferredWrites;
   std::string error;
+
+  std::optional<IndexedAssignment>
+  indexedAssignment(const std::string &statement,
+                    const Instance &instance) const {
+    std::string text = trim(statement);
+    if (!text.empty() && text.back() == ';') {
+      text.pop_back();
+      text = trim(text);
+    }
+
+    size_t equals = std::string::npos;
+    int parentheses = 0;
+    int brackets = 0;
+    int braces = 0;
+    bool inString = false;
+    bool inCharacter = false;
+    bool escaped = false;
+    for (size_t index = 0; index < text.size(); ++index) {
+      const char value = text[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if ((inString || inCharacter) && value == '\\') {
+        escaped = true;
+        continue;
+      }
+      if (!inCharacter && value == '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString && value == '\'') {
+        inCharacter = !inCharacter;
+        continue;
+      }
+      if (inString || inCharacter) {
+        continue;
+      }
+      if (value == '(') {
+        ++parentheses;
+      } else if (value == ')') {
+        --parentheses;
+      } else if (value == '[') {
+        ++brackets;
+      } else if (value == ']') {
+        --brackets;
+      } else if (value == '{') {
+        ++braces;
+      } else if (value == '}') {
+        --braces;
+      } else if (value == '=' && parentheses == 0 && brackets == 0 &&
+                 braces == 0) {
+        const char before = index == 0 ? '\0' : text[index - 1];
+        const char after = index + 1 == text.size() ? '\0' : text[index + 1];
+        if (before != '=' && before != '!' && before != '<' && before != '>' &&
+            before != '+' && before != '-' && before != '*' && before != '/' &&
+            before != '%' && before != '&' && before != '|' && before != '^' &&
+            after != '=') {
+          equals = index;
+          break;
+        }
+      }
+    }
+    if (equals == std::string::npos) {
+      return std::nullopt;
+    }
+
+    const std::string target = trim(text.substr(0, equals));
+    size_t position = skipSpace(target, 0);
+    if (position >= target.size() || !identifierStart(target[position])) {
+      return std::nullopt;
+    }
+    const size_t fieldStart = position++;
+    while (position < target.size() && identifierPart(target[position])) {
+      ++position;
+    }
+    IndexedAssignment result;
+    result.field = target.substr(fieldStart, position - fieldStart);
+    const auto field = instance.type->fields.find(result.field);
+    if (field == instance.type->fields.end() ||
+        !field->second.indexedStorage) {
+      return std::nullopt;
+    }
+
+    position = skipSpace(target, position);
+    while (position < target.size() && target[position] == '[') {
+      const auto closing = matchingDelimiter(target, position, '[', ']');
+      if (!closing) {
+        return std::nullopt;
+      }
+      result.indexes.push_back(
+          trim(target.substr(position + 1, *closing - position - 1)));
+      position = skipSpace(target, *closing + 1);
+    }
+    if (result.indexes.empty() || position != target.size()) {
+      return std::nullopt;
+    }
+    result.value = trim(text.substr(equals + 1));
+    if (result.value.empty()) {
+      return std::nullopt;
+    }
+    return result;
+  }
 
   Instance *addInstance(const ClassInfo &type, Instance *parent,
                         const std::string &parentField,
@@ -1136,6 +1256,35 @@ struct CombsOptimizer::Impl {
         }
         continue;
       }
+      if (auto assignment = indexedAssignment(stripped, instance)) {
+        DeferredWrite write;
+        write.id = deferredWrites.size();
+        write.instance = &instance;
+        write.field = assignment->field;
+        for (const std::string &index : assignment->indexes) {
+          write.indexes.push_back(rewrite(index, instance, nullptr, locals));
+          if (!error.empty()) {
+            active.erase(instance.id);
+            return {};
+          }
+        }
+        const std::string value =
+            rewrite(assignment->value, instance, nullptr, locals);
+        if (!error.empty()) {
+          active.erase(instance.id);
+          return {};
+        }
+        output << indent << "s.w" << write.id << "_pending = true;\n";
+        for (size_t dimension = 0; dimension < write.indexes.size();
+             ++dimension) {
+          output << indent << "s.w" << write.id << "_index_" << dimension
+                 << " = " << write.indexes[dimension] << ";\n";
+        }
+        output << indent << "s.w" << write.id << "_value = " << value
+               << ";\n";
+        deferredWrites.push_back(std::move(write));
+        continue;
+      }
       std::string rewritten = rewrite(stripped, instance, nullptr, locals);
       if (!error.empty()) {
         active.erase(instance.id);
@@ -1258,6 +1407,7 @@ struct CombsOptimizer::Impl {
   }
 
   bool emit(const std::string &rootName, const std::string &directory) {
+    deferredWrites.clear();
     findCombExpressions();
     const auto rootType = classes.find(rootName);
     if (rootType == classes.end()) {
@@ -1389,7 +1539,7 @@ struct CombsOptimizer::Impl {
                                                   : rootName.rfind("::") + 2);
     const std::regex staleChunkPattern(
         "^" + shortRoot +
-        R"(_optimized_combs_(?:(?:work|bind|strobe|model)_)?[0-9]+\.cpp$)");
+        R"(_optimized_combs_(?:(?:work|bind|strobe|memory|model)_)?[0-9]+\.cpp$)");
     for (const auto &entry : std::filesystem::directory_iterator(directory)) {
       if (entry.is_regular_file() &&
           std::regex_match(entry.path().filename().string(),
@@ -1437,12 +1587,16 @@ struct CombsOptimizer::Impl {
     constexpr size_t valuesPerChunk = 400;
     constexpr size_t bindingsPerChunk = 400;
     constexpr size_t modelTypesPerChunk = 50;
+    constexpr size_t memoryWritesPerChunk = 400;
     const size_t chunkCount =
         (schedule.size() + valuesPerChunk - 1) / valuesPerChunk;
     const size_t bindChunkCount =
         (bindingStatements.size() + bindingsPerChunk - 1) / bindingsPerChunk;
     const std::vector<std::string> workChunks = splitWork(work, 400);
     const std::vector<std::string> strobeChunks = splitWork(strobe, 400);
+    const size_t memoryChunkCount =
+        (deferredWrites.size() + memoryWritesPerChunk - 1) /
+        memoryWritesPerChunk;
     std::map<std::string, const ClassInfo *> concreteTypes;
     for (const Instance *instance : instances) {
       if (!instance->type->constructorBody.empty() ||
@@ -1462,7 +1616,7 @@ struct CombsOptimizer::Impl {
       error = "cannot write " + internalPath.string();
       return false;
     }
-    internal << "#pragma once\n#include <memory>\n#include "
+    internal << "#pragma once\n#include <cstddef>\n#include <memory>\n#include "
                 "<type_traits>\n#include <utility>\n";
     for (const std::string &include : sourceIncludes) {
       if (!include.ends_with(".h") || headers.contains(include) ||
@@ -1489,6 +1643,21 @@ struct CombsOptimizer::Impl {
                << node.instance->type->name << "&>()." << node.name << "())> p"
                << id << ";\n";
     }
+    for (const DeferredWrite &write : deferredWrites) {
+      internal << "  bool w" << write.id << "_pending{};\n";
+      for (size_t dimension = 0; dimension < write.indexes.size();
+           ++dimension) {
+        internal << "  std::size_t w" << write.id << "_index_" << dimension
+                 << "{};\n";
+      }
+      internal << "  cpphdl::value_type_for_ref_t<decltype(std::declval<"
+               << write.instance->type->name << "&>()." << write.field;
+      for (size_t dimension = 0; dimension < write.indexes.size();
+           ++dimension) {
+        internal << "[0]";
+      }
+      internal << ")> w" << write.id << "_value{};\n";
+    }
     internal << "};\n\n";
     for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_chunk_" << chunk
@@ -1507,6 +1676,11 @@ struct CombsOptimizer::Impl {
     for (size_t chunk = 0; chunk < strobeChunks.size(); ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_strobe_chunk_"
                << chunk << "(" << shortRoot << "&);\n";
+    }
+    for (size_t chunk = 0; chunk < memoryChunkCount; ++chunk) {
+      internal << "void " << shortRoot << "_optimized_combs_memory_chunk_"
+               << chunk << "(" << shortRoot << "&, " << shortRoot
+               << "_optimized_combs_state&);\n";
     }
 
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
@@ -1668,6 +1842,45 @@ struct CombsOptimizer::Impl {
       }
     }
 
+    for (size_t chunk = 0; chunk < memoryChunkCount; ++chunk) {
+      const size_t begin = chunk * memoryWritesPerChunk;
+      const size_t end =
+          std::min(deferredWrites.size(), begin + memoryWritesPerChunk);
+      const std::filesystem::path chunkPath =
+          std::filesystem::path(directory) /
+          (shortRoot + "_optimized_combs_memory_" + std::to_string(chunk) +
+           ".cpp");
+      std::ofstream chunkSource(chunkPath);
+      if (!chunkSource) {
+        error = "cannot write " + chunkPath.string();
+        return false;
+      }
+      std::set<size_t> usedInstances{0};
+      for (size_t position = begin; position < end; ++position) {
+        usedInstances.insert(deferredWrites[position].instance->id);
+      }
+      chunkSource << "#include \"" << shortRoot
+                  << "_optimized_combs_internal.h\"\n\nvoid " << shortRoot
+                  << "_optimized_combs_memory_chunk_" << chunk << "("
+                  << shortRoot << "& obj, " << shortRoot
+                  << "_optimized_combs_state& s) {\n";
+      emitAliases(chunkSource, referencedInstances({}, usedInstances));
+      for (size_t position = begin; position < end; ++position) {
+        const DeferredWrite &write = deferredWrites[position];
+        chunkSource << "  if (s.w" << write.id << "_pending) "
+                    << write.instance->alias << "." << write.field;
+        for (size_t dimension = 0; dimension < write.indexes.size();
+             ++dimension) {
+          chunkSource << "[s.w" << write.id << "_index_" << dimension << "]";
+        }
+        chunkSource << " = s.w" << write.id << "_value;\n";
+      }
+      chunkSource << "}\n";
+      if (!finishOutput(chunkSource, chunkPath)) {
+        return false;
+      }
+    }
+
     std::ofstream source(sourcePath);
     if (!source) {
       error = "cannot write " + sourcePath.string();
@@ -1675,6 +1888,13 @@ struct CombsOptimizer::Impl {
     }
     source << "#include \"" << shortRoot << "_optimized_combs_internal.h\"\n"
            << "#include \"" << shortRoot << "_optimized_combs.h\"\n\n"
+           << "#include <unordered_map>\n\n"
+           << "namespace {\nthread_local std::unordered_map<" << shortRoot
+           << "*, " << shortRoot << "_optimized_combs_state> " << shortRoot
+           << "_optimized_states;\n\n" << shortRoot
+           << "_optimized_combs_state& optimized_state(" << shortRoot
+           << "& obj) {\n  return " << shortRoot
+           << "_optimized_states[std::addressof(obj)];\n}\n}\n\n"
            << "void bind_optimized_ports(" << shortRoot << "& obj) {\n";
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_bind_chunk_" << chunk
@@ -1682,7 +1902,10 @@ struct CombsOptimizer::Impl {
     }
     source << "}\n\n"
            << "void calc_all(" << shortRoot << "& obj) {\n"
-           << "  " << shortRoot << "_optimized_combs_state s;\n";
+           << "  auto& s = optimized_state(obj);\n";
+    for (const DeferredWrite &write : deferredWrites) {
+      source << "  s.w" << write.id << "_pending = false;\n";
+    }
     for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_chunk_" << chunk
              << "(obj, s);\n";
@@ -1691,7 +1914,12 @@ struct CombsOptimizer::Impl {
       source << "  " << shortRoot << "_optimized_combs_work_chunk_" << chunk
              << "(obj, s);\n";
     }
-    source << "}\n\nvoid commit_optimized_regs(" << shortRoot << "& obj) {\n";
+    source << "}\n\nvoid commit_optimized_regs(" << shortRoot << "& obj) {\n"
+           << "  auto& s = optimized_state(obj);\n";
+    for (size_t chunk = 0; chunk < memoryChunkCount; ++chunk) {
+      source << "  " << shortRoot << "_optimized_combs_memory_chunk_" << chunk
+             << "(obj, s);\n";
+    }
     for (size_t chunk = 0; chunk < strobeChunks.size(); ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_strobe_chunk_" << chunk
              << "(obj);\n";
@@ -1705,6 +1933,7 @@ struct CombsOptimizer::Impl {
                  << chunkCount << " comb chunks, " << bindChunkCount
                  << " bind chunks, " << workChunks.size() << " work chunks, "
                  << strobeChunks.size() << " strobe chunks, "
+                 << memoryChunkCount << " memory chunks, "
                  << modelChunkCount << " model chunks\n"
                  << "  " << headerPath.string() << "\n"
                  << "  " << sourcePath.string() << "\n"
