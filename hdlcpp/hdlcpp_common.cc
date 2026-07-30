@@ -37,6 +37,7 @@ struct InstanceConnGen {
     std::string params;
     std::vector<std::string> guards;
     char unbasedUnsizedValue = '\0';
+    std::string semanticRhs;
 };
 
 struct PendingCombGen {
@@ -120,6 +121,9 @@ struct ModuleGen {
     std::map<std::string, std::string> types;
     std::map<std::string, std::string> typeAliases;
     std::map<std::string, std::string> typeWidths;
+    // Value declarations can lower to a wider C++ carrier (for example parameter
+    // bit -> uint64_t). Preserve the SV width separately for expression sizing.
+    std::map<std::string, std::string> valueWidths;
     std::map<std::string, std::map<std::string, std::string>> typeFields;
     std::map<std::string, std::vector<std::string>> typeFieldOrder;
     // C++ logic and array indices are zero based, while packed SV struct fields can
@@ -3877,7 +3881,18 @@ static std::string exprText(const std::string& in)
     replaceAll(s, "'0", "0");
     replaceAll(s, "'1", "1");
     replaceAll(s, "$clog2", "clog2");
-    replaceAll(s, "$random", "random");
+    // A parenthesis-free SystemVerilog system-function call is still an invocation.
+    // Preserve calls that already carry arguments, while adding the missing call syntax
+    // for bare uses such as `wire [31:0] value = $random`.
+    for (size_t pos = 0; (pos = s.find("$random", pos)) != std::string::npos;) {
+        auto next = pos + std::string("$random").size();
+        while (next < s.size() && std::isspace(static_cast<unsigned char>(s[next]))) {
+            ++next;
+        }
+        const auto replacement = next < s.size() && s[next] == '(' ? "random" : "random()";
+        s.replace(pos, std::string("$random").size(), replacement);
+        pos += std::string(replacement).size();
+    }
     replaceAll(s, "$isunknown", "cpphdl::sv_isunknown");
     replaceAll(s, "$signed", "");
     replaceAll(s, "$unsigned", "");
@@ -4834,8 +4849,13 @@ static std::string replaceLogicBraceCasts(std::string s)
             pos += 6;
             continue;
         }
-        s.replace(pos, end - pos + 1, "0");
-        ++pos;
+        // A sized cast around braces is a packed concatenation, not an unsupported
+        // aggregate initializer. Preserve every operand so wide package constants do
+        // not collapse to zero before assignment to their destination field.
+        const auto body = s.substr(gt + 3, end - gt - 4);
+        const auto replacement = s.substr(pos, gt - pos + 2) + "cat{" + body + "})";
+        s.replace(pos, end - pos + 1, replacement);
+        pos += replacement.size();
     }
     return s;
 }
@@ -5052,6 +5072,41 @@ static std::string namedAggregateToConstexprLambda(const std::string& type, cons
         }
         if (trim(value).rfind("{.", 0) == 0 || trim(value).rfind("{ .", 0) == 0) {
             value = namedAggregateToConstexprLambda("std::remove_cvref_t<decltype(v." + name + ")>", value, capture);
+        }
+        auto repeatedElementAssignment = [&](const std::string& text) -> std::optional<std::pair<std::string, std::string>> {
+            const std::string countMarker = "__cpphdl_i < (std::size_t)(";
+            auto countPos = text.find(countMarker);
+            auto bitsPos = text.find("__cpphdl_rep.bits", countPos);
+            if (countPos == std::string::npos || bitsPos == std::string::npos) {
+                return std::nullopt;
+            }
+            auto countOpen = countPos + countMarker.size() - 1;
+            auto countClose = matchingParenClose(text, countOpen);
+            auto bitsOpen = text.find('(', bitsPos);
+            auto bitsClose = matchingParenClose(text, bitsOpen);
+            auto equals = bitsClose == std::string::npos ? std::string::npos : text.find('=', bitsClose + 1);
+            auto semi = equals == std::string::npos ? std::string::npos : text.find(';', equals + 1);
+            if (countClose == std::string::npos || bitsClose == std::string::npos ||
+                equals == std::string::npos || semi == std::string::npos) {
+                return std::nullopt;
+            }
+            auto count = trim(text.substr(countOpen + 1, countClose - countOpen - 1));
+            auto element = trim(text.substr(equals + 1, semi - equals - 1));
+            if (count.empty() || element.empty()) {
+                return std::nullopt;
+            }
+            return std::pair{count, element};
+        };
+        // A packed SV repetition is one complete bit-vector assignment, not N proxy writes.
+        // Building it with constexpr repeat avoids non-constexpr addressable element proxies.
+        // Whole-field assignment also preserves SV truncation and zero-extension semantics.
+        if (auto repeated = repeatedElementAssignment(value)) {
+            out += " [&] { auto __cpphdl_repeated_value = " + repeated->second + ";";
+            out += " using __cpphdl_repeated_t = std::remove_cvref_t<decltype(__cpphdl_repeated_value)>;";
+            out += " constexpr std::size_t __cpphdl_repeated_width = cpphdl::type_width<__cpphdl_repeated_t>();";
+            out += " v." + name + " = cpphdl::repeat<(std::size_t)(" + repeated->first +
+                "), __cpphdl_repeated_width>(cpphdl::pack_value<__cpphdl_repeated_width>(__cpphdl_repeated_value)); }();";
+            continue;
         }
         auto isZeroExpression = [](std::string text) {
             text = stripBalancedOuterParens(trim(std::move(text)));
@@ -5365,6 +5420,18 @@ static std::string constexprStructFieldType(std::string type)
 {
     if ((type.rfind("logic<", 0) == 0 || type.rfind("u<", 0) == 0) && type.back() == '>') {
         return type;
+    }
+    // Packed SV dimensions are part of the struct's bit layout and cpphdl::array
+    // already supports constexpr construction. Converting them to std::array loses
+    // the packed marker and turns a whole-field bit assignment into scalar repetition.
+    if (type.rfind("array<", 0) == 0) {
+        auto compact = type;
+        compact.erase(std::remove_if(compact.begin(), compact.end(), [](unsigned char ch) {
+            return std::isspace(ch);
+        }), compact.end());
+        if (compact.size() >= 6 && compact.compare(compact.size() - 6, 6, ",true>") == 0) {
+            return type;
+        }
     }
     return constexprType(std::move(type));
 }

@@ -1206,7 +1206,10 @@
             auto fieldType = fieldTypeFor(type, field);
             auto fieldWidth = typeWidth(fieldType);
             auto ctype = constexprType(fieldType);
-            if ((fieldType.rfind("logic<", 0) == 0 || ctype == "unsigned" || ctype == "uint64_t" || !fieldWidth.empty()) &&
+            // Only scalar constants need a primitive constexpr conversion. Casting an
+            // aggregate merely because its packed width is known truncates every value
+            // above bit 63 before the destination field can unpack the bitstream.
+            if ((fieldType.rfind("logic<", 0) == 0 || ctype == "unsigned" || ctype == "uint64_t") &&
                 value.find("logic<") != std::string::npos) {
                 value = wrapLogicCastsForConstexprNumeric(std::move(value));
                 changed = true;
@@ -1299,7 +1302,8 @@
                         auto name = tok(d->name);
                         auto init = d->initializer ? cppExprText(d->initializer->toString()).substr(1) : "";
                         auto rawParamType = trim(exprText(pd.type->toString()));
-                        auto type = constexprType(varType(*pd.type, *d));
+                        auto declaredType = varType(*pd.type, *d);
+                        auto type = constexprType(declaredType);
                         if (rawParamType.find("unsigned") == std::string::npos) {
                             if (rawParamType == "int" || rawParamType == "integer" ||
                                 rawParamType == "signed int" || rawParamType == "signed integer") {
@@ -1328,6 +1332,9 @@
                             trackedType = "array<" + trackedType.substr(std::strlen("std::array<"));
                         }
                         mod->types[name] = trackedType;
+                        if (auto width = foldWidth(typeWidth(declaredType)); !width.empty()) {
+                            mod->valueWidths[name] = width;
+                        }
                         if (!init.empty()) {
                             init = trim(init);
                             init = replaceSystemBitsOfKnownTypes(std::move(init), "cpphdl");
@@ -1947,6 +1954,9 @@
         for (auto d : node.declarators) {
             auto name = tok(d->name);
             auto type = varType(*node.type, *d);
+            if (auto width = foldWidth(typeWidth(type)); !width.empty()) {
+                mod->valueWidths[name] = width;
+            }
             auto ctype = constexprType(type);
             auto init = d->initializer ? cppExprText(d->initializer->toString()).substr(1) : "{}";
             if (d->initializer && d->initializer->expr &&
@@ -2552,9 +2562,11 @@
                 if (expr) {
                     auto rhs = emitExpr(*expr);
                     auto lhs = emitLValue(*expr);
+                    auto semanticRhs = exprText(expr->toString());
                     auto unbasedValue = isUnbasedUnsizedLiteralExpr(*expr, '1') ? '1' : '\0';
                     mod->instanceConns.push_back(InstanceConnGen{
-                        name, type, port, rhs, lhs, true, instanceParams, {}, unbasedValue});
+                        name, type, port, rhs, lhs, true, instanceParams, {}, unbasedValue,
+                        semanticRhs});
                 }
                 else if (implicitNamed) {
                     auto connText = conn->toString();
@@ -3310,11 +3322,13 @@
                     if (isClockPortName(port)) {
                         continue;
                     }
-                    std::string rhs;
-                    std::string lhs;
-                    if (connectionExpr) {
-                        rhs = emitExpr(*connectionExpr);
-                        lhs = emitLValue(*connectionExpr);
+	                    std::string rhs;
+	                    std::string lhs;
+	                    std::string semanticRhs;
+	                    if (connectionExpr) {
+	                        rhs = emitExpr(*connectionExpr);
+	                        lhs = emitLValue(*connectionExpr);
+	                        semanticRhs = exprText(connectionExpr->toString());
                     }
                     else if (implicitNamed) {
                         auto mapped = mod->wireMap.count(port) ? mod->wireMap[port] : port;
@@ -3324,8 +3338,9 @@
                     else {
                         continue;
                     }
-                    applyGenerateReplacements(rhs);
-                    applyGenerateReplacements(lhs);
+	                    applyGenerateReplacements(rhs);
+	                    applyGenerateReplacements(lhs);
+	                    applyGenerateReplacements(semanticRhs);
                     if (isOutput) {
                         auto outExpr = elem + "." + portName + "()";
                         if (portType.rfind("array<", 0) == 0 || portType.rfind("std::array<", 0) == 0) {
@@ -3369,16 +3384,25 @@
                         }
                         addCombAssignment(*mod, outBase, lhs, outExpr, methodLoopHeaders);
                     }
-                    else {
-                        if (isInterfacePort) {
+	                    else {
+	                        if (isInterfacePort) {
                             mod->assignLines.push_back("    " + elem + "." + portName + " = " + assignRefWrapper(rhs, "i") + ";");
-                            continue;
-                        }
-                        auto rhsWasZeroLiteral = isZeroLiteralText(rhs);
+	                            continue;
+	                        }
+	                        std::string projectedSourceType;
+	                        if (auto projected = projectedInputFieldAccess(
+	                                *mod, semanticRhs, &projectedSourceType);
+	                            !projected.empty()) {
+	                            rhs = projected;
+	                        }
+	                        auto rhsWasZeroLiteral = isZeroLiteralText(rhs);
                         auto rawRhsBase = baseFromLValueText(rhs);
                         auto actualPortType = "std::remove_cvref_t<decltype(" + elem + "." + portName + "())>";
                         if (portTypeKnown) {
-                            auto sourceTypeBeforeLateBind = expressionStorageType(*mod, rhs);
+	                            auto sourceTypeBeforeLateBind = expressionStorageType(*mod, rhs);
+	                            if (sourceTypeBeforeLateBind.empty() && !projectedSourceType.empty()) {
+	                                sourceTypeBeforeLateBind = projectedSourceType;
+	                            }
                             auto target = trim(portType);
                             if (portTypeUsesChildTypeParam) {
                                 target = actualPortType;
@@ -3611,11 +3635,14 @@
                     if (expr) {
                         auto rhs = emitExpr(*expr);
                         auto lhs = emitLValue(*expr);
+                        auto semanticRhs = exprText(expr->toString());
                         applyGenerateReplacements(rhs);
                         applyGenerateReplacements(lhs);
+                        applyGenerateReplacements(semanticRhs);
                         auto unbasedValue = isUnbasedUnsizedLiteralExpr(*expr, '1') ? '1' : '\0';
                         mod->instanceConns.push_back(InstanceConnGen{
-                            name, type, port, rhs, lhs, true, instanceParams, methodLoopHeaders, unbasedValue});
+                            name, type, port, rhs, lhs, true, instanceParams, methodLoopHeaders,
+                            unbasedValue, semanticRhs});
                     }
                     else if (implicitNamed) {
                         auto connText = conn->toString();
@@ -4595,6 +4622,68 @@
             }
         }
 
+        struct PackedArrayFieldAssignment {
+            std::string selectedElement;
+            std::string elementType;
+            std::string field;
+        };
+        auto packedArrayFieldAssignment = [&]()
+            -> std::optional<PackedArrayFieldAssignment> {
+            auto arrayType = unwrapRegType(resolveAliasValueType(retType));
+            auto args = templateArgsFor(
+                arrayType,
+                arrayType.rfind("std::array<", 0) == 0 ? "std::array" : "array");
+            if (args.size() < 3 || trim(args[2]) != "true") {
+                return std::nullopt;
+            }
+            auto lhsText = trim(bodyLhs);
+            auto opening = lhsText.find('[');
+            if (opening == std::string::npos) {
+                return std::nullopt;
+            }
+            int depth = 0;
+            size_t closing = std::string::npos;
+            for (size_t index = opening; index < lhsText.size(); ++index) {
+                if (lhsText[index] == '[') {
+                    ++depth;
+                }
+                else if (lhsText[index] == ']' && --depth == 0) {
+                    closing = index;
+                    break;
+                }
+            }
+            if (closing == std::string::npos) {
+                return std::nullopt;
+            }
+            auto member = closing + 1;
+            while (member < lhsText.size() &&
+                   std::isspace(static_cast<unsigned char>(lhsText[member]))) {
+                ++member;
+            }
+            if (member >= lhsText.size() || lhsText[member] != '.') {
+                return std::nullopt;
+            }
+            auto field = trim(lhsText.substr(member + 1));
+            if (field.empty() || field.find_first_not_of(
+                                     "abcdefghijklmnopqrstuvwxyz"
+                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.") !=
+                                     std::string::npos) {
+                return std::nullopt;
+            }
+            return PackedArrayFieldAssignment{
+                trim(lhsText.substr(0, closing + 1)), trim(args[0]), field};
+        }();
+        auto packedArrayFieldAssignmentLine = [&]() {
+            const auto& assignment = *packedArrayFieldAssignment;
+            return assignment.selectedElement + " = ([&]() -> " +
+                assignment.elementType + " { auto __cpphdl_elem = " +
+                "cpphdl::unpack_value<" + assignment.elementType +
+                ">(cpphdl::pack_value<cpphdl::type_width<" +
+                assignment.elementType + ">()>(" + assignment.selectedElement +
+                ")); __cpphdl_elem." + assignment.field + " = " + finalRhs +
+                "; return __cpphdl_elem; })();";
+        };
+
         auto wholeArrayAssignmentNeedsElementUnpack = [&]() {
             auto lhsText = trim(bodyLhs);
             if (lhsText.empty() || lhsText.find('[') != std::string::npos ||
@@ -4646,10 +4735,24 @@
                     appendContinuousLine(line);
                 }
             }
-            appendContinuousLine("    " + bodyLhs + " = " + finalRhs + ";");
+            if (packedArrayFieldAssignment) {
+                // Packed array indexing returns a proxy without aggregate members.
+                // Materialize the declared element, update its requested field, and
+                // write it back so generated child-output connections remain valid.
+                appendContinuousLine("    " + packedArrayFieldAssignmentLine());
+            }
+            else {
+                appendContinuousLine("    " + bodyLhs + " = " + finalRhs + ";");
+            }
             for (size_t n = 0; n < orderedLoopHeaders.size(); ++n) {
                 appendContinuousLine("}");
             }
+        }
+        else if (packedArrayFieldAssignment) {
+            // Continuous child outputs can also target one packed aggregate field.
+            // Use the same read-modify-write operation when no generate loop wraps
+            // the connection, preserving all sibling fields of the packed element.
+            appendContinuousLine(packedArrayFieldAssignmentLine());
         }
         else if (wholeArrayAssignmentNeedsElementUnpack()) {
             auto targetType = unwrapRegType(expressionStorageType(target, bodyLhs));
@@ -5457,6 +5560,12 @@
             if (st.expr->kind == SyntaxKind::AssignmentExpression || st.expr->kind == SyntaxKind::NonblockingAssignmentExpression) {
                 auto& b = st.expr->as<BinaryExpressionSyntax>();
                 auto name = assignedBase(*b.left);
+                // Slang can represent selected aggregate lvalues in syntax forms that the
+                // structural expression walker does not recognize. Recover the root from
+                // the source lvalue so sequential storage classification is never dropped.
+                if (name.empty()) {
+                    name = baseFromLValueText(exprText(b.left->toString()));
+                }
                 if (!name.empty()) {
                     found.insert(name);
                     if (nonblocking && st.expr->kind == SyntaxKind::NonblockingAssignmentExpression) {
@@ -6798,27 +6907,41 @@
             return false;
         };
         auto getterType = [&](const std::string& getterName) {
+            auto methodReturnType = [](const MethodGen& method) {
+                auto ret = trim(method.ret);
+                while (!ret.empty() && (ret.back() == '&' || ret.back() == '*')) {
+                    ret.pop_back();
+                    ret = trim(std::move(ret));
+                }
+                return ret == "void" ? std::string{} : ret;
+            };
             for (const auto& sourcePort : m.ports) {
                 if (sourcePort.name == getterName) {
                     return sourcePort.type;
                 }
             }
+            if (hasSuffix(getterName, "_comb_func")) {
+                auto base = getterName.substr(0, getterName.size() - std::string("_comb_func").size());
+                if (auto methodIt = m.combMethodByBase.find(base);
+                    methodIt != m.combMethodByBase.end() && methodIt->second < m.methods.size()) {
+                    auto ret = methodReturnType(m.methods[methodIt->second]);
+                    if (!ret.empty()) {
+                        return ret;
+                    }
+                }
+            }
             for (const auto& method : m.methods) {
                 if (method.name == getterName) {
+                    auto ret = methodReturnType(method);
+                    if (!ret.empty() && ret != "void") {
+                        return ret;
+                    }
                     auto returnName = method.returnName.empty() ? method.returnBase : method.returnName;
                     if (auto typeIt = m.combReturnTypes.find(returnName); typeIt != m.combReturnTypes.end()) {
                         return typeIt->second;
                     }
                     if (auto typeIt = m.types.find(returnName); typeIt != m.types.end()) {
                         return typeIt->second;
-                    }
-                    auto ret = trim(method.ret);
-                    while (!ret.empty() && (ret.back() == '&' || ret.back() == '*')) {
-                        ret.pop_back();
-                        ret = trim(std::move(ret));
-                    }
-                    if (!ret.empty() && ret != "void") {
-                        return ret;
                     }
                 }
             }
@@ -7151,7 +7274,7 @@
                 line.find("_ASSIGN_COMB_I(", eq) != std::string::npos ||
                 line.find("_ASSIGN_COMB_J(", eq) != std::string::npos ||
                 line.find("_ASSIGN_COMB_IJ(", eq) != std::string::npos;
-            if (indexedComb && arg.find('[') != std::string::npos) {
+            if (indexedComb && arg.find('[') != std::string::npos && !getterAddressableArg(arg)) {
                 setAssignValue();
             }
         };
@@ -7327,7 +7450,7 @@
             if ((sourceType.empty() ||
                  trim(postProcessCppLine(resolvedSourceType)) == trim(postProcessCppLine(resolvedPortType))) &&
                 getterAddressableArg(arg)) {
-                setAssignValue();
+                setAssignComb();
                 return line;
             }
             if (isSimpleCombRef(arg) && (sourceType.empty() || sourceType == portType)) {
