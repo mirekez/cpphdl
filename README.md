@@ -37,7 +37,8 @@ the concrete hierarchy rooted at `ROOT`. `--optimize-combs-l1 ROOT` additionally
 schedules cache-backed procedural comb methods once, resolves trivial port
 wrappers across module boundaries, and merges type-compatible exact comb
 expressions. The L1 mode avoids memoization calls and clock checks in the
-generated comb schedule.
+generated comb schedule. You can use generated code instead of original
+_work() and xxx_comb_func() functions to execute it up to 10 times faster.
 
 ```sh
 build/cpphdl --optimize-combs-l1 Top --generated-dir generated Top.h -Iinclude
@@ -52,7 +53,6 @@ This work is not subsidized or paid.
 ## development plan
 
 - asynchronous resets
-- CDC approach
 - comb. hierarchy checks
 - regs/luts usage estimation
 - timing estimation

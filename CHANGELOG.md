@@ -1,3 +1,5 @@
+ - CDC initial code and tests
+
 # 1.2
 
  - Multicore Tribe CPU and multicore L2Cache

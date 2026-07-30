@@ -51,6 +51,11 @@ foreach(src ${TEST_SOURCES})
     include_directories("../include")
 
     set(cpphdl_json_args "")
+    set(cpphdl_clock_args "")
+    if(rel_path STREQUAL "cdc/TwoClocksCdc.cpp")
+        set(cpphdl_clock_args
+            "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
+    endif()
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
@@ -64,7 +69,7 @@ foreach(src ${TEST_SOURCES})
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_json_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_json_args} ${cpphdl_clock_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
     )
 
@@ -82,6 +87,22 @@ foreach(src ${TEST_SOURCES})
         TIMEOUT 600
     )
 
+endforeach()
+
+foreach(cdc_failure_case secondary_without_primary secondary_above_primary missing_methods invalid_reset_signature)
+    if(cdc_failure_case STREQUAL "invalid_reset_signature")
+        set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/InvalidResetSignature.h)
+    else()
+        set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/MissingClockMethods.h)
+    endif()
+    add_test(NAME cdc_${cdc_failure_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${cdc_failure_source}
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_cdc_missing_methods
+            -DCASE=${cdc_failure_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cdc/ExpectFailure.cmake)
 endforeach()
 
 set(CPPHDL_NBA_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_nonblocking_memory")
