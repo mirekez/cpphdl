@@ -34,6 +34,7 @@ public:
 
     L1PeerInvalidateComb result(size_t target)
     {
+        ++_system_clock;
         return peer_invalidate_comb_func()[target];
     }
 };

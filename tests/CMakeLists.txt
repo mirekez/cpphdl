@@ -12,6 +12,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent CppHDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# This source is an integration driver for two optimizer-generated trees.
+# Its custom target is declared below instead of using the converter loop.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/optimize_l1\\.cpp$")
 
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -149,3 +152,62 @@ set_target_properties(optimizer_procedural_comb PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
 add_test(NAME optimizer_procedural_comb
          COMMAND "$<TARGET_FILE:optimizer_procedural_comb>")
+
+set(CPPHDL_OPTIMIZE_L1_NORMAL_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_l1_normal")
+set(CPPHDL_OPTIMIZE_L1_L1_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_l1_l1")
+set(CPPHDL_OPTIMIZE_L1_MODEL
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeL1.h")
+
+function(cpphdl_generate_optimize_l1_fixture mode directory output_var)
+    set(generated
+        "${directory}/OptimizeL1_optimized_combs.cpp"
+        "${directory}/OptimizeL1_optimized_combs.h"
+        "${directory}/OptimizeL1_optimized_combs_internal.h"
+        "${directory}/OptimizeL1_optimized_combs_0.cpp"
+        "${directory}/OptimizeL1_optimized_combs_work_0.cpp"
+        "${directory}/OptimizeL1_optimized_combs_strobe_0.cpp")
+    add_custom_command(
+        OUTPUT ${generated}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${directory}"
+        COMMAND "$<TARGET_FILE:cpphdl>"
+                "${mode}" OptimizeL1
+                --generated-dir "${directory}"
+                "${CPPHDL_OPTIMIZE_L1_MODEL}"
+                -I"${CMAKE_SOURCE_DIR}/include"
+        DEPENDS cpphdl "${CPPHDL_OPTIMIZE_L1_MODEL}"
+        VERBATIM)
+    set(${output_var} ${generated} PARENT_SCOPE)
+endfunction()
+
+cpphdl_generate_optimize_l1_fixture(
+    --optimize-combs "${CPPHDL_OPTIMIZE_L1_NORMAL_DIR}"
+    CPPHDL_OPTIMIZE_L1_NORMAL_GENERATED)
+cpphdl_generate_optimize_l1_fixture(
+    --optimize-combs-l1 "${CPPHDL_OPTIMIZE_L1_L1_DIR}"
+    CPPHDL_OPTIMIZE_L1_L1_GENERATED)
+
+add_custom_target(combs_optimize_l1_generated
+    DEPENDS ${CPPHDL_OPTIMIZE_L1_NORMAL_GENERATED}
+            ${CPPHDL_OPTIMIZE_L1_L1_GENERATED})
+add_executable(combs_optimize_l1
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/optimize_l1.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_0.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_strobe_0.cpp")
+add_dependencies(combs_optimize_l1 combs_optimize_l1_generated)
+target_include_directories(combs_optimize_l1 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}")
+cpphdl_link_stdcxxexp_if_available(combs_optimize_l1)
+cpphdl_add_host_opt_flags(combs_optimize_l1)
+target_compile_options(combs_optimize_l1 PRIVATE "-fno-strict-aliasing")
+target_compile_definitions(combs_optimize_l1 PRIVATE
+    CPPHDL_OPTIMIZE_L1_NORMAL_DIR="${CPPHDL_OPTIMIZE_L1_NORMAL_DIR}"
+    CPPHDL_OPTIMIZE_L1_L1_DIR="${CPPHDL_OPTIMIZE_L1_L1_DIR}")
+set_target_properties(combs_optimize_l1 PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME combs_optimize_l1 COMMAND "$<TARGET_FILE:combs_optimize_l1>")

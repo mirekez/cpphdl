@@ -769,7 +769,7 @@ struct CombsOptimizer::Impl {
             }
           }
         }
-        output += child->second->alias;
+        output += child->second->alias + ".";
         index = afterIdentifier + 2;
         continue;
       }
@@ -1596,6 +1596,7 @@ struct CombsOptimizer::Impl {
             std::istringstream input(bodyInterior(body));
             std::string line;
             bool skipGuardReturn = false;
+            bool skipGuardClosingBrace = false;
             while (std::getline(input, line)) {
               const std::string statement = trim(line);
               const std::string cache = methodName + "_cache";
@@ -1604,10 +1605,16 @@ struct CombsOptimizer::Impl {
                   std::string::npos) {
                 skipGuardReturn =
                     statement.find("return " + cache) == std::string::npos;
+                skipGuardClosingBrace =
+                    skipGuardReturn && statement.ends_with('{');
                 continue;
               }
               if (skipGuardReturn && statement == "return " + cache + ";") {
                 skipGuardReturn = false;
+                continue;
+              }
+              if (skipGuardClosingBrace && statement == "}") {
+                skipGuardClosingBrace = false;
                 continue;
               }
               if (statement == clock + " = _system_clock;") {

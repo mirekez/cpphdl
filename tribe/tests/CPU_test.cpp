@@ -138,6 +138,31 @@ static bool build_cpu_fence_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_sfence_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_sfence.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr_zifencei -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " -I " + shell_quote(code_dir);
+    cmd += " " + shell_quote(code_dir / "c_start.S");
+    cmd += " " + shell_quote(code_dir / "cpu_sfence.c");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU SFENCE.VMA/FENCE.I bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool build_cpu_bytecopy_elf()
 {
     const auto code_dir = tribe_code_dir();
@@ -320,6 +345,33 @@ static bool run_cpu_fence_cpp(bool debug)
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU fence");
 }
 
+static bool run_cpu_sfence_cpp(bool debug)
+{
+    const auto expected = std::filesystem::current_path() / "cpu_sfence.expected";
+    if (!write_file(expected, "SFENCE\n")) {
+        return false;
+    }
+
+    TestTribe test(debug);
+    bool ok = test.run((std::filesystem::current_path() / "cpu_sfence.elf").string(),
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU SFENCE.VMA/FENCE.I");
+    const auto perf = test.perf_snapshot();
+
+    constexpr uint64_t icache_sets =
+        L1_ICACHE_SIZE / CACHE_LINE_SIZE / L1_CACHE_ASSOCIATIONS;
+    constexpr uint64_t expected_init_wait = 2 * icache_sets;
+    // Reset and the single FENCE.I each sweep the I-cache once. The 16
+    // SFENCE.VMA instructions must invalidate only address translations.
+    if (perf.icache_init_wait != expected_init_wait) {
+        std::print("unexpected I-cache initialization after SFENCE.VMA/FENCE.I: {} cycles, expected {}\n",
+            perf.icache_init_wait, expected_init_wait);
+        return false;
+    }
+    return ok;
+}
+
 static bool run_cpu_trap_ra_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_trap_ra.elf").string(),
@@ -453,6 +505,7 @@ static bool check_system_decode_has_no_decode_branch()
         {0x0ff0000f, Sys::FENCE, "fence iorw,iorw"},
         {0x0440000f, Sys::FENCE, "fence w,o"},
         {0x0000100f, Sys::FENCEI, "fence.i"},
+        {0x12000073, Sys::SFENCE_VMA, "sfence.vma"},
         {0xffffffff, Sys::TRAP, "illegal"},
     };
 
@@ -661,6 +714,13 @@ int main(int argc, char** argv)
     if (run_selected("fence")) {
         ok = ok && build_cpu_fence_elf();
         ok = ok && run_cpu_fence_cpp(debug);
+    }
+    // Scenario: SFENCE.VMA invalidates translations but must not clear the
+    // instruction cache. The final FENCE.I proves that cache invalidation still
+    // occurs for the instruction that architecturally requires it.
+    if (run_selected("sfence")) {
+        ok = ok && build_cpu_sfence_elf();
+        ok = ok && run_cpu_sfence_cpp(debug);
     }
     // Scenario: byte loads and stores around unaligned offsets must observe
     // dirty cached data instead of bypassing to stale RAM contents.

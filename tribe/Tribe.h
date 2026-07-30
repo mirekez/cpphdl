@@ -1250,14 +1250,15 @@ private:
     }
 #endif
 
-    // FENCE.I and SFENCE.VMA both discard I-cache contents before fetching translated code again.
+    // FENCE.I discards fetched instructions. SFENCE.VMA invalidates address
+    // translations only and must not turn every context switch into an I-cache clear.
     _LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb =
 #ifdef MULTICORE
             remote_fence_i_in() ||
 #endif
             (state_reg[0].valid &&
-            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+            state_reg[0].sys_op == Sys::FENCEI &&
             !memory_wait_comb_func() && !icache_invalidate_issued_reg);
     }
 
@@ -1776,13 +1777,11 @@ public:
         dcache._work(reset);
         bp._work(reset);
 
-        if (state_reg[0].valid &&
-            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI &&
             !memory_wait_comb_func()) {
             icache_invalidate_issued_reg._next = true;
         }
-        else if (!state_reg[0].valid ||
-                 (state_reg[0].sys_op != Sys::FENCEI && state_reg[0].sys_op != Sys::SFENCE_VMA)) {
+        else if (!state_reg[0].valid || state_reg[0].sys_op != Sys::FENCEI) {
             icache_invalidate_issued_reg._next = false;
         }
 
