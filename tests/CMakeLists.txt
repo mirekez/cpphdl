@@ -14,7 +14,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 # This source is an integration driver for two optimizer-generated trees.
 # Its custom target is declared below instead of using the converter loop.
-list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/optimize_l1\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeL1\\.cpp$")
 
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -229,7 +229,7 @@ add_custom_target(combs_optimize_l1_generated
     DEPENDS ${CPPHDL_OPTIMIZE_L1_NORMAL_GENERATED}
             ${CPPHDL_OPTIMIZE_L1_L1_GENERATED})
 add_executable(combs_optimize_l1
-    "${CMAKE_CURRENT_SOURCE_DIR}/combs/optimize_l1.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeL1.cpp"
     "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs.cpp"
     "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_0.cpp"
     "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_work_0.cpp"
