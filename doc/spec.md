@@ -976,70 +976,6 @@ Use this sequence in native CppHDL and Verilator testbenches:
 
 `test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native CppHDL and Verilator flows.
 
-### Asynchronous reset handlers
-
-&nbsp;&nbsp;&nbsp;&nbsp;A named clock process can move its reset assignments out of the synchronous work method and into an optional asynchronous-reset handler:
-
-```cpp
-void _reset_pos_fast_clk()
-{
-    fast_state_reg.clr();
-}
-
-void _reset_neg_fast_clk()
-{
-    fast_neg_state_reg.clr();
-}
-```
-
-`_reset_pos_<clk_name>()` resets state owned by the positive-edge process for `<clk_name>`. `_reset_neg_<clk_name>()` resets state owned by that clock's negative-edge process. The `pos` and `neg` parts identify the **clock edge**, not reset polarity. Both handlers use the existing shared, active-high `reset` input and generate `posedge reset` sensitivity:
-
-```systemverilog
-always_ff @(posedge fast_clk or posedge reset) begin
-    if (reset) begin
-        _reset_pos_fast_clk();
-    end
-    else begin
-        _work_fast_clk(reset);
-    end
-end
-
-always_ff @(negedge fast_clk or posedge reset) begin
-    if (reset) begin
-        _reset_neg_fast_clk();
-    end
-    else begin
-        _work_neg_fast_clk(reset);
-    end
-end
-```
-
-The handlers follow these rules:
-
-* A reset handler has `void` return type and no arguments.
-* `_reset_neg_<clk_name>()` requires the corresponding `_work_neg_<clk_name>(bool)` and `_strobe_neg_<clk_name>()` process.
-* A handler may modify only registers owned by its matching clock and edge.
-* Registers changed by `_reset_pos_<clk_name>()` must be strobed by `_strobe_<clk_name>()`.
-* Registers changed by `_reset_neg_<clk_name>()` must be strobed by `_strobe_neg_<clk_name>()`.
-* If a process has no asynchronous-reset handler, its existing synchronous reset behavior is unchanged.
-
-&nbsp;&nbsp;&nbsp;&nbsp;In native C++ simulation, an asynchronous assertion is an explicit event. Call every applicable reset handler and then its matching strobe method without waiting for a clock edge:
-
-```cpp
-dut._reset_pos_fast_clk();
-dut._strobe_fast_clk();
-dut._reset_neg_fast_clk();
-dut._strobe_neg_fast_clk();
-dut._reset_pos_slow_clk();
-dut._strobe_slow_clk();
-```
-
-While reset remains asserted, a native clock scheduler must select the reset handler instead of the normal work method on each matching edge. In Verilator, drive `reset` from `0` to `1` and call `eval()`; no clock transition is required. Deasserting reset does not itself execute work. Normal state changes resume on subsequent clock edges.
-
-Asynchronous assertion does not make release timing safe automatically. The shared reset must be deasserted in accordance with every domain's recovery/removal requirements, normally through a per-domain synchronized release. CppHDL does not model metastability or prove this timing.
-
-`tests/reset/AsyncReset.cpp` checks asynchronous assertion with stationary clocks, held reset, release behavior, positive- and negative-edge ownership, generated sensitivity lists, native C++ execution, and Verilator execution.
-
 ## Native and Verilator simulation
 
 &nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. On an active edge, call the work method before the matching strobe method:
@@ -1119,6 +1055,41 @@ The following behavior cannot presently be validated or fully represented by Cpp
 * Power-domain isolation and level-shifter behavior
 
 These limits require dedicated CDC analysis, static timing analysis, physical implementation constraints, and hardware signoff outside CppHDL.
+
+\newpage
+
+# Asynchronous Reset
+
+&nbsp;&nbsp;&nbsp;&nbsp;Named clock processes support asynchronous assertion through optional active-high reset handlers:
+
+```cpp
+void _reset_pos_fast_clk()
+{
+    fast_state_reg.clr();
+}
+
+void _reset_neg_fast_clk()
+{
+    fast_neg_state_reg.clr();
+}
+```
+
+`_reset_pos_<clk_name>()` belongs to the positive clock-edge process, while `_reset_neg_<clk_name>()` belongs to the negative clock-edge process. The suffix describes the clock edge, not reset polarity. Generated RTL uses the shared active-high `reset`:
+
+```systemverilog
+always_ff @(posedge fast_clk or posedge reset) begin
+    if (reset)
+        _reset_pos_fast_clk();
+    else
+        _work_fast_clk(reset);
+end
+```
+
+Reset handlers must return `void`, take no arguments, and modify only registers owned and strobed by the matching clock edge. A negative-edge handler requires matching `_work_neg_<clk_name>(bool)` and `_strobe_neg_<clk_name>()` methods.
+
+In native simulation, call the reset handler followed by its matching strobe method when reset is asserted. In Verilator, change `reset` from `0` to `1` and call `eval()`; no clock edge is required. Reset release must still satisfy each clock domain's recovery/removal requirements, normally through synchronized release logic.
+
+See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 
 # CppHDL SV Conversion tool
 
