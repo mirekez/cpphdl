@@ -120,6 +120,8 @@ public:
     _PORT(uint32_t)  imem_read_addr_out;
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
     _PORT(bool)      atomic_request_out = _ASSIGN_COMB(atomic_request_comb_func());
+    _PORT(bool)      atomic_data_request_out = _ASSIGN_COMB(atomic_data_request_comb_func());
+    _PORT(bool)      atomic_complete_out = _ASSIGN_COMB(atomic_complete_comb_func());
     _PORT(bool)      atomic_grant_in = _ASSIGN(true);
 #endif
 #ifdef ENABLE_MMU_TLB
@@ -642,6 +644,21 @@ private:
         return atomic_request_comb =
             (state_reg[0].valid && state_reg[0].amo_op != Amo::AMONONE) ||
             (state_reg[1].valid && state_reg[1].amo_op != Amo::AMONONE);
+    }
+
+    // Classify the currently driven D-memory request independently from a
+    // younger AMO waiting in execute, so the cluster does not hide an older
+    // ordinary response when it grants atomic ownership.
+    _LAZY_COMB(atomic_data_request_comb, bool)
+        return atomic_data_request_comb = state_reg[1].valid &&
+            state_reg[1].amo_op != Amo::AMONONE;
+    }
+
+    // End cluster ownership when the memory-stage AMO can retire. Looking only
+    // for an empty AMO pipeline deadlocks on tight back-to-back AMO loops.
+    _LAZY_COMB(atomic_complete_comb, bool)
+        return atomic_complete_comb = atomic_grant_in() && state_reg[1].valid &&
+            state_reg[1].amo_op != Amo::AMONONE && !memory_wait_comb_func();
     }
 
 #endif
@@ -1174,7 +1191,7 @@ private:
             csr_state_comb.csr_op = Csr::CNONE;
         }
 #ifdef ENABLE_MMU_TLB
-        if (immu.fault_out() && !state_reg[0].valid) {
+        if (immu.fault_out() && !state_reg[0].valid && !state_reg[1].valid) {
             csr_state_comb = State{};
             csr_state_comb.valid = true;
             csr_state_comb.pc = fetch_addr_comb_func();
@@ -1233,14 +1250,15 @@ private:
     }
 #endif
 
-    // FENCE.I and SFENCE.VMA both discard I-cache contents before fetching translated code again.
+    // FENCE.I discards fetched instructions. SFENCE.VMA invalidates address
+    // translations only and must not turn every context switch into an I-cache clear.
     _LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb =
 #ifdef MULTICORE
             remote_fence_i_in() ||
 #endif
             (state_reg[0].valid &&
-            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+            state_reg[0].sys_op == Sys::FENCEI &&
             !memory_wait_comb_func() && !icache_invalidate_issued_reg);
     }
 
@@ -1356,13 +1374,13 @@ public:
     void _work(bool reset)
     {
 #ifndef SYNTHESIS
-        const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
-        const char* trace_pc_write_target_env = std::getenv("TRIBE_TRACE_PC_WRITE_TARGET");
-        const char* trace_pc_write_reason_env = std::getenv("TRIBE_TRACE_PC_WRITE_REASON");
-        const char* trace_pc_write_file_env = std::getenv("TRIBE_TRACE_PC_WRITE_FILE");
-        const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
-        const bool trace_pc_write_zero_only = std::getenv("TRIBE_TRACE_PC_WRITE_ZERO_ONLY") != nullptr;
-        const bool trace_pc_write_user_kernel = std::getenv("TRIBE_TRACE_PC_WRITE_USER_KERNEL") != nullptr;
+        static const char* trace_pc_write_from_env = std::getenv("TRIBE_TRACE_PC_WRITE_FROM");
+        static const char* trace_pc_write_target_env = std::getenv("TRIBE_TRACE_PC_WRITE_TARGET");
+        static const char* trace_pc_write_reason_env = std::getenv("TRIBE_TRACE_PC_WRITE_REASON");
+        static const char* trace_pc_write_file_env = std::getenv("TRIBE_TRACE_PC_WRITE_FILE");
+        static const bool trace_pc_write_all = std::getenv("TRIBE_TRACE_PC_WRITE_ALL") != nullptr;
+        static const bool trace_pc_write_zero_only = std::getenv("TRIBE_TRACE_PC_WRITE_ZERO_ONLY") != nullptr;
+        static const bool trace_pc_write_user_kernel = std::getenv("TRIBE_TRACE_PC_WRITE_USER_KERNEL") != nullptr;
         const uint32_t trace_pc_write_target = trace_pc_write_target_env != nullptr ?
             (uint32_t)std::strtoul(trace_pc_write_target_env, nullptr, 0) : 0;
         auto trace_pc_write = [&](const char* reason, uint32_t next_pc) {
@@ -1402,7 +1420,8 @@ public:
                 }
             }
             FILE* trace_pc_write_out = trace_pc_write_file != nullptr ? trace_pc_write_file : stdout;
-            std::print(trace_pc_write_out, "trace-pc-write cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} hazard={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_wb={} state0_rd={} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x} state1_wb={} state1_rd={}",
+            std::print(trace_pc_write_out, "trace-pc-write inst={} cycle={} reason={} pc={:08x} next={:08x} valid={} fetch_valid={} memwait={} stall={} hazard={} branch_mispredict={} branch_target={:08x} predicted={:08x} state0_valid={} state0_pc={:08x} state0_wb={} state0_rd={} state0_sys={} state0_trap={} state0_br={} state1_valid={} state1_pc={:08x} state1_wb={} state1_rd={}",
+                __inst_name,
                 _system_clock,
                 reason,
                 old_pc,
@@ -1499,6 +1518,7 @@ public:
         }
         else
         if (!reset && state_reg[0].valid &&
+            !memory_wait_comb_func() &&
             !sbi_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
@@ -1533,15 +1553,21 @@ public:
             ;
         }
         else
-        if (!reset && immu.fault_out() && state_reg[0].valid && !dmmu_active_fault_comb_func()) {
-            // Fetch faults are younger than the execute-stage instruction.
-            // Drain that instruction first so JAL/JALR links and xRET privilege
-            // changes retire before any trap caused by the next fetch.
+        if (!reset && immu.fault_out() && (state_reg[0].valid || state_reg[1].valid) &&
+            !dmmu_active_fault_comb_func() && !memory_wait_comb_func()) {
+            // Fetch faults are younger than both pipeline stages. Drain one
+            // stage per cycle so loads and JAL/JALR links retire before the
+            // fault updates sepc and flushes the pipe. A waiting memory-stage
+            // instruction is held by the normal memory-wait path below.
             pc._next = pc;
 #ifndef SYNTHESIS
             trace_pc_write("fetch-fault-drain", (uint32_t)pc);
 #endif
-            valid._next = false;
+            // Keep the faulting translation request asserted while the older
+            // instruction retires. Otherwise MMU_TLB clears its fault when
+            // execute_in drops and the next cycle restarts the same walk
+            // instead of entering the trap handler.
+            valid._next = true;
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
             state_reg._next[1] = state_reg[0];
@@ -1751,13 +1777,11 @@ public:
         dcache._work(reset);
         bp._work(reset);
 
-        if (state_reg[0].valid &&
-            (state_reg[0].sys_op == Sys::FENCEI || state_reg[0].sys_op == Sys::SFENCE_VMA) &&
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI &&
             !memory_wait_comb_func()) {
             icache_invalidate_issued_reg._next = true;
         }
-        else if (!state_reg[0].valid ||
-                 (state_reg[0].sys_op != Sys::FENCEI && state_reg[0].sys_op != Sys::SFENCE_VMA)) {
+        else if (!state_reg[0].valid || state_reg[0].sys_op != Sys::FENCEI) {
             icache_invalidate_issued_reg._next = false;
         }
 

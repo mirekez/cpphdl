@@ -1235,13 +1235,25 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 std::print("can't open checkpoint input '{}'\n", checkpoint_load_file);
                 return false;
             }
-            _strobe(checkpoint_read_fd(checkpoint_in));
+            try {
+                _strobe(checkpoint_read_fd(checkpoint_in));
+            }
+            catch (const checkpoint_io_error& checkpoint_error) {
+                fclose(checkpoint_in);
+                std::print("can't load checkpoint '{}': {} returned {} of {} bytes; "
+                    "the file is truncated or incompatible with this simulator configuration\n",
+                    checkpoint_load_file, checkpoint_error.operation, checkpoint_error.actual_size,
+                    checkpoint_error.expected_size);
+                return false;
+            }
             fclose(checkpoint_in);
             // Checkpoint loading restores _system_clock together with registers and
             // memories. Move to a fresh comb epoch before reading restored
             // UART/PLIC/MMU outputs; otherwise lazy comb caches can still carry
             // pre-load host-process values.
             ++_system_clock;
+            perf_system_clock_start = _system_clock;
+            perf_live_start = std::chrono::steady_clock::now();
             checkpoint_loaded_pending_work = true;
             if (!scripted_uart_input.empty() && std::getenv("TRIBE_UART_INPUT_RESTART_ON_LOAD")) {
                 // Most checkpoint users need the serialized feeder registers
@@ -1464,7 +1476,20 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                     }
                 }
                 uint64_t strobe_time_start = tribe_runtime_tick();
-                _strobe(checkpoint_out);
+                try {
+                    _strobe(checkpoint_out);
+                }
+                catch (const checkpoint_io_error& checkpoint_error) {
+                    if (checkpoint_out) {
+                        fclose(checkpoint_out);
+                        std::filesystem::remove(checkpoint_save_file);
+                    }
+                    std::print("can't save checkpoint '{}': {} returned {} of {} bytes\n",
+                        checkpoint_save_file, checkpoint_error.operation, checkpoint_error.actual_size,
+                        checkpoint_error.expected_size);
+                    error = true;
+                    break;
+                }
                 runtime_strobe_ticks += tribe_runtime_tick() - strobe_time_start;
                 if (checkpoint_out) {
                     fclose(checkpoint_out);

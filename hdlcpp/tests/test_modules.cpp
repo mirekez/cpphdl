@@ -10005,6 +10005,117 @@ endmodule
     expectBefore(h, "if (", "break;");
 }
 
+static void testOneBitConditionalBranchesUseOneCppType(const char* argv0)
+{
+    const std::string sv = R"sv(
+module one_bit_conditional_types (
+    input  logic        select_i,
+    input  logic        valid_i,
+    input  logic        sync_i,
+    input  logic        ready_i,
+    input  logic [31:0] lhs_i,
+    input  logic [31:0] rhs_i,
+    output logic        handshake_o,
+    output logic        less_o
+);
+  logic [31:0] add_result;
+  wire handshake_internal;
+  wire less_internal;
+  assign add_result = lhs_i + rhs_i;
+  assign handshake_internal = (!select_i) ? (valid_i && sync_i) : ready_i;
+  assign less_internal = (lhs_i[31] == rhs_i[31]) ? add_result[31]
+                                                   : (select_i ? rhs_i[31] : lhs_i[31]);
+  assign handshake_o = handshake_internal;
+  assign less_o = less_internal;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "one_bit_conditional_types", sv, "");
+    expectContains(h, "handshake_internal_comb = ((!select_i_in()) ? logic<1>(");
+    expectContains(h, "less_internal_comb = (");
+    expectContains(h, "? logic<1>(");
+}
+
+static void testProceduralCombFeedingRegisterIsMaterialized(const char* argv0)
+{
+    const std::string sv = R"sv(
+module procedural_comb_to_reg (
+    input logic clk,
+    input logic reset,
+    input logic redo,
+    input logic jump,
+    input logic [31:0] redo_pc,
+    input logic [31:0] jump_pc
+);
+  reg   [31:0] pc;
+  logic [31:0] pc_reg;
+
+  always @(*) begin
+    pc = pc_reg + 32'd4;
+    if (redo) pc = redo_pc;
+    if (jump) pc = jump_pc;
+    pc[0] = 1'b0;
+    pc[1] = 1'b0;
+  end
+
+  always @(posedge clk) begin
+    if (reset) pc_reg <= 32'h80000000;
+    else pc_reg <= pc;
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "procedural_comb_to_reg", sv, "");
+    expectContains(h, "logic<32>& pc_comb_func()");
+    expectContains(h, "pc_reg._next = pc_comb_func();");
+    expectNotContains(h, "pc_reg._next = pc;");
+}
+
+static void testImplicitScalarNetsKeepOneBitConcatWidth(const char* argv0)
+{
+    const std::string sv = R"sv(
+module implicit_scalar_concat (
+    input wire [19:0] address_i,
+    input wire error_i,
+    input wire valid_i,
+    output wire [21:0] packed_o
+);
+  wire [19:0] address;
+  wire error;
+  wire valid;
+  assign address = address_i;
+  assign error = error_i;
+  assign valid = valid_i;
+  assign packed_o = {address, {error, valid}};
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "implicit_scalar_concat", sv, "");
+    expectContains(h, "_LAZY_COMB(error_comb, logic<1>)");
+    expectContains(h, "_LAZY_COMB(valid_comb, logic<1>)");
+    expectContains(h, "logic<22>(0)");
+    expectContains(h, "<< 2");
+    expectNotContains(h, "logic<84>");
+}
+
+static void testNestedConcatenationPreservesAccumulatedWidth(const char* argv0)
+{
+    const std::string sv = R"sv(
+module nested_concat_width (
+    input  wire [31:0] source_i,
+    output reg  [31:0] expanded_o
+);
+  always @(*) begin
+    expanded_o = {{{source_i[7:0], source_i[7:0]}, source_i[7:0]}, source_i[7:0]};
+  end
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "nested_concat_width", sv, "");
+    expectContains(h, "cat{logic<24>(cat{");
+    expectNotContains(h, "logic<8>(cat{");
+}
+
 int main(int argc, char** argv)
 {
     testLoopBreakStatementIsPreserved(argv[0]);
@@ -10316,5 +10427,9 @@ int main(int argc, char** argv)
     testGeneratedPackedTreeOrdersDependenciesBeforeParent(argv[0]);
     testStructEnumFieldConditionalUsesFieldWidth(argv[0]);
     testBitsOfScopedPackageTypedefUsesType(argv[0]);
+    testOneBitConditionalBranchesUseOneCppType(argv[0]);
+    testProceduralCombFeedingRegisterIsMaterialized(argv[0]);
+    testImplicitScalarNetsKeepOneBitConcatWidth(argv[0]);
+    testNestedConcatenationPreservesAccumulatedWidth(argv[0]);
     return 0;
 }

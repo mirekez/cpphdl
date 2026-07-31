@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <cstring>
 #include <cstdio>
@@ -2080,6 +2081,55 @@ struct MethodConsumer : public ASTConsumer
 
 static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
+namespace
+{
+
+bool validClockName(std::string_view name)
+{
+    if (name.empty() || name == "reset" || is_systemverilog_keyword(std::string(name))) {
+        return false;
+    }
+    if (!(std::isalpha(static_cast<unsigned char>(name.front())) || name.front() == '_')) {
+        return false;
+    }
+    return std::all_of(name.begin() + 1, name.end(), [](char ch) {
+        return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+    });
+}
+
+bool parseClockFrequency(const char* text, uint64_t& frequency)
+{
+    std::string_view value(text ? text : "");
+    const char* begin = value.data();
+    const char* end = begin + value.size();
+    auto result = std::from_chars(begin, end, frequency);
+    return !value.empty() && result.ec == std::errc{} && result.ptr == end && frequency != 0;
+}
+
+bool appendClockDomain(std::vector<cpphdl::ClockDomain>& clocks, const char* name,
+    const char* frequencyText, const char* option)
+{
+    uint64_t frequency = 0;
+    if (!validClockName(name ? name : "")) {
+        llvm::errs() << option << " requires a valid non-keyword clock identifier\n";
+        return false;
+    }
+    if (!parseClockFrequency(frequencyText, frequency)) {
+        llvm::errs() << option << " requires a positive integer frequency\n";
+        return false;
+    }
+    if (std::any_of(clocks.begin(), clocks.end(), [&](const auto& clock) {
+            return clock.name == name;
+        })) {
+        llvm::errs() << "clock '" << name << "' is declared more than once\n";
+        return false;
+    }
+    clocks.push_back({name, frequency});
+    return true;
+}
+
+}
+
 struct MyFrontendAction : public ASTFrontendAction
 {
     explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr)
@@ -2124,6 +2174,7 @@ int main(int argc, const char **argv)
     std::string generated_dir = "generated";
     std::string json_output;
     std::string optimize_combs_root;
+    bool optimize_combs_l1 = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2131,6 +2182,8 @@ int main(int argc, const char **argv)
     bool saw_double_dash = false;
     bool injected_double_dash = false;
     std::filesystem::path cpphdl_source_include;
+    std::vector<cpphdl::ClockDomain> primary_clocks;
+    std::vector<cpphdl::ClockDomain> secondary_clocks;
 
 #ifdef CPPHDL_SOURCE_DIR
     cpphdl_source_include = std::filesystem::path(CPPHDL_SOURCE_DIR) / "include";
@@ -2156,12 +2209,62 @@ int main(int argc, const char **argv)
             continue;
         }
 
+        if (!saw_double_dash && std::strcmp(arg, "--primary_clock") == 0) {
+            if (i + 2 >= argc) {
+                llvm::errs() << "--primary_clock requires <clk_name> <frequency>\n";
+                return 1;
+            }
+            if (!primary_clocks.empty()) {
+                llvm::errs() << "--primary_clock may be specified only once\n";
+                return 1;
+            }
+            if (!appendClockDomain(primary_clocks, argv[i + 1], argv[i + 2], "--primary_clock")) {
+                return 1;
+            }
+            i += 2;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--secondary_clock") == 0) {
+            if (i + 2 >= argc) {
+                llvm::errs() << "--secondary_clock requires <clk_name> <frequency>\n";
+                return 1;
+            }
+            if (!appendClockDomain(secondary_clocks, argv[i + 1], argv[i + 2], "--secondary_clock")) {
+                return 1;
+            }
+            i += 2;
+            continue;
+        }
+
         if (!saw_double_dash && std::strcmp(arg, "--optimize-combs") == 0) {
             if (i + 1 >= argc) {
                 llvm::errs() << "--optimize-combs requires a root module class\n";
                 return 1;
             }
             optimize_combs_root = argv[++i];
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-l1") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_root = argv[++i];
+            optimize_combs_l1 = true;
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-l1=", 20) == 0) {
+            optimize_combs_root = arg + 20;
+            if (optimize_combs_root.empty()) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_l1 = true;
             add_synthesis_flag = false;
             continue;
         }
@@ -2233,6 +2336,27 @@ int main(int argc, const char **argv)
         }
     }
 
+    if (!secondary_clocks.empty() && primary_clocks.empty()) {
+        llvm::errs() << "--secondary_clock requires --primary_clock\n";
+        return 1;
+    }
+    if (!primary_clocks.empty()) {
+        for (const auto& secondary : secondary_clocks) {
+            if (secondary.name == primary_clocks.front().name) {
+                llvm::errs() << "clock '" << secondary.name << "' is declared more than once\n";
+                return 1;
+            }
+            if (secondary.frequency > primary_clocks.front().frequency) {
+                llvm::errs() << "primary clock '" << primary_clocks.front().name
+                             << "' must have the highest frequency\n";
+                return 1;
+            }
+        }
+        currProject->clocks = primary_clocks;
+        currProject->clocks.insert(currProject->clocks.end(),
+            secondary_clocks.begin(), secondary_clocks.end());
+    }
+
     std::vector<std::string> cpphdl_include_args;
 #ifdef CPPHDL_SOURCE_DIR
     if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
@@ -2286,7 +2410,8 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    cpphdl::CombsOptimizer combsOptimizer;
+    cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
+    combsOptimizer.setL1Scheduling(optimize_combs_l1);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
     int ret = Tool.run(&actionFactory);
@@ -2298,7 +2423,9 @@ int main(int argc, const char **argv)
             return 1;
         }
     } else {
-        currProject->generate(generated_dir);
+        if (!currProject->generate(generated_dir)) {
+            return 1;
+        }
     }
     if (!json_output.empty() && !cpphdl::writeJsonOutput(*currProject, json_output)) {
         return 1;

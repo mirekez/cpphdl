@@ -201,6 +201,338 @@ void ensureWorkMethod(std::vector<Method>& methods)
     methods.emplace_back(std::move(work));
 }
 
+struct ClockProcess
+{
+    ClockDomain clock;
+    std::string work;
+    std::string strobe;
+    std::string workNeg;
+    std::string strobeNeg;
+    std::string resetPos;
+    std::string resetNeg;
+    std::unordered_set<std::string> regs;
+    std::unordered_set<std::string> negRegs;
+};
+
+const Method* findMethod(const Module& module, const std::string& name)
+{
+    auto it = std::find_if(module.methods.begin(), module.methods.end(), [&](const Method& method) {
+        return method.name == name;
+    });
+    return it == module.methods.end() ? nullptr : &*it;
+}
+
+bool hasClockWorkSignature(const Method& method)
+{
+    return method.ret.empty()
+        && method.arguments.size() == 1
+        && method.arguments[0].expr.type == Expr::EXPR_TYPE
+        && method.arguments[0].expr.value == "bool";
+}
+
+bool hasClockStrobeSignature(const Method& method)
+{
+    return method.ret.empty() && method.arguments.empty();
+}
+
+bool exprContainsMember(const Expr& expr, const std::string& name)
+{
+    if (expr.type == Expr::EXPR_MEMBER && expr.value == name) {
+        return true;
+    }
+    return std::any_of(expr.sub.begin(), expr.sub.end(), [&](const Expr& sub) {
+        return exprContainsMember(sub, name);
+    });
+}
+
+std::string expressionRootName(const Expr& expression)
+{
+    const Expr* expr = &expression;
+    while (expr) {
+        switch (expr->type) {
+        case Expr::EXPR_INDEX:
+        case Expr::EXPR_CAST:
+        case Expr::EXPR_UNARY:
+            expr = expr->sub.empty() ? nullptr : &expr->sub[0];
+            break;
+        case Expr::EXPR_MEMBER:
+            if (expr->sub.empty() || expr->sub[0].type == Expr::EXPR_NONE) {
+                return expr->value;
+            }
+            expr = &expr->sub[0];
+            break;
+        case Expr::EXPR_VAR:
+            return expr->value;
+        default:
+            return "";
+        }
+    }
+    return "";
+}
+
+void collectMethodRegisters(Module& module, const std::string& methodName,
+    bool strobes, std::unordered_set<std::string>& registers,
+    std::unordered_set<std::string>& visited)
+{
+    if (!visited.insert(methodName).second) {
+        return;
+    }
+
+    for (const auto& method : module.methods) {
+        if (method.name != methodName) {
+            continue;
+        }
+        for (const auto& statement : method.statements) {
+            Expr copy = statement;
+            copy.traverseIf([&](Expr& expr) {
+                if (strobes && expr.type == Expr::EXPR_MEMBERCALL && expr.value == "strobe"
+                    && !expr.sub.empty()) {
+                    const std::string root = expressionRootName(expr.sub[0]);
+                    if (module.isReg(root)) {
+                        registers.insert(root);
+                    }
+                }
+                if (!strobes
+                    && (expr.type == Expr::EXPR_BINARY || expr.type == Expr::EXPR_OPERATORCALL)
+                    && expr.value == "=" && !expr.sub.empty()
+                    && exprContainsMember(expr.sub[0], "_next")) {
+                    const std::string root = expressionRootName(expr.sub[0]);
+                    if (module.isReg(root)) {
+                        registers.insert(root);
+                    }
+                }
+                if (!strobes && expr.type == Expr::EXPR_MEMBERCALL
+                    && (expr.value == "set" || expr.value == "clr") && !expr.sub.empty()) {
+                    const std::string root = expressionRootName(expr.sub[0]);
+                    if (module.isReg(root)) {
+                        registers.insert(root);
+                    }
+                }
+
+                if ((expr.type == Expr::EXPR_CALL || expr.type == Expr::EXPR_MEMBERCALL)
+                    && findMethod(module, expr.value)) {
+                    collectMethodRegisters(module, expr.value, strobes, registers, visited);
+                }
+                return false;
+            });
+        }
+    }
+}
+
+std::unordered_set<std::string> methodRegisters(Module& module,
+    const std::string& methodName, bool strobes)
+{
+    std::unordered_set<std::string> registers;
+    std::unordered_set<std::string> visited;
+    collectMethodRegisters(module, methodName, strobes, registers, visited);
+    return registers;
+}
+
+bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes)
+{
+    std::unordered_map<std::string, std::string> owners;
+    for (const auto& clock : currProject->clocks) {
+        ClockProcess process;
+        process.clock = clock;
+        process.work = "_work_" + clock.name;
+        process.strobe = "_strobe_" + clock.name;
+        process.workNeg = "_work_neg_" + clock.name;
+        process.strobeNeg = "_strobe_neg_" + clock.name;
+        process.resetPos = "_reset_pos_" + clock.name;
+        process.resetNeg = "_reset_neg_" + clock.name;
+
+        const Method* workMethod = findMethod(module, process.work);
+        const Method* strobeMethod = findMethod(module, process.strobe);
+        if (!workMethod || !strobeMethod) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.work << "(bool) and " << process.strobe << "()\n";
+            return false;
+        }
+        if (!hasClockStrobeSignature(*strobeMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.strobe << " with signature void " << process.strobe
+                      << "()\n";
+            return false;
+        }
+        if (!hasClockWorkSignature(*workMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.work << " with signature void " << process.work
+                      << "(bool reset)\n";
+            return false;
+        }
+
+        const bool hasWorkNeg = findMethod(module, process.workNeg) != nullptr;
+        const bool hasStrobeNeg = findMethod(module, process.strobeNeg) != nullptr;
+        const Method* resetPosMethod = findMethod(module, process.resetPos);
+        const Method* resetNegMethod = findMethod(module, process.resetNeg);
+        if (hasWorkNeg != hasStrobeNeg) {
+            std::cerr << "ERROR: module '" << module.name << "' must define both "
+                      << process.workNeg << "(bool) and " << process.strobeNeg
+                      << "(), or neither\n";
+            return false;
+        }
+        if (resetPosMethod && !hasClockStrobeSignature(*resetPosMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.resetPos << " with signature void " << process.resetPos
+                      << "()\n";
+            return false;
+        }
+        if (resetNegMethod && !hasClockStrobeSignature(*resetNegMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.resetNeg << " with signature void " << process.resetNeg
+                      << "()\n";
+            return false;
+        }
+        if (resetNegMethod && !hasWorkNeg) {
+            std::cerr << "ERROR: module '" << module.name << "' defines "
+                      << process.resetNeg << "() without the negative-edge process "
+                      << process.workNeg << "(bool) and " << process.strobeNeg << "()\n";
+            return false;
+        }
+        if (hasWorkNeg && !hasClockWorkSignature(*findMethod(module, process.workNeg))) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.workNeg << " with signature void " << process.workNeg
+                      << "(bool reset)\n";
+            return false;
+        }
+        if (hasStrobeNeg && !hasClockStrobeSignature(*findMethod(module, process.strobeNeg))) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.strobeNeg << " with signature void " << process.strobeNeg
+                      << "()\n";
+            return false;
+        }
+
+        process.regs = methodRegisters(module, process.strobe, true);
+        const auto written = methodRegisters(module, process.work, false);
+        for (const auto& reg : written) {
+            if (process.regs.find(reg) == process.regs.end()) {
+                std::cerr << "ERROR: register '" << reg << "' is written by "
+                          << module.name << "::" << process.work << " but is not strobed by "
+                          << process.strobe << "\n";
+                return false;
+            }
+        }
+
+        if (hasWorkNeg) {
+            process.negRegs = methodRegisters(module, process.strobeNeg, true);
+            const auto negWritten = methodRegisters(module, process.workNeg, false);
+            for (const auto& reg : negWritten) {
+                if (process.negRegs.find(reg) == process.negRegs.end()) {
+                    std::cerr << "ERROR: register '" << reg << "' is written by "
+                              << module.name << "::" << process.workNeg << " but is not strobed by "
+                              << process.strobeNeg << "\n";
+                    return false;
+                }
+            }
+        }
+
+        auto validateResetRegisters = [&](const Method* resetMethod,
+                const std::string& resetName,
+                const std::unordered_set<std::string>& ownedRegisters,
+                const std::string& owner) {
+            if (!resetMethod) {
+                return true;
+            }
+            const auto resetRegisters = methodRegisters(module, resetName, false);
+            for (const auto& reg : resetRegisters) {
+                if (ownedRegisters.find(reg) == ownedRegisters.end()) {
+                    std::cerr << "ERROR: register '" << reg << "' is written by "
+                              << module.name << "::" << resetName
+                              << " but is not owned by " << owner << "\n";
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!validateResetRegisters(resetPosMethod, process.resetPos, process.regs,
+                clock.name + " posedge")
+            || !validateResetRegisters(resetNegMethod, process.resetNeg, process.negRegs,
+                clock.name + " negedge")) {
+            return false;
+        }
+
+        auto claim = [&](const std::unordered_set<std::string>& registers, const std::string& edge) {
+            for (const auto& reg : registers) {
+                const std::string owner = clock.name + " " + edge;
+                auto [it, inserted] = owners.emplace(reg, owner);
+                if (!inserted) {
+                    std::cerr << "ERROR: register '" << reg << "' in module '" << module.name
+                              << "' is strobed by both " << it->second << " and " << owner << "\n";
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!claim(process.regs, "posedge") || !claim(process.negRegs, "negedge")) {
+            return false;
+        }
+        processes.emplace_back(std::move(process));
+    }
+    return true;
+}
+
+bool isRegisterField(const Field& field)
+{
+    Expr expr = field.expr;
+    return expr.traverseIf([](auto& sub) {
+        return sub.type == Expr::EXPR_TEMPLATE && sub.value == "cpphdl_reg";
+    });
+}
+
+void printClockBlock(std::ofstream& out, Module& module, const std::string& edge,
+    const std::string& clock, const std::string& work,
+    const std::unordered_set<std::string>& registers, bool alwaysFf,
+    const std::string& asyncReset = {})
+{
+    out << "\n";
+    out << "    " << (alwaysFf ? "always_ff" : "always") << " @("
+        << edge << " " << clock;
+    if (!asyncReset.empty()) {
+        out << " or posedge reset";
+    }
+    out << ") begin\n";
+    for (auto& field : module.vars) {
+        if (registers.find(field.name) != registers.end()
+            && module.onceAccessedRegs.find(field.name) == module.onceAccessedRegs.end()
+            && isRegisterField(field)) {
+            out << "        " << field.name << "_tmp = " << field.name << ";\n";
+        }
+    }
+    out << "\n";
+    if (!asyncReset.empty()) {
+        out << "        if (reset) begin\n";
+        out << "            " << asyncReset << "();\n";
+        out << "        end\n";
+        out << "        else begin\n";
+        out << "            " << work << "(reset);\n";
+        out << "        end\n";
+    }
+    else {
+        out << "        " << work << "(reset);\n";
+    }
+    out << "\n";
+    for (auto& field : module.vars) {
+        if (registers.find(field.name) != registers.end()
+            && module.onceAccessedRegs.find(field.name) == module.onceAccessedRegs.end()
+            && isRegisterField(field)) {
+            out << "        " << field.name << " <= " << field.name << "_tmp;\n";
+        }
+    }
+    out << "    end\n";
+}
+
+std::vector<std::string> generatedClockNames()
+{
+    if (currProject->clocks.empty()) {
+        return {"clk"};
+    }
+    std::vector<std::string> names;
+    for (const auto& clock : currProject->clocks) {
+        names.push_back(clock.name);
+    }
+    return names;
+}
+
 }
 
 void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* importsSet)
@@ -258,6 +590,11 @@ bool Module::print(std::ofstream& out)
 {
     currModule = this;
     onceAccessedRegs.clear();
+    const bool multipleClocks = currProject->clocks.size() >= 2;
+    std::vector<ClockProcess> clockProcesses;
+    if (multipleClocks && !validateClockProcesses(*this, clockProcesses)) {
+        return false;
+    }
 
     out << "`default_nettype none\n\n";
     out << "import Predef_pkg::*;\n";
@@ -281,7 +618,11 @@ bool Module::print(std::ofstream& out)
         out <<  " )\n";
     }
     out << " (\n";
-    out << "    input wire clk\n";
+    const auto clockNames = generatedClockNames();
+    out << "    input wire " << clockNames.front() << "\n";
+    for (size_t i = 1; i < clockNames.size(); ++i) {
+        out << ",   input wire " << clockNames[i] << "\n";
+    }
     out << ",   input wire reset\n";
     for (auto& p : ports) {
         p.indent = 1;
@@ -320,9 +661,13 @@ bool Module::print(std::ofstream& out)
     out << "\n";
 
     out << "    // members\n";
-    printMembers(out);
+    if (!printMembers(out)) {
+        return false;
+    }
 
-    ensureWorkMethod(methods);
+    if (!multipleClocks) {
+        ensureWorkMethod(methods);
+    }
 
     Optimizer opt;
     opt.optimizeBlocking(methods);
@@ -343,6 +688,11 @@ bool Module::print(std::ofstream& out)
 
     bool hasWorkNeg = false;
     for (auto& method : methods) {
+        if (multipleClocks && std::any_of(clockProcesses.begin(), clockProcesses.end(), [&](const auto& process) {
+                return method.name == process.strobe || method.name == process.strobeNeg;
+            })) {
+            continue;
+        }
         out << "\n";
         if (!method.print(out)) {
             return false;
@@ -352,32 +702,33 @@ bool Module::print(std::ofstream& out)
         }
     }
 
-    out << "\n";
-    out << "    always @(posedge clk) begin\n";
-    for (auto& field : vars) {  // strobe
-        field.indent = 1;
-        if (onceAccessedRegs.find(field.name) == onceAccessedRegs.end()
-            && field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
-            out << "        " << field.name << "_tmp = " << field.name << ";\n";
+    if (multipleClocks) {
+        for (const auto& process : clockProcesses) {
+            printClockBlock(out, *this, "posedge", process.clock.name,
+                process.work, process.regs, true,
+                findMethod(*this, process.resetPos) ? process.resetPos : std::string{});
+            if (findMethod(*this, process.workNeg)) {
+                printClockBlock(out, *this, "negedge", process.clock.name,
+                    process.workNeg, process.negRegs, true,
+                    findMethod(*this, process.resetNeg) ? process.resetNeg : std::string{});
+            }
         }
     }
-    out << "\n";
-    out << "        _work(reset);\n";
-    out << "\n";
-    for (auto& field : vars) {  // strobe
-        field.indent = 1;
-        if (onceAccessedRegs.find(field.name) == onceAccessedRegs.end()
-            && field.expr.traverseIf([](auto& e){ return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_reg"; })) {
-            out << "        " << field.name << " <= " << field.name << "_tmp;\n";
+    else {
+        std::unordered_set<std::string> allRegisters;
+        for (const auto& field : vars) {
+            if (isRegisterField(field)) {
+                allRegisters.insert(field.name);
+            }
         }
-    }
-    out << "    end\n";
-
-    if (hasWorkNeg) {
-        out << "\n";
-        out << "    always @(negedge clk) begin\n";
-        out << "        _work_neg(reset);\n";
-        out << "    end\n";
+        printClockBlock(out, *this, "posedge", clockNames.front(), "_work",
+            allRegisters, false);
+        if (hasWorkNeg) {
+            out << "\n";
+            out << "    always @(negedge " << clockNames.front() << ") begin\n";
+            out << "        _work_neg(reset);\n";
+            out << "    end\n";
+        }
     }
 
     out << "\n";
@@ -465,7 +816,13 @@ bool Module::printMembers(std::ofstream& out)
                 out << std::string(4 + member.array.size() * 4, ' ');
             }
             out << " " << member.name << " (" << "\n";
-            out << std::string(8 + member.array.size() * 4, ' ') << ".clk(clk)\n" ;
+            const auto clockNames = generatedClockNames();
+            out << std::string(8 + member.array.size() * 4, ' ') << "."
+                << clockNames.front() << "(" << clockNames.front() << ")\n";
+            for (size_t i = 1; i < clockNames.size(); ++i) {
+                out << std::string(4 + member.array.size() * 4, ' ') << ",           ."
+                    << clockNames[i] << "(" << clockNames[i] << ")\n";
+            }
             out << std::string(4 + member.array.size() * 4, ' ') << ",           .reset(reset)\n" ;
             for (auto& port : mod->ports) {
                 out << std::string(4 + member.array.size() * 4, ' ') << ",           ." << port.name
@@ -515,7 +872,11 @@ bool Module::printMembers(std::ofstream& out)
                 out << "    ";
             }
             out << " " << member.name << " (" << "\n";
-            out << "        .clk(clk)\n" ;
+            const auto clockNames = generatedClockNames();
+            out << "        ." << clockNames.front() << "(" << clockNames.front() << ")\n";
+            for (size_t i = 1; i < clockNames.size(); ++i) {
+                out << ",       ." << clockNames[i] << "(" << clockNames[i] << ")\n";
+            }
             out << ",       .reset(reset)\n" ;
             for (auto& port : mod->ports) {
                 out << ",       ." << port.name << "(" << member.name << "__" << port.name << ")" << "\n";  // cant be reg or memory

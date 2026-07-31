@@ -2629,23 +2629,6 @@ static std::string emitCurrentCpphdlArrayOrder(std::string text)
     return text;
 }
 
-static bool rewriteGeneratedCpphdlArrayOrder(const std::filesystem::path& path)
-{
-    std::ifstream in(path);
-    if (!in) {
-        return false;
-    }
-    std::ostringstream contents;
-    contents << in.rdbuf();
-    in.close();
-    std::ofstream out(path);
-    if (!out) {
-        return false;
-    }
-    out << emitCurrentCpphdlArrayOrder(contents.str());
-    return true;
-}
-
 static size_t matchingParenClose(const std::string& s, size_t open)
 {
     if (open >= s.size() || s[open] != '(') {
@@ -2669,6 +2652,159 @@ static size_t matchingParenClose(const std::string& s, size_t open)
 static std::string valueAssignCombFunctionPorts(std::string line)
 {
     return line;
+}
+
+static std::vector<std::string> splitCppTemplateArgs(const std::string& text)
+{
+    std::vector<std::string> args;
+    std::string current;
+    int angleDepth = 0;
+    int groupDepth = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        const char next = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (c == '(' || c == '[' || c == '{') {
+            ++groupDepth;
+        }
+        else if (c == ')' || c == ']' || c == '}') {
+            --groupDepth;
+        }
+        else if (groupDepth == 0 && c == '<' && next != '<' && next != '=') {
+            ++angleDepth;
+        }
+        else if (groupDepth == 0 && c == '>' && next != '=') {
+            if (next == '>' && angleDepth > 1) {
+                angleDepth -= 2;
+                current += c;
+                current += next;
+                ++i;
+                continue;
+            }
+            if (next != '>' && angleDepth > 0) {
+                --angleDepth;
+            }
+        }
+        if (c == ',' && groupDepth == 0 && angleDepth == 0) {
+            args.push_back(trim(current));
+            current.clear();
+        }
+        else {
+            current += c;
+        }
+    }
+    args.push_back(trim(current));
+    return args;
+}
+
+static size_t cppTemplateClose(const std::string& text, size_t open)
+{
+    int angleDepth = 1;
+    int groupDepth = 0;
+    for (size_t i = open + 1; i < text.size(); ++i) {
+        const char c = text[i];
+        const char next = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (c == '(' || c == '[' || c == '{') {
+            ++groupDepth;
+        }
+        else if (c == ')' || c == ']' || c == '}') {
+            --groupDepth;
+        }
+        else if (groupDepth == 0 && c == '<' && next != '<' && next != '=') {
+            ++angleDepth;
+        }
+        else if (groupDepth == 0 && c == '>' && next != '=') {
+            if (next == '>' && angleDepth > 1) {
+                angleDepth -= 2;
+                ++i;
+            }
+            else if (next == '>' && angleDepth == 1) {
+                return i;
+            }
+            else if (next != '>') {
+                --angleDepth;
+            }
+            if (angleDepth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+static bool cpphdlArrayExtent(const std::string& arg)
+{
+    const auto value = trim(arg);
+    if (value.empty()) {
+        return false;
+    }
+    const auto isTypePrefix = [&](const std::string& prefix) {
+        return value.rfind(prefix, 0) == 0;
+    };
+    if (isTypePrefix("logic<") || isTypePrefix("array<") || isTypePrefix("reg<") ||
+        isTypePrefix("memory<") || isTypePrefix("std::") || isTypePrefix("::") ||
+        isTypePrefix("decltype(") || isTypePrefix("typename ") || value == "bool" ||
+        value == "auto" || value == "signed" || value == "unsigned" ||
+        (value.size() >= 2 && value.compare(value.size() - 2, 2, "_t") == 0)) {
+        return false;
+    }
+    if (std::isdigit(static_cast<unsigned char>(value.front())) || value.front() == '(' ||
+        value.front() == '+' || value.front() == '-') {
+        return true;
+    }
+    if (value.find_first_of("+-*/%&|?()") != std::string::npos) {
+        return true;
+    }
+    auto tail = value;
+    if (auto dot = tail.find_last_of('.'); dot != std::string::npos) {
+        tail = tail.substr(dot + 1);
+    }
+    if (auto scope = tail.rfind("::"); scope != std::string::npos) {
+        tail = tail.substr(scope + 2);
+    }
+    if (!tail.empty() && std::isupper(static_cast<unsigned char>(tail.front()))) {
+        return true;
+    }
+    return std::all_of(value.begin(), value.end(), [](char c) {
+        return std::isupper(static_cast<unsigned char>(c)) ||
+               std::isdigit(static_cast<unsigned char>(c)) || c == '_';
+    });
+}
+
+static std::string updateCpphdlArraySyntax(std::string text)
+{
+    for (size_t pos = 0; (pos = text.find("array<", pos)) != std::string::npos;) {
+        const bool identifierPrefix = pos > 0 &&
+            (std::isalnum(static_cast<unsigned char>(text[pos - 1])) || text[pos - 1] == '_');
+        const bool stdArray = pos >= 5 && text.compare(pos - 5, 5, "std::") == 0;
+        if (identifierPrefix || stdArray) {
+            pos += 6;
+            continue;
+        }
+        const auto close = cppTemplateClose(text, pos + 5);
+        if (close == std::string::npos) {
+            break;
+        }
+        auto args = splitCppTemplateArgs(text.substr(pos + 6, close - pos - 6));
+        if (args.size() != 2 && args.size() != 3) {
+            pos = close + 1;
+            continue;
+        }
+        for (auto& arg : args) {
+            arg = updateCpphdlArraySyntax(std::move(arg));
+        }
+        if (cpphdlArrayExtent(args[0]) && !cpphdlArrayExtent(args[1])) {
+            pos = close + 1;
+            continue;
+        }
+        std::string replacement = "array<" + args[1] + "," + args[0];
+        if (args.size() == 3) {
+            replacement += "," + args[2];
+        }
+        replacement += ">";
+        text.replace(pos, close - pos + 1, replacement);
+        pos += replacement.size();
+    }
+    return text;
 }
 
 static bool replicationNeedsCaptureText(const std::string& text);
@@ -2739,6 +2875,7 @@ static std::string postProcessCppLineImpl(std::string line)
     }
 	    replaceAll(line, "<<<", "<<");
 	    replaceAll(line, ">>>", ">>");
+	    line = updateCpphdlArraySyntax(std::move(line));
 	    if (line.find(".data.bits(") == std::string::npos) {
 	        line = repairDottedLogicWidthCasts(std::move(line));
 	    }

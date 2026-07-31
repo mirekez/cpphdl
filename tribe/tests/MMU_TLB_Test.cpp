@@ -131,6 +131,7 @@ class TestMMUTLBDirect : public Module
     uint32_t fill_ppn = 0;
     uint8_t fill_flags = 0;
     bool sfence = false;
+    bool stall_memory = false;
     uint32_t mem_read_data = 0;
     bool mem_wait = false;
     bool error = false;
@@ -275,6 +276,10 @@ public:
         mem_wait = false;
         mem_read_data = 0;
         if (!read_mem_valid()) {
+            return;
+        }
+        if (stall_memory) {
+            mem_wait = true;
             return;
         }
         addr = read_mem_addr();
@@ -450,9 +455,10 @@ public:
 
         read = false;
         cycle();
-        // Scenario: invalid PTEs terminate the walk with a fault.
+        // Scenario: an instruction fetch through an invalid PTE terminates the
+        // walk with a fault.
         vaddr = 0x00c00000u;
-        read = true;
+        execute = true;
         sfence = true;
         cycle();
         sfence = false;
@@ -460,7 +466,19 @@ public:
         wait_idle(8, "invalid PTE walk should complete as fault");
         check(fault(), "invalid PTE should fault");
 
-        read = false;
+        // Scenario: redirecting away from a faulted instruction must not leave
+        // a one-cycle untranslated-fetch hole. The latched fault belongs to the
+        // old address, while the new address must wait for its own translation.
+        vaddr = 0x12345678u;
+        ++_system_clock;
+        check(!fault(), "latched page fault must not transfer to a redirect address");
+        check(busy(), "redirect address must stall while the old fault is being retired");
+        cycle();
+        check(busy(), "redirect address should start a fresh page-table walk");
+        wait_idle(8, "redirected instruction translation should complete");
+        check(hit(), "redirected instruction translation should refill the TLB");
+
+        execute = false;
         cycle();
         // Scenario: permission checks use the final leaf PTE, so stores to a
         // read-only mapping fault even though the walk itself succeeds.
@@ -473,6 +491,32 @@ public:
         cycle();
         wait_idle(8, "permission-fault walk should complete");
         check(fault(), "store to read-only PTE should fault");
+
+        // Scenario: a remote sfence can collide with completion of an older
+        // page-table read. The flush must cancel that walk instead of allowing
+        // its stale PTE to advance or refill the TLB after invalidation.
+        write = false;
+        read = false;
+        cycle();
+        vaddr = 0x12345678u;
+        read = true;
+        sfence = true;
+        cycle();
+        sfence = false;
+        stall_memory = true;
+        cycle();
+        cycle();
+        check(read_mem_valid(), "stalled page-table walk should retain its root request");
+        sfence = true;
+        stall_memory = false;
+        cycle();
+        sfence = false;
+        cycle();
+        check(read_mem_valid(), "sfence should restart the active translation walk");
+        check(read_mem_addr() == (root_ppn << 12) + 0x48u * 4u,
+            "sfence must restart at the root instead of consuming the stale completed PTE");
+        wait_idle(8, "restarted walk after sfence should complete");
+        check(hit(), "restarted walk after sfence should refill the TLB");
 
         std::print(" {}\n", !error ? "PASSED" : "FAILED");
         return !error;

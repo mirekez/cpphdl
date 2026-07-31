@@ -82,7 +82,7 @@ std::vector<std::string> cpphdl::collectStructPackageImports(const Struct& st)
     return imports;
 }
 
-void Project::generate(const std::string& outDir)
+bool Project::generate(const std::string& outDir)
 {
     namespace fs = std::filesystem;
 
@@ -99,7 +99,7 @@ void Project::generate(const std::string& outDir)
         std::ofstream out(filePath);
         if (!out) {
             std::cerr << "Failed to open '" << filePath << "' for writing\n";
-            continue;
+            return false;
         }
 
         if (!mod.replacement.empty()) {
@@ -108,7 +108,11 @@ void Project::generate(const std::string& outDir)
                 out << "\n";
             }
         } else {
-            mod.print(out);
+            if (!mod.print(out)) {
+                out.close();
+                fs::remove(filePath);
+                return false;
+            }
         }
 
         std::cout << "Generated: " << filePath << " (" << mod.name << "/" << mod.origName << ")" << "\n";
@@ -217,6 +221,7 @@ void Project::generate(const std::string& outDir)
             out << "endpackage\n";
         }
     }
+    return true;
 }
 
 Module* Project::findModule(const std::string& name)

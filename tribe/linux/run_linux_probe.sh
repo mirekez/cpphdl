@@ -16,17 +16,19 @@ DTB_WITH_INITRD="${DTB_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dtb}"
 DTS_WITH_INITRD="${DTS_WITH_INITRD:-${LINUX_DIR}/config32.initramfs.dts}"
 TRIBE_RAM_BYTES="${TRIBE_RAM_BYTES:-33554432}"
 TRIBE_IO_BYTES="${TRIBE_IO_BYTES:-4194304}"
-# Keep Linux timer IRQ load low enough for the slow RTL simulator to leave
-# hardirq context and service PLIC/UART interrupts during interactive use.
-TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-256}"
 TRIBE_LINUX_INTERACTIVE="${TRIBE_LINUX_INTERACTIVE:-1}"
 TRIBE_LINUX_TAIL_UART="${TRIBE_LINUX_TAIL_UART:-0}"
 TRIBE_LINUX_BAUD="${TRIBE_LINUX_BAUD:-1000000}"
 TRIBE_LINUX_BOOTARGS="${TRIBE_LINUX_BOOTARGS:-console=ttyS0,${TRIBE_LINUX_BAUD} earlycon=uart,mmio,0x82000000 unaligned_scalar_speed=slow}"
 TRIBE_LINUX_SD_IMAGE="${TRIBE_LINUX_SD_IMAGE:-}"
 TRIBE_LINUX_ETH_TAP_SOCKET="${TRIBE_LINUX_ETH_TAP_SOCKET:-}"
-TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-50000000}"
-TRIBE_TIMEBASE_HZ="${TRIBE_TIMEBASE_HZ:-$((TRIBE_CPU_CLOCK_HZ / TRIBE_CLINT_TICK_DIV))}"
+if [[ -z "${TRIBE_LINUX_MULTICORE_EXPLICIT+x}" ]]; then
+    if [[ -n "${TRIBE_LINUX_MULTICORE+x}" ]]; then
+        TRIBE_LINUX_MULTICORE_EXPLICIT=1
+    else
+        TRIBE_LINUX_MULTICORE_EXPLICIT=0
+    fi
+fi
 TRIBE_LINUX_MULTICORE="${TRIBE_LINUX_MULTICORE:-0}"
 TRIBE_LINUX_BUS_WIDTH="${TRIBE_LINUX_BUS_WIDTH:-64}"
 
@@ -35,6 +37,7 @@ usage()
     cat <<'EOF'
 Usage: run_linux_probe.sh [options]
   --multicore                 Build and run with -DMULTICORE.
+  --singlecore                Build and run the single-core machine.
   --bus_width 64|128|256      Select the L2 AXI bus width (default: 64).
   --sd-image FILE             Attach an SD-card image.
   --eth-tap-socket PATH       Connect Ethernet to a TAP socket.
@@ -50,6 +53,12 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --multicore)
             TRIBE_LINUX_MULTICORE=1
+            TRIBE_LINUX_MULTICORE_EXPLICIT=1
+            shift
+            ;;
+        --singlecore)
+            TRIBE_LINUX_MULTICORE=0
+            TRIBE_LINUX_MULTICORE_EXPLICIT=1
             shift
             ;;
         --bus_width|--bus-width)
@@ -100,6 +109,25 @@ if [[ "${TRIBE_LINUX_MULTICORE}" != "0" && "${TRIBE_LINUX_MULTICORE}" != "1" ]];
     echo "TRIBE_LINUX_MULTICORE must be 0 or 1" >&2
     exit 1
 fi
+
+if [[ -n "${TRIBE_CHECKPOINT_LOAD:-}" && "${TRIBE_LINUX_MULTICORE_EXPLICIT}" != "1" ]]; then
+    echo "TRIBE_CHECKPOINT_LOAD requires an explicit CPU topology; use --multicore, --singlecore, or set TRIBE_LINUX_MULTICORE=0/1" >&2
+    exit 1
+fi
+
+# Linux uses a 250 Hz periodic tick. Four contending simulated cores cannot
+# finish each timer path within the 200,000 core cycles provided by the
+# single-core 50 MHz profile, so timer work starves kernel initialization.
+# Keep the same 195312 Hz timebase while giving multicore eight times more core
+# cycles per tick. Explicit platform timing values always take precedence.
+if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
+    TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-2048}"
+    TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-400000000}"
+else
+    TRIBE_CLINT_TICK_DIV="${TRIBE_CLINT_TICK_DIV:-256}"
+    TRIBE_CPU_CLOCK_HZ="${TRIBE_CPU_CLOCK_HZ:-50000000}"
+fi
+TRIBE_TIMEBASE_HZ="${TRIBE_TIMEBASE_HZ:-$((TRIBE_CPU_CLOCK_HZ / TRIBE_CLINT_TICK_DIV))}"
 
 tribe_binary_name="tribe${TRIBE_LINUX_BUS_WIDTH}_linux"
 if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
@@ -343,6 +371,7 @@ if [[ "${TRIBE_LINUX_INPUTS_PREPARED:-0}" != "1" ]]; then
     prepare_linux_inputs
     export TRIBE_LINUX_INPUTS_PREPARED=1
     export TRIBE_LINUX_MULTICORE
+    export TRIBE_LINUX_MULTICORE_EXPLICIT
     export TRIBE_LINUX_BUS_WIDTH
     export TRIBE_LINUX_SD_IMAGE
     export TRIBE_LINUX_ETH_TAP_SOCKET
@@ -350,14 +379,19 @@ if [[ "${TRIBE_LINUX_INPUTS_PREPARED:-0}" != "1" ]]; then
 fi
 
 newer_tribe_header=""
+newer_cpphdl_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
     newer_tribe_header="$(find "${ROOT_DIR}/tribe" \
         -path "${LINUX_DIR}" -prune -o \
         -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
+    newer_cpphdl_header="$(find "${ROOT_DIR}/include" \
+        -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
 fi
 TRIBE_BIN_CONFIG="${TRIBE_BIN}.config"
 TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=${TRIBE_LINUX_BUS_WIDTH} MULTICORE=${TRIBE_LINUX_MULTICORE} TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"
-if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" || -n "${newer_tribe_header}" || ! -f "${TRIBE_BIN_CONFIG}" || "$(cat "${TRIBE_BIN_CONFIG}")" != "${TRIBE_COMPILE_CONFIG}" ]]; then
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" ||
+      -n "${newer_tribe_header}" || -n "${newer_cpphdl_header}" ||
+      ! -f "${TRIBE_BIN_CONFIG}" || "$(cat "${TRIBE_BIN_CONFIG}")" != "${TRIBE_COMPILE_CONFIG}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
     TRIBE_BIN_TMP="${TRIBE_BIN}.new.$$"
     rm -f "${TRIBE_BIN_TMP}"

@@ -1875,14 +1875,14 @@
                 ? "cpphdl::pack_value<" + width + ">(" + emitExpr(*e) + ")"
                 : numericEmitted;
             auto bitsWidth = emittedBitsCallWidth(emitted);
-            if (!bitsWidth.empty()) {
+            if (!bitsWidth.empty() && emitted.find("cat{") == std::string::npos) {
                 width = bitsWidth;
             }
             if (emittedOneBitValueExpr(emitted)) {
                 width = "1";
             }
             auto castWidth = emittedConcatOperandCastWidth(emitted);
-            if (!castWidth.empty() &&
+            if (!castWidth.empty() && emitted.find("cat{") == std::string::npos &&
                 (rangeSelectWidth.empty() || emitted.find("__cpphdl_slice_out") != std::string::npos) &&
                 (width.empty() ||
                  (width == "1" && !isBitSelectOperand(*e) && !emittedOneBitValueExpr(emitted)) ||
@@ -2042,14 +2042,14 @@
                 emitted = "cpphdl::pack_value<" + width + ">(" + emitExpr(*e) + ")";
             }
             auto bitsWidth = emittedBitsCallWidth(emitted);
-            if (!bitsWidth.empty()) {
+            if (!bitsWidth.empty() && emitted.find("cat{") == std::string::npos) {
                 width = bitsWidth;
             }
             if (emittedOneBitValueExpr(emitted)) {
                 width = "1";
             }
             auto castWidth = emittedConcatOperandCastWidth(emitted);
-            if (!castWidth.empty() &&
+            if (!castWidth.empty() && emitted.find("cat{") == std::string::npos &&
                 (width.empty() ||
                  (width == "1" && !isBitSelectOperand(*e) && !emittedOneBitValueExpr(emitted)) ||
                  emitted.find("__cpphdl_slice_out") != std::string::npos)) {

@@ -32,6 +32,11 @@ public:
     using Base::write_in;
     using Base::write_mask_in;
 
+protected:
+    // Exposed to derived layer tests that verify peer-invalidation generations.
+    using Base::tag_epoch_reg;
+    using Base::tag_set_epoch_reg;
+
 private:
     using Base::REFILL_BEATS;
     using Base::SETS;
@@ -53,8 +58,6 @@ private:
     using Base::req_reg;
     using Base::request_geometry_comb_func;
     using Base::state_reg;
-    using Base::tag_epoch_reg;
-    using Base::tag_set_epoch_reg;
     using Base::tag_ram;
     using Base::victim_reg;
 
@@ -62,7 +65,7 @@ public:
     // Bind grouped combinational decisions to public ports and physical RAM interfaces once.
     void _assign()
     {
-        size_t i;
+        uint32_t i;
         read_data_out = _ASSIGN_COMB(cpu_response_comb_func().data);
         read_addr_out = _ASSIGN_COMB(cpu_response_comb_func().addr);
         read_valid_out = _ASSIGN_COMB(cpu_response_comb_func().valid);
@@ -119,12 +122,13 @@ public:
     // Advance request, lookup, refill, held-response, invalidate, and flush sequencing.
     void _work(bool reset)
     {
-        size_t i;
+        uint32_t i;
         L1InputRequestComb input_request;
         L1LookupComb lookup;
         L1RefillLinesComb refill_lines;
         uint32_t invalidate_set;
         bool invalidate_conflict;
+        bool invalidate_epoch_wrap;
         input_request = input_request_comb_func();
         lookup = lookup_comb_func();
         refill_lines = refill_lines_comb_func();
@@ -132,14 +136,37 @@ public:
         invalidate_conflict = invalidate_line_in() && req_reg.read &&
             ((uint32_t)req_reg.addr & ~(uint32_t)(CACHE_LINE_SIZE - 1)) ==
                 ((uint32_t)invalidate_addr_in() & ~(uint32_t)(CACHE_LINE_SIZE - 1));
+        invalidate_epoch_wrap = invalidate_line_in() &&
+            tag_set_epoch_reg[invalidate_set] == 0xffu;
 
         if (invalidate_line_in()) {
             // A per-set generation counter invalidates peer data without taking the
             // single-port tag RAM away from an unrelated local lookup/refill.
-            tag_set_epoch_reg._next[invalidate_set] = tag_set_epoch_reg[invalidate_set] + 1;
+            // Before the 8-bit generation wraps, reset every set generation and
+            // start a physical tag clear. Otherwise tags from 256 peer stores ago
+            // can become valid again and expose stale data to another CPU.
+            if (invalidate_epoch_wrap) {
+                for (i = 0; i < SETS; ++i) {
+                    tag_set_epoch_reg._next[i] = 0;
+                }
+            }
+            else {
+                tag_set_epoch_reg._next[invalidate_set] =
+                    tag_set_epoch_reg[invalidate_set] + 1;
+            }
         }
 
-        if (invalidate_conflict) {
+        if (invalidate_epoch_wrap) {
+            // Reuse the initialization walk to physically clear every tag. This
+            // keeps compact checkpoint-compatible epochs without relying on a
+            // second wrapping global generation.
+            req_reg._next.read = false;
+            response_reg._next.valid = false;
+            refill_reg._next.req_data_valid = false;
+            init_set_reg._next = 0;
+            state_reg._next = L1_ST_INIT;
+        }
+        else if (invalidate_conflict) {
             // Only abort a request for the snooped line. The set generation also
             // invalidates unrelated resident lines, but aborting unrelated
             // in-flight refills lets a store stream starve another core forever.
@@ -152,8 +179,8 @@ public:
             req_reg._next.read = false;
             response_reg._next.valid = false;
             refill_reg._next.req_data_valid = false;
-            tag_epoch_reg._next = !tag_epoch_reg;
-            state_reg._next = L1_ST_IDLE;
+            init_set_reg._next = 0;
+            state_reg._next = L1_ST_INIT;
         }
         else if (flush_in()) {
             req_reg._next.addr = addr_in();
@@ -281,7 +308,7 @@ public:
     // Commit checkpointed architectural cache state and transient refill response state.
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        size_t i;
+        uint32_t i;
         state_reg.strobe(checkpoint_fd);
         req_reg.strobe(checkpoint_fd);
         tag_epoch_reg.strobe(checkpoint_fd);

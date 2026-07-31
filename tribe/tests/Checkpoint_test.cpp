@@ -114,6 +114,36 @@ static bool write_file(const std::filesystem::path& path, const std::string& tex
     return true;
 }
 
+static bool checkpoint_short_read_reports_error()
+{
+    const auto path = std::filesystem::current_path() / "checkpoint_truncated.bin";
+    if (!write_file(path, "x")) {
+        return false;
+    }
+
+    FILE* checkpoint = fopen(path.c_str(), "rb");
+    if (!checkpoint) {
+        std::filesystem::remove(path);
+        return false;
+    }
+
+    uint64_t value = 0;
+    bool reported = false;
+    try {
+        checkpoint_read_exact(checkpoint_read_fd(checkpoint), &value, sizeof(value));
+    }
+    catch (const checkpoint_io_error& error) {
+        reported = std::strcmp(error.operation, "read") == 0 &&
+            error.expected_size == sizeof(value) && error.actual_size == 1;
+    }
+    fclose(checkpoint);
+    std::filesystem::remove(path);
+    if (!reported) {
+        std::print("truncated checkpoint did not report a short read\n");
+    }
+    return reported;
+}
+
 static bool validate_checkpoint_uart_log(const std::filesystem::path& path, const std::string& expected)
 {
     std::ifstream f(path, std::ios::binary);
@@ -274,7 +304,8 @@ int main(int argc, char** argv)
         }
     }
 
-    bool ok = build_checkpoint_elf();
+    bool ok = checkpoint_short_read_reports_error();
+    ok = ok && build_checkpoint_elf();
 
 #ifndef VERILATOR
     ok = ok && run_checkpoint_cpp(debug);

@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <print>
 #include <string>
 
@@ -17,6 +18,44 @@
 // 5. A peer store invalidates an LR reservation so the following SC fails.
 // 6. An AMO acquires ownership while another hart continuously issues stores.
 // 7. An explicit UART success marker works even when a tohost address is configured.
+// 8. Simultaneous peer stores fall back to a full private-cache invalidation.
+// 9. A cached line cannot resurrect after 256 peer stores map to its L1 set.
+
+class PeerInvalidationProbe : public TribeTest<CPUS_PER_L2_CACHE>
+{
+public:
+    void set_store(size_t source, bool valid, uint32_t addr)
+    {
+        L1PeerStoreState state = {};
+        state.valid = valid;
+        state.addr = addr;
+        peer_store_reg[source].set(state);
+    }
+
+    L1PeerInvalidateComb result(size_t target)
+    {
+        ++_system_clock;
+        return peer_invalidate_comb_func()[target];
+    }
+};
+
+static bool test_peer_invalidation_fan_in()
+{
+    auto probe = std::make_unique<PeerInvalidationProbe>();
+    probe->set_store(1, true, 0x1000);
+    L1PeerInvalidateComb single = probe->result(0);
+    if (!single.valid || single.full || (uint32_t)single.addr != 0x1000) {
+        std::print("single peer invalidation was not preserved\n");
+        return false;
+    }
+    probe->set_store(2, true, 0x2000);
+    L1PeerInvalidateComb collision = probe->result(0);
+    if (collision.valid || !collision.full) {
+        std::print("simultaneous peer invalidations were not merged safely\n");
+        return false;
+    }
+    return true;
+}
 
 static std::filesystem::path multicore_source_root()
 {
@@ -100,7 +139,7 @@ int main(int argc, char** argv)
         }
     }
 
-    bool ok = build_multicore_elf() && run_multicore(debug);
+    bool ok = test_peer_invalidation_fan_in() && build_multicore_elf() && run_multicore(debug);
 #ifndef VERILATOR
     if (ok && !noveril) {
         const auto source_root = multicore_source_root();

@@ -12,6 +12,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent CppHDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# This source is an integration driver for two optimizer-generated trees.
+# Its custom target is declared below instead of using the converter loop.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/optimize_l1\\.cpp$")
 
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -48,6 +51,15 @@ foreach(src ${TEST_SOURCES})
     include_directories("../include")
 
     set(cpphdl_json_args "")
+    set(cpphdl_clock_args "")
+    if(rel_path STREQUAL "cdc/TwoClocksCdc.cpp")
+        set(cpphdl_clock_args
+            "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
+    endif()
+    if(rel_path STREQUAL "reset/AsyncReset.cpp")
+        set(cpphdl_clock_args
+            "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
+    endif()
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
@@ -61,7 +73,7 @@ foreach(src ${TEST_SOURCES})
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_json_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_json_args} ${cpphdl_clock_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
     )
 
@@ -80,3 +92,99 @@ foreach(src ${TEST_SOURCES})
     )
 
 endforeach()
+
+foreach(cdc_failure_case secondary_without_primary secondary_above_primary missing_methods invalid_reset_signature)
+    if(cdc_failure_case STREQUAL "invalid_reset_signature")
+        set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/InvalidResetSignature.h)
+    else()
+        set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/MissingClockMethods.h)
+    endif()
+    add_test(NAME cdc_${cdc_failure_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${cdc_failure_source}
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_cdc_missing_methods
+            -DCASE=${cdc_failure_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cdc/ExpectFailure.cmake)
+endforeach()
+
+foreach(async_reset_failure_case invalid_signature missing_negative_process wrong_owner)
+    add_test(NAME reset_async_${async_reset_failure_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/reset/InvalidAsyncReset.h
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_async_reset_failure
+            -DCASE=${async_reset_failure_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/reset/ExpectFailure.cmake)
+endforeach()
+
+set(CPPHDL_NBA_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_nonblocking_memory")
+set(CPPHDL_NBA_GENERATED
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.h"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_internal.h"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_work_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_memory_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_strobe_0.cpp")
+add_custom_command(
+    OUTPUT ${CPPHDL_NBA_GENERATED}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CPPHDL_NBA_TEST_DIR}"
+    COMMAND "$<TARGET_FILE:cpphdl>"
+            --optimize-combs NonblockingMemory
+            --generated-dir "${CPPHDL_NBA_TEST_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemory.h"
+            -I"${CMAKE_SOURCE_DIR}/include"
+    DEPENDS cpphdl "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemory.h"
+    VERBATIM)
+
+add_executable(optimizer_nonblocking_memory
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NonblockingMemoryMain.cc"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_work_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_memory_0.cpp"
+    "${CPPHDL_NBA_TEST_DIR}/NonblockingMemory_optimized_combs_strobe_0.cpp")
+target_include_directories(optimizer_nonblocking_memory PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+    "${CPPHDL_NBA_TEST_DIR}")
+set_target_properties(optimizer_nonblocking_memory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME optimizer_nonblocking_memory
+         COMMAND "$<TARGET_FILE:optimizer_nonblocking_memory>")
+
+set(CPPHDL_PROCEDURAL_TEST_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_procedural_comb")
+set(CPPHDL_PROCEDURAL_GENERATED
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.h"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_internal.h"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_work_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_strobe_0.cpp")
+add_custom_command(
+    OUTPUT ${CPPHDL_PROCEDURAL_GENERATED}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CPPHDL_PROCEDURAL_TEST_DIR}"
+    COMMAND "$<TARGET_FILE:cpphdl>"
+            --optimize-combs-l1 ProceduralComb
+            --generated-dir "${CPPHDL_PROCEDURAL_TEST_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralComb.h"
+            -I"${CMAKE_SOURCE_DIR}/include"
+    DEPENDS cpphdl "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralComb.h"
+    VERBATIM)
+
+add_executable(optimizer_procedural_comb
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProceduralCombMain.cc"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_work_0.cpp"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}/ProceduralComb_optimized_combs_strobe_0.cpp")
+target_include_directories(optimizer_procedural_comb PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+    "${CPPHDL_PROCEDURAL_TEST_DIR}")
+set_target_properties(optimizer_procedural_comb PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME optimizer_procedural_comb
+         COMMAND "$<TARGET_FILE:optimizer_procedural_comb>")

@@ -492,7 +492,8 @@ public:
         inhibit_instret = (mcountinhibit_reg >> 2) & 1;
         trace_csr_events = false;
 #ifndef SYNTHESIS
-        trace_csr_events = std::getenv("TRIBE_TRACE_CSR_EVENTS") != nullptr;
+        static const bool trace_csr_events_enabled = std::getenv("TRIBE_TRACE_CSR_EVENTS") != nullptr;
+        trace_csr_events = trace_csr_events_enabled;
 #endif
 #ifndef SYNTHESIS
         FILE* trace_csr_out = stdout;
@@ -518,10 +519,11 @@ public:
 
         if (csr_writes()) {
             if (trace_csr_events &&
-                (state_in().csr_addr == 0x100 || state_in().csr_addr == 0x141 || state_in().csr_addr == 0x180)) {
+                (state_in().csr_addr == 0x100 || state_in().csr_addr == 0x140 ||
+                 state_in().csr_addr == 0x141 || state_in().csr_addr == 0x180)) {
 #ifndef SYNTHESIS
-                std::print(trace_csr_out, "trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
-                    state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
+                std::print(trace_csr_out, "trace-csr-write inst={} cycle={} pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
+                    __inst_name, _system_clock, state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
                     csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
 #else
                 std::print("trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
@@ -545,8 +547,9 @@ public:
             if (to_s) {
                 if (trace_csr_events) {
 #ifndef SYNTHESIS
-                    std::print(trace_csr_out, "trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
-                        state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
+                    std::print(trace_csr_out, "trace-trap-to-s inst={} cycle={} pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
+                        __inst_name, _system_clock, state_in().pc, cause, tval, (uint32_t)priv_reg,
+                        (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
 #else
                     std::print("trace-trap-to-s pc={:08x} cause={} tval={:08x} priv={} stvec={:08x} mstatus={:08x}\n",
                         state_in().pc, cause, tval, (uint32_t)priv_reg, (uint32_t)stvec_reg, (uint32_t)mstatus_reg);
@@ -587,8 +590,14 @@ public:
             spp = (mstatus_reg & MSTATUS_SPP) ? PRIV_S : PRIV_U;
             sie_restore = (mstatus_reg & MSTATUS_SPIE) ? MSTATUS_SIE : 0;
             if (trace_csr_events) {
+#ifndef SYNTHESIS
+                std::print(trace_csr_out, "trace-sret inst={} cycle={} pc={:08x} sepc={:08x} mstatus={:08x} next_priv={}\n",
+                    __inst_name, _system_clock, state_in().pc, (uint32_t)sepc_reg,
+                    (uint32_t)mstatus_reg, spp);
+#else
                 std::print("trace-sret pc={:08x} sepc={:08x} mstatus={:08x} next_priv={}\n",
                     state_in().pc, (uint32_t)sepc_reg, (uint32_t)mstatus_reg, spp);
+#endif
             }
             priv_reg._next = spp;
             mstatus_reg._next = ((mstatus_reg & ~MSTATUS_SIE) | sie_restore | MSTATUS_SPIE) & ~MSTATUS_SPP;

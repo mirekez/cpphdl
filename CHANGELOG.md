@@ -1,6 +1,14 @@
+ - asynchronous resets initial code
+ - CDC initial code and tests
+
+# 1.2
+
+ - Multicore Tribe CPU and multicore L2Cache
  - Tribe cpu has SD(H) device and ethgig device, ping works from Linux
  - several bugs in C++ templates conversion are fixed
  - several bugs in L2 Cache are fixed
+ - --optimize-combs experimental mode in development
+ - hdlcpp tool in development
 
 # 1.1
 

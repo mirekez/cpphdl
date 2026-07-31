@@ -20,6 +20,9 @@ protected:
 
     // Stores each CPU pair's instruction/data wait result for the final port bindings.
     L2CpuWaitComb cpu_wait_comb[CPU_PORTS];
+#ifndef SYNTHESIS
+    long prev_cpu_wait_comb_clock = -1;
+#endif
 
     // Rebuild every CPU pair's waits from its registered response identity for _assign().
     L2CpuWaitComb (&cpu_wait_comb_func())[CPU_PORTS]
@@ -28,6 +31,12 @@ protected:
         bool done_i_read;
         bool done_d_read;
         bool done_d_write;
+#ifndef SYNTHESIS
+        if (prev_cpu_wait_comb_clock == _system_clock) {
+            return cpu_wait_comb;
+        }
+        prev_cpu_wait_comb_clock = _system_clock;
+#endif
         for (index = 0; index < CPU_PORTS; ++index) {
             done_i_read = response_reg[CPU_RESPONSE_BASE + index].valid &&
                 !response_reg[CPU_RESPONSE_BASE + index].data_port &&
