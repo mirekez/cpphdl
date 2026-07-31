@@ -1,3 +1,4 @@
+ - asynchronous resets initial code
  - CDC initial code and tests
 
 # 1.2

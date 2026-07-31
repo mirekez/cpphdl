@@ -208,6 +208,8 @@ struct ClockProcess
     std::string strobe;
     std::string workNeg;
     std::string strobeNeg;
+    std::string resetPos;
+    std::string resetNeg;
     std::unordered_set<std::string> regs;
     std::unordered_set<std::string> negRegs;
 };
@@ -336,6 +338,8 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
         process.strobe = "_strobe_" + clock.name;
         process.workNeg = "_work_neg_" + clock.name;
         process.strobeNeg = "_strobe_neg_" + clock.name;
+        process.resetPos = "_reset_pos_" + clock.name;
+        process.resetNeg = "_reset_neg_" + clock.name;
 
         const Method* workMethod = findMethod(module, process.work);
         const Method* strobeMethod = findMethod(module, process.strobe);
@@ -359,10 +363,30 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
 
         const bool hasWorkNeg = findMethod(module, process.workNeg) != nullptr;
         const bool hasStrobeNeg = findMethod(module, process.strobeNeg) != nullptr;
+        const Method* resetPosMethod = findMethod(module, process.resetPos);
+        const Method* resetNegMethod = findMethod(module, process.resetNeg);
         if (hasWorkNeg != hasStrobeNeg) {
             std::cerr << "ERROR: module '" << module.name << "' must define both "
                       << process.workNeg << "(bool) and " << process.strobeNeg
                       << "(), or neither\n";
+            return false;
+        }
+        if (resetPosMethod && !hasClockStrobeSignature(*resetPosMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.resetPos << " with signature void " << process.resetPos
+                      << "()\n";
+            return false;
+        }
+        if (resetNegMethod && !hasClockStrobeSignature(*resetNegMethod)) {
+            std::cerr << "ERROR: module '" << module.name << "' must define "
+                      << process.resetNeg << " with signature void " << process.resetNeg
+                      << "()\n";
+            return false;
+        }
+        if (resetNegMethod && !hasWorkNeg) {
+            std::cerr << "ERROR: module '" << module.name << "' defines "
+                      << process.resetNeg << "() without the negative-edge process "
+                      << process.workNeg << "(bool) and " << process.strobeNeg << "()\n";
             return false;
         }
         if (hasWorkNeg && !hasClockWorkSignature(*findMethod(module, process.workNeg))) {
@@ -402,6 +426,31 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
             }
         }
 
+        auto validateResetRegisters = [&](const Method* resetMethod,
+                const std::string& resetName,
+                const std::unordered_set<std::string>& ownedRegisters,
+                const std::string& owner) {
+            if (!resetMethod) {
+                return true;
+            }
+            const auto resetRegisters = methodRegisters(module, resetName, false);
+            for (const auto& reg : resetRegisters) {
+                if (ownedRegisters.find(reg) == ownedRegisters.end()) {
+                    std::cerr << "ERROR: register '" << reg << "' is written by "
+                              << module.name << "::" << resetName
+                              << " but is not owned by " << owner << "\n";
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!validateResetRegisters(resetPosMethod, process.resetPos, process.regs,
+                clock.name + " posedge")
+            || !validateResetRegisters(resetNegMethod, process.resetNeg, process.negRegs,
+                clock.name + " negedge")) {
+            return false;
+        }
+
         auto claim = [&](const std::unordered_set<std::string>& registers, const std::string& edge) {
             for (const auto& reg : registers) {
                 const std::string owner = clock.name + " " + edge;
@@ -432,11 +481,16 @@ bool isRegisterField(const Field& field)
 
 void printClockBlock(std::ofstream& out, Module& module, const std::string& edge,
     const std::string& clock, const std::string& work,
-    const std::unordered_set<std::string>& registers, bool alwaysFf)
+    const std::unordered_set<std::string>& registers, bool alwaysFf,
+    const std::string& asyncReset = {})
 {
     out << "\n";
     out << "    " << (alwaysFf ? "always_ff" : "always") << " @("
-        << edge << " " << clock << ") begin\n";
+        << edge << " " << clock;
+    if (!asyncReset.empty()) {
+        out << " or posedge reset";
+    }
+    out << ") begin\n";
     for (auto& field : module.vars) {
         if (registers.find(field.name) != registers.end()
             && module.onceAccessedRegs.find(field.name) == module.onceAccessedRegs.end()
@@ -445,7 +499,17 @@ void printClockBlock(std::ofstream& out, Module& module, const std::string& edge
         }
     }
     out << "\n";
-    out << "        " << work << "(reset);\n";
+    if (!asyncReset.empty()) {
+        out << "        if (reset) begin\n";
+        out << "            " << asyncReset << "();\n";
+        out << "        end\n";
+        out << "        else begin\n";
+        out << "            " << work << "(reset);\n";
+        out << "        end\n";
+    }
+    else {
+        out << "        " << work << "(reset);\n";
+    }
     out << "\n";
     for (auto& field : module.vars) {
         if (registers.find(field.name) != registers.end()
@@ -641,10 +705,12 @@ bool Module::print(std::ofstream& out)
     if (multipleClocks) {
         for (const auto& process : clockProcesses) {
             printClockBlock(out, *this, "posedge", process.clock.name,
-                process.work, process.regs, true);
+                process.work, process.regs, true,
+                findMethod(*this, process.resetPos) ? process.resetPos : std::string{});
             if (findMethod(*this, process.workNeg)) {
                 printClockBlock(out, *this, "negedge", process.clock.name,
-                    process.workNeg, process.negRegs, true);
+                    process.workNeg, process.negRegs, true,
+                    findMethod(*this, process.resetNeg) ? process.resetNeg : std::string{});
             }
         }
     }

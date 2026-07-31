@@ -52,7 +52,6 @@ This work is not subsidized or paid.
 
 ## development plan
 
-- asynchronous resets
 - comb. hierarchy checks
 - regs/luts usage estimation
 - timing estimation

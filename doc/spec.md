@@ -401,7 +401,7 @@ use packed *structs* to achieve proper `<8`bit fields packing.
 
 ## Clock and reset
 
-&nbsp;&nbsp;&nbsp;&nbsp;The default flow uses one clock named *clk*. Multi-clock designs declare a primary clock and one or more secondary clocks on the `cpphdl` command line. Each declared clock becomes a module port and has its own work and strobe methods. Reset is the main *reset* parameter of each work function. It is possible to define any synchronous reset sequence. True asynchronous reset sensitivity is not supported; synchronized reset release can be implemented as described in the Clock Domain Crossing chapter.
+&nbsp;&nbsp;&nbsp;&nbsp;The default flow uses one clock named *clk*. Multi-clock designs declare a primary clock and one or more secondary clocks on the `cpphdl` command line. Each declared clock becomes a module port and has its own work and strobe methods. Reset is the main *reset* parameter of each work function. Named multi-clock processes support synchronous reset and active-high asynchronous reset assertion. Asynchronous-reset method naming, ownership, and release requirements are described in the Clock Domain Crossing chapter.
 
 ## Variables list
 
@@ -976,6 +976,70 @@ Use this sequence in native CppHDL and Verilator testbenches:
 
 `test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native CppHDL and Verilator flows.
 
+### Asynchronous reset handlers
+
+&nbsp;&nbsp;&nbsp;&nbsp;A named clock process can move its reset assignments out of the synchronous work method and into an optional asynchronous-reset handler:
+
+```cpp
+void _reset_pos_fast_clk()
+{
+    fast_state_reg.clr();
+}
+
+void _reset_neg_fast_clk()
+{
+    fast_neg_state_reg.clr();
+}
+```
+
+`_reset_pos_<clk_name>()` resets state owned by the positive-edge process for `<clk_name>`. `_reset_neg_<clk_name>()` resets state owned by that clock's negative-edge process. The `pos` and `neg` parts identify the **clock edge**, not reset polarity. Both handlers use the existing shared, active-high `reset` input and generate `posedge reset` sensitivity:
+
+```systemverilog
+always_ff @(posedge fast_clk or posedge reset) begin
+    if (reset) begin
+        _reset_pos_fast_clk();
+    end
+    else begin
+        _work_fast_clk(reset);
+    end
+end
+
+always_ff @(negedge fast_clk or posedge reset) begin
+    if (reset) begin
+        _reset_neg_fast_clk();
+    end
+    else begin
+        _work_neg_fast_clk(reset);
+    end
+end
+```
+
+The handlers follow these rules:
+
+* A reset handler has `void` return type and no arguments.
+* `_reset_neg_<clk_name>()` requires the corresponding `_work_neg_<clk_name>(bool)` and `_strobe_neg_<clk_name>()` process.
+* A handler may modify only registers owned by its matching clock and edge.
+* Registers changed by `_reset_pos_<clk_name>()` must be strobed by `_strobe_<clk_name>()`.
+* Registers changed by `_reset_neg_<clk_name>()` must be strobed by `_strobe_neg_<clk_name>()`.
+* If a process has no asynchronous-reset handler, its existing synchronous reset behavior is unchanged.
+
+&nbsp;&nbsp;&nbsp;&nbsp;In native C++ simulation, an asynchronous assertion is an explicit event. Call every applicable reset handler and then its matching strobe method without waiting for a clock edge:
+
+```cpp
+dut._reset_pos_fast_clk();
+dut._strobe_fast_clk();
+dut._reset_neg_fast_clk();
+dut._strobe_neg_fast_clk();
+dut._reset_pos_slow_clk();
+dut._strobe_slow_clk();
+```
+
+While reset remains asserted, a native clock scheduler must select the reset handler instead of the normal work method on each matching edge. In Verilator, drive `reset` from `0` to `1` and call `eval()`; no clock transition is required. Deasserting reset does not itself execute work. Normal state changes resume on subsequent clock edges.
+
+Asynchronous assertion does not make release timing safe automatically. The shared reset must be deasserted in accordance with every domain's recovery/removal requirements, normally through a per-domain synchronized release. CppHDL does not model metastability or prove this timing.
+
+`tests/reset/AsyncReset.cpp` checks asynchronous assertion with stationary clocks, held reset, release behavior, positive- and negative-edge ownership, generated sensitivity lists, native C++ execution, and Verilator execution.
+
 ## Native and Verilator simulation
 
 &nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. On an active edge, call the work method before the matching strobe method:
@@ -1021,7 +1085,8 @@ This emits the corresponding `ASYNC_REG` attributes in generated SystemVerilog. 
 
 ## Covered CDC Features
 
-Each item has a dedicated test function in `tests/cdc/TwoClocksCdc.cpp`:
+Each item has dedicated regression coverage in `tests/cdc/TwoClocksCdc.cpp` or
+`tests/reset/AsyncReset.cpp`:
 
 * Independent clocks with unrelated phase/frequency
 * Generated clock ports and separate edge blocks
@@ -1032,6 +1097,7 @@ Each item has a dedicated test function in `tests/cdc/TwoClocksCdc.cpp`:
 * Request/acknowledge coherent data mailbox
 * Memory-backed asynchronous FIFO
 * Shared-reset sampling and completion across all clock domains
+* Active-high asynchronous reset assertion for positive- and negative-edge processes
 * Synchronized reset release
 * Positive/negative-edge processes
 * `ASYNC_REG` synthesis attributes
@@ -1046,7 +1112,7 @@ The following behavior cannot presently be validated or fully represented by Cpp
 * Physical synchronizer placement and routing skew
 * SDC false-path, multicycle, and generated-clock constraints
 * Automatic detection of unsafe raw buses, reconvergence, or lost pulses
-* True asynchronous reset sensitivity; only clocked assertion and synchronized release are represented
+* Active-low reset polarity and independent per-domain reset ports; asynchronous handlers currently use the shared active-high `reset`
 * Dynamic clock gating or clock multiplexing
 * Jitter, drift, and precise phase relationships
 * Module-local clock subsets or clock-name remapping; clocks are currently design-global

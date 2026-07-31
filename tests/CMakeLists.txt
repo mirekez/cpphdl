@@ -56,6 +56,10 @@ foreach(src ${TEST_SOURCES})
         set(cpphdl_clock_args
             "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
     endif()
+    if(rel_path STREQUAL "reset/AsyncReset.cpp")
+        set(cpphdl_clock_args
+            "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
+    endif()
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
@@ -103,6 +107,17 @@ foreach(cdc_failure_case secondary_without_primary secondary_above_primary missi
             -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_cdc_missing_methods
             -DCASE=${cdc_failure_case}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cdc/ExpectFailure.cmake)
+endforeach()
+
+foreach(async_reset_failure_case invalid_signature missing_negative_process wrong_owner)
+    add_test(NAME reset_async_${async_reset_failure_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/reset/InvalidAsyncReset.h
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_async_reset_failure
+            -DCASE=${async_reset_failure_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/reset/ExpectFailure.cmake)
 endforeach()
 
 set(CPPHDL_NBA_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_nonblocking_memory")
