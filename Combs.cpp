@@ -295,6 +295,10 @@ struct ClassInfo {
   Body strobeBody;
   bool useTemplatePatternMethods = false;
   bool supportsTemplateArgumentDeduction = true;
+  // Oversized concrete specializations can remain normal CppHDL subtrees.
+  // Their lifecycle calls are preserved while the surrounding hierarchy is
+  // flattened, avoiding semantic instantiation solely for optimization.
+  bool opaque = false;
 };
 
 // Flattened work can pass ordinary module fields to output-reference helpers.
@@ -449,6 +453,43 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     if (rootName.empty()) {
       return;
     }
+    // Bounded collection translation units can precede the final root TU.
+    // Restrict AST walking to explicitly reached classes so declarations
+    // imported from a PCH remain lazy instead of recreating one giant AST.
+    reachableOnly = true;
+    for (const clang::Decl *declaration :
+         context.getTranslationUnitDecl()->decls()) {
+      const auto *variable = clang::dyn_cast<clang::VarDecl>(declaration);
+      if (!variable ||
+          (!variable->getNameAsString().starts_with("cpphdlCombsCollect") &&
+           !variable->getNameAsString().starts_with("cpphdlCombsOpaque"))) {
+        continue;
+      }
+      clang::QualType type = variable->getType();
+      if (type->isPointerType()) {
+        type = type->getPointeeType();
+      }
+      const auto *record = type->getAsCXXRecordDecl();
+      if (!record) {
+        continue;
+      }
+      if (variable->getNameAsString().starts_with("cpphdlCombsOpaque")) {
+        const std::string name = recordTypeName(record, context);
+        if (!name.empty()) {
+          ClassInfo &info = classes[name];
+          info.name = name;
+          info.opaque = true;
+          const auto location = context.getSourceManager().getSpellingLoc(
+              record->getLocation());
+          if (location.isValid()) {
+            info.header =
+                context.getSourceManager().getFilename(location).str();
+          }
+        }
+      } else if (derivesModule(record)) {
+        collectClass(record, false);
+      }
+    }
     const auto *root = findRoot(context.getTranslationUnitDecl());
     if (!root) {
       return;
@@ -457,7 +498,6 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     // The optimization root fixes the concrete module hierarchy up front.
     // Collect its child fields recursively before the AST walk, allowing that
     // walk to skip method extraction for unrelated header-only models.
-    reachableOnly = true;
     collectClass(root);
   }
 
@@ -481,17 +521,18 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     }
   }
 
-  void collectClass(const clang::CXXRecordDecl *declaration) {
-    declaration = declaration->getDefinition() ? declaration->getDefinition()
-                                               : declaration;
+  void collectClass(const clang::CXXRecordDecl *declaration,
+                    bool collectChildren = true) {
     const std::string name = recordTypeName(declaration, context);
     if (name.empty() || collecting.contains(name)) {
       return;
     }
     auto &info = classes[name];
-    if (!info.fields.empty()) {
+    if (info.opaque || !info.fields.empty()) {
       return;
     }
+    declaration = declaration->getDefinition() ? declaration->getDefinition()
+                                               : declaration;
     collecting.insert(name);
     info.name = name;
     std::map<std::string, clang::QualType> templateTypeArguments;
@@ -650,9 +691,15 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
                 }
               }
               const auto *value = valueType->getAsCXXRecordDecl();
-              if (value && derivesModule(value)) {
-                collectClass(value);
-                item.portModuleClass = recordTypeName(value, context);
+              const std::string valueName = recordTypeName(value, context);
+              const auto knownValue = classes.find(valueName);
+              if (value && ((knownValue != classes.end() &&
+                             knownValue->second.opaque) ||
+                            derivesModule(value))) {
+                if (collectChildren) {
+                  collectClass(value);
+                }
+                item.portModuleClass = valueName;
               }
             }
           }
@@ -690,11 +737,17 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           item.childPointer = true;
           childType = childType->getPointeeType();
         }
-        if (const auto *child = childType->getAsCXXRecordDecl();
-            child && derivesModule(child)) {
-          collectClass(child);
+        const auto *child = childType->getAsCXXRecordDecl();
+        const std::string childName = recordTypeName(child, context);
+        const auto knownChild = classes.find(childName);
+        const bool childIsOpaque =
+            knownChild != classes.end() && knownChild->second.opaque;
+        if (child && (childIsOpaque || derivesModule(child))) {
+          if (collectChildren) {
+            collectClass(child);
+          }
           item.kind = FieldKind::Child;
-          item.childClass = recordTypeName(child, context);
+          item.childClass = childName;
         } else {
           std::vector<size_t> dimensions;
           clang::QualType elementType = childType;
@@ -719,10 +772,17 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
             elementType = arguments[1].getAsType();
           }
           const auto *element = elementType->getAsCXXRecordDecl();
-          if (!dimensions.empty() && element && derivesModule(element)) {
-            collectClass(element);
+          const std::string elementName = recordTypeName(element, context);
+          const auto knownElement = classes.find(elementName);
+          if (!dimensions.empty() && element &&
+              ((knownElement != classes.end() &&
+                knownElement->second.opaque) ||
+               derivesModule(element))) {
+            if (collectChildren) {
+              collectClass(element);
+            }
             item.kind = FieldKind::ChildArray;
-            item.childClass = recordTypeName(element, context);
+            item.childClass = elementName;
             item.childDimensions = std::move(dimensions);
             item.childCount = 1;
             for (size_t dimension : item.childDimensions) {
@@ -760,9 +820,14 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   }
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *declaration) {
+    const std::string name = recordTypeName(declaration, context);
+    const auto known = classes.find(name);
+    if (known != classes.end() && known->second.opaque) {
+      return true;
+    }
     if (declaration->isCompleteDefinition() && derivesModule(declaration) &&
         (!reachableOnly ||
-         classes.contains(recordTypeName(declaration, context)))) {
+         classes.contains(name))) {
       collectClass(declaration);
     }
     return true;
@@ -772,6 +837,10 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     const auto *record =
         declaration->getUnderlyingType()->getAsCXXRecordDecl();
     const std::string className = recordTypeName(record, context);
+    const auto known = classes.find(className);
+    if (known != classes.end() && known->second.opaque) {
+      return true;
+    }
     if (record && derivesModule(record) &&
         (!reachableOnly || classes.contains(className))) {
       // A specialization named only through a generated alias is not always
@@ -845,10 +914,14 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       return true;
     }
     const auto *parent = declaration->getParent();
+    const std::string className = recordTypeName(parent, context);
+    const auto known = classes.find(className);
+    if (known != classes.end() && known->second.opaque) {
+      return true;
+    }
     if (!derivesModule(parent)) {
       return true;
     }
-    const std::string className = recordTypeName(parent, context);
     bool relevant = !reachableOnly || classes.contains(className);
     if (!relevant) {
       const auto *classTemplate = parent->getDescribedClassTemplate();
@@ -944,7 +1017,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   void applyTemplateMethods() {
     size_t reconciledClasses = 0;
     for (auto &[name, info] : classes) {
-      if (info.templateBase.empty()) {
+      if (info.opaque || info.templateBase.empty()) {
         continue;
       }
       const ClassInfo *pattern = nullptr;
@@ -1078,6 +1151,44 @@ std::optional<std::string> combStorage(const std::string &body) {
     return std::nullopt;
   }
   return storage;
+}
+
+std::string l1CombBody(const std::string &body, const std::string &method,
+                       const std::string &storage) {
+  const std::string clock = method + "_clock";
+  std::vector<std::string> lines;
+  std::istringstream input(bodyInterior(body));
+  std::string line;
+  bool skipGuardReturn = false;
+  bool skipGuardClosingBrace = false;
+  while (std::getline(input, line)) {
+    const std::string statement = trim(line);
+    if (statement.find(clock + " == _system_clock") != std::string::npos) {
+      skipGuardReturn =
+          statement.find("return " + storage) == std::string::npos;
+      skipGuardClosingBrace = skipGuardReturn && statement.ends_with('{');
+      continue;
+    }
+    if (skipGuardReturn && statement == "return " + storage + ";") {
+      skipGuardReturn = false;
+      continue;
+    }
+    if (skipGuardClosingBrace && statement == "}") {
+      skipGuardClosingBrace = false;
+      continue;
+    }
+    if (statement == clock + " = _system_clock;") {
+      continue;
+    }
+    lines.push_back(line);
+  }
+  std::ostringstream normalized;
+  normalized << "{\n";
+  for (const std::string &bodyLine : lines) {
+    normalized << bodyLine << '\n';
+  }
+  normalized << "}";
+  return normalized.str();
 }
 
 struct Assignment {
@@ -1979,6 +2090,34 @@ struct CombsOptimizer::Impl {
         output += child->second->alias + ".";
         index = afterIdentifier + (childArrow ? 2 : 1);
         continue;
+      }
+
+      if (!qualifiedBefore && !memberBefore && identifier == "this" &&
+          afterIdentifier + 2 <= input.size() &&
+          input.substr(afterIdentifier, 2) == "->") {
+        const size_t methodStart = skipSpace(input, afterIdentifier + 2);
+        if (methodStart < input.size() && identifierStart(input[methodStart])) {
+          size_t methodEnd = methodStart + 1;
+          while (methodEnd < input.size() && identifierPart(input[methodEnd])) {
+            ++methodEnd;
+          }
+          const std::string method =
+              input.substr(methodStart, methodEnd - methodStart);
+          const size_t opening = skipSpace(input, methodEnd);
+          if (opening < input.size() && input[opening] == '(') {
+            const auto closing = matchingDelimiter(input, opening, '(', ')');
+            if (closing &&
+                trim(input.substr(opening + 1, *closing - opening - 1))
+                    .empty()) {
+              if (auto node = callableNode(context, method)) {
+                referenceNode(*node, dependencies);
+                output += nodeValue(*node);
+                index = *closing + 1;
+                continue;
+              }
+            }
+          }
+        }
       }
 
       if (!qualifiedBefore && !memberBefore && identifier == "this") {
@@ -3196,6 +3335,9 @@ struct CombsOptimizer::Impl {
 
   std::string flattenWork(Instance &instance, const std::string &indent,
                           std::unordered_set<size_t> &active) {
+    if (instance.type->opaque) {
+      return indent + instance.alias + "._work(__cpphdl_reset);\n";
+    }
     if (active.contains(instance.id)) {
       error = "recursive _work call at " + instance.path;
       return {};
@@ -3443,6 +3585,9 @@ struct CombsOptimizer::Impl {
 
   std::string flattenStrobe(Instance &instance, const std::string &indent,
                             std::unordered_set<size_t> &active) {
+    if (instance.type->opaque) {
+      return indent + instance.alias + "._strobe();\n";
+    }
     if (active.contains(instance.id)) {
       error = "recursive _strobe call at " + instance.path;
       return {};
@@ -3777,6 +3922,12 @@ struct CombsOptimizer::Impl {
             return false;
           }
         }
+        // Opaque subtrees retain the bindings established by the root's
+        // one-time _assign() call. Their ports are intentionally outside the
+        // flattened dependency graph.
+        if (target->type->opaque) {
+          continue;
+        }
         const auto field = target->type->fields.find(assignment.targetPort);
         if (field == target->type->fields.end() ||
             field->second.kind != FieldKind::Port) {
@@ -3837,7 +3988,14 @@ struct CombsOptimizer::Impl {
         }
         if (auto storage = combStorage(bodyText(body));
             storage && info.fields.contains(*storage)) {
-          info.combExpressions[methodName] = body;
+          if (l1Scheduling && *storage == methodName + "_cache" &&
+              info.fields.contains(methodName + "_clock")) {
+            info.combExpressions[methodName] =
+                std::make_shared<const std::string>(
+                    l1CombBody(bodyText(body), methodName, *storage));
+          } else {
+            info.combExpressions[methodName] = body;
+          }
           info.combStorage[methodName] = *storage;
         }
       }
@@ -4174,18 +4332,10 @@ struct CombsOptimizer::Impl {
     }
     internal << "#pragma once\n#include <cstddef>\n#include <limits>\n#include <memory>\n#include "
                 "<type_traits>\n#include <unordered_map>\n#include <utility>\n";
-    for (const std::string &include : sourceIncludes) {
-      const std::string includeName =
-          std::filesystem::path(include).filename().string();
-      if (!include.ends_with(".h") || headerNames.contains(includeName) ||
-          include == rootHeader || includeName == rootHeaderName ||
-          includeName == "cpphdl_support.h") {
-        continue;
-      }
-      internal << "#include \"" << include << "\"\n";
-    }
     // Load CppHDL and its standard-library dependencies before changing
-    // access control while reading generated module declarations.
+    // access control. The root and concrete model headers are then included
+    // under the access shim; including seed headers first would lock their
+    // private declarations behind include guards before the shim is active.
     internal << "#include \"cpphdl.h\"\n";
     internal << "#define private public\n";
     // Root first makes the declaration in the generated API obvious.

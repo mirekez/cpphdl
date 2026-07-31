@@ -28,6 +28,7 @@
 #include <cstring>
 #include <cstdio>
 #include <deque>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,6 +38,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 using namespace clang;
 
@@ -2132,11 +2137,20 @@ bool appendClockDomain(std::vector<cpphdl::ClockDomain>& clocks, const char* nam
 
 struct MyFrontendAction : public ASTFrontendAction
 {
-    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr)
-        : combsOptimizer(combsOptimizer) {}
+    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr,
+                              bool trimPreviousAst = false)
+        : combsOptimizer(combsOptimizer), trimPreviousAst(trimPreviousAst) {}
 
     bool BeginSourceFileAction(CompilerInstance &CI) override
     {
+#if defined(__GLIBC__)
+        // Clang has destroyed the previous CompilerInstance before creating
+        // this action. Return its released AST arenas before collecting the
+        // next bounded optimizer input instead of accumulating them per TU.
+        if (trimPreviousAst) {
+            malloc_trim(0);
+        }
+#endif
         // Fetched Clang 21 can report failed include-search candidates here
         // even when a later search directory opens the header successfully.
         CI.getDiagnostics().setSeverity(
@@ -2152,6 +2166,7 @@ struct MyFrontendAction : public ASTFrontendAction
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool trimPreviousAst;
 };
 
 struct MyFrontendActionFactory : public tooling::FrontendActionFactory
@@ -2161,10 +2176,14 @@ struct MyFrontendActionFactory : public tooling::FrontendActionFactory
 
     std::unique_ptr<FrontendAction> create() override
     {
-        return std::make_unique<MyFrontendAction>(combsOptimizer);
+        auto action = std::make_unique<MyFrontendAction>(combsOptimizer,
+                                                         !firstSource);
+        firstSource = false;
+        return action;
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool firstSource = true;
 };
 
 int main(int argc, const char **argv)
@@ -2410,17 +2429,39 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
+    // The comb optimizer can restrict method extraction to the concrete root.
+    // Supplying it before Clang's AST walk avoids retaining unrelated module
+    // implementations from the same generated umbrella header.
     cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
+    const bool trace_phases = std::getenv("CPPHDL_TRACE_PHASES") != nullptr;
+    const auto parse_started = std::chrono::steady_clock::now();
     int ret = Tool.run(&actionFactory);
+    if (trace_phases) {
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - parse_started).count();
+        llvm::errs() << "cpphdl phase: AST collection " << elapsed << " s\n";
+    }
     if (ret != 0) {
         return ret;
     }
     if (!optimize_combs_root.empty()) {
+#if defined(__GLIBC__)
+        // Clang releases its AST before Tool.run() returns, but glibc can retain
+        // those multi-gigabyte arenas.  The graph is a separate allocation phase,
+        // so return unused AST pages before constructing the optimized schedule.
+        malloc_trim(0);
+#endif
+        const auto generate_started = std::chrono::steady_clock::now();
         if (!combsOptimizer.generate(optimize_combs_root, generated_dir)) {
             return 1;
+        }
+        if (trace_phases) {
+            const auto elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - generate_started).count();
+            llvm::errs() << "cpphdl phase: comb generation " << elapsed << " s\n";
         }
     } else {
         if (!currProject->generate(generated_dir)) {
