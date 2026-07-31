@@ -22,7 +22,7 @@ struct CombDeps {
 
 class CombsOptimizer {
 public:
-  CombsOptimizer();
+  explicit CombsOptimizer(std::string rootModule = {});
   ~CombsOptimizer();
   CombsOptimizer(CombsOptimizer &&) noexcept;
   CombsOptimizer &operator=(CombsOptimizer &&) noexcept;
