@@ -12,10 +12,11 @@ HDLCPP_JOBS="${HDLCPP_JOBS:-1}"
 # Large explicit-instantiation units make GCC retain several gigabytes of template state.
 # Group small specializations by generated definition size while leaving large modules alone.
 # This preserves the generated model and keeps the serial CVA6 build below the host memory limit.
-HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="${HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE:-32}"
-HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="${HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE:-85000}"
+HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="${HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE:-24}"
+HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="${HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE:-200000}"
 DEFAULT_HDLCPP="/home/me/cpphdl/hdlcpp/build/hdlcpp"
 HDLCPP="${HDLCPP:-$DEFAULT_HDLCPP}"
+CPPHDL="${CPPHDL:-/home/me/cpphdl/build/cpphdl}"
 CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
 CPPHDL_CVA6_ONLY="${CPPHDL_CVA6_ONLY:-}"
 CPPHDL_CVA6_FINALIZE_ONLY="${CPPHDL_CVA6_FINALIZE_ONLY:-0}"
@@ -75,8 +76,14 @@ else
     cp "$SUPPORT/$RUNNER" "$OUT/$RUNNER"
     cp "$SUPPORT/cva6_generate_param_values.tsv" "$OUT/cva6_generate_param_values.tsv"
     if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        rm -f "$OUT/CpphdlOptimizedRoot.h" \
+            "$OUT/CpphdlCombOptimizedRoot.h" \
+            "$OUT/cpphdl_comb_optimized_externs.h"
         cp "$SUPPORT"/run_cpphdl_testharness_model* "$OUT"/
+        cp "$SUPPORT"/run_cpphdl_testharness_optimized* "$OUT"/
         cp "$SUPPORT/run_cpphdl_testharness_optimize_seed.cpp" "$OUT"/
+        cp "$SUPPORT/prepare_optimize_combs.py" "$OUT"/
+        cp "$SUPPORT/run_optimize_combs_l1.sh" "$OUT"/
     fi
 fi
 
@@ -193,23 +200,58 @@ rename_cpp_global_collisions
         mv "$RUNNER.runtime" "$RUNNER"
         trap - EXIT
         cp "$RUNNER" cpphdl_optimized_main.cpp
+        if [[ ! -x "$CPPHDL" ]]; then
+            echo "missing cpphdl executable: $CPPHDL" >&2
+            exit 2
+        fi
+        python3 prepare_optimize_combs.py .
         python3 - <<'PY'
 from pathlib import Path
 
-# Keep the non-templated runner and narrow model bridges in separate translation units.
-# The optimization seed still supplies the concrete top hierarchy to hdlcpp.
-# Splitting here bounds GCC memory without changing the generated RTL model.
+for pattern in ("CpphdlOptimizedRoot_optimized_combs*", "cpphdl_opt_t0_optimized_combs*"):
+    for path in Path(".").glob(pattern):
+        if path.is_file():
+            path.unlink()
+PY
+        CPPHDL="$CPPHDL" bash run_optimize_combs_l1.sh .
+        python3 - <<'PY'
+from pathlib import Path
+
+# Keep the runner, narrow model bridges, and global comb schedule in separate
+# translation units. The hdlcpp specialization sources still own concrete
+# templates, while the L1 sources replace recursive work and comb dispatch.
 makefile = Path("Makefile.optimize")
 text = makefile.read_text()
 model_sources = [
     "run_cpphdl_testharness_model_create.cpp",
-    "run_cpphdl_testharness_model_bind.cpp",
-    "run_cpphdl_testharness_model_cycle.cpp",
+    "run_cpphdl_testharness_optimized_bind.cpp",
+    "run_cpphdl_testharness_optimized_cycle.cpp",
     "run_cpphdl_testharness_model_memory.cpp",
     "run_cpphdl_testharness_model_observe.cpp",
 ]
-model_objects = " \\\n        ".join(f"build/opt/{Path(source).stem}.o" for source in model_sources)
-text = text.replace("OBJS := ", f"MODEL_OBJS := {model_objects}\nOBJS := $(MODEL_OBJS) ", 1)
+comb_sources = sorted(Path(".").glob("cpphdl_opt_t0_optimized_combs*.cpp"))
+if not comb_sources:
+    raise SystemExit("cpphdl L1 optimizer generated no implementation sources")
+model_objects = [f"build/opt/{Path(source).stem}.o" for source in model_sources]
+comb_objects = [f"build/opt/{source.stem}.o" for source in comb_sources]
+objects = " \\\n        ".join(model_objects + comb_objects)
+text = text.replace(
+    "OBJS := ",
+    f"MODEL_OBJS := {objects}\nOBJS := $(MODEL_OBJS) ",
+    1,
+)
+
+# L1 replaces the concrete root's recursive cycle methods with its generated
+# schedule. Drop only the isolated root work/strobe instantiations; descendants
+# retained as opaque subtrees still require their ordinary lifecycle methods.
+for source in Path(".").glob("cpphdl_optimized_inst_*.cpp"):
+    source_text = source.read_text()
+    if ("template void cpphdl_opt_t0::_work(bool);" not in source_text and
+            "template void cpphdl_opt_t0::_strobe();" not in source_text):
+        continue
+    object_path = f"build/opt/{source.stem}.o"
+    text = text.replace(f" \\\n        {object_path}", "")
+    text = text.replace(f" {object_path}", "")
 makefile.write_text(text)
 PY
     fi

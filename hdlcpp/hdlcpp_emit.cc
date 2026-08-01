@@ -3110,7 +3110,7 @@
                 }
                 h << "namespace " << m.name << "\n{\n";
                 for (auto& decl : m.packageDecls) {
-                    h << decl << "\n";
+                    h << updateCpphdlArraySyntax(decl) << "\n";
                 }
                 for (auto& f : m.methods) {
                     emitMethod(h, m, f);
@@ -3124,7 +3124,7 @@
                 }
             }
             for (auto& decl : m.preClassDecls) {
-                h << decl << "\n";
+                h << updateCpphdlArraySyntax(decl) << "\n";
             }
             if (!m.params.empty()) {
                 h << "template<";
@@ -13025,11 +13025,15 @@ static size_t findMatchingAngle(const std::string& text, size_t open)
 {
     int depth = 0;
     for (size_t i = open; i < text.size(); ++i) {
-        if (text[i] == '<' && i + 1 < text.size() && text[i + 1] == '<') {
+        if (text[i] == '<' && i + 1 < text.size() &&
+            (text[i + 1] == '<' || text[i + 1] == '=')) {
             ++i;
         }
         else if (text[i] == '<') {
             ++depth;
+        }
+        else if (text[i] == '>' && i + 1 < text.size() && text[i + 1] == '=') {
+            ++i;
         }
         else if (text[i] == '>') {
             --depth;
@@ -13348,7 +13352,15 @@ static std::set<std::string> parseLocalValueNames(const std::string& text)
 
 static std::string extractGeneratedClassDefinition(const std::string& text, const std::string& name)
 {
-    auto classPos = text.find("class " + name);
+    const std::string needle = "class " + name;
+    size_t classPos = 0;
+    while ((classPos = text.find(needle, classPos)) != std::string::npos) {
+        const size_t afterName = classPos + needle.size();
+        if (afterName >= text.size() || !identChar(text[afterName])) {
+            break;
+        }
+        classPos = afterName;
+    }
     if (classPos == std::string::npos) {
         return {};
     }
@@ -13489,9 +13501,12 @@ static std::vector<std::string> findConcreteModuleTypes(const std::string& mainT
             auto prefix = trim(mainText.substr(lineBegin, pos - lineBegin));
             const bool usingAlias = prefix.rfind("using ", 0) == 0 &&
                                     prefix.find('=') != std::string::npos;
+            const bool nestedType = after < mainText.size() &&
+                                    (mainText[after] == '>' || mainText[after] == ',' ||
+                                     mainText[after] == ']');
             if (after >= mainText.size() ||
                 (!identChar(mainText[after]) && mainText[after] != '&' && mainText[after] != '*' &&
-                 !(usingAlias && mainText[after] == ';'))) {
+                 !nestedType && !(usingAlias && mainText[after] == ';'))) {
                 pos = close + 1;
                 continue;
             }
@@ -13772,6 +13787,13 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     }
     if (!concreteTypes.empty()) {
         externs << "\n";
+        // Root lifecycle bridges keep optimized clients from re-instantiating or
+        // inlining large template methods in every translation unit. Their bodies
+        // are emitted beside the corresponding explicit root instantiations.
+        externs << "cpphdl_opt_t0* cpphdl_optimized_root_create();\n";
+        externs << "void cpphdl_optimized_root_work(cpphdl_opt_t0&, bool);\n";
+        externs << "void cpphdl_optimized_root_strobe(cpphdl_opt_t0&);\n";
+        externs << "void cpphdl_optimized_root_assign(cpphdl_opt_t0&);\n\n";
     }
     auto constructorName = [](const std::string& concreteType) {
         auto type = trim(concreteType);
@@ -13838,21 +13860,46 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
         case OptimizedMember::Constructor:
             if (hasInstantiableConstructor(concreteTypes[index])) {
                 inst << "template " << type << "::" << ctor << "();\n";
+                if (index == 0) {
+                    inst << "__attribute__((noinline, optimize(\"O0\", \"no-inline\"))) "
+                            "cpphdl_opt_t0* cpphdl_optimized_root_create() "
+                            "{ return new cpphdl_opt_t0; }\n";
+                }
             }
             break;
         case OptimizedMember::Work:
             inst << "template void " << type << "::_work(bool);\n";
+            if (index == 0) {
+                inst << "void cpphdl_optimized_root_work(cpphdl_opt_t0& obj, bool reset) "
+                        "{ obj._work(reset); }\n";
+            }
             break;
         case OptimizedMember::Strobe:
             inst << "template void " << type << "::_strobe();\n";
+            if (index == 0) {
+                inst << "void cpphdl_optimized_root_strobe(cpphdl_opt_t0& obj) "
+                        "{ obj._strobe(); }\n";
+            }
             break;
         case OptimizedMember::Assign:
             inst << "template void " << type << "::_assign();\n";
+            if (index == 0) {
+                inst << "void cpphdl_optimized_root_assign(cpphdl_opt_t0& obj) "
+                        "{ obj._assign(); }\n";
+            }
             break;
         }
     };
-    auto instantiationPreamble = [&]() {
+    auto instantiationPreamble = [&](bool disableInlining = false) {
         std::ostringstream inst;
+        if (disableInlining) {
+            // Constructors execute only during elaboration. Prevent GCC from
+            // recursively inlining the full child hierarchy into isolated root
+            // constructor units while preserving -O2 for all cycle methods.
+            inst << "#if defined(__GNUC__) && !defined(__clang__)\n"
+                    "#pragma GCC optimize (\"O0\", \"no-inline\")\n"
+                    "#endif\n";
+        }
         inst << "#include \"cpphdl_optimized_externs.h\"\n\n";
         for (const auto& include : generatedIncludes) {
             inst << "#include \"" << include << "\"\n";
@@ -13875,7 +13922,7 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     };
     auto memberInstantiationFile = [&](size_t index, OptimizedMember member) {
         std::ostringstream inst;
-        inst << instantiationPreamble();
+        inst << instantiationPreamble(member == OptimizedMember::Constructor);
         emitMemberInstantiation(inst, index, member);
         return inst.str();
     };
@@ -13884,15 +13931,67 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     std::vector<std::set<std::string>> unitTemplateNames;
     std::vector<size_t> unitDefinitionBytes;
     std::vector<std::pair<size_t, OptimizedMember>> oversizedMemberUnits;
+
+    std::set<std::string> generatedModuleNames;
+    for (const auto& [name, _] : moduleInfos) {
+        generatedModuleNames.insert(name);
+    }
+    std::map<std::string, size_t> moduleDefinitionWeights;
+    auto moduleDefinitionWeight = [&](const std::string& moduleName) {
+        auto cached = moduleDefinitionWeights.find(moduleName);
+        if (cached != moduleDefinitionWeights.end()) {
+            return cached->second;
+        }
+
+        // A wrapper's short definition can instantiate a much larger child model,
+        // so its raw source bytes badly underestimate explicit-instantiation cost.
+        // Include direct generated children while keeping shared leaf models groupable.
+        std::set<std::string> weightedNames{moduleName};
+        auto info = moduleInfos.find(moduleName);
+        if (info != moduleInfos.end()) {
+            for (const auto& child : findConcreteModuleTypes(info->second.definition,
+                                                             generatedModuleNames)) {
+                weightedNames.insert(moduleNameOfConcreteType(child));
+            }
+        }
+        size_t weight = 0;
+        for (const auto& name : weightedNames) {
+            auto weighted = moduleInfos.find(name);
+            const auto bytes = weighted == moduleInfos.end()
+                ? size_t{1}
+                : std::max(size_t{1}, weighted->second.definition.size());
+            if (weight > std::numeric_limits<size_t>::max() - bytes) {
+                weight = std::numeric_limits<size_t>::max();
+                break;
+            }
+            weight += bytes;
+        }
+        moduleDefinitionWeights[moduleName] = weight;
+        return weight;
+    };
+
     for (size_t index = 0; index < concreteTypes.size(); ++index) {
         auto type = trim(concreteTypes[index]);
         auto open = type.find('<');
         auto templateName = trim(open == std::string::npos ? type : type.substr(0, open));
         auto moduleInfo = moduleInfos.find(moduleNameOfConcreteType(type));
-        auto definitionBytes = moduleInfo == moduleInfos.end()
+        auto ownDefinitionBytes = moduleInfo == moduleInfos.end()
             ? size_t{1}
             : std::max(size_t{1}, moduleInfo->second.definition.size());
+        auto definitionBytes = moduleDefinitionWeight(moduleNameOfConcreteType(type));
+        if (ownDefinitionBytes > maxDefinitionBytesPerFile) {
+            if (hasInstantiableConstructor(concreteTypes[index])) {
+                oversizedMemberUnits.emplace_back(index, OptimizedMember::Constructor);
+            }
+            oversizedMemberUnits.emplace_back(index, OptimizedMember::Work);
+            oversizedMemberUnits.emplace_back(index, OptimizedMember::Strobe);
+            oversizedMemberUnits.emplace_back(index, OptimizedMember::Assign);
+            continue;
+        }
         if (definitionBytes > maxDefinitionBytesPerFile) {
+            // A short wrapper can still make GCC elaborate and optimize its
+            // complete child hierarchy. Split lifecycle members just like a
+            // directly oversized model so one unit cannot retain all four ASTs.
             if (hasInstantiableConstructor(concreteTypes[index])) {
                 oversizedMemberUnits.emplace_back(index, OptimizedMember::Constructor);
             }
@@ -13922,10 +14021,17 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     }
 
     std::vector<std::pair<std::filesystem::path, std::string>> instantiationFiles;
+    std::set<std::filesystem::path> memoryConstrainedConstructorObjects;
     for (const auto& [index, member] : oversizedMemberUnits) {
         auto unit = instantiationFiles.size();
-        instantiationFiles.push_back({"cpphdl_optimized_inst_" + std::to_string(unit) + ".cpp",
-                                      memberInstantiationFile(index, member)});
+        auto path = std::filesystem::path("cpphdl_optimized_inst_" +
+                                          std::to_string(unit) + ".cpp");
+        instantiationFiles.push_back({path, memberInstantiationFile(index, member)});
+        if (member == OptimizedMember::Constructor) {
+            path.replace_extension(".o");
+            memoryConstrainedConstructorObjects.insert(
+                std::filesystem::path("build/opt") / path);
+        }
     }
     for (size_t unit = 0; unit < instantiationUnits.size(); ++unit) {
         auto fileIndex = instantiationFiles.size();
@@ -13938,6 +14044,10 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     make << "CPPHDL_INCLUDE ?= /home/me/cpphdl/include\n";
     make << "CXXFLAGS ?= -std=c++23 -O0 -g0 -w -pipe -fno-asynchronous-unwind-tables -I$(CPPHDL_INCLUDE) -I$(CURDIR)\n";
     make << "DEPFLAGS ?= -MMD -MP\n";
+    // Isolated constructors elaborate deep child hierarchies but never execute
+    // in the cycle loop. More frequent GCC collection bounds compiler memory
+    // without weakening the requested optimization level for runtime methods.
+    make << "CONSTRUCTOR_CXXFLAGS ?= --param ggc-min-expand=1 --param ggc-min-heapsize=4096\n";
     make << "LDFLAGS ?=\n\n";
     make << "RUNNER := " << runnerName << "\n";
     make << "OBJS := build/opt/cpphdl_optimized_main.o";
@@ -13950,6 +14060,16 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     make << "DEPS := $(OBJS:.o=.d)\n\n";
     make << ".PHONY: all clean\n\n";
     make << "all: $(RUNNER)\n\n";
+    for (const auto& object : memoryConstrainedConstructorObjects) {
+        // build.sh supplies CXXFLAGS on make's command line. Target-specific
+        // assignments need override so constructor-only memory controls still
+        // append without changing the optimized flags used by cycle methods.
+        make << object.string()
+             << ": override CXXFLAGS += $(CONSTRUCTOR_CXXFLAGS)\n";
+    }
+    if (!memoryConstrainedConstructorObjects.empty()) {
+        make << "\n";
+    }
     make << "build/opt/%.o: %.cpp all_generated.h cpphdl_optimized_externs.h\n";
     make << "\t@mkdir -p $(dir $@)\n";
     make << "\t$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@\n\n";

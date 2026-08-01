@@ -305,8 +305,17 @@ int main(int argc, char** argv)
     uint32_t lastCommittedPc = 0;
     uint32_t lastCommittedInsn = 0;
     const bool traceCommits = std::getenv("CPPHDL_TRACE_COMMITS") != nullptr;
+    const bool observeCommits = traceCommits ||
+        std::getenv("CPPHDL_OBSERVE_COMMITS") != nullptr;
     const bool traceMemory = std::getenv("CPPHDL_TRACE_MEMORY") != nullptr;
     const bool traceIrq = std::getenv("CPPHDL_TRACE_IRQ") != nullptr;
+    // Keep detailed probes opt-in because they traverse many model internals.
+    // Configurable bounds let divergence searches inspect one short interval at a time.
+    // Defaults preserve the established interrupt-debug window.
+    const uint64_t traceIrqStart = std::getenv("CPPHDL_TRACE_IRQ_START")
+        ? std::strtoull(std::getenv("CPPHDL_TRACE_IRQ_START"), nullptr, 0) : 2990;
+    const uint64_t traceIrqEnd = std::getenv("CPPHDL_TRACE_IRQ_END")
+        ? std::strtoull(std::getenv("CPPHDL_TRACE_IRQ_END"), nullptr, 0) : 3060;
     const bool traceRvfiRd = std::getenv("CPPHDL_TRACE_RVFI_RD") != nullptr;
     // Keep retired deep-path probes out of template instantiation in the runner.
 #if 0
@@ -319,28 +328,30 @@ int main(int argc, char** argv)
             cpphdl_model_trace_rvfi_rd(mainTime);
         }
 
-        const std::size_t commitLanes = cpphdl_model_commit_lanes();
-        for (std::size_t lane = 0; lane < commitLanes; ++lane) {
-            const CpphdlCommit committed = cpphdl_model_commit(lane);
-            if (committed.valid) {
-                ++committedInstructions;
-                lastCommittedPc = committed.pc;
-                lastCommittedInsn = committed.insn;
-                if (traceCommits) {
-                    std::fprintf(stderr,
-                                 "CPPCOMMIT cycle=%llu ordinal=%llu lane=%zu order=%llu pc=0x%08x "
-                                 "next=0x%08x insn=0x%08x trap=%u cause=0x%08x "
-                                 "rd=x%u data=0x%08x\n",
-                                 static_cast<unsigned long long>(mainTime),
-                                 static_cast<unsigned long long>(committedInstructions), lane,
-                                 static_cast<unsigned long long>(committed.order),
-                                 lastCommittedPc,
-                                 committed.nextPc,
-                                 lastCommittedInsn,
-                                 static_cast<unsigned>(committed.trap),
-                                 committed.cause,
-                                 static_cast<unsigned>(committed.rd),
-                                 committed.data);
+        if (observeCommits) {
+            const std::size_t commitLanes = cpphdl_model_commit_lanes();
+            for (std::size_t lane = 0; lane < commitLanes; ++lane) {
+                const CpphdlCommit committed = cpphdl_model_commit(lane);
+                if (committed.valid) {
+                    ++committedInstructions;
+                    lastCommittedPc = committed.pc;
+                    lastCommittedInsn = committed.insn;
+                    if (traceCommits) {
+                        std::fprintf(stderr,
+                                     "CPPCOMMIT cycle=%llu ordinal=%llu lane=%zu order=%llu pc=0x%08x "
+                                     "next=0x%08x insn=0x%08x trap=%u cause=0x%08x "
+                                     "rd=x%u data=0x%08x\n",
+                                     static_cast<unsigned long long>(mainTime),
+                                     static_cast<unsigned long long>(committedInstructions), lane,
+                                     static_cast<unsigned long long>(committed.order),
+                                     lastCommittedPc,
+                                     committed.nextPc,
+                                     lastCommittedInsn,
+                                     static_cast<unsigned>(committed.trap),
+                                     committed.cause,
+                                     static_cast<unsigned>(committed.rd),
+                                     committed.data);
+                    }
                 }
             }
         }
@@ -422,7 +433,7 @@ int main(int argc, char** argv)
 
         ++_system_clock;
         cpphdl_model_work(false);
-        if (traceIrq && mainTime >= 2990 && mainTime <= 3060) {
+        if (traceIrq && mainTime >= traceIrqStart && mainTime <= traceIrqEnd) {
             cpphdl_model_trace_irq(mainTime);
         }
 

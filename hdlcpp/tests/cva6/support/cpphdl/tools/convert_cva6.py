@@ -105,6 +105,15 @@ def unique(seq):
     return out
 
 
+# Generated support headers are broad Makefile dependencies for optimized units.
+# Preserve their timestamps when regeneration produces identical content so an
+# optimizer-only rerun does not force recompilation of the entire C++ model.
+def write_if_changed(path: Path, text: str) -> None:
+    if path.exists() and path.read_text() == text:
+        return
+    path.write_text(text)
+
+
 def collect_sources():
     files, incdirs = parse_flist(ROOT / "core/Flist.cva6")
     for tok in make_verilate_tokens():
@@ -947,7 +956,7 @@ def write_disabled_fpu_wrap(gen_root: Path):
     if cc_path.exists():
         cc_path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include \"cpphdl.h\"
 
@@ -992,7 +1001,7 @@ def write_disabled_instr_tracer(gen_root: Path):
     if cc_path.exists():
         cc_path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include \"cpphdl.h\"
 
@@ -1020,7 +1029,7 @@ def write_disabled_acc_dispatcher(gen_root: Path):
     if cc_path.exists():
         cc_path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include "cpphdl.h"
 
@@ -1099,7 +1108,7 @@ def write_xlnx_axi_stubs(gen_root: Path):
         lines.append("    void _assign() {}")
         lines.append("};")
         lines.append("")
-    path.write_text("\n".join(lines))
+    write_if_changed(path, "\n".join(lines))
     return path
 
 
@@ -1109,7 +1118,7 @@ def write_uart_bus_stub(gen_root: Path):
     if cc_path.exists():
         cc_path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include "cpphdl.h"
 
@@ -1133,7 +1142,7 @@ public:
 def write_dpi_adapter_header(gen_root: Path):
     path = gen_root / "corev_apu" / "tb" / "dpi_adapters.h"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include <cstdint>
 #include <type_traits>
@@ -1217,7 +1226,7 @@ static inline int jtag_tick(TCK& jtag_TCK, TMS& jtag_TMS, TDI& jtag_TDI,
 def write_tech_clock_cells(gen_root: Path):
     tc_path = gen_root / "vendor" / "pulp-platform" / "tech_cells_generic" / "src" / "rtl" / "tc_clk.h"
     tc_path.parent.mkdir(parents=True, exist_ok=True)
-    tc_path.write_text("""#pragma once
+    write_if_changed(tc_path, """#pragma once
 
 #include "cpphdl.h"
 
@@ -1342,7 +1351,7 @@ public:
 
     pulp_path = gen_root / "vendor" / "pulp-platform" / "tech_cells_generic" / "src" / "deprecated" / "pulp_clk_cells.h"
     pulp_path.parent.mkdir(parents=True, exist_ok=True)
-    pulp_path.write_text("""#pragma once
+    write_if_changed(pulp_path, """#pragma once
 
 #include "cpphdl.h"
 
@@ -1453,7 +1462,7 @@ public:
 
 def write_rvfi_types(gen_root: Path):
     path = gen_root / "rvfi_types.h"
-    path.write_text("""#pragma once
+    write_if_changed(path, """#pragma once
 
 #include "cpphdl.h"
 
@@ -1642,7 +1651,7 @@ def write_project_makefile(out: Path, gen_sources):
         gen_src_block = f"GEN_SRCS := {sources}\n"
     else:
         gen_src_block = "GEN_SRCS :=\n"
-    (out / "Makefile").write_text(f"""CXX ?= g++
+    write_if_changed(out / "Makefile", f"""CXX ?= g++
 CPPHDL_INCLUDE ?= /home/me/cpphdl/include
 CXXFLAGS ?= -std=c++23 -O0 -g0 -I$(CPPHDL_INCLUDE) -I$(CURDIR)
 LDFLAGS ?=
@@ -2100,11 +2109,6 @@ def main():
                 insert_at = idx
                 break
         includes.insert(insert_at, dpi_include)
-    def write_if_changed(path: Path, text: str) -> None:
-        if path.exists() and path.read_text() == text:
-            return
-        path.write_text(text)
-
     write_if_changed(aggregate_header, "#pragma once\n\n" + "\n".join(includes) + "\n")
     write_if_changed(aggregate, '#include "all_generated.h"\n\nint main() { return 0; }\n')
     gen_sources = []
@@ -2116,7 +2120,7 @@ def main():
     write_project_makefile(OUT, gen_sources)
 
     summary = OUT / "conversion-summary.txt"
-    summary.write_text(
+    write_if_changed(summary,
         f"target={TARGET}\n"
         f"sources={len(files)}\n"
         f"conversion_sources={len(conversion_files)}\n"

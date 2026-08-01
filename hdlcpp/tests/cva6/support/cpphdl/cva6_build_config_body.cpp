@@ -134,7 +134,8 @@ sv_assign_field(cfg.Mcontrol6, CVA6Cfg.Mcontrol6);
 sv_assign_field(cfg.Icount, CVA6Cfg.Icount);
 sv_assign_field(cfg.Etrigger, CVA6Cfg.Etrigger);
 sv_assign_field(cfg.Itrigger, CVA6Cfg.Itrigger);
-sv_assign_field(cfg.NonIdemPotenceEn, (CVA6Cfg.NrNonIdempotentRules > 0) && (CVA6Cfg.NonIdempotentLength[0] > 0));
+sv_assign_field(cfg.NonIdemPotenceEn, (CVA6Cfg.NrNonIdempotentRules > 0) &&
+    ((uint64_t)(std::as_const(CVA6Cfg.NonIdempotentLength)[0]) > 0));
 sv_assign_field(cfg.AxiBurstWriteEn, CVA6Cfg.AxiBurstWriteEn);
 sv_assign_field(cfg.ICACHE_SET_ASSOC, CVA6Cfg.IcacheSetAssoc);
 sv_assign_field(cfg.ICACHE_SET_ASSOC_WIDTH, CVA6Cfg.IcacheSetAssoc > 1 ? clog2(CVA6Cfg.IcacheSetAssoc) : CVA6Cfg.IcacheSetAssoc);

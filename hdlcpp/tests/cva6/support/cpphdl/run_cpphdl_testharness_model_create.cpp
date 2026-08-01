@@ -6,5 +6,5 @@ CpphdlModelContext* cpphdlModel = nullptr;
 void cpphdl_model_create()
 {
     cpphdlModel = new CpphdlModelContext;
-    cpphdlModel->dut = new cpphdl_opt_t0;
+    cpphdlModel->dut = cpphdl_optimized_root_create();
 }

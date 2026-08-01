@@ -1,9 +1,6 @@
-#include "cpphdl.h"
-
-#define private public
 #include "all_generated.h"
-#undef private
 
-// The optimizer traces this concrete top; the executable main is supplied separately.
+// The specialization pass traces this concrete root; the executable main and
+// the live DUT object are supplied separately.
 using CpphdlOptimizationTop = ariane_testharness<>;
 CpphdlOptimizationTop* cpphdlOptimizationTop = nullptr;
