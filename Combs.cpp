@@ -295,6 +295,7 @@ struct ClassInfo {
   Body strobeBody;
   bool useTemplatePatternMethods = false;
   bool supportsTemplateArgumentDeduction = true;
+  bool typeAlias = false;
   // Oversized concrete specializations can remain normal CppHDL subtrees.
   // Their lifecycle calls are preserved while the surrounding hierarchy is
   // flattened, avoiding semantic instantiation solely for optimization.
@@ -430,12 +431,31 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     return true;
   }
 
-  const clang::CXXRecordDecl *findRoot(const clang::DeclContext *scope) const {
+  bool matchesRootName(const clang::NamedDecl &declaration) const {
+    return declaration.getQualifiedNameAsString() == rootName ||
+           (rootName.find("::") == std::string::npos &&
+            declaration.getNameAsString() == rootName);
+  }
+
+  const clang::CXXRecordDecl *findRoot(const clang::DeclContext *scope) {
     for (const clang::Decl *declaration : scope->decls()) {
       if (const auto *record = clang::dyn_cast<clang::CXXRecordDecl>(declaration);
           record && record->isCompleteDefinition() &&
-          recordTypeName(record, context) == rootName) {
+          (recordTypeName(record, context) == rootName ||
+           matchesRootName(*record))) {
         return record;
+      }
+      // Specialized hdlcpp models are exposed through compact aliases. Accept
+      // an alias as the optimizer root while retaining the underlying record's
+      // methods and fields for hierarchy collection.
+      if (const auto *alias =
+              clang::dyn_cast<clang::TypedefNameDecl>(declaration);
+          alias && matchesRootName(*alias)) {
+        if (const auto *record =
+                alias->getUnderlyingType()->getAsCXXRecordDecl()) {
+          rootAlias = alias;
+          return record->getDefinition() ? record->getDefinition() : record;
+        }
       }
       if ((clang::isa<clang::NamespaceDecl>(declaration) ||
            clang::isa<clang::LinkageSpecDecl>(declaration)) &&
@@ -499,6 +519,34 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     // Collect its child fields recursively before the AST walk, allowing that
     // walk to skip method extraction for unrelated header-only models.
     collectClass(root);
+  }
+
+  void materializeRootAlias() {
+    if (!rootAlias) {
+      return;
+    }
+    const auto *record = rootAlias->getUnderlyingType()->getAsCXXRecordDecl();
+    if (!record) {
+      return;
+    }
+    const std::string concreteRoot = recordTypeName(record, context);
+    if (concreteRoot != rootName) {
+      const auto concrete = classes.find(concreteRoot);
+      if (concrete != classes.end()) {
+        ClassInfo alias = concrete->second;
+        alias.name = rootName;
+        if (rootAlias) {
+          alias.typeAlias = true;
+          const auto location = context.getSourceManager().getSpellingLoc(
+              rootAlias->getLocation());
+          if (location.isValid()) {
+            alias.header =
+                context.getSourceManager().getFilename(location).str();
+          }
+        }
+        classes.insert_or_assign(rootName, std::move(alias));
+      }
+    }
   }
 
   void collectMainFileIncludes() {
@@ -1124,6 +1172,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   std::string rootName;
   clang::ASTContext &context;
   std::unordered_set<std::string> collecting;
+  const clang::TypedefNameDecl *rootAlias = nullptr;
   size_t collectedMethodCount = 0;
   bool reachableOnly = false;
 };
@@ -2079,10 +2128,19 @@ struct CombsOptimizer::Impl {
                 index = *closing + 1;
                 continue;
               }
-              if (!unavailableValue.empty()) {
-                output += unavailableValue;
+              if (child->second->type->opaque) {
+                // Opaque subtrees retain their normal CppHDL ports and combs.
+                // Keep the getter call so function_ref evaluates that subtree
+                // on demand instead of replacing an observable value with zero.
+                output += child->second->alias + "." + method + "()";
                 index = *closing + 1;
                 continue;
+              }
+              if (!unavailableValue.empty()) {
+                error = "cannot resolve child method " + context.path + "." +
+                        identifier + "." + method + " while optimizing " +
+                        context.path;
+                return {};
               }
             }
           }
@@ -4272,8 +4330,13 @@ struct CombsOptimizer::Impl {
       error = "cannot write " + headerPath.string();
       return false;
     }
-    header << "#pragma once\n\nclass " << shortRoot << ";\n"
-           << "void bind_optimized_ports(" << shortRoot << "& obj);\n"
+    header << "#pragma once\n";
+    if (root->type->typeAlias) {
+      header << "#include \"" << rootHeader << "\"\n";
+    } else {
+      header << "\nclass " << shortRoot << ";\n";
+    }
+    header << "\nvoid bind_optimized_ports(" << shortRoot << "& obj);\n"
            << "void calc_all(" << shortRoot
            << "& obj, bool reset = false);\n"
            << "void commit_optimized_regs(" << shortRoot << "& obj);\n";
@@ -4783,6 +4846,7 @@ void CombsOptimizer::collect(clang::ASTContext &context) {
   collector.collectRootHierarchy();
   collector.TraverseDecl(context.getTranslationUnitDecl());
   collector.applyTemplateMethods();
+  collector.materializeRootAlias();
 }
 
 void CombsOptimizer::setL1Scheduling(bool enabled) {

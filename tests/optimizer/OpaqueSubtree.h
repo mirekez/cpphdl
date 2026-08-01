@@ -40,8 +40,16 @@ public:
     void _work(bool reset)
     {
         child._work(reset);
-        observed = child.output();
+        observed = forwarded_comb_func();
     }
 
     void _strobe() { child._strobe(); }
+
+private:
+    cpphdl::logic<1> forwarded_comb = 0;
+    cpphdl::logic<1>& forwarded_comb_func()
+    {
+        forwarded_comb = child.output();
+        return forwarded_comb;
+    }
 };

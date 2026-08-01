@@ -272,6 +272,18 @@ add_test(
 )
 set_tests_properties(optimizer_opaque_subtree PROPERTIES TIMEOUT 120)
 
+# Concrete specialization aliases are the stable public names emitted by the
+# hdlcpp optimizer. Accept one as the comb root while collecting behavior from
+# its underlying class-template specialization.
+add_test(
+    NAME optimizer_alias_root
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/AliasRootTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+)
+set_tests_properties(optimizer_alias_root PROPERTIES TIMEOUT 120)
+
 # Structural non-type template arguments can have no valid semantic source
 # spelling. Deduce them from the concrete module specialization when moving a
 # dependent comb body out of class scope instead of serializing the value.
