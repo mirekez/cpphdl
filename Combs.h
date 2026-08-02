@@ -39,6 +39,11 @@ public:
   // method body exactly once in dependency order.
   void setL1Scheduling(bool enabled);
 
+  // Replace recognized bit-level arithmetic networks with equivalent scalar
+  // host expressions.  This pass operates on the flattened comb graph and is
+  // therefore available only through --optimize-combs modes.
+  void setMathOptimization(bool enabled);
+
   // Generate the optimized API, internal state, and bounded comb/work C++
   // translation units in outputDirectory.  Returns false after printing a
   // precise graph/source diagnostic.

@@ -9,9 +9,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <map>
 #include <optional>
 #include <regex>
@@ -89,6 +91,337 @@ std::optional<size_t> matchingDelimiter(const std::string &text, size_t opening,
   }
   return std::nullopt;
 }
+
+std::optional<unsigned> firstIntegerLiteral(std::string_view text) {
+  for (size_t index = 0; index < text.size(); ++index) {
+    if (!std::isdigit(static_cast<unsigned char>(text[index]))) {
+      continue;
+    }
+    if (index != 0 && identifierPart(text[index - 1])) {
+      continue;
+    }
+    size_t end = index + 1;
+    while (end < text.size() &&
+           std::isdigit(static_cast<unsigned char>(text[end]))) {
+      ++end;
+    }
+    if (end < text.size() && identifierPart(text[end])) {
+      index = end;
+      continue;
+    }
+    try {
+      return static_cast<unsigned>(
+          std::stoul(std::string(text.substr(index, end - index))));
+    } catch (const std::exception &) {
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<size_t> topLevelAssignment(const std::string &text) {
+  int parentheses = 0;
+  int brackets = 0;
+  int braces = 0;
+  for (size_t index = 0; index < text.size(); ++index) {
+    switch (text[index]) {
+    case '(':
+      ++parentheses;
+      break;
+    case ')':
+      --parentheses;
+      break;
+    case '[':
+      ++brackets;
+      break;
+    case ']':
+      --brackets;
+      break;
+    case '{':
+      ++braces;
+      break;
+    case '}':
+      --braces;
+      break;
+    case '=': {
+      if (parentheses != 0 || brackets != 0 || braces != 0) {
+        break;
+      }
+      const char before = index == 0 ? '\0' : text[index - 1];
+      const char after = index + 1 == text.size() ? '\0' : text[index + 1];
+      if (before != '=' && before != '!' && before != '<' && before != '>' &&
+          before != '+' && before != '-' && before != '*' && before != '/' &&
+          before != '%' && before != '&' && before != '|' && before != '^' &&
+          after != '=') {
+        return index;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  return std::nullopt;
+}
+
+std::vector<std::string> splitTopLevel(const std::string &text, char delimiter) {
+  std::vector<std::string> result;
+  size_t start = 0;
+  int parentheses = 0;
+  int brackets = 0;
+  int braces = 0;
+  for (size_t index = 0; index < text.size(); ++index) {
+    switch (text[index]) {
+    case '(':
+      ++parentheses;
+      break;
+    case ')':
+      --parentheses;
+      break;
+    case '[':
+      ++brackets;
+      break;
+    case ']':
+      --brackets;
+      break;
+    case '{':
+      ++braces;
+      break;
+    case '}':
+      --braces;
+      break;
+    default:
+      if (text[index] == delimiter && parentheses == 0 && brackets == 0 &&
+          braces == 0) {
+        result.push_back(trim(text.substr(start, index - start)));
+        start = index + 1;
+      }
+      break;
+    }
+  }
+  result.push_back(trim(text.substr(start)));
+  return result;
+}
+
+std::string hexMask(unsigned low, unsigned high) {
+  const uint64_t highMask =
+      high == 63 ? ~uint64_t{0} : ((uint64_t{1} << (high + 1)) - 1);
+  const uint64_t lowMask = low == 0 ? 0 : ((uint64_t{1} << low) - 1);
+  std::ostringstream output;
+  output << "0x" << std::hex << (highMask & ~lowMask) << "ull";
+  return output.str();
+}
+
+std::optional<unsigned> packedLogicWidth(const std::string &type) {
+  static const std::regex pattern(
+      R"((?:^|[^A-Za-z0-9_])(?:cpphdl::)?logic<\s*([0-9]+)\s*>)");
+  std::smatch match;
+  if (!std::regex_search(type, match, pattern)) {
+    return std::nullopt;
+  }
+  return static_cast<unsigned>(std::stoul(match[1].str()));
+}
+
+struct MathReplacement {
+  std::string expression;
+  const char *kind = nullptr;
+};
+
+std::string bodyInterior(const std::string &body);
+
+class MathCombRewriter {
+public:
+  static std::optional<MathReplacement>
+  rewrite(const std::string &method, const std::string &body,
+          unsigned targetWidth) {
+    const std::string target = method + "_cache";
+    std::vector<BitAssignment> bits;
+    std::optional<SliceAssignment> slice;
+
+    std::istringstream input(bodyInterior(body));
+    std::string line;
+    while (std::getline(input, line)) {
+      line = trim(line);
+      if (line.empty() || line == "return " + target + ";") {
+        continue;
+      }
+      if (!line.empty() && line.back() == ';') {
+        line.pop_back();
+        line = trim(line);
+      }
+      const auto equals = topLevelAssignment(line);
+      if (!equals) {
+        return std::nullopt;
+      }
+      const std::string lhs = trim(line.substr(0, *equals));
+      const std::string rhs = trim(line.substr(*equals + 1));
+      if (rhs.empty()) {
+        return std::nullopt;
+      }
+      if (lhs.starts_with(target + "[") && lhs.ends_with(']')) {
+        const size_t opening = target.size();
+        const auto closing = matchingDelimiter(lhs, opening, '[', ']');
+        if (!closing || *closing + 1 != lhs.size()) {
+          return std::nullopt;
+        }
+        const auto index = firstIntegerLiteral(
+            std::string_view(lhs).substr(opening + 1, *closing - opening - 1));
+        if (!index) {
+          return std::nullopt;
+        }
+        bits.push_back(BitAssignment{*index, rhs});
+        continue;
+      }
+      const std::string bitsPrefix = target + ".bits(";
+      if (lhs.starts_with(bitsPrefix) && lhs.ends_with(')') && !slice) {
+        const size_t opening = bitsPrefix.size() - 1;
+        const auto closing = matchingDelimiter(lhs, opening, '(', ')');
+        if (!closing || *closing + 1 != lhs.size()) {
+          return std::nullopt;
+        }
+        const auto arguments = splitTopLevel(
+            lhs.substr(opening + 1, *closing - opening - 1), ',');
+        if (arguments.size() != 2) {
+          return std::nullopt;
+        }
+        const auto high = firstIntegerLiteral(arguments[0]);
+        const auto low = firstIntegerLiteral(arguments[1]);
+        if (!high || !low || *high < *low) {
+          return std::nullopt;
+        }
+        slice = SliceAssignment{*high, *low, rhs};
+        continue;
+      }
+      return std::nullopt;
+    }
+
+    if (bits.size() < 2) {
+      return std::nullopt;
+    }
+    if (auto replacement = replicatedBits(bits, slice, targetWidth)) {
+      return replacement;
+    }
+    if (!slice) {
+      return reversedBits(bits, targetWidth);
+    }
+    return std::nullopt;
+  }
+
+private:
+  struct BitAssignment {
+    unsigned index;
+    std::string value;
+  };
+  struct SliceAssignment {
+    unsigned high;
+    unsigned low;
+    std::string value;
+  };
+
+  static bool uniqueContiguous(const std::vector<BitAssignment> &bits,
+                               unsigned low, unsigned high) {
+    if (high < low || bits.size() != high - low + 1) {
+      return false;
+    }
+    std::vector<bool> seen(high - low + 1, false);
+    for (const auto &bit : bits) {
+      if (bit.index < low || bit.index > high || seen[bit.index - low]) {
+        return false;
+      }
+      seen[bit.index - low] = true;
+    }
+    return true;
+  }
+
+  static std::optional<MathReplacement>
+  replicatedBits(const std::vector<BitAssignment> &bits,
+                 const std::optional<SliceAssignment> &slice,
+                 unsigned targetWidth) {
+    const std::string value = bits.front().value;
+    if (std::any_of(bits.begin(), bits.end(), [&](const BitAssignment &bit) {
+          return bit.value != value;
+        })) {
+      return std::nullopt;
+    }
+    const unsigned low = slice ? slice->high + 1 : 0;
+    const unsigned high = std::max_element(
+                              bits.begin(), bits.end(),
+                              [](const auto &left, const auto &right) {
+                                return left.index < right.index;
+                              })
+                              ->index;
+    if (targetWidth == 0 || targetWidth > 64 || high + 1 != targetWidth ||
+        !uniqueContiguous(bits, low, high) ||
+        (slice && slice->low != 0)) {
+      return std::nullopt;
+    }
+    const unsigned width = targetWidth;
+    std::ostringstream expression;
+    expression << "cpphdl::logic<" << width << ">((((uint64_t)(" << value
+               << ") & 1ull) ? " << hexMask(low, high) << " : 0ull)";
+    if (slice) {
+      expression << " | ((uint64_t)(" << slice->value << ") & "
+                 << hexMask(0, slice->high) << ")";
+    }
+    expression << ")";
+    return MathReplacement{expression.str(),
+                           slice ? "sign-extension" : "bit-replication"};
+  }
+
+  static std::optional<MathReplacement>
+  reversedBits(const std::vector<BitAssignment> &bits, unsigned targetWidth) {
+    const unsigned width = targetWidth;
+    if ((width != 8 && width != 16 && width != 32 && width != 64) ||
+        !uniqueContiguous(bits, 0, width - 1)) {
+      return std::nullopt;
+    }
+
+    std::optional<std::string> source;
+    static const std::regex castPattern(
+        R"(static_cast<(?:cpphdl::)?logic<([0-9]+)>>\s*\()"
+    );
+    for (const auto &bit : bits) {
+      std::smatch match;
+      if (!std::regex_search(bit.value, match, castPattern) ||
+          std::stoul(match[1].str()) != width) {
+        return std::nullopt;
+      }
+      const size_t opening = match.position() + match.length() - 1;
+      const auto closing = matchingDelimiter(bit.value, opening, '(', ')');
+      if (!closing) {
+        return std::nullopt;
+      }
+      const std::string candidate = trim(
+          bit.value.substr(opening + 1, *closing - opening - 1));
+      const size_t shift = bit.value.find(">>", *closing + 1);
+      if (shift == std::string::npos) {
+        return std::nullopt;
+      }
+      const auto sourceIndex =
+          firstIntegerLiteral(std::string_view(bit.value).substr(shift + 2));
+      if (!sourceIndex || bit.index + *sourceIndex != width - 1 ||
+          (source && *source != candidate)) {
+        return std::nullopt;
+      }
+      source = candidate;
+    }
+    if (!source) {
+      return std::nullopt;
+    }
+
+    const unsigned hostWidth = width <= 32 ? 32 : 64;
+    std::ostringstream expression;
+    expression << "cpphdl::logic<" << width
+               << ">(cpphdl_optimized_math::bit_reverse" << hostWidth
+               << "((std::uint" << hostWidth << "_t)(uint64_t)(" << *source
+               << "))";
+    if (width < hostWidth) {
+      expression << " >> " << (hostWidth - width);
+    }
+    expression << ")";
+    return MathReplacement{expression.str(), "bit-reversal"};
+  }
+};
 
 std::string sourceText(const clang::Stmt *statement,
                        clang::ASTContext &context) {
@@ -477,6 +810,10 @@ struct CombsOptimizer::Impl {
   std::vector<DeferredWrite> deferredWrites;
   std::string error;
   bool l1Scheduling = false;
+  bool mathOptimization = false;
+  size_t mathBitReversals = 0;
+  size_t mathReplications = 0;
+  size_t mathSignExtensions = 0;
 
   std::optional<IndexedAssignment>
   indexedAssignment(const std::string &statement,
@@ -861,6 +1198,10 @@ struct CombsOptimizer::Impl {
               dependencies->push_back(*node);
             output += nodeValue(*node);
             index = *closing + 1;
+            continue;
+          }
+          if (context.type->methods.contains(identifier)) {
+            output += context.alias + "." + identifier;
             continue;
           }
         }
@@ -1591,51 +1932,30 @@ struct CombsOptimizer::Impl {
         if (info.fields.contains(methodName + "_cache")) {
           if (auto expression = combExpression(body, methodName)) {
             info.combExpressions[methodName] = *expression;
+          } else if (mathOptimization) {
+            const std::string procedural =
+                proceduralCombBody(methodName, body);
+            const auto width =
+                packedLogicWidth(info.fields.at(methodName + "_cache").type);
+            const auto replacement =
+                width ? MathCombRewriter::rewrite(methodName, procedural,
+                                                  *width)
+                      : std::nullopt;
+            if (replacement) {
+              info.combExpressions[methodName] = replacement->expression;
+              if (std::string_view(replacement->kind) == "bit-reversal") {
+                ++mathBitReversals;
+              } else if (std::string_view(replacement->kind) ==
+                         "sign-extension") {
+                ++mathSignExtensions;
+              } else {
+                ++mathReplications;
+              }
+            } else if (l1Scheduling) {
+              collectProceduralComb(info, methodName, body);
+            }
           } else if (l1Scheduling) {
-            std::vector<std::string> lines;
-            std::istringstream input(bodyInterior(body));
-            std::string line;
-            bool skipGuardReturn = false;
-            bool skipGuardClosingBrace = false;
-            while (std::getline(input, line)) {
-              const std::string statement = trim(line);
-              const std::string cache = methodName + "_cache";
-              const std::string clock = methodName + "_clock";
-              if (statement.find(clock + " == _system_clock") !=
-                  std::string::npos) {
-                skipGuardReturn =
-                    statement.find("return " + cache) == std::string::npos;
-                skipGuardClosingBrace =
-                    skipGuardReturn && statement.ends_with('{');
-                continue;
-              }
-              if (skipGuardReturn && statement == "return " + cache + ";") {
-                skipGuardReturn = false;
-                continue;
-              }
-              if (skipGuardClosingBrace && statement == "}") {
-                skipGuardClosingBrace = false;
-                continue;
-              }
-              if (statement == clock + " = _system_clock;") {
-                continue;
-              }
-              lines.push_back(line);
-            }
-            while (!lines.empty() && trim(lines.back()).empty()) {
-              lines.pop_back();
-            }
-            if (!lines.empty() &&
-                trim(lines.back()) == "return " + methodName + "_cache;") {
-              lines.pop_back();
-            }
-            std::ostringstream procedural;
-            for (const std::string &bodyLine : lines) {
-              procedural << bodyLine << '\n';
-            }
-            if (!trim(procedural.str()).empty()) {
-              info.proceduralCombBodies[methodName] = procedural.str();
-            }
+            collectProceduralComb(info, methodName, body);
           }
         } else if (l1Scheduling && methodName.starts_with("_optimized_")) {
           if (auto expression = singleReturnExpression(body)) {
@@ -1646,8 +1966,63 @@ struct CombsOptimizer::Impl {
     }
   }
 
+  void collectProceduralComb(ClassInfo &info, const std::string &methodName,
+                             const std::string &body) {
+    const std::string procedural = proceduralCombBody(methodName, body);
+    if (!trim(procedural).empty()) {
+      info.proceduralCombBodies[methodName] = procedural;
+    }
+  }
+
+  std::string proceduralCombBody(const std::string &methodName,
+                                 const std::string &body) const {
+    std::vector<std::string> lines;
+    std::istringstream input(bodyInterior(body));
+    std::string line;
+    bool skipGuardReturn = false;
+    bool skipGuardClosingBrace = false;
+    while (std::getline(input, line)) {
+      const std::string statement = trim(line);
+      const std::string cache = methodName + "_cache";
+      const std::string clock = methodName + "_clock";
+      if (statement.find(clock + " == _system_clock") != std::string::npos) {
+        skipGuardReturn =
+            statement.find("return " + cache) == std::string::npos;
+        skipGuardClosingBrace = skipGuardReturn && statement.ends_with('{');
+        continue;
+      }
+      if (skipGuardReturn && statement == "return " + cache + ";") {
+        skipGuardReturn = false;
+        continue;
+      }
+      if (skipGuardClosingBrace && statement == "}") {
+        skipGuardClosingBrace = false;
+        continue;
+      }
+      if (statement == clock + " = _system_clock;") {
+        continue;
+      }
+      lines.push_back(line);
+    }
+    while (!lines.empty() && trim(lines.back()).empty()) {
+      lines.pop_back();
+    }
+    if (!lines.empty() &&
+        trim(lines.back()) == "return " + methodName + "_cache;") {
+      lines.pop_back();
+    }
+    std::ostringstream result;
+    for (const std::string &bodyLine : lines) {
+      result << bodyLine << '\n';
+    }
+    return result.str();
+  }
+
   bool emit(const std::string &rootName, const std::string &directory) {
     deferredWrites.clear();
+    mathBitReversals = 0;
+    mathReplications = 0;
+    mathSignExtensions = 0;
     findCombExpressions();
     const auto rootType = classes.find(rootName);
     if (rootType == classes.end()) {
@@ -1856,7 +2231,7 @@ struct CombsOptimizer::Impl {
       error = "cannot write " + internalPath.string();
       return false;
     }
-    internal << "#pragma once\n#include <cstddef>\n#include <memory>\n#include "
+    internal << "#pragma once\n#include <cstddef>\n#include <cstdint>\n#include <memory>\n#include "
                 "<type_traits>\n#include <utility>\n";
     for (const std::string &include : sourceIncludes) {
       if (!include.ends_with(".h") || headers.contains(include) ||
@@ -1872,8 +2247,43 @@ struct CombsOptimizer::Impl {
     for (const std::string &include : headers) {
       internal << "#include \"" << include << "\"\n";
     }
-    internal << "#undef private\n\n"
-             << "struct " << shortRoot << "_optimized_combs_state {\n";
+    internal << "#undef private\n\n";
+    if (mathOptimization && mathBitReversals != 0) {
+      internal << R"CPP(namespace cpphdl_optimized_math {
+inline std::uint32_t bit_reverse32(std::uint32_t value) {
+#if defined(__clang__) && __has_builtin(__builtin_bitreverse32)
+  return __builtin_bitreverse32(value);
+#else
+  value = ((value >> 1) & 0x55555555u) | ((value & 0x55555555u) << 1);
+  value = ((value >> 2) & 0x33333333u) | ((value & 0x33333333u) << 2);
+  value = ((value >> 4) & 0x0f0f0f0fu) | ((value & 0x0f0f0f0fu) << 4);
+  value = ((value >> 8) & 0x00ff00ffu) | ((value & 0x00ff00ffu) << 8);
+  return (value >> 16) | (value << 16);
+#endif
+}
+
+inline std::uint64_t bit_reverse64(std::uint64_t value) {
+#if defined(__clang__) && __has_builtin(__builtin_bitreverse64)
+  return __builtin_bitreverse64(value);
+#else
+  value = ((value >> 1) & 0x5555555555555555ull) |
+          ((value & 0x5555555555555555ull) << 1);
+  value = ((value >> 2) & 0x3333333333333333ull) |
+          ((value & 0x3333333333333333ull) << 2);
+  value = ((value >> 4) & 0x0f0f0f0f0f0f0f0full) |
+          ((value & 0x0f0f0f0f0f0f0f0full) << 4);
+  value = ((value >> 8) & 0x00ff00ff00ff00ffull) |
+          ((value & 0x00ff00ff00ff00ffull) << 8);
+  value = ((value >> 16) & 0x0000ffff0000ffffull) |
+          ((value & 0x0000ffff0000ffffull) << 16);
+  return (value >> 32) | (value << 32);
+#endif
+}
+} // namespace cpphdl_optimized_math
+
+)CPP";
+    }
+    internal << "struct " << shortRoot << "_optimized_combs_state {\n";
     for (const size_t id : schedule) {
       const Node &node = nodes[id];
       if (node.kind != NodeKind::Port) {
@@ -2187,6 +2597,14 @@ struct CombsOptimizer::Impl {
                  << strobeChunks.size() << " strobe chunks, "
                  << memoryChunkCount << " memory chunks, "
                  << modelChunkCount << " model chunks\n"
+                 << (mathOptimization ? "  math replacements: " : "")
+                 << (mathOptimization ? std::to_string(mathBitReversals) +
+                                             " reversals, " +
+                                             std::to_string(mathReplications) +
+                                             " replications, " +
+                                             std::to_string(mathSignExtensions) +
+                                             " sign extensions\n"
+                                      : "")
                  << "  " << headerPath.string() << "\n"
                  << "  " << sourcePath.string() << "\n"
                  << "  " << internalPath.string() << "\n";
@@ -2208,6 +2626,10 @@ void CombsOptimizer::collect(clang::ASTContext &context) {
 
 void CombsOptimizer::setL1Scheduling(bool enabled) {
   impl->l1Scheduling = enabled;
+}
+
+void CombsOptimizer::setMathOptimization(bool enabled) {
+  impl->mathOptimization = enabled;
 }
 
 bool CombsOptimizer::generate(const std::string &rootModule,

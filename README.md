@@ -40,8 +40,15 @@ expressions. The L1 mode avoids memoization calls and clock checks in the
 generated comb schedule. You can use generated code instead of original
 _work() and xxx_comb_func() functions to execute it up to 10 times faster.
 
+`--optimize-math` enables exact scalar replacements for recognized bit-level
+math networks, currently complete bit reversals, bit replications, and packed
+sign extensions. It requires either `--optimize-combs` or
+`--optimize-combs-l1`; unmatched expressions retain their normal comb
+implementation.
+
 ```sh
-build/cpphdl --optimize-combs-l1 Top --generated-dir generated Top.h -Iinclude
+build/cpphdl --optimize-combs-l1 Top --optimize-math \
+  --generated-dir generated Top.h -Iinclude
 ```
 
 ## author

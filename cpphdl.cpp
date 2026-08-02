@@ -2175,6 +2175,7 @@ int main(int argc, const char **argv)
     std::string json_output;
     std::string optimize_combs_root;
     bool optimize_combs_l1 = false;
+    bool optimize_math = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2276,6 +2277,11 @@ int main(int argc, const char **argv)
                 return 1;
             }
             add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-math") == 0) {
+            optimize_math = true;
             continue;
         }
 
@@ -2393,6 +2399,12 @@ int main(int argc, const char **argv)
     new_argv.push_back(nullptr);
     int new_argc = (int)new_argv.size() - 1;
 
+    if (optimize_math && optimize_combs_root.empty()) {
+        llvm::errs() << "--optimize-math requires --optimize-combs or "
+                        "--optimize-combs-l1\n";
+        return 1;
+    }
+
     if (cpphdlDebugEnabled) {
         llvm::errs() << "CppHDL clang args:";
         for (const auto& arg : args) {
@@ -2412,6 +2424,7 @@ int main(int argc, const char **argv)
 
     cpphdl::CombsOptimizer combsOptimizer;
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
+    combsOptimizer.setMathOptimization(optimize_math);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
     int ret = Tool.run(&actionFactory);

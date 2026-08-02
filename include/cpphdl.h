@@ -507,6 +507,3 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 #include <print>
 #define CPPHDL_HAS_STD_PRINT 1
 #endif
-
-#define CPPHDL_WANT_STD_PRINT_STUBS 1
-#include "cpphdl_std_format.h"
