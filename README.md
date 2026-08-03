@@ -47,13 +47,15 @@ sign extensions. It requires either `--optimize-combs` or
 implementation.
 
 `--optimize-threads N` can be added to either comb optimizer mode. It assigns
-independent connected components of the flattened combinational DAG to at most
-`N` persistent worker lanes. An explicit count is honored whenever the graph
-contains at least `N` independent components; otherwise empty lanes are removed.
-Dependencies never cross lanes, so workers use a single release/acquire join per
-`calc_all()` call before executing clocked `_work()` statements. Register and
-memory commits remain in `commit_optimized_regs()` and keep their original
-source order.
+weighted independent components of the flattened combinational DAG to at most
+`N` persistent worker lanes. The scheduler evaluates dependency-safe stage cuts
+and rejects additional stages when their synchronization cost exceeds their
+estimated load-balance benefit. Each stage uses one release and cache-line-
+separated completion slots; there are no per-value waits. On Linux the caller
+and workers are pinned to distinct CPUs from the process's existing affinity
+mask, with a no-affinity fallback on constrained hosts. Clocked `_work()`
+statements remain ordered, while register and memory commits stay in
+`commit_optimized_regs()` and preserve nonblocking semantics.
 
 ```sh
 build/cpphdl --optimize-combs-l1 Top --optimize-math --optimize-threads 4 \

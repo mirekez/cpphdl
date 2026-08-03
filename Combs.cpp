@@ -2870,45 +2870,70 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
              << "    object_ = std::addressof(obj);\n"
              << "    state_ = std::addressof(state);\n"
              << "    const std::uint64_t command = ++command_value_;\n"
-             << "    command_.store(command, std::memory_order_release);\n"
-             << "    for (std::size_t stage = 0; stage < "
-             << combStages.size() << "; ++stage) {\n"
-             << "      run_stage(stage, 0, obj, state);\n"
-             << "      const std::uint64_t token = command * "
-             << (combStages.size() + 1) << " + stage + 1;\n"
-             << "      for (std::size_t lane = 1; lane < " << combThreadCount
-             << "; ++lane) {\n"
-             << "        while (completed_[lane - 1].value.load("
-                "std::memory_order_acquire) != token) {\n"
-             << "          cpphdl_optimized_thread_pause();\n        }\n"
-             << "      }\n"
-             << "      if (stage + 1 != " << combStages.size() << ") {\n"
-             << "        stage_release_.store(token, "
-                "std::memory_order_release);\n"
-             << "      }\n"
-             << "    }\n  }\n\n"
-             << "private:\n  void run_stage(std::size_t stage, "
-                "std::size_t lane, " << shortRoot
-             << "& obj, " << shortRoot
-             << "_optimized_combs_state& state) {\n"
-             << "    switch (stage) {\n";
-      for (size_t stage = 0; stage < stageLaneChunks.size(); ++stage) {
-        source << "    case " << stage << ":\n"
-               << "      switch (lane) {\n";
-        for (size_t lane = 0; lane < stageLaneChunks[stage].size(); ++lane) {
-          source << "      case " << lane << ":\n";
+             << "    command_.store(command, std::memory_order_release);\n";
+      const bool singleStage = combStages.size() == 1;
+      if (singleStage) {
+        source << "    run_lane(0, obj, state);\n"
+               << "    for (std::size_t lane = 1; lane < " << combThreadCount
+               << "; ++lane) {\n"
+               << "      while (completed_[lane - 1].value.load("
+                  "std::memory_order_acquire) != command) {\n"
+               << "        cpphdl_optimized_thread_pause();\n      }\n"
+               << "    }\n  }\n\n"
+               << "private:\n  void run_lane(std::size_t lane, "
+               << shortRoot << "& obj, " << shortRoot
+               << "_optimized_combs_state& state) {\n"
+               << "    switch (lane) {\n";
+        for (size_t lane = 0; lane < stageLaneChunks.front().size(); ++lane) {
+          source << "    case " << lane << ":\n";
           for (size_t chunk = 0;
-               chunk < stageLaneChunks[stage][lane].size(); ++chunk) {
-            source << "        " << shortRoot << "_optimized_combs_thread_"
-                   << stage << "_" << lane << "_" << chunk
-                   << "(obj, state);\n";
+               chunk < stageLaneChunks.front()[lane].size(); ++chunk) {
+            source << "      " << shortRoot << "_optimized_combs_thread_0_"
+                   << lane << "_" << chunk << "(obj, state);\n";
           }
-          source << "        break;\n";
+          source << "      break;\n";
         }
-        source << "      }\n      break;\n";
+        source << "    }\n  }\n\n";
+      } else {
+        source << "    for (std::size_t stage = 0; stage < "
+               << combStages.size() << "; ++stage) {\n"
+               << "      run_stage(stage, 0, obj, state);\n"
+               << "      const std::uint64_t token = command * "
+               << (combStages.size() + 1) << " + stage + 1;\n"
+               << "      for (std::size_t lane = 1; lane < "
+               << combThreadCount << "; ++lane) {\n"
+               << "        while (completed_[lane - 1].value.load("
+                  "std::memory_order_acquire) != token) {\n"
+               << "          cpphdl_optimized_thread_pause();\n        }\n"
+               << "      }\n"
+               << "      if (stage + 1 != " << combStages.size() << ") {\n"
+               << "        stage_release_.store(token, "
+                  "std::memory_order_release);\n"
+               << "      }\n"
+               << "    }\n  }\n\n"
+               << "private:\n  void run_stage(std::size_t stage, "
+                  "std::size_t lane, " << shortRoot
+               << "& obj, " << shortRoot
+               << "_optimized_combs_state& state) {\n"
+               << "    switch (stage) {\n";
+        for (size_t stage = 0; stage < stageLaneChunks.size(); ++stage) {
+          source << "    case " << stage << ":\n"
+                 << "      switch (lane) {\n";
+          for (size_t lane = 0; lane < stageLaneChunks[stage].size(); ++lane) {
+            source << "      case " << lane << ":\n";
+            for (size_t chunk = 0;
+                 chunk < stageLaneChunks[stage][lane].size(); ++chunk) {
+              source << "        " << shortRoot << "_optimized_combs_thread_"
+                     << stage << "_" << lane << "_" << chunk
+                     << "(obj, state);\n";
+            }
+            source << "        break;\n";
+          }
+          source << "      }\n      break;\n";
+        }
+        source << "    }\n  }\n\n";
       }
-      source << "    }\n  }\n\n"
-             << "  void worker(std::size_t lane) {\n"
+      source << "  void worker(std::size_t lane) {\n"
              << "    pin_worker(lane);\n"
              << "    std::uint64_t observed = 0;\n"
              << "    for (;;) {\n"
@@ -2921,21 +2946,28 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
              << "          cpphdl_optimized_thread_pause();\n        }\n"
              << "      } while (command == observed);\n"
              << "      observed = command;\n"
-             << "      auto* object = object_;\n      auto* state = state_;\n"
-             << "      for (std::size_t stage = 0; stage < "
-             << combStages.size() << "; ++stage) {\n"
-             << "        run_stage(stage, lane, *object, *state);\n"
-             << "        const std::uint64_t token = observed * "
-             << (combStages.size() + 1) << " + stage + 1;\n"
-             << "        completed_[lane - 1].value.store(token, "
-                "std::memory_order_release);\n"
-             << "        if (stage + 1 != " << combStages.size() << ") {\n"
-             << "          while (stage_release_.load("
-                "std::memory_order_acquire) != token) {\n"
-             << "            cpphdl_optimized_thread_pause();\n          }\n"
-             << "        }\n"
-             << "      }\n"
-             << "    }\n  }\n\n"
+             << "      auto* object = object_;\n      auto* state = state_;\n";
+      if (singleStage) {
+        source << "      run_lane(lane, *object, *state);\n"
+               << "      completed_[lane - 1].value.store("
+                  "observed, std::memory_order_release);\n";
+      } else {
+        source << "      for (std::size_t stage = 0; stage < "
+               << combStages.size() << "; ++stage) {\n"
+               << "        run_stage(stage, lane, *object, *state);\n"
+               << "        const std::uint64_t token = observed * "
+               << (combStages.size() + 1) << " + stage + 1;\n"
+               << "        completed_[lane - 1].value.store(token, "
+                  "std::memory_order_release);\n"
+               << "        if (stage + 1 != " << combStages.size()
+               << ") {\n"
+               << "          while (stage_release_.load("
+                  "std::memory_order_acquire) != token) {\n"
+               << "            cpphdl_optimized_thread_pause();\n          }\n"
+               << "        }\n"
+               << "      }\n";
+      }
+      source << "    }\n  }\n\n"
              << R"CPP(  void pin_caller() {
 #if defined(__linux__)
     if (pthread_getaffinity_np(pthread_self(), sizeof(original_affinity_),

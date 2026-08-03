@@ -51,6 +51,7 @@ int checkGeneratedStructure() {
       source.find("pin_worker(lane);") == std::string::npos ||
       source.find("restore_caller();") == std::string::npos ||
       source.find("pthread_setaffinity_np") == std::string::npos ||
+      source.find("run_lane(0, obj, state);") == std::string::npos ||
       source.find("workers_.emplace_back") == std::string::npos ||
       source.find("optimized_runtime(obj).run(obj, s)") == std::string::npos) {
     std::cerr << "generated comb lanes lack synchronization or dispatch\n";
@@ -59,6 +60,8 @@ int checkGeneratedStructure() {
   if (source.find("cpphdl_optimized_wait_ready") != std::string::npos ||
       source.find("condition_variable") != std::string::npos ||
       source.find("notify_all") != std::string::npos ||
+      source.find("void run_stage(") != std::string::npos ||
+      source.find("stage_release_.store") != std::string::npos ||
       source.find(".wait(") != std::string::npos) {
     std::cerr << "generated comb lanes contain fine-grained or OS waits\n";
     return 3;
