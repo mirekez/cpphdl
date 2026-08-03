@@ -494,16 +494,28 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 
 #endif
 
-#if defined(__has_include)
+#if !defined(CPPHDL_DISABLE_STD_FORMAT) && defined(__has_include)
 #if __has_include(<format>)
 #include <format>
 #endif
+#elif !defined(CPPHDL_DISABLE_STD_FORMAT)
+#include <format>
+#endif
+
+#if defined(CPPHDL_DISABLE_STD_PRINT)
+#ifdef CPPHDL_HAS_STD_PRINT
+#undef CPPHDL_HAS_STD_PRINT
+#endif
+#elif defined(__has_include)
 #if __has_include(<print>)
 #include <print>
+#if defined(__cpp_lib_print) && (__cpp_lib_print >= 202207L)
 #define CPPHDL_HAS_STD_PRINT 1
 #endif
+#endif
 #else
-#include <format>
 #include <print>
+#if defined(__cpp_lib_print) && (__cpp_lib_print >= 202207L)
 #define CPPHDL_HAS_STD_PRINT 1
+#endif
 #endif

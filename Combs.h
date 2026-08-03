@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,6 +44,11 @@ public:
   // host expressions.  This pass operates on the flattened comb graph and is
   // therefore available only through --optimize-combs modes.
   void setMathOptimization(bool enabled);
+
+  // Evaluate independent components of the flattened combinational DAG on at
+  // most this many persistent worker lanes.  A value greater than one requires
+  // an optimize-combs mode.
+  void setThreadCount(std::size_t count);
 
   // Generate the optimized API, internal state, and bounded comb/work C++
   // translation units in outputDirectory.  Returns false after printing a

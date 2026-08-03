@@ -247,34 +247,34 @@ static bool check_direct_arrays()
     string_elements[0].text = "low";
     string_elements[1].text = "mid";
     string_elements[2].text = "high";
-    ok &= check(string_elements.to_string() == "highmidlow",
+    ok &= check(string_elements.to_string() == "high mid low",
         "unpacked array delegates formatting to element to_string");
     const auto& const_string_elements = string_elements;
-    ok &= check(const_string_elements.to_string() == "highmidlow",
+    ok &= check(const_string_elements.to_string() == "high mid low",
         "const unpacked array delegates formatting to const element to_string");
 
     array<3, MutableArrayStringElement> mutable_string_elements;
     mutable_string_elements[0].text = "zero";
     mutable_string_elements[1].text = "one";
     mutable_string_elements[2].text = "two";
-    ok &= check(mutable_string_elements.to_string() == "twoonezero",
+    ok &= check(mutable_string_elements.to_string() == "two one zero",
         "unpacked array delegates formatting to mutable element to_string");
 
     array<3, PackedArrayStringElement, true> packed_string_elements;
     packed_string_elements[0] = PackedArrayStringElement(0x0a);
     packed_string_elements[1] = PackedArrayStringElement(0x0b);
     packed_string_elements[2] = PackedArrayStringElement(0x0c);
-    ok &= check(packed_string_elements.to_string() == "0c0b0a",
+    ok &= check(packed_string_elements.to_string() == "0c 0b 0a",
         "packed array delegates formatting to reconstructed element to_string");
     const auto& const_packed_string_elements = packed_string_elements;
-    ok &= check(const_packed_string_elements.to_string() == "0c0b0a",
+    ok &= check(const_packed_string_elements.to_string() == "0c 0b 0a",
         "const packed array delegates formatting to const reconstructed element to_string");
 
     array<3, MutablePackedArrayStringElement, true> mutable_packed_string_elements;
     mutable_packed_string_elements[0] = MutablePackedArrayStringElement(0x1a);
     mutable_packed_string_elements[1] = MutablePackedArrayStringElement(0x1b);
     mutable_packed_string_elements[2] = MutablePackedArrayStringElement(0x1c);
-    ok &= check(mutable_packed_string_elements.to_string() == "1c1b1a",
+    ok &= check(mutable_packed_string_elements.to_string() == "1c 1b 1a",
         "packed array delegates formatting to mutable reconstructed element to_string");
 
     array<2, uint64_t> wide_numeric_elements;
@@ -296,8 +296,22 @@ static bool check_direct_arrays()
     nested_string_elements[1][0] = 0x03;
     nested_string_elements[1][1] = 0x04;
     const auto& const_nested_string_elements = nested_string_elements;
-    ok &= check(const_nested_string_elements.to_string() == "04030201",
+    ok &= check(const_nested_string_elements.to_string() == "0403 0201",
         "nested unpacked array recursively delegates element formatting");
+
+    array2D<2, 3, ArrayStringElement> printable_rows;
+    printable_rows[0][0].text = "aa";
+    printable_rows[0][1].text = "bb";
+    printable_rows[0][2].text = "cc";
+    printable_rows[1][0].text = "dd";
+    printable_rows[1][1].text = "ee";
+    printable_rows[1][2].text = "ff";
+    ok &= check(printable_rows[0].to_string() == "cc bb aa",
+        "array2D row delegates formatting to const element to_string");
+    int printed_row_size = std::printf("%s", printable_rows[0].to_string().c_str());
+    std::printf("\n");
+    ok &= check(printed_row_size == 8,
+        "array2D row temporary to_string remains valid through printf");
 
     array<3,logic<9>> unpacked_logic;
     unpacked_logic = 0;

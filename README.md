@@ -46,8 +46,17 @@ sign extensions. It requires either `--optimize-combs` or
 `--optimize-combs-l1`; unmatched expressions retain their normal comb
 implementation.
 
+`--optimize-threads N` can be added to either comb optimizer mode. It assigns
+independent connected components of the flattened combinational DAG to at most
+`N` persistent worker lanes. An explicit count is honored whenever the graph
+contains at least `N` independent components; otherwise empty lanes are removed.
+Dependencies never cross lanes, so workers use a single release/acquire join per
+`calc_all()` call before executing clocked `_work()` statements. Register and
+memory commits remain in `commit_optimized_regs()` and keep their original
+source order.
+
 ```sh
-build/cpphdl --optimize-combs-l1 Top --optimize-math \
+build/cpphdl --optimize-combs-l1 Top --optimize-math --optimize-threads 4 \
   --generated-dir generated Top.h -Iinclude
 ```
 

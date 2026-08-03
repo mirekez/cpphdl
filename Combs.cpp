@@ -15,6 +15,7 @@
 #include <functional>
 #include <iomanip>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <regex>
 #include <set>
@@ -811,6 +812,7 @@ struct CombsOptimizer::Impl {
   std::string error;
   bool l1Scheduling = false;
   bool mathOptimization = false;
+  size_t threadCount = 1;
   size_t mathBitReversals = 0;
   size_t mathReplications = 0;
   size_t mathSignExtensions = 0;
@@ -2154,7 +2156,7 @@ struct CombsOptimizer::Impl {
                                                   : rootName.rfind("::") + 2);
     const std::regex staleChunkPattern(
         "^" + shortRoot +
-        R"(_optimized_combs_(?:(?:work|bind|strobe|memory|model)_)?[0-9]+\.cpp$)");
+        R"(_optimized_combs_(?:(?:work|bind|strobe|memory|model|prefix)_[0-9]+|thread_[0-9]+_[0-9]+(?:_[0-9]+)?|[0-9]+)\.cpp$)");
     for (const auto &entry : std::filesystem::directory_iterator(directory)) {
       if (entry.is_regular_file() &&
           std::regex_match(entry.path().filename().string(),
@@ -2203,8 +2205,187 @@ struct CombsOptimizer::Impl {
     constexpr size_t bindingsPerChunk = 400;
     constexpr size_t modelTypesPerChunk = 50;
     constexpr size_t memoryWritesPerChunk = 400;
+
+    struct CombComponent {
+      std::vector<size_t> values;
+      uint64_t weight = 0;
+    };
+    struct CombStage {
+      size_t begin = 0;
+      size_t end = 0;
+      size_t componentCount = 0;
+      std::vector<std::vector<size_t>> lanes;
+      std::vector<uint64_t> laneWeights;
+    };
+    struct CombPartition {
+      uint64_t estimatedCost = 0;
+      size_t componentCount = 0;
+      std::vector<CombStage> stages;
+    };
+
+    std::vector<uint64_t> nodeWeights(nodes.size(), 1);
+    std::vector<uint64_t> cumulativeWeights(schedule.size() + 1, 0);
+    for (size_t position = 0; position < schedule.size(); ++position) {
+      const size_t id = schedule[position];
+      nodeWeights[id] = std::max<uint64_t>(1, nodes[id].expression.size());
+      cumulativeWeights[position + 1] =
+          cumulativeWeights[position] + nodeWeights[id];
+    }
+
+    const size_t requestedThreads =
+        std::min(threadCount, std::max<size_t>(1, schedule.size()));
+    const auto buildStage = [&](size_t begin, size_t end) {
+      CombStage result;
+      result.begin = begin;
+      result.end = end;
+      std::vector<bool> member(nodes.size(), false);
+      std::vector<size_t> componentParent(nodes.size());
+      for (size_t position = begin; position < end; ++position) {
+        const size_t id = schedule[position];
+        member[id] = true;
+        componentParent[id] = id;
+      }
+      const auto findComponent = [&](size_t id, const auto &self) -> size_t {
+        if (componentParent[id] != id) {
+          componentParent[id] = self(componentParent[id], self);
+        }
+        return componentParent[id];
+      };
+      const auto mergeComponents = [&](size_t left, size_t right) {
+        left = findComponent(left, findComponent);
+        right = findComponent(right, findComponent);
+        if (left != right) {
+          componentParent[right] = left;
+        }
+      };
+      for (size_t position = begin; position < end; ++position) {
+        const size_t id = schedule[position];
+        for (const size_t dependency : nodes[id].dependencies) {
+          if (dependency < member.size() && member[dependency]) {
+            mergeComponents(id, dependency);
+          }
+        }
+      }
+
+      std::vector<CombComponent> components;
+      std::unordered_map<size_t, size_t> componentIds;
+      for (size_t position = begin; position < end; ++position) {
+        const size_t id = schedule[position];
+        const size_t root = findComponent(id, findComponent);
+        const auto [componentPosition, inserted] =
+            componentIds.emplace(root, components.size());
+        if (inserted) {
+          components.emplace_back();
+        }
+        CombComponent &component = components[componentPosition->second];
+        component.values.push_back(id);
+        component.weight += nodeWeights[id];
+      }
+      result.componentCount = components.size();
+
+      result.lanes.resize(requestedThreads);
+      result.laneWeights.assign(requestedThreads, 0);
+      std::vector<size_t> componentOrder(components.size());
+      std::iota(componentOrder.begin(), componentOrder.end(), 0);
+      std::stable_sort(componentOrder.begin(), componentOrder.end(),
+                       [&](size_t left, size_t right) {
+                         return components[left].weight > components[right].weight;
+                       });
+      for (const size_t componentId : componentOrder) {
+        const size_t lane = static_cast<size_t>(std::distance(
+            result.laneWeights.begin(),
+            std::min_element(result.laneWeights.begin(),
+                             result.laneWeights.end())));
+        CombComponent &component = components[componentId];
+        result.lanes[lane].insert(result.lanes[lane].end(),
+                                  component.values.begin(),
+                                  component.values.end());
+        result.laneWeights[lane] += component.weight;
+      }
+      return result;
+    };
+
+    const auto buildPartition = [&](size_t stageCount) {
+      CombPartition result;
+      size_t begin = 0;
+      for (size_t stage = 0; stage < stageCount; ++stage) {
+        size_t end = schedule.size();
+        if (stage + 1 != stageCount) {
+          const uint64_t target =
+              cumulativeWeights.back() * (stage + 1) / stageCount;
+          const auto first = cumulativeWeights.begin() + begin + 1;
+          const auto last = cumulativeWeights.end() - (stageCount - stage - 1);
+          end = static_cast<size_t>(std::distance(
+              cumulativeWeights.begin(), std::lower_bound(first, last, target)));
+        }
+        CombStage combStage = buildStage(begin, end);
+        result.componentCount += combStage.componentCount;
+        result.estimatedCost += *std::max_element(
+            combStage.laneWeights.begin(), combStage.laneWeights.end());
+        result.stages.push_back(std::move(combStage));
+        begin = end;
+      }
+      return result;
+    };
+
+    CombPartition partition = buildPartition(1);
+    if (requestedThreads > 1 && schedule.size() > requestedThreads) {
+      const size_t maximumStages = std::min<size_t>(8, schedule.size());
+      // A barrier executes once per simulated cycle.  On the large generated
+      // models this costs more than another complete comb traversal, so only
+      // accept an additional stage when it removes more than one traversal of
+      // critical work.  This normally preserves a single dispatch/join while
+      // retaining staged scheduling for unusually parallel, expensive DAGs.
+      const uint64_t barrierPenalty = cumulativeWeights.back();
+      uint64_t bestScore = partition.estimatedCost;
+      for (size_t stageCount = 2; stageCount <= maximumStages; ++stageCount) {
+        CombPartition candidate = buildPartition(stageCount);
+        const uint64_t score = candidate.estimatedCost +
+                               barrierPenalty * (stageCount - 1);
+        if (score < bestScore) {
+          bestScore = score;
+          partition = std::move(candidate);
+        }
+      }
+    }
+
+    const std::vector<size_t> prefixValues;
+    const uint64_t prefixWeight = 0;
+    const size_t componentCount = partition.componentCount;
+    const uint64_t estimatedParallelWeight = partition.estimatedCost;
+    std::vector<CombStage> combStages = std::move(partition.stages);
+    const size_t combThreadCount = requestedThreads;
+    const bool threadedCombs = combThreadCount > 1;
+
+    std::vector<std::vector<size_t>> prefixChunks;
+    for (size_t begin = 0; begin < prefixValues.size(); begin += valuesPerChunk) {
+      const size_t end = std::min(prefixValues.size(), begin + valuesPerChunk);
+      prefixChunks.emplace_back(prefixValues.begin() + begin,
+                                prefixValues.begin() + end);
+    }
+    std::vector<std::vector<std::vector<std::vector<size_t>>>> stageLaneChunks(
+        combStages.size());
+    size_t threadChunkCount = 0;
+    if (threadedCombs) {
+      for (size_t stage = 0; stage < combStages.size(); ++stage) {
+        stageLaneChunks[stage].resize(combThreadCount);
+        for (size_t lane = 0; lane < combThreadCount; ++lane) {
+          const auto &values = combStages[stage].lanes[lane];
+          for (size_t begin = 0; begin < values.size();
+               begin += valuesPerChunk) {
+            const size_t end =
+                std::min(values.size(), begin + valuesPerChunk);
+            stageLaneChunks[stage][lane].emplace_back(values.begin() + begin,
+                                                      values.begin() + end);
+            ++threadChunkCount;
+          }
+        }
+      }
+    }
     const size_t chunkCount =
-        (schedule.size() + valuesPerChunk - 1) / valuesPerChunk;
+        threadedCombs
+            ? 0
+            : (schedule.size() + valuesPerChunk - 1) / valuesPerChunk;
     const size_t bindChunkCount =
         (bindingStatements.size() + bindingsPerChunk - 1) / bindingsPerChunk;
     const std::vector<std::string> workChunks = splitWork(work, 400);
@@ -2231,8 +2412,8 @@ struct CombsOptimizer::Impl {
       error = "cannot write " + internalPath.string();
       return false;
     }
-    internal << "#pragma once\n#include <cstddef>\n#include <cstdint>\n#include <memory>\n#include "
-                "<type_traits>\n#include <utility>\n";
+    internal << "#pragma once\n#include <atomic>\n#include <cstddef>\n#include <cstdint>\n#include <memory>\n#include "
+                "<thread>\n#include <type_traits>\n#include <utility>\n";
     for (const std::string &include : sourceIncludes) {
       if (!include.ends_with(".h") || headers.contains(include) ||
           include == shortRoot + ".h" || include == "cpphdl_support.h") {
@@ -2283,6 +2464,19 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
 
 )CPP";
     }
+    if (threadedCombs) {
+      internal << R"CPP(inline void cpphdl_optimized_thread_pause() {
+#if defined(__i386__) || defined(__x86_64__)
+  __builtin_ia32_pause();
+#elif defined(__aarch64__)
+  asm volatile("yield");
+#else
+  std::this_thread::yield();
+#endif
+}
+
+)CPP";
+    }
     internal << "struct " << shortRoot << "_optimized_combs_state {\n";
     for (const size_t id : schedule) {
       const Node &node = nodes[id];
@@ -2309,10 +2503,29 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
       internal << ")> w" << write.id << "_value{};\n";
     }
     internal << "};\n\n";
-    for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
-      internal << "void " << shortRoot << "_optimized_combs_chunk_" << chunk
-               << "(" << shortRoot << "&, " << shortRoot
+    for (size_t chunk = 0; chunk < prefixChunks.size(); ++chunk) {
+      internal << "void " << shortRoot << "_optimized_combs_prefix_chunk_"
+               << chunk << "(" << shortRoot << "&, " << shortRoot
                << "_optimized_combs_state&);\n";
+    }
+    if (threadedCombs) {
+      for (size_t stage = 0; stage < stageLaneChunks.size(); ++stage) {
+        for (size_t lane = 0; lane < stageLaneChunks[stage].size(); ++lane) {
+          for (size_t chunk = 0;
+               chunk < stageLaneChunks[stage][lane].size(); ++chunk) {
+            internal << "void " << shortRoot << "_optimized_combs_thread_"
+                     << stage << "_" << lane << "_" << chunk << "("
+                     << shortRoot << "&, " << shortRoot
+                     << "_optimized_combs_state&);\n";
+          }
+        }
+      }
+    } else {
+      for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
+        internal << "void " << shortRoot << "_optimized_combs_chunk_" << chunk
+                 << "(" << shortRoot << "&, " << shortRoot
+                 << "_optimized_combs_state&);\n";
+      }
     }
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_bind_chunk_"
@@ -2403,47 +2616,54 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
 
     std::unordered_set<size_t> emitted;
-    for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
-      const size_t begin = chunk * valuesPerChunk;
-      const size_t end = std::min(schedule.size(), begin + valuesPerChunk);
-      std::ostringstream body;
-      std::set<size_t> usedInstances{0};
-      for (size_t position = begin; position < end; ++position) {
-        const size_t id = schedule[position];
-        if (!emitted.insert(id).second) {
-          error = "internal error: scheduled comb twice";
+    for (const size_t id : schedule) {
+      if (!emitted.insert(id).second) {
+        error = "internal error: scheduled comb twice";
+        return false;
+      }
+      const Node &node = nodes[id];
+      for (const size_t dependency : node.dependencies) {
+        if (!emitted.contains(dependency)) {
+          error = "internal error: dependency emitted after consumer " +
+                  node.instance->path + "." + node.name;
           return false;
         }
-        const Node &node = nodes[id];
-        for (const size_t dependency : node.dependencies) {
-          if (!emitted.contains(dependency)) {
-            error = "internal error: dependency emitted after consumer " +
-                    node.instance->path + "." + node.name;
-            return false;
+      }
+    }
+
+    const auto appendNode = [&](std::ostringstream &body, size_t id) {
+      const Node &node = nodes[id];
+      // The flattened schedule evaluates every cache exactly once.  The
+      // accessor timestamps are irrelevant because calc_all never calls the
+      // memoized accessors.
+      if (node.procedural) {
+        body << "  {\n";
+        std::istringstream statements(node.expression);
+        std::string statement;
+        while (std::getline(statements, statement)) {
+          if (!trim(statement).empty()) {
+            body << "    " << statement << '\n';
           }
         }
+        body << "  }\n";
+      } else {
+        body << "  " << nodeValue(id) << " = " << node.expression << ";\n";
+      }
+    };
+
+    for (size_t chunk = 0; chunk < prefixChunks.size(); ++chunk) {
+      std::ostringstream body;
+      std::set<size_t> usedInstances{0};
+      for (const size_t id : prefixChunks[chunk]) {
+        const Node &node = nodes[id];
         usedInstances.insert(node.instance->id);
         usedInstances = referencedInstances(node.expression, usedInstances);
-        // The flattened schedule evaluates every cache exactly once.  The
-        // accessor timestamps are irrelevant because calc_all never calls the
-        // memoized accessors.
-        if (node.procedural) {
-          body << "  {\n";
-          std::istringstream statements(node.expression);
-          std::string statement;
-          while (std::getline(statements, statement)) {
-            if (!trim(statement).empty()) {
-              body << "    " << statement << '\n';
-            }
-          }
-          body << "  }\n";
-        } else {
-          body << "  " << nodeValue(id) << " = " << node.expression << ";\n";
-        }
+        appendNode(body, id);
       }
       const std::filesystem::path chunkPath =
           std::filesystem::path(directory) /
-          (shortRoot + "_optimized_combs_" + std::to_string(chunk) + ".cpp");
+          (shortRoot + "_optimized_combs_prefix_" + std::to_string(chunk) +
+           ".cpp");
       std::ofstream chunkSource(chunkPath);
       if (!chunkSource) {
         error = "cannot write " + chunkPath.string();
@@ -2451,12 +2671,84 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
       }
       chunkSource << "#include \"" << shortRoot
                   << "_optimized_combs_internal.h\"\n\nvoid " << shortRoot
-                  << "_optimized_combs_chunk_" << chunk << "(" << shortRoot
-                  << "& obj, " << shortRoot << "_optimized_combs_state& s) {\n";
+                  << "_optimized_combs_prefix_chunk_" << chunk << "("
+                  << shortRoot << "& obj, " << shortRoot
+                  << "_optimized_combs_state& s) {\n";
       emitAliases(chunkSource, referencedInstances({}, usedInstances));
       chunkSource << body.str() << "}\n";
       if (!finishOutput(chunkSource, chunkPath)) {
         return false;
+      }
+    }
+
+    if (threadedCombs) {
+      for (size_t stage = 0; stage < stageLaneChunks.size(); ++stage) {
+        for (size_t lane = 0; lane < stageLaneChunks[stage].size(); ++lane) {
+          for (size_t chunk = 0;
+               chunk < stageLaneChunks[stage][lane].size(); ++chunk) {
+          std::ostringstream body;
+          std::set<size_t> usedInstances{0};
+          for (const size_t id : stageLaneChunks[stage][lane][chunk]) {
+            const Node &node = nodes[id];
+            usedInstances.insert(node.instance->id);
+            usedInstances = referencedInstances(node.expression, usedInstances);
+            appendNode(body, id);
+          }
+          const std::filesystem::path chunkPath =
+              std::filesystem::path(directory) /
+              (shortRoot + "_optimized_combs_thread_" +
+               std::to_string(stage) + "_" + std::to_string(lane) + "_" +
+               std::to_string(chunk) + ".cpp");
+          std::ofstream chunkSource(chunkPath);
+          if (!chunkSource) {
+            error = "cannot write " + chunkPath.string();
+            return false;
+          }
+          chunkSource << "#include \"" << shortRoot
+                      << "_optimized_combs_internal.h\"\n\nvoid " << shortRoot
+                      << "_optimized_combs_thread_" << stage << "_" << lane
+                      << "_" << chunk << "(" << shortRoot << "& obj, "
+                      << shortRoot << "_optimized_combs_state& s) {\n";
+          emitAliases(chunkSource, referencedInstances({}, usedInstances));
+          chunkSource << body.str() << "}\n";
+          if (!finishOutput(chunkSource, chunkPath)) {
+            return false;
+          }
+          }
+        }
+      }
+    } else {
+      for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
+        const size_t begin = chunk * valuesPerChunk;
+        const size_t end = std::min(schedule.size(), begin + valuesPerChunk);
+        std::ostringstream body;
+        std::set<size_t> usedInstances{0};
+        for (size_t position = begin; position < end; ++position) {
+          const size_t id = schedule[position];
+          const Node &node = nodes[id];
+          usedInstances.insert(node.instance->id);
+          usedInstances = referencedInstances(node.expression, usedInstances);
+          appendNode(body, id);
+        }
+        const std::filesystem::path chunkPath =
+            std::filesystem::path(directory) /
+            (shortRoot + "_optimized_combs_" + std::to_string(chunk) +
+             ".cpp");
+        std::ofstream chunkSource(chunkPath);
+        if (!chunkSource) {
+          error = "cannot write " + chunkPath.string();
+          return false;
+        }
+        chunkSource << "#include \"" << shortRoot
+                    << "_optimized_combs_internal.h\"\n\nvoid " << shortRoot
+                    << "_optimized_combs_chunk_" << chunk << "(" << shortRoot
+                    << "& obj, " << shortRoot
+                    << "_optimized_combs_state& s) {\n";
+        emitAliases(chunkSource, referencedInstances({}, usedInstances));
+        chunkSource << body.str() << "}\n";
+        if (!finishOutput(chunkSource, chunkPath)) {
+          return false;
+        }
       }
     }
 
@@ -2550,14 +2842,189 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
     source << "#include \"" << shortRoot << "_optimized_combs_internal.h\"\n"
            << "#include \"" << shortRoot << "_optimized_combs.h\"\n\n"
-           << "#include <unordered_map>\n\n"
+           << "#include <array>\n#include <unordered_map>\n#include <vector>\n"
+           << "#if defined(__linux__)\n#include <pthread.h>\n#include <sched.h>\n#endif\n\n"
            << "namespace {\nthread_local std::unordered_map<" << shortRoot
            << "*, " << shortRoot << "_optimized_combs_state> " << shortRoot
            << "_optimized_states;\n\n" << shortRoot
            << "_optimized_combs_state& optimized_state(" << shortRoot
            << "& obj) {\n  return " << shortRoot
-           << "_optimized_states[std::addressof(obj)];\n}\n}\n\n"
-           << "void bind_optimized_ports(" << shortRoot << "& obj) {\n";
+           << "_optimized_states[std::addressof(obj)];\n}\n\n";
+    if (threadedCombs) {
+      source << "class " << shortRoot << "_optimized_combs_runtime {\n"
+             << "public:\n  " << shortRoot
+             << "_optimized_combs_runtime() {\n"
+             << "    pin_caller();\n"
+             << "    workers_.reserve(" << (combThreadCount - 1) << ");\n"
+             << "    for (std::size_t lane = 1; lane < " << combThreadCount
+             << "; ++lane) {\n"
+             << "      workers_.emplace_back([this, lane] { worker(lane); });\n"
+             << "    }\n  }\n\n"
+             << "  ~" << shortRoot << "_optimized_combs_runtime() {\n"
+             << "    command_.fetch_or(stop_bit, std::memory_order_release);\n"
+             << "    for (auto& worker : workers_) {\n"
+             << "      worker.join();\n    }\n"
+             << "    restore_caller();\n  }\n\n"
+             << "  void run(" << shortRoot << "& obj, " << shortRoot
+             << "_optimized_combs_state& state) {\n"
+             << "    object_ = std::addressof(obj);\n"
+             << "    state_ = std::addressof(state);\n"
+             << "    const std::uint64_t command = ++command_value_;\n"
+             << "    command_.store(command, std::memory_order_release);\n"
+             << "    for (std::size_t stage = 0; stage < "
+             << combStages.size() << "; ++stage) {\n"
+             << "      run_stage(stage, 0, obj, state);\n"
+             << "      const std::uint64_t token = command * "
+             << (combStages.size() + 1) << " + stage + 1;\n"
+             << "      for (std::size_t lane = 1; lane < " << combThreadCount
+             << "; ++lane) {\n"
+             << "        while (completed_[lane - 1].value.load("
+                "std::memory_order_acquire) != token) {\n"
+             << "          cpphdl_optimized_thread_pause();\n        }\n"
+             << "      }\n"
+             << "      if (stage + 1 != " << combStages.size() << ") {\n"
+             << "        stage_release_.store(token, "
+                "std::memory_order_release);\n"
+             << "      }\n"
+             << "    }\n  }\n\n"
+             << "private:\n  void run_stage(std::size_t stage, "
+                "std::size_t lane, " << shortRoot
+             << "& obj, " << shortRoot
+             << "_optimized_combs_state& state) {\n"
+             << "    switch (stage) {\n";
+      for (size_t stage = 0; stage < stageLaneChunks.size(); ++stage) {
+        source << "    case " << stage << ":\n"
+               << "      switch (lane) {\n";
+        for (size_t lane = 0; lane < stageLaneChunks[stage].size(); ++lane) {
+          source << "      case " << lane << ":\n";
+          for (size_t chunk = 0;
+               chunk < stageLaneChunks[stage][lane].size(); ++chunk) {
+            source << "        " << shortRoot << "_optimized_combs_thread_"
+                   << stage << "_" << lane << "_" << chunk
+                   << "(obj, state);\n";
+          }
+          source << "        break;\n";
+        }
+        source << "      }\n      break;\n";
+      }
+      source << "    }\n  }\n\n"
+             << "  void worker(std::size_t lane) {\n"
+             << "    pin_worker(lane);\n"
+             << "    std::uint64_t observed = 0;\n"
+             << "    for (;;) {\n"
+             << "      std::uint64_t command;\n"
+             << "      do {\n"
+             << "        command = command_.load(std::memory_order_acquire);\n"
+             << "        if ((command & stop_bit) != 0) {\n"
+             << "          return;\n        }\n"
+             << "        if (command == observed) {\n"
+             << "          cpphdl_optimized_thread_pause();\n        }\n"
+             << "      } while (command == observed);\n"
+             << "      observed = command;\n"
+             << "      auto* object = object_;\n      auto* state = state_;\n"
+             << "      for (std::size_t stage = 0; stage < "
+             << combStages.size() << "; ++stage) {\n"
+             << "        run_stage(stage, lane, *object, *state);\n"
+             << "        const std::uint64_t token = observed * "
+             << (combStages.size() + 1) << " + stage + 1;\n"
+             << "        completed_[lane - 1].value.store(token, "
+                "std::memory_order_release);\n"
+             << "        if (stage + 1 != " << combStages.size() << ") {\n"
+             << "          while (stage_release_.load("
+                "std::memory_order_acquire) != token) {\n"
+             << "            cpphdl_optimized_thread_pause();\n          }\n"
+             << "        }\n"
+             << "      }\n"
+             << "    }\n  }\n\n"
+             << R"CPP(  void pin_caller() {
+#if defined(__linux__)
+    if (pthread_getaffinity_np(pthread_self(), sizeof(original_affinity_),
+                               &original_affinity_) != 0) {
+      return;
+    }
+    caller_cpu_ = sched_getcpu();
+    if (caller_cpu_ < 0 || !CPU_ISSET(caller_cpu_, &original_affinity_)) {
+      caller_cpu_ = -1;
+      return;
+    }
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    CPU_SET(caller_cpu_, &affinity);
+    caller_pinned_ = pthread_setaffinity_np(
+                         pthread_self(), sizeof(affinity), &affinity) == 0;
+#endif
+  }
+
+  void pin_worker(std::size_t lane) {
+#if defined(__linux__)
+    if (!caller_pinned_) {
+      return;
+    }
+    std::size_t worker_index = 0;
+    int worker_cpu = -1;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+      if (!CPU_ISSET(cpu, &original_affinity_) || cpu == caller_cpu_) {
+        continue;
+      }
+      if (worker_index++ == lane - 1) {
+        worker_cpu = cpu;
+        break;
+      }
+    }
+    if (worker_cpu < 0) {
+      return;
+    }
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    CPU_SET(worker_cpu, &affinity);
+    (void)pthread_setaffinity_np(pthread_self(), sizeof(affinity), &affinity);
+#else
+    (void)lane;
+#endif
+  }
+
+  void restore_caller() {
+#if defined(__linux__)
+    if (caller_pinned_) {
+      (void)pthread_setaffinity_np(pthread_self(), sizeof(original_affinity_),
+                                   &original_affinity_);
+    }
+#endif
+  }
+
+)CPP"
+             << "  static constexpr std::uint64_t stop_bit = "
+                "std::uint64_t{1} << 63;\n"
+             << "  struct alignas(64) completion_slot {\n"
+             << "    std::atomic<std::uint64_t> value{0};\n  };\n"
+             << "  std::vector<std::thread> workers_;\n"
+             << "  " << shortRoot << "* object_ = nullptr;\n"
+             << "  " << shortRoot
+             << "_optimized_combs_state* state_ = nullptr;\n"
+             << "  alignas(64) std::atomic<std::uint64_t> command_{0};\n"
+             << "  alignas(64) std::atomic<std::uint64_t> stage_release_{0};\n"
+             << "  std::uint64_t command_value_ = 0;\n"
+             << "  std::array<completion_slot, " << (combThreadCount - 1)
+             << "> completed_{};\n"
+             << "#if defined(__linux__)\n"
+             << "  cpu_set_t original_affinity_{};\n"
+             << "  int caller_cpu_ = -1;\n"
+             << "  bool caller_pinned_ = false;\n"
+             << "#endif\n"
+             << "};\n\n"
+             << "thread_local std::unordered_map<" << shortRoot
+             << "*, std::unique_ptr<" << shortRoot
+             << "_optimized_combs_runtime>> " << shortRoot
+             << "_optimized_runtimes;\n\n"
+             << shortRoot << "_optimized_combs_runtime& optimized_runtime("
+             << shortRoot << "& obj) {\n"
+             << "  auto& runtime = " << shortRoot
+             << "_optimized_runtimes[std::addressof(obj)];\n"
+             << "  if (!runtime) {\n    runtime = std::make_unique<" << shortRoot
+             << "_optimized_combs_runtime>();\n  }\n"
+             << "  return *runtime;\n}\n\n";
+    }
+    source << "}\n\nvoid bind_optimized_ports(" << shortRoot << "& obj) {\n";
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_bind_chunk_" << chunk
              << "(obj);\n";
@@ -2568,9 +3035,17 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     for (const DeferredWrite &write : deferredWrites) {
       source << "  s.w" << write.id << "_pending = false;\n";
     }
-    for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
-      source << "  " << shortRoot << "_optimized_combs_chunk_" << chunk
+    for (size_t chunk = 0; chunk < prefixChunks.size(); ++chunk) {
+      source << "  " << shortRoot << "_optimized_combs_prefix_chunk_" << chunk
              << "(obj, s);\n";
+    }
+    if (threadedCombs) {
+      source << "  optimized_runtime(obj).run(obj, s);\n";
+    } else {
+      for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
+        source << "  " << shortRoot << "_optimized_combs_chunk_" << chunk
+               << "(obj, s);\n";
+      }
     }
     for (size_t chunk = 0; chunk < workChunks.size(); ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_work_chunk_" << chunk
@@ -2592,11 +3067,49 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
     llvm::outs() << "CppHDL comb optimizer: " << instances.size()
                  << " instances, " << schedule.size() << " scheduled values, "
-                 << chunkCount << " comb chunks, " << bindChunkCount
+                 << (threadedCombs ? combThreadCount : 1) << " comb threads, "
+                 << componentCount << " independent stage components, "
+                 << combStages.size() << " dependency stages, "
+                 << "0 within-stage cross-lane edges, "
+                 << (threadedCombs
+                         ? std::to_string(combStages.size()) +
+                               " stage joins, " +
+                               std::to_string(combStages.size() - 1) +
+                               " stage releases, "
+                                   : "0 end-of-cycle joins, ")
+                 << (threadedCombs ? threadChunkCount : chunkCount)
+                 << " comb chunks, "
+                 << prefixValues.size() << " serial-prefix values (weight "
+                 << prefixWeight << "), "
+                 << bindChunkCount
                  << " bind chunks, " << workChunks.size() << " work chunks, "
                  << strobeChunks.size() << " strobe chunks, "
                  << memoryChunkCount << " memory chunks, "
                  << modelChunkCount << " model chunks\n"
+                 << (threadedCombs ? "  estimated staged weight: " : "")
+                 << (threadedCombs
+                         ? std::to_string(estimatedParallelWeight) + "\n"
+                         : "")
+                 << (threadedCombs
+                         ? [&]() {
+                             std::ostringstream weights;
+                             for (size_t stage = 0;
+                                  stage < combStages.size(); ++stage) {
+                               weights << "  stage " << stage
+                                       << " lane weights: ";
+                               for (size_t lane = 0;
+                                    lane < combStages[stage].laneWeights.size();
+                                    ++lane) {
+                                 if (lane != 0) {
+                                   weights << ",";
+                                 }
+                                 weights << combStages[stage].laneWeights[lane];
+                               }
+                               weights << "\n";
+                             }
+                             return weights.str();
+                           }()
+                         : "")
                  << (mathOptimization ? "  math replacements: " : "")
                  << (mathOptimization ? std::to_string(mathBitReversals) +
                                              " reversals, " +
@@ -2630,6 +3143,10 @@ void CombsOptimizer::setL1Scheduling(bool enabled) {
 
 void CombsOptimizer::setMathOptimization(bool enabled) {
   impl->mathOptimization = enabled;
+}
+
+void CombsOptimizer::setThreadCount(std::size_t count) {
+  impl->threadCount = std::max<std::size_t>(1, count);
 }
 
 bool CombsOptimizer::generate(const std::string &rootModule,

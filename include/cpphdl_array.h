@@ -447,6 +447,9 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
             std::string str;
             for (size_t i = COUNT; i-- > 0;) {
                 str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             return str;
         }
@@ -461,6 +464,9 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         for (size_t i = COUNT; i-- > 0;) {
             if constexpr (detail::has_to_string_method<TYPE>::value) {
                 str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             else {
                 char buf[2 * sizeof(uint64_t) + 1] = {};
@@ -615,6 +621,9 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
             for (size_t i = COUNT; i-- > 0;) {
                 TYPE value = const_array[i];
                 str += value.to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             return str;
         }
@@ -629,6 +638,9 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
             std::string str;
             for (size_t i = COUNT; i-- > 0;) {
                 str += (*this)[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             return str;
         }
