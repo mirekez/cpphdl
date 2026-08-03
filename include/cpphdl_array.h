@@ -62,6 +62,14 @@ struct has_to_string_method<TYPE,
     std::void_t<decltype(std::declval<const TYPE&>().to_string())>>
     : std::is_convertible<decltype(std::declval<const TYPE&>().to_string()), std::string> {};
 
+template<typename TYPE, typename = void>
+struct has_mutable_to_string_method : std::false_type {};
+
+template<typename TYPE>
+struct has_mutable_to_string_method<TYPE,
+    std::void_t<decltype(std::declval<TYPE&>().to_string())>>
+    : std::is_convertible<decltype(std::declval<TYPE&>().to_string()), std::string> {};
+
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
 {
@@ -433,16 +441,37 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         return (array&)(*this = *this ^ other);
     }
 
+    std::string to_string()
+    {
+        if constexpr (detail::has_mutable_to_string_method<TYPE>::value) {
+            std::string str;
+            for (size_t i = COUNT; i-- > 0;) {
+                str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
+            }
+            return str;
+        }
+        else {
+            return static_cast<const array&>(*this).to_string();
+        }
+    }
+
     std::string to_string() const
     {
         std::string str;
-        for (int i=COUNT-1; i >= 0; --i) {
+        for (size_t i = COUNT; i-- > 0;) {
             if constexpr (detail::has_to_string_method<TYPE>::value) {
                 str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             else {
-                char buf[10] = {};
-                std::snprintf(buf, sizeof(buf), "%.02lx", (uint64_t)data[i]);
+                char buf[2 * sizeof(uint64_t) + 1] = {};
+                std::snprintf(buf, sizeof(buf), "%02llx",
+                    (unsigned long long)(uint64_t)data[i]);
                 str += buf;
             }
         }
@@ -584,12 +613,34 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_ullong();
     }
 
+    std::string to_string()
+    {
+        if constexpr (detail::has_mutable_to_string_method<TYPE>::value) {
+            std::string str;
+            const auto& const_array = static_cast<const array&>(*this);
+            for (size_t i = COUNT; i-- > 0;) {
+                TYPE value = const_array[i];
+                str += value.to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
+            }
+            return str;
+        }
+        else {
+            return static_cast<const array&>(*this).to_string();
+        }
+    }
+
     std::string to_string() const
     {
         if constexpr (detail::has_to_string_method<TYPE>::value) {
             std::string str;
-            for (int i = COUNT - 1; i >= 0; --i) {
+            for (size_t i = COUNT; i-- > 0;) {
                 str += (*this)[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             return str;
         }

@@ -3,7 +3,7 @@ new file mode 100755
 index 00000000..36c3f1c0
 --- /dev/null
 +++ b/scripts/build-cpphdl-rocket64.sh
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,115 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -21,6 +21,13 @@ index 00000000..36c3f1c0
 +cpphdl_include=${CPPHDL_INCLUDE_DIR:-${HOME:?HOME must be set}/cpphdl/include}
 +cpphdl_opt_level=${CPPHDL_OPT_LEVEL:--O2}
 +cpphdl_use_pch=${CPPHDL_USE_OPTIMIZED_PCH:-ON}
++cpphdl_optimize_threads=${CPPHDL_OPTIMIZE_THREADS:-}
++
++if [[ -n "$cpphdl_optimize_threads" &&
++      ! "$cpphdl_optimize_threads" =~ ^[1-9][0-9]*$ ]]; then
++  echo "error: CPPHDL_OPTIMIZE_THREADS must be a positive integer" >&2
++  exit 1
++fi
 +
 +if [[ ! -f "$fir_file" ]]; then
 +  make -C "$root/sims/verilator" CONFIG="$config" firrtl
@@ -55,7 +62,11 @@ index 00000000..36c3f1c0
 +    mapfile -d '' cpphdl_model_sources < <(
 +      find "$output_dir" -maxdepth 1 -type f -name '*.cpp' \
 +        ! -name '*_optimized_combs*.cpp' -print0 | sort -z)
-+    "$cpphdl_tool" --optimize-combs TestHarness \
++    cpphdl_optimizer_args=(--optimize-combs TestHarness)
++    if [[ -n "$cpphdl_optimize_threads" ]]; then
++      cpphdl_optimizer_args+=(--optimize-threads "$cpphdl_optimize_threads")
++    fi
++    "$cpphdl_tool" "${cpphdl_optimizer_args[@]}" \
 +      --generated-dir="$output_dir" "${cpphdl_model_sources[@]}" -- \
 +      -I"$output_dir" -I"$cpphdl_include" \
 +      -I"$root/tools/firtool-cpphdl/runtime"
@@ -368,7 +379,7 @@ new file mode 100644
 index 00000000..c5d6dd40
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/CMakeLists.txt
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,59 @@
 +cmake_minimum_required(VERSION 3.20)
 +project(chipyard_cpphdl_runtime LANGUAGES CXX)
 +
@@ -404,6 +415,8 @@ index 00000000..c5d6dd40
 +file(GLOB CPPHDL_OPTIMIZED_SOURCES CONFIGURE_DEPENDS
 +  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp"
 +  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_prefix_[0-9]*.cpp"
++  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_thread_[0-9]*_[0-9]*_[0-9]*.cpp"
 +  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_bind_[0-9]*.cpp"
 +  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_work_[0-9]*.cpp"
 +  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_strobe_[0-9]*.cpp"

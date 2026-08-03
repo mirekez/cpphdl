@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+find_package(Threads REQUIRED)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
@@ -14,7 +15,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 # This source is an integration driver for two optimizer-generated trees.
 # Its custom target is declared below instead of using the converter loop.
-list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/optimize_l1\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeL1\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeMath\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeThreads\\.cpp$")
 
 foreach(src ${TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
@@ -34,9 +37,11 @@ foreach(src ${TEST_SOURCES})
         endif()
     endforeach()
 
-    # Public constexpr helpers must remain usable by C++17 projects even though
-    # converter regressions normally compile in the newest supported language mode.
-    if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp")
+    # Public header APIs must remain usable by C++17 projects even though converter
+    # regressions normally compile in the newest supported language mode.
+    if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp" OR
+       rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
+       rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
         target_compile_options(${target_name} PRIVATE "-std=c++17")
     endif()
 
@@ -118,6 +123,16 @@ foreach(async_reset_failure_case invalid_signature missing_negative_process wron
             -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_async_reset_failure
             -DCASE=${async_reset_failure_case}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/reset/ExpectFailure.cmake)
+endforeach()
+
+foreach(unsupported_std_formatting_case format print)
+    add_test(NAME datatypes_std_${unsupported_std_formatting_case}_unavailable_cxx17
+        COMMAND ${CMAKE_COMMAND}
+            -DCXX=${CMAKE_CXX_COMPILER}
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/datatypes/UnsupportedStdFormatting.h
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DCASE=${unsupported_std_formatting_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/datatypes/ExpectUnsupportedStdFormatting.cmake)
 endforeach()
 
 set(CPPHDL_NBA_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_optimizer_nonblocking_memory")
@@ -295,3 +310,223 @@ add_test(
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
 )
 set_tests_properties(optimizer_structural_nttp PROPERTIES TIMEOUT 120)
+
+set(CPPHDL_OPTIMIZE_L1_NORMAL_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_l1_normal")
+set(CPPHDL_OPTIMIZE_L1_L1_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_l1_l1")
+set(CPPHDL_OPTIMIZE_L1_MODEL
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeL1.h")
+
+function(cpphdl_generate_optimize_l1_fixture mode directory output_var)
+    set(generated
+        "${directory}/OptimizeL1_optimized_combs.cpp"
+        "${directory}/OptimizeL1_optimized_combs.h"
+        "${directory}/OptimizeL1_optimized_combs_internal.h"
+        "${directory}/OptimizeL1_optimized_combs_0.cpp"
+        "${directory}/OptimizeL1_optimized_combs_work_0.cpp"
+        "${directory}/OptimizeL1_optimized_combs_strobe_0.cpp")
+    add_custom_command(
+        OUTPUT ${generated}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${directory}"
+        COMMAND "$<TARGET_FILE:cpphdl>"
+                "${mode}" OptimizeL1
+                --generated-dir "${directory}"
+                "${CPPHDL_OPTIMIZE_L1_MODEL}"
+                -I"${CMAKE_SOURCE_DIR}/include"
+        DEPENDS cpphdl "${CPPHDL_OPTIMIZE_L1_MODEL}"
+        VERBATIM)
+    set(${output_var} ${generated} PARENT_SCOPE)
+endfunction()
+
+cpphdl_generate_optimize_l1_fixture(
+    --optimize-combs "${CPPHDL_OPTIMIZE_L1_NORMAL_DIR}"
+    CPPHDL_OPTIMIZE_L1_NORMAL_GENERATED)
+cpphdl_generate_optimize_l1_fixture(
+    --optimize-combs-l1 "${CPPHDL_OPTIMIZE_L1_L1_DIR}"
+    CPPHDL_OPTIMIZE_L1_L1_GENERATED)
+
+add_custom_target(combs_optimize_l1_generated
+    DEPENDS ${CPPHDL_OPTIMIZE_L1_NORMAL_GENERATED}
+            ${CPPHDL_OPTIMIZE_L1_L1_GENERATED})
+add_executable(combs_optimize_l1
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeL1.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_0.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}/OptimizeL1_optimized_combs_strobe_0.cpp")
+add_dependencies(combs_optimize_l1 combs_optimize_l1_generated)
+target_include_directories(combs_optimize_l1 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs"
+    "${CPPHDL_OPTIMIZE_L1_L1_DIR}")
+cpphdl_link_stdcxxexp_if_available(combs_optimize_l1)
+cpphdl_add_host_opt_flags(combs_optimize_l1)
+target_compile_options(combs_optimize_l1 PRIVATE "-fno-strict-aliasing")
+target_compile_definitions(combs_optimize_l1 PRIVATE
+    CPPHDL_OPTIMIZE_L1_NORMAL_DIR="${CPPHDL_OPTIMIZE_L1_NORMAL_DIR}"
+    CPPHDL_OPTIMIZE_L1_L1_DIR="${CPPHDL_OPTIMIZE_L1_L1_DIR}")
+set_target_properties(combs_optimize_l1 PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME combs_optimize_l1 COMMAND "$<TARGET_FILE:combs_optimize_l1>")
+
+set(CPPHDL_OPTIMIZE_THREADS_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_threads")
+set(CPPHDL_OPTIMIZE_THREADS_MODEL
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeThreads.h")
+set(CPPHDL_OPTIMIZE_THREADS_GENERATED
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs.h"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_internal.h"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_0_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_1_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_2_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_3_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_strobe_0.cpp")
+add_custom_command(
+    OUTPUT ${CPPHDL_OPTIMIZE_THREADS_GENERATED}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CPPHDL_OPTIMIZE_THREADS_DIR}"
+    COMMAND "$<TARGET_FILE:cpphdl>"
+            --optimize-combs-l1 OptimizeThreads
+            --optimize-threads 4
+            --generated-dir "${CPPHDL_OPTIMIZE_THREADS_DIR}"
+            "${CPPHDL_OPTIMIZE_THREADS_MODEL}"
+            -I"${CMAKE_SOURCE_DIR}/include"
+    DEPENDS cpphdl "${CPPHDL_OPTIMIZE_THREADS_MODEL}"
+    VERBATIM)
+
+add_executable(combs_optimize_threads
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeThreads.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_0_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_1_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_2_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_thread_0_3_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}/OptimizeThreads_optimized_combs_strobe_0.cpp")
+target_include_directories(combs_optimize_threads PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs"
+    "${CPPHDL_OPTIMIZE_THREADS_DIR}")
+target_link_libraries(combs_optimize_threads PRIVATE Threads::Threads)
+cpphdl_link_stdcxxexp_if_available(combs_optimize_threads)
+target_compile_options(combs_optimize_threads PRIVATE "-fno-strict-aliasing")
+target_compile_definitions(combs_optimize_threads PRIVATE
+    CPPHDL_OPTIMIZE_THREADS_DIR="${CPPHDL_OPTIMIZE_THREADS_DIR}")
+set_target_properties(combs_optimize_threads PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME combs_optimize_threads
+    COMMAND "$<TARGET_FILE:combs_optimize_threads>")
+add_test(NAME combs_optimize_threads_cli
+    COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${CPPHDL_OPTIMIZE_THREADS_MODEL}
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_threads_cli
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/combs/ExpectOptimizeThreadsFailure.cmake)
+add_test(NAME combs_optimize_threads_imbalance
+    COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeThreadsImbalanced.h
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_threads_imbalance
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/combs/CheckOptimizeThreadsImbalance.cmake)
+
+set(CPPHDL_OPTIMIZE_MATH_MODEL
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeMath.h")
+set(CPPHDL_OPTIMIZE_MATH_BASELINE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_math_baseline")
+set(CPPHDL_OPTIMIZE_MATH_COMBS_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_math_combs")
+set(CPPHDL_OPTIMIZE_MATH_L1_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_math_l1")
+
+function(cpphdl_generate_optimize_math_fixture directory output_var mode)
+    set(generated
+        "${directory}/OptimizeMath_optimized_combs.cpp"
+        "${directory}/OptimizeMath_optimized_combs.h"
+        "${directory}/OptimizeMath_optimized_combs_internal.h"
+        "${directory}/OptimizeMath_optimized_combs_0.cpp"
+        "${directory}/OptimizeMath_optimized_combs_work_0.cpp"
+        "${directory}/OptimizeMath_optimized_combs_strobe_0.cpp")
+    add_custom_command(
+        OUTPUT ${generated}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${directory}"
+        COMMAND "$<TARGET_FILE:cpphdl>" "${mode}" OptimizeMath ${ARGN}
+                --generated-dir "${directory}"
+                "${CPPHDL_OPTIMIZE_MATH_MODEL}"
+                -I"${CMAKE_SOURCE_DIR}/include"
+        DEPENDS cpphdl "${CPPHDL_OPTIMIZE_MATH_MODEL}"
+        VERBATIM)
+    set(${output_var} ${generated} PARENT_SCOPE)
+endfunction()
+
+cpphdl_generate_optimize_math_fixture(
+    "${CPPHDL_OPTIMIZE_MATH_BASELINE_DIR}"
+    CPPHDL_OPTIMIZE_MATH_BASELINE_GENERATED
+    --optimize-combs-l1)
+cpphdl_generate_optimize_math_fixture(
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}"
+    CPPHDL_OPTIMIZE_MATH_COMBS_GENERATED
+    --optimize-combs --optimize-math)
+cpphdl_generate_optimize_math_fixture(
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}"
+    CPPHDL_OPTIMIZE_MATH_L1_GENERATED
+    --optimize-combs-l1 --optimize-math)
+
+add_custom_target(combs_optimize_math_generated
+    DEPENDS ${CPPHDL_OPTIMIZE_MATH_BASELINE_GENERATED}
+            ${CPPHDL_OPTIMIZE_MATH_COMBS_GENERATED}
+            ${CPPHDL_OPTIMIZE_MATH_L1_GENERATED})
+add_executable(combs_optimize_math
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeMath.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}/OptimizeMath_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}/OptimizeMath_optimized_combs_0.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}/OptimizeMath_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}/OptimizeMath_optimized_combs_strobe_0.cpp")
+add_dependencies(combs_optimize_math combs_optimize_math_generated)
+target_include_directories(combs_optimize_math PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs"
+    "${CPPHDL_OPTIMIZE_MATH_L1_DIR}")
+cpphdl_link_stdcxxexp_if_available(combs_optimize_math)
+cpphdl_add_host_opt_flags(combs_optimize_math)
+target_compile_options(combs_optimize_math PRIVATE "-fno-strict-aliasing")
+target_compile_definitions(combs_optimize_math PRIVATE
+    CPPHDL_OPTIMIZE_MATH_BASELINE_DIR="${CPPHDL_OPTIMIZE_MATH_BASELINE_DIR}"
+    CPPHDL_OPTIMIZE_MATH_COMBS_DIR="${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}"
+    CPPHDL_OPTIMIZE_MATH_L1_DIR="${CPPHDL_OPTIMIZE_MATH_L1_DIR}")
+set_target_properties(combs_optimize_math PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME combs_optimize_math COMMAND "$<TARGET_FILE:combs_optimize_math>")
+
+add_executable(combs_optimize_math_combs
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs/OptimizeMath.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}/OptimizeMath_optimized_combs.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}/OptimizeMath_optimized_combs_0.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}/OptimizeMath_optimized_combs_work_0.cpp"
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}/OptimizeMath_optimized_combs_strobe_0.cpp")
+add_dependencies(combs_optimize_math_combs combs_optimize_math_generated)
+target_include_directories(combs_optimize_math_combs PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/combs"
+    "${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}")
+cpphdl_link_stdcxxexp_if_available(combs_optimize_math_combs)
+cpphdl_add_host_opt_flags(combs_optimize_math_combs)
+target_compile_options(combs_optimize_math_combs PRIVATE "-fno-strict-aliasing")
+target_compile_definitions(combs_optimize_math_combs PRIVATE
+    CPPHDL_OPTIMIZE_MATH_BASELINE_DIR="${CPPHDL_OPTIMIZE_MATH_BASELINE_DIR}"
+    CPPHDL_OPTIMIZE_MATH_COMBS_DIR="${CPPHDL_OPTIMIZE_MATH_COMBS_DIR}"
+    CPPHDL_OPTIMIZE_MATH_L1_DIR="${CPPHDL_OPTIMIZE_MATH_L1_DIR}")
+set_target_properties(combs_optimize_math_combs PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
+add_test(NAME combs_optimize_math_combs
+    COMMAND "$<TARGET_FILE:combs_optimize_math_combs>")
+
+add_test(NAME combs_optimize_math_requires_combs
+    COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DSOURCE=${CPPHDL_OPTIMIZE_MATH_MODEL}
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/combs/ExpectOptimizeMathFailure.cmake)

@@ -2111,6 +2111,15 @@ bool parseClockFrequency(const char* text, uint64_t& frequency)
     return !value.empty() && result.ec == std::errc{} && result.ptr == end && frequency != 0;
 }
 
+bool parsePositiveSize(const char* text, size_t& value)
+{
+    std::string_view input(text ? text : "");
+    const char* begin = input.data();
+    const char* end = begin + input.size();
+    auto result = std::from_chars(begin, end, value);
+    return !input.empty() && result.ec == std::errc{} && result.ptr == end && value != 0;
+}
+
 bool appendClockDomain(std::vector<cpphdl::ClockDomain>& clocks, const char* name,
     const char* frequencyText, const char* option)
 {
@@ -2196,6 +2205,9 @@ int main(int argc, const char **argv)
     bool optimize_combs_l1 = false;
     std::string optimize_combs_collection_output;
     std::vector<std::string> optimize_combs_collection_inputs;
+    bool optimize_math = false;
+    size_t optimize_threads = 1;
+    bool optimize_threads_specified = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2337,6 +2349,30 @@ int main(int argc, const char **argv)
             continue;
         }
 
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-math") == 0) {
+            optimize_math = true;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-threads") == 0) {
+            if (i + 1 >= argc || !parsePositiveSize(argv[i + 1], optimize_threads)) {
+                llvm::errs() << "--optimize-threads requires a positive integer\n";
+                return 1;
+            }
+            optimize_threads_specified = true;
+            ++i;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-threads=", 19) == 0) {
+            if (!parsePositiveSize(arg + 19, optimize_threads)) {
+                llvm::errs() << "--optimize-threads requires a positive integer\n";
+                return 1;
+            }
+            optimize_threads_specified = true;
+            continue;
+        }
+
         if (!saw_double_dash && std::strcmp(arg, "--generated-dir") == 0) {
             if (i + 1 >= argc) {
                 llvm::errs() << "--generated-dir requires a directory argument\n";
@@ -2457,6 +2493,17 @@ int main(int argc, const char **argv)
     new_argv.push_back(nullptr);
     int new_argc = (int)new_argv.size() - 1;
 
+    if (optimize_math && optimize_combs_root.empty()) {
+        llvm::errs() << "--optimize-math requires --optimize-combs or "
+                        "--optimize-combs-l1\n";
+        return 1;
+    }
+    if (optimize_threads_specified && optimize_combs_root.empty()) {
+        llvm::errs() << "--optimize-threads requires --optimize-combs or "
+                        "--optimize-combs-l1\n";
+        return 1;
+    }
+
     if (cpphdlDebugEnabled) {
         llvm::errs() << "CppHDL clang args:";
         for (const auto& arg : args) {
@@ -2485,6 +2532,8 @@ int main(int argc, const char **argv)
             return 1;
         }
     }
+    combsOptimizer.setMathOptimization(optimize_math);
+    combsOptimizer.setThreadCount(optimize_threads);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
     const bool trace_phases = std::getenv("CPPHDL_TRACE_PHASES") != nullptr;

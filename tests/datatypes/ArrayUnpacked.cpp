@@ -4,7 +4,6 @@
 #define MAIN_FILE_INCLUDED
 
 #include <cpphdl.h>
-#include <print>
 
 using namespace cpphdl;
 
@@ -115,6 +114,7 @@ public:
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -139,7 +139,7 @@ static T verilator_read(const void* ptr)
 static bool check(bool condition, const char* text)
 {
     if (!condition) {
-        std::print("\nERROR: {}\n", text);
+        std::printf("\nERROR: %s\n", text);
         return false;
     }
     return true;
@@ -150,6 +150,16 @@ struct ArrayStringElement
     const char* text;
 
     std::string to_string() const
+    {
+        return text;
+    }
+};
+
+struct MutableArrayStringElement
+{
+    const char* text;
+
+    std::string to_string()
     {
         return text;
     }
@@ -184,6 +194,35 @@ struct PackedArrayStringElement
     }
 };
 
+struct MutablePackedArrayStringElement
+{
+    uint8_t raw = 0;
+
+    MutablePackedArrayStringElement() = default;
+
+    explicit MutablePackedArrayStringElement(uint64_t value)
+        : raw((uint8_t)value)
+    {
+    }
+
+    static constexpr size_t _size_bits()
+    {
+        return 8;
+    }
+
+    explicit operator uint64_t() const
+    {
+        return raw;
+    }
+
+    std::string to_string()
+    {
+        char text[3] = {};
+        std::snprintf(text, sizeof(text), "%02x", raw);
+        return text;
+    }
+};
+
 static bool check_direct_arrays()
 {
     bool ok = true;
@@ -208,15 +247,71 @@ static bool check_direct_arrays()
     string_elements[0].text = "low";
     string_elements[1].text = "mid";
     string_elements[2].text = "high";
-    ok &= check(string_elements.to_string() == "highmidlow",
+    ok &= check(string_elements.to_string() == "high mid low",
         "unpacked array delegates formatting to element to_string");
+    const auto& const_string_elements = string_elements;
+    ok &= check(const_string_elements.to_string() == "high mid low",
+        "const unpacked array delegates formatting to const element to_string");
+
+    array<3, MutableArrayStringElement> mutable_string_elements;
+    mutable_string_elements[0].text = "zero";
+    mutable_string_elements[1].text = "one";
+    mutable_string_elements[2].text = "two";
+    ok &= check(mutable_string_elements.to_string() == "two one zero",
+        "unpacked array delegates formatting to mutable element to_string");
 
     array<3, PackedArrayStringElement, true> packed_string_elements;
     packed_string_elements[0] = PackedArrayStringElement(0x0a);
     packed_string_elements[1] = PackedArrayStringElement(0x0b);
     packed_string_elements[2] = PackedArrayStringElement(0x0c);
-    ok &= check(packed_string_elements.to_string() == "0c0b0a",
+    ok &= check(packed_string_elements.to_string() == "0c 0b 0a",
         "packed array delegates formatting to reconstructed element to_string");
+    const auto& const_packed_string_elements = packed_string_elements;
+    ok &= check(const_packed_string_elements.to_string() == "0c 0b 0a",
+        "const packed array delegates formatting to const reconstructed element to_string");
+
+    array<3, MutablePackedArrayStringElement, true> mutable_packed_string_elements;
+    mutable_packed_string_elements[0] = MutablePackedArrayStringElement(0x1a);
+    mutable_packed_string_elements[1] = MutablePackedArrayStringElement(0x1b);
+    mutable_packed_string_elements[2] = MutablePackedArrayStringElement(0x1c);
+    ok &= check(mutable_packed_string_elements.to_string() == "1c 1b 1a",
+        "packed array delegates formatting to mutable reconstructed element to_string");
+
+    array<2, uint64_t> wide_numeric_elements;
+    wide_numeric_elements[0] = 0x8123456789abcdefull;
+    wide_numeric_elements[1] = 0xfedcba9876543210ull;
+    ok &= check(wide_numeric_elements.to_string()
+            == "fedcba98765432108123456789abcdef",
+        "unpacked array numeric formatting keeps all 64 bits");
+
+    array<2, uint64_t> short_numeric_elements;
+    short_numeric_elements[0] = 0;
+    short_numeric_elements[1] = 0xau;
+    ok &= check(short_numeric_elements.to_string() == "0a00",
+        "unpacked array numeric formatting retains two-digit minimum width");
+
+    array2D<2, 2, u8> nested_string_elements;
+    nested_string_elements[0][0] = 0x01;
+    nested_string_elements[0][1] = 0x02;
+    nested_string_elements[1][0] = 0x03;
+    nested_string_elements[1][1] = 0x04;
+    const auto& const_nested_string_elements = nested_string_elements;
+    ok &= check(const_nested_string_elements.to_string() == "0403 0201",
+        "nested unpacked array recursively delegates element formatting");
+
+    array2D<2, 3, ArrayStringElement> printable_rows;
+    printable_rows[0][0].text = "aa";
+    printable_rows[0][1].text = "bb";
+    printable_rows[0][2].text = "cc";
+    printable_rows[1][0].text = "dd";
+    printable_rows[1][1].text = "ee";
+    printable_rows[1][2].text = "ff";
+    ok &= check(printable_rows[0].to_string() == "cc bb aa",
+        "array2D row delegates formatting to const element to_string");
+    int printed_row_size = std::printf("%s", printable_rows[0].to_string().c_str());
+    std::printf("\n");
+    ok &= check(printed_row_size == 8,
+        "array2D row temporary to_string remains valid through printf");
 
     array<3,logic<9>> unpacked_logic;
     unpacked_logic = 0;
@@ -391,9 +486,9 @@ public:
     bool run()
     {
 #ifdef VERILATOR
-        std::print("VERILATOR TestArrayUnpacked...");
+        std::printf("VERILATOR TestArrayUnpacked...");
 #else
-        std::print("CppHDL TestArrayUnpacked...");
+        std::printf("CppHDL TestArrayUnpacked...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "array_unpacked_test";
@@ -421,8 +516,8 @@ public:
             ++_system_clock;
         }
 
-        std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
-            (std::chrono::duration_cast<std::chrono::microseconds>(
+        std::printf(" %s (%lld us)\n", !error ? "PASSED" : "FAILED",
+            (long long)(std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::high_resolution_clock::now() - start)).count());
         return !error;
     }
