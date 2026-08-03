@@ -34,9 +34,10 @@ public:
     cpphdl::logic<1>& producer_comb_func()
     {
         ++evaluations;
-        producer_comb = cpphdl::logic<1>(1) & ~child.output();
         if (use_inactive_input) {
             producer_comb = inactive_input();
+        } else {
+            producer_comb = cpphdl::logic<1>(1) & ~child.output();
         }
         return producer_comb;
     }

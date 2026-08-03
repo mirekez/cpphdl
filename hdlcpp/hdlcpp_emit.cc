@@ -13793,7 +13793,7 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
         externs << "cpphdl_opt_t0* cpphdl_optimized_root_create();\n";
         externs << "void cpphdl_optimized_root_work(cpphdl_opt_t0&, bool);\n";
         externs << "void cpphdl_optimized_root_strobe(cpphdl_opt_t0&);\n";
-        externs << "void cpphdl_optimized_root_assign(cpphdl_opt_t0&);\n\n";
+        externs << "extern \"C\" void cpphdl_optimized_root_assign_abi(void*);\n\n";
     }
     auto constructorName = [](const std::string& concreteType) {
         auto type = trim(concreteType);
@@ -13884,8 +13884,8 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
         case OptimizedMember::Assign:
             inst << "template void " << type << "::_assign();\n";
             if (index == 0) {
-                inst << "void cpphdl_optimized_root_assign(cpphdl_opt_t0& obj) "
-                        "{ obj._assign(); }\n";
+                inst << "extern \"C\" void cpphdl_optimized_root_assign_abi(void* raw_obj) "
+                        "{ static_cast<cpphdl_opt_t0*>(raw_obj)->_assign(); }\n";
             }
             break;
         }

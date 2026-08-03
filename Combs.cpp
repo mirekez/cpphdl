@@ -17,13 +17,16 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <zlib.h>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -259,7 +262,12 @@ struct FieldInfo {
 };
 
 struct ClassInfo {
-  using Body = std::shared_ptr<const std::string>;
+  struct BodyData {
+    std::shared_ptr<const std::string> text;
+    std::string collectionPath;
+    uint64_t collectionIndex = 0;
+  };
+  using Body = std::shared_ptr<BodyData>;
 
   std::string name;
   std::string templateBase;
@@ -302,6 +310,456 @@ struct ClassInfo {
   bool opaque = false;
 };
 
+struct CollectionWriter {
+  explicit CollectionWriter(const std::string &path)
+      : output(gzopen(path.c_str(), "wb1")), valid(output != nullptr) {}
+  ~CollectionWriter() {
+    if (output) {
+      valid = gzclose(output) == Z_OK && valid;
+    }
+  }
+
+  void number(uint64_t value) {
+    bytes(reinterpret_cast<const char *>(&value), sizeof(value));
+  }
+  void flag(bool value) { number(value ? 1 : 0); }
+  void text(const std::string &value) {
+    number(value.size());
+    bytes(value.data(), value.size());
+  }
+  void bytes(const char *data, size_t size) {
+    while (valid && size != 0) {
+      const unsigned int chunk = static_cast<unsigned int>(
+          std::min<size_t>(size, std::numeric_limits<unsigned int>::max()));
+      const int written = gzwrite(output, data, chunk);
+      if (written <= 0 || static_cast<unsigned int>(written) != chunk) {
+        valid = false;
+        return;
+      }
+      data += chunk;
+      size -= chunk;
+    }
+  }
+  bool close() {
+    if (!output) {
+      return false;
+    }
+    valid = gzclose(output) == Z_OK && valid;
+    output = nullptr;
+    return valid;
+  }
+  explicit operator bool() const { return output && valid; }
+
+  gzFile output = nullptr;
+  bool valid = true;
+};
+
+struct CollectionReader {
+  explicit CollectionReader(const std::string &path)
+      : input(gzopen(path.c_str(), "rb")), valid(input != nullptr) {}
+  ~CollectionReader() {
+    if (input) {
+      gzclose(input);
+    }
+  }
+
+  uint64_t number() {
+    uint64_t value = 0;
+    bytes(reinterpret_cast<char *>(&value), sizeof(value));
+    return value;
+  }
+  bool flag() { return number() != 0; }
+  std::string text() {
+    const uint64_t size = number();
+    if (!valid || size > (uint64_t{1} << 34)) {
+      valid = false;
+      return {};
+    }
+    std::string value(static_cast<size_t>(size), '\0');
+    bytes(value.data(), value.size());
+    return value;
+  }
+  void bytes(char *data, size_t size) {
+    while (valid && size != 0) {
+      const unsigned int chunk = static_cast<unsigned int>(
+          std::min<size_t>(size, std::numeric_limits<unsigned int>::max()));
+      const int read = gzread(input, data, chunk);
+      if (read <= 0 || static_cast<unsigned int>(read) != chunk) {
+        valid = false;
+        return;
+      }
+      data += chunk;
+      size -= chunk;
+    }
+  }
+  void skip(size_t size) {
+    char buffer[64 * 1024];
+    while (valid && size != 0) {
+      const size_t chunk = std::min(size, sizeof(buffer));
+      bytes(buffer, chunk);
+      size -= chunk;
+    }
+  }
+  void fail() { valid = false; }
+  explicit operator bool() const { return input && valid; }
+
+  gzFile input = nullptr;
+  bool valid = true;
+};
+
+void writeStrings(CollectionWriter &writer,
+                  const std::vector<std::string> &values) {
+  writer.number(values.size());
+  for (const auto &value : values) {
+    writer.text(value);
+  }
+}
+
+void readStrings(CollectionReader &reader, std::vector<std::string> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  values.reserve(static_cast<size_t>(count));
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    values.push_back(reader.text());
+  }
+}
+
+void writeStringSet(CollectionWriter &writer,
+                    const std::set<std::string> &values) {
+  writer.number(values.size());
+  for (const auto &value : values) {
+    writer.text(value);
+  }
+}
+
+void readStringSet(CollectionReader &reader, std::set<std::string> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    values.insert(reader.text());
+  }
+}
+
+void writeStringMap(CollectionWriter &writer,
+                    const std::map<std::string, std::string> &values) {
+  writer.number(values.size());
+  for (const auto &[key, value] : values) {
+    writer.text(key);
+    writer.text(value);
+  }
+}
+
+void readStringMap(CollectionReader &reader,
+                   std::map<std::string, std::string> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    auto key = reader.text();
+    auto value = reader.text();
+    values.insert_or_assign(std::move(key), std::move(value));
+  }
+}
+
+void writeStringSizeMap(CollectionWriter &writer,
+                        const std::map<std::string, size_t> &values) {
+  writer.number(values.size());
+  for (const auto &[key, value] : values) {
+    writer.text(key);
+    writer.number(value);
+  }
+}
+
+void readStringSizeMap(CollectionReader &reader,
+                       std::map<std::string, size_t> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    auto key = reader.text();
+    values.insert_or_assign(std::move(key),
+                            static_cast<size_t>(reader.number()));
+  }
+}
+
+void writeStringUintMap(
+    CollectionWriter &writer,
+    const std::unordered_map<std::string, uint64_t> &values) {
+  std::map<std::string, uint64_t> ordered(values.begin(), values.end());
+  writer.number(ordered.size());
+  for (const auto &[key, value] : ordered) {
+    writer.text(key);
+    writer.number(value);
+  }
+}
+
+void readStringUintMap(CollectionReader &reader,
+                       std::unordered_map<std::string, uint64_t> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    auto key = reader.text();
+    values.insert_or_assign(std::move(key), reader.number());
+  }
+}
+
+void writeOrderedStringUintMap(
+    CollectionWriter &writer,
+    const std::map<std::string, uint64_t> &values) {
+  writer.number(values.size());
+  for (const auto &[key, value] : values) {
+    writer.text(key);
+    writer.number(value);
+  }
+}
+
+void readOrderedStringUintMap(CollectionReader &reader,
+                              std::map<std::string, uint64_t> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    auto key = reader.text();
+    values.insert_or_assign(std::move(key), reader.number());
+  }
+}
+
+void writeStringSetMap(
+    CollectionWriter &writer,
+    const std::map<std::string, std::set<std::string>> &values) {
+  writer.number(values.size());
+  for (const auto &[key, value] : values) {
+    writer.text(key);
+    writeStringSet(writer, value);
+  }
+}
+
+void readStringSetMap(
+    CollectionReader &reader,
+    std::map<std::string, std::set<std::string>> &values) {
+  const uint64_t count = reader.number();
+  values.clear();
+  for (uint64_t index = 0; index < count && reader; ++index) {
+    auto key = reader.text();
+    std::set<std::string> value;
+    readStringSet(reader, value);
+    values.insert_or_assign(std::move(key), std::move(value));
+  }
+}
+
+struct CollectionBodyTable {
+  void add(const ClassInfo::Body &body) {
+    if (!body || !body->text || indexes.contains(*body->text)) {
+      return;
+    }
+    indexes.emplace(*body->text, bodies.size());
+    bodies.push_back(body->text.get());
+  }
+
+  std::unordered_map<std::string_view, uint64_t> indexes;
+  std::vector<const std::string *> bodies;
+};
+
+void writeBody(CollectionWriter &writer, const ClassInfo::Body &body,
+               const CollectionBodyTable &table) {
+  if (!body) {
+    writer.number(0);
+    return;
+  }
+  writer.number(table.indexes.at(*body->text) + 1);
+}
+
+ClassInfo::Body readBody(
+    CollectionReader &reader,
+    const std::vector<ClassInfo::Body> &bodies) {
+  const uint64_t encoded = reader.number();
+  if (encoded == 0) {
+    return nullptr;
+  }
+  const uint64_t index = encoded - 1;
+  if (index >= bodies.size()) {
+    reader.fail();
+    return nullptr;
+  }
+  return bodies[static_cast<size_t>(index)];
+}
+
+void writeClassInfo(CollectionWriter &writer, const ClassInfo &info,
+                    const CollectionBodyTable &bodies) {
+  writer.text(info.name);
+  writer.text(info.templateBase);
+  writer.text(info.header);
+  writeStrings(writer, info.templateParameterOrder);
+  writeStringMap(writer, info.templateParameterDeclarations);
+  writeStringMap(writer, info.templateSubstitutions);
+  writeStringMap(writer, info.templateTypeAccess);
+  writeStringSizeMap(writer, info.templateTypeAccessDepth);
+  writeStringMap(writer, info.templateParameterTypes);
+  writeStringSet(writer, info.typeTemplateParameters);
+  writeStringSet(writer, info.integralTemplateParameters);
+  writeStringSet(writer, info.structuralTemplateParameters);
+  writeStringSetMap(writer, info.methodTemplateParameters);
+  writeOrderedStringUintMap(writer, info.constantValues);
+  writeStringSet(writer, info.nestedTypes);
+  writer.number(info.fields.size());
+  for (const auto &[name, field] : info.fields) {
+    writer.text(name);
+    writer.text(field.name);
+    writer.text(field.type);
+    writer.text(field.childClass);
+    writer.text(field.portModuleClass);
+    writer.text(field.initializer);
+    writer.number(field.portModuleDimensions.size());
+    for (size_t value : field.portModuleDimensions) writer.number(value);
+    writer.number(field.childCount);
+    writer.number(field.childDimensions.size());
+    for (size_t value : field.childDimensions) writer.number(value);
+    writer.flag(field.childPointer);
+    writer.flag(field.indexedStorage);
+    writer.number(static_cast<uint64_t>(field.kind));
+  }
+  writer.number(info.methods.size());
+  for (const auto &[name, body] : info.methods) {
+    writer.text(name);
+    writeBody(writer, body, bodies);
+  }
+  writeStringSet(writer, info.concreteMethods);
+  writeStringSet(writer, info.workMutatedFields);
+  writeBody(writer, info.constructorBody, bodies);
+  writeBody(writer, info.destructorBody, bodies);
+  writeBody(writer, info.assignBody, bodies);
+  writeBody(writer, info.workBody, bodies);
+  writeBody(writer, info.strobeBody, bodies);
+  writer.flag(info.useTemplatePatternMethods);
+  writer.flag(info.supportsTemplateArgumentDeduction);
+  writer.flag(info.typeAlias);
+  writer.flag(info.opaque);
+}
+
+ClassInfo readClassInfo(CollectionReader &reader,
+                        const std::vector<ClassInfo::Body> &bodies) {
+  ClassInfo info;
+  info.name = reader.text();
+  info.templateBase = reader.text();
+  info.header = reader.text();
+  readStrings(reader, info.templateParameterOrder);
+  readStringMap(reader, info.templateParameterDeclarations);
+  readStringMap(reader, info.templateSubstitutions);
+  readStringMap(reader, info.templateTypeAccess);
+  readStringSizeMap(reader, info.templateTypeAccessDepth);
+  readStringMap(reader, info.templateParameterTypes);
+  readStringSet(reader, info.typeTemplateParameters);
+  readStringSet(reader, info.integralTemplateParameters);
+  readStringSet(reader, info.structuralTemplateParameters);
+  readStringSetMap(reader, info.methodTemplateParameters);
+  readOrderedStringUintMap(reader, info.constantValues);
+  readStringSet(reader, info.nestedTypes);
+  const uint64_t fieldCount = reader.number();
+  for (uint64_t index = 0; index < fieldCount && reader; ++index) {
+    auto name = reader.text();
+    FieldInfo field;
+    field.name = reader.text();
+    field.type = reader.text();
+    field.childClass = reader.text();
+    field.portModuleClass = reader.text();
+    field.initializer = reader.text();
+    const uint64_t portDimensions = reader.number();
+    for (uint64_t dimension = 0; dimension < portDimensions && reader;
+         ++dimension) {
+      field.portModuleDimensions.push_back(
+          static_cast<size_t>(reader.number()));
+    }
+    field.childCount = static_cast<size_t>(reader.number());
+    const uint64_t childDimensions = reader.number();
+    for (uint64_t dimension = 0; dimension < childDimensions && reader;
+         ++dimension) {
+      field.childDimensions.push_back(static_cast<size_t>(reader.number()));
+    }
+    field.childPointer = reader.flag();
+    field.indexedStorage = reader.flag();
+    field.kind = static_cast<FieldKind>(reader.number());
+    info.fields.insert_or_assign(std::move(name), std::move(field));
+  }
+  const uint64_t methodCount = reader.number();
+  for (uint64_t index = 0; index < methodCount && reader; ++index) {
+    auto name = reader.text();
+    info.methods.insert_or_assign(std::move(name), readBody(reader, bodies));
+  }
+  readStringSet(reader, info.concreteMethods);
+  readStringSet(reader, info.workMutatedFields);
+  info.constructorBody = readBody(reader, bodies);
+  info.destructorBody = readBody(reader, bodies);
+  info.assignBody = readBody(reader, bodies);
+  info.workBody = readBody(reader, bodies);
+  info.strobeBody = readBody(reader, bodies);
+  info.useTemplatePatternMethods = reader.flag();
+  info.supportsTemplateArgumentDeduction = reader.flag();
+  info.typeAlias = reader.flag();
+  info.opaque = reader.flag();
+  return info;
+}
+
+// Collection shards can mention the same concrete class with different amounts
+// of instantiated metadata. Preserve declarations from every shard while giving
+// the latest shard precedence when both contain the same concrete definition.
+void mergeClassInfo(ClassInfo &target, ClassInfo incoming) {
+  const auto keepString = [](std::string &value, const std::string &fallback) {
+    if (value.empty()) value = fallback;
+  };
+  const auto mergeMap = [](auto &values, const auto &fallback) {
+    for (const auto &[name, value] : fallback) {
+      values.try_emplace(name, value);
+    }
+  };
+  const auto mergeSet = [](auto &values, const auto &fallback) {
+    values.insert(fallback.begin(), fallback.end());
+  };
+
+  keepString(incoming.name, target.name);
+  keepString(incoming.templateBase, target.templateBase);
+  keepString(incoming.header, target.header);
+  if (incoming.templateParameterOrder.empty()) {
+    incoming.templateParameterOrder = target.templateParameterOrder;
+  }
+  mergeMap(incoming.templateParameterDeclarations,
+           target.templateParameterDeclarations);
+  mergeMap(incoming.templateSubstitutions, target.templateSubstitutions);
+  mergeMap(incoming.templateTypeAccess, target.templateTypeAccess);
+  mergeMap(incoming.templateTypeAccessDepth, target.templateTypeAccessDepth);
+  mergeMap(incoming.templateParameterTypes, target.templateParameterTypes);
+  mergeSet(incoming.typeTemplateParameters, target.typeTemplateParameters);
+  mergeSet(incoming.integralTemplateParameters,
+           target.integralTemplateParameters);
+  mergeSet(incoming.structuralTemplateParameters,
+           target.structuralTemplateParameters);
+  for (const auto &[method, parameters] : target.methodTemplateParameters) {
+    mergeSet(incoming.methodTemplateParameters[method], parameters);
+  }
+  mergeMap(incoming.constantValues, target.constantValues);
+  mergeSet(incoming.nestedTypes, target.nestedTypes);
+  for (const auto &[name, oldField] : target.fields) {
+    const auto [position, inserted] = incoming.fields.try_emplace(name, oldField);
+    if (!inserted && position->second.initializer.empty()) {
+      position->second.initializer = oldField.initializer;
+    }
+  }
+  mergeMap(incoming.methods, target.methods);
+  mergeSet(incoming.concreteMethods, target.concreteMethods);
+  mergeSet(incoming.workMutatedFields, target.workMutatedFields);
+  if (!incoming.constructorBody)
+    incoming.constructorBody = target.constructorBody;
+  if (!incoming.destructorBody)
+    incoming.destructorBody = target.destructorBody;
+  if (!incoming.assignBody) incoming.assignBody = target.assignBody;
+  if (!incoming.workBody) incoming.workBody = target.workBody;
+  if (!incoming.strobeBody) incoming.strobeBody = target.strobeBody;
+  incoming.useTemplatePatternMethods =
+      incoming.useTemplatePatternMethods || target.useTemplatePatternMethods;
+  incoming.supportsTemplateArgumentDeduction =
+      incoming.supportsTemplateArgumentDeduction &&
+      target.supportsTemplateArgumentDeduction;
+  incoming.typeAlias = incoming.typeAlias || target.typeAlias;
+  incoming.opaque = incoming.opaque || target.opaque;
+  target = std::move(incoming);
+}
+
 // Flattened work can pass ordinary module fields to output-reference helpers.
 // Capture that semantic write boundary without treating reg::_next updates as
 // mutations of the current registered value visible to same-clock combs.
@@ -312,6 +770,13 @@ struct FieldReferenceCollector
       : info(info), fields(fields) {}
 
   bool VisitMemberExpr(clang::MemberExpr *expression) {
+    // Only the outermost field rooted directly at this belongs to the class
+    // whose _work body is being summarized. Traversing child.field must not
+    // mark an unrelated parent field that happens to share field's name.
+    const clang::Expr *base = expression->getBase()->IgnoreParenImpCasts();
+    if (!clang::isa<clang::CXXThisExpr>(base)) {
+      return true;
+    }
     const auto *field =
         clang::dyn_cast<clang::FieldDecl>(expression->getMemberDecl());
     if (field) {
@@ -384,7 +849,13 @@ struct WorkMutationCollector
 
 const std::string &bodyText(const ClassInfo::Body &body) {
   static const std::string empty;
-  return body ? *body : empty;
+  return body && body->text ? *body->text : empty;
+}
+
+ClassInfo::Body makeBody(std::string text) {
+  auto body = std::make_shared<ClassInfo::BodyData>();
+  body->text = std::make_shared<const std::string>(std::move(text));
+  return body;
 }
 
 void appendChildElementNames(const std::string &prefix,
@@ -419,10 +890,41 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
                      std::set<std::string> &sourceIncludes,
                      std::unordered_map<std::string, uint64_t> &constantValues,
                      std::string rootName,
-                     clang::ASTContext &context)
+                     clang::ASTContext &context,
+                     bool collectionOnly)
       : classes(classes), sourceIncludes(sourceIncludes),
         constantValues(constantValues), rootName(std::move(rootName)),
-        context(context) {}
+        context(context), collectionOnly(collectionOnly) {}
+
+  void discoverTypeAliases() {
+    for (const clang::Decl *declaration :
+         context.getTranslationUnitDecl()->decls()) {
+      const auto *alias = clang::dyn_cast<clang::TypedefNameDecl>(declaration);
+      if (!alias) {
+        continue;
+      }
+      const auto *record =
+          alias->getUnderlyingType()->getAsCXXRecordDecl();
+      if (!record || !derivesModule(record)) {
+        continue;
+      }
+      const auto *canonical = record->getCanonicalDecl();
+      const std::string name = alias->getQualifiedNameAsString();
+      const auto known = typeAliases.find(canonical);
+      if (known == typeAliases.end() || name.size() < known->second.size()) {
+        typeAliases.insert_or_assign(canonical, name);
+      }
+    }
+  }
+
+  std::string typeName(const clang::CXXRecordDecl *record) const {
+    if (!record) {
+      return {};
+    }
+    const auto alias = typeAliases.find(record->getCanonicalDecl());
+    return alias == typeAliases.end() ? recordTypeName(record, context)
+                                      : alias->second;
+  }
 
   bool TraverseStmt(clang::Stmt *) {
     // Relevant method bodies are captured once by VisitCXXMethodDecl as
@@ -441,7 +943,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     for (const clang::Decl *declaration : scope->decls()) {
       if (const auto *record = clang::dyn_cast<clang::CXXRecordDecl>(declaration);
           record && record->isCompleteDefinition() &&
-          (recordTypeName(record, context) == rootName ||
+          (typeName(record) == rootName ||
            matchesRootName(*record))) {
         return record;
       }
@@ -473,10 +975,16 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     if (rootName.empty()) {
       return;
     }
+    // Preserve compact source aliases for concrete specializations. Clang's
+    // canonical spelling can recursively expand structural template values.
+    discoverTypeAliases();
     // Bounded collection translation units can precede the final root TU.
     // Restrict AST walking to explicitly reached classes so declarations
     // imported from a PCH remain lazy instead of recreating one giant AST.
     reachableOnly = true;
+    const auto *root = findRoot(context.getTranslationUnitDecl());
+    bool sawCollectionMarker = false;
+    bool sawRootMarker = false;
     for (const clang::Decl *declaration :
          context.getTranslationUnitDecl()->decls()) {
       const auto *variable = clang::dyn_cast<clang::VarDecl>(declaration);
@@ -485,6 +993,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
            !variable->getNameAsString().starts_with("cpphdlCombsOpaque"))) {
         continue;
       }
+      sawCollectionMarker = true;
       clang::QualType type = variable->getType();
       if (type->isPointerType()) {
         type = type->getPointeeType();
@@ -493,11 +1002,23 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       if (!record) {
         continue;
       }
+      const bool isRoot = root &&
+          record->getCanonicalDecl() == root->getCanonicalDecl();
+      if (isRoot) {
+        // The final root marker joins classes collected by earlier bounded
+        // translation units. A collection-only process captures just the root
+        // class; the final loaded process connects its already owned children.
+        sawRootMarker = true;
+        if (collectionOnly) {
+          collectClass(record, false);
+        }
+        continue;
+      }
       if (variable->getNameAsString().starts_with("cpphdlCombsOpaque")) {
-        const std::string name = recordTypeName(record, context);
+        const std::string name = typeName(record);
         if (!name.empty()) {
           ClassInfo &info = classes[name];
-          info.name = name;
+          info.name = typeName(record);
           info.opaque = true;
           const auto location = context.getSourceManager().getSpellingLoc(
               record->getLocation());
@@ -510,15 +1031,16 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         collectClass(record, false);
       }
     }
-    const auto *root = findRoot(context.getTranslationUnitDecl());
     if (!root) {
       return;
     }
 
-    // The optimization root fixes the concrete module hierarchy up front.
-    // Collect its child fields recursively before the AST walk, allowing that
-    // walk to skip method extraction for unrelated header-only models.
-    collectClass(root);
+    // Marker-free inputs retain the direct one-TU optimizer behavior. Bounded
+    // collection inputs defer root expansion until their explicit root marker,
+    // preventing every shard from instantiating the entire concrete hierarchy.
+    if (!sawCollectionMarker || sawRootMarker) {
+      collectClass(root);
+    }
   }
 
   void materializeRootAlias() {
@@ -529,7 +1051,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     if (!record) {
       return;
     }
-    const std::string concreteRoot = recordTypeName(record, context);
+    const std::string concreteRoot = typeName(record);
     if (concreteRoot != rootName) {
       const auto concrete = classes.find(concreteRoot);
       if (concrete != classes.end()) {
@@ -545,6 +1067,15 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           }
         }
         classes.insert_or_assign(rootName, std::move(alias));
+      }
+    } else if (auto concrete = classes.find(concreteRoot);
+               concrete != classes.end()) {
+      concrete->second.typeAlias = true;
+      const auto location = context.getSourceManager().getSpellingLoc(
+          rootAlias->getLocation());
+      if (location.isValid()) {
+        concrete->second.header =
+            context.getSourceManager().getFilename(location).str();
       }
     }
   }
@@ -571,7 +1102,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
 
   void collectClass(const clang::CXXRecordDecl *declaration,
                     bool collectChildren = true) {
-    const std::string name = recordTypeName(declaration, context);
+    const std::string name = typeName(declaration);
     if (name.empty() || collecting.contains(name)) {
       return;
     }
@@ -582,7 +1113,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     declaration = declaration->getDefinition() ? declaration->getDefinition()
                                                : declaration;
     collecting.insert(name);
-    info.name = name;
+    info.name = typeName(declaration);
     std::map<std::string, clang::QualType> templateTypeArguments;
     if (const auto *specialization =
             clang::dyn_cast<clang::ClassTemplateSpecializationDecl>(
@@ -650,6 +1181,11 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           if (nonType->getType()->isIntegralOrEnumerationType()) {
             info.integralTemplateParameters.insert(parameter);
           }
+        }
+        if (value.empty() &&
+            arguments[index].getKind() == clang::TemplateArgument::Type) {
+          value = typeName(
+              arguments[index].getAsType()->getAsCXXRecordDecl());
         }
         if (value.empty()) {
           llvm::raw_string_ostream stream(value);
@@ -739,7 +1275,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
                 }
               }
               const auto *value = valueType->getAsCXXRecordDecl();
-              const std::string valueName = recordTypeName(value, context);
+              const std::string valueName = typeName(value);
               const auto knownValue = classes.find(valueName);
               if (value && ((knownValue != classes.end() &&
                              knownValue->second.opaque) ||
@@ -786,7 +1322,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           childType = childType->getPointeeType();
         }
         const auto *child = childType->getAsCXXRecordDecl();
-        const std::string childName = recordTypeName(child, context);
+        const std::string childName = typeName(child);
         const auto knownChild = classes.find(childName);
         const bool childIsOpaque =
             knownChild != classes.end() && knownChild->second.opaque;
@@ -820,7 +1356,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
             elementType = arguments[1].getAsType();
           }
           const auto *element = elementType->getAsCXXRecordDecl();
-          const std::string elementName = recordTypeName(element, context);
+          const std::string elementName = typeName(element);
           const auto knownElement = classes.find(elementName);
           if (!dimensions.empty() && element &&
               ((knownElement != classes.end() &&
@@ -839,6 +1375,9 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           }
         }
       }
+      // Classification above is the only consumer of the canonical field
+      // spelling. Keeping it can recursively expand structural NTTP values.
+      item.type.clear();
       info.fields[item.name] = std::move(item);
     }
     for (const auto *child : declaration->decls()) {
@@ -853,7 +1392,6 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       }
       FieldInfo item;
       item.name = variable->getNameAsString();
-      item.type = variable->getType().getAsString();
       item.kind = FieldKind::Other;
       info.fields[item.name] = std::move(item);
       clang::Expr::EvalResult result;
@@ -868,7 +1406,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   }
 
   bool VisitCXXRecordDecl(clang::CXXRecordDecl *declaration) {
-    const std::string name = recordTypeName(declaration, context);
+    const std::string name = typeName(declaration);
     const auto known = classes.find(name);
     if (known != classes.end() && known->second.opaque) {
       return true;
@@ -884,7 +1422,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   bool VisitTypedefNameDecl(clang::TypedefNameDecl *declaration) {
     const auto *record =
         declaration->getUnderlyingType()->getAsCXXRecordDecl();
-    const std::string className = recordTypeName(record, context);
+    const std::string className = typeName(record);
     const auto known = classes.find(className);
     if (known != classes.end() && known->second.opaque) {
       return true;
@@ -962,7 +1500,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       return true;
     }
     const auto *parent = declaration->getParent();
-    const std::string className = recordTypeName(parent, context);
+    const std::string className = typeName(parent);
     const auto known = classes.find(className);
     if (known != classes.end() && known->second.opaque) {
       return true;
@@ -1012,7 +1550,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       return true;
     }
     auto &info = classes[className];
-    info.name = className;
+    info.name = typeName(parent);
     const bool inMainFile =
         sourceManager.isWrittenInMainFile(methodLocation);
     if (clang::isa<clang::CXXConstructorDecl>(declaration)) {
@@ -1020,7 +1558,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         return true;
       }
       info.constructorBody =
-          std::make_shared<const std::string>(std::move(body));
+          makeBody(std::move(body));
       releaseCollectedMethodBuffers();
       return true;
     }
@@ -1029,12 +1567,12 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         return true;
       }
       info.destructorBody =
-          std::make_shared<const std::string>(std::move(body));
+          makeBody(std::move(body));
       releaseCollectedMethodBuffers();
       return true;
     }
     const auto methodBody =
-        std::make_shared<const std::string>(std::move(body));
+        makeBody(std::move(body));
     info.methods[methodName] = methodBody;
     info.concreteMethods.insert(methodName);
     if (methodName == "_assign") {
@@ -1062,7 +1600,29 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     }
   }
 
-  void applyTemplateMethods() {
+  void applyTemplateMethods(bool fillMissingOnly = false) {
+    // Loaded SoC collections contain many specializations of the same primary
+    // templates. Index candidates once so post-merge reconciliation is linear
+    // in class count instead of scanning every class for every specialization.
+    std::unordered_map<std::string, const ClassInfo *> primaryPatterns;
+    std::unordered_map<std::string, const ClassInfo *> fallbackPatterns;
+    for (const auto &[candidateName, candidate] : classes) {
+      if (candidate.methods.empty()) {
+        continue;
+      }
+      const size_t arguments = candidateName.find('<');
+      if (arguments != std::string::npos) {
+        const std::string base = candidateName.substr(0, arguments);
+        if (candidate.templateBase.empty()) {
+          primaryPatterns.try_emplace(base, &candidate);
+        }
+        fallbackPatterns.try_emplace(base, &candidate);
+      }
+      if (!candidate.templateBase.empty()) {
+        fallbackPatterns.try_emplace(candidate.templateBase, &candidate);
+      }
+    }
+
     size_t reconciledClasses = 0;
     for (auto &[name, info] : classes) {
       if (info.opaque || info.templateBase.empty()) {
@@ -1077,23 +1637,15 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         // Primary template records retain parameter names in source methods.
         // Prefer them over concrete specializations, whose semantic bodies may
         // already contain non-round-trippable structural argument spellings.
-        for (const auto &[candidateName, candidate] : classes) {
-          if (candidate.templateBase.empty() &&
-              candidateName.starts_with(info.templateBase + "<") &&
-              !candidate.methods.empty()) {
-            pattern = &candidate;
-            break;
-          }
+        const auto primary = primaryPatterns.find(info.templateBase);
+        if (primary != primaryPatterns.end()) {
+          pattern = primary->second;
         }
       }
       if (!pattern) {
-        for (const auto &[candidateName, candidate] : classes) {
-          if ((candidate.templateBase == info.templateBase ||
-               candidateName.starts_with(info.templateBase + "<")) &&
-              !candidate.methods.empty()) {
-            pattern = &candidate;
-            break;
-          }
+        const auto fallback = fallbackPatterns.find(info.templateBase);
+        if (fallback != fallbackPatterns.end()) {
+          pattern = fallback->second;
         }
       }
       if (!pattern) {
@@ -1104,34 +1656,28 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       }
       if (info.useTemplatePatternMethods) {
         for (const auto &[methodName, methodBody] : pattern->methods) {
-          const bool lifecycleMethod =
-              methodName == "_assign" || methodName == "_work" ||
-              methodName == "_strobe";
+          // Every collection shard performs full source-body reconciliation.
+          // After shards are merged, only restore methods absent from a partial
+          // specialization; rescanning large deferred bodies is unnecessary.
+          if (fillMissingOnly) {
+            info.methods.try_emplace(methodName, methodBody);
+            continue;
+          }
           bool usesTemplateParameter = false;
           for (const auto &[parameter, unused] :
                info.templateSubstitutions) {
-            // Lifecycle flattening needs dependency only for projected type
-            // members. Keeping unrelated structural values here duplicates
-            // large concrete configurations throughout nested work output.
-            if (lifecycleMethod &&
-                !info.typeTemplateParameters.contains(parameter)) {
-              continue;
-            }
             if (containsIdentifier(bodyText(methodBody), parameter)) {
               info.methodTemplateParameters[methodName].insert(parameter);
               usesTemplateParameter = true;
             }
           }
 
-          // A concrete AST can substitute only selected occurrences of a type
-          // parameter, indirectly serializing structural values in nested
-          // types. Source-pattern combs keep every occurrence deducible.
-          if (!lifecycleMethod && usesTemplateParameter) {
-            info.methods[methodName] = methodBody;
-            continue;
-          }
-          if (lifecycleMethod &&
-              bodyText(methodBody).find("if constexpr") != std::string::npos &&
+          // Concrete semantic bodies can expand a compact generated template
+          // into megabytes for every specialization. Keep the shared source
+          // pattern and preserve its parameters through generated wrappers.
+          const bool hasConstexprBranch =
+              bodyText(methodBody).find("if constexpr") != std::string::npos;
+          if (!hasConstexprBranch || usesTemplateParameter ||
               !info.concreteMethods.contains(methodName)) {
             info.methods[methodName] = methodBody;
           }
@@ -1175,6 +1721,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
   const clang::TypedefNameDecl *rootAlias = nullptr;
   size_t collectedMethodCount = 0;
   bool reachableOnly = false;
+  bool collectionOnly = false;
+  std::unordered_map<const clang::CXXRecordDecl *, std::string> typeAliases;
 };
 
 std::string bodyInterior(const std::string &body) {
@@ -1583,6 +2131,33 @@ std::string maskNonCode(const std::string &text) {
   return result;
 }
 
+std::string maskUnevaluatedOperands(const std::string &text) {
+  std::string code = maskNonCode(text);
+  for (size_t start = 0; start < code.size();) {
+    if (!identifierStart(code[start])) {
+      ++start;
+      continue;
+    }
+    size_t end = start + 1;
+    while (end < code.size() && identifierPart(code[end])) {
+      ++end;
+    }
+    const std::string_view identifier(code.data() + start, end - start);
+    const size_t operand = skipSpace(code, end);
+    if ((identifier == "decltype" || identifier == "sizeof" ||
+         identifier == "noexcept") &&
+        operand < code.size() && code[operand] == '(') {
+      if (const auto closing = matchingDelimiter(code, operand, '(', ')')) {
+        std::fill(code.begin() + operand + 1, code.begin() + *closing, ' ');
+        start = *closing + 1;
+        continue;
+      }
+    }
+    start = end;
+  }
+  return code;
+}
+
 struct Instance {
   size_t id = 0;
   std::string path;
@@ -1635,19 +2210,188 @@ std::string nodeKey(size_t instance, NodeKind kind, const std::string &name) {
 struct CombsOptimizer::Impl {
   explicit Impl(std::string rootName) : rootName(std::move(rootName)) {}
 
+  bool saveCollection(const std::string &path) const {
+    CollectionWriter writer(path);
+    CollectionBodyTable bodies;
+    for (const auto &[unused, info] : classes) {
+      for (const auto &[unusedMethod, body] : info.methods) bodies.add(body);
+      bodies.add(info.constructorBody);
+      bodies.add(info.destructorBody);
+      bodies.add(info.assignBody);
+      bodies.add(info.workBody);
+      bodies.add(info.strobeBody);
+    }
+    writer.text("cpphdl-combs-collection-v3");
+    writer.number(bodies.bodies.size());
+    for (const std::string *body : bodies.bodies) {
+      writer.text(*body);
+    }
+    writeStringSet(writer, sourceIncludes);
+    writeStringUintMap(writer, constantValues);
+    writer.number(classes.size());
+    for (const auto &[name, info] : classes) {
+      writer.text(name);
+      writeClassInfo(writer, info, bodies);
+    }
+    if (!writer.close()) {
+      llvm::errs() << "cpphdl --optimize-combs: cannot write collection "
+                   << path << "\n";
+      return false;
+    }
+    return true;
+  }
+
+  bool loadCollection(const std::string &path) {
+    CollectionReader reader(path);
+    if (reader.text() != "cpphdl-combs-collection-v3") {
+      llvm::errs() << "cpphdl --optimize-combs: invalid collection " << path
+                   << "\n";
+      return false;
+    }
+    const uint64_t bodyCount = reader.number();
+    std::vector<ClassInfo::Body> bodies;
+    bodies.reserve(static_cast<size_t>(bodyCount));
+    for (uint64_t index = 0; index < bodyCount && reader; ++index) {
+      auto body = std::make_shared<ClassInfo::BodyData>();
+      body->collectionPath = path;
+      body->collectionIndex = index;
+      bodies.push_back(std::move(body));
+      const uint64_t size = reader.number();
+      reader.skip(static_cast<size_t>(size));
+    }
+    std::set<std::string> loadedIncludes;
+    std::unordered_map<std::string, uint64_t> loadedConstants;
+    readStringSet(reader, loadedIncludes);
+    readStringUintMap(reader, loadedConstants);
+    const uint64_t classCount = reader.number();
+    uint64_t loadedFields = 0;
+    uint64_t loadedMethods = 0;
+    uint64_t metadataTextBytes = 0;
+    size_t largestClassBytes = 0;
+    std::string largestClass;
+    for (uint64_t index = 0; index < classCount && reader; ++index) {
+      auto name = reader.text();
+      auto info = readClassInfo(reader, bodies);
+      size_t classBytes = info.name.size() + info.templateBase.size() +
+                          info.header.size();
+      const auto addMapBytes = [&classBytes](const auto &values) {
+        for (const auto &[key, value] : values) {
+          classBytes += key.size();
+          if constexpr (requires { value.size(); }) {
+            classBytes += value.size();
+          }
+        }
+      };
+      addMapBytes(info.templateParameterDeclarations);
+      addMapBytes(info.templateSubstitutions);
+      addMapBytes(info.templateTypeAccess);
+      addMapBytes(info.templateParameterTypes);
+      for (const auto &[fieldName, field] : info.fields) {
+        classBytes += fieldName.size() + field.name.size() + field.type.size() +
+                      field.childClass.size() + field.portModuleClass.size() +
+                      field.initializer.size();
+      }
+      for (const auto &[methodName, unused] : info.methods) {
+        classBytes += methodName.size();
+      }
+      loadedFields += info.fields.size();
+      loadedMethods += info.methods.size();
+      metadataTextBytes += classBytes;
+      if (classBytes > largestClassBytes) {
+        largestClassBytes = classBytes;
+        largestClass = name;
+      }
+      const auto existing = classes.find(name);
+      if (existing == classes.end()) {
+        classes.emplace(std::move(name), std::move(info));
+      } else {
+        mergeClassInfo(existing->second, std::move(info));
+      }
+    }
+    if (!reader) {
+      llvm::errs() << "cpphdl --optimize-combs: cannot read collection "
+                   << path << "\n";
+      return false;
+    }
+    sourceIncludes.insert(loadedIncludes.begin(), loadedIncludes.end());
+    for (auto &[name, value] : loadedConstants) {
+      constantValues.insert_or_assign(std::move(name), value);
+    }
+    collectionBodies.insert_or_assign(path, std::move(bodies));
+    if (std::getenv("CPPHDL_TRACE_COLLECTIONS")) {
+      llvm::errs() << "cpphdl collection: " << path << ", " << classCount
+                   << " classes, " << loadedFields << " fields, "
+                   << loadedMethods << " methods, " << metadataTextBytes
+                   << " metadata text bytes, largest "
+                   << largestClass.substr(0, 120)
+                   << " (" << largestClassBytes << " bytes)\n";
+    }
+    return true;
+  }
+
+  bool materializeBodies(const std::vector<ClassInfo::Body> &requested) {
+    std::map<std::string, std::set<uint64_t>> needed;
+    for (const auto &body : requested) {
+      if (body && !body->text && !body->collectionPath.empty()) {
+        needed[body->collectionPath].insert(body->collectionIndex);
+      }
+    }
+    for (const auto &[path, indexes] : needed) {
+      CollectionReader reader(path);
+      if (reader.text() != "cpphdl-combs-collection-v3") {
+        error = "invalid deferred collection " + path;
+        return false;
+      }
+      const uint64_t count = reader.number();
+      const auto table = collectionBodies.find(path);
+      if (table == collectionBodies.end() || table->second.size() != count) {
+        error = "invalid deferred body table " + path;
+        return false;
+      }
+      for (uint64_t index = 0; index < count && reader; ++index) {
+        const uint64_t size = reader.number();
+        if (!indexes.contains(index)) {
+          reader.skip(static_cast<size_t>(size));
+          continue;
+        }
+        std::string text(static_cast<size_t>(size), '\0');
+        reader.bytes(text.data(), text.size());
+        table->second[static_cast<size_t>(index)]->text =
+            std::make_shared<const std::string>(std::move(text));
+      }
+      if (!reader) {
+        error = "cannot materialize deferred collection " + path;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void releaseBodies(const std::vector<ClassInfo::Body> &bodies) {
+    for (const auto &body : bodies) {
+      if (body && !body->collectionPath.empty()) {
+        body->text.reset();
+      }
+    }
+    releaseTemporaryAllocatorPages();
+  }
+
   std::string rootName;
   // The concrete-hierarchy optimizer already schedules complete procedural
   // comb bodies. Retain the explicit L1 mode so the upstream CLI can select
   // and report that behavior without falling back to the legacy optimizer.
   bool l1Scheduling = false;
+  bool collectionOnly = false;
   std::map<std::string, ClassInfo> classes;
   std::set<std::string> sourceIncludes;
   std::unordered_map<std::string, uint64_t> constantValues;
+  std::map<std::string, std::vector<ClassInfo::Body>> collectionBodies;
   std::vector<std::unique_ptr<Instance>> instanceStorage;
   std::vector<Instance *> instances;
   std::vector<Node> nodes;
   std::unordered_map<std::string, size_t> nodeIds;
   std::unordered_map<std::string, std::pair<Instance *, std::string>> bindings;
+  std::unordered_map<std::string, std::string> bindingMacros;
   std::unordered_map<std::string, std::string> bindingGuards;
   std::unordered_map<std::string, Instance *> modulePortBindings;
   std::vector<size_t> schedule;
@@ -1916,7 +2660,7 @@ struct CombsOptimizer::Impl {
   std::string nodeValue(size_t id) const {
     const Node &node = nodes[id];
     if (node.kind == NodeKind::Port) {
-      return "s.p" + std::to_string(id);
+      return "(*s.p" + std::to_string(id) + "_pointer)";
     }
     const auto storage = node.instance->type->combStorage.find(node.name);
     return node.instance->alias + "." +
@@ -1925,10 +2669,43 @@ struct CombsOptimizer::Impl {
                 : storage->second);
   }
 
+  bool portUsesOwnedStorage(const Node &node) const {
+    const std::string key =
+        nodeKey(node.instance->id, NodeKind::Port, node.name);
+    const auto macro = bindingMacros.find(key);
+    const auto guard = bindingGuards.find(key);
+    const bool guarded =
+        guard != bindingGuards.end() && !guard->second.empty();
+    const bool rootInput = !node.instance->parent && macro == bindingMacros.end();
+    const bool addressableBinding =
+        macro != bindingMacros.end() &&
+        (macro->second.starts_with("_ASSIGN_REG") ||
+         macro->second.starts_with("_ASSIGN_COMB"));
+    return guarded || (!rootInput && !addressableBinding);
+  }
+
+  std::string nodeAssignment(size_t id, const std::string &expression) const {
+    const Node &node = nodes[id];
+    if (node.kind == NodeKind::Port) {
+      const std::string suffix = std::to_string(id);
+      if (!portUsesOwnedStorage(node)) {
+        // Binding expressions can be top-level comma expressions whose final
+        // operand is the addressable value returned by _ASSIGN_COMB/_ASSIGN_REG.
+        // Parenthesize the whole expression so addressof still gets one lvalue.
+        return "s.p" + suffix + "_pointer = std::addressof((" + expression +
+               "))";
+      }
+      return "(s.p" + suffix + "_storage = (" + expression +
+             "), s.p" + suffix + "_pointer = std::addressof(s.p" + suffix +
+             "_storage))";
+    }
+    return nodeValue(id) + " = " + expression;
+  }
+
   bool cachesForSystemClock(const Node &node) const {
-    // Ports cache their returned address, and _LAZY_COMB adds an equivalent
-    // macro-owned clock field beside its storage. Preserve both boundaries
-    // while leaving ordinary reference-returning comb methods repeatable.
+    // function_ref ports cache their returned address, and _LAZY_COMB owns an
+    // equivalent clock field beside its storage. Ordinary comb methods do not:
+    // repeated calls in one clock are observable and must remain repeatable.
     if (node.kind == NodeKind::Port) {
       return true;
     }
@@ -2038,8 +2815,7 @@ struct CombsOptimizer::Impl {
   std::string rewrite(const std::string &input, Instance &context,
                       std::vector<size_t> *dependencies = nullptr,
                       const std::unordered_set<std::string> &locals = {},
-                      const std::string &unavailableValue = {},
-                      bool preserveDependentPorts = false) {
+                      const std::string &unavailableValue = {}) {
     std::string output;
     output.reserve(input.size() + input.size() / 4);
     size_t index = 0;
@@ -2137,10 +2913,15 @@ struct CombsOptimizer::Impl {
                 continue;
               }
               if (!unavailableValue.empty()) {
-                error = "cannot resolve child method " + context.path + "." +
-                        identifier + "." + method + " while optimizing " +
-                        context.path;
-                return {};
+                // A dependent if-constexpr branch can legally name a method
+                // absent from the concrete child type. Preserve that call in
+                // the extracted template body; C++ discards the inactive
+                // branch, while an active missing method remains a compile
+                // error instead of silently becoming a value.
+                output += context.alias + "." + identifier + "." + method +
+                          "()";
+                index = *closing + 1;
+                continue;
               }
             }
           }
@@ -2202,6 +2983,17 @@ struct CombsOptimizer::Impl {
         continue;
       }
 
+      // Static constexpr members lose constant-expression status when accessed
+      // through a runtime instance alias. Their collected specialization value
+      // is equivalent and remains valid in if constexpr and template arguments.
+      const auto classConstant = context.type->constantValues.find(identifier);
+      if (!qualifiedBefore && !memberBefore &&
+          (!locals.contains(identifier) || forcedField) &&
+          classConstant != context.type->constantValues.end()) {
+        output += std::to_string(classConstant->second);
+        continue;
+      }
+
       if (!qualifiedBefore && !memberBefore &&
           (!locals.contains(identifier) || forcedField) &&
           context.type->nestedTypes.contains(identifier)) {
@@ -2219,15 +3011,6 @@ struct CombsOptimizer::Impl {
                                          *closing - afterIdentifier - 1))
                            .empty()) {
           const auto field = context.type->fields.find(identifier);
-          // A requires-dependent lifecycle body must keep its own port access
-          // dependent on the concrete module type. Replacing it with a parent
-          // cache would make projected field accesses fail before discard.
-          if (preserveDependentPorts && field != context.type->fields.end() &&
-              field->second.kind == FieldKind::Port) {
-            output += context.alias + "." + identifier + "()";
-            index = *closing + 1;
-            continue;
-          }
           if (field != context.type->fields.end() &&
               !field->second.portModuleClass.empty()) {
             if (!field->second.portModuleDimensions.empty()) {
@@ -2467,7 +3250,7 @@ struct CombsOptimizer::Impl {
                 for (const std::string &arrayIndex : indices) {
                   rewrittenIndices.push_back(rewrite(
                       arrayIndex, context, dependencies, locals,
-                      unavailableValue, preserveDependentPorts));
+                      unavailableValue));
                   if (!error.empty()) {
                     return {};
                   }
@@ -2589,6 +3372,14 @@ struct CombsOptimizer::Impl {
           !preservedIdentifiers.contains(identifier) &&
           substitution != context.type->templateSubstitutions.end()) {
         output += resolvedTemplateSubstitution(*context.type, identifier);
+        continue;
+      }
+
+      const auto classConstant = context.type->constantValues.find(identifier);
+      if (!qualifiedBefore && !memberBefore &&
+          !preservedIdentifiers.contains(identifier) &&
+          classConstant != context.type->constantValues.end()) {
+        output += std::to_string(classConstant->second);
         continue;
       }
 
@@ -2854,27 +3645,29 @@ struct CombsOptimizer::Impl {
     // Graph values have already replaced understood comb and port calls.
     // Parse any remaining n<ID> member/index chain so module arrays receive
     // the same lazy treatment as direct child calls without product patterns.
-    for (size_t start = 0; start < input.size(); ++start) {
-      if (input[start] != 'n' ||
-          (start != 0 && identifierPart(input[start - 1]))) {
+    const std::string code = maskUnevaluatedOperands(input);
+
+    for (size_t start = 0; start < code.size(); ++start) {
+      if (code[start] != 'n' ||
+          (start != 0 && identifierPart(code[start - 1]))) {
         continue;
       }
       size_t cursor = start + 1;
       const size_t digits = cursor;
-      while (cursor < input.size() &&
-             std::isdigit(static_cast<unsigned char>(input[cursor]))) {
+      while (cursor < code.size() &&
+             std::isdigit(static_cast<unsigned char>(code[cursor]))) {
         ++cursor;
       }
       if (cursor == digits ||
-          (cursor < input.size() && identifierPart(input[cursor]))) {
+          (cursor < code.size() && identifierPart(code[cursor]))) {
         continue;
       }
 
       bool sawMember = false;
-      while (cursor < input.size()) {
-        cursor = skipSpace(input, cursor);
-        if (cursor < input.size() && input[cursor] == '[') {
-          const auto closing = matchingDelimiter(input, cursor, '[', ']');
+      while (cursor < code.size()) {
+        cursor = skipSpace(code, cursor);
+        if (cursor < code.size() && code[cursor] == '[') {
+          const auto closing = matchingDelimiter(code, cursor, '[', ']');
           if (!closing) {
             break;
           }
@@ -2883,28 +3676,28 @@ struct CombsOptimizer::Impl {
         }
 
         size_t separatorWidth = 0;
-        if (cursor < input.size() && input[cursor] == '.') {
+        if (cursor < code.size() && code[cursor] == '.') {
           separatorWidth = 1;
-        } else if (cursor + 1 < input.size() && input[cursor] == '-' &&
-                   input[cursor + 1] == '>') {
+        } else if (cursor + 1 < code.size() && code[cursor] == '-' &&
+                   code[cursor + 1] == '>') {
           separatorWidth = 2;
         } else {
           break;
         }
-        cursor = skipSpace(input, cursor + separatorWidth);
-        if (cursor >= input.size() || !identifierStart(input[cursor])) {
+        cursor = skipSpace(code, cursor + separatorWidth);
+        if (cursor >= code.size() || !identifierStart(code[cursor])) {
           break;
         }
         sawMember = true;
         ++cursor;
-        while (cursor < input.size() && identifierPart(input[cursor])) {
+        while (cursor < code.size() && identifierPart(code[cursor])) {
           ++cursor;
         }
-        cursor = skipSpace(input, cursor);
-        if (cursor < input.size() && input[cursor] == '(') {
-          const auto closing = matchingDelimiter(input, cursor, '(', ')');
+        cursor = skipSpace(code, cursor);
+        if (cursor < code.size() && code[cursor] == '(') {
+          const auto closing = matchingDelimiter(code, cursor, '(', ')');
           if (sawMember && closing &&
-              trim(input.substr(cursor + 1, *closing - cursor - 1)).empty()) {
+              trim(code.substr(cursor + 1, *closing - cursor - 1)).empty()) {
             return true;
           }
           break;
@@ -2922,7 +3715,12 @@ struct CombsOptimizer::Impl {
     std::vector<int> low(count, -1);
     std::vector<size_t> stack;
     std::vector<bool> onStack(count, false);
-    std::vector<size_t> cyclicSeeds;
+    std::vector<size_t> demandSeeds;
+    std::vector<size_t> workMutationSeeds;
+    std::unordered_set<size_t> sccSeeds;
+    std::unordered_set<size_t> conditionalSeeds;
+    std::unordered_set<size_t> unresolvedSeeds;
+    std::vector<std::pair<size_t, size_t>> cyclicComponents;
     int nextIndex = 0;
 
     std::function<void(size_t)> strongConnect = [&](size_t id) {
@@ -2961,8 +3759,10 @@ struct CombsOptimizer::Impl {
                            component.front()) != dependencies.end();
       }
       if (cyclic) {
-        cyclicSeeds.insert(cyclicSeeds.end(), component.begin(),
+        demandSeeds.insert(demandSeeds.end(), component.begin(),
                            component.end());
+        sccSeeds.insert(component.begin(), component.end());
+        cyclicComponents.emplace_back(component.size(), component.front());
       }
     };
 
@@ -2977,16 +3777,18 @@ struct CombsOptimizer::Impl {
       // their dependencies eagerly would execute calls from discarded
       // if-constexpr branches, unlike the original function_ref chain.
       if (nodes[id].conditionallyEvaluated) {
-        cyclicSeeds.push_back(id);
+        demandSeeds.push_back(id);
+        conditionalSeeds.insert(id);
       }
       if (hasUnresolvedInstanceCall(nodes[id].expression)) {
-        cyclicSeeds.push_back(id);
+        demandSeeds.push_back(id);
+        unresolvedSeeds.insert(id);
       }
       // A field written by flattened _work is not a clock-start graph input.
       // Keep readers and their consumers on demand so their first evaluation
       // remains at the source call site after the imperative write occurs.
       if (readsWorkMutatedField(nodes[id].expression)) {
-        cyclicSeeds.push_back(id);
+        workMutationSeeds.push_back(id);
       }
     }
 
@@ -2995,7 +3797,7 @@ struct CombsOptimizer::Impl {
     // so no discarded branch is evaluated by the remaining eager schedule.
     std::vector<size_t> conditionalDependencies;
     std::unordered_set<size_t> conditionalDependencySet;
-    for (const size_t id : cyclicSeeds) {
+    for (const size_t id : demandSeeds) {
       if (nodes[id].conditionallyEvaluated) {
         conditionalDependencies.push_back(id);
         conditionalDependencySet.insert(id);
@@ -3006,7 +3808,7 @@ struct CombsOptimizer::Impl {
            nodes[conditionalDependencies[index]].allDependencies) {
         if (conditionalDependencySet.insert(dependency).second) {
           conditionalDependencies.push_back(dependency);
-          cyclicSeeds.push_back(dependency);
+          demandSeeds.push_back(dependency);
         }
       }
     }
@@ -3020,12 +3822,19 @@ struct CombsOptimizer::Impl {
       }
     }
 
-    // Any eager consumer of an SCC or unresolved module call could request it
-    // through a branch inactive in the original lazy call chain. Move the
-    // complete reverse dependency cone to generated on-demand evaluation.
+    // Any eager consumer could otherwise trigger an on-demand dependency before
+    // the call site which first reaches it in the source model. That changes
+    // function_ref/_LAZY_COMB cache contents and SCC retained-value selection.
+    // Keep the complete reverse cone on demand so first evaluation order stays
+    // identical to the flattened source work and output demand order.
     dynamicNodes.clear();
     std::vector<size_t> pending;
-    for (const size_t id : cyclicSeeds) {
+    for (const size_t id : demandSeeds) {
+      if (dynamicNodes.insert(id).second) {
+        pending.push_back(id);
+      }
+    }
+    for (const size_t id : workMutationSeeds) {
       if (dynamicNodes.insert(id).second) {
         pending.push_back(id);
       }
@@ -3037,6 +3846,29 @@ struct CombsOptimizer::Impl {
         if (dynamicNodes.insert(consumer).second) {
           pending.push_back(consumer);
         }
+      }
+    }
+    // Large specialized designs can have one conservative seed pull a broad
+    // reverse cone on demand. Keep reason counts opt-in so graph tuning can
+    // distinguish real SCCs from conditional or work-order overclassification.
+    if (std::getenv("CPPHDL_TRACE_COMB_GRAPH")) {
+      std::sort(cyclicComponents.begin(), cyclicComponents.end(),
+                std::greater<>());
+      llvm::errs() << "cpphdl comb graph: active=" << activeNodes.size()
+                   << " scc=" << sccSeeds.size()
+                   << " conditional=" << conditionalSeeds.size()
+                   << " unresolved=" << unresolvedSeeds.size()
+                   << " work_mutated=" << workMutationSeeds.size()
+                   << " conditional_deps="
+                   << conditionalDependencySet.size()
+                   << " dynamic=" << dynamicNodes.size()
+                   << " scc_components=" << cyclicComponents.size() << "\n";
+      for (size_t rank = 0;
+           rank < std::min<size_t>(cyclicComponents.size(), 8); ++rank) {
+        const auto [size, representative] = cyclicComponents[rank];
+        llvm::errs() << "cpphdl comb graph scc[" << rank << "] size=" << size
+                     << " representative=" << nodes[representative].instance->path
+                     << "." << nodes[representative].name << "\n";
       }
     }
   }
@@ -3076,7 +3908,7 @@ struct CombsOptimizer::Impl {
 
   std::string replaceAliases(const std::string &input) const {
     static const std::regex valuePattern(
-        R"(s\.p([0-9]+)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+        R"(\(\*s\.p([0-9]+)_pointer\)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
     std::string output;
     size_t position = 0;
     for (auto iterator =
@@ -3104,9 +3936,18 @@ struct CombsOptimizer::Impl {
 
   std::string replaceDynamicCalls(const std::string &input,
                                   const std::string &shortRoot,
-                                  std::optional<size_t> self = {}) const {
+                                  std::optional<size_t> self = {},
+                                  const std::vector<std::string> *rawExpressions =
+                                      nullptr,
+                                  const std::unordered_map<size_t, size_t>
+                                      *useCounts = nullptr,
+                                  bool allowFusion = true) const {
     static const std::regex valuePattern(
-        R"(s\.p([0-9]+)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+        R"(\(\*s\.p([0-9]+)_pointer\)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+    static const std::regex genericLambdaPattern(R"(\[[^]]*\]\s*<)");
+    const std::string evaluatedCode = maskUnevaluatedOperands(input);
+    const bool inputHasGenericLambda =
+        std::regex_search(evaluatedCode, genericLambdaPattern);
     std::string output;
     size_t position = 0;
     for (auto iterator =
@@ -3116,9 +3957,41 @@ struct CombsOptimizer::Impl {
       output.append(input, position,
                     static_cast<size_t>(match.position()) - position);
       const auto id = valueNode(match);
-      if (id && dynamicNodes.contains(*id) && (!self || *id != *self)) {
-        output += "(" + shortRoot + "_optimized_comb_eval_" +
-                  std::to_string(*id) + "(obj, s), " + nodeValue(*id) + ")";
+      const size_t matchPosition = static_cast<size_t>(match.position());
+      if (evaluatedCode[matchPosition] != ' ' && id &&
+          dynamicNodes.contains(*id) && (!self || *id != *self)) {
+        const bool clockCached = cachesForSystemClock(nodes[*id]);
+        const std::string state = "s.evaluated" + std::to_string(*id) +
+                                  " == _system_clock";
+        const bool nestedGenericLambda =
+            inputHasGenericLambda && rawExpressions &&
+            std::regex_search(rawExpressions->at(*id), genericLambdaPattern);
+        const bool fuse = allowFusion && !nestedGenericLambda &&
+                          rawExpressions && useCounts &&
+                          useCounts->contains(*id) && useCounts->at(*id) == 1;
+        if (fuse) {
+          const std::string body = replaceDynamicCalls(
+              rawExpressions->at(*id), shortRoot, *id, rawExpressions,
+              useCounts, false);
+          const std::string evaluate =
+              "([&]() { " +
+              (clockCached ? "s.evaluated" + std::to_string(*id) +
+                                 " = _system_clock; "
+                           : std::string{}) +
+              nodeAssignment(*id, body) + "; }())";
+          output += clockCached
+                        ? "((" + state + " ? void() : " + evaluate + "), " +
+                              nodeValue(*id) + ")"
+                        : "((" + evaluate + "), " + nodeValue(*id) + ")";
+        } else {
+          const std::string evaluate =
+              shortRoot + "_optimized_comb_eval_" + std::to_string(*id) +
+              "(obj, s)";
+          output += clockCached
+                        ? "((" + state + " ? void() : " + evaluate + "), " +
+                              nodeValue(*id) + ")"
+                        : "((" + evaluate + "), " + nodeValue(*id) + ")";
+        }
       } else {
         output += match.str();
       }
@@ -3148,7 +4021,7 @@ struct CombsOptimizer::Impl {
 
     const std::string input =
         node.inlineExpression ? *node.inlineExpression : node.expression;
-    static const std::regex portPattern(R"(s\.p([0-9]+))");
+    static const std::regex portPattern(R"(\(\*s\.p([0-9]+)_pointer\))");
     std::string output;
     size_t position = 0;
     for (auto iterator =
@@ -3179,14 +4052,93 @@ struct CombsOptimizer::Impl {
   void collectNodeUses(const std::string &input,
                        std::unordered_map<size_t, size_t> &uses) const {
     static const std::regex valuePattern(
-        R"(s\.p([0-9]+)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+        R"(\(\*s\.p([0-9]+)_pointer\)|n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+    const std::string code = maskUnevaluatedOperands(input);
     for (auto iterator =
-             std::sregex_iterator(input.begin(), input.end(), valuePattern);
+             std::sregex_iterator(code.begin(), code.end(), valuePattern);
          iterator != std::sregex_iterator(); ++iterator) {
       if (const auto id = valueNode(*iterator)) {
         ++uses[*id];
       }
     }
+  }
+
+  std::vector<size_t>
+  clusterDynamicSchedule(const std::vector<size_t> &input,
+                         size_t valuesPerChunk) const {
+    if (input.size() <= valuesPerChunk) {
+      return input;
+    }
+
+    std::unordered_set<size_t> active(input.begin(), input.end());
+    std::vector<std::unordered_map<size_t, size_t>> affinity(nodes.size());
+    std::vector<size_t> rank(nodes.size(), input.size());
+    for (size_t position = 0; position < input.size(); ++position) {
+      rank[input[position]] = position;
+      std::unordered_map<size_t, size_t> uses;
+      collectNodeUses(nodes[input[position]].expression, uses);
+      for (const auto &[dependency, count] : uses) {
+        if (dependency == input[position] || !active.contains(dependency)) {
+          continue;
+        }
+        affinity[input[position]][dependency] += count;
+        affinity[dependency][input[position]] += count;
+      }
+    }
+
+    std::vector<size_t> output;
+    output.reserve(input.size());
+    std::unordered_set<size_t> assigned;
+    size_t nextSeed = 0;
+    while (output.size() < input.size()) {
+      while (nextSeed < input.size() && assigned.contains(input[nextSeed])) {
+        ++nextSeed;
+      }
+      if (nextSeed == input.size()) {
+        break;
+      }
+
+      std::unordered_map<size_t, size_t> scores;
+      using Candidate = std::tuple<size_t, size_t, size_t>;
+      std::priority_queue<Candidate> candidates;
+      size_t chunkSize = 0;
+      auto add = [&](size_t id) {
+        assigned.insert(id);
+        output.push_back(id);
+        ++chunkSize;
+        for (const auto &[neighbor, weight] : affinity[id]) {
+          if (assigned.contains(neighbor)) {
+            continue;
+          }
+          const size_t score = (scores[neighbor] += weight);
+          candidates.emplace(score, input.size() - rank[neighbor], neighbor);
+        }
+      };
+      add(input[nextSeed]);
+
+      while (chunkSize < valuesPerChunk && output.size() < input.size()) {
+        size_t selected = nodes.size();
+        while (!candidates.empty()) {
+          const auto [score, unusedRank, candidate] = candidates.top();
+          candidates.pop();
+          if (!assigned.contains(candidate) && scores[candidate] == score) {
+            selected = candidate;
+            break;
+          }
+        }
+        if (selected == nodes.size()) {
+          while (nextSeed < input.size() && assigned.contains(input[nextSeed])) {
+            ++nextSeed;
+          }
+          if (nextSeed == input.size()) {
+            break;
+          }
+          selected = input[nextSeed];
+        }
+        add(selected);
+      }
+    }
+    return output;
   }
 
   void addConcreteDependencies(size_t id, std::vector<size_t> &output) const {
@@ -3205,12 +4157,21 @@ struct CombsOptimizer::Impl {
     // canonicalized when its consumer is inspected.
     for (const size_t id : schedule) {
       Node &node = nodes[id];
-      if (dynamicNodes.contains(id) || node.kind != NodeKind::Port ||
-          node.dependencies.size() != 1 ||
-          dynamicNodes.contains(node.dependencies.front())) {
+      if (node.kind != NodeKind::Port || node.dependencies.size() != 1) {
         continue;
       }
       const size_t dependency = node.dependencies.front();
+      const bool demandOrdered = dynamicNodes.contains(id) ||
+                                 dynamicNodes.contains(dependency);
+      // An exact cached-to-cached forwarding port adds no observable boundary:
+      // if the dependency was demanded earlier, the forwarding port would read
+      // that same cached value on its first call. Keep all other dynamic aliases
+      // separate, especially a cached port forwarding a repeatable comb method.
+      if (demandOrdered &&
+          !(cachesForSystemClock(node) &&
+            cachesForSystemClock(nodes[dependency]))) {
+        continue;
+      }
       if (trim(node.expression) == nodeValue(dependency)) {
         node.aliasOf = canonicalNode(dependency);
       }
@@ -3304,6 +4265,36 @@ struct CombsOptimizer::Impl {
   std::vector<std::string> splitWork(const std::string &work,
                                      size_t statementsPerChunk,
                                      size_t bytesPerChunk = 250000) const {
+    // A concrete class-template _work body is represented as one immediately
+    // invoked generic lambda so discarded constexpr branches stay dependent.
+    // Look through that generated wrapper before counting top-level statements;
+    // otherwise an entire SoC appears to be one indivisible multi-megabyte unit.
+    const size_t wrapperStart = skipSpace(work, 0);
+    if (work.compare(wrapperStart, 5, "([&]<") == 0) {
+      const size_t opening = work.find('{', wrapperStart + 5);
+      if (opening != std::string::npos) {
+        const auto closing = matchingDelimiter(work, opening, '{', '}');
+        if (closing) {
+          const std::string suffix = work.substr(*closing);
+          if (trim(suffix).starts_with("}).template operator()<")) {
+            const std::string interior =
+                work.substr(opening + 1, *closing - opening - 1);
+            const std::vector<std::string> interiorChunks =
+                splitWork(interior, statementsPerChunk, bytesPerChunk);
+            if (interiorChunks.size() > 1) {
+              const std::string prefix = work.substr(0, opening + 1) + "\n";
+              std::vector<std::string> wrappedChunks;
+              wrappedChunks.reserve(interiorChunks.size());
+              for (const std::string &chunk : interiorChunks) {
+                wrappedChunks.push_back(prefix + chunk + suffix);
+              }
+              return wrappedChunks;
+            }
+          }
+        }
+      }
+    }
+
     // A generated _work body normally consists only of assignments and
     // balanced conditional blocks.  Keep a conservative fallback for
     // hand-written models whose local variables may be live across
@@ -3469,8 +4460,7 @@ struct CombsOptimizer::Impl {
         if (!pendingLoops.empty()) {
           for (const std::string &loop : pendingLoops) {
             output << indent
-                   << rewrite(loop, instance, nullptr, locals, {},
-                              !dependentTemplateParameters.empty())
+                   << rewrite(loop, instance, nullptr, locals)
                    << '\n';
           }
           pendingLoops.clear();
@@ -3506,8 +4496,7 @@ struct CombsOptimizer::Impl {
           std::string condition =
               stripped.substr(opening + 1, *closing - opening - 1);
           condition =
-              rewrite(condition, instance, nullptr, locals, {},
-                      !dependentTemplateParameters.empty());
+              rewrite(condition, instance, nullptr, locals);
           for (const std::string &nestedChunk : splitWork(nested, 400)) {
             output << indent << "if (" << condition << ") {\n"
                    << nestedChunk << indent << "}\n";
@@ -3520,8 +4509,7 @@ struct CombsOptimizer::Impl {
       if (!pendingLoops.empty()) {
         for (const std::string &loop : pendingLoops) {
           output << indent
-                 << rewrite(loop, instance, nullptr, locals, {},
-                            !dependentTemplateParameters.empty())
+                 << rewrite(loop, instance, nullptr, locals)
                  << '\n';
         }
         pendingLoops.clear();
@@ -3533,16 +4521,14 @@ struct CombsOptimizer::Impl {
         write.field = assignment->field;
         for (const std::string &index : assignment->indexes) {
           write.indexes.push_back(
-              rewrite(index, instance, nullptr, locals, {},
-                      !dependentTemplateParameters.empty()));
+              rewrite(index, instance, nullptr, locals));
           if (!error.empty()) {
             active.erase(instance.id);
             return {};
           }
         }
         const std::string value =
-            rewrite(assignment->value, instance, nullptr, locals, {},
-                    !dependentTemplateParameters.empty());
+            rewrite(assignment->value, instance, nullptr, locals);
         if (!error.empty()) {
           active.erase(instance.id);
           return {};
@@ -3559,8 +4545,7 @@ struct CombsOptimizer::Impl {
         continue;
       }
       std::string rewritten =
-          rewrite(stripped, instance, nullptr, locals, {},
-                  !dependentTemplateParameters.empty());
+          rewrite(stripped, instance, nullptr, locals);
       if (!error.empty()) {
         active.erase(instance.id);
         return {};
@@ -3578,8 +4563,7 @@ struct CombsOptimizer::Impl {
     }
     for (const std::string &loop : pendingLoops) {
       output << indent
-             << rewrite(loop, instance, nullptr, locals, {},
-                        !dependentTemplateParameters.empty())
+             << rewrite(loop, instance, nullptr, locals)
              << '\n';
     }
     active.erase(instance.id);
@@ -4030,6 +5014,7 @@ struct CombsOptimizer::Impl {
         // _assign() is imperative binding setup. A later assignment to the
         // same port replaces the earlier function_ref, exactly as in C++.
         bindings[key] = {instance, assignment.expression};
+        bindingMacros[key] = assignment.macro;
         bindingGuards[key] = conjunction(assignment.constexprGuards);
         }
       }
@@ -4049,8 +5034,7 @@ struct CombsOptimizer::Impl {
           if (l1Scheduling && *storage == methodName + "_cache" &&
               info.fields.contains(methodName + "_clock")) {
             info.combExpressions[methodName] =
-                std::make_shared<const std::string>(
-                    l1CombBody(bodyText(body), methodName, *storage));
+                makeBody(l1CombBody(bodyText(body), methodName, *storage));
           } else {
             info.combExpressions[methodName] = body;
           }
@@ -4064,8 +5048,6 @@ struct CombsOptimizer::Impl {
     lazyCycleBackEdges = 0;
     preparedNodeCount = 0;
     deferredWrites.clear();
-    findCombExpressions();
-    tracePhase("comb discovery");
     const auto rootType = classes.find(rootName);
     if (rootType == classes.end()) {
       error = "root module class not found: " + rootName;
@@ -4078,14 +5060,57 @@ struct CombsOptimizer::Impl {
     }
     discardUnusedClasses();
     tracePhase("hierarchy elaboration");
+
+    const auto lifecycleBodies = [this](auto selector) {
+      std::vector<ClassInfo::Body> bodies;
+      std::set<const ClassInfo *> seen;
+      for (const Instance *instance : instances) {
+        if (seen.insert(instance->type).second) {
+          selector(*instance->type, bodies);
+        }
+      }
+      return bodies;
+    };
+    const auto assignBodies = lifecycleBodies(
+        [](const ClassInfo &info, std::vector<ClassInfo::Body> &bodies) {
+          if (info.assignBody) bodies.push_back(info.assignBody);
+        });
+    const auto combBodies = lifecycleBodies(
+        [](const ClassInfo &info, std::vector<ClassInfo::Body> &bodies) {
+          for (const auto &[name, body] : info.methods) {
+            if (name != "_assign" && name != "_work" &&
+                name != "_strobe" && body) {
+              bodies.push_back(body);
+            }
+          }
+        });
+    const auto workBodies = lifecycleBodies(
+        [](const ClassInfo &info, std::vector<ClassInfo::Body> &bodies) {
+          if (info.workBody) bodies.push_back(info.workBody);
+        });
+    const auto strobeBodies = lifecycleBodies(
+        [](const ClassInfo &info, std::vector<ClassInfo::Body> &bodies) {
+          if (info.strobeBody) bodies.push_back(info.strobeBody);
+        });
+
+    if (!materializeBodies(assignBodies)) {
+      return false;
+    }
     if (!buildBindings()) {
       return false;
     }
     // Binding expansion creates short-lived copies of generated template
     // expressions across the concrete hierarchy. Return those pages before
     // lifecycle flattening starts its independent string-heavy phase.
+    releaseBodies(assignBodies);
     releaseTemporaryAllocatorPages();
     tracePhase("port binding expansion");
+
+    if (!materializeBodies(combBodies)) {
+      return false;
+    }
+    findCombExpressions();
+    tracePhase("comb discovery");
 
     // The roots are state updates in _work and externally visible root
     // outputs.  prepareNode() discovers their transitive comb/port
@@ -4101,6 +5126,9 @@ struct CombsOptimizer::Impl {
 
     std::unordered_set<size_t> activeWork;
     std::vector<size_t> workDemandOrder;
+    if (!materializeBodies(workBodies)) {
+      return false;
+    }
     // rewrite() sees calls in the same order as the original flattened work.
     // Record only this phase so declarations and graph preparation cannot
     // perturb the lazy cycle entry points selected by runtime evaluation.
@@ -4123,9 +5151,20 @@ struct CombsOptimizer::Impl {
       }
       return false;
     }
+    std::unordered_set<const ClassInfo *> externalTypes;
+    for (const Instance *instance : instances) {
+      if (bodyText(instance->type->workBody)
+              .find("firtool_cpphdl_external::work") != std::string::npos) {
+        externalTypes.insert(instance->type);
+      }
+    }
+    releaseBodies(workBodies);
     releaseTemporaryAllocatorPages();
     tracePhase("work flattening");
     std::unordered_set<size_t> activeStrobe;
+    if (!materializeBodies(strobeBodies)) {
+      return false;
+    }
     std::string strobe = flattenStrobe(*root, "  ", activeStrobe);
     if (!error.empty()) {
       return false;
@@ -4139,14 +5178,13 @@ struct CombsOptimizer::Impl {
               "were not collected";
       return false;
     }
+    releaseBodies(strobeBodies);
 
     // External models still consume their ports through the generated
     // function_ref API.  Make those bindings graph roots so their lambdas can
     // read already-scheduled caches instead of calling legacy comb methods.
     for (Instance *instance : instances) {
-      if (bodyText(instance->type->workBody)
-              .find("firtool_cpphdl_external::work") ==
-          std::string::npos) {
+      if (!externalTypes.contains(instance->type)) {
         continue;
       }
       for (const auto &[name, field] : instance->type->fields) {
@@ -4214,25 +5252,140 @@ struct CombsOptimizer::Impl {
     // SCC consumers execute through generated per-clock evaluators so source
     // conditionals select the recursive path at runtime. Remove them from the
     // eager schedule and redirect their exact use sites to those evaluators.
-    for (const size_t id : dynamicNodes) {
-      if (id < nodes.size() && nodes[id].expressionReady) {
-        nodes[id].expression =
-            replaceDynamicCalls(nodes[id].expression, shortRoot, id);
+    // Both dynamic and eager consumers can read an on-demand value. Rewrite
+    // every prepared expression so a mixed graph invokes that evaluator at
+    // the exact read site instead of observing uninitialized retained storage.
+    std::vector<std::string> rawDynamicExpressions(nodes.size());
+    std::unordered_map<size_t, size_t> dynamicUseCounts;
+    for (size_t id = 0; id < nodes.size(); ++id) {
+      if (!nodes[id].expressionReady) {
+        continue;
+      }
+      rawDynamicExpressions[id] = nodes[id].expression;
+    }
+    for (const size_t id : schedule) {
+      std::unordered_map<size_t, size_t> uses;
+      collectNodeUses(nodes[id].expression, uses);
+      for (const auto &[dependency, count] : uses) {
+        if (dependency != id && dynamicNodes.contains(dependency)) {
+          dynamicUseCounts[dependency] += count;
+        }
       }
     }
-    work = replaceDynamicCalls(work, shortRoot);
+    {
+      std::unordered_map<size_t, size_t> uses;
+      collectNodeUses(work, uses);
+      for (const auto &[dependency, count] : uses) {
+        if (dynamicNodes.contains(dependency)) {
+          dynamicUseCounts[dependency] += count;
+        }
+      }
+    }
+    for (size_t id = 0; id < nodes.size(); ++id) {
+      if (nodes[id].expressionReady) {
+        nodes[id].expression = replaceDynamicCalls(
+            rawDynamicExpressions[id], shortRoot, id, &rawDynamicExpressions,
+            &dynamicUseCounts);
+      }
+    }
+    work = replaceDynamicCalls(work, shortRoot, {}, &rawDynamicExpressions,
+                               &dynamicUseCounts);
+    const std::regex evaluatorCallPattern(shortRoot +
+                                          R"(_optimized_comb_eval_([0-9]+))");
+    std::unordered_set<size_t> reachableEvaluators;
+    std::vector<size_t> pendingEvaluators;
+    const auto addEvaluatorCalls = [&](const std::string &text) {
+      for (auto iterator = std::sregex_iterator(text.begin(), text.end(),
+                                                evaluatorCallPattern);
+           iterator != std::sregex_iterator(); ++iterator) {
+        const size_t id = std::stoull((*iterator)[1].str());
+        if (id < nodes.size() && reachableEvaluators.insert(id).second) {
+          pendingEvaluators.push_back(id);
+        }
+      }
+    };
+    addEvaluatorCalls(work);
+    for (const size_t id : schedule) {
+      if (!dynamicNodes.contains(id)) {
+        addEvaluatorCalls(nodes[id].expression);
+      }
+    }
+    for (const auto &[name, field] : root->type->fields) {
+      if (field.kind != FieldKind::Port || !field.portModuleClass.empty() ||
+          !bindings.contains(nodeKey(root->id, NodeKind::Port, name))) {
+        continue;
+      }
+      const auto node = nodeIds.find(nodeKey(root->id, NodeKind::Port, name));
+      if (node == nodeIds.end()) {
+        continue;
+      }
+      const size_t id = canonicalNode(node->second);
+      if (dynamicNodes.contains(id) && reachableEvaluators.insert(id).second) {
+        pendingEvaluators.push_back(id);
+      }
+    }
+    for (size_t position = 0; position < pendingEvaluators.size(); ++position) {
+      addEvaluatorCalls(nodes[pendingEvaluators[position]].expression);
+    }
+    std::vector<size_t> dynamicStateSchedule;
+    std::vector<size_t> dynamicSchedule;
+    dynamicStateSchedule.reserve(dynamicNodes.size());
+    dynamicSchedule.reserve(dynamicNodes.size());
+    for (const size_t id : schedule) {
+      if (dynamicNodes.contains(id)) {
+        dynamicStateSchedule.push_back(id);
+        // The dependency DFS keeps related evaluators adjacent. Preserve that
+        // order when partitioning sources so direct calls are visible to one
+        // compiler invocation instead of crossing arbitrary node-id chunks.
+        if (reachableEvaluators.contains(id)) {
+          dynamicSchedule.push_back(id);
+        }
+      }
+    }
     schedule.erase(
         std::remove_if(schedule.begin(), schedule.end(),
                        [this](size_t id) { return dynamicNodes.contains(id); }),
         schedule.end());
+    const size_t clockCachedDynamicStates = std::count_if(
+        dynamicStateSchedule.begin(), dynamicStateSchedule.end(),
+        [this](size_t id) { return cachesForSystemClock(nodes[id]); });
+
+    // Evaluator definitions stay in source partitions. Duplicating even small
+    // definitions in the common internal header makes every partition parse
+    // and optimize the same bodies, while CVA6 profiling showed no runtime
+    // benefit over hidden direct calls.
+    std::unordered_set<size_t> inlineDynamicEvaluators;
+
+    struct RootOutputPort {
+      std::string name;
+      size_t value = 0;
+    };
+    std::vector<RootOutputPort> rootOutputPorts;
+    for (const auto &[name, field] : root->type->fields) {
+      if (field.kind != FieldKind::Port || !field.portModuleClass.empty() ||
+          !bindings.contains(nodeKey(root->id, NodeKind::Port, name))) {
+        continue;
+      }
+      const auto node = nodeIds.find(nodeKey(root->id, NodeKind::Port, name));
+      if (node == nodeIds.end()) {
+        error = "missing optimized root output port node " + root->path +
+                "." + name;
+        return false;
+      }
+      rootOutputPorts.push_back({name, canonicalNode(node->second)});
+    }
     releaseTemporaryAllocatorPages();
     tracePhase("graph simplification");
+    releaseBodies(combBodies);
 
     struct BindingStatement {
       std::string text;
       std::set<size_t> usedInstances;
     };
     std::vector<BindingStatement> bindingStatements;
+    if (!materializeBodies(assignBodies)) {
+      return false;
+    }
     for (Instance *instance : instances) {
       std::string parseError;
       const auto assignments =
@@ -4258,9 +5411,7 @@ struct CombsOptimizer::Impl {
             return false;
           }
         }
-        if (bodyText(target->type->workBody)
-                .find("firtool_cpphdl_external::work") ==
-            std::string::npos) {
+        if (!externalTypes.contains(target->type)) {
           continue;
         }
         const auto node = nodeIds.find(
@@ -4289,6 +5440,7 @@ struct CombsOptimizer::Impl {
         }
       }
     }
+    releaseBodies(assignBodies);
 
     // Dependency diagnostics duplicate long specialized type names. Build
     // that optional public view only if dependencyTrees() is requested; the
@@ -4298,6 +5450,40 @@ struct CombsOptimizer::Impl {
     tracePhase("dependency metadata deferred");
 
     std::filesystem::create_directories(directory);
+    struct PreviousOutput {
+      uint64_t hash = 0;
+      uintmax_t size = 0;
+      std::filesystem::file_time_type modified;
+    };
+    const auto fingerprint = [](const std::filesystem::path &path) {
+      uint64_t hash = 1469598103934665603ull;
+      std::ifstream input(path, std::ios::binary);
+      std::array<char, 64 * 1024> buffer{};
+      while (input) {
+        input.read(buffer.data(), buffer.size());
+        for (std::streamsize index = 0; index < input.gcount(); ++index) {
+          hash ^= static_cast<unsigned char>(buffer[index]);
+          hash *= 1099511628211ull;
+        }
+      }
+      return hash;
+    };
+    std::map<std::string, PreviousOutput> previousOutputs;
+    const std::string outputPrefix = shortRoot + "_optimized_combs";
+    // Optimizer-only fixes often change one generated partition. Remember the
+    // old content identity so byte-identical files retain their timestamps and
+    // incremental builds do not re-optimize the entire graph unnecessarily.
+    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
+      const std::string name = entry.path().filename().string();
+      if (entry.is_regular_file() && name.starts_with(outputPrefix) &&
+          (entry.path().extension() == ".cpp" ||
+           entry.path().extension() == ".h")) {
+        previousOutputs.emplace(
+            name, PreviousOutput{fingerprint(entry.path()),
+                                 std::filesystem::file_size(entry.path()),
+                                 std::filesystem::last_write_time(entry.path())});
+      }
+    }
     const std::regex staleChunkPattern(
         "^" + shortRoot +
         R"(_optimized_combs_(?:(?:work|bind|strobe|model|dynamic)_)?[0-9]+\.cpp$)");
@@ -4337,6 +5523,7 @@ struct CombsOptimizer::Impl {
       header << "\nclass " << shortRoot << ";\n";
     }
     header << "\nvoid bind_optimized_ports(" << shortRoot << "& obj);\n"
+           << "extern \"C\" void cpphdl_optimized_bind_ports_abi(void* obj);\n"
            << "void calc_all(" << shortRoot
            << "& obj, bool reset = false);\n"
            << "void commit_optimized_regs(" << shortRoot << "& obj);\n";
@@ -4346,6 +5533,13 @@ struct CombsOptimizer::Impl {
 
     std::set<std::string> headers;
     std::set<std::string> headerNames;
+    for (const std::string &include : sourceIncludes) {
+      if (include.ends_with(".h")) {
+        headers.insert(include);
+        headerNames.insert(
+            std::filesystem::path(include).filename().string());
+      }
+    }
     for (const auto &[name, info] : classes) {
       if (!info.header.empty() && info.header.ends_with(".h")) {
         headers.insert(info.header);
@@ -4355,18 +5549,64 @@ struct CombsOptimizer::Impl {
     }
 
     constexpr size_t valuesPerChunk = 400;
-    constexpr size_t dynamicValuesPerChunk = 200;
+    size_t dynamicValuesPerChunk = 200;
+    size_t dynamicBytesPerChunk = 2 * 1024 * 1024;
+    // Dynamic graphs can range from a few nodes to whole SoCs. Let build flows
+    // trade translation-unit count against compiler memory without changing the
+    // graph or generated runtime behavior.
+    if (const char *configured =
+            std::getenv("CPPHDL_OPTIMIZE_COMBS_DYNAMIC_VALUES_PER_CHUNK")) {
+      try {
+        dynamicValuesPerChunk = std::stoull(configured);
+      } catch (const std::exception &) {
+        dynamicValuesPerChunk = 0;
+      }
+      if (dynamicValuesPerChunk == 0) {
+        error =
+            "invalid CPPHDL_OPTIMIZE_COMBS_DYNAMIC_VALUES_PER_CHUNK=" +
+            std::string(configured);
+        return false;
+      }
+    }
+    if (const char *configured =
+            std::getenv("CPPHDL_OPTIMIZE_COMBS_DYNAMIC_BYTES_PER_CHUNK")) {
+      try {
+        dynamicBytesPerChunk = std::stoull(configured);
+      } catch (const std::exception &) {
+        dynamicBytesPerChunk = 0;
+      }
+      if (dynamicBytesPerChunk == 0) {
+        error =
+            "invalid CPPHDL_OPTIMIZE_COMBS_DYNAMIC_BYTES_PER_CHUNK=" +
+            std::string(configured);
+        return false;
+      }
+    }
+    dynamicSchedule =
+        clusterDynamicSchedule(dynamicSchedule, dynamicValuesPerChunk);
     constexpr size_t bindingsPerChunk = 400;
     constexpr size_t modelTypesPerChunk = 50;
     constexpr size_t memoryWritesPerChunk = 400;
-    std::vector<size_t> dynamicSchedule(dynamicNodes.begin(),
-                                        dynamicNodes.end());
-    std::sort(dynamicSchedule.begin(), dynamicSchedule.end());
     const size_t chunkCount =
         (schedule.size() + valuesPerChunk - 1) / valuesPerChunk;
-    const size_t dynamicChunkCount =
-        (dynamicSchedule.size() + dynamicValuesPerChunk - 1) /
-        dynamicValuesPerChunk;
+    std::vector<std::pair<size_t, size_t>> dynamicChunks;
+    for (size_t begin = 0; begin < dynamicSchedule.size();) {
+      size_t end = begin;
+      size_t estimatedBytes = 0;
+      while (end < dynamicSchedule.size() &&
+             end - begin < dynamicValuesPerChunk) {
+        const size_t nodeBytes = nodes[dynamicSchedule[end]].expression.size() +
+                                 512;
+        if (end != begin && estimatedBytes + nodeBytes > dynamicBytesPerChunk) {
+          break;
+        }
+        estimatedBytes += nodeBytes;
+        ++end;
+      }
+      dynamicChunks.emplace_back(begin, end);
+      begin = end;
+    }
+    const size_t dynamicChunkCount = dynamicChunks.size();
     const size_t bindChunkCount =
         (bindingStatements.size() + bindingsPerChunk - 1) / bindingsPerChunk;
     const std::vector<std::string> workChunks = splitWork(work, 400);
@@ -4374,6 +5614,14 @@ struct CombsOptimizer::Impl {
     const size_t memoryChunkCount =
         (deferredWrites.size() + memoryWritesPerChunk - 1) /
         memoryWritesPerChunk;
+    const auto modelBodies = lifecycleBodies(
+        [](const ClassInfo &info, std::vector<ClassInfo::Body> &bodies) {
+          if (info.constructorBody) bodies.push_back(info.constructorBody);
+          if (info.destructorBody) bodies.push_back(info.destructorBody);
+        });
+    if (!materializeBodies(modelBodies)) {
+      return false;
+    }
     std::map<std::string, const ClassInfo *> concreteTypes;
     for (const Instance *instance : instances) {
       if (!bodyText(instance->type->constructorBody).empty() ||
@@ -4419,7 +5667,7 @@ struct CombsOptimizer::Impl {
     internal << "  long evaluated_system_clock = "
                 "std::numeric_limits<long>::min();\n";
     std::unordered_set<size_t> stateNodes(schedule.begin(), schedule.end());
-    stateNodes.insert(dynamicSchedule.begin(), dynamicSchedule.end());
+    stateNodes.insert(dynamicStateSchedule.begin(), dynamicStateSchedule.end());
     for (size_t id = 0; id < nodes.size(); ++id) {
       if (!stateNodes.contains(id)) {
         continue;
@@ -4428,20 +5676,26 @@ struct CombsOptimizer::Impl {
       if (node.kind != NodeKind::Port) {
         continue;
       }
-      internal << "  std::remove_reference_t<decltype("
-               << instanceExpression(
-                      *node.instance,
-                      "std::declval<" + shortRoot + "&>()")
-               << "." << node.name << "())> p" << id << ";\n";
-    }
-    // Ports cache for a clock; combs only guard recursive active calls.
-    // A comb executes again after returning, while an SCC backedge observes
-    // the storage accumulated by the currently active invocation.
-    for (const size_t id : dynamicSchedule) {
-      if (cachesForSystemClock(nodes[id])) {
-        internal << "  bool evaluated" << id << " = false;\n";
+      const std::string type =
+          "std::remove_reference_t<decltype(" +
+          instanceExpression(*node.instance,
+                             "std::declval<" + shortRoot + "&>()") +
+          "." + node.name + "())>";
+      if (portUsesOwnedStorage(node)) {
+        internal << "  " << type << " p" << id << "_storage;\n"
+                 << "  " << type << "* p" << id
+                 << "_pointer = std::addressof(p" << id << "_storage);\n";
       } else {
-        internal << "  bool evaluating" << id << " = false;\n";
+        internal << "  " << type << "* p" << id << "_pointer{};\n";
+      }
+    }
+    // Ports and _LAZY_COMB are the source-language recursion boundaries. Their
+    // timestamps expose retained storage at a recursive edge. Ordinary comb
+    // methods remain repeatable and need no optimizer-owned state.
+    for (const size_t id : dynamicStateSchedule) {
+      if (cachesForSystemClock(nodes[id])) {
+        internal << "  long evaluated" << id
+                 << " = std::numeric_limits<long>::min();\n";
       }
     }
     for (const DeferredWrite &write : deferredWrites) {
@@ -4464,9 +5718,33 @@ struct CombsOptimizer::Impl {
     }
     internal << "};\n\n";
     for (const size_t id : dynamicSchedule) {
-      internal << "void " << shortRoot << "_optimized_comb_eval_" << id
+      if (inlineDynamicEvaluators.contains(id)) {
+        internal << "[[gnu::always_inline]] inline void ";
+      } else {
+        // Evaluators can be called from another generated partition, but they
+        // are private to this specialized executable. Hidden visibility prevents
+        // ELF interposition from blocking same-TU inlining at -O2.
+        internal << "[[gnu::visibility(\"hidden\")]] void ";
+      }
+      internal << shortRoot << "_optimized_comb_eval_" << id
                << "(" << shortRoot << "&, "
                << shortRoot << "_optimized_combs_state&);\n";
+    }
+    internal << '\n';
+    for (const size_t id : dynamicSchedule) {
+      if (!inlineDynamicEvaluators.contains(id)) {
+        continue;
+      }
+      const Node &node = nodes[id];
+      const std::set<size_t> usedInstances =
+          referencedInstances(node.expression, {0, node.instance->id});
+      internal << "[[gnu::always_inline]] inline void " << shortRoot
+               << "_optimized_comb_eval_" << id << "(" << shortRoot
+               << "& obj, " << shortRoot
+               << "_optimized_combs_state& s) {\n";
+      emitAliases(internal, usedInstances);
+      internal << "  " << nodeAssignment(id, node.expression)
+               << ";\n}\n\n";
     }
     for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_chunk_" << chunk
@@ -4564,6 +5842,7 @@ struct CombsOptimizer::Impl {
         return false;
       }
     }
+    releaseBodies(modelBodies);
 
     std::unordered_set<size_t> emitted;
     for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
@@ -4579,7 +5858,11 @@ struct CombsOptimizer::Impl {
         }
         const Node &node = nodes[id];
         for (const size_t dependency : node.dependencies) {
-          if (!emitted.contains(dependency)) {
+          // Dynamic dependencies are invoked at this exact expression site
+          // and are deliberately absent from the eager emitted set. Only an
+          // eager dependency appearing after its consumer violates ordering.
+          if (!dynamicNodes.contains(dependency) &&
+              !emitted.contains(dependency)) {
             error = "internal error: dependency emitted after consumer " +
                     node.instance->path + "." + node.name;
             return false;
@@ -4590,7 +5873,7 @@ struct CombsOptimizer::Impl {
         // The flattened schedule evaluates every cache exactly once.  The
         // accessor timestamps are irrelevant because calc_all never calls the
         // memoized accessors.
-        body << "  " << nodeValue(id) << " = " << node.expression << ";\n";
+        body << "  " << nodeAssignment(id, node.expression) << ";\n";
       }
       const std::filesystem::path chunkPath =
           std::filesystem::path(directory) /
@@ -4616,9 +5899,7 @@ struct CombsOptimizer::Impl {
     }
 
     for (size_t chunk = 0; chunk < dynamicChunkCount; ++chunk) {
-      const size_t begin = chunk * dynamicValuesPerChunk;
-      const size_t end =
-          std::min(dynamicSchedule.size(), begin + dynamicValuesPerChunk);
+      const auto [begin, end] = dynamicChunks[chunk];
       const std::filesystem::path chunkPath =
           std::filesystem::path(directory) /
           (shortRoot + "_optimized_combs_dynamic_" +
@@ -4632,6 +5913,9 @@ struct CombsOptimizer::Impl {
                   << "_optimized_combs_internal.h\"\n\n";
       for (size_t position = begin; position < end; ++position) {
         const size_t id = dynamicSchedule[position];
+        if (inlineDynamicEvaluators.contains(id)) {
+          continue;
+        }
         const Node &node = nodes[id];
         const std::set<size_t> usedInstances =
             referencedInstances(node.expression, {0, node.instance->id});
@@ -4640,21 +5924,11 @@ struct CombsOptimizer::Impl {
                     << "& obj, " << shortRoot
                     << "_optimized_combs_state& s) {\n";
         emitAliases(chunkSource, usedInstances);
-        // Ports retain function_ref's clock cache; combs guard only recursion.
-        // Clear a comb guard after its body so later call sites execute again.
-        // This preserves both SCC backedges and stateful repeated comb calls.
         if (cachesForSystemClock(node)) {
-          chunkSource << "  if (s.evaluated" << id << ") return;\n"
-                      << "  s.evaluated" << id << " = true;\n";
-        } else {
-          chunkSource << "  if (s.evaluating" << id << ") return;\n"
-                      << "  s.evaluating" << id << " = true;\n";
+          chunkSource << "  s.evaluated" << id << " = _system_clock;\n";
         }
-        chunkSource << "  " << nodeValue(id) << " = " << node.expression
+        chunkSource << "  " << nodeAssignment(id, node.expression)
                     << ";\n";
-        if (!cachesForSystemClock(node)) {
-          chunkSource << "  s.evaluating" << id << " = false;\n";
-        }
         chunkSource << "}\n\n";
       }
       if (!finishOutput(chunkSource, chunkPath)) {
@@ -4768,6 +6042,25 @@ struct CombsOptimizer::Impl {
       source << "  " << shortRoot << "_optimized_combs_bind_chunk_" << chunk
              << "(obj);\n";
     }
+    if (!rootOutputPorts.empty()) {
+      source << "  auto& s = optimized_state(obj);\n";
+      std::set<size_t> usedInstances{0};
+      for (const RootOutputPort &port : rootOutputPorts) {
+        usedInstances.insert(nodes[port.value].instance->id);
+      }
+      emitAliases(source, usedInstances);
+      for (const RootOutputPort &port : rootOutputPorts) {
+        // calc_all materializes every externally visible root output. Rebind
+        // its function_ref to that stable lvalue so a host read cannot re-enter
+        // the original recursive std::function/comb graph.
+        source << "  obj." << port.name << " = _ASSIGN_REG("
+               << nodeValue(port.value) << ");\n";
+      }
+    }
+    source << "}\n\nextern \"C\" void "
+           << "cpphdl_optimized_bind_ports_abi(void* raw_obj) {\n"
+           << "  bind_optimized_ports(*static_cast<" << shortRoot
+           << "*>(raw_obj));\n";
     // Flattening replaces calls to many module _work methods, but their reset
     // argument remains part of the model's cycle semantics. Thread that one
     // runtime value through the dispatcher and every emitted work chunk.
@@ -4782,17 +6075,9 @@ struct CombsOptimizer::Impl {
     for (const DeferredWrite &write : deferredWrites) {
       source << "  s.w" << write.id << "_pending = false;\n";
     }
-    // Port temporaries retain their preceding-clock value just like a lazy
-    // function_ref cache, while only evaluation flags reset at clock start.
-    // This also keeps independent optimized roots isolated by object address.
-    // Reset only function_ref-equivalent port cache flags each clock.
-    // Internal comb methods carry storage but are never call-result caches.
-    // Their generated evaluators therefore have no state flag to clear.
-    for (const size_t id : dynamicSchedule) {
-      if (cachesForSystemClock(nodes[id])) {
-        source << "  s.evaluated" << id << " = false;\n";
-      }
-    }
+    // Clock-cached evaluators compare their timestamps directly with
+    // _system_clock, avoiding an O(graph-size) flag-clear pass. Ordinary comb
+    // recursion flags are cleared when each invocation returns.
     for (size_t chunk = 0; chunk < chunkCount; ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_chunk_" << chunk
              << "(obj, s);\n";
@@ -4800,6 +6085,24 @@ struct CombsOptimizer::Impl {
     for (size_t chunk = 0; chunk < workChunks.size(); ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_work_chunk_" << chunk
              << "(obj, s, reset);\n";
+    }
+    std::set<size_t> demandedRootOutputs;
+    for (const RootOutputPort &port : rootOutputPorts) {
+      const size_t id = port.value;
+      if (!dynamicNodes.contains(id) || !demandedRootOutputs.insert(id).second) {
+        continue;
+      }
+      const std::string state =
+          cachesForSystemClock(nodes[id])
+              ? "s.evaluated" + std::to_string(id) + " == _system_clock"
+              : std::string{};
+      if (state.empty()) {
+        source << "  " << shortRoot << "_optimized_comb_eval_" << id
+               << "(obj, s);\n";
+      } else {
+        source << "  if (!(" << state << ")) " << shortRoot
+               << "_optimized_comb_eval_" << id << "(obj, s);\n";
+      }
     }
     source << "}\n\nvoid commit_optimized_regs(" << shortRoot << "& obj) {\n";
     if (memoryChunkCount != 0) {
@@ -4817,6 +6120,18 @@ struct CombsOptimizer::Impl {
     if (!finishOutput(source, sourcePath)) {
       return false;
     }
+    // Restore timestamps only after every output has closed. A size and content
+    // hash match means downstream dependency checks can safely reuse the old
+    // object even though generation used a truncate-and-rewrite stream.
+    for (const auto &[name, previous] : previousOutputs) {
+      const std::filesystem::path path =
+          std::filesystem::path(directory) / name;
+      if (std::filesystem::is_regular_file(path) &&
+          std::filesystem::file_size(path) == previous.size &&
+          fingerprint(path) == previous.hash) {
+        std::filesystem::last_write_time(path, previous.modified);
+      }
+    }
     llvm::outs() << "CppHDL comb optimizer: " << instances.size()
                  << " instances, " << schedule.size() << " scheduled values, "
                  << chunkCount << " comb chunks, " << bindChunkCount
@@ -4824,7 +6139,9 @@ struct CombsOptimizer::Impl {
                  << strobeChunks.size() << " strobe chunks, "
                  << modelChunkCount << " model chunks, "
                  << memoryChunkCount << " memory chunks, "
-                 << dynamicSchedule.size() << " dynamic values, "
+                 << dynamicSchedule.size() << " dynamic evaluators, "
+                 << inlineDynamicEvaluators.size() << " inline evaluators, "
+                 << clockCachedDynamicStates << " dynamic states, "
                  << lazyCycleBackEdges << " lazy cycle back-edges\n"
                  << "  " << headerPath.string() << "\n"
                  << "  " << sourcePath.string() << "\n"
@@ -4841,16 +6158,32 @@ CombsOptimizer &CombsOptimizer::operator=(CombsOptimizer &&) noexcept = default;
 
 void CombsOptimizer::collect(clang::ASTContext &context) {
   Collector collector(impl->classes, impl->sourceIncludes,
-                      impl->constantValues, impl->rootName, context);
+                      impl->constantValues, impl->rootName, context,
+                      impl->collectionOnly);
   collector.collectMainFileIncludes();
   collector.collectRootHierarchy();
   collector.TraverseDecl(context.getTranslationUnitDecl());
-  collector.applyTemplateMethods();
+  // A specialization and its primary-template methods can arrive in separate
+  // collection shards. Reconcile their deferred body handles after all loaded
+  // metadata and the final AST have been merged; this does not load body text.
+  collector.applyTemplateMethods(!impl->collectionBodies.empty());
   collector.materializeRootAlias();
 }
 
 void CombsOptimizer::setL1Scheduling(bool enabled) {
   impl->l1Scheduling = enabled;
+}
+
+void CombsOptimizer::setCollectionOnly(bool enabled) {
+  impl->collectionOnly = enabled;
+}
+
+bool CombsOptimizer::saveCollection(const std::string &path) const {
+  return impl->saveCollection(path);
+}
+
+bool CombsOptimizer::loadCollection(const std::string &path) {
+  return impl->loadCollection(path);
 }
 
 bool CombsOptimizer::generate(const std::string &rootModule,

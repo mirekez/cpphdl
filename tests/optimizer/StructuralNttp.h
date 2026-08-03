@@ -20,6 +20,8 @@ public:
     _PORT(cpphdl::logic<Config.width>) input;
     _PORT(cpphdl::logic<Config.width>) output =
         _ASSIGN_COMB(output_comb_func());
+    _PORT(cpphdl::logic<Config.width>) mirrored_output =
+        _ASSIGN_COMB(mirrored_output_comb_func());
 
     cpphdl::logic<Config.width>& output_comb_func()
     {
@@ -29,8 +31,15 @@ public:
         return output_comb;
     }
 
+    cpphdl::logic<Config.width>& mirrored_output_comb_func()
+    {
+        mirrored_output_comb = output();
+        return mirrored_output_comb;
+    }
+
 public:
     cpphdl::logic<Config.width> output_comb = 0;
+    cpphdl::logic<Config.width> mirrored_output_comb = 0;
 };
 
 template<StructuralNttpConfig Config>
@@ -83,6 +92,32 @@ public:
     cpphdl::logic<3> output_comb = 0;
 };
 
+class StructuralNttpMissingMethodLeaf : public cpphdl::Module
+{
+};
+
+template<bool Enabled, typename Child>
+class StructuralNttpDiscardedChildCall : public cpphdl::Module
+{
+public:
+    Child child;
+    _PORT(cpphdl::logic<1>) output = _ASSIGN_COMB(output_comb_func());
+
+    cpphdl::logic<1>& output_comb_func()
+    {
+        if constexpr (Enabled) {
+            output_comb = child.method_not_present_for_disabled_child();
+        }
+        else {
+            output_comb = 0;
+        }
+        return output_comb;
+    }
+
+public:
+    cpphdl::logic<1> output_comb = 0;
+};
+
 template<typename Response>
 class StructuralNttpProjectedLeaf : public cpphdl::Module
 {
@@ -115,8 +150,10 @@ public:
     StructuralNttpArrayProjectedLeaf<
         typename StructuralNttpInterface<structural_nttp_config>::request>
         array_projected_leaf;
+    StructuralNttpDiscardedChildCall<false,
+        StructuralNttpMissingMethodLeaf> discarded_child_call;
     _PORT(cpphdl::logic<3>) input;
-    _PORT(cpphdl::logic<3>) output = _ASSIGN_COMB(leaf.output());
+    _PORT(cpphdl::logic<3>) output = _ASSIGN_COMB(leaf.mirrored_output());
     cpphdl::logic<3> work_value = 0;
     cpphdl::logic<3> projected_value = 0;
     cpphdl::logic<3> array_projected_value = 0;
@@ -142,5 +179,8 @@ public:
         work_value = output();
         projected_value = projected_leaf.output();
         array_projected_value = array_projected_leaf.output();
+        discarded_child_value = discarded_child_call.output();
     }
+
+    cpphdl::logic<1> discarded_child_value = 0;
 };

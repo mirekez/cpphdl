@@ -7,6 +7,6 @@ void cpphdl_model_assign()
 {
     cpphdlModel->dut->rst_ni_in = _ASSIGN_REG(cpphdlModel->rstN);
     cpphdlModel->dut->rtc_i_in = _ASSIGN_REG(cpphdlModel->rtc);
-    cpphdl_optimized_root_assign(*cpphdlModel->dut);
-    bind_optimized_ports(*cpphdlModel->dut);
+    cpphdl_optimized_root_assign_abi(cpphdlModel->dut);
+    cpphdl_optimized_bind_ports_abi(cpphdlModel->dut);
 }

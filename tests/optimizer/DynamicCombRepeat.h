@@ -17,6 +17,11 @@ public:
     cpphdl::logic<1> work_output = 0;
     cpphdl::logic<3> first_repeat = 0;
     cpphdl::logic<3> second_repeat = 0;
+    cpphdl::logic<3> third_repeat = 0;
+    cpphdl::logic<3> fourth_repeat = 0;
+    cpphdl::logic<3> fifth_repeat = 0;
+    cpphdl::logic<3> sixth_repeat = 0;
+    cpphdl::logic<3> seventh_repeat = 0;
     cpphdl::logic<3> first_lazy = 0;
     cpphdl::logic<3> second_lazy = 0;
     unsigned lazy_evaluations = 0;
@@ -47,6 +52,11 @@ public:
         work_output = leaf.output();
         first_repeat = advancing_comb_func();
         second_repeat = advancing_comb_func();
+        third_repeat = advancing_comb_func();
+        fourth_repeat = advancing_comb_func();
+        fifth_repeat = advancing_comb_func();
+        sixth_repeat = advancing_comb_func();
+        seventh_repeat = advancing_comb_func();
         first_lazy = lazy_comb_func();
         second_lazy = lazy_comb_func();
     }

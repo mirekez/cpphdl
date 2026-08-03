@@ -660,11 +660,22 @@ public:
 #pragma once
 #include "worker.h"
 
+template <unsigned Dummy = 13>
+class parent_helper : public Module
+{
+    worker<Dummy> unrelated;
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
 template <unsigned First = (1ull << 4), uint64_t Late = 7>
 class parent : public Module
 {
     worker<First> own;
     worker<Late> second;
+    array<2, worker<((31 >= 0) ? 9 : 8)>> nested;
 public:
     parent() {}
     void _work(bool) {}
@@ -712,19 +723,38 @@ z_implicit_ctor<> support;
     assert(rc == 0);
     expectContains(readFile(dir / "Makefile.optimize"), "RUNNER := custom_runner_opt\n");
     expectContains(readFile(dir / "Makefile.optimize"), "DEPFLAGS ?= -MMD -MP\n");
+    expectContains(readFile(dir / "Makefile.optimize"),
+                   "CONSTRUCTOR_CXXFLAGS ?= --param ggc-min-expand=1 "
+                   "--param ggc-min-heapsize=4096\n");
     expectContains(readFile(dir / "Makefile.optimize"), "-include $(DEPS)\n");
     auto externs = readFile(dir / "cpphdl_optimized_externs.h");
     expectContains(externs, "using cpphdl_opt_t0 = parent<>;");
     expectContains(externs, "using cpphdl_opt_t1 = z_implicit_ctor<>;");
-    expectContains(externs, "using cpphdl_opt_t2 = worker<(1ull<< 4)>;");
-    expectContains(externs, "using cpphdl_opt_t3 = worker<7>;");
+    expectContains(externs, "using cpphdl_opt_t2 = worker<((31>= 0) ? 9 : 8)>;");
+    expectContains(externs, "using cpphdl_opt_t3 = worker<(1ull<< 4)>;");
+    expectContains(externs, "using cpphdl_opt_t4 = worker<7>;");
+    expectNotContains(externs, "worker<13>");
     expectNotContains(externs, "worker<Other>");
     expectNotContains(externs, "uint64_t Late");
     expectContains(externs, "extern template cpphdl_opt_t0::parent();");
     expectNotContains(externs, "extern template cpphdl_opt_t1::z_implicit_ctor();");
+    expectContains(externs, "cpphdl_opt_t0* cpphdl_optimized_root_create();");
+    expectContains(externs, "void cpphdl_optimized_root_work(cpphdl_opt_t0&, bool);");
+    expectContains(externs, "void cpphdl_optimized_root_strobe(cpphdl_opt_t0&);");
+    expectContains(externs,
+                   "extern \"C\" void cpphdl_optimized_root_assign_abi(void*);");
     auto instantiations = readFile(dir / "cpphdl_optimized_inst_0.cpp");
     expectContains(instantiations, "template cpphdl_opt_t0::parent();");
+    expectContains(instantiations,
+                   "__attribute__((noinline, optimize(\"O0\", \"no-inline\"))) "
+                   "cpphdl_opt_t0* cpphdl_optimized_root_create() { return new cpphdl_opt_t0; }");
     expectContains(instantiations, "template void cpphdl_opt_t0::_work(bool);");
+    expectContains(instantiations,
+                   "void cpphdl_optimized_root_work(cpphdl_opt_t0& obj, bool reset) { obj._work(reset); }");
+    expectContains(instantiations,
+                   "void cpphdl_optimized_root_strobe(cpphdl_opt_t0& obj) { obj._strobe(); }");
+    expectContains(instantiations,
+                   "extern \"C\" void cpphdl_optimized_root_assign_abi(void* raw_obj) { static_cast<cpphdl_opt_t0*>(raw_obj)->_assign(); }");
     expectContains(instantiations, "template void cpphdl_opt_t2::_work(bool);");
     expectNotContains(instantiations, "template void cpphdl_opt_t3::_work(bool);");
     expectContains(readFile(dir / "cpphdl_optimized_inst_1.cpp"),
@@ -741,7 +771,8 @@ z_implicit_ctor<> support;
     command = "make -f Makefile.optimize -j1 "
               "build/opt/cpphdl_optimized_main.o "
               "build/opt/cpphdl_optimized_inst_0.o "
-              "build/opt/cpphdl_optimized_inst_1.o";
+              "build/opt/cpphdl_optimized_inst_1.o "
+              "build/opt/cpphdl_optimized_inst_2.o";
     rc = std::system(command.c_str());
     fs::current_path(oldCwd);
     assert(rc == 0);
@@ -815,6 +846,9 @@ small_b<> third;
             foundLargeWork = true;
             expectNotContains(text, "template void cpphdl_opt_t0::_assign();");
         }
+        if (text.find("template cpphdl_opt_t0::large();") != std::string::npos) {
+            expectContains(text, "#pragma GCC optimize (\"O0\", \"no-inline\")");
+        }
         if (text.find("template void cpphdl_opt_t0::_assign();") != std::string::npos) {
             foundLargeAssign = true;
             expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
@@ -828,6 +862,133 @@ small_b<> third;
     assert(foundLargeAssign);
     assert(foundSmallA);
     assert(foundSmallB);
+    expectContains(readFile(dir / "Makefile.optimize"),
+                   "build/opt/cpphdl_optimized_inst_0.o: override CXXFLAGS += "
+                   "$(CONSTRUCTOR_CXXFLAGS)\n");
+}
+
+static void testOptimizeIsolatesWrapperByChildDefinitionWeight(const char* argv0)
+{
+    auto dir = makeTempDir("hdlcpp_optimize_child_definition_weight");
+    auto executable = hdlcppPath(argv0);
+    fs::create_directories(dir / "generated");
+    auto large = std::string(R"cpp(
+#pragma once
+#include "cpphdl.h"
+using namespace cpphdl;
+template <uint64_t Value = 0>
+class large_child : public Module
+{
+public:
+    large_child() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+)cpp");
+    large.insert(large.find("public:"), std::string(2000, ' '));
+    writeFile(dir / "generated" / "large_child.h", large);
+    writeFile(dir / "generated" / "wrapper.h", R"cpp(
+#pragma once
+#include "large_child.h"
+#include "small.h"
+template <uint64_t Value = 0>
+class wrapper : public Module
+{
+    large_child<Value> child;
+    small<Value> unrelated;
+public:
+    wrapper() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+)cpp");
+    writeFile(dir / "generated" / "small.h", R"cpp(
+#pragma once
+#include "cpphdl.h"
+using namespace cpphdl;
+template <uint64_t Value = 0>
+class small : public Module
+{
+public:
+    small() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+)cpp");
+    writeFile(dir / "all_generated.h", R"cpp(
+#pragma once
+#include "generated/wrapper.h"
+)cpp");
+    writeFile(dir / "weighted_runner.cpp", R"cpp(
+#include "all_generated.h"
+wrapper<> first;
+)cpp");
+
+    auto oldCwd = fs::current_path();
+    fs::current_path(dir);
+    auto command = "HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE=32 "
+                   "HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE=1000 " +
+                   shellQuote(executable) + " --optimize weighted_runner.cpp";
+    auto rc = std::system(command.c_str());
+    fs::current_path(oldCwd);
+    assert(rc == 0);
+
+    bool foundWrapperConstructor = false;
+    bool foundWrapperWork = false;
+    bool foundWrapperStrobe = false;
+    bool foundWrapperAssign = false;
+    bool foundLargeWork = false;
+    bool foundLargeAssign = false;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        auto name = entry.path().filename().string();
+        if (name.rfind("cpphdl_optimized_inst_", 0) != 0 || entry.path().extension() != ".cpp") {
+            continue;
+        }
+        auto text = readFile(entry.path());
+        if (text.find("template cpphdl_opt_t0::wrapper();") != std::string::npos) {
+            foundWrapperConstructor = true;
+            expectContains(text, "#pragma GCC optimize (\"O0\", \"no-inline\")");
+            expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
+            expectNotContains(text, "template void cpphdl_opt_t0::_strobe();");
+            expectNotContains(text, "template void cpphdl_opt_t0::_assign();");
+        }
+        if (text.find("template void cpphdl_opt_t0::_work(bool);") != std::string::npos) {
+            foundWrapperWork = true;
+            expectNotContains(text, "template cpphdl_opt_t0::wrapper();");
+            expectNotContains(text, "template void cpphdl_opt_t0::_strobe();");
+            expectNotContains(text, "template void cpphdl_opt_t0::_assign();");
+            expectNotContains(text, "template void cpphdl_opt_t2::_work(bool);");
+        }
+        if (text.find("template void cpphdl_opt_t0::_strobe();") != std::string::npos) {
+            foundWrapperStrobe = true;
+            expectNotContains(text, "template cpphdl_opt_t0::wrapper();");
+            expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
+            expectNotContains(text, "template void cpphdl_opt_t0::_assign();");
+        }
+        if (text.find("template void cpphdl_opt_t0::_assign();") != std::string::npos) {
+            foundWrapperAssign = true;
+            expectNotContains(text, "template cpphdl_opt_t0::wrapper();");
+            expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
+            expectNotContains(text, "template void cpphdl_opt_t0::_strobe();");
+        }
+        if (text.find("template void cpphdl_opt_t1::_work(bool);") != std::string::npos) {
+            foundLargeWork = true;
+            expectNotContains(text, "template void cpphdl_opt_t1::_assign();");
+        }
+        if (text.find("template void cpphdl_opt_t1::_assign();") != std::string::npos) {
+            foundLargeAssign = true;
+            expectNotContains(text, "template void cpphdl_opt_t1::_work(bool);");
+        }
+    }
+    assert(foundWrapperConstructor);
+    assert(foundWrapperWork);
+    assert(foundWrapperStrobe);
+    assert(foundWrapperAssign);
+    assert(foundLargeWork);
+    assert(foundLargeAssign);
 }
 
 static void testSequentialPartialRegUpdateSeedsNextFromCurrent(const char* argv0)
@@ -9039,6 +9200,30 @@ endmodule
     expectNotContains(h, "req_comb_func()[0].aw.id");
 }
 
+static void testPackedTypeParameterArrayFieldUsesProjectedInput(const char* argv0)
+{
+    const std::string sv = R"(
+module packed_type_parameter_array_projection #(
+    parameter type resp_t = logic,
+    parameter type r_chan_t = logic,
+    parameter int unsigned PORTS = 2
+) (
+    input  resp_t   [PORTS-1:0] responses_i,
+    output r_chan_t [PORTS-1:0] channels_o
+);
+    for (genvar i = 0; i < PORTS; ++i)
+        assign channels_o[i] = responses_i[i].r;
+endmodule
+)";
+    const std::string moduleTraits =
+        "packed_type_parameter_array_projection\tinput_field.responses_i.r\n";
+    auto h = convertModule(argv0, "packed_type_parameter_array_projection", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "responses_i_in__field_r()[");
+    expectNotContains(h,
+        "cpphdl::unpack_value<resp_t>(cpphdl::pack_value<cpphdl::type_width<resp_t>()>((responses_i_in())[");
+}
+
 static void testProjectedIndexedChildInputIgnoresDecltypeGetter(const char* argv0)
 {
     const std::string sv = R"(
@@ -10093,7 +10278,8 @@ endmodule
     auto h = convertModule(argv0, "implicit_scalar_concat", sv, "");
     expectContains(h, "_LAZY_COMB(error_comb, logic<1>)");
     expectContains(h, "_LAZY_COMB(valid_comb, logic<1>)");
-    expectContains(h, "logic<22>(0)");
+    expectContains(h, "packed_o_comb = cat{logic<20>(");
+    expectContains(h, "logic<2>(cat{");
     expectContains(h, "<< 2");
     expectNotContains(h, "logic<84>");
 }
@@ -10137,6 +10323,7 @@ int main(int argc, char** argv)
     testImplicitNamedExternalChildInputBindsDemandedFields(argv[0]);
     testOptimizeRunnerNameFollowsMainFile(argv[0]);
     testOptimizeSeparatesUnitsByGeneratedDefinitionWeight(argv[0]);
+    testOptimizeIsolatesWrapperByChildDefinitionWeight(argv[0]);
     assert(argc >= 1);
     testSequentialPartialRegUpdateSeedsNextFromCurrent(argv[0]);
     testResolvedGenerateOutputBeatsInactiveSequentialBranch(argv[0]);
@@ -10398,6 +10585,7 @@ int main(int argc, char** argv)
     testPackedStructRegisterShiftPacksCurrentValue(argv[0]);
     testNestedArrayElementConditionalKeepsElementType(argv[0]);
     testIndexedStructInputUsesIndependentProjectedFieldPort(argv[0]);
+    testPackedTypeParameterArrayFieldUsesProjectedInput(argv[0]);
     testProjectedIndexedChildInputIgnoresDecltypeGetter(argv[0]);
     testExternalParameterizedChildBindsIndexedInputProjections(argv[0]);
     testParameterizedStructFieldAdaptsToPackedArrayChildPort(argv[0]);

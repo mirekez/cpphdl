@@ -2194,6 +2194,8 @@ int main(int argc, const char **argv)
     std::string json_output;
     std::string optimize_combs_root;
     bool optimize_combs_l1 = false;
+    std::string optimize_combs_collection_output;
+    std::vector<std::string> optimize_combs_collection_inputs;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2298,6 +2300,43 @@ int main(int argc, const char **argv)
             continue;
         }
 
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-collect") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_output = argv[++i];
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-collect=", 25) == 0) {
+            optimize_combs_collection_output = arg + 25;
+            if (optimize_combs_collection_output.empty()) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-load") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.emplace_back(argv[++i]);
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-load=", 22) == 0) {
+            std::string input = arg + 22;
+            if (input.empty()) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.push_back(std::move(input));
+            continue;
+        }
+
         if (!saw_double_dash && std::strcmp(arg, "--generated-dir") == 0) {
             if (i + 1 >= argc) {
                 llvm::errs() << "--generated-dir requires a directory argument\n";
@@ -2357,6 +2396,12 @@ int main(int argc, const char **argv)
 
     if (!secondary_clocks.empty() && primary_clocks.empty()) {
         llvm::errs() << "--secondary_clock requires --primary_clock\n";
+        return 1;
+    }
+    if (optimize_combs_root.empty() &&
+        (!optimize_combs_collection_output.empty() ||
+         !optimize_combs_collection_inputs.empty())) {
+        llvm::errs() << "--optimize-combs-collect/load requires --optimize-combs or --optimize-combs-l1\n";
         return 1;
     }
     if (!primary_clocks.empty()) {
@@ -2434,6 +2479,12 @@ int main(int argc, const char **argv)
     // implementations from the same generated umbrella header.
     cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
+    combsOptimizer.setCollectionOnly(!optimize_combs_collection_output.empty());
+    for (const auto& input : optimize_combs_collection_inputs) {
+        if (!combsOptimizer.loadCollection(input)) {
+            return 1;
+        }
+    }
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
     const bool trace_phases = std::getenv("CPPHDL_TRACE_PHASES") != nullptr;
@@ -2446,6 +2497,10 @@ int main(int argc, const char **argv)
     }
     if (ret != 0) {
         return ret;
+    }
+    if (!optimize_combs_collection_output.empty()) {
+        return combsOptimizer.saveCollection(optimize_combs_collection_output)
+            ? 0 : 1;
     }
     if (!optimize_combs_root.empty()) {
 #if defined(__GLIBC__)

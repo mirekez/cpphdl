@@ -39,6 +39,13 @@ public:
   // method body exactly once in dependency order.
   void setL1Scheduling(bool enabled);
 
+  // Collection-only invocations retain one bounded source hierarchy and can
+  // serialize it for a later optimizer process. Process isolation prevents
+  // Clang AST/PCH arenas from accumulating across very large projects.
+  void setCollectionOnly(bool enabled);
+  bool saveCollection(const std::string &path) const;
+  bool loadCollection(const std::string &path);
+
   // Generate the optimized API, internal state, and bounded comb/work C++
   // translation units in outputDirectory.  Returns false after printing a
   // precise graph/source diagnostic.

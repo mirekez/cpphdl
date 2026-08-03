@@ -12,6 +12,15 @@ trap 'rm -rf "$build_dir"' EXIT
     "$source_dir/DynamicCombRepeatSeed.cc" -- \
     -w -I"$source_dir" -I"$include_dir"
 
+# Frequently reused ordinary combs must remain repeatable. They stay as hidden
+# source-partition functions; duplicating definitions in the common header made
+# every generated translation unit optimize the same body without a speedup.
+if rg -q '\[\[gnu::always_inline\]\] inline void .*_optimized_comb_eval_' \
+    "$build_dir/DynamicCombRepeatRoot_optimized_combs_internal.h"; then
+    printf 'repeatable evaluator body was duplicated in the common header\n' >&2
+    exit 1
+fi
+
 objects=()
 for source in "$build_dir"/*.cpp; do
     object="${source%.cpp}.o"

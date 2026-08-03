@@ -123,11 +123,11 @@ def main() -> int:
             line = '#include "cpphdl_comb_optimized_generated.h"'
         context_lines.append(line)
     context_text = "#pragma once\n" + "\n".join(context_lines).strip() + "\n"
-    write_if_changed(collection_context, context_text)
 
     alias_lines = {
         name: f"using {name} = {rhs};" for name, rhs in aliases
     }
+    alias_names = [name for name, _ in aliases]
     alias_dependencies = {
         name: set(ALIAS_NAME_RE.findall(rhs)) for name, rhs in aliases
     }
@@ -151,6 +151,13 @@ def main() -> int:
             visit(target)
         return ordered
 
+    # Parse all concrete aliases once into the shared PCH. Every bounded AST
+    # process then uses the same compact names for cross-shard child types.
+    context_text += "\n".join(
+        alias_lines[name] for name in ordered_alias_closure(alias_names)
+    ) + "\n"
+    write_if_changed(collection_context, context_text)
+
     write_if_changed(
         reduced_externs,
         '#pragma once\n\n#include "cpphdl_comb_optimization_context.h"\n\n'
@@ -160,10 +167,9 @@ def main() -> int:
         )
         + "\n\nvoid cpphdl_optimized_root_work(cpphdl_opt_t0&, bool);\n"
           "void cpphdl_optimized_root_strobe(cpphdl_opt_t0&);\n"
-          "void cpphdl_optimized_root_assign(cpphdl_opt_t0&);\n",
+          "extern \"C\" void cpphdl_optimized_root_assign_abi(void*);\n",
     )
 
-    alias_names = [name for name, _ in aliases]
     alias_modules = {
         name: match.group(1) if (match := re.match(r"([A-Za-z_]\w*)", rhs)) else ""
         for name, rhs in aliases
@@ -210,9 +216,6 @@ def main() -> int:
     for index, targets in enumerate(groups):
         source_name = f"cpphdl_comb_collect_{index:03d}.cpp"
         collection_sources.append(source_name)
-        declarations = "\n".join(
-            alias_lines[name] for name in ordered_alias_closure(targets)
-        )
         markers = "\n".join(
             (
                 f"{name}* cpphdlCombsOpaque{index:03d}_{marker:03d} = nullptr;"
@@ -224,12 +227,14 @@ def main() -> int:
         write_if_changed(
             output / source_name,
             '#include "cpphdl_comb_optimization_context.h"\n\n'
-            + declarations + "\n\n" + markers + "\n",
+            + markers + "\n",
         )
     expected_sources = set(collection_sources)
     for stale in output.glob("cpphdl_comb_collect_*.cpp"):
         if stale.name not in expected_sources:
             stale.unlink()
+    for stale in output.glob("cpphdl_comb_aliases_*.h"):
+        stale.unlink()
     write_if_changed(
         collection_manifest,
         "\n".join(collection_sources + [seed.name]) + "\n",

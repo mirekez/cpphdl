@@ -83,6 +83,7 @@ else
         cp "$SUPPORT"/run_cpphdl_testharness_optimized* "$OUT"/
         cp "$SUPPORT/run_cpphdl_testharness_optimize_seed.cpp" "$OUT"/
         cp "$SUPPORT/prepare_optimize_combs.py" "$OUT"/
+        cp "$SUPPORT/run_optimize_combs.sh" "$OUT"/
         cp "$SUPPORT/run_optimize_combs_l1.sh" "$OUT"/
     fi
 fi
@@ -204,7 +205,10 @@ rename_cpp_global_collisions
             echo "missing cpphdl executable: $CPPHDL" >&2
             exit 2
         fi
-        python3 prepare_optimize_combs.py .
+        python3 prepare_optimize_combs.py . \
+            --collection-chunk-size "${CPPHDL_COMB_COLLECTION_CHUNK_SIZE:-64}" \
+            --collection-max-definition-bytes "${CPPHDL_COMB_COLLECTION_MAX_DEFINITION_BYTES:-4000000}" \
+            --collection-isolate-definition-bytes "${CPPHDL_COMB_COLLECTION_ISOLATE_DEFINITION_BYTES:-1000000000}"
         python3 - <<'PY'
 from pathlib import Path
 
@@ -213,13 +217,14 @@ for pattern in ("CpphdlOptimizedRoot_optimized_combs*", "cpphdl_opt_t0_optimized
         if path.is_file():
             path.unlink()
 PY
-        CPPHDL="$CPPHDL" bash run_optimize_combs_l1.sh .
+        CPPHDL="$CPPHDL" CPPHDL_COMB_OPTIMIZER_MODE="${CPPHDL_COMB_OPTIMIZER_MODE:-full}" \
+            bash run_optimize_combs.sh .
         python3 - <<'PY'
 from pathlib import Path
 
 # Keep the runner, narrow model bridges, and global comb schedule in separate
-# translation units. The hdlcpp specialization sources still own concrete
-# templates, while the L1 sources replace recursive work and comb dispatch.
+# translation units. A Make wildcard follows every chunk emitted by either comb
+# optimizer mode without baking the chunk count from one conversion into it.
 makefile = Path("Makefile.optimize")
 text = makefile.read_text()
 model_sources = [
@@ -231,13 +236,14 @@ model_sources = [
 ]
 comb_sources = sorted(Path(".").glob("cpphdl_opt_t0_optimized_combs*.cpp"))
 if not comb_sources:
-    raise SystemExit("cpphdl L1 optimizer generated no implementation sources")
+    raise SystemExit("cpphdl comb optimizer generated no implementation sources")
 model_objects = [f"build/opt/{Path(source).stem}.o" for source in model_sources]
-comb_objects = [f"build/opt/{source.stem}.o" for source in comb_sources]
-objects = " \\\n        ".join(model_objects + comb_objects)
+objects = " \\\n        ".join(model_objects)
 text = text.replace(
     "OBJS := ",
-    f"MODEL_OBJS := {objects}\nOBJS := $(MODEL_OBJS) ",
+    "COMB_SOURCES := $(sort $(wildcard cpphdl_opt_t0_optimized_combs*.cpp))\n"
+    "COMB_OBJS := $(patsubst %.cpp,build/opt/%.o,$(COMB_SOURCES))\n"
+    f"MODEL_OBJS := {objects} $(COMB_OBJS)\nOBJS := $(MODEL_OBJS) ",
     1,
 )
 
