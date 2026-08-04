@@ -1684,16 +1684,25 @@
                                    bool allowMissingField = false)
     {
         aggregateType = unwrapRegType(trim(std::move(aggregateType)));
-        std::vector<std::string> dimensions;
+        struct ArrayDimension {
+            std::string count;
+            std::string packed;
+        };
+        std::vector<ArrayDimension> dimensions;
         for (;;) {
             auto args = templateArgsFor(aggregateType, "array");
-            if (args.empty()) {
-                args = templateArgsFor(aggregateType, "std::array");
+            if (args.size() >= 2) {
+                const bool legacyTypeFirst = cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]);
+                dimensions.push_back({trim(args[legacyTypeFirst ? 1 : 0]),
+                                      args.size() >= 3 ? trim(args[2]) : std::string{}});
+                aggregateType = unwrapRegType(trim(args[legacyTypeFirst ? 0 : 1]));
+                continue;
             }
+            args = templateArgsFor(aggregateType, "std::array");
             if (args.size() < 2) {
                 break;
             }
-            dimensions.push_back(trim(args[1]));
+            dimensions.push_back({trim(args[1]), {}});
             aggregateType = unwrapRegType(trim(args[0]));
         }
         if (aggregateType.empty() || field.empty()) {
@@ -1720,7 +1729,8 @@
               "else { return logic<1>{}; } }.template operator()<" + aggregateType + ">())>"
             : "std::remove_cvref_t<decltype(std::declval<" + aggregateType + ">()." + field + ")>";
         for (auto it = dimensions.rbegin(); it != dimensions.rend(); ++it) {
-            type = "array<" + type + "," + *it + ">";
+            type = "array<" + it->count + "," + type +
+                   (it->packed.empty() ? std::string{} : "," + it->packed) + ">";
         }
         return type;
     }
@@ -2953,6 +2963,14 @@
                     pendingDemand.insert(base);
                 }
             }
+            // A selected packed-array member is rewritten to its projected getter
+            // while expressions are parsed. Keep the pending source alive until the
+            // projected comb can clone and isolate the source procedural logic.
+            for (const auto& field : m.requestedCombFields) {
+                if (m.pendingCombByBase.count(field.first)) {
+                    pendingDemand.insert(field.first);
+                }
+            }
             auto scanPendingDemand = [&](const std::string& text) {
                 for (const auto& item : m.pendingCombByBase) {
                     if (!isInterfacePortBase(item.first) &&
@@ -3671,38 +3689,75 @@
 		                    for (size_t methodIndex = 0; methodIndex < m.methods.size(); ++methodIndex) {
 		                        const auto& method = m.methods[methodIndex];
 		                        if (generatedFieldMethods.count(methodIndex)) {
+		                            if (traceFieldScans) {
+		                                std::cerr << "HDLCPP_FIELD_FAST module=" << m.name
+		                                          << " method=" << method.name
+		                                          << " lines=" << method.body.size() << "\n";
+		                            }
 		                            // Generated field methods can expose recursive projections
 		                            // such as `a_comb_func().tag`, but most large methods only
-		                            // repeat already-known accesses. Detect new direct call paths
+		                            // repeat already-known accesses. Detect new projection paths
 		                            // in one linear pass before invoking the full demand scanner.
 		                            bool hasNewDemand = false;
 		                            for (const auto& line : method.body) {
+		                                std::set<std::string> scannedCalls;
 		                                for (size_t call = 0; (call = line.find("()", call)) != std::string::npos;) {
 		                                    size_t nameEnd = call;
 		                                    size_t nameBegin = nameEnd;
 		                                    while (nameBegin > 0 && hdlcpp::isIdentifierChar(line[nameBegin - 1])) {
 		                                        --nameBegin;
 		                                    }
-		                                    auto source = combCallBases.find(
-		                                        line.substr(nameBegin, nameEnd - nameBegin));
-		                                    size_t fieldBegin = call + 2;
-		                                    if (source != combCallBases.end() && fieldBegin < line.size() &&
-		                                        line[fieldBegin] == '.') {
-		                                        ++fieldBegin;
-		                                        size_t fieldEnd = fieldBegin;
-		                                        while (fieldEnd < line.size() &&
-		                                               (hdlcpp::isIdentifierChar(line[fieldEnd]) ||
-		                                                line[fieldEnd] == '.')) {
-		                                            ++fieldEnd;
+		                                    auto callName = line.substr(nameBegin, nameEnd - nameBegin);
+		                                    auto source = combCallBases.find(callName);
+		                                    if (source != combCallBases.end() && scannedCalls.insert(callName).second) {
+		                                        auto accesses = hdlcpp::projectedMemberAccesses(
+		                                            line, callName + "()");
+		                                        if (traceFieldScans && !accesses.empty()) {
+		                                            std::cerr << "HDLCPP_FIELD_FAST_CALL module=" << m.name
+		                                                      << " method=" << method.name
+		                                                      << " source=" << source->second
+		                                                      << " accesses=" << accesses.size()
+		                                                      << " text=" << line << "\n";
 		                                        }
-		                                        auto field = line.substr(fieldBegin, fieldEnd - fieldBegin);
-		                                        if (!field.empty() && field != "bits" && field != "get" &&
-		                                            !cachedFieldDemand.count({source->second, field})) {
-		                                            hasNewDemand = true;
+		                                        for (const auto& access : accesses) {
+		                                            if (access.field != "bits" && access.field != "get" &&
+		                                                access.field != "_next" &&
+		                                                access.field.rfind("_next.", 0) != 0 &&
+		                                                !cachedFieldDemand.count({source->second, access.field})) {
+		                                                hasNewDemand = true;
+		                                                break;
+		                                            }
+		                                        }
+		                                        if (hasNewDemand) {
 		                                            break;
 		                                        }
 		                                    }
 		                                    call += 2;
+		                                }
+		                                for (size_t pos = 0; !hasNewDemand && pos < line.size();) {
+		                                    if (!hdlcpp::isIdentifierChar(line[pos]) ||
+		                                        std::isdigit(static_cast<unsigned char>(line[pos]))) {
+		                                        ++pos;
+		                                        continue;
+		                                    }
+		                                    const auto begin = pos++;
+		                                    while (pos < line.size() && hdlcpp::isIdentifierChar(line[pos])) {
+		                                        ++pos;
+		                                    }
+		                                    auto direct = candidateBases.find(line.substr(begin, pos - begin));
+		                                    if (direct == candidateBases.end()) {
+		                                        continue;
+		                                    }
+		                                    for (const auto& access : hdlcpp::projectedMemberAccesses(
+		                                             line, direct->first)) {
+		                                        if (access.field != "bits" && access.field != "get" &&
+		                                            access.field != "_next" &&
+		                                            access.field.rfind("_next.", 0) != 0 &&
+		                                            !cachedFieldDemand.count({direct->first, access.field})) {
+		                                            hasNewDemand = true;
+		                                            break;
+		                                        }
+		                                    }
 		                                }
 		                                if (hasNewDemand) {
 		                                    break;
@@ -3969,18 +4024,23 @@
 	                                sourceAggregateType = unwrapRegType(typeIt->second);
 	                            }
 	                        }
-	                        auto sourceArrayArgs = templateArgsFor(sourceAggregateType, "array");
-	                        if (sourceArrayArgs.empty()) {
-	                            sourceArrayArgs = templateArgsFor(sourceAggregateType, "std::array");
-	                        }
 	                        auto arrayArgsForProjection = [&](std::string sourceType) {
 	                            sourceType = resolveLocalAliasType(trim(std::move(sourceType)));
 	                            auto args = templateArgsFor(sourceType, "array");
-	                            if (args.empty()) {
-	                                args = templateArgsFor(sourceType, "std::array");
+	                            if (args.size() >= 2) {
+	                                const bool legacyTypeFirst =
+	                                    cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]);
+	                                std::vector<std::string> normalized{
+	                                    trim(args[legacyTypeFirst ? 0 : 1]),
+	                                    trim(args[legacyTypeFirst ? 1 : 0])};
+	                                if (args.size() >= 3) {
+	                                    normalized.push_back(trim(args[2]));
+	                                }
+	                                return normalized;
 	                            }
-	                            return args;
+	                            return templateArgsFor(sourceType, "std::array");
 	                        };
+	                        auto sourceArrayArgs = arrayArgsForProjection(sourceAggregateType);
 	                        auto sourceTypeAfterIndices = [&](std::string sourceType,
 	                                                          const std::string& targetExpr,
 	                                                          const std::string& targetBase) {
@@ -4089,13 +4149,17 @@
 	                        auto appendProjectedArrayFieldMap = [&](std::vector<std::string>& lines,
 	                                                                const std::string& projectionSourceType,
 	                                                                const std::string& aggregate,
-	                                                                const std::string& targetExpr) {
+	                                                                const std::string& targetExpr,
+	                                                                bool preserveAddressableSource = false) {
 	                            const auto serial = projectedArraySerial++;
 	                            const auto suffix = std::to_string(serial);
 	                            const auto sourceRoot = "__cpphdl_projected_source_" + suffix;
 	                            lines.push_back("{");
 	                            auto aggregateText = trim(aggregate);
-	                            if (!aggregateText.empty() && aggregateText.front() == '{') {
+	                            if (preserveAddressableSource) {
+	                                lines.push_back("auto&& " + sourceRoot + " = " + aggregateText + ";");
+	                            }
+	                            else if (!aggregateText.empty() && aggregateText.front() == '{') {
 	                                lines.push_back(projectionSourceType + " " + sourceRoot + " = " + aggregateText + ";");
 	                            }
 	                            else {
@@ -4119,18 +4183,26 @@
 	                                    return;
 	                                }
 	                                const auto index = "__cpphdl_i_" + suffix + "_" + std::to_string(depth);
-	                                const auto element = "__cpphdl_projected_element_" + suffix + "_" + std::to_string(depth);
 	                                const auto elementType = trim(args[0]);
 	                                lines.push_back("for (std::size_t " + index + " = 0; " + index +
 	                                                " < (std::size_t)(" + args[1] + "); ++" + index + ") {");
-	                                // Packed CppHDL arrays return an element proxy. Reconstruct the
-	                                // conceptual SV element before either descending another array
-	                                // dimension or selecting a packed-struct field from that element.
-	                                lines.push_back(elementType + " " + element + " = cpphdl::unpack_value<" +
-	                                                elementType + ">(cpphdl::pack_value<cpphdl::type_width<" +
-	                                                elementType + ">()>(" + sourceExpr + "[" + index + "]));");
-	                                appendLevel(elementType, element,
-	                                            destinationExpr + "[" + index + "]", depth + 1);
+	                                const bool packedElementProxy =
+	                                    args.size() >= 3 && trim(args[2]) == "true";
+	                                if (packedElementProxy) {
+	                                    // Packed CppHDL arrays return an element proxy. Reconstruct
+	                                    // the conceptual SV element before selecting its fields.
+	                                    const auto element = "__cpphdl_projected_element_" + suffix +
+	                                        "_" + std::to_string(depth);
+	                                    lines.push_back(elementType + " " + element + " = cpphdl::unpack_value<" +
+	                                                    elementType + ">(cpphdl::pack_value<cpphdl::type_width<" +
+	                                                    elementType + ">()>(" + sourceExpr + "[" + index + "]));");
+	                                    appendLevel(elementType, element,
+	                                                destinationExpr + "[" + index + "]", depth + 1);
+	                                }
+	                                else {
+	                                    appendLevel(elementType, sourceExpr + "[" + index + "]",
+	                                                destinationExpr + "[" + index + "]", depth + 1);
+	                                }
 	                                lines.push_back("}");
 	                            };
 	                            appendLevel(projectionSourceType, sourceRoot, targetExpr, 0);
@@ -4141,7 +4213,7 @@
 	                            methodBody.push_back(storageName + " = " + typeDefaultExpr() + ";");
 	                            if (sourceArrayArgs.size() >= 2) {
 	                                appendProjectedArrayFieldMap(methodBody, sourceAggregateType,
-	                                                             directStorageRhs, storageName);
+	                                                             directStorageRhs, storageName, true);
 	                            }
 	                            else {
 	                                auto projected = projectedChildOutputPortCall(m, directStorageRhs, field);

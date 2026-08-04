@@ -5372,7 +5372,7 @@ endmodule
     auto h = convertModule(argv0, "projected_array_whole_assignment", sv, "");
     expectContains(h, "__cpphdl_projected_source_0 = cpphdl::unpack_value<array<2,item_t>>");
     expectContains(h, ">(items_q));");
-    expectContains(h, "items_d_valid_comb[__cpphdl_i_0_0] = __cpphdl_projected_element_0_0.valid;");
+    expectContains(h, "items_d_valid_comb[__cpphdl_i_0_0] = __cpphdl_projected_source_0[__cpphdl_i_0_0].valid;");
     expectNotContains(h, "(items_q).valid");
 }
 
@@ -5658,8 +5658,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generated_child_nested_output", sv, "");
-    expectContains(h, "cpphdl::unpack_value<nested_output_pkg::req_t>");
-    expectContains(h, "__cpphdl_projected_element_");
+    expectContains(h, "cpphdl::unpack_value<array<2,nested_output_pkg::req_t>>");
+    expectNotContains(h, "__cpphdl_projected_element_");
     expectContains(h, ".aw.id;");
     expectNotContains(h, "data_o_out()).aw");
     expectNotContains(h, "data_o_out()).valid");
@@ -7019,8 +7019,8 @@ endmodule
 
     auto h = convertModule(argv0, "packed_type_parameter_array_comb_projection", sv, "");
     expectContains(h, "chans_comb_func()");
-    expectContains(h, "selected_last_comb = (cpphdl::unpack_value<cpphdl::value_type_for_ref_t<decltype(chans_comb_func()[");
-    expectNotContains(h, "selected_last_comb = (chans_comb_func()");
+    expectContains(h, "selected_last_comb = chans_last_comb_func()[");
+    expectNotContains(h, "selected_last_comb = (cpphdl::unpack_value<");
 }
 
 static void testPackedTypeParameterRegisterProjectionMaterializesSelectedElement(const char* argv0)
@@ -9205,7 +9205,8 @@ endmodule
     expectContains(h, "req_i_in__field_aw_id()");
     expectContains(h, "array<2,std::remove_cvref_t<decltype(std::declval<req_t>().aw.id)>> req_aw_id_comb;");
     expectContains(h, "req_aw_id_comb[i] = source_i_in__field_aw_id()[");
-    expectContains(h, "child_i.req_i_in__field_aw_id = _ASSIGN_COMB(req_aw_id_comb_func()[");
+    expectContains(h, "child_i.req_i_in__field_aw_id = _ASSIGN(");
+    expectContains(h, "req_aw_id_comb_func()[");
     expectNotContains(h, "req_comb_func()[0].aw.id");
 }
 
@@ -9660,6 +9661,115 @@ endmodule
     expectContains(h, "child_i.requests_i_in__field_ready = _ASSIGN(array<2,");
     expectContains(h, "requests_ready_comb_func()");
     expectNotContains(h, "child_i.requests_i_in__field_ready = _ASSIGN(array<std::remove_cvref_t");
+}
+
+static void testInternalStructArrayAliasProjectsSelectedField(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+  logic       valid;
+  logic [7:0] data;
+} alias_response_t;
+
+typedef struct packed {
+  logic selected_valid;
+} alias_result_t;
+
+module internal_struct_array_alias_projection (
+    input  alias_response_t responses_i [1:0],
+    output alias_result_t   result_o
+);
+  alias_response_t responses [1:0];
+  always_comb responses = responses_i;
+  assign result_o.selected_valid = responses[0].valid;
+endmodule
+)sv";
+
+    const std::string moduleTraits =
+        "internal_struct_array_alias_projection\toutput_field.result_o.selected_valid\n";
+    auto h = convertModule(argv0, "internal_struct_array_alias_projection", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "responses_valid_comb_func()");
+    expectContains(h, "array<2,std::remove_cvref_t<decltype(std::declval<alias_response_t>().valid)>>");
+    expectNotContains(h, "responses_comb_func()[0].valid");
+}
+
+static void testPackedStructArrayChildOutputProjectsSelectedField(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+  logic       valid;
+  logic [7:0] data;
+} packed_alias_response_t;
+
+typedef struct packed {
+  logic selected_valid;
+} packed_alias_result_t;
+
+module packed_array_source (
+    output packed_alias_response_t [1:0] responses_o
+);
+  assign responses_o = '0;
+endmodule
+
+module packed_struct_array_child_output_projection (
+    output packed_alias_result_t result_o
+);
+  packed_alias_response_t [1:0] responses;
+  packed_array_source source_i(.responses_o(responses));
+  assign result_o.selected_valid = responses[0].valid;
+endmodule
+)sv";
+
+    const std::string moduleTraits =
+        "packed_array_source\toutput_field.responses_o.valid\n"
+        "packed_struct_array_child_output_projection\toutput_field.result_o.selected_valid\n";
+    auto h = convertModule(argv0, "packed_struct_array_child_output_projection", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "responses_valid_comb_func()");
+    expectContains(h, "source_i.responses_o_out__field_valid()");
+    expectNotContains(h, "responses_comb_func()[0].valid");
+}
+
+static void testWholeStructAliasPropagatesIndexedSourceFieldDemand(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+  logic       valid;
+  logic [7:0] data;
+} transitive_response_t;
+
+module transitive_array_source (
+    output transitive_response_t responses_o [2]
+);
+  assign responses_o = '0;
+endmodule
+
+module transitive_field_sink (
+    input transitive_response_t response_i
+);
+  logic sink;
+  assign sink = response_i.valid;
+endmodule
+
+module whole_struct_alias_field_projection;
+  transitive_response_t responses [2];
+  transitive_response_t selected;
+  transitive_array_source source_i(.responses_o(responses));
+  assign selected = responses[0];
+  transitive_field_sink sink_i(.response_i(selected));
+endmodule
+)sv";
+
+    const std::string moduleTraits =
+        "transitive_array_source\toutput_field.responses_o.valid\n"
+        "transitive_field_sink\tinput_field.response_i.valid\n";
+    auto h = convertModule(argv0, "whole_struct_alias_field_projection", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "responses_valid_comb_func()");
+    expectContains(h, "source_i.responses_o_out__field_valid()");
+    expectContains(h, "selected_valid_comb_func()");
+    expectNotContains(h, "selected_valid_comb = responses_comb_func()[");
 }
 
 static void testModuleMemberNestedArrayTypeIsNormalizedOnce(const char* argv0)
@@ -10733,6 +10843,9 @@ int main(int argc, char** argv)
     testWholeAggregateInputForwardingUsesProjectedFieldPort(argv[0]);
     testArrayOutputForwardingUsesProjectedInputFieldPort(argv[0]);
     testProjectedArrayChildBindingKeepsCpphdlTemplateOrder(argv[0]);
+    testInternalStructArrayAliasProjectsSelectedField(argv[0]);
+    testPackedStructArrayChildOutputProjectsSelectedField(argv[0]);
+    testWholeStructAliasPropagatesIndexedSourceFieldDemand(argv[0]);
     testModuleMemberNestedArrayTypeIsNormalizedOnce(argv[0]);
     testLowercaseArrayExtentKeepsCpphdlTemplateOrder(argv[0]);
     testInterfaceNestedPackedAndUnpackedArrayOrder(argv[0]);

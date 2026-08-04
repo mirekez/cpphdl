@@ -3858,6 +3858,49 @@
                 }
             }
         }
+        if (debug && mod) {
+            std::cerr << "HDLCPP_ARRAY_MEMBER base=" << selectedBase
+                      << " variable=" << mod->varNames.count(selectedBase)
+                      << " method=" << mod->combMethodByBase.count(selectedBase)
+                      << " pending=" << mod->pendingCombByBase.count(selectedBase)
+                      << " comb=" << mod->combAssignedVars.count(selectedBase)
+                      << " assign=" << mod->assignDrivenVars.count(selectedBase) << "\n";
+        }
+        // Register selected internal fields from the SV AST before packed proxy
+        // materialization hides the source behind pack/unpack calls. The emit pass
+        // later extracts this field into its own on-demand comb method.
+        auto selectedStorageType = mod && mod->types.count(selectedBase)
+            ? unwrapRegType(mod->types.at(selectedBase)) : std::string{};
+        const bool selectedStorageIsMemory = !selectedStorageType.empty() &&
+            scheduledMemoryType(selectedStorageType);
+        if (mod && !selectedBase.empty() && !selectedStorageIsMemory &&
+            (mod->varNames.count(selectedBase) ||
+             mod->combMethodByBase.count(selectedBase) ||
+             mod->pendingCombByBase.count(selectedBase) ||
+             mod->combAssignedVars.count(selectedBase) ||
+             mod->assignDrivenVars.count(selectedBase))) {
+            auto baseMethod = selectedBase + "_comb_func";
+            if (auto method = mod->combMethodByBase.find(selectedBase);
+                method != mod->combMethodByBase.end() && method->second < mod->methods.size()) {
+                baseMethod = mod->methods[method->second].name;
+            }
+            auto base = emitMemberBaseExpr(selected);
+            auto accesses = hdlcpp::projectedMemberAccesses(base + "." + field,
+                                                            baseMethod + "()");
+            if (accesses.empty()) {
+                accesses = hdlcpp::projectedMemberAccesses(base + "." + field,
+                                                           selectedBase);
+            }
+            if (accesses.size() == 1 && accesses.front().field == field) {
+                auto sourceType = mod->types.find(selectedBase);
+                if (sourceType == mod->types.end() ||
+                    !knownAggregateRejectsFieldPath(*mod, sourceType->second, field)) {
+                    mod->requestedCombFields.insert({selectedBase, field});
+                    return selectedBase + "_" + hdlcpp::projectedFieldIdentifier(field) +
+                        "_comb_func()" + accesses.front().indices;
+                }
+            }
+        }
         if (mod && !selectedBase.empty()) {
             auto typeIt = mod->types.find(selectedBase);
             if (typeIt != mod->types.end() && scheduledMemoryType(typeIt->second) &&
