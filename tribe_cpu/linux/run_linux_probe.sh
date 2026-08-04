@@ -3,7 +3,7 @@ set -euo pipefail
 ulimit -s unlimited 2>/dev/null || true
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe/linux}"
+LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe_cpu/linux}"
 KERNEL_IMAGE="${KERNEL_IMAGE:-${LINUX_DIR}/Image}"
 KERNEL_ELF="${KERNEL_ELF:-${LINUX_DIR}/vmlinux}"
 VMLINUX_ARCHIVE="${VMLINUX_ARCHIVE:-${LINUX_DIR}/vmlinux.tgz}"
@@ -136,9 +136,9 @@ fi
 TRIBE_BIN="${TRIBE_BIN:-${ROOT_DIR}/build/tribe_linux/${tribe_binary_name}}"
 TRIBE_LINUX_CPU_CORES=1
 if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
-    TRIBE_LINUX_CPU_CORES="$(awk '$2 == "CPUS_PER_L2_CACHE" { print $3; exit }' "${ROOT_DIR}/tribe/Config.h")"
+    TRIBE_LINUX_CPU_CORES="$(awk '$2 == "CPUS_PER_L2_CACHE" { print $3; exit }' "${ROOT_DIR}/tribe_cpu/Config.h")"
     if [[ ! "${TRIBE_LINUX_CPU_CORES}" =~ ^[1-9][0-9]*$ ]]; then
-        echo "can't read CPUS_PER_L2_CACHE from tribe/Config.h" >&2
+        echo "can't read CPUS_PER_L2_CACHE from tribe_cpu/Config.h" >&2
         exit 1
     fi
 fi
@@ -381,7 +381,7 @@ fi
 newer_tribe_header=""
 newer_cpphdl_header=""
 if [[ -x "${TRIBE_BIN}" ]]; then
-    newer_tribe_header="$(find "${ROOT_DIR}/tribe" \
+    newer_tribe_header="$(find "${ROOT_DIR}/tribe_cpu" \
         -path "${LINUX_DIR}" -prune -o \
         -name '*.h' -newer "${TRIBE_BIN}" -print -quit)"
     newer_cpphdl_header="$(find "${ROOT_DIR}/include" \
@@ -389,7 +389,7 @@ if [[ -x "${TRIBE_BIN}" ]]; then
 fi
 TRIBE_BIN_CONFIG="${TRIBE_BIN}.config"
 TRIBE_COMPILE_CONFIG="TRIBE_RAM_BYTES=${TRIBE_RAM_BYTES} TRIBE_IO_BYTES=${TRIBE_IO_BYTES} L2_AXI_WIDTH=${TRIBE_LINUX_BUS_WIDTH} MULTICORE=${TRIBE_LINUX_MULTICORE} TRIBE_CLINT_TICK_DIV=${TRIBE_CLINT_TICK_DIV}"
-if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" ||
+if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe_cpu/main.cpp" -nt "${TRIBE_BIN}" ||
       -n "${newer_tribe_header}" || -n "${newer_cpphdl_header}" ||
       ! -f "${TRIBE_BIN_CONFIG}" || "$(cat "${TRIBE_BIN_CONFIG}")" != "${TRIBE_COMPILE_CONFIG}" ]]; then
     mkdir -p "$(dirname "${TRIBE_BIN}")"
@@ -405,15 +405,15 @@ if [[ ! -x "${TRIBE_BIN}" || "${ROOT_DIR}/tribe/main.cpp" -nt "${TRIBE_BIN}" ||
     if [[ "${TRIBE_LINUX_MULTICORE}" == "1" ]]; then
         TRIBE_COMPILE_DEFINITIONS+=(-DMULTICORE)
     fi
-    "${CXX_CMD[@]}" "${ROOT_DIR}/tribe/main.cpp" \
+    "${CXX_CMD[@]}" "${ROOT_DIR}/tribe_cpu/main.cpp" \
         -std=c++26 -O3 -g ${CPPHDL_HOST_OPT_FLAGS:-} -fno-strict-aliasing \
         -Wno-unknown-warning-option -Wno-deprecated-missing-comma-variadic-parameter \
         -I"${ROOT_DIR}/include" \
-        -I"${ROOT_DIR}/tribe" \
-        -I"${ROOT_DIR}/tribe/common" \
-        -I"${ROOT_DIR}/tribe/spec" \
-        -I"${ROOT_DIR}/tribe/cache" \
-        -I"${ROOT_DIR}/tribe/devices" \
+        -I"${ROOT_DIR}/tribe_cpu" \
+        -I"${ROOT_DIR}/tribe_cpu/common" \
+        -I"${ROOT_DIR}/tribe_cpu/spec" \
+        -I"${ROOT_DIR}/tribe_cpu/cache" \
+        -I"${ROOT_DIR}/tribe_cpu/devices" \
         -I"${ROOT_DIR}/examples/axi" \
         "${TRIBE_COMPILE_DEFINITIONS[@]}" \
         -o "${TRIBE_BIN_TMP}" \

@@ -563,10 +563,10 @@ static bool generate_sv()
     cmd += shell_quote(build_root / "cpphdl");
     cmd += " " + shell_quote(std::filesystem::path(__FILE__));
     cmd += " -I " + shell_quote(source_root / "include");
-    cmd += " -I " + shell_quote(source_root / "tribe");
-    cmd += " -I " + shell_quote(source_root / "tribe" / "common");
-    cmd += " -I " + shell_quote(source_root / "tribe" / "devices");
-    cmd += " -I " + shell_quote(source_root / "tribe" / "verif");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu" / "common");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu" / "devices");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu" / "verif");
     if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
         cmd += " ";
         cmd += toolchain_args;
@@ -594,9 +594,9 @@ int main(int argc, char** argv)
             ok &= VerilatorCompileInExactFolder(__FILE__, "EthGigMac", "EthGigMacChain",
                 {"Predef_pkg", "EthGigPHY", "EthGigPCS", "EthGigMAC"},
                 {(source_root / "include").string(),
-                 (source_root / "tribe" / "common").string(),
-                 (source_root / "tribe" / "devices").string(),
-                 (source_root / "tribe" / "verif").string()},
+                 (source_root / "tribe_cpu" / "common").string(),
+                 (source_root / "tribe_cpu" / "devices").string(),
+                 (source_root / "tribe_cpu" / "verif").string()},
                 128);
             ok &= std::system("EthGigMac/obj_dir/VEthGigMacChain") == 0;
         }

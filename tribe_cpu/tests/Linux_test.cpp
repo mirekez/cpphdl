@@ -23,7 +23,7 @@ static std::filesystem::path source_root_dir()
 
 static std::filesystem::path linux_source_dir()
 {
-    return source_root_dir() / "tribe" / "linux";
+    return source_root_dir() / "tribe_cpu" / "linux";
 }
 
 static std::filesystem::path linux_work_dir()

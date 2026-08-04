@@ -826,16 +826,16 @@ public:
 
     std::string command;
     command += shell_quote_path(cpphdl);
-    command += " " + shell_quote_path(source_root / "tribe" / "SoC" / "System.cpp");
+    command += " " + shell_quote_path(source_root / "tribe_cpu" / "SoC" / "System.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
     command += " -I " + shell_quote_path(source_root / "include");
-    command += " -I " + shell_quote_path(source_root / "tribe");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "common");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "spec");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "cache");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "devices");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "common");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "spec");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "cache");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "devices");
     if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
         command += " ";
         command += toolchain_args;
@@ -911,11 +911,11 @@ int main(int argc, char** argv)
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
                 "Tribe", "TribeTest", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),
-                    (source_root / "tribe").string(),
-                    (source_root / "tribe" / "common").string(),
-                    (source_root / "tribe" / "spec").string(),
-                    (source_root / "tribe" / "cache").string(),
-                    (source_root / "tribe" / "devices").string()});
+                    (source_root / "tribe_cpu").string(),
+                    (source_root / "tribe_cpu" / "common").string(),
+                    (source_root / "tribe_cpu" / "spec").string(),
+                    (source_root / "tribe_cpu" / "cache").string(),
+                    (source_root / "tribe_cpu" / "devices").string()});
         }
         std::string verilator_run = "System/obj_dir/VSystem";
         if (debug) verilator_run += " --debug";

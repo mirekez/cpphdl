@@ -1675,7 +1675,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 
     std::string command;
     command += shell_quote_path(cpphdl);
-    command += " " + shell_quote_path(source_root / "tribe" / "main.cpp");
+    command += " " + shell_quote_path(source_root / "tribe_cpu" / "main.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
@@ -1683,9 +1683,9 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
     command += " -DMULTICORE";
 #endif
     command += " -I " + shell_quote_path(source_root / "include");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "common");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "spec");
-    command += " -I " + shell_quote_path(source_root / "tribe" / "devices");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "common");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "spec");
+    command += " -I " + shell_quote_path(source_root / "tribe_cpu" / "devices");
     if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
         command += " ";
         command += toolchain_args;
@@ -1698,7 +1698,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
     namespace fs = std::filesystem;
 
     // CTest gives every executable a private work directory. Do not chdir back
-    // to build/tribe/tests there, or parallel tests overwrite each other's ELF,
+    // to build/tribe_cpu/tests there, or parallel tests overwrite each other's ELF,
     // checkpoint, log, and Verilator generated artifacts.
     if (std::getenv("TRIBE_KEEP_WORKDIR")) {
         return;
@@ -1995,11 +1995,11 @@ int main (int argc, char** argv)
 	                  "Writeback",
 	                  "WritebackMem"}, {
                           (source_root / "include").string(),
-                          (source_root / "tribe").string(),
-                          (source_root / "tribe" / "common").string(),
-                          (source_root / "tribe" / "spec").string(),
-                          (source_root / "tribe" / "cache").string(),
-                          (source_root / "tribe" / "devices").string()},
+                          (source_root / "tribe_cpu").string(),
+                          (source_root / "tribe_cpu" / "common").string(),
+                          (source_root / "tribe_cpu" / "spec").string(),
+                          (source_root / "tribe_cpu" / "cache").string(),
+                          (source_root / "tribe_cpu" / "devices").string()},
                           TEST_TRIBE_CPU_CORES);
         }
         std::cout << "Executing tests... ===========================================================================\n";

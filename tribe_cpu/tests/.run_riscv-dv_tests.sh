@@ -33,7 +33,7 @@ RISCV_DV_PYTHON_DEPS=(
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
-TESTLIST="${ROOT_DIR}/tribe/tests/riscv_dv_tribe_testlist.yaml"
+TESTLIST="${ROOT_DIR}/tribe_cpu/tests/riscv_dv_tribe_testlist.yaml"
 
 clean_verilator_obj_dirs() {
     for width in 256 128 64; do

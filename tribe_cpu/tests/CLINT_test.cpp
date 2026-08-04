@@ -497,8 +497,8 @@ int main(int argc, char** argv)
         ok &= VerilatorCompileInExactFolder(__FILE__, "CLINT", "CLINTTest",
             {"Predef_pkg", "CLINT"},
             {(source_root / "include").string(),
-             (source_root / "tribe" / "common").string(),
-             (source_root / "tribe" / "devices").string()},
+             (source_root / "tribe_cpu" / "common").string(),
+             (source_root / "tribe_cpu" / "devices").string()},
             16, 4, 32);
         ok &= std::system("CLINT/obj_dir/VCLINTTest") == 0;
         ok &= run_clint_elf_verilator(debug);

@@ -2331,12 +2331,12 @@ struct CombsOptimizer::Impl {
     CombPartition partition = buildPartition(1);
     if (requestedThreads > 1 && schedule.size() > requestedThreads) {
       const size_t maximumStages = std::min<size_t>(8, schedule.size());
-      // A barrier executes once per simulated cycle.  On the large generated
-      // models this costs more than another complete comb traversal, so only
-      // accept an additional stage when it removes more than one traversal of
-      // critical work.  This normally preserves a single dispatch/join while
-      // retaining staged scheduling for unusually parallel, expensive DAGs.
-      const uint64_t barrierPenalty = cumulativeWeights.back();
+      // A barrier executes once per simulated cycle and is expensive on large
+      // generated models.  Require every extra stage to remove at least half a
+      // traversal from the estimated critical path.  Rocket does not meet this
+      // threshold, while an unusually parallel DAG can still select stages.
+      const uint64_t barrierPenalty =
+          std::max<uint64_t>(1, cumulativeWeights.back() / 2);
       uint64_t bestScore = partition.estimatedCost;
       for (size_t stageCount = 2; stageCount <= maximumStages; ++stageCount) {
         CombPartition candidate = buildPartition(stageCount);
@@ -2842,7 +2842,7 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
     source << "#include \"" << shortRoot << "_optimized_combs_internal.h\"\n"
            << "#include \"" << shortRoot << "_optimized_combs.h\"\n\n"
-           << "#include <array>\n#include <unordered_map>\n#include <vector>\n"
+           << "#include <array>\n#include <cstdlib>\n#include <unordered_map>\n#include <vector>\n"
            << "#if defined(__linux__)\n#include <pthread.h>\n#include <sched.h>\n#endif\n\n"
            << "namespace {\nthread_local std::unordered_map<" << shortRoot
            << "*, " << shortRoot << "_optimized_combs_state> " << shortRoot
@@ -2970,8 +2970,18 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
       source << "    }\n  }\n\n"
              << R"CPP(  void pin_caller() {
 #if defined(__linux__)
+    if (std::getenv("CPPHDL_DISABLE_THREAD_AFFINITY") != nullptr) {
+      return;
+    }
     if (pthread_getaffinity_np(pthread_self(), sizeof(original_affinity_),
                                &original_affinity_) != 0) {
+      return;
+    }
+    std::size_t allowed_cpus = 0;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+      allowed_cpus += CPU_ISSET(cpu, &original_affinity_) ? 1 : 0;
+    }
+    if (allowed_cpus < lane_count) {
       return;
     }
     caller_cpu_ = sched_getcpu();
@@ -3025,6 +3035,8 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
   }
 
 )CPP"
+             << "  static constexpr std::size_t lane_count = "
+             << combThreadCount << ";\n"
              << "  static constexpr std::uint64_t stop_bit = "
                 "std::uint64_t{1} << 63;\n"
              << "  struct alignas(64) completion_slot {\n"
@@ -3033,9 +3045,11 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
              << "  " << shortRoot << "* object_ = nullptr;\n"
              << "  " << shortRoot
              << "_optimized_combs_state* state_ = nullptr;\n"
-             << "  alignas(64) std::atomic<std::uint64_t> command_{0};\n"
-             << "  alignas(64) std::atomic<std::uint64_t> stage_release_{0};\n"
-             << "  std::uint64_t command_value_ = 0;\n"
+             << "  alignas(64) std::atomic<std::uint64_t> command_{0};\n";
+      if (!singleStage) {
+        source << "  alignas(64) std::atomic<std::uint64_t> stage_release_{0};\n";
+      }
+      source << "  std::uint64_t command_value_ = 0;\n"
              << "  std::array<completion_slot, " << (combThreadCount - 1)
              << "> completed_{};\n"
              << "#if defined(__linux__)\n"

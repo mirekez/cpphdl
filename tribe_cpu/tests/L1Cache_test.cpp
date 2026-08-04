@@ -1142,8 +1142,8 @@ int main(int argc, char** argv)
         auto compile_l1 = [&](size_t cache_size, size_t ways, int id, size_t port_bits) {
             return VerilatorCompile(__FILE__, "L1Cache", {"Predef_pkg", "L1CachePerf_pkg", "RAM"},
                 {(source_root / "include").string(),
-                 (source_root / "tribe" / "common").string(),
-                 (source_root / "tribe" / "cache").string()},
+                 (source_root / "tribe_cpu" / "common").string(),
+                 (source_root / "tribe_cpu" / "cache").string()},
                 cache_size, LINE_SIZE, ways, id, ADDR_BITS, port_bits);
         };
         ok &= compile_l1(1024, 1, 0, 32);

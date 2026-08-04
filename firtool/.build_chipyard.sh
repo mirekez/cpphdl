@@ -650,6 +650,7 @@ install_fesvr_and_libgloss() {
 }
 
 build_dramsim2() {
+  local build_jobs="${CHIPYARD_BUILD_JOBS:-1}"
   if [ ! -d tools/DRAMSim2 ]; then
     return
   fi
@@ -675,7 +676,7 @@ build_dramsim2() {
       CC="$HOST_CC" \
       CXX="$HOST_CXX" \
       AR="${AR:-ar}" \
-      make libdramsim.a -j1
+      make libdramsim.a -j"$build_jobs"
   )
 }
 
@@ -722,6 +723,7 @@ patch_verilator_fcoroutines_if_needed() {
 
 build_simulator() {
   local config="$1"
+  local build_jobs="${CHIPYARD_BUILD_JOBS:-1}"
   build_dramsim2
   patch_verilator_fcoroutines_if_needed "$config"
 
@@ -732,7 +734,7 @@ build_simulator() {
     CXX="$HOST_CXX" \
     LINK="$HOST_CXX" \
     EXTRA_SIM_LDFLAGS="-static-libstdc++ -static-libgcc -no-pie -Wl,--allow-multiple-definition -Wl,--start-group -lriscv -lfdt -lsoftfloat -ldisasm -Wl,--end-group -ldl" \
-    -j1
+    -j"$build_jobs"
 }
 
 run_host_simulator() {

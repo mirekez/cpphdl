@@ -59,6 +59,11 @@ struct cpphdl_exception
 // Some Verilator installations still expect user code to provide this
 // timestamp hook even when tests do not use delays or SystemC. Keep the shared
 // harness linkable with both conda and system Verilator headers.
+// The generated model is the only caller, so force the inline definition into
+// the testbench object even when that translation unit does not call it.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((used))
+#endif
 inline double sc_time_stamp()
 {
     return 0.0;

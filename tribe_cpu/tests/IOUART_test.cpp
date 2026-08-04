@@ -378,9 +378,9 @@ static bool generate_iouart_direct_sv()
     cmd += " " + shell_quote(std::filesystem::path(__FILE__));
     cmd += " -DIOUART_DIRECT_VERILATOR";
     cmd += " -I " + shell_quote(source_root / "include");
-    cmd += " -I " + shell_quote(source_root / "tribe");
-    cmd += " -I " + shell_quote(source_root / "tribe" / "common");
-    cmd += " -I " + shell_quote(source_root / "tribe" / "devices");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu" / "common");
+    cmd += " -I " + shell_quote(source_root / "tribe_cpu" / "devices");
     cmd += " -I " + shell_quote(source_root / "examples" / "axi");
     if (const char* toolchain_args = std::getenv("CPPHDL_TOOLCHAIN_ARGS")) {
         cmd += " ";
@@ -444,8 +444,8 @@ int main(int argc, char** argv)
             ok &= VerilatorCompileInExactFolder(__FILE__, "IOUART", "IOUART",
                 {"Predef_pkg"},
                 {(source_root / "include").string(),
-                 (source_root / "tribe" / "common").string(),
-                 (source_root / "tribe" / "devices").string()},
+                 (source_root / "tribe_cpu" / "common").string(),
+                 (source_root / "tribe_cpu" / "devices").string()},
                 16, 4, 32);
             ok &= std::system("IOUART/obj_dir/VIOUART") == 0;
         }

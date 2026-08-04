@@ -577,7 +577,7 @@ int main(int argc, char** argv)
         setenv("CPPHDL_VERILATOR_CFLAGS", "-DMMU_TLB_DIRECT_VERILATOR", 1);
         ok &= VerilatorCompile(__FILE__, "MMU_TLB", {"Predef_pkg"},
             {(source_root / "include").string(),
-             (source_root / "tribe").string()}, 4);
+             (source_root / "tribe_cpu").string()}, 4);
         ok &= std::system("MMU_TLB_4/obj_dir/VMMU_TLB") == 0;
 
         if (ok && !direct_verilator_only) {

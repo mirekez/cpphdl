@@ -4,7 +4,7 @@
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
-#include "../../tribe/common/Axi4.h"
+#include "../../tribe_cpu/common/Axi4.h"
 
 using namespace cpphdl;
 
@@ -101,7 +101,7 @@ static bool contains(const std::string& text, const std::string& needle)
 
 int main()
 {
-    const std::filesystem::path jsonPath = "generated/json_output.json";
+    const std::filesystem::path jsonPath = "generated/JsonOutput.json";
     std::ifstream in(jsonPath);
     if (!in) {
         std::cerr << "can't open " << jsonPath << "\n";
