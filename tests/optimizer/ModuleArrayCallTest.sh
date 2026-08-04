@@ -22,6 +22,14 @@ if rg -q 'children\s*\[[^]]+\]\.output\s*\(' \
     exit 1
 fi
 
+# A cast-wrapped constexpr index is one concrete graph edge. It must not emit
+# a selector against every elaborated child and falsely couple their graphs.
+if [[ "$(rg -o ' == [01]\) return' \
+        "$build_dir"/ModuleArrayCallRoot_optimized_combs*.cpp | wc -l)" -ne 2 ]]; then
+    printf 'constant module-array index emitted a runtime dispatcher\n' >&2
+    exit 1
+fi
+
 objects=()
 for source in "$build_dir"/*.cpp; do
     object="${source%.cpp}.o"

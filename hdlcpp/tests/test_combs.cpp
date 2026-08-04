@@ -374,6 +374,36 @@ static void testFieldExtractionAvoidsUnneededFields()
     });
 }
 
+static void testFieldExtractionSlicesUnrelatedTemporaries()
+{
+    std::vector<std::string> lines = {
+        "logic<32> table_address = {};",
+        "request.kill_req = logic<1>(0b0);",
+        "request.address = logic<32>(0);",
+        "if (selected) {",
+        "    table_address = base + offset;",
+        "    request.address = table_address;",
+        "}",
+    };
+
+    auto killLines = hdlcpp::extractTargetFieldCombLines(
+        lines, "request", "kill_req", "request_kill_req", "");
+    expectVector(killLines, {
+        "request_kill_req = logic<1>(0b0);",
+    });
+
+    auto addressLines = hdlcpp::extractTargetFieldCombLines(
+        lines, "request", "address", "request_address", "");
+    expectVector(addressLines, {
+        "logic<32> __comb_local_table_address = {};",
+        "request_address = logic<32>(0);",
+        "if (selected) {",
+        "    __comb_local_table_address = base + offset;",
+        "request_address = __comb_local_table_address;",
+        "}",
+    });
+}
+
 static void testFieldExtractionHandlesIndexedField()
 {
     std::vector<std::string> lines = {
@@ -564,6 +594,7 @@ int main()
     testStructOutputFieldThroughLocal();
     testLargeCombStaysCombined();
     testFieldExtractionAvoidsUnneededFields();
+    testFieldExtractionSlicesUnrelatedTemporaries();
     testFieldExtractionHandlesIndexedField();
     testFieldExtractionKeepsNestedFieldUpdates();
     testIndexedNestedMemberProjection();

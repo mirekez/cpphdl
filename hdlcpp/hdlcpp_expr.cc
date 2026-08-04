@@ -623,6 +623,34 @@
             }
             return "";
         };
+        auto rawArg = trim(exprText(arg->toString()));
+        auto scopeSeparator = rawArg.rfind("::");
+        if (scopeSeparator != std::string::npos) {
+            if (auto width = widthForType(rawArg); !width.empty()) {
+                return width;
+            }
+            auto scope = trim(rawArg.substr(0, scopeSeparator));
+            auto name = trim(rawArg.substr(scopeSeparator + 2));
+            // A scoped typedef is a type operand to $bits, not a value expression.
+            // Resolve it through package metadata before exprWidth can emit decltype(type).
+            // Scoped constants still follow the ordinary expression-width path below.
+            if (auto* package = findModule(scope); package && package->isPackage) {
+                if (auto it = package->types.find(name); it != package->types.end()) {
+                    if (auto width = widthForType(it->second); !width.empty()) {
+                        return width;
+                    }
+                }
+                if (auto it = package->typeAliases.find(name); it != package->typeAliases.end()) {
+                    if (auto width = widthForType(it->second); !width.empty()) {
+                        return width;
+                    }
+                }
+                if (auto it = package->typeWidths.find(name); it != package->typeWidths.end()) {
+                    auto width = foldWidth(it->second);
+                    return width.empty() ? it->second : width;
+                }
+            }
+        }
         if (auto type = exprType(*arg); !type.empty()) {
             if (auto width = widthForType(type); !width.empty()) {
                 return width;
@@ -911,6 +939,12 @@
             }
         }
         auto simple = trim(exprText(text));
+        if (mod && expr.kind == SyntaxKind::IdentifierName) {
+            if (auto it = mod->valueWidths.find(simple); it != mod->valueWidths.end()) {
+                auto width = foldWidth(it->second);
+                return width.empty() ? it->second : width;
+            }
+        }
         for (const auto& [prefix, defaultWidth] : configuredTextMap("HDLCPP_ENUM_WIDTH_PREFIXES")) {
             if (simple.rfind(prefix, 0) == 0) {
                 auto name = simple.substr(prefix.size());
@@ -2375,6 +2409,9 @@
             auto& ret = st.as<ReturnStatementSyntax>();
             out.push_back(pre + std::string("return") + (ret.returnValue ? " " + emitExpr(*ret.returnValue) : "") + ";");
         }
+        else if (st.kind == SyntaxKind::JumpStatement) {
+            out.push_back(pre + tok(st.as<JumpStatementSyntax>().breakOrContinue) + ";");
+        }
     }
 
     void emitCaseClause(const SyntaxNode& clause, std::vector<std::string>& out, bool comb, int indent)
@@ -3168,6 +3205,12 @@
         if (isBlockingAssignmentKind(expr.kind) || isNonblockingAssignmentKind(expr.kind)) {
             auto& b = expr.as<BinaryExpressionSyntax>();
             auto base = assignedBase(*b.left);
+            // The early sequential pre-scan can encounter syntax shapes before all module
+            // metadata is available. The emitted assignment is authoritative, so retain its
+            // nonblocking storage class for declaration, seeding, and strobe generation.
+            if (isNonblockingAssignmentKind(expr.kind) && mod && mod->types.count(base)) {
+                mod->nonblockingAssignedVars.insert(base);
+            }
             auto lhs = emitLValue(*b.left);
             if ((!mod || !mod->types.count(base)) && !lhs.empty()) {
                 auto textBase = baseFromLValueText(lhs);
@@ -3786,6 +3829,35 @@
             return {};
         }
         auto selectedBase = assignedBase(selected);
+        if (mod && (selected.kind == SyntaxKind::IdentifierSelectName ||
+                    selected.kind == SyntaxKind::ElementSelectExpression)) {
+            for (const auto& port : mod->ports) {
+                if (port.direction != "input" || port.isInterface ||
+                    port.name.find("__field_") != std::string::npos) {
+                    continue;
+                }
+                std::string svPort = port.name;
+                for (const auto& mapped : mod->portCppNames) {
+                    if (mapped.second == port.name) {
+                        svPort = mapped.first;
+                        break;
+                    }
+                }
+                if (selectedBase != svPort && selectedBase != port.name) {
+                    continue;
+                }
+                auto base = emitMemberBaseExpr(selected);
+                auto accesses = hdlcpp::projectedMemberAccesses(
+                    base + "." + field, port.name + "()");
+                if (accesses.size() != 1 || accesses.front().field != field) {
+                    continue;
+                }
+                auto& projection = ensureInputFieldProjection(*mod, port, svPort, field);
+                if (!projection.projectedType.empty()) {
+                    return projection.projectedCppPort + "()" + accesses.front().indices;
+                }
+            }
+        }
         if (mod && !selectedBase.empty()) {
             auto typeIt = mod->types.find(selectedBase);
             if (typeIt != mod->types.end() && scheduledMemoryType(typeIt->second) &&
@@ -3822,7 +3894,10 @@
             std::cerr << "HDLCPP_ARRAY_MEMBER element-type=" << elementType
                       << " width=" << width << "\n";
         }
-        if (elementType.empty() || width.empty()) {
+        // A type-parameter element can have no foldable width in the generic module.
+        // CppHDL's type_width<T>() remains valid after specialization, so materialize
+        // the packed proxy whenever its element type is known instead of emitting `.field`.
+        if (elementType.empty()) {
             return {};
         }
         auto base = emitMemberBaseExpr(selected);

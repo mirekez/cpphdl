@@ -59,6 +59,7 @@ if [[ -z "$CPPHDL_CVA6_ONLY" && "$CPPHDL_CVA6_FINALIZE_ONLY" != "1" && "$CPPHDL_
     touch "$OUT/cva6_assign_suffix_code.tsv"
     python3 - "$OUT" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 out = Path(sys.argv[1]).resolve()
@@ -221,6 +222,7 @@ PY
             bash run_optimize_combs.sh .
         python3 - <<'PY'
 from pathlib import Path
+import re
 
 # Keep the runner, narrow model bridges, and global comb schedule in separate
 # translation units. A Make wildcard follows every chunk emitted by either comb
@@ -247,17 +249,90 @@ text = text.replace(
     1,
 )
 
-# L1 replaces the concrete root's recursive cycle methods with its generated
-# schedule. Drop only the isolated root work/strobe instantiations; descendants
-# retained as opaque subtrees still require their ordinary lifecycle methods.
+# A complete flattened schedule replaces recursive _work/_strobe throughout
+# the known hierarchy. Remove their dead explicit instantiations only after the
+# generated sources confirm that no opaque subtree still calls either method.
+legacy_cycle_call = re.compile(r"(?:\.|->)_(?:work|strobe)\s*\(")
+fully_flattened = not any(
+    legacy_cycle_call.search(source.read_text()) for source in comb_sources
+)
+cycle_instantiation = re.compile(
+    r"^template void cpphdl_opt_t\d+::_(?:work\(bool\)|strobe\(\));\s*$",
+    re.MULTILINE,
+)
+elaboration_objects = []
 for source in Path(".").glob("cpphdl_optimized_inst_*.cpp"):
     source_text = source.read_text()
-    if ("template void cpphdl_opt_t0::_work(bool);" not in source_text and
-            "template void cpphdl_opt_t0::_strobe();" not in source_text):
+    root_cycle = ("template void cpphdl_opt_t0::_work(bool);" in source_text or
+                  "template void cpphdl_opt_t0::_strobe();" in source_text)
+    if not fully_flattened and not root_cycle:
+        continue
+    filtered = cycle_instantiation.sub("", source_text)
+    if filtered == source_text:
         continue
     object_path = f"build/opt/{source.stem}.o"
+    if "cpphdl_optimized_root_work" in filtered or "cpphdl_optimized_root_strobe" in filtered:
+        text = text.replace(f" \\\n        {object_path}", "")
+        text = text.replace(f" {object_path}", "")
+        continue
+    source.write_text(filtered)
+    if not re.search(r"^template ", filtered, re.MULTILINE):
+        text = text.replace(f" \\\n        {object_path}", "")
+        text = text.replace(f" {object_path}", "")
+    else:
+        elaboration_objects.append(object_path)
+
+# Different aliases can resolve to the same concrete C++ specialization. Keep
+# one primary model type per translation unit while packing up to twenty small
+# elaboration models together to amortize the generated-header parse.
+alias_types = {}
+for match in re.finditer(
+        r"^using (cpphdl_opt_t\d+) = ([^;]+);$",
+        Path("cpphdl_optimized_externs.h").read_text(), re.MULTILINE):
+    alias_types[match.group(1)] = match.group(2).split("<", 1)[0].strip()
+declarations = {}
+for object_path in elaboration_objects:
+    source = Path(Path(object_path).stem + ".cpp")
+    for line in source.read_text().splitlines():
+        match = re.match(r"^template (?:void )?(cpphdl_opt_t\d+)::", line)
+        if match:
+            declarations.setdefault(match.group(1), []).append(line)
+
+packed_units = []
+for alias, lines in declarations.items():
+    primary_type = alias_types[alias]
+    for unit in packed_units:
+        if len(unit["aliases"]) < 20 and primary_type not in unit["types"]:
+            break
+    else:
+        unit = {"aliases": [], "types": set()}
+        packed_units.append(unit)
+    unit["aliases"].append((alias, lines))
+    unit["types"].add(primary_type)
+
+for object_path in elaboration_objects:
     text = text.replace(f" \\\n        {object_path}", "")
     text = text.replace(f" {object_path}", "")
+repacked_objects = []
+for unit, target_object in zip(packed_units, elaboration_objects):
+    target_source = Path(Path(target_object).stem + ".cpp")
+    body = "\n\n".join("\n".join(lines) for _, lines in unit["aliases"])
+    target_source.write_text('#include "cpphdl_optimized_externs.h"\n\n' + body + "\n")
+    marker = "\nDEPS := $(OBJS:.o=.d)"
+    text = text.replace(marker, f" \\\n        {target_object}" + marker, 1)
+    repacked_objects.append(target_object)
+elaboration_objects = repacked_objects
+
+# After lifecycle removal, mixed small-model units contain only constructors
+# and _assign bindings. Give them the same low-cost flags as isolated
+# elaboration units while preserving -O2 for every generated cycle partition.
+rules = "".join(
+    f"{obj}: override CXXFLAGS += $(CONSTRUCTOR_CXXFLAGS)\n"
+    for obj in elaboration_objects
+    if f"{obj}: override CXXFLAGS" not in text
+)
+if rules:
+    text = text.replace("build/opt/%.o: %.cpp", rules + "\nbuild/opt/%.o: %.cpp", 1)
 makefile.write_text(text)
 PY
     fi

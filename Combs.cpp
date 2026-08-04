@@ -3539,6 +3539,27 @@ struct CombsOptimizer::Impl {
               std::vector<std::string> elements;
               appendChildElementNames(
                   identifier, field->second.portModuleDimensions, 0, elements);
+              if (const auto element = constantArrayElement(
+                      context, elements, indices)) {
+                const auto binding = modulePortBindings.find(
+                    nodeKey(context.id, NodeKind::Port, *element));
+                if (binding == modulePortBindings.end()) {
+                  error = "missing module-array port binding " + context.path +
+                          "." + *element;
+                  return {};
+                }
+                const auto node = callableNode(*binding->second, method);
+                if (!node) {
+                  error = "missing method " + method +
+                          " on module-array port element " + context.path +
+                          "." + *element;
+                  return {};
+                }
+                referenceNode(*node, dependencies);
+                output += nodeValue(*node);
+                index = *methodClosing + 1;
+                continue;
+              }
               std::vector<size_t> selectedNodes;
               selectedNodes.reserve(elements.size());
               for (const std::string &element : elements) {
@@ -3699,6 +3720,22 @@ struct CombsOptimizer::Impl {
                     .empty()) {
               std::vector<std::string> elements =
                   childElementNames(identifier, field->second);
+              if (const auto element = constantArrayElement(
+                      context, elements, indices)) {
+                const auto childElement = context.children.find(*element);
+                if (childElement == context.children.end()) {
+                  error = "missing child array element " + context.path +
+                          "." + *element;
+                  return {};
+                }
+                const auto node = callableNode(*childElement->second, method);
+                if (node) {
+                  referenceNode(*node, dependencies);
+                  output += nodeValue(*node);
+                  index = *methodClosing + 1;
+                  continue;
+                }
+              }
               std::vector<size_t> selectedNodes;
               selectedNodes.reserve(elements.size());
               for (const std::string &element : elements) {
@@ -4199,6 +4236,7 @@ struct CombsOptimizer::Impl {
     std::unordered_set<size_t> conditionalSeeds;
     std::unordered_set<size_t> unresolvedSeeds;
     std::vector<std::pair<size_t, size_t>> cyclicComponents;
+    std::vector<size_t> largestCyclicComponent;
     int nextIndex = 0;
 
     std::function<void(size_t)> strongConnect = [&](size_t id) {
@@ -4241,6 +4279,9 @@ struct CombsOptimizer::Impl {
                            component.end());
         sccSeeds.insert(component.begin(), component.end());
         cyclicComponents.emplace_back(component.size(), component.front());
+        if (component.size() > largestCyclicComponent.size()) {
+          largestCyclicComponent = component;
+        }
       }
     };
 
@@ -4330,6 +4371,25 @@ struct CombsOptimizer::Impl {
     // reverse cone on demand. Keep reason counts opt-in so graph tuning can
     // distinguish real SCCs from conditional or work-order overclassification.
     if (std::getenv("CPPHDL_TRACE_COMB_GRAPH")) {
+      const auto reverseConeSize = [&](const auto &seeds) {
+        std::unordered_set<size_t> closure;
+        std::vector<size_t> worklist;
+        for (const size_t id : seeds) {
+          if (closure.insert(id).second) {
+            worklist.push_back(id);
+          }
+        }
+        while (!worklist.empty()) {
+          const size_t id = worklist.back();
+          worklist.pop_back();
+          for (const size_t consumer : consumers[id]) {
+            if (closure.insert(consumer).second) {
+              worklist.push_back(consumer);
+            }
+          }
+        }
+        return closure.size();
+      };
       std::sort(cyclicComponents.begin(), cyclicComponents.end(),
                 std::greater<>());
       llvm::errs() << "cpphdl comb graph: active=" << activeNodes.size()
@@ -4341,12 +4401,112 @@ struct CombsOptimizer::Impl {
                    << conditionalDependencySet.size()
                    << " dynamic=" << dynamicNodes.size()
                    << " scc_components=" << cyclicComponents.size() << "\n";
+      llvm::errs() << "cpphdl comb graph reverse cones: scc="
+                   << reverseConeSize(sccSeeds)
+                   << " conditional=" << reverseConeSize(conditionalDependencySet)
+                   << " unresolved=" << reverseConeSize(unresolvedSeeds)
+                   << " work_mutated=" << reverseConeSize(workMutationSeeds)
+                   << "\n";
       for (size_t rank = 0;
            rank < std::min<size_t>(cyclicComponents.size(), 8); ++rank) {
         const auto [size, representative] = cyclicComponents[rank];
         llvm::errs() << "cpphdl comb graph scc[" << rank << "] size=" << size
                      << " representative=" << nodes[representative].instance->path
                      << "." << nodes[representative].name << "\n";
+      }
+      if (!largestCyclicComponent.empty()) {
+        std::unordered_set<size_t> members(largestCyclicComponent.begin(),
+                                           largestCyclicComponent.end());
+        std::unordered_map<std::string, size_t> typeCounts;
+        std::vector<std::pair<size_t, size_t>> internalDegrees;
+        size_t portCount = 0;
+        size_t combCount = 0;
+        for (const size_t id : largestCyclicComponent) {
+          ++typeCounts[nodes[id].instance->type->name];
+          portCount += nodes[id].kind == NodeKind::Port;
+          combCount += nodes[id].kind == NodeKind::Comb;
+          const size_t degree = std::count_if(
+              nodes[id].allDependencies.begin(),
+              nodes[id].allDependencies.end(),
+              [&](size_t dependency) { return members.contains(dependency); });
+          internalDegrees.emplace_back(degree, id);
+        }
+        std::vector<std::pair<size_t, std::string>> rankedTypes;
+        for (const auto &[type, count] : typeCounts) {
+          rankedTypes.emplace_back(count, type);
+        }
+        std::sort(rankedTypes.begin(), rankedTypes.end(), std::greater<>());
+        std::sort(internalDegrees.begin(), internalDegrees.end(),
+                  std::greater<>());
+        llvm::errs() << "cpphdl comb graph largest scc: ports=" << portCount
+                     << " combs=" << combCount
+                     << " types=" << rankedTypes.size() << "\n";
+        for (size_t rank = 0;
+             rank < std::min<size_t>(rankedTypes.size(), 16); ++rank) {
+          llvm::errs() << "cpphdl comb graph largest type[" << rank
+                       << "] count=" << rankedTypes[rank].first
+                       << " name=" << rankedTypes[rank].second << "\n";
+        }
+        for (size_t rank = 0;
+             rank < std::min<size_t>(internalDegrees.size(), 24); ++rank) {
+          const auto [degree, id] = internalDegrees[rank];
+          llvm::errs() << "cpphdl comb graph largest degree[" << rank
+                       << "] deps=" << degree << " node="
+                       << nodes[id].instance->path << "." << nodes[id].name
+                       << "\n";
+        }
+
+        // A large SCC count alone does not identify the conservative edge
+        // which closes the cycle. Print one shortest concrete cycle from a
+        // high-degree member so graph fixes can target its actual expression.
+        const size_t cycleStart = internalDegrees.front().second;
+        std::vector<size_t> parent(nodes.size(), nodes.size());
+        std::queue<size_t> queue;
+        parent[cycleStart] = cycleStart;
+        queue.push(cycleStart);
+        size_t cycleEnd = nodes.size();
+        while (!queue.empty() && cycleEnd == nodes.size()) {
+          const size_t current = queue.front();
+          queue.pop();
+          for (const size_t dependency : nodes[current].allDependencies) {
+            if (!members.contains(dependency)) {
+              continue;
+            }
+            if (dependency == cycleStart && current != cycleStart) {
+              cycleEnd = current;
+              break;
+            }
+            if (parent[dependency] == nodes.size()) {
+              parent[dependency] = current;
+              queue.push(dependency);
+            }
+          }
+        }
+        if (cycleEnd != nodes.size()) {
+          std::vector<size_t> cycle;
+          for (size_t current = cycleEnd;; current = parent[current]) {
+            cycle.push_back(current);
+            if (current == cycleStart) {
+              break;
+            }
+          }
+          std::reverse(cycle.begin(), cycle.end());
+          cycle.push_back(cycleStart);
+          llvm::errs() << "cpphdl comb graph largest shortest cycle length="
+                       << cycle.size() - 1 << "\n";
+          for (size_t position = 0; position < cycle.size(); ++position) {
+            const Node &node = nodes[cycle[position]];
+            std::string expression = node.expression;
+            std::replace(expression.begin(), expression.end(), '\n', ' ');
+            if (expression.size() > 180) {
+              expression.resize(180);
+              expression += "...";
+            }
+            llvm::errs() << "cpphdl comb graph cycle[" << position << "] "
+                         << node.instance->path << "." << node.name
+                         << " expr=" << expression << "\n";
+          }
+        }
       }
     }
   }
@@ -5261,11 +5421,55 @@ struct CombsOptimizer::Impl {
 
   std::optional<size_t> constantIndex(Instance &instance,
                                       const std::string &expression) const {
-    const std::string stripped = trim(expression);
-    if (!stripped.empty() &&
-        std::all_of(stripped.begin(), stripped.end(),
-                    [](unsigned char value) { return std::isdigit(value); })) {
-      return std::stoull(stripped);
+    std::string stripped = trim(expression);
+    for (;;) {
+      bool changed = false;
+      if (!stripped.empty() && stripped.front() == '(') {
+        if (const auto closing = matchingDelimiter(stripped, 0, '(', ')');
+            closing && *closing == stripped.size() - 1) {
+          stripped = trim(stripped.substr(1, stripped.size() - 2));
+          changed = true;
+          continue;
+        }
+        if (const auto closing = matchingDelimiter(stripped, 0, '(', ')');
+            closing && *closing + 1 < stripped.size()) {
+          const std::string castType =
+              trim(stripped.substr(1, *closing - 1));
+          static const std::regex typeName(
+              R"(^[A-Za-z_][A-Za-z0-9_:]*(?:\s+[A-Za-z_][A-Za-z0-9_:]*)*(?:\s*[*&]+\s*)?$)");
+          if (std::regex_match(castType, typeName)) {
+            stripped = trim(stripped.substr(*closing + 1));
+            changed = true;
+            continue;
+          }
+        }
+      }
+      static const std::regex staticCast(
+          R"(^static_cast\s*<[^<>]+>\s*\((.*)\)$)");
+      std::smatch match;
+      if (std::regex_match(stripped, match, staticCast)) {
+        stripped = trim(match[1].str());
+        changed = true;
+        continue;
+      }
+      if (!changed) {
+        break;
+      }
+    }
+
+    static const std::regex integerLiteral(
+        R"(^(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|0[0-7]*|[1-9][0-9]*)(?:[uUlL]*)$)");
+    if (std::regex_match(stripped, integerLiteral)) {
+      std::string literal = stripped;
+      while (!literal.empty() &&
+             (literal.back() == 'u' || literal.back() == 'U' ||
+              literal.back() == 'l' || literal.back() == 'L')) {
+        literal.pop_back();
+      }
+      if (literal.starts_with("0b") || literal.starts_with("0B")) {
+        return std::stoull(literal.substr(2), nullptr, 2);
+      }
+      return std::stoull(literal, nullptr, 0);
     }
     if (const auto value = instance.type->constantValues.find(stripped);
         value != instance.type->constantValues.end()) {
@@ -5275,14 +5479,24 @@ struct CombsOptimizer::Impl {
         value != constantValues.end()) {
       return value->second;
     }
-    static const std::regex qualified(
-        R"(([A-Za-z_]\w*(?:::[A-Za-z_]\w*)+))");
-    for (auto iterator =
-             std::sregex_iterator(stripped.begin(), stripped.end(), qualified);
-         iterator != std::sregex_iterator(); ++iterator) {
-      if (const auto value = constantValues.find((*iterator)[1].str());
-          value != constantValues.end()) {
-        return value->second;
+    return std::nullopt;
+  }
+
+  std::optional<std::string> constantArrayElement(
+      Instance &instance, const std::vector<std::string> &elements,
+      const std::vector<std::string> &expressions) const {
+    std::vector<size_t> indices;
+    indices.reserve(expressions.size());
+    for (const std::string &expression : expressions) {
+      const auto index = constantIndex(instance, expression);
+      if (!index) {
+        return std::nullopt;
+      }
+      indices.push_back(*index);
+    }
+    for (const std::string &element : elements) {
+      if (childElementIndices(element) == indices) {
+        return element;
       }
     }
     return std::nullopt;

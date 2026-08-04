@@ -430,6 +430,9 @@ inline bool replaceMemberPrefix(std::string& text,
 
 inline std::string localCombNameFor(const std::string& base)
 {
+    if (base.rfind("__comb_local_", 0) == 0) {
+        return base;
+    }
     return "__comb_local_" + base;
 }
 
@@ -1281,7 +1284,23 @@ inline std::vector<std::string> extractTargetFieldCombLines(const std::vector<st
                                                             const std::string& resultName,
                                                             const std::string& indexName)
 {
-    return extractTargetFieldCombLinesRange(lines, base, field, resultName, indexName, 0, lines.size());
+    auto projected = extractTargetFieldCombLinesRange(
+        lines, base, field, resultName, indexName, 0, lines.size());
+    std::vector<std::string> variables{resultName};
+    for (const auto& line : projected) {
+        auto name = assignmentBase(line);
+        if (name.empty()) {
+            name = declarationName(line);
+        }
+        if (!name.empty() &&
+            std::find(variables.begin(), variables.end(), name) == variables.end()) {
+            variables.push_back(name);
+        }
+    }
+    // Field projection initially retains non-aggregate assignments because they may
+    // be temporaries feeding the selected member. Slice that projected program once
+    // more so unrelated temporary calculations cannot create false comb dependencies.
+    return extractTargetCombLines(projected, variables, resultName);
 }
 
 inline std::vector<std::string> extractProjectedArrayFieldCombLinesRange(

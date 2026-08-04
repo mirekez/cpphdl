@@ -724,8 +724,10 @@ z_implicit_ctor<> support;
     expectContains(readFile(dir / "Makefile.optimize"), "RUNNER := custom_runner_opt\n");
     expectContains(readFile(dir / "Makefile.optimize"), "DEPFLAGS ?= -MMD -MP\n");
     expectContains(readFile(dir / "Makefile.optimize"),
-                   "CONSTRUCTOR_CXXFLAGS ?= --param ggc-min-expand=1 "
-                   "--param ggc-min-heapsize=4096\n");
+                   "CXX_IS_CLANG := $(findstring clang,$(shell $(CXX) --version ");
+    expectContains(readFile(dir / "Makefile.optimize"),
+                   "CONSTRUCTOR_CXXFLAGS ?= $(if $(CXX_IS_CLANG),-O0 -fno-inline,"
+                   "--param ggc-min-expand=1 --param ggc-min-heapsize=4096)\n");
     expectContains(readFile(dir / "Makefile.optimize"), "-include $(DEPS)\n");
     auto externs = readFile(dir / "cpphdl_optimized_externs.h");
     expectContains(externs, "using cpphdl_opt_t0 = parent<>;");
@@ -847,10 +849,12 @@ small_b<> third;
             expectNotContains(text, "template void cpphdl_opt_t0::_assign();");
         }
         if (text.find("template cpphdl_opt_t0::large();") != std::string::npos) {
+            expectContains(text, "#pragma clang optimize off");
             expectContains(text, "#pragma GCC optimize (\"O0\", \"no-inline\")");
         }
         if (text.find("template void cpphdl_opt_t0::_assign();") != std::string::npos) {
             foundLargeAssign = true;
+            expectContains(text, "#pragma clang optimize off");
             expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
         }
         foundSmallA = foundSmallA ||
@@ -864,6 +868,9 @@ small_b<> third;
     assert(foundSmallB);
     expectContains(readFile(dir / "Makefile.optimize"),
                    "build/opt/cpphdl_optimized_inst_0.o: override CXXFLAGS += "
+                   "$(CONSTRUCTOR_CXXFLAGS)\n");
+    expectContains(readFile(dir / "Makefile.optimize"),
+                   "build/opt/cpphdl_optimized_inst_3.o: override CXXFLAGS += "
                    "$(CONSTRUCTOR_CXXFLAGS)\n");
 }
 
@@ -950,6 +957,7 @@ wrapper<> first;
         auto text = readFile(entry.path());
         if (text.find("template cpphdl_opt_t0::wrapper();") != std::string::npos) {
             foundWrapperConstructor = true;
+            expectContains(text, "#pragma clang optimize off");
             expectContains(text, "#pragma GCC optimize (\"O0\", \"no-inline\")");
             expectNotContains(text, "template void cpphdl_opt_t0::_work(bool);");
             expectNotContains(text, "template void cpphdl_opt_t0::_strobe();");
@@ -3913,6 +3921,7 @@ endmodule
     auto h = convertModule(argv0, "concat_packed_array_slice", sv, "concat_packed_array_slice.W\t64\nconcat_packed_array_slice.N\t2\n");
     expectContains(h, "__cpphdl_slice_out");
     expectContains(h, "logic<((uint64_t)(((uint64_t)(W) & ((1ull << 32) - 1ull)))) *");
+    expectContains(h, ")))>>>(cpphdl::pack_value");
     expectNotContains(h, "logic<1>((uint64_t)(logic<((uint64_t)(((uint64_t)(W) & ((1ull << 32) - 1ull)))) *");
 }
 
@@ -9388,7 +9397,8 @@ endmodule
                            portTypes, "", moduleTraits);
     expectContains(h, "child_i[(unsigned)(uint64_t)((uint64_t)(i))].req_i_in__field_aw_id = _ASSIGN_COMB_I(");
     expectContains(h, "req_aw_id_comb_func()[(unsigned)");
-    expectContains(h, "__cpphdl_projected_source_0.aw.id;");
+    expectContains(h, "source_i_in__field_aw_id()");
+    expectNotContains(h, "__cpphdl_projected_source_0.aw.id;");
     expectNotContains(h, "(source_i_in()).aw.id");
 }
 
@@ -9588,6 +9598,129 @@ endmodule
     expectContains(h, "forwarded_req_ar_valid_comb = req_i_in__field_ar_valid();");
     expectNotContains(h, "cpphdl::type_width<forwarded_req_t>()>(req_i_in())");
     expectNotContains(h, "req_i_in().r_ready");
+}
+
+static void testArrayOutputForwardingUsesProjectedInputFieldPort(const char* argv0)
+{
+    const std::string sv = R"(
+typedef struct packed {
+    logic       ready;
+    logic [7:0] payload;
+} projected_array_response_t;
+
+module array_output_input_forwarding (
+    input  projected_array_response_t response_i,
+    output projected_array_response_t responses_o [1]
+);
+    assign responses_o[0] = response_i;
+endmodule
+)";
+    const std::string moduleTraits =
+        "array_output_input_forwarding\tinput_field.response_i.ready\n"
+        "array_output_input_forwarding\toutput_field.responses_o.ready\n";
+    auto h = convertModule(argv0, "array_output_input_forwarding", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "] = response_i_in__field_ready();");
+    expectNotContains(h, "cpphdl::type_width<projected_array_response_t>()>(response_i_in())");
+}
+
+static void testProjectedArrayChildBindingKeepsCpphdlTemplateOrder(const char* argv0)
+{
+    const std::string sv = R"(
+typedef struct packed {
+    logic       ready;
+    logic [7:0] payload;
+} projected_array_request_t;
+
+module projected_array_binding_child #(
+    parameter type request_t = projected_array_request_t
+) (
+    input request_t requests_i [2]
+);
+    logic sink;
+    assign sink = requests_i[0].ready;
+endmodule
+
+module projected_array_binding_parent (
+    input logic [1:0] ready_i
+);
+    projected_array_request_t requests [2];
+    always_comb begin
+        requests = '0;
+        for (int i = 0; i < 2; ++i)
+            requests[i].ready = ready_i[i];
+    end
+    projected_array_binding_child #(.request_t(projected_array_request_t)) child_i(.requests_i(requests));
+endmodule
+)";
+    const std::string moduleTraits =
+        "projected_array_binding_child\tinput_field.requests_i.ready\n";
+    auto h = convertModule(argv0, "projected_array_binding_parent", sv,
+                           "", "", "", "", "", "", "", moduleTraits);
+    expectContains(h, "child_i.requests_i_in__field_ready = _ASSIGN(array<2,");
+    expectContains(h, "requests_ready_comb_func()");
+    expectNotContains(h, "child_i.requests_i_in__field_ready = _ASSIGN(array<std::remove_cvref_t");
+}
+
+static void testModuleMemberNestedArrayTypeIsNormalizedOnce(const char* argv0)
+{
+    const std::string sv = R"(
+module nested_array_width_child #(
+    parameter int unsigned DATA_WIDTH = 1
+) ();
+endmodule
+
+module module_member_nested_array_type #(
+    parameter int unsigned COUNT = 3,
+    parameter int unsigned WIDTH = 5
+) ();
+    typedef logic [WIDTH-1:0] packed_words_t [COUNT];
+    nested_array_width_child #(
+        .DATA_WIDTH($bits(packed_words_t))
+    ) children [COUNT] ();
+endmodule
+)";
+    auto h = convertModule(argv0, "module_member_nested_array_type", sv, "");
+    expectContains(h, "cpphdl::type_width<array<COUNT,logic<");
+    expectNotContains(h, "cpphdl::type_width<array<logic<");
+}
+
+static void testLowercaseArrayExtentKeepsCpphdlTemplateOrder(const char* argv0)
+{
+    const std::string sv = R"(
+module lowercase_array_extent #(
+    parameter int unsigned count = 2
+) (
+    input  logic values_i [count],
+    output logic values_o [count]
+);
+    always_comb values_o = values_i;
+endmodule
+)";
+    auto h = convertModule(argv0, "lowercase_array_extent", sv, "");
+    expectContains(h, "array<count,logic<1>>");
+    expectNotContains(h, "array<logic<1>,count>");
+}
+
+static void testInterfaceNestedPackedAndUnpackedArrayOrder(const char* argv0)
+{
+    const std::string sv = R"(
+interface nested_interface_array #(
+    parameter int WIDTH = 8,
+    parameter int NUM_OUTER = 2,
+    parameter int NUM_INNER = 3
+);
+    struct packed {
+        logic             valid;
+        logic [WIDTH-1:0] payload;
+    } [NUM_INNER-1:0] rules [NUM_OUTER];
+    modport source(output rules);
+endinterface
+)";
+    auto h = convertModule(argv0, "nested_interface_array", sv, "");
+    expectContains(h, "array<NUM_OUTER,array<");
+    expectContains(h, ",rules_t>>) rules;");
+    expectNotContains(h, "array<array<rules_t");
 }
 
 static void testChildAggregateOutputUsesProjectedFieldPort(const char* argv0)
@@ -10598,6 +10731,11 @@ int main(int argc, char** argv)
     testProjectedFieldAfterWholeStructCastStaysOutsideCast(argv[0]);
     testStructCastDoesNotProjectFieldsFromScalarInput(argv[0]);
     testWholeAggregateInputForwardingUsesProjectedFieldPort(argv[0]);
+    testArrayOutputForwardingUsesProjectedInputFieldPort(argv[0]);
+    testProjectedArrayChildBindingKeepsCpphdlTemplateOrder(argv[0]);
+    testModuleMemberNestedArrayTypeIsNormalizedOnce(argv[0]);
+    testLowercaseArrayExtentKeepsCpphdlTemplateOrder(argv[0]);
+    testInterfaceNestedPackedAndUnpackedArrayOrder(argv[0]);
     testChildAggregateOutputUsesProjectedFieldPort(argv[0]);
     testProjectedNestedOutputRebasesDescendantMembers(argv[0]);
     testProjectedNestedVectorPreservesPartSelect(argv[0]);

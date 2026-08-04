@@ -4007,6 +4007,84 @@
 	                            }
 	                            return sourceType;
 	                        };
+	                        auto projectedInputIndices = [](const std::string& expression,
+	                                                          const std::string& getter)
+	                            -> std::optional<std::string> {
+	                            const std::array<std::string, 2> prefixes = {
+	                                getter, "(" + getter + ")"
+	                            };
+	                            for (const auto& prefix : prefixes) {
+	                                if (expression.rfind(prefix, 0) != 0) {
+	                                    continue;
+	                                }
+	                                auto suffix = trim(expression.substr(prefix.size()));
+	                                size_t pos = 0;
+	                                while (pos < suffix.size() && suffix[pos] == '[') {
+	                                    int depth = 1;
+	                                    ++pos;
+	                                    while (pos < suffix.size() && depth != 0) {
+	                                        if (suffix[pos] == '[') ++depth;
+	                                        else if (suffix[pos] == ']') --depth;
+	                                        ++pos;
+	                                    }
+	                                    if (depth != 0) {
+	                                        break;
+	                                    }
+	                                }
+	                                if (pos == suffix.size()) {
+	                                    return suffix;
+	                                }
+	                            }
+	                            return std::nullopt;
+	                        };
+	                        // A projected aggregate leaf must use the matching synthetic
+	                        // input-field port when one exists. Falling back to the whole
+	                        // input couples unrelated struct fields and creates false SCCs.
+	                        auto projectedInputFieldCall = [&](const std::string& expression,
+	                                                            const std::string& demandedField,
+	                                                            const std::string& demandedType,
+	                                                            bool adaptType = true) {
+	                            const size_t originalPortCount = m.ports.size();
+	                            for (size_t portIndex = 0; portIndex < originalPortCount; ++portIndex) {
+	                                const auto port = m.ports[portIndex];
+	                                if (port.direction != "input" || port.isInterface ||
+	                                    port.name.find("__field_") != std::string::npos) {
+	                                    continue;
+	                                }
+	                                auto indices = projectedInputIndices(expression, port.name + "()");
+	                                if (!indices) {
+	                                    if (auto cppName = m.portCppNames.find(port.name);
+	                                        cppName != m.portCppNames.end()) {
+	                                        indices = projectedInputIndices(
+	                                            expression, cppName->second + "()");
+	                                    }
+	                                }
+	                                if (!indices) {
+	                                    continue;
+	                                }
+	                                std::string svPort = port.name;
+	                                for (const auto& mapped : m.portCppNames) {
+	                                    if (mapped.second == port.name) {
+	                                        svPort = mapped.first;
+	                                        break;
+	                                    }
+	                                }
+	                                auto& projection = ensureInputFieldProjection(
+	                                    m, port, svPort, demandedField);
+	                                if (projection.projectedType.empty()) {
+	                                    continue;
+	                                }
+	                                auto sourceExpr = projection.projectedCppPort + "()" + *indices;
+	                                if (!adaptType ||
+	                                    trim(projection.projectedType) == trim(demandedType)) {
+	                                    return sourceExpr;
+	                                }
+	                                return "cpphdl::unpack_value<" + demandedType + ">(" +
+	                                    "cpphdl::pack_value<cpphdl::type_width<" + demandedType +
+	                                    ">()>(" + sourceExpr + "))";
+	                            }
+	                            return std::string{};
+	                        };
 	                        size_t projectedArraySerial = 0;
 	                        auto appendProjectedArrayFieldMap = [&](std::vector<std::string>& lines,
 	                                                                const std::string& projectionSourceType,
@@ -4150,8 +4228,15 @@
 	                                                    field.size() + 2, ")." + field) == 0) {
 	                                        auto close = matchingParenClose(rhs, 0);
 			                                        if (close == rhs.size() - field.size() - 2) {
-			                                            auto aggregate = trim(rhs.substr(1, close - 1));
-			                                            auto childProjection = projectedChildOutputPortCall(
+	                                            auto aggregate = trim(rhs.substr(1, close - 1));
+	                                            if (auto inputProjection = projectedInputFieldCall(
+	                                                    aggregate, field, type, false);
+	                                                !inputProjection.empty()) {
+	                                                projectedWholeAssignments.push_back(
+	                                                    lhs + " = " + inputProjection + ";");
+	                                                continue;
+	                                            }
+	                                            auto childProjection = projectedChildOutputPortCall(
 			                                                m, aggregate, field);
 			                                            if (childProjection.empty()) {
 			                                                childProjection = projectedChildOutputThroughMethodCall(
@@ -4392,71 +4477,9 @@
 			                            // A whole aggregate input can hide a field dependency after forwarding
 				                            // through an intermediate SV variable. Bind that leaf to the synthetic
 				                            // field port so evaluating one channel never evaluates sibling channels.
-					                            auto projectedInputIndices = [](const std::string& expression,
-					                                                              const std::string& getter)
-					                                -> std::optional<std::string> {
-					                                const std::array<std::string, 2> prefixes = {
-					                                    getter, "(" + getter + ")"
-					                                };
-					                                for (const auto& prefix : prefixes) {
-					                                    if (expression.rfind(prefix, 0) != 0) {
-					                                        continue;
-					                                    }
-					                                    auto suffix = trim(expression.substr(prefix.size()));
-					                                    size_t pos = 0;
-					                                    while (pos < suffix.size()) {
-					                                        if (suffix[pos] != '[') {
-					                                            break;
-					                                        }
-					                                        int depth = 1;
-					                                        ++pos;
-					                                        while (pos < suffix.size() && depth != 0) {
-					                                            if (suffix[pos] == '[') ++depth;
-					                                            else if (suffix[pos] == ']') --depth;
-					                                            ++pos;
-					                                        }
-					                                        if (depth != 0) {
-					                                            break;
-					                                        }
-					                                    }
-					                                    if (pos == suffix.size()) {
-					                                        return suffix;
-					                                    }
-					                                }
-					                                return std::nullopt;
-					                            };
-					                            for (const auto& port : m.ports) {
-					                                if (port.direction != "input" || port.isInterface ||
-					                                    port.name.find("__field_") != std::string::npos) {
-					                                    continue;
-					                                }
-					                                auto indices = projectedInputIndices(expr, port.name + "()");
-					                                if (!indices) {
-					                                    if (auto cppName = m.portCppNames.find(port.name);
-					                                        cppName != m.portCppNames.end()) {
-					                                        indices = projectedInputIndices(expr, cppName->second + "()");
-					                                    }
-					                                }
-					                                if (!indices) {
-					                                    continue;
-					                                }
-				                                std::string svPort = port.name;
-				                                for (const auto& mapped : m.portCppNames) {
-				                                    if (mapped.second == port.name) {
-				                                        svPort = mapped.first;
-				                                        break;
-				                                    }
-				                                }
-					                                auto& projection = ensureInputFieldProjection(m, port, svPort, field);
-					                                if (!projection.projectedType.empty()) {
-					                                    auto sourceExpr = projection.projectedCppPort + "()" + *indices;
-					                                    if (trim(projection.projectedType) == trim(type)) {
-					                                        return sourceExpr;
-					                                    }
-					                                    return "cpphdl::unpack_value<" + type + ">(" +
-					                                        "cpphdl::pack_value<cpphdl::type_width<" + type +
-					                                        ">()>(" + sourceExpr + "))";
-					                                }
+					                            if (auto projected = projectedInputFieldCall(expr, field, type);
+					                                !projected.empty()) {
+					                                return projected;
 				                            }
 				                            // A child aggregate output is projected through the child's public
 				                            // field port. Calling the whole output here would evaluate unrelated
@@ -5498,7 +5521,7 @@
             }
 	            h << (m.isInterface ? "\npublic:\n" : "\nprivate:\n");
 	            for (auto& member : m.members) {
-	                h << "    " << postProcessCppLine(updateCpphdlArraySyntax(member)) << "\n";
+	                h << "    " << postProcessCppLine(member) << "\n";
 	            }
 	            if (!m.members.empty()) {
 	                h << "\n";
@@ -5918,7 +5941,7 @@
                     h << "    cpphdl::function_ref<" << postProcessCppLine(emittedType) << "> " << v.second;
                 }
                 else if (m.isInterface && !m.seqAssignedVars.count(v.second)) {
-                    h << "    _PORT(" << emittedType << ") " << v.second;
+                    h << "    _PORT(" << postProcessCppLine(emittedType) << ") " << v.second;
                 }
                 else {
                     h << "    " << postProcessCppLine(emittedType) << " " << v.second;
@@ -6440,13 +6463,14 @@
 		                            auto loop = depth < indices.size() ? indices[depth] : "cpphdl_member_i" + std::to_string(depth);
 		                            h << std::string(8 + depth * 4, ' ') << postProcessCppLine("for (unsigned " + loop + " = 0;(uint64_t)(" + loop + ") < (uint64_t)(" + arrayDimensions[depth] + ");" + loop + "++) {") << "\n";
 		                        }
-		                        h << std::string(8 + arrayDimensions.size() * 4, ' ') << emittedAssignLine << "\n";
+			                        h << std::string(8 + arrayDimensions.size() * 4, ' ')
+                                      << postProcessCppLine(std::move(emittedAssignLine)) << "\n";
 		                        for (size_t depth = arrayDimensions.size(); depth > 0; --depth) {
 		                            h << std::string(8 + (depth - 1) * 4, ' ') << "}\n";
 		                        }
 		                    }
 		                    else {
-		                        h << "        " << emittedAssignLine << "\n";
+			                    h << "        " << postProcessCppLine(std::move(emittedAssignLine)) << "\n";
 		                    }
                         emitGuardClose(h, assignGuards, "        ");
 		                }
@@ -13890,13 +13914,15 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
             break;
         }
     };
-    auto instantiationPreamble = [&](bool disableInlining = false) {
+    auto instantiationPreamble = [&](bool disableOptimization = false) {
         std::ostringstream inst;
-        if (disableInlining) {
-            // Constructors execute only during elaboration. Prevent GCC from
-            // recursively inlining the full child hierarchy into isolated root
-            // constructor units while preserving -O2 for all cycle methods.
-            inst << "#if defined(__GNUC__) && !defined(__clang__)\n"
+        if (disableOptimization) {
+            // Constructors and _assign execute only during elaboration. Prevent
+            // optimization of a complete child hierarchy in their isolated units
+            // while preserving -O2 for every cycle method.
+            inst << "#if defined(__clang__)\n"
+                    "#pragma clang optimize off\n"
+                    "#elif defined(__GNUC__)\n"
                     "#pragma GCC optimize (\"O0\", \"no-inline\")\n"
                     "#endif\n";
         }
@@ -13922,7 +13948,8 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     };
     auto memberInstantiationFile = [&](size_t index, OptimizedMember member) {
         std::ostringstream inst;
-        inst << instantiationPreamble(member == OptimizedMember::Constructor);
+        inst << instantiationPreamble(member == OptimizedMember::Constructor ||
+                                      member == OptimizedMember::Assign);
         emitMemberInstantiation(inst, index, member);
         return inst.str();
     };
@@ -14021,15 +14048,15 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     }
 
     std::vector<std::pair<std::filesystem::path, std::string>> instantiationFiles;
-    std::set<std::filesystem::path> memoryConstrainedConstructorObjects;
+    std::set<std::filesystem::path> elaborationOnlyObjects;
     for (const auto& [index, member] : oversizedMemberUnits) {
         auto unit = instantiationFiles.size();
         auto path = std::filesystem::path("cpphdl_optimized_inst_" +
                                           std::to_string(unit) + ".cpp");
         instantiationFiles.push_back({path, memberInstantiationFile(index, member)});
-        if (member == OptimizedMember::Constructor) {
+        if (member == OptimizedMember::Constructor || member == OptimizedMember::Assign) {
             path.replace_extension(".o");
-            memoryConstrainedConstructorObjects.insert(
+            elaborationOnlyObjects.insert(
                 std::filesystem::path("build/opt") / path);
         }
     }
@@ -14044,10 +14071,11 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     make << "CPPHDL_INCLUDE ?= /home/me/cpphdl/include\n";
     make << "CXXFLAGS ?= -std=c++23 -O0 -g0 -w -pipe -fno-asynchronous-unwind-tables -I$(CPPHDL_INCLUDE) -I$(CURDIR)\n";
     make << "DEPFLAGS ?= -MMD -MP\n";
-    // Isolated constructors elaborate deep child hierarchies but never execute
-    // in the cycle loop. More frequent GCC collection bounds compiler memory
-    // without weakening the requested optimization level for runtime methods.
-    make << "CONSTRUCTOR_CXXFLAGS ?= --param ggc-min-expand=1 --param ggc-min-heapsize=4096\n";
+    // Isolated constructors and _assign methods elaborate deep hierarchies but
+    // never execute in the cycle loop. Compile those units cheaply without
+    // weakening the requested optimization level for runtime methods.
+    make << "CXX_IS_CLANG := $(findstring clang,$(shell $(CXX) --version 2>/dev/null | head -n 1))\n";
+    make << "CONSTRUCTOR_CXXFLAGS ?= $(if $(CXX_IS_CLANG),-O0 -fno-inline,--param ggc-min-expand=1 --param ggc-min-heapsize=4096)\n";
     make << "LDFLAGS ?=\n\n";
     make << "RUNNER := " << runnerName << "\n";
     make << "OBJS := build/opt/cpphdl_optimized_main.o";
@@ -14060,14 +14088,14 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     make << "DEPS := $(OBJS:.o=.d)\n\n";
     make << ".PHONY: all clean\n\n";
     make << "all: $(RUNNER)\n\n";
-    for (const auto& object : memoryConstrainedConstructorObjects) {
-        // build.sh supplies CXXFLAGS on make's command line. Target-specific
-        // assignments need override so constructor-only memory controls still
-        // append without changing the optimized flags used by cycle methods.
+    for (const auto& object : elaborationOnlyObjects) {
+        // A caller may supply CXXFLAGS on make's command line. Target-specific
+        // override keeps elaboration-only controls effective without changing
+        // the optimized flags used by cycle methods.
         make << object.string()
              << ": override CXXFLAGS += $(CONSTRUCTOR_CXXFLAGS)\n";
     }
-    if (!memoryConstrainedConstructorObjects.empty()) {
+    if (!elaborationOnlyObjects.empty()) {
         make << "\n";
     }
     make << "build/opt/%.o: %.cpp all_generated.h cpphdl_optimized_externs.h\n";

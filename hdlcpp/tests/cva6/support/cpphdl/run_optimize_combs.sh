@@ -45,7 +45,22 @@ cleanup_intermediates() {
 }
 trap cleanup_intermediates EXIT
 
-if [[ ! -f "$PCH" || "$OUT/cpphdl_comb_optimization_context.h" -nt "$PCH" ]]; then
+# The context header includes the CppHDL runtime, so checking only the wrapper
+# can retain an ABI-stale PCH after a runtime update. Rebuild when any public
+# CppHDL header is newer than the cached compilation context.
+runtime_header_newer=0
+if [[ -f "$PCH" ]] && find /home/me/cpphdl/include -type f -newer "$PCH" -print -quit | grep -q .; then
+    runtime_header_newer=1
+fi
+# The umbrella timestamp does not change when one of its generated includes is
+# regenerated. Include those dependencies in the freshness test so Clang never
+# consumes an AST whose declarations disagree with the current model headers.
+generated_header_newer=0
+if [[ -f "$PCH" ]] && find "$OUT/generated" -type f -name '*.h' -newer "$PCH" -print -quit | grep -q .; then
+    generated_header_newer=1
+fi
+if [[ ! -f "$PCH" || "$OUT/cpphdl_comb_optimization_context.h" -nt "$PCH" || \
+      "$runtime_header_newer" == "1" || "$generated_header_newer" == "1" ]]; then
     "$CLANGXX" -std=c++26 -DSYNTHESIS -w \
         -I/home/me/cpphdl/include -I"$OUT" -x c++-header \
         "$OUT/cpphdl_comb_optimization_context.h" -o "$PCH"

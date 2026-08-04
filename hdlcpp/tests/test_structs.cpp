@@ -84,12 +84,13 @@ static std::string convertModule(const char* argv0, const std::string& section,
     writeFile(params, generateParams);
     writeFile(overrides, typeDeclOverrides);
 
+    auto hdlcpp = hdlcppPath(argv0);
     auto oldCwd = fs::current_path();
     fs::current_path(dir);
     std::string command = "HDLCPP_GENERATE_PARAM_VALUES=" + shellQuote(params) + " " +
                           "HDLCPP_TYPE_DECL_OVERRIDES=" + shellQuote(overrides) + " " +
                           "HDLCPP_ADDRESSABLE_PACKED_ARRAY_TYPES='" + addressablePackedArrayTypes + "' " +
-                          shellQuote(hdlcppPath(argv0)) + " " + shellQuote(input);
+                          shellQuote(hdlcpp) + " " + shellQuote(input);
     auto rc = std::system(command.c_str());
     fs::current_path(oldCwd);
     if (rc != 0) {
@@ -977,12 +978,60 @@ endmodule
     expectNotContains(h, "(uint64_t)(req_i_in__field_ar())");
 }
 
+static void testConstexprAggregatePackedArrayReplicationAssignsElements(const char* argv0)
+{
+    const std::string sv = R"sv(
+package constexpr_aggregate_replication;
+  typedef struct packed {
+    logic [3:0][7:0] lanes;
+  } cfg_t;
+
+  localparam cfg_t CFG = '{
+    lanes: {4{8'ha5}}
+  };
+endpackage
+)sv";
+
+    auto h = convertModule(argv0, "constexpr_aggregate_replication", sv);
+    expectContains(h, "v.lanes = cpphdl::repeat");
+    expectContains(h, "cpphdl::repeat<(std::size_t)(4), __cpphdl_repeated_width>");
+    expectNotContains(h, "__cpphdl_repeated_dst");
+    expectNotContains(h, "__cpphdl_rep.bits");
+}
+
+static void testConstexprAggregateWidePackedCastKeepsConcat(const char* argv0)
+{
+    const std::string sv = R"sv(
+package constexpr_aggregate_wide_cast;
+  typedef struct packed {
+    int unsigned          count;
+    logic [3:0][63:0]     regions;
+  } cfg_t;
+
+  localparam cfg_t CFG = '{
+    count: unsigned'(3),
+    regions: 256'({64'h8000_0000, 64'h1_0000, 64'h0})
+  };
+endpackage
+)sv";
+
+    auto h = convertModule(argv0, "constexpr_aggregate_wide_cast", sv);
+    expectContains(h, "array<4,logic<64>,true> regions;");
+    expectContains(h, "logic<256>(cat{");
+    expectContains(h, "logic<64>(0x80000000)");
+    expectContains(h, "logic<64>(0x10000)");
+    expectNotContains(h, "auto __cpphdl_field_value = (uint64_t)(logic<256>");
+    expectNotContains(h, "__cpphdl_field_value = (uint64_t)(0)");
+}
+
 int main(int argc, char** argv)
 {
     assert(argc >= 1);
     testStructFieldsAreExportedAsCrossFileMetadata(argv[0]);
     testPackedStructWidthDoesNotTreatIdentifierPrefixAsRuntimeIndex(argv[0]);
     testWideTypeParameterizedStructMemberConcatKeepsUpperBits(argv[0]);
+    testConstexprAggregatePackedArrayReplicationAssignsElements(argv[0]);
+    testConstexprAggregateWidePackedCastKeepsConcat(argv[0]);
     testPackedTypedefStructEmitsCppStruct(argv[0]);
     testPackedStructFieldBitsCanDriveLocalparam(argv[0]);
     testLocalparamTypeStructInParameterList(argv[0]);

@@ -2770,6 +2770,38 @@ static bool cpphdlArrayExtent(const std::string& arg)
     });
 }
 
+static bool cpphdlArrayType(const std::string& arg)
+{
+    const auto value = trim(arg);
+    if (value.empty()) {
+        return false;
+    }
+    const auto hasPrefix = [&](const std::string& prefix) {
+        return value.rfind(prefix, 0) == 0;
+    };
+    if (hasPrefix("logic<") || hasPrefix("array<") || hasPrefix("reg<") ||
+        hasPrefix("memory<") || hasPrefix("std::") || hasPrefix("::") ||
+        hasPrefix("decltype(") || hasPrefix("typename ") || value == "bool" ||
+        value == "auto" || value == "signed" || value == "unsigned") {
+        return true;
+    }
+    if (value.size() >= 2 && value.compare(value.size() - 2, 2, "_t") == 0) {
+        return true;
+    }
+    // A complete template-id in an array slot is a type. Requiring its closing
+    // bracket at the end avoids mistaking comparisons and shifts for types.
+    if (auto angle = value.find('<'); angle != std::string::npos && angle > 0) {
+        auto end = angle;
+        while (end > 0 && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+            --end;
+        }
+        const auto close = cppTemplateClose(value, angle);
+        return end > 0 && close == value.size() - 1 &&
+            (std::isalnum(static_cast<unsigned char>(value[end - 1])) || value[end - 1] == '_');
+    }
+    return false;
+}
+
 static std::string updateCpphdlArraySyntax(std::string text)
 {
     for (size_t pos = 0; (pos = text.find("array<", pos)) != std::string::npos;) {
@@ -2792,11 +2824,14 @@ static std::string updateCpphdlArraySyntax(std::string text)
         for (auto& arg : args) {
             arg = updateCpphdlArraySyntax(std::move(arg));
         }
-        if (cpphdlArrayExtent(args[0]) && !cpphdlArrayExtent(args[1])) {
-            pos = close + 1;
-            continue;
-        }
-        std::string replacement = "array<" + args[1] + "," + args[0];
+        const bool firstIsType = cpphdlArrayType(args[0]);
+        const bool secondIsType = cpphdlArrayType(args[1]);
+        const bool alreadyCurrentOrder = firstIsType != secondIsType
+            ? secondIsType
+            : cpphdlArrayExtent(args[0]) && !cpphdlArrayExtent(args[1]);
+        std::string replacement = alreadyCurrentOrder
+            ? "array<" + args[0] + "," + args[1]
+            : "array<" + args[1] + "," + args[0];
         if (args.size() == 3) {
             replacement += "," + args[2];
         }
@@ -2873,8 +2908,6 @@ static std::string postProcessCppLineImpl(std::string line)
             pos = start + repl.size();
         }
     }
-	    replaceAll(line, "<<<", "<<");
-	    replaceAll(line, ">>>", ">>");
 	    line = updateCpphdlArraySyntax(std::move(line));
 	    if (line.find(".data.bits(") == std::string::npos) {
 	        line = repairDottedLogicWidthCasts(std::move(line));
