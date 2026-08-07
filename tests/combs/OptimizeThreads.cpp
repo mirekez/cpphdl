@@ -51,6 +51,7 @@ int checkGeneratedStructure() {
       source.find("pin_worker(lane);") == std::string::npos ||
       source.find("restore_caller();") == std::string::npos ||
       source.find("pthread_setaffinity_np") == std::string::npos ||
+      source.find("allowed_cpus < lane_count") == std::string::npos ||
       source.find("run_lane(0, obj, state);") == std::string::npos ||
       source.find("workers_.emplace_back") == std::string::npos ||
       source.find("optimized_runtime(obj).run(obj, s)") == std::string::npos) {

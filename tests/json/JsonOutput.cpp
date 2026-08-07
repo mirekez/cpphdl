@@ -4,7 +4,7 @@
 #define MAIN_FILE_INCLUDED
 
 #include "cpphdl.h"
-#include "../../tribe/common/Axi4.h"
+#include "../../tribe_cpu/common/Axi4.h"
 
 using namespace cpphdl;
 

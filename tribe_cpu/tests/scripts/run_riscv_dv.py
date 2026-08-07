@@ -98,7 +98,7 @@ def run(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> int:
 
 
 def default_testlist(repo_root: pathlib.Path, work: pathlib.Path) -> pathlib.Path:
-    source_testlist = repo_root / "tribe" / "tests" / "riscv_dv_tribe_testlist.yaml"
+    source_testlist = repo_root / "tribe_cpu" / "tests" / "riscv_dv_tribe_testlist.yaml"
     if source_testlist.exists():
         return source_testlist
 

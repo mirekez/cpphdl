@@ -221,8 +221,8 @@ int main(int argc, char** argv)
         auto start = std::chrono::high_resolution_clock::now();
         ok &= VerilatorCompile(__FILE__, "BranchPredictor", {"Predef_pkg", "Br_pkg"},
             {(source_root / "include").string(),
-             (source_root / "tribe").string(),
-             (source_root / "tribe" / "spec").string()},
+             (source_root / "tribe_cpu").string(),
+             (source_root / "tribe_cpu" / "spec").string()},
             ENTRIES, COUNTER_BITS);
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start)).count());

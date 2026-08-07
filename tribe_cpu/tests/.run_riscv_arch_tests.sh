@@ -44,7 +44,7 @@ export TRIBE_ARCH_TEST_GCC="${TRIBE_ARCH_TEST_GCC:-riscv32-unknown-elf-gcc}"
 export TRIBE_ARCH_TEST_OBJDUMP="${TRIBE_ARCH_TEST_OBJDUMP:-riscv32-unknown-elf-objdump}"
 export TRIBE_ARCH_TEST_EXTENSIONS="${TRIBE_ARCH_TEST_EXTENSIONS:-I,M,Zicsr,Zifencei,Zca,Zaamo,Zalrsc,ExceptionsS,ExceptionsU,InterruptsSm}"
 export TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS="${TRIBE_ARCH_TEST_EXCLUDE_EXTENSIONS:-F,D,Zcf,Zcd,Zabha,Zicntr,Zihpm,Misalign,MisalignZca}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-${BUILD_DIR}/tribe/tests/riscv-arch-test-uv-cache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${BUILD_DIR}/tribe_cpu/tests/riscv-arch-test-uv-cache}"
 # riscv-arch-test Python tools require >=3.10. Keep this as a version
 # request so uv can use an installed interpreter or fetch a managed one.
 export UV_PYTHON="${UV_PYTHON:-3.10}"
@@ -77,10 +77,10 @@ if ! command -v uv >/dev/null 2>&1; then
         "${RISCV_ARCH_TEST_PYTHON_DEPS[@]}"
 fi
 
-if command -v mise >/dev/null 2>&1 && [[ -f "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml" ]]; then
+if command -v mise >/dev/null 2>&1 && [[ -f "${ROOT_DIR}/tribe_cpu/tests/riscv-arch-test/.mise.toml" ]]; then
     configure_mise
-    mise trust "${ROOT_DIR}/tribe/tests/riscv-arch-test/.mise.toml"
-    mise install --cd "${ROOT_DIR}/tribe/tests/riscv-arch-test"
+    mise trust "${ROOT_DIR}/tribe_cpu/tests/riscv-arch-test/.mise.toml"
+    mise install --cd "${ROOT_DIR}/tribe_cpu/tests/riscv-arch-test"
 fi
 
 make -C "${BUILD_DIR}" tribe256 tribe128 tribe64

@@ -607,10 +607,10 @@ int main(int argc, char** argv)
         ok &= VerilatorCompileInExactFolder(__FILE__, "SD", "SDController",
             {"Predef_pkg"},
             {(source_root / "include").string(),
-             (source_root / "tribe").string(),
-             (source_root / "tribe" / "common").string(),
-             (source_root / "tribe" / "devices").string(),
-             (source_root / "tribe" / "verif").string()},
+             (source_root / "tribe_cpu").string(),
+             (source_root / "tribe_cpu" / "common").string(),
+             (source_root / "tribe_cpu" / "devices").string(),
+             (source_root / "tribe_cpu" / "verif").string()},
             SD_TEST_ADDR_WIDTH, 4, SD_TEST_DATA_WIDTH, 64);
         ok &= std::system("SD/obj_dir/VSDController") == 0;
     }

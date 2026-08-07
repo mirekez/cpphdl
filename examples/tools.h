@@ -336,7 +336,7 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     std::string command;
     command += ToolShellQuote(cpphdl);
     command += " --generated-dir " + ToolShellQuote(generated_dir);
-    command += " " + ToolShellQuote(source_root / "tribe" / "main.cpp");
+    command += " " + ToolShellQuote(source_root / "tribe_cpu" / "main.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
@@ -344,9 +344,9 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
         command += " -DMULTICORE";
     }
     command += " -I " + ToolShellQuote(source_root / "include");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "common");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "spec");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "devices");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "common");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "spec");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "devices");
     return SystemEcho(command.c_str()) == 0;
 }
 #endif
@@ -469,11 +469,11 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
     return VerilatorCompileInFolder(cpp_name, folder_name, "TribeTest", modules, {
 #endif
                   (source_root / "include").string(),
-                  (source_root / "tribe").string(),
-                  (source_root / "tribe" / "common").string(),
-                  (source_root / "tribe" / "spec").string(),
-                  (source_root / "tribe" / "cache").string(),
-                  (source_root / "tribe" / "devices").string()}, cpu_cores);
+                  (source_root / "tribe_cpu").string(),
+                  (source_root / "tribe_cpu" / "common").string(),
+                  (source_root / "tribe_cpu" / "spec").string(),
+                  (source_root / "tribe_cpu" / "cache").string(),
+                  (source_root / "tribe_cpu" / "devices").string()}, cpu_cores);
 }
 
 #define STRINGIFY_IMPL(x) #x

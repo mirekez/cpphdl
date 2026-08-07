@@ -25,41 +25,10 @@ Then for both Win&Lin:
 
 ```
 cd build
+make
 ctest
-# be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run CPU tests
-# you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe/tests/ if you want to run CPU tests
-```
-
-## optimized simulation
-
-`--optimize-combs ROOT` generates a flattened `calc_all()` implementation for
-the concrete hierarchy rooted at `ROOT`. `--optimize-combs-l1 ROOT` additionally
-schedules cache-backed procedural comb methods once, resolves trivial port
-wrappers across module boundaries, and merges type-compatible exact comb
-expressions. The L1 mode avoids memoization calls and clock checks in the
-generated comb schedule. You can use generated code instead of original
-_work() and xxx_comb_func() functions to execute it up to 10 times faster.
-
-`--optimize-math` enables exact scalar replacements for recognized bit-level
-math networks, currently complete bit reversals, bit replications, and packed
-sign extensions. It requires either `--optimize-combs` or
-`--optimize-combs-l1`; unmatched expressions retain their normal comb
-implementation.
-
-`--optimize-threads N` can be added to either comb optimizer mode. It assigns
-weighted independent components of the flattened combinational DAG to at most
-`N` persistent worker lanes. The scheduler evaluates dependency-safe stage cuts
-and rejects additional stages when their synchronization cost exceeds their
-estimated load-balance benefit. Each stage uses one release and cache-line-
-separated completion slots; there are no per-value waits. On Linux the caller
-and workers are pinned to distinct CPUs from the process's existing affinity
-mask, with a no-affinity fallback on constrained hosts. Clocked `_work()`
-statements remain ordered, while register and memory commits stay in
-`commit_optimized_regs()` and preserve nonblocking semantics.
-
-```sh
-build/cpphdl --optimize-combs-l1 Top --optimize-math --optimize-threads 4 \
-  --generated-dir generated Top.h -Iinclude
+# be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run Tribe CPU tests
+# you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe_cpu/tests/ if you want to run CPU tests
 ```
 
 ## author

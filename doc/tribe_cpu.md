@@ -4,28 +4,28 @@
 
 Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model is intended to run both as a native C++ simulation and as generated SystemVerilog through Verilator. The core implements a small in-order pipeline with instruction and data L1 caches, a shared L2 cache, CSR/trap support, optional interrupt support, optional Sv32 MMU/TLB support, coherent AXI4-style memory ports, and an SoC wrapper with memory-mapped devices.
 
-The base implementation targets 32-bit integer software. Build-time configuration in `tribe/Config.h` selects optional blocks such as `ENABLE_ZICSR`, `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB`. The L2 memory data width is selected with `L2_AXI_WIDTH`; common test targets use 64, 128, and 256 bits. Main memory starts at `memory_base_in`, has runtime size `memory_size_in`, and is split into four L2 memory/device regions. The last region is used as uncached IO/MMIO space.
+The base implementation targets 32-bit integer software. Build-time configuration in `tribe_cpu/Config.h` selects optional blocks such as `ENABLE_ZICSR`, `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB`. The L2 memory data width is selected with `L2_AXI_WIDTH`; common test targets use 64, 128, and 256 bits. Main memory starts at `memory_base_in`, has runtime size `memory_size_in`, and is split into four L2 memory/device regions. The last region is used as uncached IO/MMIO space.
 
 ## Structure
 
-The top-level CPU is the `Tribe` module in `tribe/Tribe.h`. It instantiates these core blocks:
+The top-level CPU is the `Tribe` module in `tribe_cpu/Tribe.h`. It instantiates these core blocks:
 
 | Block | Source | Role |
 | --- | --- | --- |
-| `Decode` | `tribe/Decode.h` | Instruction decode, register source selection, and `State` construction. |
-| `Execute` | `tribe/Execute.h` | ALU operation and branch resolution. |
-| `ExecuteMem` | `tribe/ExecuteMem.h` | Memory request generation, split access handling, and optional atomics. |
-| `WritebackMem` | `tribe/WritebackMem.h` | Load response capture, split-load assembly, and store-to-load forwarding. |
-| `Writeback` | `tribe/Writeback.h` | Architectural register writeback formatting. |
-| `CSR` | `tribe/CSR.h` | CSR, privilege, trap, and return-from-trap state. |
-| `MMU_TLB` | `tribe/MMU_TLB.h` | Optional Sv32 instruction/data address translation and page-table walking. |
-| `InterruptController` | `tribe/InterruptController.h` | Optional CLINT and PLIC/external interrupt routing into CSR trap input. |
+| `Decode` | `tribe_cpu/Decode.h` | Instruction decode, register source selection, and `State` construction. |
+| `Execute` | `tribe_cpu/Execute.h` | ALU operation and branch resolution. |
+| `ExecuteMem` | `tribe_cpu/ExecuteMem.h` | Memory request generation, split access handling, and optional atomics. |
+| `WritebackMem` | `tribe_cpu/WritebackMem.h` | Load response capture, split-load assembly, and store-to-load forwarding. |
+| `Writeback` | `tribe_cpu/Writeback.h` | Architectural register writeback formatting. |
+| `CSR` | `tribe_cpu/CSR.h` | CSR, privilege, trap, and return-from-trap state. |
+| `MMU_TLB` | `tribe_cpu/MMU_TLB.h` | Optional Sv32 instruction/data address translation and page-table walking. |
+| `InterruptController` | `tribe_cpu/InterruptController.h` | Optional CLINT and PLIC/external interrupt routing into CSR trap input. |
 | `File<32,32>` | `File.h` | Integer register file. |
-| `L1Cache` | `tribe/cache/L1Cache.h` | Separate instruction and data L1 caches. |
-| `L2Cache` | `tribe/cache/L2Cache.h` | Shared coherent L2 cache, AXI memory/device master ports, and external AXI slave ports. |
-| `BranchPredictor` | `tribe/BranchPredictor.h` | Small direct-mapped branch predictor. |
+| `L1Cache` | `tribe_cpu/cache/L1Cache.h` | Separate instruction and data L1 caches. |
+| `L2Cache` | `tribe_cpu/cache/L2Cache.h` | Shared coherent L2 cache, AXI memory/device master ports, and external AXI slave ports. |
+| `BranchPredictor` | `tribe_cpu/BranchPredictor.h` | Small direct-mapped branch predictor. |
 
-The executable test wrapper is `TestTribe` in `tribe/TribeTest.h`, driven by `tribe/main.cpp`. It instantiates three RAM regions, an IO region mux, NS16550A UART, CLINT, PLIC, Accelerator, SD controller plus SD verification card, and the ethgig DMA/MAC/PCS/PHY chain plus optional TAP-backed RGMII verification link. `tribe/SoC/System.cpp` packages the same CPU with UART, CLINT, PLIC, Accelerator, SD controller, and the third RAM region into a synthesizable-style `System` module where the first two DRAM regions remain outside the DUT.
+The executable test wrapper is `TestTribe` in `tribe_cpu/TribeTest.h`, driven by `tribe_cpu/main.cpp`. It instantiates three RAM regions, an IO region mux, NS16550A UART, CLINT, PLIC, Accelerator, SD controller plus SD verification card, and the ethgig DMA/MAC/PCS/PHY chain plus optional TAP-backed RGMII verification link. `tribe_cpu/SoC/System.cpp` packages the same CPU with UART, CLINT, PLIC, Accelerator, SD controller, and the third RAM region into a synthesizable-style `System` module where the first two DRAM regions remain outside the DUT.
 
 ## Main (Core)
 
@@ -417,7 +417,7 @@ Ports:
 
 ## SoC
 
-`tribe/SoC/System.cpp` defines a `System` DUT and a `SystemTest` wrapper. `System` integrates the `Tribe` core with the on-chip IO space, NS16550A UART, CLINT, PLIC, Accelerator, SD controller, and the third internal AXI RAM region. `SystemTest` provides external `dram0` and `dram1` RAMs and converts realistic hardware configuration values into `System` input ports before running the same program modes as the corresponding Tribe targets. The full native Linux test wrapper in `TribeTest.h` additionally connects the ethgig network device chain and optional TAP socket bridge.
+`tribe_cpu/SoC/System.cpp` defines a `System` DUT and a `SystemTest` wrapper. `System` integrates the `Tribe` core with the on-chip IO space, NS16550A UART, CLINT, PLIC, Accelerator, SD controller, and the third internal AXI RAM region. `SystemTest` provides external `dram0` and `dram1` RAMs and converts realistic hardware configuration values into `System` input ports before running the same program modes as the corresponding Tribe targets. The full native Linux test wrapper in `TribeTest.h` additionally connects the ethgig network device chain and optional TAP socket bridge.
 
 `System` ports:
 
@@ -499,7 +499,7 @@ The SoC memory map mirrors the default Tribe executable wrapper for CPU-visible 
 
 ## Devices
 
-Device modules live in `tribe/devices`. They are memory-mapped AXI responders; devices with DMA (`Accelerator`, `SDController`, and `EthGigDMA`) also own AXI master ports that connect to L2 coherent slave ports. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
+Device modules live in `tribe_cpu/devices`. They are memory-mapped AXI responders; devices with DMA (`Accelerator`, `SDController`, and `EthGigDMA`) also own AXI master ports that connect to L2 coherent slave ports. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
 
 ### IOUART
 
@@ -600,9 +600,9 @@ PIO mode moves payload bytes through `TXDATA` and `RXDATA`. DMA mode uses `dma_o
 
 ### SDPhysical, SDFifo, and SDCardVerif
 
-`SDPhysical` and `SDFifo` are small SD-layer helpers under `tribe/devices/sd`. `SDPhysical` handles the byte-level command/response stream between controller logic and card-facing ports, while `SDFifo` provides small byte FIFOs used by SD tests and layering. `SDTypes.h` is the shared register, status, control, IRQ, and command constant header.
+`SDPhysical` and `SDFifo` are small SD-layer helpers under `tribe_cpu/devices/sd`. `SDPhysical` handles the byte-level command/response stream between controller logic and card-facing ports, while `SDFifo` provides small byte FIFOs used by SD tests and layering. `SDTypes.h` is the shared register, status, control, IRQ, and command constant header.
 
-`tribe/verif/SDCardVerif.h` provides a C++ SD card verification model plus `SDCardVerifFrontend`, an RTL-facing wrapper that connects to `SDController` physical ports. The verification model stores a byte vector, can load/save an SD image file, supports checkpointing, and responds to the controller's `CMD17`/`CMD24` frames. The native Linux wrapper uses this model for `TRIBE_LINUX_SD_IMAGE` and can override or restore SD image state across checkpoints.
+`tribe_cpu/verif/SDCardVerif.h` provides a C++ SD card verification model plus `SDCardVerifFrontend`, an RTL-facing wrapper that connects to `SDController` physical ports. The verification model stores a byte vector, can load/save an SD image file, supports checkpointing, and responds to the controller's `CMD17`/`CMD24` frames. The native Linux wrapper uses this model for `TRIBE_LINUX_SD_IMAGE` and can override or restore SD image state across checkpoints.
 
 ### EthGigDMA
 
@@ -718,6 +718,6 @@ Ports:
 
 ### RGMIIVerif and ethgig_tap
 
-`tribe/verif/RGMIIVerif.h` contains a C++ packet-level RGMII verification model and `RGMIIVerifFrontend`, an RTL-facing module with RGMII nibble ports. Tests can push RX packets into the model and pop packets transmitted by the DUT. The native Linux wrapper can also connect the RGMII verification link to a host TAP process through `TRIBE_LINUX_ETH_TAP_SOCKET`.
+`tribe_cpu/verif/RGMIIVerif.h` contains a C++ packet-level RGMII verification model and `RGMIIVerifFrontend`, an RTL-facing module with RGMII nibble ports. Tests can push RX packets into the model and pop packets transmitted by the DUT. The native Linux wrapper can also connect the RGMII verification link to a host TAP process through `TRIBE_LINUX_ETH_TAP_SOCKET`.
 
-`tribe/linux/net/ethgig_tap.cpp` is the host-side bridge. It creates or uses a TAP interface, exchanges packet frames over a Unix-domain socket, and lets Linux running inside Tribe communicate with the host network namespace as `eth0`. The helper script under `tribe/linux/net` configures the TAP side; the simulator side connects by passing `TRIBE_LINUX_ETH_TAP_SOCKET=/tmp/tribe-ethgig.sock` to `run_linux_probe.sh`.
+`tribe_cpu/linux/net/ethgig_tap.cpp` is the host-side bridge. It creates or uses a TAP interface, exchanges packet frames over a Unix-domain socket, and lets Linux running inside Tribe communicate with the host network namespace as `eth0`. The helper script under `tribe_cpu/linux/net` configures the TAP side; the simulator side connects by passing `TRIBE_LINUX_ETH_TAP_SOCKET=/tmp/tribe-ethgig.sock` to `run_linux_probe.sh`.

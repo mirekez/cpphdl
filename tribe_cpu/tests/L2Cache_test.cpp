@@ -1807,9 +1807,9 @@ int main(int argc, char** argv)
             }
             return VerilatorCompile(verilator_source, L2CACHE_TEST_TOP_NAME, {},
                 {(source_root / "include").string(),
-                 (source_root / "tribe").string(),
-                 (source_root / "tribe" / "common").string(),
-                 (source_root / "tribe" / "cache").string()},
+                 (source_root / "tribe_cpu").string(),
+                 (source_root / "tribe_cpu" / "common").string(),
+                 (source_root / "tribe_cpu" / "cache").string()},
                 cache_size, port_bits, LINE_SIZE, ways, 32, 32, mem_ports, cpu_ports);
         };
         ok &= compile_l2(0, 16384, 64, 4, 1, cpu_ports);

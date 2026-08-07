@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe/linux}"
+LINUX_DIR="${LINUX_DIR:-${ROOT_DIR}/tribe_cpu/linux}"
 KERNEL_SRC="${KERNEL_SRC:-${LINUX_DIR}/linux-build/linux}"
 KERNEL_OUT="${KERNEL_OUT:-}"
 KERNEL_CONFIG="${KERNEL_CONFIG:-${LINUX_DIR}/config-v6.19-rv32}"

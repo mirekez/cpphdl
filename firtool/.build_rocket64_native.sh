@@ -4,6 +4,12 @@ set -euo pipefail
 
 PRODUCT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHIPYARD_ROOT="$PRODUCT_ROOT/chipyard"
+BUILD_JOBS="${CHIPYARD_BUILD_JOBS:-1}"
+
+if [[ ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: CHIPYARD_BUILD_JOBS must be a positive integer" >&2
+  exit 1
+fi
 
 if [ ! -f "$PRODUCT_ROOT/.build_chipyard.sh" ]; then
   echo "error: missing $PRODUCT_ROOT/.build_chipyard.sh" >&2
@@ -31,7 +37,7 @@ configure_host_compilers
 
 step "Generate RocketConfig SystemVerilog"
 CHIPYARD_DISABLE_OPTIONAL_MODULES=1 make_with_sbt_retry \
-  make -C sims/verilator CONFIG=RocketConfig verilog
+  make -C sims/verilator CONFIG=RocketConfig verilog -j"$BUILD_JOBS"
 
 step "Build native SystemVerilog/Verilator RocketConfig simulator"
 build_simulator RocketConfig
@@ -39,7 +45,7 @@ build_simulator RocketConfig
 step "Build native RV64 matrix-multiply test"
 "$CMAKE_BIN" -S tests -B tests/build -D CMAKE_BUILD_TYPE=Release
 "$CMAKE_BIN" --build tests/build \
-  --target rocket64-mmul rocket64-mmul-dump -j1
+  --target rocket64-mmul rocket64-mmul-dump --parallel "$BUILD_JOBS"
 
 sim="sims/verilator/simulator-chipyard.harness-RocketConfig"
 elf="tests/build/rocket64-mmul.riscv"
