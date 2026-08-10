@@ -16,3 +16,9 @@
 
 #define BRANCH_PREDICTOR_ENTRIES 16
 #define BRANCH_PREDICTOR_COUNTER_BITS 2
+
+#define CPU_CLK_MULTIPLIER 4
+
+#if CPU_CLK_MULTIPLIER < 1
+#error "CPU_CLK_MULTIPLIER must be a positive integer"
+#endif

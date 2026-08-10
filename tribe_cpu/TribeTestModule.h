@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Tribe.h"
+#include "common/Axi4Cdc.h"
+#include "cache/L1MemCdc.h"
 #include "cache/l2/L2Cache.h"
 
 struct L1PeerStoreState
@@ -36,8 +38,12 @@ class TribeTest : public Module
 
 public:
     Tribe cores[CPU_CORES];
+    L1MemFastToSlowCdc<L2_PORT_WIDTH> i_mem_cdc[CPU_CORES];
+    L1MemFastToSlowCdc<L2_PORT_WIDTH> d_mem_cdc[CPU_CORES];
     L2Cache<L2_TOTAL_SIZE, L2_PORT_WIDTH, L2_LINE_SIZE, L2_WAYS,
         L2_ADDRESS_BITS, L2_RAM_ADDRESS_BITS, L2_PORT_COUNT, CPU_CORES> l2cache;
+    Axi4FastToSlowCdc<L2_ADDRESS_BITS, 4, L2_PORT_WIDTH> axi_in_cdc[L2_PORT_COUNT];
+    Axi4SlowToFastCdc<L2_RAM_ADDRESS_BITS, 4, L2_PORT_WIDTH> axi_out_cdc[L2_PORT_COUNT];
 
 protected:
     reg<L1PeerStoreState> peer_store_reg[CPU_CORES]; // Holds each store and address through L2 completion.
@@ -237,8 +243,20 @@ public:
         l2cache.memory_size_in = memory_size_in;
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             l2cache.mem_region_size_in[i] = mem_region_size_in[i];
-            AXI4_DRIVER_FROM(l2cache.axi_in[i], axi_in[i]);
-            AXI4_RESPONDER_FROM_I(l2cache.axi_out[i], axi_out[i]);
+            AXI4_DRIVER_FROM_I(axi_in_cdc[i].fast_in, axi_in[i]);
+            AXI4_RESPONDER_FROM_I(axi_in[i], axi_in_cdc[i].fast_in);
+            AXI4_DRIVER_FROM_I(l2cache.axi_in[i], axi_in_cdc[i].slow_out);
+            AXI4_RESPONDER_FROM_I(axi_in_cdc[i].slow_out, l2cache.axi_in[i]);
+            AXI4_DRIVER_FROM_I(axi_out_cdc[i].slow_in, l2cache.axi_out[i]);
+            AXI4_RESPONDER_FROM_I(l2cache.axi_out[i], axi_out_cdc[i].slow_in);
+            AXI4_DRIVER_FROM_I(axi_out[i], axi_out_cdc[i].fast_out);
+            AXI4_RESPONDER_FROM_I(axi_out_cdc[i].fast_out, axi_out[i]);
+#ifndef SYNTHESIS
+            axi_in_cdc[i].__inst_name = __inst_name + "/axi_in_cdc" + std::to_string(i);
+            axi_out_cdc[i].__inst_name = __inst_name + "/axi_out_cdc" + std::to_string(i);
+#endif
+            axi_in_cdc[i]._assign();
+            axi_out_cdc[i]._assign();
         }
         l2cache.mem_region_uncached_in[0] = _ASSIGN(false);
         l2cache.mem_region_uncached_in[1] = _ASSIGN(false);
@@ -249,6 +267,8 @@ public:
         l2cache._assign();
 
         for (i = 0; i < CPU_CORES; ++i) {
+            i_mem_cdc[i]._assign();
+            d_mem_cdc[i]._assign();
             cores[i].debugen_in = debugen_in;
             cores[i].reset_pc_in = reset_pc_in;
             cores[i].boot_hartid_in = _ASSIGN_I((uint32_t)boot_hartid_in() + (uint32_t)i);
@@ -287,48 +307,63 @@ public:
 #ifdef MULTICORE
             cores[i].atomic_grant_in = _ASSIGN_I(atomic_grant_comb_func()[i]);
 #endif
-            cores[i].i_mem_out.read_data_out = l2cache.i_mem_in[i].read_data_out;
-            cores[i].i_mem_out.wait_out = l2cache.i_mem_in[i].wait_out;
-            cores[i].d_mem_out.read_data_out = l2cache.d_mem_in[i].read_data_out;
+            cores[i].i_mem_out.read_data_out = i_mem_cdc[i].fast_in.read_data_out;
+            cores[i].i_mem_out.wait_out = i_mem_cdc[i].fast_in.wait_out;
+            cores[i].d_mem_out.read_data_out = d_mem_cdc[i].fast_in.read_data_out;
 #ifdef MULTICORE
             cores[i].d_mem_out.wait_out = _ASSIGN_I(
-                !atomic_data_access_comb_func()[i] || l2cache.d_mem_in[i].wait_out());
+                !atomic_data_access_comb_func()[i] || d_mem_cdc[i].fast_in.wait_out());
 #else
-            cores[i].d_mem_out.wait_out = l2cache.d_mem_in[i].wait_out;
+            cores[i].d_mem_out.wait_out = d_mem_cdc[i].fast_in.wait_out;
 #endif
 #ifndef SYNTHESIS
             cores[i].__inst_name = __inst_name + "/core" + std::to_string(i);
+            i_mem_cdc[i].__inst_name = __inst_name + "/i_mem_cdc" + std::to_string(i);
+            d_mem_cdc[i].__inst_name = __inst_name + "/d_mem_cdc" + std::to_string(i);
 #endif
             cores[i]._assign();
-            l2cache.i_mem_in[i].read_in = cores[i].i_mem_out.read_in;
-            l2cache.i_mem_in[i].write_in = cores[i].i_mem_out.write_in;
-            l2cache.i_mem_in[i].addr_in = cores[i].i_mem_out.addr_in;
-            l2cache.i_mem_in[i].write_data_in = cores[i].i_mem_out.write_data_in;
-            l2cache.i_mem_in[i].write_mask_in = cores[i].i_mem_out.write_mask_in;
-            l2cache.i_mem_in[i].cache_disable_in = cores[i].i_mem_out.cache_disable_in;
+            i_mem_cdc[i].fast_in.read_in = cores[i].i_mem_out.read_in;
+            i_mem_cdc[i].fast_in.write_in = cores[i].i_mem_out.write_in;
+            i_mem_cdc[i].fast_in.addr_in = cores[i].i_mem_out.addr_in;
+            i_mem_cdc[i].fast_in.write_data_in = cores[i].i_mem_out.write_data_in;
+            i_mem_cdc[i].fast_in.write_mask_in = cores[i].i_mem_out.write_mask_in;
+            i_mem_cdc[i].fast_in.cache_disable_in = cores[i].i_mem_out.cache_disable_in;
 #ifdef MULTICORE
-            l2cache.d_mem_in[i].read_in = _ASSIGN_I(
+            d_mem_cdc[i].fast_in.read_in = _ASSIGN_I(
                 atomic_data_access_comb_func()[i] && cores[i].d_mem_out.read_in());
-            l2cache.d_mem_in[i].write_in = _ASSIGN_I(
+            d_mem_cdc[i].fast_in.write_in = _ASSIGN_I(
                 atomic_data_access_comb_func()[i] && cores[i].d_mem_out.write_in());
 #else
-            l2cache.d_mem_in[i].read_in = cores[i].d_mem_out.read_in;
-            l2cache.d_mem_in[i].write_in = cores[i].d_mem_out.write_in;
+            d_mem_cdc[i].fast_in.read_in = cores[i].d_mem_out.read_in;
+            d_mem_cdc[i].fast_in.write_in = cores[i].d_mem_out.write_in;
 #endif
-            l2cache.d_mem_in[i].addr_in = cores[i].d_mem_out.addr_in;
-            l2cache.d_mem_in[i].write_data_in = cores[i].d_mem_out.write_data_in;
-            l2cache.d_mem_in[i].write_mask_in = cores[i].d_mem_out.write_mask_in;
-            l2cache.d_mem_in[i].cache_disable_in = cores[i].d_mem_out.cache_disable_in;
-        }
+            d_mem_cdc[i].fast_in.addr_in = cores[i].d_mem_out.addr_in;
+            d_mem_cdc[i].fast_in.write_data_in = cores[i].d_mem_out.write_data_in;
+            d_mem_cdc[i].fast_in.write_mask_in = cores[i].d_mem_out.write_mask_in;
+            d_mem_cdc[i].fast_in.cache_disable_in = cores[i].d_mem_out.cache_disable_in;
 
-        for (i = 0; i < L2_MEM_PORTS; ++i) {
-            AXI4_RESPONDER_FROM(axi_in[i], l2cache.axi_in[i]);
-            AXI4_DRIVER_FROM_I(axi_out[i], l2cache.axi_out[i]);
+            l2cache.i_mem_in[i].read_in = i_mem_cdc[i].slow_out.read_in;
+            l2cache.i_mem_in[i].write_in = i_mem_cdc[i].slow_out.write_in;
+            l2cache.i_mem_in[i].addr_in = i_mem_cdc[i].slow_out.addr_in;
+            l2cache.i_mem_in[i].write_data_in = i_mem_cdc[i].slow_out.write_data_in;
+            l2cache.i_mem_in[i].write_mask_in = i_mem_cdc[i].slow_out.write_mask_in;
+            l2cache.i_mem_in[i].cache_disable_in = i_mem_cdc[i].slow_out.cache_disable_in;
+            i_mem_cdc[i].slow_out.read_data_out = l2cache.i_mem_in[i].read_data_out;
+            i_mem_cdc[i].slow_out.wait_out = l2cache.i_mem_in[i].wait_out;
+
+            l2cache.d_mem_in[i].read_in = d_mem_cdc[i].slow_out.read_in;
+            l2cache.d_mem_in[i].write_in = d_mem_cdc[i].slow_out.write_in;
+            l2cache.d_mem_in[i].addr_in = d_mem_cdc[i].slow_out.addr_in;
+            l2cache.d_mem_in[i].write_data_in = d_mem_cdc[i].slow_out.write_data_in;
+            l2cache.d_mem_in[i].write_mask_in = d_mem_cdc[i].slow_out.write_mask_in;
+            l2cache.d_mem_in[i].cache_disable_in = d_mem_cdc[i].slow_out.cache_disable_in;
+            d_mem_cdc[i].slow_out.read_data_out = l2cache.d_mem_in[i].read_data_out;
+            d_mem_cdc[i].slow_out.wait_out = l2cache.d_mem_in[i].wait_out;
         }
     }
 
     // Advances every core before the shared cache consumes their live requests.
-    void _work(bool reset)
+    void work_clk_func(bool reset)
     {
         uint32_t i;
 #ifdef MULTICORE
@@ -341,12 +376,20 @@ public:
         // These calls are removed from the parent SV task, but keep each child
         // module's clocked implementation reachable during cpphdl conversion.
         cores[0]._work(reset);
-        l2cache._work(reset);
+        i_mem_cdc[0]._work_clk(reset);
+        d_mem_cdc[0]._work_clk(reset);
+        axi_in_cdc[0]._work_clk(reset);
+        axi_out_cdc[0]._work_clk(reset);
 #else
         for (i = 0; i < CPU_CORES; ++i) {
             cores[i]._work(reset);
+            i_mem_cdc[i]._work(reset);
+            d_mem_cdc[i]._work(reset);
         }
-        l2cache._work(reset);
+        for (i = 0; i < L2_PORT_COUNT; ++i) {
+            axi_in_cdc[i]._work(reset);
+            axi_out_cdc[i]._work(reset);
+        }
 #endif
         for (i = 0; i < CPU_CORES; ++i) {
             // Convert the L2 ready/write handshake into one delayed pulse. A
@@ -357,7 +400,7 @@ public:
 #ifdef MULTICORE
                 && atomic_data_access_comb_func()[i]
 #endif
-                && !l2cache.d_mem_in[i].wait_out()) {
+                && !d_mem_cdc[i].fast_in.wait_out()) {
                 peer_store_reg[i]._next.valid = true;
                 peer_store_reg[i]._next.addr = cores[i].dmem_addr_out();
             }
@@ -411,6 +454,16 @@ public:
         }
     }
 
+    void _work(bool reset)
+    {
+        work_clk_func(reset);
+    }
+
+    void _work_clk(bool reset)
+    {
+        work_clk_func(reset);
+    }
+
 #ifndef SYNTHESIS
     // Propagates the optional falling-edge phase to every CPU core.
     void _work_neg(bool reset)
@@ -421,13 +474,47 @@ public:
     }
 #endif
 
-    // Commits all CPU state and then the shared L2 state once per clock.
+    // Declares top-level primary-domain ownership for generated RTL. Child
+    // lifecycle calls only force template instantiation; each child owns its
+    // own clock block.
+    void _strobe_clk()
+    {
+        uint32_t i;
+
+#ifdef SYNTHESIS
+        cores[0]._strobe();
+        i_mem_cdc[0]._strobe_clk();
+        d_mem_cdc[0]._strobe_clk();
+        axi_in_cdc[0]._strobe_clk();
+        axi_out_cdc[0]._strobe_clk();
+#endif
+        for (i = 0; i < CPU_CORES; ++i) {
+            peer_store_reg[i].strobe();
+        }
+#ifdef MULTICORE
+        atomic_owner_valid_reg.strobe();
+        atomic_owner_reg.strobe();
+        atomic_rr_reg.strobe();
+#endif
+    }
+
+    // Commits CPU-domain state on every primary clock in native simulation.
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
         for (uint32_t i = 0; i < CPU_CORES; ++i) {
             cores[i]._strobe(checkpoint_fd);
+            i_mem_cdc[i]._strobe();
+            d_mem_cdc[i]._strobe();
         }
-        l2cache._strobe(checkpoint_fd);
+        for (uint32_t i = 0; i < L2_PORT_COUNT; ++i) {
+            axi_in_cdc[i]._strobe();
+            axi_out_cdc[i]._strobe();
+        }
+#ifndef SYNTHESIS
+        if (checkpoint_fd) {
+            l2cache.checkpoint_l2(checkpoint_fd);
+        }
+#endif
         for (uint32_t i = 0; i < CPU_CORES; ++i) {
             peer_store_reg[i].strobe(checkpoint_fd);
         }
@@ -437,6 +524,67 @@ public:
         atomic_rr_reg.strobe(checkpoint_fd);
 #endif
     }
+
+    // The shared cache samples the level-held L1 requests only on divided
+    // l2_clock edges. Its registered response remains visible until the next
+    // L2 edge, giving the faster L1 domain time to retire the request.
+    void _work_l2_clock(bool reset)
+    {
+#ifdef SYNTHESIS
+        // Converter discovery calls: child clock blocks own the actual state.
+        l2cache._work_l2_clock(reset);
+        i_mem_cdc[0]._work_l2_clock(reset);
+        d_mem_cdc[0]._work_l2_clock(reset);
+        axi_in_cdc[0]._work_l2_clock(reset);
+        axi_out_cdc[0]._work_l2_clock(reset);
+#else
+        l2cache._work_l2_clock(reset);
+        for (uint32_t i = 0; i < CPU_CORES; ++i) {
+            i_mem_cdc[i]._work_l2_clock(reset);
+            d_mem_cdc[i]._work_l2_clock(reset);
+        }
+        for (uint32_t i = 0; i < L2_PORT_COUNT; ++i) {
+            axi_in_cdc[i]._work_l2_clock(reset);
+            axi_out_cdc[i]._work_l2_clock(reset);
+        }
+#endif
+    }
+
+    void _strobe_l2_clock()
+    {
+#ifdef SYNTHESIS
+        // Converter discovery calls: omitted from the generated parent task.
+        l2cache._strobe_l2_clock();
+        i_mem_cdc[0]._strobe_l2_clock();
+        d_mem_cdc[0]._strobe_l2_clock();
+        axi_in_cdc[0]._strobe_l2_clock();
+        axi_out_cdc[0]._strobe_l2_clock();
+#else
+        l2cache._strobe_l2_clock();
+        for (uint32_t i = 0; i < CPU_CORES; ++i) {
+            i_mem_cdc[i]._strobe_l2_clock();
+            d_mem_cdc[i]._strobe_l2_clock();
+        }
+        for (uint32_t i = 0; i < L2_PORT_COUNT; ++i) {
+            axi_in_cdc[i]._strobe_l2_clock();
+            axi_out_cdc[i]._strobe_l2_clock();
+        }
+#endif
+    }
+
+#ifndef SYNTHESIS
+    void checkpoint_axi_cdc(FILE* checkpoint_fd)
+    {
+        for (uint32_t i = 0; i < CPU_CORES; ++i) {
+            i_mem_cdc[i].checkpoint(checkpoint_fd);
+            d_mem_cdc[i].checkpoint(checkpoint_fd);
+        }
+        for (uint32_t i = 0; i < L2_PORT_COUNT; ++i) {
+            axi_in_cdc[i].checkpoint(checkpoint_fd);
+            axi_out_cdc[i].checkpoint(checkpoint_fd);
+        }
+    }
+#endif
 };
 
 template class TribeTest<1>;

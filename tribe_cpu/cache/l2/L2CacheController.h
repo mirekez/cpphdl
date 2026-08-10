@@ -171,7 +171,7 @@ public:
         }
     }
 
-    void _work(bool reset)
+    void _work_l2_clock(bool reset)
     {
         uint32_t i;
         uint32_t way;
@@ -733,7 +733,39 @@ public:
         }
     }
 
-    void _strobe(FILE* checkpoint_fd = nullptr)
+    void _strobe_l2_clock()
+    {
+        data_ram.apply();
+        tag_ram.apply();
+        data_q_reg.strobe();
+        tag_q_reg.strobe();
+        state_reg.strobe();
+        req_reg.strobe();
+        // Arbitration order is transient and must not change the checkpoint stream format.
+        cpu_rr_reg.strobe();
+        victim_reg.strobe();
+        fill_way_reg.strobe();
+        init_set_reg.strobe();
+        response_reg.strobe();
+        cross_low_reg.strobe();
+        cross_high_reg.strobe();
+        fill_beat_reg.strobe();
+        evict_beat_reg.strobe();
+        // Transient eviction metadata is intentionally omitted from the
+        // checkpoint stream to keep existing checkpoint files compatible.
+        evict_tag_reg.strobe();
+        evict_line_reg.strobe();
+        slave_aw_reg.strobe();
+        slave_aw_seen_reg.strobe();
+        slave_ar_seen_reg.strobe();
+    }
+
+#ifndef SYNTHESIS
+    // Preserve the legacy checkpoint stream without making checkpoint timing
+    // another L2 clock edge. Between l2_clock edges every _next value and RAM
+    // change queue already matches the committed state, so this is also safe
+    // when a checkpoint is requested on an intervening CPU clock.
+    void checkpoint_l2(FILE* checkpoint_fd)
     {
         data_ram.apply(checkpoint_fd);
         tag_ram.apply(checkpoint_fd);
@@ -741,7 +773,7 @@ public:
         tag_q_reg.strobe(checkpoint_fd);
         state_reg.strobe(checkpoint_fd);
         req_reg.strobe(checkpoint_fd);
-        // Arbitration order is transient and must not change the checkpoint stream format.
+        // Arbitration order is transient and is not part of the stream.
         cpu_rr_reg.strobe();
         victim_reg.strobe(checkpoint_fd);
         fill_way_reg.strobe(checkpoint_fd);
@@ -751,12 +783,17 @@ public:
         cross_high_reg.strobe(checkpoint_fd);
         fill_beat_reg.strobe(checkpoint_fd);
         evict_beat_reg.strobe(checkpoint_fd);
-        // Transient eviction metadata is intentionally omitted from the
-        // checkpoint stream to keep existing checkpoint files compatible.
+        // Transient eviction and request-novelty metadata remain omitted for
+        // compatibility with checkpoints produced before the clock split.
         evict_tag_reg.strobe();
         evict_line_reg.strobe();
         slave_aw_reg.strobe(checkpoint_fd);
         slave_aw_seen_reg.strobe();
         slave_ar_seen_reg.strobe();
     }
+#endif
+
+    // L2 state is owned exclusively by the divided memory clock.
+    void _work_clk(bool) {}
+    void _strobe_clk() {}
 };

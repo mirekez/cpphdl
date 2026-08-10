@@ -327,6 +327,10 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
 {
     namespace fs = std::filesystem;
 
+    static_assert(CPU_CLK_MULTIPLIER > 0, "CPU_CLK_MULTIPLIER must be positive");
+    static_assert(100000000u % CPU_CLK_MULTIPLIER == 0,
+        "CPU_CLK_MULTIPLIER must divide the CPU clock frequency exactly");
+
     fs::path cpphdl = CpphdlToolFrom(source_root);
     if (!fs::exists(cpphdl)) {
         std::cout << "can't find cpphdl generator in CPPHDL_BUILD_DIR, near build directory, or source root\n";
@@ -336,6 +340,9 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     std::string command;
     command += ToolShellQuote(cpphdl);
     command += " --generated-dir " + ToolShellQuote(generated_dir);
+    command += " --primary_clock clk 100000000";
+    command += " --secondary_clock l2_clock "
+        + std::to_string(100000000u / CPU_CLK_MULTIPLIER);
     command += " " + ToolShellQuote(source_root / "tribe_cpu" / "main.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
@@ -449,6 +456,9 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
     std::vector<std::string> modules = {"File",
               "RAM",
               "L1Cache",
+              "Axi4SlowToFastCdc",
+              "Axi4FastToSlowCdc",
+              "L1MemFastToSlowCdc",
               "L2Cache",
               "Tribe",
               "BranchPredictor",

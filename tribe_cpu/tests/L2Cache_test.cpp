@@ -96,7 +96,9 @@ static uint32_t port_word(logic<WIDTH> bits, size_t word)
 long _system_clock = -1;
 
 static constexpr size_t LINE_SIZE = 32;
-static constexpr size_t WAIT_LIMIT = 128;
+// Preserve the original timeout in L2 state-machine transitions while this
+// testbench advances one CPU/L1 clock per cycle().
+static constexpr size_t WAIT_LIMIT = 128 * CPU_CLK_MULTIPLIER;
 
 #ifndef L2CACHE_TEST_DUT
 #define L2CACHE_TEST_DUT L2Cache
@@ -196,8 +198,18 @@ class TestL2Cache : public Module
     Axi4Driver<32, 4, PORT_BITS> slave_axi[MEM_PORTS] = {};
     bool region_uncached[MEM_PORTS] = {};
     uint32_t region_size[MEM_PORTS] = {};
+    bool slave_aw_handshake[MEM_PORTS] = {};
+    bool slave_w_handshake[MEM_PORTS] = {};
+    bool slave_ar_handshake[MEM_PORTS] = {};
+    bool slave_b_handshake[MEM_PORTS] = {};
+    bool slave_r_handshake[MEM_PORTS] = {};
+    bool slave_bready_pending[MEM_PORTS] = {};
+    bool slave_rready_pending[MEM_PORTS] = {};
+    logic<PORT_BITS> slave_r_handshake_data[MEM_PORTS] = {};
+    u<4> slave_r_handshake_id[MEM_PORTS] = {};
     uint32_t memory_base = 0;
     bool error = false;
+    uint64_t cpu_cycle = 0;
 
 public:
     void _assign()
@@ -236,6 +248,8 @@ public:
             l2.mem_region_size_in[i] = _ASSIGN_REG_I(region_size[i]);
             l2.mem_region_uncached_in[i] = _ASSIGN_REG_I(region_uncached[i]);
             AXI4_DRIVER_FROM_DRIVER_I(l2.axi_in[i], slave_axi[i]);
+            l2.axi_in[i].bready_in = _ASSIGN_I(slave_axi[i].b.ready || slave_bready_pending[i]);
+            l2.axi_in[i].rready_in = _ASSIGN_I(slave_axi[i].r.ready || slave_rready_pending[i]);
         }
         l2.debugen_in = std::getenv("TRIBE_TRACE_L2") != nullptr;
         l2.__inst_name = "l2";
@@ -296,6 +310,8 @@ public:
             l2.mem_region_size_in[i] = region_size[i];
             l2.mem_region_uncached_in[i] = region_uncached[i];
             AXI4_DRIVER_POKE_VERILATOR_IF_FROM_DRIVER_I(l2, axi_in, i, slave_axi[i]);
+            l2.axi_in___05Fbready_in[i] = slave_axi[i].b.ready || slave_bready_pending[i];
+            l2.axi_in___05Frready_in[i] = slave_axi[i].r.ready || slave_rready_pending[i];
         }
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             AXI4_RESPONDER_FROM_VERILATOR(l2, ram[i].axi_in, i);
@@ -334,11 +350,35 @@ public:
 
     void cycle(bool reset = false)
     {
+        const bool l2_edge = (cpu_cycle % CPU_CLK_MULTIPLIER) == 0;
+        for (size_t i = 0; i < MEM_PORTS; ++i) {
+            slave_bready_pending[i] = slave_bready_pending[i] || slave_axi[i].b.ready;
+            slave_rready_pending[i] = slave_rready_pending[i] || slave_axi[i].r.ready;
+            slave_aw_handshake[i] = false;
+            slave_w_handshake[i] = false;
+            slave_ar_handshake[i] = false;
+            slave_b_handshake[i] = false;
+            slave_r_handshake[i] = false;
+        }
 #ifdef VERILATOR
         l2.clk = 0;
+        l2.l2_clock = 0;
         eval_l2(reset);
-        for (size_t i = 0; i < MEM_PORTS; ++i) {
-            ram[i]._work(reset);
+        if (l2_edge) {
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                slave_aw_handshake[i] = slave_axi[i].aw.valid && l2.axi_in___05Fawready_out[i];
+                slave_w_handshake[i] = slave_axi[i].w.valid && l2.axi_in___05Fwready_out[i];
+                slave_ar_handshake[i] = slave_axi[i].ar.valid && l2.axi_in___05Farready_out[i];
+                slave_b_handshake[i] = slave_bready_pending[i] && l2.axi_in___05Fbvalid_out[i];
+                slave_r_handshake[i] = slave_rready_pending[i] && l2.axi_in___05Frvalid_out[i];
+                if (slave_r_handshake[i]) {
+                    slave_r_handshake_data[i] = copy_to_logic<PORT_BITS>(l2.axi_in___05Frdata_out[i]);
+                    slave_r_handshake_id[i] = (u<4>)(uint32_t)l2.axi_in___05Frid_out[i];
+                }
+            }
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                ram[i]._work(reset);
+            }
         }
         eval_l2(reset);
         // The RAM responder reads L2 master outputs through function_refs, then
@@ -346,23 +386,66 @@ public:
         // eval settles that L2->RAM->L2 path before the sampling edge.
         eval_l2(reset);
         l2.clk = 1;
+        l2.l2_clock = l2_edge;
         eval_l2(reset);
-        for (size_t i = 0; i < MEM_PORTS; ++i) {
-            ram[i]._strobe();
+        if (l2_edge) {
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                ram[i]._strobe();
+            }
         }
         l2.clk = 0;
+        l2.l2_clock = 0;
         eval_l2(reset);
-#else
-        l2._work(reset);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            ram[i]._work(reset);
+            if (slave_b_handshake[i]) {
+                slave_bready_pending[i] = false;
+            }
+            if (slave_r_handshake[i]) {
+                slave_rready_pending[i] = false;
+            }
         }
-        l2._strobe();
-        for (size_t i = 0; i < MEM_PORTS; ++i) {
-            ram[i]._strobe();
+#else
+        if (l2_edge) {
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                slave_aw_handshake[i] = slave_axi[i].aw.valid && l2.axi_in[i].awready_out();
+                slave_w_handshake[i] = slave_axi[i].w.valid && l2.axi_in[i].wready_out();
+                slave_ar_handshake[i] = slave_axi[i].ar.valid && l2.axi_in[i].arready_out();
+                slave_b_handshake[i] = slave_bready_pending[i] && l2.axi_in[i].bvalid_out();
+                slave_r_handshake[i] = slave_rready_pending[i] && l2.axi_in[i].rvalid_out();
+                if (slave_r_handshake[i]) {
+                    slave_r_handshake_data[i] = l2.axi_in[i].rdata_out();
+                    slave_r_handshake_id[i] = l2.axi_in[i].rid_out();
+                }
+            }
+            l2._work_l2_clock(reset);
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                ram[i]._work(reset);
+            }
+            l2._strobe_l2_clock();
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                ram[i]._strobe();
+            }
+            for (size_t i = 0; i < MEM_PORTS; ++i) {
+                if (slave_b_handshake[i]) {
+                    slave_bready_pending[i] = false;
+                }
+                if (slave_r_handshake[i]) {
+                    slave_rready_pending[i] = false;
+                }
+            }
         }
 #endif
+        ++cpu_cycle;
         ++_system_clock;
+    }
+
+    void cycle_through_l2_edge(bool reset = false)
+    {
+        size_t phase = cpu_cycle % CPU_CLK_MULTIPLIER;
+        size_t cycles = ((CPU_CLK_MULTIPLIER - phase) % CPU_CLK_MULTIPLIER) + 1;
+        for (size_t i = 0; i < cycles; ++i) {
+            cycle(reset);
+        }
     }
 
     void preload()
@@ -529,6 +612,58 @@ public:
         cycle(false);
     }
 
+    void divided_clock_handshake_check()
+    {
+        if (CPU_CLK_MULTIPLIER == 1) {
+            return;
+        }
+
+        constexpr uint32_t request_addr = 0x00000c00u;
+        constexpr uint32_t expected = 0x4c324344u;
+        set_backing_word(request_addr, expected);
+        read = false;
+        d_read = false;
+        write = false;
+
+        // Start immediately after an L2 edge, then present a new L1 request.
+        while ((cpu_cycle % CPU_CLK_MULTIPLIER) != 1u) {
+            cycle(false);
+        }
+        i_addr = request_addr;
+        read = true;
+        for (size_t i = 1; i < CPU_CLK_MULTIPLIER; ++i) {
+            if (!L2_VALUE(L2_I_WAIT_OUT)) {
+                std::print("\ndivided-clock request completed without an l2_clock edge phase={}\n", i);
+                error = true;
+            }
+            cycle(false);
+        }
+
+        size_t cycles = 0;
+        while (cycles++ < WAIT_LIMIT && L2_VALUE(L2_I_WAIT_OUT)) {
+            cycle(false);
+        }
+        uint32_t word = (request_addr % (PORT_BITS / 8)) / 4;
+        uint32_t data = port_word(L2_VALUE(L2_I_READ_DATA_OUT), word);
+        if (L2_VALUE(L2_I_WAIT_OUT) || data != expected) {
+            std::print("\ndivided-clock response ERROR wait={} data={:#x} expected={:#x}\n",
+                L2_VALUE(L2_I_WAIT_OUT), data, expected);
+            error = true;
+        }
+
+        // A registered L2 response must remain visible until the next slow
+        // edge, allowing any intervening fast L1 edge to consume it.
+        for (size_t i = 1; i < CPU_CLK_MULTIPLIER; ++i) {
+            if (L2_VALUE(L2_I_WAIT_OUT)) {
+                std::print("\ndivided-clock response was not held for fast phase={}\n", i);
+                error = true;
+            }
+            cycle(false);
+        }
+        read = false;
+        cycle(false);
+    }
+
     void d_read_check(uint32_t request_addr, uint32_t expected)
     {
         read = false;
@@ -595,26 +730,19 @@ public:
 
     bool slave_awready(size_t port)
     {
-#ifdef VERILATOR
-        eval_l2(false);
-        return l2.axi_in___05Fawready_out[port];
-#else
-        return l2.axi_in[port].awready_out();
-#endif
+        return slave_aw_handshake[port];
     }
 
     bool slave_wready(size_t port)
     {
-#ifdef VERILATOR
-        eval_l2(false);
-        return l2.axi_in___05Fwready_out[port];
-#else
-        return l2.axi_in[port].wready_out();
-#endif
+        return slave_w_handshake[port];
     }
 
     bool slave_bvalid(size_t port)
     {
+        if (slave_b_handshake[port]) {
+            return true;
+        }
 #ifdef VERILATOR
         eval_l2(false);
         return l2.axi_in___05Fbvalid_out[port];
@@ -625,16 +753,14 @@ public:
 
     bool slave_arready(size_t port)
     {
-#ifdef VERILATOR
-        eval_l2(false);
-        return l2.axi_in___05Farready_out[port];
-#else
-        return l2.axi_in[port].arready_out();
-#endif
+        return slave_ar_handshake[port];
     }
 
     bool slave_rvalid(size_t port)
     {
+        if (slave_r_handshake[port]) {
+            return true;
+        }
 #ifdef VERILATOR
         eval_l2(false);
         return l2.axi_in___05Frvalid_out[port];
@@ -645,6 +771,9 @@ public:
 
     logic<PORT_BITS> slave_rdata(size_t port)
     {
+        if (slave_r_handshake[port]) {
+            return slave_r_handshake_data[port];
+        }
 #ifdef VERILATOR
         eval_l2(false);
         const auto& raw = l2.axi_in___05Frdata_out[port];
@@ -656,6 +785,9 @@ public:
 
     u<4> slave_rid(size_t port)
     {
+        if (slave_r_handshake[port]) {
+            return slave_r_handshake_id[port];
+        }
 #ifdef VERILATOR
         eval_l2(false);
         return (u<4>)(uint32_t)l2.axi_in___05Frid_out[port];
@@ -922,7 +1054,10 @@ public:
         }
         slave_axi[0].ar.valid = false;
         slave_axi[0].r.ready = false;
-        cycle(false);
+        // The source clock is faster than l2_clock. Keep VALID low until the
+        // slow domain samples it; an identical request cannot be rearmed by a
+        // pulse that exists wholly between two L2 edges.
+        cycle_through_l2_edge(false);
         slave_axi[0].ar.valid = true;
         for (size_t i = 0; i < WAIT_LIMIT && !slave_arready(0); ++i) {
             cycle(false);
@@ -1711,7 +1846,7 @@ public:
             L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);
 #endif
         std::print("\n  features under test:"
-                   "\n    - one-clock unified request/response pipeline"
+                   "\n    - fast L1 requests with registered divided-clock L2 responses"
                    "\n    - independent arbitration and responses for every CPU I/D port pair"
                    "\n    - cached CPU read fill and hit"
                    "\n    - instruction-port direct read crossing a cache-line end"
@@ -1737,11 +1872,13 @@ public:
         preload();
         cycle(true);
         cycle(false);
-        for (size_t i = 0; i < SETS + 8 && (L2_VALUE(L2_I_WAIT_OUT) || L2_VALUE(L2_D_WAIT_OUT)); ++i) {
+        for (size_t i = 0; i < (SETS + 8) * CPU_CLK_MULTIPLIER &&
+            (L2_VALUE(L2_I_WAIT_OUT) || L2_VALUE(L2_D_WAIT_OUT)); ++i) {
             cycle(false);
         }
         read_check(8, 0);
         read_check(8, 0);
+        divided_clock_handshake_check();
         instruction_cross_line_direct_check();
         data_port_unaligned_beat_end_direct_read_check();
         immediate_hit_after_fill_check();

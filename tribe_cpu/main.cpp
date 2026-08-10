@@ -1208,11 +1208,16 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 
         __inst_name = "tribe_test";
         _assign();
-        _strobe();
-        ++_system_clock;
-        _work(1);
-        _strobe_neg();
-        _work_neg(1);
+        // Reset must span every clock domain. A one-primary-cycle pulse can
+        // occur entirely between l2_clock edges when several simulations run
+        // in one host process and retain the global clock phase.
+        for (size_t reset_cycle = 0; reset_cycle <= CPU_CLK_MULTIPLIER; ++reset_cycle) {
+            _strobe();
+            ++_system_clock;
+            _work(1);
+            _strobe_neg();
+            _work_neg(1);
+        }
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_reset();
@@ -1230,6 +1235,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         uint32_t scripted_uart_start_delay = uart_input_start_delay_env ? std::stoul(uart_input_start_delay_env, nullptr, 0) : 0;
         bool checkpoint_loaded_pending_work = false;
         if (!checkpoint_load_file.empty()) {
+            const long pre_load_comb_epoch = _system_clock;
             FILE* checkpoint_in = fopen(checkpoint_load_file.c_str(), "rb");
             if (!checkpoint_in) {
                 std::print("can't open checkpoint input '{}'\n", checkpoint_load_file);
@@ -1252,6 +1258,15 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
             // UART/PLIC/MMU outputs; otherwise lazy comb caches can still carry
             // pre-load host-process values.
             ++_system_clock;
+            // A test process can construct and reset a fresh model after the
+            // checkpoint was saved, then restore an earlier _system_clock.
+            // Lazy combs use that value as their native-simulation cache key.
+            // Advance by whole L2 periods until the next work cycle is newer
+            // than every cycle evaluated before the load, retaining the exact
+            // clk/l2_clock phase relationship stored by the checkpoint.
+            while (_system_clock + 1 <= pre_load_comb_epoch) {
+                _system_clock += CPU_CLK_MULTIPLIER;
+            }
             perf_system_clock_start = _system_clock;
             perf_live_start = std::chrono::steady_clock::now();
             checkpoint_loaded_pending_work = true;
@@ -1658,6 +1673,10 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 {
     namespace fs = std::filesystem;
 
+    static_assert(CPU_CLK_MULTIPLIER > 0, "CPU_CLK_MULTIPLIER must be positive");
+    static_assert(100000000u % CPU_CLK_MULTIPLIER == 0,
+        "CPU_CLK_MULTIPLIER must divide the CPU clock frequency exactly");
+
     fs::path cpphdl;
     if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
         cpphdl = fs::path(build_dir) / "cpphdl";
@@ -1675,6 +1694,9 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
 
     std::string command;
     command += shell_quote_path(cpphdl);
+    command += " --primary_clock clk 100000000";
+    command += " --secondary_clock l2_clock "
+        + std::to_string(100000000u / CPU_CLK_MULTIPLIER);
     command += " " + shell_quote_path(source_root / "tribe_cpu" / "main.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
@@ -1983,6 +2005,7 @@ int main (int argc, char** argv)
                   "File",
                   "RAM",
                   "L1Cache",
+                  "Axi4SlowToFastCdc", "Axi4FastToSlowCdc", "L1MemFastToSlowCdc",
                   "L2Cache",
                   "Tribe",
                   "BranchPredictor",
@@ -2004,9 +2027,11 @@ int main (int argc, char** argv)
         }
         std::cout << "Executing tests... ===========================================================================\n";
         auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
-        ok = ( ok
-            && ((only != -1 && only != 0) || std::system((std::string("TribeTest/obj_dir/VTribeTest") + (debug?" --debug":"") + " 0").c_str()) == 0)
-        );
+        const std::string verilator_runner = "TribeTest_" + std::to_string(TEST_TRIBE_CPU_CORES)
+            + "/obj_dir/VTribeTest";
+        ok = (ok
+            && ((only != -1 && only != 0)
+                || std::system((verilator_runner + (debug ? " --debug" : "") + " 0").c_str()) == 0));
         std::cout << "Verilator compilation time: " << compile_us/2 << " microseconds\n";
     }
 #else

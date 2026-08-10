@@ -11,6 +11,9 @@
 #include <vector>
 
 static constexpr size_t CHECKPOINT_ISR_INPUT_LEN = 512;
+// The divided L2 clock makes each interrupt-driven byte transfer take longer
+// than the former single-clock design. Both simulators complete near 309k.
+static constexpr uint64_t CHECKPOINT_ISR_MAX_CYCLES = 320000;
 
 static std::filesystem::path source_root_dir()
 {
@@ -256,7 +259,7 @@ static bool run_checkpoint_cpp(bool debug)
     }
 
     if (!run_checkpoint_segment(debug, elf, expected,
-            previous_checkpoint, "", 0, true, false, 300000)) {
+            previous_checkpoint, "", 0, true, false, CHECKPOINT_ISR_MAX_CYCLES)) {
         return false;
     }
     return validate_checkpoint_uart_log(std::filesystem::current_path() / "out.txt", expected_text);
@@ -284,7 +287,7 @@ static bool run_checkpoint_verilator(bool debug,
     ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
     std::string command = "Checkpoint/obj_dir/VTribeTest --program " + shell_quote(elf) +
         " --log " + shell_quote(expected) +
-        " --cycles 300000 --boot-priv m";
+        " --cycles " + std::to_string(CHECKPOINT_ISR_MAX_CYCLES) + " --boot-priv m";
     if (debug) {
         command += " --debug";
     }
@@ -331,7 +334,7 @@ int main(int argc, char** argv)
     // Keep Verilator coverage to the ISR/UART execution path; the restore
     // sequence is covered by the native C++ model above.
     ok = ok && TestTribe(debug).run(elf.string(),
-        0, expected.string(), 300000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, expected.string(), CHECKPOINT_ISR_MAX_CYCLES, 0, 0, DEFAULT_RAM_SIZE, false,
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "",
         false, "", "Checkpoint ISR");
 #endif
