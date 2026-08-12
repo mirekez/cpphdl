@@ -32,6 +32,12 @@ bool isMemberName(const std::string& name)
     return currModule && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == name; });
 }
 
+bool isModuleClockLifecycleMethod(const std::string& name)
+{
+    return name == "_work" || name == "_work_neg" || name == "_strobe" || name == "_strobe_neg"
+        || name.rfind("_work_", 0) == 0 || name.rfind("_strobe_", 0) == 0;
+}
+
 std::string sizedCpphdlWidth(const std::string& name, const char* prefix)
 {
     if (name.find(prefix) != 0) {
@@ -678,7 +684,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_MEMBERCALL:
         {
             ASSERT(sub.size());
-            if (value == "_assign" || value == "_strobe" || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
+            if (value == "_assign" || isModuleClockLifecycleMethod(value)
+                || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
                 return "";
             }
             if ((flags&FLAG_MODULE_INSTANCE_METHOD)) {
@@ -734,7 +741,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
                 && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // Port struct
 
-                if (member == "_work") {  // dont call _work() for members
+                if (isModuleClockLifecycleMethod(member)) {  // child clock blocks call their own lifecycle methods
                     return "";
                 }
                 if (interface && str_ending(base, "_out")) {  // for Port structs
@@ -751,7 +758,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
 //                base = sub[0].sub[0].str();  dont break base
                 std::string memberRef = memberArrayPortRef(sub[0], member, suffix, interface);
                 if (!memberRef.empty()) {
-                    if (member == "_work") {  // dont call _work() for members
+                    if (isModuleClockLifecycleMethod(member)) {  // child clock blocks call their own lifecycle methods
                         return "";
                     }
                     return indent_str + prefix + memberRef;

@@ -1138,14 +1138,19 @@ public:
     {
         bool sd_dma_cache_invalidate_ready;
         bool eth_dma_cache_invalidate_ready;
+        bool l2_edge;
 #ifdef VERILATOR
         size_t i;
 #endif
         sd_dma_cache_invalidate_ready = true;
         eth_dma_cache_invalidate_ready = true;
+        l2_edge = ((uint64_t)_system_clock % CPU_CLK_MULTIPLIER) == 0;
 #ifndef VERILATOR
         uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe._work(reset);
+        if (l2_edge) {
+            tribe._work_l2_clock(reset);
+        }
         runtime_tribe_work_ticks += tribe_runtime_tick() - tribe_work_time_start;
 #else
 //        memcpy(&tribe.data_in.m_storage, data_out, sizeof(tribe.data_in.m_storage));
@@ -1187,6 +1192,7 @@ public:
 #endif
 
         tribe.clk = 0;
+        tribe.l2_clock = 0;
         tribe.reset = reset;
         tribe.eval();
 #endif
@@ -1239,6 +1245,7 @@ public:
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem2.axi_in, 2);
         AXI4_RESPONDER_FROM_VERILATOR(tribe, iospace.slave_in, 3);
         tribe.clk = 1;
+        tribe.l2_clock = l2_edge;
         tribe.reset = reset;
         uint64_t tribe_work_time_start = tribe_runtime_tick();
         tribe.eval();  // eval of verilator should be in the end
@@ -1255,6 +1262,7 @@ public:
 
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
+        bool l2_edge;
         checkpoint_value(checkpoint_fd, perf_clocks);
         checkpoint_value(checkpoint_fd, perf_stall);
         checkpoint_value(checkpoint_fd, perf_hazard);
@@ -1276,6 +1284,7 @@ public:
         checkpoint_value(checkpoint_fd, ram_size);
         checkpoint_value(checkpoint_fd, tohost_done);
         checkpoint_value(checkpoint_fd, _system_clock);
+        l2_edge = ((uint64_t)_system_clock % CPU_CLK_MULTIPLIER) == 0;
         uart_rx_valid_reg.strobe(checkpoint_fd);
         uart_rx_data_reg.strobe(checkpoint_fd);
         uart_script_pos_reg.strobe(checkpoint_fd);
@@ -1295,6 +1304,9 @@ public:
 #ifndef VERILATOR
         uint64_t tribe_strobe_time_start = tribe_runtime_tick();
         tribe._strobe(checkpoint_fd);
+        if (l2_edge) {
+            tribe._strobe_l2_clock();
+        }
         runtime_tribe_strobe_ticks += tribe_runtime_tick() - tribe_strobe_time_start;
 #endif
         mem0._strobe(checkpoint_fd);  // we use these modules in Verilator test
@@ -1326,12 +1338,33 @@ public:
             sdcard_verif._work(false);
             sdcard_verif._strobe(checkpoint_fd);
         }
+#ifndef VERILATOR
+        if (checkpoint_fd) {
+            static constexpr uint64_t AXI_CDC_CHECKPOINT_MAGIC = 0x3143444349584134ull;
+            uint64_t magic = AXI_CDC_CHECKPOINT_MAGIC;
+            if (checkpoint_reading(checkpoint_fd)) {
+                FILE* fd = checkpoint_file(checkpoint_fd);
+                int first = std::fgetc(fd);
+                if (first == EOF) {
+                    clearerr(fd);
+                    return;
+                }
+                std::ungetc(first, fd);
+            }
+            checkpoint_value(checkpoint_fd, magic);
+            if (magic != AXI_CDC_CHECKPOINT_MAGIC) {
+                throw checkpoint_io_error{"read AXI CDC trailer", sizeof(magic), 0, 0};
+            }
+            tribe.checkpoint_axi_cdc(checkpoint_fd);
+        }
+#endif
     }
 
     void _work_neg(bool reset)
     {
 #ifdef VERILATOR
         tribe.clk = 0;
+        tribe.l2_clock = 0;
         tribe.reset = reset;
         tribe.eval();  // eval of verilator should be in the end
 #else

@@ -1,6 +1,10 @@
 #include "clint.h"
 #include "uart.h"
 
+#ifndef CPU_TIME_CSR_MAX_DELTA
+#define CPU_TIME_CSR_MAX_DELTA 64u
+#endif
+
 static uint64_t read_time_csr(void)
 {
     uint32_t hi0;
@@ -18,6 +22,7 @@ int main(void)
 {
     uint64_t mmio_time;
     uint64_t csr_time;
+    uint32_t delta;
 
     tribe_clint_disable_timer();
     tribe_clint_write32(TRIBE_CLINT_MTIME_HI, 0x00123456u);
@@ -25,10 +30,13 @@ int main(void)
 
     mmio_time = tribe_clint_mtime();
     csr_time = read_time_csr();
+    delta = (uint32_t)csr_time - (uint32_t)mmio_time;
     if ((uint32_t)(csr_time >> 32) != (uint32_t)(mmio_time >> 32) ||
         (uint32_t)csr_time < (uint32_t)mmio_time ||
-        (uint32_t)csr_time - (uint32_t)mmio_time > 64u) {
-        tribe_uart_puts("TIMECSR FAIL\n");
+        delta > CPU_TIME_CSR_MAX_DELTA) {
+        tribe_uart_puts("TIMECSR FAIL delta=");
+        tribe_uart_put_i32((int32_t)delta);
+        tribe_uart_putc('\n');
         return 1;
     }
 

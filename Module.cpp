@@ -235,6 +235,32 @@ bool hasClockStrobeSignature(const Method& method)
     return method.ret.empty() && method.arguments.empty();
 }
 
+bool hasNamedClockProcess(const Module& module)
+{
+    return std::any_of(currProject->clocks.begin(), currProject->clocks.end(),
+        [&](const ClockDomain& clock) {
+            return findMethod(module, "_work_" + clock.name) != nullptr
+                || findMethod(module, "_strobe_" + clock.name) != nullptr;
+        });
+}
+
+void ensureNoopClockProcess(Module& module, const ClockDomain& clock)
+{
+    const std::string workName = "_work_" + clock.name;
+    const std::string strobeName = "_strobe_" + clock.name;
+    if (!findMethod(module, workName)) {
+        Method work;
+        work.name = workName;
+        work.arguments.emplace_back(Field{"reset", Expr{"bool", Expr::EXPR_TYPE}});
+        module.methods.emplace_back(std::move(work));
+    }
+    if (!findMethod(module, strobeName)) {
+        Method strobe;
+        strobe.name = strobeName;
+        module.methods.emplace_back(std::move(strobe));
+    }
+}
+
 bool exprContainsMember(const Expr& expr, const std::string& name)
 {
     if (expr.type == Expr::EXPR_MEMBER && expr.value == name) {
@@ -331,24 +357,60 @@ std::unordered_set<std::string> methodRegisters(Module& module,
 bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes)
 {
     std::unordered_map<std::string, std::string> owners;
-    for (const auto& clock : currProject->clocks) {
+    const bool namedClockProcess = hasNamedClockProcess(module);
+    const auto& primaryClock = currProject->clocks.front();
+    const bool explicitPrimary = findMethod(module, "_work_" + primaryClock.name) != nullptr
+        || findMethod(module, "_strobe_" + primaryClock.name) != nullptr;
+    // Existing modules keep _work/_strobe as their primary-domain process even
+    // after adding named secondary clocks. An explicit named primary process
+    // takes precedence when both APIs are present.
+    const bool legacyPrimary = findMethod(module, "_work") != nullptr && !explicitPrimary;
+    if (namedClockProcess && currProject->clocks.size() > 1) {
+        const auto& primary = currProject->clocks.front();
+        const bool hasPrimaryWork = legacyPrimary
+            || findMethod(module, "_work_" + primary.name) != nullptr;
+        const bool hasPrimaryStrobe = legacyPrimary
+            || findMethod(module, "_strobe_" + primary.name) != nullptr;
+        const bool hasCompleteSecondary = std::any_of(
+            currProject->clocks.begin() + 1, currProject->clocks.end(),
+            [&](const ClockDomain& clock) {
+                return findMethod(module, "_work_" + clock.name) != nullptr
+                    && findMethod(module, "_strobe_" + clock.name) != nullptr;
+            });
+        // A secondary-only module has no state in the primary domain. Permit
+        // that local clock subset without weakening validation for modules
+        // that define a primary process but forget a secondary process.
+        if (!hasPrimaryWork && !hasPrimaryStrobe && hasCompleteSecondary) {
+            ensureNoopClockProcess(module, primary);
+        }
+    }
+    if (!namedClockProcess) {
+        const size_t firstNoopClock = legacyPrimary ? 1 : 0;
+        for (size_t i = firstNoopClock; i < currProject->clocks.size(); ++i) {
+            ensureNoopClockProcess(module, currProject->clocks[i]);
+        }
+    }
+
+    for (size_t clockIndex = 0; clockIndex < currProject->clocks.size(); ++clockIndex) {
+        const auto& clock = currProject->clocks[clockIndex];
         ClockProcess process;
         process.clock = clock;
-        process.work = "_work_" + clock.name;
-        process.strobe = "_strobe_" + clock.name;
-        process.workNeg = "_work_neg_" + clock.name;
-        process.strobeNeg = "_strobe_neg_" + clock.name;
+        const bool useLegacyPrimary = legacyPrimary && clockIndex == 0;
+        process.work = useLegacyPrimary ? "_work" : "_work_" + clock.name;
+        process.strobe = useLegacyPrimary ? "_strobe" : "_strobe_" + clock.name;
+        process.workNeg = useLegacyPrimary ? "_work_neg" : "_work_neg_" + clock.name;
+        process.strobeNeg = useLegacyPrimary ? "_strobe_neg" : "_strobe_neg_" + clock.name;
         process.resetPos = "_reset_pos_" + clock.name;
         process.resetNeg = "_reset_neg_" + clock.name;
 
         const Method* workMethod = findMethod(module, process.work);
         const Method* strobeMethod = findMethod(module, process.strobe);
-        if (!workMethod || !strobeMethod) {
+        if (!workMethod || (!useLegacyPrimary && !strobeMethod)) {
             std::cerr << "ERROR: module '" << module.name << "' must define "
                       << process.work << "(bool) and " << process.strobe << "()\n";
             return false;
         }
-        if (!hasClockStrobeSignature(*strobeMethod)) {
+        if (!useLegacyPrimary && !hasClockStrobeSignature(*strobeMethod)) {
             std::cerr << "ERROR: module '" << module.name << "' must define "
                       << process.strobe << " with signature void " << process.strobe
                       << "()\n";
@@ -365,7 +427,7 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
         const bool hasStrobeNeg = findMethod(module, process.strobeNeg) != nullptr;
         const Method* resetPosMethod = findMethod(module, process.resetPos);
         const Method* resetNegMethod = findMethod(module, process.resetNeg);
-        if (hasWorkNeg != hasStrobeNeg) {
+        if (!useLegacyPrimary && hasWorkNeg != hasStrobeNeg) {
             std::cerr << "ERROR: module '" << module.name << "' must define both "
                       << process.workNeg << "(bool) and " << process.strobeNeg
                       << "(), or neither\n";
@@ -395,14 +457,30 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
                       << "(bool reset)\n";
             return false;
         }
-        if (hasStrobeNeg && !hasClockStrobeSignature(*findMethod(module, process.strobeNeg))) {
+        if (!useLegacyPrimary && hasStrobeNeg && !hasClockStrobeSignature(*findMethod(module, process.strobeNeg))) {
             std::cerr << "ERROR: module '" << module.name << "' must define "
                       << process.strobeNeg << " with signature void " << process.strobeNeg
                       << "()\n";
             return false;
         }
 
-        process.regs = methodRegisters(module, process.strobe, true);
+        if (useLegacyPrimary) {
+            if (namedClockProcess) {
+                // In a multi-clock module, _strobe is the ownership declaration
+                // for only the legacy primary-domain registers.
+                process.regs = methodRegisters(module, "_strobe", true);
+            }
+            else {
+                for (const auto& field : module.vars) {
+                    if (module.isReg(field.name)) {
+                        process.regs.insert(field.name);
+                    }
+                }
+            }
+        }
+        else {
+            process.regs = methodRegisters(module, process.strobe, true);
+        }
         const auto written = methodRegisters(module, process.work, false);
         for (const auto& reg : written) {
             if (process.regs.find(reg) == process.regs.end()) {

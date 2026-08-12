@@ -50,6 +50,12 @@ namespace
 
 using AnnotationVars = std::unordered_map<std::string, std::string>;
 
+bool isModuleClockLifecycleMethod(const std::string& name)
+{
+    return name == "_work" || name == "_work_neg" || name == "_strobe" || name == "_strobe_neg"
+        || name.rfind("_work_", 0) == 0 || name.rfind("_strobe_", 0) == 0;
+}
+
 static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordDecl* owner)
 {
     if (!current || !owner) {
@@ -1597,7 +1603,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     if (hlp.mod->origName != MD->getParent()->getQualifiedNameAsString()) {  // method of base class or external object (not current mod)
         std::string parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
         if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
-            if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_assign") {
+            if (isModuleClockLifecycleMethod(MD->getNameAsString()) || MD->getNameAsString() == "_assign") {
                 return "";  // we need not work functions from third party classes (not Modules)
             }
 

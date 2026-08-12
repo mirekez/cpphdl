@@ -304,6 +304,18 @@ public:
         sdcard._strobe(checkpoint_fd);
         sd_dma_cache_invalidate_reg.strobe(checkpoint_fd);
     }
+
+#ifndef SYNTHESIS
+    void _work_l2_clock(bool reset)
+    {
+        tribe._work_l2_clock(reset);
+    }
+
+    void _strobe_l2_clock()
+    {
+        tribe._strobe_l2_clock();
+    }
+#endif
 };
 
 #if !defined(SYNTHESIS)
@@ -521,6 +533,8 @@ public:
 
     void _work(bool reset)
     {
+        bool l2_edge;
+        l2_edge = ((uint64_t)_system_clock % CPU_CLK_MULTIPLIER) == 0;
 #ifdef VERILATOR
         system.debugen_in = debugen_in;
         system.reset_pc_in = reset_pc;
@@ -540,10 +554,14 @@ public:
         system.sd_rsp_data_in = (uint8_t)sdcard_verif.sd_rsp_data_out();
         system.sd_rsp_last_in = sdcard_verif.sd_rsp_last_out();
         system.clk = 0;
+        system.l2_clock = 0;
         system.reset = reset;
         system.eval();
 #else
         system._work(reset);
+        if (l2_edge) {
+            system._work_l2_clock(reset);
+        }
 #endif
         dram0._work(reset);
         dram1._work(reset);
@@ -551,6 +569,7 @@ public:
         AXI4_RESPONDER_FROM_VERILATOR(system, dram0.axi_in, 0);
         AXI4_RESPONDER_FROM_VERILATOR(system, dram1.axi_in, 1);
         system.clk = 1;
+        system.l2_clock = l2_edge;
         system.reset = reset;
         system.eval();
         sdcard_verif._work(reset);
@@ -564,6 +583,7 @@ public:
     {
 #ifdef VERILATOR
         system.clk = 0;
+        system.l2_clock = 0;
         system.reset = reset;
         system.eval();
 #else
@@ -573,6 +593,8 @@ public:
 
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
+        bool l2_edge;
+        l2_edge = ((uint64_t)_system_clock % CPU_CLK_MULTIPLIER) == 0;
         checkpoint_value(checkpoint_fd, perf_clocks);
         checkpoint_value(checkpoint_fd, perf_stall);
         checkpoint_value(checkpoint_fd, perf_hazard);
@@ -593,6 +615,9 @@ public:
         uart_rx_data_reg.strobe(checkpoint_fd);
 #ifndef VERILATOR
         system._strobe(checkpoint_fd);
+        if (l2_edge) {
+            system._strobe_l2_clock();
+        }
 #endif
         dram0._strobe(checkpoint_fd);
         dram1._strobe(checkpoint_fd);
@@ -709,10 +734,14 @@ public:
 
         __inst_name = "system_test";
         _assign();
-        _strobe();
-        ++_system_clock;
-        _work(1);
-        _work_neg(1);
+        // Keep reset asserted long enough for both the primary and divided L2
+        // domains to observe and commit it, independent of the retained phase.
+        for (size_t reset_cycle = 0; reset_cycle <= CPU_CLK_MULTIPLIER; ++reset_cycle) {
+            _strobe();
+            ++_system_clock;
+            _work(1);
+            _work_neg(1);
+        }
 
         auto start = std::chrono::high_resolution_clock::now();
         perf_clocks = perf_stall = perf_hazard = perf_dcache_wait = perf_icache_wait = perf_branch = 0;
@@ -809,6 +838,11 @@ public:
 [[maybe_unused]] static bool regenerate_system_sv(const std::filesystem::path& source_root)
 {
     namespace fs = std::filesystem;
+
+    static_assert(CPU_CLK_MULTIPLIER > 0, "CPU_CLK_MULTIPLIER must be positive");
+    static_assert(100000000u % CPU_CLK_MULTIPLIER == 0,
+        "CPU_CLK_MULTIPLIER must divide the CPU clock frequency exactly");
+
     fs::path cpphdl;
     if (const char* build_dir = std::getenv("CPPHDL_BUILD_DIR")) {
         cpphdl = fs::path(build_dir) / "cpphdl";
@@ -826,6 +860,9 @@ public:
 
     std::string command;
     command += shell_quote_path(cpphdl);
+    command += " --primary_clock clk 100000000";
+    command += " --secondary_clock l2_clock "
+        + std::to_string(100000000u / CPU_CLK_MULTIPLIER);
     command += " " + shell_quote_path(source_root / "tribe_cpu" / "SoC" / "System.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
@@ -907,7 +944,9 @@ int main(int argc, char** argv)
             ok &= VerilatorCompile(__FILE__, "System", {"Predef_pkg",
                 "Amo_pkg", "Trap_pkg", "State_pkg", "Rv32i_pkg", "Rv32ic_pkg", "Rv32im_pkg", "Rv32ia_pkg", "Zicsr_pkg",
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
-                "File", "RAM", "Memory", "Axi4Ram", "L1Cache", "L2Cache", "BranchPredictor", "InterruptController",
+                "File", "RAM", "Memory", "Axi4Ram", "L1Cache",
+                "Axi4SlowToFastCdc", "Axi4FastToSlowCdc", "L1MemFastToSlowCdc",
+                "L2Cache", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
                 "Tribe", "TribeTest", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),

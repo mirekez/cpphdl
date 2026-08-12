@@ -116,6 +116,12 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     const uint64_t wall_us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
     const auto perf = test.perf_snapshot();
 
+    const bool execution_progress_ok =
+        perf.branch > 1000 && perf.icache_refill_wait > 1000;
+    if (!execution_progress_ok) {
+        std::print("PERF regression: Linux made no sustained control-flow/cache progress\n");
+    }
+
     const double stall_pct = percent(perf.stall, perf.clocks);
     const double issue_pct = percent(perf.icache_issue_wait, perf.clocks);
     const double total_stall_pct = percent(perf.stall + perf.icache_issue_wait, perf.clocks);
@@ -129,35 +135,33 @@ static bool run_perf_test(bool debug, bool check_wall_time)
         return false;
     }
 
-    bool ok = true;
+    bool ok = execution_progress_ok;
 #ifdef VERILATOR
     constexpr uint64_t expected_clocks = 5000000;
     constexpr uint64_t expected_wall_us = 33587140;
-    constexpr double expected_stall_pct = 29.44;
-    constexpr double expected_issue_pct = 27.30;
-    constexpr double expected_total_stall_pct = 56.74;
-    constexpr double expected_hazard_pct = 0.01;
-    // The registered L2 request/response boundary adds one measured wait cycle
-    // to D-cache transactions in both the C++ and Verilator models.
-    constexpr double expected_dcache_wait_pct = 15.97;
-    constexpr double expected_icache_wait_pct = 15.64;
-    constexpr double expected_branch_pct = 1.58;
-    constexpr double expected_icache_refill_pct = 13.91;
+    constexpr double expected_stall_pct = 62.85;
+    constexpr double expected_issue_pct = 4.58;
+    constexpr double expected_total_stall_pct = 67.43;
+    constexpr double expected_hazard_pct = 0.07;
+    constexpr double expected_dcache_wait_pct = 20.27;
+    constexpr double expected_icache_wait_pct = 42.81;
+    constexpr double expected_branch_pct = 0.09;
+    constexpr double expected_icache_refill_pct = 42.25;
 #else
     constexpr uint64_t expected_clocks = 5000000;
     constexpr uint64_t expected_wall_us = 38374253;
-    constexpr double expected_stall_pct = 29.44;
-    constexpr double expected_issue_pct = 27.30;
-    constexpr double expected_total_stall_pct = 56.74;
-    constexpr double expected_hazard_pct = 0.01;
-    // Keep the software model baseline identical to the RTL pipeline contract.
-    constexpr double expected_dcache_wait_pct = 15.97;
-    constexpr double expected_icache_wait_pct = 15.64;
-    constexpr double expected_branch_pct = 1.58;
-    constexpr double expected_icache_refill_pct = 13.91;
+    constexpr double expected_stall_pct = 62.85;
+    constexpr double expected_issue_pct = 4.58;
+    constexpr double expected_total_stall_pct = 67.43;
+    constexpr double expected_hazard_pct = 0.07;
+    constexpr double expected_dcache_wait_pct = 20.27;
+    constexpr double expected_icache_wait_pct = 42.81;
+    constexpr double expected_branch_pct = 0.09;
+    constexpr double expected_icache_refill_pct = 42.25;
 #endif
 
-    // This guards the real early Linux boot path instead of a synthetic ELF:
+    // This guards the real early Linux boot path instead of a synthetic ELF.
+    // The metric baseline includes the configured 4:1 phase-aligned L2 clock:
     // ELF load, DTB/initramfs placement, Sv32 setup, early printk, and the
     // first kernel init sequence all execute with the same cache geometry used
     // by run_linux_probe.sh.

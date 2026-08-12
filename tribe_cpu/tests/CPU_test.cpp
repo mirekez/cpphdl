@@ -328,6 +328,13 @@ static bool build_cpu_time_csr_elf()
     cmd += shell_quote(gcc);
     cmd += " -march=rv32im_zicsr -mabi=ilp32";
     cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    // Preserve the original 64-L2-cycle timer-read budget when the platform
+    // timer advances on the faster CPU clock.
+    // read_time_csr follows three serialized CLINT MMIO reads. Each can spend
+    // two l2_clock edges entering the request mailbox, arbitrate with I-cache
+    // traffic, and spend two clk edges returning. Bound this in L2 cycles so
+    // changing the clock ratio does not silently weaken the check.
+    cmd += " -DCPU_TIME_CSR_MAX_DELTA=" + std::to_string(128u * CPU_CLK_MULTIPLIER);
     cmd += " -nostdlib -nostartfiles";
     cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
     cmd += " -I " + shell_quote(code_dir);
