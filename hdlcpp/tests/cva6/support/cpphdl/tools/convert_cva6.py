@@ -463,6 +463,29 @@ def source_filtered_metadata(src: Path, work: Path, work_root: Path) -> tuple[Pa
     return port_types, module_params
 
 
+def source_filtered_traits(src: Path, work: Path, work_root: Path) -> Path:
+    rel = rel_source(src)
+    modules_path = work_root / "_source_modules" / rel.parent / f"{rel.name}.txt"
+    merged_path = OUT / "cva6_merged_module_traits.tsv"
+    if not modules_path.exists() or not merged_path.exists():
+        return merged_path
+    own_modules = {line.strip() for line in modules_path.read_text().splitlines() if line.strip()}
+    filtered = []
+    for line in merged_path.read_text().splitlines():
+        fields = line.split("\t", 1)
+        if len(fields) == 2 and fields[0].strip() in own_modules and (
+            fields[1].startswith("input_field.") or fields[1].startswith("output_field.")
+        ):
+            continue
+        filtered.append(line)
+    traits = work / ".cpphdl_dependency_module_traits.tsv"
+    # A source must not consume its own previously inferred field contracts.
+    # Keep dependency schemas and traits, but regenerate owned input/output fields;
+    # otherwise one bad fixed-point pass becomes permanent metadata.
+    traits.write_text("\n".join(filtered) + ("\n" if filtered else ""))
+    return traits
+
+
 def build_metadata(files, work_root: Path) -> tuple[Path, Path]:
     auto_path = OUT / "cva6_auto_port_types.tsv"
     merged_path = OUT / "cva6_merged_port_types.tsv"
@@ -496,6 +519,7 @@ def build_metadata(files, work_root: Path) -> tuple[Path, Path]:
         dependencies_out = metadata_tmp / f"{idx:04d}.dependencies.tsv"
         env = os.environ.copy()
         setup_hdlcpp_env(env)
+        env["HDLCPP_MODULE_TRAITS"] = str(source_filtered_traits(src, work, work_root))
         env["HDLCPP_WRITE_PORT_TYPES"] = str(port_out)
         env["HDLCPP_WRITE_MODULE_PARAMS"] = str(params_out)
         env["HDLCPP_WRITE_TYPE_WIDTHS"] = str(widths_out)
@@ -803,6 +827,10 @@ def refresh_incremental_metadata(files, work_root: Path) -> tuple[Path, Path]:
             OUT / "cva6_port_types.tsv",
             OUT / "cva6_module_params.tsv",
         )
+        # Incremental metadata must replace each source's inferred contracts, not
+        # rediscover them from the previous merged file. Dependency traits remain
+        # visible through the source-filtered input assembled above.
+        env["HDLCPP_MODULE_TRAITS"] = str(source_filtered_traits(src, work, work_root))
         env["HDLCPP_WRITE_PORT_TYPES"] = str(outputs["ports"])
         env["HDLCPP_WRITE_MODULE_PARAMS"] = str(outputs["params"])
         env["HDLCPP_WRITE_TYPE_WIDTHS"] = str(outputs["widths"])
@@ -1711,10 +1739,17 @@ def main():
         missing = sorted(requested - found)
         if missing:
             raise SystemExit("unknown CPPHDL_CVA6_ONLY sources: " + ", ".join(missing))
-        conversion_files = expand_sources_with_dependents(
-            conversion_files, all_conversion_files, OUT / "work"
-        )
-        if os.environ.get("CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN", "").strip() != "1":
+        # Once metadata has converged, generator-only fixes can safely rebuild one
+        # source without reparsing every transitive consumer. This CVA6 fixture mode
+        # deliberately requires KEEP_METADATA so it cannot hide contract changes.
+        exact_incremental = os.environ.get("CPPHDL_CVA6_EXACT_ONLY", "").strip() == "1"
+        if exact_incremental and not keep_incremental_metadata:
+            raise SystemExit("CPPHDL_CVA6_EXACT_ONLY requires CPPHDL_CVA6_KEEP_METADATA=1")
+        if not exact_incremental:
+            conversion_files = expand_sources_with_dependents(
+                conversion_files, all_conversion_files, OUT / "work"
+            )
+        if not exact_incremental and os.environ.get("CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN", "").strip() != "1":
             stale_trait_sources = sources_with_stale_projected_traits(
                 all_conversion_files, OUT / "work"
             )

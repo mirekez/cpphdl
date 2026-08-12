@@ -1681,7 +1681,8 @@
     }
 
     std::string projectedFieldType(std::string aggregateType, const std::string& field,
-                                   bool allowMissingField = false)
+                                   bool allowMissingField = false,
+                                   const ModuleGen* owner = nullptr)
     {
         aggregateType = unwrapRegType(trim(std::move(aggregateType)));
         struct ArrayDimension {
@@ -1692,7 +1693,13 @@
         for (;;) {
             auto args = templateArgsFor(aggregateType, "array");
             if (args.size() >= 2) {
-                const bool legacyTypeFirst = cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]);
+                const bool firstIsTypeParam = owner &&
+                    owner->typeParamNames.count(trim(args[0]));
+                const bool secondIsTypeParam = owner &&
+                    owner->typeParamNames.count(trim(args[1]));
+                const bool legacyTypeFirst =
+                    (firstIsTypeParam && !secondIsTypeParam) ||
+                    (cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]));
                 dimensions.push_back({trim(args[legacyTypeFirst ? 1 : 0]),
                                       args.size() >= 3 ? trim(args[2]) : std::string{}});
                 aggregateType = unwrapRegType(trim(args[legacyTypeFirst ? 0 : 1]));
@@ -1863,7 +1870,24 @@
         }
         const bool dependsOnTypeParameter =
             fieldPathDependsOnTypeParameter(module, sourcePort.type, field);
-        projection.projectedType = projectedFieldType(sourcePort.type, field, dependsOnTypeParameter);
+        std::string concreteFieldType;
+        auto concreteOwnerType = unwrapRegType(trim(sourcePort.type));
+        if (concreteOwnerType.rfind("array<", 0) != 0 &&
+            concreteOwnerType.rfind("std::array<", 0) != 0 &&
+            !dependsOnTypeParameter) {
+            // Concrete AST field paths carry stronger type information than textual decltype.
+            // Retain that leaf type so later comb extraction can distinguish packed scalars
+            // from aggregates before synthetic projection ports have been materialized.
+            std::stringstream fields(field);
+            std::string member;
+            while (!concreteOwnerType.empty() && std::getline(fields, member, '.')) {
+                concreteOwnerType = fieldTypeFor(concreteOwnerType, trim(std::move(member)));
+            }
+            concreteFieldType = unwrapRegType(trim(std::move(concreteOwnerType)));
+        }
+        projection.projectedType = concreteFieldType.empty()
+            ? projectedFieldType(sourcePort.type, field, dependsOnTypeParameter, &module)
+            : concreteFieldType;
         auto [inserted, _] = module.inputFieldProjections.emplace(key, std::move(projection));
         return inserted->second;
     }
@@ -2099,7 +2123,7 @@
                     const bool dependsOnTypeParameter =
                         fieldPathDependsOnTypeParameter(module, port.type, field);
                     projection.projectedType = projectedFieldType(
-                        port.type, field, dependsOnTypeParameter);
+                        port.type, field, dependsOnTypeParameter, &module);
                     module.outputFieldProjections.emplace(key, std::move(projection));
                 }
                 module.requestedCombFields.insert(key);
@@ -2130,6 +2154,65 @@
 
     void projectGeneratedStructuralBindings(ModuleGen& module)
     {
+        auto concreteChildInputType = [&](const std::string& childType,
+                                          const std::string& svPort,
+                                          const std::string& cppPort) {
+            auto elementType = trim(arrayElementTypeText(childType));
+            auto baseType = elementType;
+            std::string params;
+            if (auto lt = elementType.find('<'); lt != std::string::npos) {
+                int depth = 0;
+                size_t gt = std::string::npos;
+                for (size_t pos = lt; pos < elementType.size(); ++pos) {
+                    if (elementType[pos] == '<') {
+                        ++depth;
+                    }
+                    else if (elementType[pos] == '>' && --depth == 0) {
+                        gt = pos;
+                        break;
+                    }
+                }
+                if (gt != std::string::npos) {
+                    params = elementType.substr(lt + 1, gt - lt - 1);
+                    baseType = trim(elementType.substr(0, lt));
+                }
+            }
+            if (baseType.rfind("::", 0) == 0) {
+                baseType.erase(0, 2);
+            }
+
+            auto* child = findModule(baseType);
+            std::string portType;
+            if (child) {
+                for (const auto& port : child->ports) {
+                    if (port.direction == "input" &&
+                        (port.name == svPort || port.name == cppPort ||
+                         port.name == svPort + "_in")) {
+                        portType = port.type;
+                        break;
+                    }
+                }
+            }
+            if (portType.empty()) {
+                portType = configuredPortType(baseType, svPort, "input");
+            }
+            if (portType.empty()) {
+                portType = configuredPortType(baseType, cppPort, "input");
+            }
+            if (portType.empty() || params.empty()) {
+                return portType;
+            }
+
+            // Projected field metadata is shared by all specializations of a module.
+            // Resolve this instance's actual port type before applying that metadata,
+            // otherwise a scalar specialization inherits fields from struct users.
+            auto declarations = configuredModuleParams(baseType);
+            if (declarations.empty() && child) {
+                declarations = child->params;
+            }
+            return substituteParamDeclValues(
+                declarations, splitTopLevelArgs(params), std::move(portType));
+        };
         auto indexedCombWrapper = [](const std::string& source,
                                      const std::string& indexedTarget) {
             auto identifiers = [](const std::string& text) {
@@ -2221,6 +2304,12 @@
             if (targetPort.empty() || targetBase.empty()) {
                 continue;
             }
+            // Project only the original whole-port binding. Field bindings generated
+            // by an earlier pass are leaves, not new aggregate sources; revisiting one
+            // would recursively compose unrelated specialization fields below it.
+            if (targetPort.find("__field_") != std::string::npos) {
+                continue;
+            }
             size_t memberIndex = module.memberNames.size();
             for (size_t i = 0; i < module.memberNames.size(); ++i) {
                 if (module.memberNames[i] == targetBase) {
@@ -2243,6 +2332,8 @@
             if (hasSuffix(sourcePortName, "_in")) {
                 sourcePortName.resize(sourcePortName.size() - 3);
             }
+            auto concreteTargetType = concreteChildInputType(
+                childElementType, sourcePortName, targetPort);
             std::set<std::string> fields = configuredInputPortFields(childBaseType, sourcePortName);
             if (auto* child = findModule(childBaseType)) {
                 for (const auto& item : child->inputFieldProjections) {
@@ -2364,6 +2455,10 @@
             }
 
             for (const auto& field : fields) {
+                if (!concreteTargetType.empty() &&
+                    knownAggregateRejectsFieldPath(module, concreteTargetType, field)) {
+                    continue;
+                }
                 auto sourceField = sourceMember.empty() ? field : sourceMember + "." + field;
                 std::string projectedSource;
                 auto sourcePort = std::find_if(module.ports.begin(), module.ports.end(), [&](const PortGen& port) {
@@ -3343,7 +3438,7 @@
 	                        const bool dependsOnTypeParameter =
 	                            fieldPathDependsOnTypeParameter(m, resolvedBaseType, field);
 	                        return projectedFieldType(
-	                            resolvedBaseType, field, dependsOnTypeParameter);
+	                            resolvedBaseType, field, dependsOnTypeParameter, &m);
 	                    }
 	                    auto type = fieldTypeFor(resolvedBaseType, field);
 	                    if (type.empty()) {
@@ -3356,7 +3451,7 @@
 	                                // A type parameter remains dependent even when its default is scalar.
 	                                // A projected child port already requires this member for every valid
 	                                // instantiation, so derive its type from the actual template argument.
-	                                return projectedFieldType(resolvedBaseType, field, true);
+	                                return projectedFieldType(resolvedBaseType, field, true, &m);
 	                            }
 	                        }
 	                        if (isNumericValueType(resolvedBaseType) || resolvedBaseType == "bool" || resolvedBaseType == "u1" ||
@@ -3366,7 +3461,7 @@
 	                        const bool dependsOnTypeParameter =
 	                            fieldPathDependsOnTypeParameter(m, resolvedBaseType, field);
 	                        return projectedFieldType(
-	                            resolvedBaseType, field, dependsOnTypeParameter);
+	                            resolvedBaseType, field, dependsOnTypeParameter, &m);
 	                    }
 		                    return unwrapRegType(type);
 		                };
@@ -3460,14 +3555,27 @@
 			                const char* traceFieldDemandEnv = std::getenv("HDLCPP_TRACE_FIELD_DEMANDS");
 			                const bool traceFieldDemands = traceFieldDemandEnv != nullptr;
 			                const bool traceFieldScans = traceFieldDemandEnv && std::string(traceFieldDemandEnv) == "scan";
+			                std::set<std::string> moduleParameterBases;
+			                for (const auto& declaration : m.params) {
+			                    auto name = templateParamName(declaration);
+			                    if (!name.empty()) {
+			                        moduleParameterBases.insert(std::move(name));
+			                    }
+			                }
 			                std::set<std::pair<std::string, std::string>> cachedFieldDemand =
 			                    m.requestedCombFields;
+			                std::erase_if(cachedFieldDemand, [&](const auto& demand) {
+			                    return moduleParameterBases.count(demand.first) != 0;
+			                });
 			                std::map<size_t, size_t> scannedFieldMethodHashes;
 			                bool scannedFieldAssignLines = false;
 			                auto demandFields = [&]() {
 			                    auto demand = cachedFieldDemand;
 			                    std::map<std::string, const MethodGen*> candidateBases;
 			                    for (const auto& item : m.combMethodByBase) {
+			                        if (moduleParameterBases.count(item.first)) {
+			                            continue;
+			                        }
 			                        if (auto source = methodForBase(item.first)) {
 			                            candidateBases[item.first] = source;
 			                        }
@@ -3477,7 +3585,20 @@
 			                            candidateBases.emplace(method.returnBase, &method);
 			                        }
 			                    }
-			                    auto scan = [&](const std::string& text, const std::string& inheritedField = "") {
+	                    auto scan = [&](const std::string& text, const std::string& inheritedField = "") {
+	                        std::set<std::string_view> identifiers;
+	                        for (size_t pos = 0; pos < text.size();) {
+	                            if (!hdlcpp::isIdentifierChar(text[pos]) ||
+	                                std::isdigit(static_cast<unsigned char>(text[pos]))) {
+	                                ++pos;
+	                                continue;
+	                            }
+	                            const auto begin = pos++;
+	                            while (pos < text.size() && hdlcpp::isIdentifierChar(text[pos])) {
+	                                ++pos;
+	                            }
+	                            identifiers.emplace(text.data() + begin, pos - begin);
+	                        }
 	                        auto demandSelectedAggregateBranch = [&](const std::string& base, const std::string& wholeCall) {
 	                            if (inheritedField.empty()) {
 	                                return;
@@ -3588,11 +3709,15 @@
 	                                dot += suffix.size();
 	                            }
 	                        };
-			                        for (const auto& item : candidateBases) {
-		                            auto source = item.second;
-		                            if (!source) {
-		                                continue;
-		                            }
+	                        for (const auto& item : candidateBases) {
+	                            auto source = item.second;
+	                            if (!source) {
+	                                continue;
+	                            }
+	                            if (!identifiers.count(item.first) &&
+	                                !identifiers.count(source->name)) {
+	                                continue;
+	                            }
 		                            if (traceFieldScans) {
 		                                std::cerr << "HDLCPP_FIELD_SCAN module=" << m.name
 		                                          << " base=" << item.first
@@ -3680,93 +3805,14 @@
 		                    for (const auto& fieldMethod : m.combMethodByField) {
 		                        generatedFieldMethods.insert(fieldMethod.second);
 		                    }
-		                    std::map<std::string, std::string> combCallBases;
-		                    for (const auto& item : candidateBases) {
-		                        if (item.second) {
-		                            combCallBases[item.second->name] = item.first;
-		                        }
-		                    }
-		                    for (size_t methodIndex = 0; methodIndex < m.methods.size(); ++methodIndex) {
-		                        const auto& method = m.methods[methodIndex];
-		                        if (generatedFieldMethods.count(methodIndex)) {
-		                            if (traceFieldScans) {
-		                                std::cerr << "HDLCPP_FIELD_FAST module=" << m.name
-		                                          << " method=" << method.name
-		                                          << " lines=" << method.body.size() << "\n";
-		                            }
-		                            // Generated field methods can expose recursive projections
-		                            // such as `a_comb_func().tag`, but most large methods only
-		                            // repeat already-known accesses. Detect new projection paths
-		                            // in one linear pass before invoking the full demand scanner.
-		                            bool hasNewDemand = false;
-		                            for (const auto& line : method.body) {
-		                                std::set<std::string> scannedCalls;
-		                                for (size_t call = 0; (call = line.find("()", call)) != std::string::npos;) {
-		                                    size_t nameEnd = call;
-		                                    size_t nameBegin = nameEnd;
-		                                    while (nameBegin > 0 && hdlcpp::isIdentifierChar(line[nameBegin - 1])) {
-		                                        --nameBegin;
-		                                    }
-		                                    auto callName = line.substr(nameBegin, nameEnd - nameBegin);
-		                                    auto source = combCallBases.find(callName);
-		                                    if (source != combCallBases.end() && scannedCalls.insert(callName).second) {
-		                                        auto accesses = hdlcpp::projectedMemberAccesses(
-		                                            line, callName + "()");
-		                                        if (traceFieldScans && !accesses.empty()) {
-		                                            std::cerr << "HDLCPP_FIELD_FAST_CALL module=" << m.name
-		                                                      << " method=" << method.name
-		                                                      << " source=" << source->second
-		                                                      << " accesses=" << accesses.size()
-		                                                      << " text=" << line << "\n";
-		                                        }
-		                                        for (const auto& access : accesses) {
-		                                            if (access.field != "bits" && access.field != "get" &&
-		                                                access.field != "_next" &&
-		                                                access.field.rfind("_next.", 0) != 0 &&
-		                                                !cachedFieldDemand.count({source->second, access.field})) {
-		                                                hasNewDemand = true;
-		                                                break;
-		                                            }
-		                                        }
-		                                        if (hasNewDemand) {
-		                                            break;
-		                                        }
-		                                    }
-		                                    call += 2;
-		                                }
-		                                for (size_t pos = 0; !hasNewDemand && pos < line.size();) {
-		                                    if (!hdlcpp::isIdentifierChar(line[pos]) ||
-		                                        std::isdigit(static_cast<unsigned char>(line[pos]))) {
-		                                        ++pos;
-		                                        continue;
-		                                    }
-		                                    const auto begin = pos++;
-		                                    while (pos < line.size() && hdlcpp::isIdentifierChar(line[pos])) {
-		                                        ++pos;
-		                                    }
-		                                    auto direct = candidateBases.find(line.substr(begin, pos - begin));
-		                                    if (direct == candidateBases.end()) {
-		                                        continue;
-		                                    }
-		                                    for (const auto& access : hdlcpp::projectedMemberAccesses(
-		                                             line, direct->first)) {
-		                                        if (access.field != "bits" && access.field != "get" &&
-		                                            access.field != "_next" &&
-		                                            access.field.rfind("_next.", 0) != 0 &&
-		                                            !cachedFieldDemand.count({direct->first, access.field})) {
-		                                            hasNewDemand = true;
-		                                            break;
-		                                        }
-		                                    }
-		                                }
-		                                if (hasNewDemand) {
-		                                    break;
-		                                }
-		                            }
-		                            if (!hasNewDemand) {
-		                                continue;
-		                            }
-		                        }
+			                    for (size_t methodIndex = 0; methodIndex < m.methods.size(); ++methodIndex) {
+			                        const auto& method = m.methods[methodIndex];
+			                        if (generatedFieldMethods.count(methodIndex)) {
+			                            // Field methods are derived copies of already-scanned HDL combs.
+			                            // Feeding their rewritten accesses back into demand discovery can
+			                            // combine unrelated fields from different template specializations.
+			                            continue;
+			                        }
 		                        size_t methodHash = 0;
 		                        for (const auto& line : method.body) {
 		                            methodHash ^= std::hash<std::string>{}(line) + 0x9e3779b9u +
@@ -3804,6 +3850,9 @@
 	                    for (const auto& item : demand) {
 	                        const auto& base = item.first;
 	                        const auto& field = item.second;
+	                        if (moduleParameterBases.count(base)) {
+	                            continue;
+	                        }
 	                        size_t mappedMethod = static_cast<size_t>(-1);
 	                        if (auto mapped = m.combMethodByField.find(item);
 	                            mapped != m.combMethodByField.end() && mapped->second < m.methods.size()) {
@@ -4028,8 +4077,13 @@
 	                            sourceType = resolveLocalAliasType(trim(std::move(sourceType)));
 	                            auto args = templateArgsFor(sourceType, "array");
 	                            if (args.size() >= 2) {
+	                                const bool firstIsTypeParam =
+	                                    m.typeParamNames.count(trim(args[0]));
+	                                const bool secondIsTypeParam =
+	                                    m.typeParamNames.count(trim(args[1]));
 	                                const bool legacyTypeFirst =
-	                                    cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]);
+	                                    (firstIsTypeParam && !secondIsTypeParam) ||
+	                                    (cpphdlArrayType(args[0]) && !cpphdlArrayType(args[1]));
 	                                std::vector<std::string> normalized{
 	                                    trim(args[legacyTypeFirst ? 0 : 1]),
 	                                    trim(args[legacyTypeFirst ? 1 : 0])};
@@ -4104,6 +4158,24 @@
 	                                                            const std::string& demandedField,
 	                                                            const std::string& demandedType,
 	                                                            bool adaptType = true) {
+	                            auto makeProjectionCall = [&](const PortGen& port,
+	                                                          const std::string& svPort,
+	                                                          const std::string& projectedField,
+	                                                          const std::string& indices) {
+	                                auto& projection = ensureInputFieldProjection(
+	                                    m, port, svPort, projectedField);
+	                                if (projection.projectedType.empty()) {
+	                                    return std::string{};
+	                                }
+	                                auto sourceExpr = projection.projectedCppPort + "()" + indices;
+	                                if (!adaptType ||
+	                                    trim(projection.projectedType) == trim(demandedType)) {
+	                                    return sourceExpr;
+	                                }
+	                                return "cpphdl::unpack_value<" + demandedType + ">(" +
+	                                    "cpphdl::pack_value<cpphdl::type_width<" + demandedType +
+	                                    ">()>(" + sourceExpr + "))";
+	                            };
 	                            const size_t originalPortCount = m.ports.size();
 	                            for (size_t portIndex = 0; portIndex < originalPortCount; ++portIndex) {
 	                                const auto port = m.ports[portIndex];
@@ -4129,19 +4201,35 @@
 	                                        break;
 	                                    }
 	                                }
-	                                auto& projection = ensureInputFieldProjection(
-	                                    m, port, svPort, demandedField);
-	                                if (projection.projectedType.empty()) {
+	                                return makeProjectionCall(port, svPort, demandedField, *indices);
+	                            }
+	                            // A previously synthesized ancestor port is still the original SV
+	                            // aggregate semantically. Collapse a later leaf selection onto the
+	                            // original port contract instead of materializing the ancestor value.
+	                            std::vector<PortFieldProjectionGen> existingProjections;
+	                            existingProjections.reserve(m.inputFieldProjections.size());
+	                            for (const auto& item : m.inputFieldProjections) {
+	                                existingProjections.push_back(item.second);
+	                            }
+	                            for (const auto& ancestor : existingProjections) {
+	                                auto indices = projectedInputIndices(
+	                                    expression, ancestor.projectedCppPort + "()");
+	                                if (!indices) {
 	                                    continue;
 	                                }
-	                                auto sourceExpr = projection.projectedCppPort + "()" + *indices;
-	                                if (!adaptType ||
-	                                    trim(projection.projectedType) == trim(demandedType)) {
-	                                    return sourceExpr;
+	                                auto original = std::find_if(
+	                                    m.ports.begin(), m.ports.end(), [&](const PortGen& port) {
+	                                        return port.direction == "input" &&
+	                                               port.name == ancestor.sourceCppPort;
+	                                    });
+	                                if (original == m.ports.end()) {
+	                                    continue;
 	                                }
-	                                return "cpphdl::unpack_value<" + demandedType + ">(" +
-	                                    "cpphdl::pack_value<cpphdl::type_width<" + demandedType +
-	                                    ">()>(" + sourceExpr + "))";
+	                                auto exactField = ancestor.field.empty()
+	                                    ? demandedField
+	                                    : ancestor.field + "." + demandedField;
+	                                return makeProjectionCall(
+	                                    *original, ancestor.sourcePort, exactField, *indices);
 	                            }
 	                            return std::string{};
 	                        };
@@ -4274,6 +4362,27 @@
 	                                    if (!rhs.empty() && rhs.back() == ';') {
 	                                        rhs.pop_back();
 	                                        rhs = trim(rhs);
+	                                    }
+	                                    if (lhs == storageName || lhs.rfind(storageName + "[", 0) == 0) {
+	                                        auto getterMember = rhs.rfind("().");
+	                                        if (getterMember != std::string::npos) {
+	                                            auto aggregate = trim(rhs.substr(0, getterMember + 2));
+	                                            auto member = trim(rhs.substr(getterMember + 3));
+	                                            if (isValidProjectedFieldPath(member)) {
+	                                                if (std::getenv("HDLCPP_TRACE_CHILD_PROJECTION")) {
+	                                                    std::cerr << "HDLCPP_CHILD_DIRECT module=" << m.name
+	                                                              << " aggregate=" << aggregate
+	                                                              << " field=" << member << "\n";
+	                                                }
+	                                                auto projected = projectedChildOutputPortCall(
+	                                                    m, aggregate, member);
+	                                                if (!projected.empty()) {
+	                                                    projectedWholeAssignments.push_back(
+	                                                        lhs + " = " + projected + ";");
+	                                                    continue;
+	                                                }
+	                                            }
+	                                        }
 	                                    }
 	                                    // Ancestor field extraction can leave `(getter()[i]).leaf`
 	                                    // before the general expression projector is built. Project or
@@ -4431,9 +4540,9 @@
 	                            return "([&]() { " + type + " __cpphdl_projected{}; " + body +
 	                                   "return __cpphdl_projected; }())";
 	                        };
-	                        std::function<std::string(std::string)> projectFieldExpr;
-			                        projectFieldExpr = [&](std::string expr) -> std::string {
-			                            expr = stripOuterParens(std::move(expr));
+			                        std::function<std::string(std::string)> projectFieldExpr;
+				                        projectFieldExpr = [&](std::string expr) -> std::string {
+				                            expr = stripOuterParens(std::move(expr));
 				                            auto unwrapAggregateCast = [&](const std::string& text) -> std::string {
 					                            for (const auto* prefix : {"cpphdl::sv_cast<", "sv_cast<",
 					                                                       "static_cast<", "cpphdl::unpack_value<",
@@ -4501,10 +4610,26 @@
 			                                       " : " + projectFieldExpr(falseBranch) + ")";
 			                            }
 			                            auto selectedPackedArrayElementType = [&](const std::string& expression) {
-			                                const auto getterEnd = expression.rfind("()");
-			                                const auto open = getterEnd == std::string::npos
-			                                    ? expression.find('[')
-			                                    : expression.find('[', getterEnd + 2);
+			                                size_t open = std::string::npos;
+			                                int parenDepth = 0;
+			                                int braceDepth = 0;
+			                                int angleDepth = 0;
+			                                for (size_t pos = 0; pos < expression.size(); ++pos) {
+			                                    const auto ch = expression[pos];
+			                                    if (ch == '(') ++parenDepth;
+			                                    else if (ch == ')' && parenDepth > 0) --parenDepth;
+			                                    else if (ch == '{') ++braceDepth;
+			                                    else if (ch == '}' && braceDepth > 0) --braceDepth;
+			                                    else if (ch == '<' && parenDepth == 0 && braceDepth == 0) ++angleDepth;
+			                                    else if (ch == '>' && parenDepth == 0 && braceDepth == 0 && angleDepth > 0) --angleDepth;
+			                                    else if (ch == '[' && parenDepth == 0 && braceDepth == 0 && angleDepth == 0) {
+			                                        open = pos;
+			                                        break;
+			                                    }
+			                                }
+			                                const auto getterEnd = open == std::string::npos
+			                                    ? std::string::npos
+			                                    : expression.rfind("()", open);
 			                                if (open == std::string::npos || open == 0) {
 			                                    return std::string{};
 			                                }
@@ -4543,10 +4668,47 @@
 			                                auto args = arrayArgsForProjection(arrayType);
 			                                if (args.size() < 3 || trim(args[2]) != "true") {
 			                                    return std::string{};
-			                                }
-			                                return trim(args[0]);
-			                            };
-			                            // A whole aggregate input can hide a field dependency after forwarding
+	                                }
+	                                return trim(args[0]);
+	                            };
+	                            auto expressionType = unwrapRegType(expressionStorageType(m, expr));
+	                            bool projectedInputMemberGetter = false;
+	                            {
+	                                // Synthetic input-field ports are materialized after comb extraction.
+	                                // Recover their value type from projection metadata at this earlier phase,
+	                                // so packed leaves are reconstructed instead of treated as nested structs.
+	                                for (const auto& projectionItem : m.inputFieldProjections) {
+	                                    const auto& projection = projectionItem.second;
+	                                    const auto getter = projection.projectedCppPort + "()";
+	                                    if (expr.rfind(getter, 0) == 0) {
+	                                        projectedInputMemberGetter = true;
+	                                        if (expressionType.empty()) {
+	                                            expressionType = unwrapRegType(projection.projectedType);
+	                                        }
+	                                        break;
+	                                    }
+	                                }
+	                            }
+	                            auto aggregateType = unwrapRegType(sourceAggregateType);
+	                            if (!aggregateType.empty() && projectedInputMemberGetter) {
+	                                // This getter is already one member of an input aggregate. The SV whole
+	                                // assignment converts that member's packed value to the target aggregate;
+	                                // selecting another synthetic input member would compose unrelated paths.
+	                                return "(cpphdl::unpack_value<" + aggregateType +
+	                                       ">(cpphdl::pack_value<cpphdl::type_width<" + aggregateType +
+	                                       ">()>(" + expr + ")))." + field;
+	                            }
+	                            if (!aggregateType.empty() && !expressionType.empty() &&
+	                                expressionType != aggregateType &&
+	                                knownAggregateRejectsFieldPath(m, expressionType, field)) {
+	                                // A packed scalar can carry an aggregate through an equal-width SV
+	                                // assignment. Reconstruct the assignment target before publishing a
+	                                // projected input demand, which would invent a member on the scalar.
+	                                return "(cpphdl::unpack_value<" + aggregateType +
+	                                       ">(cpphdl::pack_value<cpphdl::type_width<" + aggregateType +
+	                                       ">()>(" + expr + ")))." + field;
+	                            }
+	                            // A whole aggregate input can hide a field dependency after forwarding
 				                            // through an intermediate SV variable. Bind that leaf to the synthetic
 				                            // field port so evaluating one channel never evaluates sibling channels.
 					                            if (auto projected = projectedInputFieldCall(expr, field, type);
@@ -4589,13 +4751,55 @@
 			                            // Explicit projected input and child-output leaves above preserve the
 			                            // narrowest dependency. Materialize a packed selected aggregate only
 			                            // when no such structural field binding can supply this demand.
-			                            if (auto elementType = selectedPackedArrayElementType(expr);
-			                                !elementType.empty()) {
-			                                return "(cpphdl::unpack_value<" + elementType +
-			                                    ">(cpphdl::pack_value<cpphdl::type_width<" + elementType +
-			                                    ">()>(" + expr + ")))." + field;
-			                            }
-			                            for (const auto& combItem : m.combMethodByBase) {
+	                            if (auto elementType = selectedPackedArrayElementType(expr);
+	                                !elementType.empty()) {
+			                                const auto firstIndex = expr.find('[');
+			                                const auto indexedBase = firstIndex == std::string::npos
+			                                    ? std::string{}
+			                                    : trim(expr.substr(0, firstIndex));
+			                                const bool indexedCombSource =
+			                                    std::any_of(m.methods.begin(), m.methods.end(),
+			                                                [&](const MethodGen& method) {
+			                                                    return method.returnBase == indexedBase;
+			                                                }) ||
+			                                    m.combAssignedVars.count(indexedBase) ||
+			                                    (m.varNames.count(indexedBase) &&
+			                                     !m.seqAssignedVars.count(indexedBase)) ||
+			                                    (m.types.count(indexedBase) &&
+			                                     !m.seqAssignedVars.count(indexedBase)) ||
+			                                    m.combMethodByBase.count(indexedBase) ||
+			                                    m.pendingCombByBase.count(indexedBase);
+			                                if (!indexedBase.empty() &&
+			                                    std::all_of(indexedBase.begin(), indexedBase.end(),
+			                                                [](char ch) { return hdlcpp::isIdentifierChar(ch); }) &&
+			                                    indexedCombSource) {
+			                                    // The source AST still names local aggregate storage here;
+			                                    // late binding turns it into a comb call only at emission.
+			                                    // Demand and call the matching projected array comb directly.
+			                                    cachedFieldDemand.insert({indexedBase, field});
+			                                    return fieldMethodName(indexedBase, field) + "()" +
+			                                           expr.substr(firstIndex);
+			                                }
+			                                for (const auto& upstream : m.methods) {
+			                                    if (upstream.returnBase.empty()) {
+			                                        continue;
+			                                    }
+			                                    const auto call = upstream.name + "()";
+			                                    if (expr.rfind(call + "[", 0) != 0) {
+			                                        continue;
+			                                    }
+			                                    // Selecting one element from an aggregate comb still has an
+			                                    // exact upstream field dependency. Preserve the index while
+			                                    // routing the value through that field's independent array comb.
+			                                    cachedFieldDemand.insert({upstream.returnBase, field});
+			                                    return fieldMethodName(upstream.returnBase, field) + "()" +
+			                                           expr.substr(call.size());
+			                                }
+	                                return "(cpphdl::unpack_value<" + elementType +
+	                                    ">(cpphdl::pack_value<cpphdl::type_width<" + elementType +
+	                                    ">()>(" + expr + ")))." + field;
+	                            }
+	                            for (const auto& combItem : m.combMethodByBase) {
 			                                if (combItem.second >= m.methods.size()) {
 			                                    continue;
 			                                }
@@ -4608,6 +4812,13 @@
 			                                        if (auto sourceWhole = wholeAssignExpr(*source); !sourceWhole.empty()) {
 			                                            return projectFieldExpr(sourceWhole);
 			                                        }
+			                                    }
+			                                    if (combItem.first != base) {
+			                                        // Projection dependencies are discovered from the source
+			                                        // expression itself. Queue the exact upstream field instead
+			                                        // of rescanning the generated downstream method later.
+			                                        cachedFieldDemand.insert({combItem.first, field});
+			                                        return fieldMethodName(combItem.first, field) + "()";
 			                                    }
 			                                    return fieldCall;
 			                                }
@@ -4622,17 +4833,24 @@
 				                                            m.methods[combItem.second]); !projected.empty()) {
 				                                        return projected;
 				                                    }
-			                                    return sourceArrayArgs.size() >= 2
-			                                        ? projectWholeArrayFieldExpr(expr)
-			                                        : call + "." + field;
+			                                    if (sourceArrayArgs.size() >= 2) {
+			                                        cachedFieldDemand.insert({combItem.first, field});
+			                                        return projectWholeArrayFieldExpr(expr);
+			                                    }
+			                                    if (combItem.first != base) {
+			                                        // A scalar aggregate comb contributes this same demanded
+			                                        // field. Record that dataflow edge while the original HDL
+			                                        // expression is still available and use its narrow getter.
+			                                        cachedFieldDemand.insert({combItem.first, field});
+			                                        return fieldMethodName(combItem.first, field) + "()";
+			                                    }
+			                                    return call + "." + field;
 			                                }
 	                            }
 			                            if (sourceArrayArgs.size() >= 2) {
 			                                return projectWholeArrayFieldExpr(expr);
 			                            }
-			                            auto expressionType = unwrapRegType(expressionStorageType(m, expr));
-			                            auto aggregateType = unwrapRegType(sourceAggregateType);
-			                            if (!aggregateType.empty() && expressionType != aggregateType) {
+	                            if (!aggregateType.empty() && expressionType != aggregateType) {
 			                                if (!expr.empty() && expr.front() == '{') {
 			                                    return "([&]() { " + aggregateType + " __cpphdl_projected = " +
 			                                           expr + "; return __cpphdl_projected." + field + "; }())";
@@ -4683,8 +4901,101 @@
 			                                    if (it->field == field || it->field.rfind(field + ".", 0) == 0) {
 			                                        continue;
 			                                    }
+			                                    cachedFieldDemand.insert({base, it->field});
 			                                    auto replacement = fieldMethodName(base, it->field) + "()" + it->indices;
 			                                    line.replace(it->begin, it->end - it->begin, replacement);
+			                                }
+			                            };
+	                            auto replaceUpstreamCombFieldReads = [&](std::string& line) {
+	                                auto projectedUpstreamRead = [&](const std::string& upstreamBase,
+	                                                                 const std::string& sourceExpr,
+	                                                                 const std::string& upstreamField) {
+	                                    auto upstreamType = m.types.find(upstreamBase);
+	                                    if (upstreamType == m.types.end() || sourceAggregateType.empty() ||
+	                                        !knownAggregateRejectsFieldPath(
+	                                            m, upstreamType->second, upstreamField)) {
+	                                        return std::string{};
+	                                    }
+	                                    return "(cpphdl::unpack_value<" + sourceAggregateType +
+	                                        ">(cpphdl::pack_value<cpphdl::type_width<" +
+	                                        sourceAggregateType + ">()>(" + sourceExpr + ")))." +
+	                                        upstreamField;
+	                                };
+	                                auto replaceFor = [&](const std::string& upstreamBase,
+	                                                      const std::string& getter) {
+	                                    if (upstreamBase.empty() || upstreamBase == base ||
+	                                        moduleParameterBases.count(upstreamBase) ||
+	                                        line.find(getter + "()") == std::string::npos) {
+			                                        return;
+			                                    }
+			                                    auto accesses = hdlcpp::projectedMemberAccesses(
+			                                        line, getter + "()");
+			                                    auto assign = hdlcpp::topLevelAssignPos(line);
+			                                    for (auto it = accesses.rbegin(); it != accesses.rend(); ++it) {
+			                                        if ((assign != std::string::npos && it->begin < assign) ||
+			                                            it->field == "bits" || it->field == "get" ||
+			                                            it->field == "_next" ||
+			                                            it->field.rfind("_next.", 0) == 0) {
+			                                            continue;
+			                                        }
+	                                        auto sourceExpr = getter + "()" + it->indices;
+	                                        auto replacement = projectedUpstreamRead(
+	                                            upstreamBase, sourceExpr, it->field);
+	                                        if (replacement.empty()) {
+	                                            cachedFieldDemand.insert({upstreamBase, it->field});
+	                                            replacement = fieldMethodName(
+	                                                upstreamBase, it->field) + "()" + it->indices;
+	                                        }
+	                                        line.replace(it->begin, it->end - it->begin, replacement);
+			                                    }
+			                                };
+			                                for (size_t upstreamIndex = 0;
+			                                     upstreamIndex < m.methods.size(); ++upstreamIndex) {
+			                                    const auto& upstream = m.methods[upstreamIndex];
+			                                    auto upstreamBase = upstream.returnBase;
+			                                    if (upstreamBase.empty()) {
+			                                        for (const auto& mapped : m.combMethodByBase) {
+			                                            if (mapped.second == upstreamIndex) {
+			                                                upstreamBase = mapped.first;
+			                                                break;
+			                                            }
+			                                        }
+			                                    }
+			                                    // This access remains part of the copied source comb's
+			                                    // dataflow. Queue its exact upstream field and rewrite it
+			                                    // now, without treating the generated method as new HDL.
+			                                    replaceFor(upstreamBase, upstream.name);
+			                                }
+	                                for (const auto& typed : m.types) {
+	                                    if (moduleParameterBases.count(typed.first)) {
+	                                        continue;
+	                                    }
+	                                    replaceFor(typed.first, typed.first + "_comb_func");
+			                                    if (typed.first == base ||
+			                                        m.seqAssignedVars.count(typed.first) ||
+			                                        line.find(typed.first) == std::string::npos) {
+			                                        continue;
+			                                    }
+			                                    auto accesses = hdlcpp::projectedMemberAccesses(
+			                                        line, typed.first);
+			                                    auto assign = hdlcpp::topLevelAssignPos(line);
+			                                    for (auto it = accesses.rbegin(); it != accesses.rend(); ++it) {
+			                                        if ((assign != std::string::npos && it->begin < assign) ||
+			                                            it->field == "bits" || it->field == "get" ||
+			                                            it->field == "_next" ||
+			                                            it->field.rfind("_next.", 0) == 0) {
+			                                            continue;
+			                                        }
+	                                        auto sourceExpr = typed.first + it->indices;
+	                                        auto replacement = projectedUpstreamRead(
+	                                            typed.first, sourceExpr, it->field);
+	                                        if (replacement.empty()) {
+	                                            cachedFieldDemand.insert({typed.first, it->field});
+	                                            replacement = fieldMethodName(
+	                                                typed.first, it->field) + "()" + it->indices;
+	                                        }
+	                                        line.replace(it->begin, it->end - it->begin, replacement);
+			                                    }
 			                                }
 			                            };
 			                            for (auto& line : extractedFieldBody) {
@@ -4698,6 +5009,7 @@
 			                                if (source->returnBase != sourceStorageName) {
 			                                    replaceSiblingFieldReads(line, source->returnBase);
 			                                }
+			                                replaceUpstreamCombFieldReads(line);
 			                                // The projected value is rooted at the demanded field's type, so
 			                                // nested accesses must lose the same aggregate prefix as direct
 			                                // assignments while retaining their remaining descendant path.
@@ -8218,8 +8530,9 @@
 	                auto configuredChildType = childBaseType.empty() ? conn.type : childBaseType;
 	                auto externalFields = configuredInputPortFields(configuredChildType, conn.port);
 	                projectedFields.insert(externalFields.begin(), externalFields.end());
+	                const auto& projectionTargetType = portTypeKnown ? portType : actualPortType;
 	                for (const auto& field : projectedFields) {
-	                    if (knownAggregateRejectsFieldPath(m, actualPortType, field)) {
+	                    if (knownAggregateRejectsFieldPath(m, projectionTargetType, field)) {
 	                        continue;
 	                    }
 	                    auto targetProjection = projectedInputPortName(portName, field);
@@ -10672,9 +10985,15 @@
                                              const std::string& demandedField)
     {
         expr = trim(std::move(expr));
+	    const bool traceProjection = std::getenv("HDLCPP_TRACE_CHILD_PROJECTION") != nullptr;
+	    if (traceProjection) {
+	        std::cerr << "HDLCPP_CHILD_PORT module=" << mod.name
+	                  << " expr=" << expr << " field=" << demandedField << "\n";
+	    }
         if (!isValidProjectedFieldPath(demandedField)) {
             return {};
         }
+	    std::string requestedField = demandedField;
         auto callEnd = expr.find("()");
         if (callEnd == std::string::npos) {
             return {};
@@ -10709,13 +11028,27 @@
             childBaseType.erase(0, 2);
         }
         if (childBaseType.empty()) {
+	        if (traceProjection) {
+	            std::cerr << "HDLCPP_CHILD_PORT_SKIP module=" << mod.name
+	                      << " expr=" << expr << " reason=no_child_type\n";
+	        }
             return {};
         }
 	        auto svPort = cppPort;
 	        std::set<std::string> available;
-	        std::string childOutputType;
 	        auto* childModule = findModule(childBaseType);
 	        if (childModule) {
+	            for (const auto& item : childModule->outputFieldProjections) {
+	                const auto& projection = item.second;
+	                if (projectedInputPortName(
+	                        projection.sourceCppPort, projection.field) != cppPort) {
+	                    continue;
+	                }
+	                svPort = projection.sourcePort;
+	                cppPort = projection.sourceCppPort;
+	                requestedField = projection.field + "." + requestedField;
+	                break;
+	            }
 	            for (const auto& output : childModule->outputPortCppNames) {
                 if (output.first == cppPort || output.second == cppPort) {
                     svPort = output.first;
@@ -10723,17 +11056,32 @@
                     break;
                 }
             }
-	            auto outputPort = std::find_if(
-	                childModule->ports.begin(), childModule->ports.end(),
-	                [&](const PortGen& port) {
-	                    return port.direction == "output" && port.name == cppPort;
-	                });
-	            if (outputPort != childModule->ports.end()) {
-	                childOutputType = outputPort->type;
-	            }
 	        }
-	        else if (hasSuffix(svPort, "_out")) {
-	            svPort.resize(svPort.size() - 4);
+	        else {
+	            const auto projectedMarker = cppPort.find("__field_");
+	            if (projectedMarker != std::string::npos) {
+	                auto sourceCppPort = cppPort.substr(0, projectedMarker);
+	                auto sourceSvPort = sourceCppPort;
+	                if (hasSuffix(sourceSvPort, "_out")) {
+	                    sourceSvPort.resize(sourceSvPort.size() - 4);
+	                }
+	                if (!configuredPortTypeRejectsNamedFields(
+	                        childBaseType, sourceSvPort, "output")) {
+	                    for (const auto& candidate : configuredOutputPortFields(
+	                             childBaseType, sourceSvPort)) {
+	                        if (projectedInputPortName(sourceCppPort, candidate) != cppPort) {
+	                            continue;
+	                        }
+	                        cppPort = sourceCppPort;
+	                        svPort = sourceSvPort;
+	                        requestedField = candidate + "." + requestedField;
+	                        break;
+	                    }
+	                }
+	            }
+	            if (svPort == cppPort && hasSuffix(svPort, "_out")) {
+	                svPort.resize(svPort.size() - 4);
+	            }
 	        }
 	        if (childModule) {
 	            // A parsed child is authoritative: only consume projected ports that
@@ -10757,7 +11105,6 @@
 	            // while known scalar aliases have already been rejected above.
 	            auto configured = configuredOutputPortFields(childBaseType, svPort);
 	            available.insert(configured.begin(), configured.end());
-	            childOutputType = configuredPortType(childBaseType, svPort, "output");
 	        }
 
         // Prefer the deepest available prefix. A projected nested struct can still
@@ -10765,8 +11112,8 @@
         // Exact leaf projections naturally win because they have the longest path.
         std::string selected;
         for (const auto& candidate : available) {
-            if (candidate == demandedField ||
-                (demandedField.rfind(candidate + ".", 0) == 0 && candidate.size() > selected.size())) {
+            if (candidate == requestedField ||
+                (requestedField.rfind(candidate + ".", 0) == 0 && candidate.size() > selected.size())) {
                 selected = candidate;
             }
         }
@@ -10774,24 +11121,19 @@
             // A separately converted child cannot expose a dependent aggregate leaf
             // until a consumer identifies the required path. Publish that demand as
             // cross-module metadata so a later specialization pass can add its port.
-            mod.externalOutputFieldDemands.emplace(childBaseType, svPort, demandedField);
+            mod.externalOutputFieldDemands.emplace(childBaseType, svPort, requestedField);
             return {};
         }
-        auto isArrayType = [&](std::string type) {
-            type = unwrapRegType(trim(std::move(type)));
-            return !templateArgsFor(type, "array").empty() ||
-                   !templateArgsFor(type, "std::array").empty();
-        };
-        if (selected.size() < demandedField.size() && isArrayType(childOutputType)) {
-            // Member projection over an SV array produces another array. In C++, an
-            // ancestor projected port is therefore an array and cannot expose a
-            // descendant member directly; request the exact leaf projection.
-            mod.externalOutputFieldDemands.emplace(childBaseType, svPort, demandedField);
+        if (selected.size() < requestedField.size()) {
+            // An ancestor getter still evaluates every sibling below that ancestor.
+            // Require the exact leaf contract so nested scalar structs and arrays both
+            // preserve the per-variable dependency graph of the source HDL.
+            mod.externalOutputFieldDemands.emplace(childBaseType, svPort, requestedField);
             return {};
         }
         auto result = instance + "." + projectedInputPortName(cppPort, selected) + "()" + indices;
-        if (selected.size() < demandedField.size()) {
-            result += demandedField.substr(selected.size());
+        if (selected.size() < requestedField.size()) {
+            result += requestedField.substr(selected.size());
         }
         return result;
     }
@@ -12022,7 +12364,29 @@
                         arrayType.rfind("std::array<", 0) == 0 ? "std::array" : "array");
                     return arrayArgs.size() >= 3 && trim(arrayArgs[2]) == "true";
                 };
-                auto selector = selected.find('[');
+	                auto topLevelSelector = [](const std::string& expression) {
+	                    int paren = 0;
+	                    int brace = 0;
+	                    int angle = 0;
+	                    int bracket = 0;
+	                    size_t selector = std::string::npos;
+	                    for (size_t pos = 0; pos < expression.size(); ++pos) {
+	                        const auto ch = expression[pos];
+	                        if (ch == '[' && paren == 0 && brace == 0 && angle == 0) {
+	                            if (bracket == 0) selector = pos;
+	                            ++bracket;
+	                        }
+	                        else if (ch == ']' && bracket > 0) --bracket;
+	                        else if (bracket == 0 && ch == '(') ++paren;
+	                        else if (bracket == 0 && ch == ')' && paren > 0) --paren;
+	                        else if (bracket == 0 && ch == '{') ++brace;
+	                        else if (bracket == 0 && ch == '}' && brace > 0) --brace;
+	                        else if (bracket == 0 && ch == '<' && paren == 0 && brace == 0) ++angle;
+	                        else if (bracket == 0 && ch == '>' && paren == 0 && brace == 0 && angle > 0) --angle;
+	                    }
+	                    return selector;
+	                };
+	                auto selector = topLevelSelector(selected);
                 auto base = selector == std::string::npos
                     ? std::string() : trim(selected.substr(0, selector));
                 const bool identifierBase = !base.empty() &&
@@ -12035,21 +12399,18 @@
                         selectedIsPacked = packedArrayType(typeIt->second);
                     }
                 }
-                bool getterSelection = false;
-                for (size_t call = 0; (call = selected.find("()", call)) != std::string::npos; call += 2) {
-                    if (selected.find('[', call + 2) != std::string::npos) {
-                        getterSelection = true;
-                        break;
-                    }
-                }
-                auto selectedByGetter = [&](const std::string& getter) {
-                    if (getter.empty()) {
-                        return false;
-                    }
-                    auto call = selected.find(getter + "()");
-                    return call != std::string::npos &&
-                        selected.find('[', call + getter.size() + 2) != std::string::npos;
-                };
+	                const auto selectorBase = selector == std::string::npos
+	                    ? std::string{} : trim(selected.substr(0, selector));
+	                const bool getterSelection = selectorBase.size() >= 2 &&
+	                    selectorBase.compare(selectorBase.size() - 2, 2, "()") == 0;
+	                auto selectedByGetter = [&](const std::string& getter) {
+	                    if (getter.empty() || !getterSelection) {
+	                        return false;
+	                    }
+	                    auto call = selectorBase.rfind(getter + "()");
+	                    return call != std::string::npos &&
+	                        call + getter.size() + 2 == selectorBase.size();
+	                };
                 if (!selectedIsPacked.has_value() && getterSelection) {
                     for (const auto& port : mod.ports) {
                         auto cppIt = mod.portCppNames.find(port.name);

@@ -6304,6 +6304,19 @@
             }
             return type;
         };
+        // Ports are callable references, so their value syntax is name() rather than name.
+        // Preserve the declared port type through that getter before resolving any selectors;
+        // otherwise projected packed inputs look untyped and acquire impossible nested fields.
+        for (const auto& port : m.ports) {
+            const auto getter = port.name + "()";
+            if (expr.rfind(getter, 0) != 0) {
+                continue;
+            }
+            auto type = resolveSelectors(port.type, getter.size());
+            if (!type.empty()) {
+                return type;
+            }
+        }
         if (!expr.empty() && expr.front() == '(') {
             int depth = 0;
             size_t close = std::string::npos;

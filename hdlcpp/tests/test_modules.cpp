@@ -7054,8 +7054,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_type_parameter_register_projection", sv, "");
-    expectContains(h, "data_o_instr_comb = (cpphdl::unpack_value<cpphdl::value_type_for_ref_t<decltype(mem_q[");
-    expectContains(h, "cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(mem_q[");
+    expectContains(h, "data_o_instr_comb = (cpphdl::unpack_value<dtype>(cpphdl::pack_value<cpphdl::type_width<dtype>()>(mem_q[");
     expectNotContains(h, "data_o_instr_comb = (mem_q[");
 }
 
@@ -9663,6 +9662,30 @@ endmodule
     expectNotContains(h, "child_i.requests_i_in__field_ready = _ASSIGN(array<std::remove_cvref_t");
 }
 
+static void testProjectedGenericArrayKeepsCountBeforeType(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+    logic       ready;
+    logic [7:0] payload;
+} generic_array_item_t;
+
+module projected_generic_array_order #(
+    parameter type DATA_T = generic_array_item_t,
+    parameter int unsigned NumIn = 2
+) (
+    input DATA_T data_i [NumIn]
+);
+    logic sink;
+    assign sink = data_i[0].ready;
+endmodule
+)sv";
+    auto h = convertModule(argv0, "projected_generic_array_order", sv, "");
+    expectContains(h, "_PORT(array<NumIn,std::remove_cvref_t<decltype(");
+    expectContains(h, ".template operator()<DATA_T>())>>) data_i_in__field_ready;");
+    expectNotContains(h, "array<DATA_T,std::remove_cvref_t");
+}
+
 static void testInternalStructArrayAliasProjectsSelectedField(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -9770,6 +9793,38 @@ endmodule
     expectContains(h, "source_i.responses_o_out__field_valid()");
     expectContains(h, "selected_valid_comb_func()");
     expectNotContains(h, "selected_valid_comb = responses_comb_func()[");
+}
+
+static void testSynthesizedLeafCollapsesNestedInputProjection(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+  logic [3:0] id;
+  logic [7:0] data;
+} nested_input_channel_t;
+
+typedef struct packed {
+  nested_input_channel_t r;
+  logic                  valid;
+} nested_input_response_t;
+
+module synthesized_leaf_nested_input_projection (
+    input  nested_input_response_t responses_i [2],
+    output logic [3:0]             id_o
+);
+  nested_input_channel_t channels [2];
+  always_comb begin
+    for (int i = 0; i < 2; ++i)
+      channels[i] = responses_i[i].r;
+  end
+  assign id_o = channels[0].id;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "synthesized_leaf_nested_input_projection", sv, "");
+    expectContains(h, "responses_i_in__field_r_id()");
+    expectContains(h, "channels_id_comb_func()");
+    expectNotContains(h, "cpphdl::type_width<nested_input_channel_t>()>(responses_i_in__field_r()[");
 }
 
 static void testModuleMemberNestedArrayTypeIsNormalizedOnce(const char* argv0)
@@ -10074,6 +10129,241 @@ endmodule
     auto exact = convertModule(argv0, "indexed_child_nested_projection_exact", sv,
                                "", "", "", "", "", "", "", exactTraits);
     expectContains(exact, "].resp_o_out__field_channel_user()[");
+}
+
+static void testNestedChildProjectionPublishesExactLeafDemand(const char* argv0)
+{
+    auto dir = makeTempDir("hdlcpp_nested_child_output_demand");
+    auto input = dir / "nested_child_output_demand.sv";
+    auto portTypes = dir / "port_types.tsv";
+    auto moduleTraits = dir / "module_traits.tsv";
+    auto finalTraits = dir / "final_traits.tsv";
+    writeFile(input, R"sv(
+typedef struct packed {
+    logic [3:0] id;
+    logic [7:0] data;
+} nested_demand_channel_t;
+typedef struct packed {
+    nested_demand_channel_t r;
+    logic                   valid;
+} nested_demand_response_t;
+
+module nested_child_output_demand(output logic [3:0] id_o);
+    nested_demand_response_t responses [2];
+    external_nested_demand_source child_i(.responses_o(responses));
+    assign id_o = responses[0].r.id;
+endmodule
+)sv");
+    writeFile(portTypes,
+              "external_nested_demand_source.responses_o\toutput:array<2,nested_demand_response_t>\n");
+    writeFile(moduleTraits,
+              "external_nested_demand_source\toutput_field.responses_o.r\n");
+    writeFile(finalTraits, "");
+
+    auto executable = hdlcppPath(argv0);
+    auto oldCwd = fs::current_path();
+    fs::current_path(dir);
+    std::string command = "HDLCPP_PORT_TYPES=" + shellQuote(portTypes) + " " +
+                          "HDLCPP_MODULE_TRAITS=" + shellQuote(moduleTraits) + " " +
+                          "HDLCPP_APPEND_FINAL_MODULE_TRAITS=" + shellQuote(finalTraits) + " " +
+                          shellQuote(executable) + " " + shellQuote(input);
+    auto rc = std::system(command.c_str());
+    fs::current_path(oldCwd);
+    assert(rc == 0);
+    expectContains(readFile(finalTraits),
+                   "external_nested_demand_source\toutput_field.responses_o.r.id");
+}
+
+static void testGenericProjectionUnionDoesNotComposeUnrelatedFields(const char* argv0)
+{
+    auto dir = makeTempDir("hdlcpp_generic_projection_union");
+    auto input = dir / "generic_projection_union.sv";
+    auto moduleTraits = dir / "module_traits.tsv";
+    auto finalTraits = dir / "final_traits.tsv";
+    writeFile(input, R"sv(
+module generic_projection_transport #(parameter type DATA_T = logic) (
+    input  DATA_T data_i,
+    output DATA_T data_o
+);
+    assign data_o = data_i;
+endmodule
+
+module generic_projection_union #(parameter type DATA_T = logic) (
+    input  DATA_T data_i,
+    output DATA_T data_o
+);
+    DATA_T forwarded;
+    generic_projection_transport #(.DATA_T(DATA_T)) child_i (
+        .data_i(data_i),
+        .data_o(forwarded)
+    );
+    assign data_o = forwarded;
+endmodule
+)sv");
+    writeFile(moduleTraits,
+              "generic_projection_transport\tinput_field.data_i.amo_op\n"
+              "generic_projection_transport\tinput_field.data_i.tid\n"
+              "generic_projection_transport\toutput_field.data_o.amo_op\n"
+              "generic_projection_transport\toutput_field.data_o.tid\n"
+              "generic_projection_union\toutput_field.data_o.amo_op\n"
+              "generic_projection_union\toutput_field.data_o.tid\n");
+    writeFile(finalTraits, "");
+
+    auto executable = hdlcppPath(argv0);
+    auto oldCwd = fs::current_path();
+    fs::current_path(dir);
+    std::string command = "HDLCPP_MODULE_TRAITS=" + shellQuote(moduleTraits) + " " +
+                          "HDLCPP_APPEND_FINAL_MODULE_TRAITS=" + shellQuote(finalTraits) + " " +
+                          shellQuote(executable) + " " + shellQuote(input);
+    auto rc = std::system(command.c_str());
+    fs::current_path(oldCwd);
+    assert(rc == 0);
+    auto h = readFile(dir / "generated" / "generic_projection_union.h");
+    expectNotContains(h, "__field_tid_amo_op");
+    expectNotContains(h, ".tid.amo_op");
+    expectNotContains(readFile(finalTraits), "data_o.tid.amo_op");
+}
+
+static void testScalarGenericChildDoesNotInheritStructFieldBindings(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+    logic [7:0] id;
+    logic       valid;
+} specialization_payload_t;
+
+module specialization_transport #(parameter type DATA_T = logic) (
+    input  DATA_T data_i,
+    output DATA_T data_o
+);
+    assign data_o = data_i;
+endmodule
+
+module scalar_generic_child_projection(
+    input  specialization_payload_t payload_i,
+    output logic [7:0] id_o
+);
+    specialization_payload_t forwarded;
+    specialization_transport #(.DATA_T(specialization_payload_t)) aggregate_i (
+        .data_i(payload_i),
+        .data_o(forwarded)
+    );
+    specialization_transport #(.DATA_T(logic [7:0])) scalar_i (
+        .data_i(forwarded.id),
+        .data_o(id_o)
+    );
+endmodule
+)sv";
+    const std::string traits =
+        "specialization_transport\tinput_field.data_i.id\n"
+        "specialization_transport\tinput_field.data_i.valid\n"
+        "specialization_transport\toutput_field.data_o.id\n"
+        "specialization_transport\toutput_field.data_o.valid\n";
+    auto h = convertModule(argv0, "scalar_generic_child_projection", sv,
+                           "", "", "", "", "", "", "", traits);
+    expectNotContains(h, "scalar_i.data_i_in__field_id");
+    expectNotContains(h, "scalar_i.data_i_in__field_valid");
+    expectNotContains(h, "forwarded_id_id_comb_func");
+    expectNotContains(h, "forwarded_id_valid_comb_func");
+}
+
+static void testPackedCombSourceReconstructsAggregateBeforeFieldSelect(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+    logic [7:0] id;
+    logic       valid;
+} packed_transport_payload_t;
+
+module packed_comb_to_aggregate #(
+    parameter type DATA_T = packed_transport_payload_t
+) (
+    input  logic [$bits(DATA_T)-1:0] packed_i,
+    output DATA_T                    data_o
+);
+    logic [$bits(DATA_T)-1:0] packed_value;
+    assign packed_value = packed_i;
+    always_comb begin
+        data_o = '0;
+        if (packed_i[0]) data_o = packed_value;
+    end
+endmodule
+)sv";
+    const std::string traits =
+        "packed_comb_to_aggregate\toutput_field.data_o.id\n"
+        "packed_comb_to_aggregate\toutput_field.data_o.valid\n";
+    auto h = convertModule(argv0, "packed_comb_to_aggregate", sv,
+                           "", "", "", "", "", "", "", traits);
+    expectContains(h, "cpphdl::unpack_value<DATA_T>");
+    expectNotContains(h, "packed_value_id_comb_func");
+    expectNotContains(h, "packed_value_valid_comb_func");
+}
+
+static void testAggregateParameterFieldsRemainConstantExpressions(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+    logic [7:0] width;
+    logic       enabled;
+} aggregate_parameter_cfg_t;
+typedef struct packed {
+    logic [7:0] width;
+    logic       enabled;
+} aggregate_parameter_result_t;
+
+module aggregate_parameter_fields #(
+    parameter aggregate_parameter_cfg_t CFG = '0
+) (
+    output aggregate_parameter_result_t result_o
+);
+    always_comb begin
+        result_o = '0;
+        result_o.width = CFG.width;
+        result_o.enabled = CFG.enabled;
+    end
+endmodule
+)sv";
+    const std::string traits =
+        "aggregate_parameter_fields\toutput_field.result_o.width\n"
+        "aggregate_parameter_fields\toutput_field.result_o.enabled\n";
+    auto h = convertModule(argv0, "aggregate_parameter_fields", sv,
+                           "", "", "", "", "", "", "", traits);
+    expectContains(h, "CFG.width");
+    expectContains(h, "CFG.enabled");
+    expectNotContains(h, "CFG_width_comb");
+    expectNotContains(h, "CFG_enabled_comb");
+    expectNotContains(h, "(*this).CFG");
+}
+
+static void testPackedInputMemberReconstructsAssignedAggregateFields(const char* argv0)
+{
+    const std::string sv = R"sv(
+typedef struct packed {
+    logic [6:0]  addr;
+    logic [31:0] data;
+} packed_member_request_t;
+typedef struct packed {
+    logic        enabled;
+    logic [30:0] reserved;
+} packed_member_control_t;
+
+module packed_input_member_to_aggregate (
+    input  packed_member_request_t request_i,
+    output logic                   enabled_o
+);
+    packed_member_control_t control;
+    always_comb begin
+        control = request_i.data;
+    end
+    assign enabled_o = control.enabled;
+endmodule
+)sv";
+    auto h = convertModule(argv0, "packed_input_member_to_aggregate", sv,
+                           "");
+    expectContains(h, "cpphdl::unpack_value<packed_member_control_t>");
+    expectContains(h, "request_i_in__field_data()");
+    expectNotContains(h, "request_i_in__field_data_enabled");
+    expectNotContains(h, ".data.enabled");
 }
 
 static void testWholeArrayChildNestedProjectionRequiresExactLeaf(const char* argv0)
@@ -10843,9 +11133,11 @@ int main(int argc, char** argv)
     testWholeAggregateInputForwardingUsesProjectedFieldPort(argv[0]);
     testArrayOutputForwardingUsesProjectedInputFieldPort(argv[0]);
     testProjectedArrayChildBindingKeepsCpphdlTemplateOrder(argv[0]);
+    testProjectedGenericArrayKeepsCountBeforeType(argv[0]);
     testInternalStructArrayAliasProjectsSelectedField(argv[0]);
     testPackedStructArrayChildOutputProjectsSelectedField(argv[0]);
     testWholeStructAliasPropagatesIndexedSourceFieldDemand(argv[0]);
+    testSynthesizedLeafCollapsesNestedInputProjection(argv[0]);
     testModuleMemberNestedArrayTypeIsNormalizedOnce(argv[0]);
     testLowercaseArrayExtentKeepsCpphdlTemplateOrder(argv[0]);
     testInterfaceNestedPackedAndUnpackedArrayOrder(argv[0]);
@@ -10856,6 +11148,12 @@ int main(int argc, char** argv)
     testIndexedChildAggregateOutputProjectionUsesTraits(argv[0]);
     testChildAggregateProjectionSurvivesArrayTranspose(argv[0]);
     testIndexedChildNestedProjectionRequiresExactLeaf(argv[0]);
+    testNestedChildProjectionPublishesExactLeafDemand(argv[0]);
+    testGenericProjectionUnionDoesNotComposeUnrelatedFields(argv[0]);
+    testScalarGenericChildDoesNotInheritStructFieldBindings(argv[0]);
+    testPackedCombSourceReconstructsAggregateBeforeFieldSelect(argv[0]);
+    testAggregateParameterFieldsRemainConstantExpressions(argv[0]);
+    testPackedInputMemberReconstructsAssignedAggregateFields(argv[0]);
     testWholeArrayChildNestedProjectionRequiresExactLeaf(argv[0]);
     testProjectedBypassReadsIndexedInputField(argv[0]);
     testNestedArrayProjectionIncludesAncestorFieldAssignment(argv[0]);

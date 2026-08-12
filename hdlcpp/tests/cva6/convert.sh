@@ -23,6 +23,7 @@ CPPHDL_CVA6_FINALIZE_ONLY="${CPPHDL_CVA6_FINALIZE_ONLY:-0}"
 CPPHDL_CVA6_RESUME_TRAITS="${CPPHDL_CVA6_RESUME_TRAITS:-0}"
 CPPHDL_CVA6_KEEP_METADATA="${CPPHDL_CVA6_KEEP_METADATA:-0}"
 CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN="${CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN:-0}"
+CPPHDL_CVA6_SKIP_OPTIMIZE="${CPPHDL_CVA6_SKIP_OPTIMIZE:-0}"
 
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" && "${CPPHDL_OUT:-}" == "" ]]; then
     OUT="$SCRIPT_DIR/cpphdl_testharness"
@@ -187,6 +188,14 @@ PY
 }
 
 rename_cpp_global_collisions
+
+# Trait convergence and generated-header debugging do not need concrete template
+# specialization or comb collection. Keep this CVA6-only control in the fixture so
+# the generic hdlcpp converter remains free of test-design workflow policy.
+if [[ "$CPPHDL_CVA6_SKIP_OPTIMIZE" == "1" ]]; then
+    echo "skipped CppHDL specialization and comb optimization"
+    exit 0
+fi
 
 (
     cd "$OUT"
