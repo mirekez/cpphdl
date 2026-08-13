@@ -10,6 +10,7 @@ public:
     _PORT(State) state_in;
     _PORT(State) trap_check_state_in;
     _PORT(u<2>) reset_priv_in = _ASSIGN((u<2>)3);
+    _PORT(uint32_t) hartid_in = _ASSIGN((uint32_t)0);
     _PORT(bool) interrupt_valid_in;
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
@@ -272,7 +273,7 @@ private:
         if (addr == 0xF11) { return 0; }                  // mvendorid
         if (addr == 0xF12) { return 0; }                  // marchid
         if (addr == 0xF13) { return 0; }                  // mimpid
-        if (addr == 0xF14) { return 0; }                  // mhartid
+        if (addr == 0xF14) { return hartid_in(); }        // mhartid
         if (addr == 0xF15) { return 0; }                  // mconfigptr
 
         if (addr == 0x7B0) { return dcsr_reg; }

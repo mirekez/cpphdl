@@ -242,6 +242,7 @@ public:
         csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
+        csr.hartid_in = boot_hartid_in;
         csr.time_lo_in = time_lo_in;
         csr.time_hi_in = time_hi_in;
 #ifdef ENABLE_ISR

@@ -32,10 +32,20 @@ bool isMemberName(const std::string& name)
     return currModule && any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == name; });
 }
 
+bool isModuleClockWorkMethod(const std::string& name)
+{
+    return name == "_work" || name == "_work_neg" || name.rfind("_work_", 0) == 0;
+}
+
+bool isModuleClockStrobeMethod(const std::string& name)
+{
+    return name == "_strobe" || name == "_strobe_neg"
+        || name.rfind("_strobe_", 0) == 0;
+}
+
 bool isModuleClockLifecycleMethod(const std::string& name)
 {
-    return name == "_work" || name == "_work_neg" || name == "_strobe" || name == "_strobe_neg"
-        || name.rfind("_work_", 0) == 0 || name.rfind("_strobe_", 0) == 0;
+    return isModuleClockWorkMethod(name) || isModuleClockStrobeMethod(name);
 }
 
 std::string sizedCpphdlWidth(const std::string& name, const char* prefix)
@@ -684,8 +694,21 @@ std::string Expr::str(std::string prefix, std::string suffix)
         case EXPR_MEMBERCALL:
         {
             ASSERT(sub.size());
-            if (value == "_assign" || isModuleClockLifecycleMethod(value)
+            // Strobes describe register ownership to the converter and are
+            // committed by the generated clock block.  Work calls are
+            // different: a named current-module clock wrapper may deliberately
+            // delegate to a legacy _work implementation and must remain a task
+            // call in SystemVerilog.
+            if (value == "_assign" || isModuleClockStrobeMethod(value)
                 || str_ending(value, "____assign") || str_ending(value, "____strobe")) {  // never need this functions
+                return "";
+            }
+            const bool currentModuleReceiver = sub[0].type == EXPR_NONE
+                || sub[0].value == "_this";
+            if (isModuleClockWorkMethod(value) && !currentModuleReceiver) {
+                // Child modules have independent generated clock blocks, so a
+                // parent's native-C++ lifecycle call must not be duplicated in
+                // the parent's generated task.
                 return "";
             }
             if ((flags&FLAG_MODULE_INSTANCE_METHOD)) {

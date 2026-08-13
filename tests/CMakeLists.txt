@@ -57,7 +57,8 @@ foreach(src ${TEST_SOURCES})
 
     set(cpphdl_json_args "")
     set(cpphdl_clock_args "")
-    if(rel_path STREQUAL "cdc/TwoClocksCdc.cpp")
+    if(rel_path STREQUAL "cdc/TwoClocksCdc.cpp" OR
+       rel_path STREQUAL "cdc/LifecycleDelegation.cpp")
         set(cpphdl_clock_args
             "--primary_clock fast_clk 100000000 --secondary_clock slow_clk 40000000")
     endif()
