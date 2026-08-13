@@ -512,7 +512,11 @@ static bool check_system_decode_has_no_decode_branch()
         {0x0ff0000f, Sys::FENCE, "fence iorw,iorw"},
         {0x0440000f, Sys::FENCE, "fence w,o"},
         {0x0000100f, Sys::FENCEI, "fence.i"},
+#ifdef ENABLE_MMU_TLB
         {0x12000073, Sys::SFENCE_VMA, "sfence.vma"},
+#else
+        {0x12000073, Sys::TRAP, "sfence.vma without MMU"},
+#endif
         {0xffffffff, Sys::TRAP, "illegal"},
     };
 

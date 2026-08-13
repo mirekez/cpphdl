@@ -244,6 +244,10 @@ public:
         }
         l2.memory_base_in = _ASSIGN_REG(memory_base);
         l2.memory_size_in = _ASSIGN((uint32_t)0xffffffffu);
+        l2.dma_line_valid_in = _ASSIGN(false);
+        l2.dma_line_addr_in = _ASSIGN((u<32>)0);
+        l2.dma_line_data_in = _ASSIGN((logic<LINE_SIZE * 8>)0);
+        l2.dma_line_keep_in = _ASSIGN((logic<LINE_SIZE>)0);
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = _ASSIGN_REG_I(region_size[i]);
             l2.mem_region_uncached_in[i] = _ASSIGN_REG_I(region_uncached[i]);
@@ -306,6 +310,10 @@ public:
         }
         l2.memory_base_in = memory_base;
         l2.memory_size_in = 0xffffffffu;
+        l2.dma_line_valid_in = false;
+        l2.dma_line_addr_in = 0;
+        verilator_logic_to_wide(l2.dma_line_data_in, (logic<LINE_SIZE * 8>)0);
+        l2.dma_line_keep_in = 0;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
             l2.mem_region_size_in[i] = region_size[i];
             l2.mem_region_uncached_in[i] = region_uncached[i];

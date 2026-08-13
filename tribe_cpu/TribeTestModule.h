@@ -109,6 +109,11 @@ public:
     // External coherent masters and memory/device ports retain the former Tribe contract.
     Axi4If<32, 4, L2_PORT_WIDTH> axi_in[L2_PORT_COUNT];
     Axi4If<L2_RAM_ADDRESS_BITS, 4, L2_PORT_WIDTH> axi_out[L2_PORT_COUNT];
+    _PORT(bool) dma_line_valid_in;
+    _PORT(u<32>) dma_line_addr_in;
+    _PORT(logic<L2_LINE_SIZE * 8>) dma_line_data_in;
+    _PORT(logic<L2_LINE_SIZE>) dma_line_keep_in;
+    _PORT(bool) dma_line_ready_out;
     bool debugen_in;
 
     // Selects one committed store per target so each affected peer set is invalidated once.
@@ -267,6 +272,11 @@ public:
         l2cache.mem_region_uncached_in[2] = _ASSIGN(false);
         l2cache.mem_region_uncached_in[3] = _ASSIGN(true);
         l2cache.debugen_in = debugen_in;
+        l2cache.dma_line_valid_in = dma_line_valid_in;
+        l2cache.dma_line_addr_in = dma_line_addr_in;
+        l2cache.dma_line_data_in = dma_line_data_in;
+        l2cache.dma_line_keep_in = dma_line_keep_in;
+        dma_line_ready_out = l2cache.dma_line_ready_out;
         l2cache.__inst_name = __inst_name + "/l2cache";
         l2cache._assign();
 
@@ -281,8 +291,13 @@ public:
             cores[i].external_cache_invalidate_in = _ASSIGN_I(
                 external_cache_invalidate_in() || peer_invalidate_comb_func()[i].full);
 #ifdef MULTICORE
-            cores[i].peer_cache_invalidate_in = _ASSIGN_I(peer_invalidate_comb_func()[i].valid);
-            cores[i].peer_cache_invalidate_addr_in = _ASSIGN_I(peer_invalidate_comb_func()[i].addr);
+            cores[i].peer_cache_invalidate_in = _ASSIGN_I(
+                peer_invalidate_comb_func()[i].valid ||
+                (dma_line_valid_in() && dma_line_ready_out()));
+            cores[i].peer_cache_invalidate_addr_in = _ASSIGN_I(
+                (dma_line_valid_in() && dma_line_ready_out()) ?
+                    (uint32_t)dma_line_addr_in() :
+                    (uint32_t)peer_invalidate_comb_func()[i].addr);
 #endif
             cores[i].memory_base_in = memory_base_in;
             cores[i].memory_size_in = memory_size_in;

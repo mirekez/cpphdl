@@ -780,6 +780,10 @@ public:
 #endif
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
+        tribe.dma_line_valid_in = _ASSIGN(false);
+        tribe.dma_line_addr_in = _ASSIGN((u<32>)0);
+        tribe.dma_line_data_in = _ASSIGN((logic<CACHE_LINE_SIZE * 8>)0);
+        tribe.dma_line_keep_in = _ASSIGN((logic<CACHE_LINE_SIZE>)0);
         tribe.mem_region_size_in[0] = _ASSIGN((uint32_t)TRIBE_MEM_REGION0_SIZE);
         tribe.mem_region_size_in[1] = _ASSIGN((uint32_t)TRIBE_MEM_REGION1_SIZE);
         tribe.mem_region_size_in[2] = _ASSIGN((uint32_t)TRIBE_MEM_REGION2_SIZE);
@@ -968,6 +972,10 @@ public:
 #endif
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
+        tribe.dma_line_valid_in = false;
+        tribe.dma_line_addr_in = 0;
+        verilator_logic_to_wide(tribe.dma_line_data_in, (logic<CACHE_LINE_SIZE * 8>)0);
+        tribe.dma_line_keep_in = 0;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;

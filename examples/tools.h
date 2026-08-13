@@ -417,10 +417,13 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
         includes_list += " -I" + include;
     }
     size_t n = 0;
-    // SV parameters substitution
-    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
-        " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " + std::to_string(args) +
-        "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
+    // SV parameter substitution. Replacement files may contain helper modules
+    // before the requested top (for example L2CacheRamBank before L2Cache), so
+    // count only parameters in the requested module's declaration.
+    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($1 == \"module\" && $2 == \"") + top_name +
+        "\") in_top = 1; if (in_top && $0 ~ /parameter/) count++; if (in_top && count == " +
+        std::to_string(++n) + " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " +
+        std::to_string(args) + "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
     // running Verilator
     const std::string verilator = ToolShellQuoteString(VerilatorTool());
     const std::string verilator_cxx_raw = VerilatorCxx();

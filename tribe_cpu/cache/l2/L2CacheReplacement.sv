@@ -124,6 +124,11 @@ module L2Cache #(
 ,   input wire[PORT_BITWIDTH-1:0] axi_out__rdata_in[MEM_PORTS]
 ,   input wire axi_out__rlast_in[MEM_PORTS]
 ,   input wire[4-1:0] axi_out__rid_in[MEM_PORTS]
+,   input wire dma_line_valid_in
+,   input wire[ADDR_BITS-1:0] dma_line_addr_in
+,   input wire[CACHE_LINE_SIZE*8-1:0] dma_line_data_in
+,   input wire[CACHE_LINE_SIZE-1:0] dma_line_keep_in
+,   output wire dma_line_ready_out
 ,   input wire debugen_in
 );
     parameter  LINE_WORDS = CACHE_LINE_SIZE/'h4;
@@ -252,16 +257,27 @@ module L2Cache #(
         logic[31:0] address;
         logic[31:0] write_data;
         logic write_enable;
+        logic dma_line_fire;
+        logic[31:0] dma_set;
+        logic[31:0] dma_tag;
+        integer dma_way;
+        integer dma_byte;
 
-        address = (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IDLE) ?
-            L2CacheRequest___active_request_comb.set :
-            L2CacheRequest___request_geometry_comb.set;
+        dma_line_fire = dma_line_valid_in && dma_line_ready_out;
+        dma_set = (dma_line_addr_in >> LINE_BITS) & (SETS - 1);
+        dma_tag = dma_line_addr_in >> (LINE_BITS + SET_BITS);
+        dma_way = (WAYS <= 1) ? 0 : dma_tag % WAYS;
+        address = dma_line_fire ? dma_set :
+            ((L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IDLE) ?
+                L2CacheRequest___active_request_comb.set :
+                L2CacheRequest___request_geometry_comb.set);
         l2_bank_addr = address[SET_BITS-1:0];
         l2_bank_read = (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_READ) ||
             (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_CROSS_WRITE_LOOKUP);
 
         for (bank = 0; bank < DATA_BANKS; bank = bank + 1) begin
             write_enable =
+                (dma_line_fire && dma_way == bank / LINE_WORDS) ||
                 (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_AXI_R &&
                     L2CacheMemory___axi_out_selected_resp_comb.r.valid &&
                     L2CacheMemory___axi_out_driver_comb.r.ready &&
@@ -309,13 +325,23 @@ module L2Cache #(
                         L2CacheTagData___fill_write_pair_comb.next_word :
                         (L2CacheMemory___axi_out_selected_resp_comb.r.data >>
                             (((bank % LINE_WORDS) % PORT_WORDS) * 32)));
+            if (dma_line_fire) begin
+                write_data = dma_line_data_in >> ((bank % LINE_WORDS) * 32);
+                for (dma_byte = 0; dma_byte < 4; dma_byte = dma_byte + 1) begin
+                    if (!dma_line_keep_in[(bank % LINE_WORDS) * 4 + dma_byte])
+                        write_data[dma_byte * 8 +: 8] = 0;
+                end
+            end
             data_bank_write[bank] = write_enable;
             data_bank_data[bank] = write_data;
         end
 
         tag_bank_data = L2CacheTagData___tag_write_data_comb;
+        if (dma_line_fire)
+            tag_bank_data = (1 << (TAG_BITS + 1)) | (1 << TAG_BITS) | dma_tag;
         for (way_index = 0; way_index < WAYS; way_index = way_index + 1) begin
             tag_bank_wr[way_index] =
+                (dma_line_fire && dma_way == way_index) ||
                 (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_INIT) ||
                 (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_AXI_R &&
                     L2CacheMemory___axi_out_selected_resp_comb.r.valid &&
@@ -690,6 +716,14 @@ module L2Cache #(
             assign axi_out__rready_out[gi] = axi_out_comb[gi].r.ready;
         end
     endgenerate
+
+    assign dma_line_ready_out =
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IDLE) ||
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IO_AW) ||
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IO_W) ||
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IO_B) ||
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IO_AR) ||
+        (L2CacheState___state_reg == L2CacheFsmState_pkg::ST_IO_R);
 
     always_comb begin : L2CacheMemory___evict_candidate_comb_func  // L2CacheMemory___evict_candidate_comb_func
         logic[31:0] i;

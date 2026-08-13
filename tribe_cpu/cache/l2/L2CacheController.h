@@ -175,7 +175,15 @@ public:
             AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
             AXI4_DRIVER_FROM_COMB_INDEXED(axi_out[i], axi_out_comb_func(), i);
         }
-        dma_line_ready_out = _ASSIGN((uint32_t)state_reg == ST_IDLE);
+        // Uncached I/O forwarding does not touch the tag/data RAMs.  Permit a
+        // line allocation in parallel with those states; MMIO polling would
+        // otherwise reduce SmartNIC allocation bandwidth below wire rate.
+        dma_line_ready_out = _ASSIGN((uint32_t)state_reg == ST_IDLE
+            || (uint32_t)state_reg == ST_IO_AW
+            || (uint32_t)state_reg == ST_IO_W
+            || (uint32_t)state_reg == ST_IO_B
+            || (uint32_t)state_reg == ST_IO_AR
+            || (uint32_t)state_reg == ST_IO_R);
     }
 
     void _work_l2_clock(bool reset)
@@ -254,7 +262,8 @@ public:
         }
 
         bank_addr = dma_line_fire ? dma_set :
-            ((state_reg == ST_IDLE) ? active_request.set : request_geometry.set);
+            ((state_reg == ST_IDLE) ? (uint32_t)active_request.set :
+                (uint32_t)request_geometry.set);
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
         // cycle later from req_reg so generated SV cannot use a live input set
         // while ST_LOOKUP consumes stale registered RAM outputs.
