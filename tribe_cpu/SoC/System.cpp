@@ -165,6 +165,13 @@ public:
 #endif
         tribe.memory_base_in = memory_base_in;
         tribe.memory_size_in = memory_size_in;
+        // System has no coherent line-allocation producer yet. Keep the L2
+        // sideband interface explicitly inactive so native simulation never
+        // evaluates an unbound port.
+        tribe.dma_line_valid_in = _ASSIGN(false);
+        tribe.dma_line_addr_in = _ASSIGN((u<32>)0);
+        tribe.dma_line_data_in = _ASSIGN((logic<CACHE_LINE_SIZE * 8>)0);
+        tribe.dma_line_keep_in = _ASSIGN((logic<CACHE_LINE_SIZE>)0);
         for (i = 0; i < L2_MEM_PORTS; ++i) {
             tribe.mem_region_size_in[i] = mem_region_size_in[i];
             tribe.axi_in[i].awvalid_in = _ASSIGN(false);

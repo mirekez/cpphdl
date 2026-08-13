@@ -1404,6 +1404,11 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         bool trace_after_seen = trace_after.empty();
         TraceState trace_state;
         UartOutputState uart_output;
+        if (append_output) {
+            std::ifstream previous_output("out.txt", std::ios::binary);
+            uart_output.captured_output.assign(std::istreambuf_iterator<char>(previous_output),
+                std::istreambuf_iterator<char>());
+        }
         bool checkpoint_save_after_completed = false;
         bool host_interrupt = false;
         std::deque<unsigned char> interactive_uart_queue;
@@ -1451,6 +1456,13 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         uart_output_config.scripted_start_delay = scripted_uart_start_delay;
         if (checkpoint_load_file.empty()) {
             init_uart_script_state(scripted_uart_after.empty(), scripted_uart_after.empty() ? scripted_uart_start_delay : 0);
+        }
+        else if (!(bool)uart_script_enabled_reg && !scripted_uart_input.empty() &&
+            uart_output.captured_output.find(scripted_uart_after) != std::string::npos) {
+            // A prior checkpoint segment may have emitted the trigger marker
+            // immediately before it saved. Recover that host-side history so
+            // the restored machine does not wait forever for a repeated marker.
+            enable_uart_script(scripted_uart_start_delay);
         }
         StdinRawMode stdin_raw(interactive_uart_input);
         if (!tohost_addr && expected_output_contains.empty()) {

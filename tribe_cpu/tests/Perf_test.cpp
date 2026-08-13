@@ -101,11 +101,12 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     const std::string saved_quiet = old_quiet ? old_quiet : "";
     setenv("TRIBE_TEST_QUIET", "1", 1);
     const auto start = std::chrono::high_resolution_clock::now();
+    const std::string progress_marker = "SBI RFENCE extension detected";
     const bool run_ok = test.run(elf.string(),
         0, "/dev/null", 5000000, 0, 0x80000000, TRIBE_RAM_BYTES / 4, false,
         0, 0x81f00000, 1, true, 0x80000000u - 0xc0000000u, dtb.string(), false,
         initramfs.string(), 0x81c00000, "", "", 0, false, "", false,
-        "", "Linux boot perf slice");
+        progress_marker, "Linux boot perf slice");
     const auto stop = std::chrono::high_resolution_clock::now();
     if (old_quiet) {
         setenv("TRIBE_TEST_QUIET", saved_quiet.c_str(), 1);
@@ -137,46 +138,46 @@ static bool run_perf_test(bool debug, bool check_wall_time)
 
     bool ok = execution_progress_ok;
 #ifdef VERILATOR
-    constexpr uint64_t expected_clocks = 5000000;
-    constexpr uint64_t expected_wall_us = 33587140;
-    constexpr double expected_stall_pct = 62.85;
-    constexpr double expected_issue_pct = 4.58;
-    constexpr double expected_total_stall_pct = 67.43;
-    constexpr double expected_hazard_pct = 0.07;
-    constexpr double expected_dcache_wait_pct = 20.27;
-    constexpr double expected_icache_wait_pct = 42.81;
-    constexpr double expected_branch_pct = 0.09;
-    constexpr double expected_icache_refill_pct = 42.25;
+    constexpr uint64_t expected_clocks = 4267088;
+    constexpr uint64_t expected_wall_us = 30000000;
+    constexpr double expected_stall_pct = 63.85;
+    constexpr double expected_issue_pct = 7.05;
+    constexpr double expected_total_stall_pct = 70.90;
+    constexpr double expected_hazard_pct = 0.11;
+    constexpr double expected_dcache_wait_pct = 23.79;
+    constexpr double expected_icache_wait_pct = 40.87;
+    constexpr double expected_branch_pct = 0.24;
+    constexpr double expected_icache_refill_pct = 40.02;
 #else
-    constexpr uint64_t expected_clocks = 5000000;
-    constexpr uint64_t expected_wall_us = 38374253;
-    constexpr double expected_stall_pct = 62.85;
-    constexpr double expected_issue_pct = 4.58;
-    constexpr double expected_total_stall_pct = 67.43;
-    constexpr double expected_hazard_pct = 0.07;
-    constexpr double expected_dcache_wait_pct = 20.27;
-    constexpr double expected_icache_wait_pct = 42.81;
-    constexpr double expected_branch_pct = 0.09;
-    constexpr double expected_icache_refill_pct = 42.25;
+    constexpr uint64_t expected_clocks = 4267088;
+    constexpr uint64_t expected_wall_us = 37510000;
+    constexpr double expected_stall_pct = 63.85;
+    constexpr double expected_issue_pct = 7.05;
+    constexpr double expected_total_stall_pct = 70.90;
+    constexpr double expected_hazard_pct = 0.11;
+    constexpr double expected_dcache_wait_pct = 23.79;
+    constexpr double expected_icache_wait_pct = 40.87;
+    constexpr double expected_branch_pct = 0.24;
+    constexpr double expected_icache_refill_pct = 40.02;
 #endif
 
     // This guards the real early Linux boot path instead of a synthetic ELF.
-    // The metric baseline includes the configured 4:1 phase-aligned L2 clock:
-    // ELF load, DTB/initramfs placement, Sv32 setup, early printk, and the
-    // first kernel init sequence all execute with the same cache geometry used
-    // by run_linux_probe.sh.
-    ok = ok && check_metric_u64("clocks", perf.clocks, expected_clocks, 10.0);
+    // Stop at a deterministic UART milestone so clocks and percentages cover
+    // the same boot work rather than whatever happens to fit in a fixed slice.
+    // This baseline records the current 2:1 phase-aligned L2 clock, Sv32,
+    // interrupts, atomics, and the cache geometry used by run_linux_probe.sh.
+    ok = check_metric_u64("clocks", perf.clocks, expected_clocks, 10.0) && ok;
     if (check_wall_time) {
-        ok = ok && check_metric_u64_max_ratio("wall_us", wall_us, expected_wall_us, 3.0);
+        ok = check_metric_u64_max_ratio("wall_us", wall_us, expected_wall_us, 3.0) && ok;
     }
-    ok = ok && check_metric("stall_pct", stall_pct, expected_stall_pct, 20.0);
-    ok = ok && check_metric("issue_wait_pct", issue_pct, expected_issue_pct, 20.0);
-    ok = ok && check_metric("total_stall_pct", total_stall_pct, expected_total_stall_pct, 25.0);
-    ok = ok && check_metric("hazard_pct", hazard_pct, expected_hazard_pct, 200.0);
-    ok = ok && check_metric("dcache_wait_pct", dcache_wait_pct, expected_dcache_wait_pct, 20.0);
-    ok = ok && check_metric("icache_wait_pct", icache_wait_pct, expected_icache_wait_pct, 20.0);
-    ok = ok && check_metric("branch_pct", branch_pct, expected_branch_pct, 30.0);
-    ok = ok && check_metric("icache_refill_pct", icache_refill_pct, expected_icache_refill_pct, 25.0);
+    ok = check_metric("stall_pct", stall_pct, expected_stall_pct, 20.0) && ok;
+    ok = check_metric("issue_wait_pct", issue_pct, expected_issue_pct, 20.0) && ok;
+    ok = check_metric("total_stall_pct", total_stall_pct, expected_total_stall_pct, 25.0) && ok;
+    ok = check_metric("hazard_pct", hazard_pct, expected_hazard_pct, 200.0) && ok;
+    ok = check_metric("dcache_wait_pct", dcache_wait_pct, expected_dcache_wait_pct, 20.0) && ok;
+    ok = check_metric("icache_wait_pct", icache_wait_pct, expected_icache_wait_pct, 20.0) && ok;
+    ok = check_metric("branch_pct", branch_pct, expected_branch_pct, 30.0) && ok;
+    ok = check_metric("icache_refill_pct", icache_refill_pct, expected_icache_refill_pct, 25.0) && ok;
     return ok;
 }
 

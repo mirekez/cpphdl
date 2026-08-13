@@ -360,8 +360,13 @@ public:
     {
         const bool l2_edge = (cpu_cycle % CPU_CLK_MULTIPLIER) == 0;
         for (size_t i = 0; i < MEM_PORTS; ++i) {
-            slave_bready_pending[i] = slave_bready_pending[i] || slave_axi[i].b.ready;
-            slave_rready_pending[i] = slave_rready_pending[i] || slave_axi[i].r.ready;
+            // Retain a fast-domain READY pulse only when it acknowledges a
+            // response that is already visible. Latching an idle READY pulse
+            // would let it consume an unrelated future slow-domain response.
+            slave_bready_pending[i] = slave_bready_pending[i] ||
+                (slave_axi[i].b.ready && slave_bvalid_raw(i));
+            slave_rready_pending[i] = slave_rready_pending[i] ||
+                (slave_axi[i].r.ready && slave_rvalid_raw(i));
             slave_aw_handshake[i] = false;
             slave_w_handshake[i] = false;
             slave_ar_handshake[i] = false;
@@ -759,6 +764,16 @@ public:
 #endif
     }
 
+    bool slave_bvalid_raw(size_t port)
+    {
+#ifdef VERILATOR
+        eval_l2(false);
+        return l2.axi_in___05Fbvalid_out[port];
+#else
+        return l2.axi_in[port].bvalid_out();
+#endif
+    }
+
     bool slave_arready(size_t port)
     {
         return slave_ar_handshake[port];
@@ -769,6 +784,16 @@ public:
         if (slave_r_handshake[port]) {
             return true;
         }
+#ifdef VERILATOR
+        eval_l2(false);
+        return l2.axi_in___05Frvalid_out[port];
+#else
+        return l2.axi_in[port].rvalid_out();
+#endif
+    }
+
+    bool slave_rvalid_raw(size_t port)
+    {
 #ifdef VERILATOR
         eval_l2(false);
         return l2.axi_in___05Frvalid_out[port];

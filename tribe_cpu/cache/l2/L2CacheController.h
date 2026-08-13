@@ -179,6 +179,13 @@ public:
         // line allocation in parallel with those states; MMIO polling would
         // otherwise reduce SmartNIC allocation bandwidth below wire rate.
         dma_line_ready_out = _ASSIGN((uint32_t)state_reg == ST_IDLE
+            || (uint32_t)state_reg == ST_READ
+            || ((uint32_t)state_reg == ST_LOOKUP
+                && (!req_reg.write || req_uncached_region_comb_func()))
+            || (uint32_t)state_reg == ST_AXI_AR
+            || (uint32_t)state_reg == ST_EVICT_AW
+            || (uint32_t)state_reg == ST_EVICT_W
+            || (uint32_t)state_reg == ST_EVICT_B
             || (uint32_t)state_reg == ST_IO_AW
             || (uint32_t)state_reg == ST_IO_W
             || (uint32_t)state_reg == ST_IO_B
@@ -267,7 +274,8 @@ public:
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
         // cycle later from req_reg so generated SV cannot use a live input set
         // while ST_LOOKUP consumes stale registered RAM outputs.
-        bank_read = state_reg == ST_READ || state_reg == ST_CROSS_WRITE_LOOKUP;
+        bank_read = (state_reg == ST_READ && !dma_line_fire)
+            || state_reg == ST_CROSS_WRITE_LOOKUP;
         for (i = 0; i < DATA_BANKS; ++i) {
             // Fill writes only the words carried by the current AXI beat;
             // store hits update one or two addressed word banks.
@@ -412,7 +420,9 @@ public:
             }
         }
         else if (state_reg == ST_READ) {
-            state_reg._next = ST_LOOKUP;
+            // Packet DMA owns the single RAM port on an allocation cycle.
+            // Retry the registered lookup read on the next free L2 clock.
+            if (!dma_line_fire) state_reg._next = ST_LOOKUP;
         }
         else if (state_reg == ST_LOOKUP) {
             if (!request_geometry.addr_in_memory) {
