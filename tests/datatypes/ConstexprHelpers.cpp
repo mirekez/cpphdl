@@ -15,6 +15,7 @@ using namespace cpphdl;
 // 6. Packed array proxies expose their stored value type to generic code.
 // 7. Packed-aggregate shifts do not intercept scalar-like cpphdl registers.
 // 8. Fixed-width slices, optimized concatenations, and wide packing preserve bit order.
+// 9. Packed arrays accept complete repeated bit vectors during constant evaluation.
 
 struct ConstexprWidePacked
 {
@@ -26,16 +27,34 @@ struct ConstexprWidePacked
 
 constexpr logic<8> constexpr_input(0x0f);
 constexpr logic<8> constexpr_inverse = ~constexpr_input;
+constexpr logic<8> constexpr_and = constexpr_input & logic<8>(0x33);
+constexpr logic<8> constexpr_or = constexpr_input | logic<8>(0x30);
+constexpr logic<8> constexpr_xor = constexpr_input ^ logic<8>(0x3c);
 constexpr auto constexpr_cat = cat(logic<4>(0xa), logic<4>(0x5));
+constexpr logic<8> constexpr_cat_logic = constexpr_cat;
 constexpr auto constexpr_bit_cat = cat(logic<1>(1), logic<1>(0), logic<1>(1));
 constexpr auto constexpr_byte_cat = cat(logic<8>(0x12), logic<16>(0x3456));
 
 static_assert(SUM<>() == 0, "empty concatenation width must be zero");
 static_assert((uint64_t)constexpr_inverse == 0xf0, "logic complement must retain width");
+static_assert((uint64_t)constexpr_and == 0x03, "logic conjunction must be constexpr");
+static_assert((uint64_t)constexpr_or == 0x3f, "logic disjunction must be constexpr");
+static_assert((uint64_t)constexpr_xor == 0x33, "logic exclusive-or must be constexpr");
 static_assert((uint64_t)constexpr_cat == 0xa5, "concatenation must be constexpr");
+static_assert((uint64_t)constexpr_cat_logic == 0xa5, "cat-to-logic conversion must be constexpr");
 static_assert((uint64_t)constexpr_bit_cat == 0x5, "one-bit concatenation order must be preserved");
 static_assert((uint64_t)constexpr_byte_cat == 0x123456, "byte-aligned concatenation order must be preserved");
 static_assert((uint64_t)(constexpr_cat + 1) == 0xa6, "cat arithmetic must be unambiguous");
+
+constexpr array<4, logic<4>, true> constexpr_repeated_array = [] {
+    array<4, logic<4>, true> value{};
+    value = repeat<4, 4>(logic<4>(3));
+    return value;
+}();
+static_assert((uint64_t)constexpr_repeated_array.data == 0x3333,
+    "packed whole-value assignment must remain constexpr");
+static_assert((uint64_t)std::as_const(constexpr_repeated_array)[0] == 3,
+    "const packed element reads must remain constexpr");
 
 static bool expect(bool condition, const char* message)
 {
@@ -114,6 +133,11 @@ int main()
         "packed initializer list did not preserve element order and zero-fill");
     static_assert(std::is_same_v<value_type_for_ref_t<decltype(packed_array[0])>, logic<4>>,
         "packed proxy must expose its stored element type");
+    // A second packed selection returns an addressable logic_bits proxy.
+    // Value-oriented generated code must still receive a constructible logic value,
+    // otherwise casts instantiate the proxy's deleted default and copy constructors.
+    static_assert(std::is_same_v<value_type_for_ref_t<logic_bits<1>>, logic<1>>,
+        "packed bit proxy must expose an ordinary logic value");
 
     ok &= expect(!sv_isunknown(packed_array),
         "two-state CppHDL values must never report unknown bits");

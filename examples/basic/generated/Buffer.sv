@@ -4,8 +4,8 @@ import Predef_pkg::*;
 
 
 module Buffer #(
-    parameter WIDTH
-,   parameter DEPTH
+    parameter WIDTH = 64
+,   parameter DEPTH = 8
  )
  (
     input wire clk
@@ -22,7 +22,7 @@ module Buffer #(
 
 
     // regs and combs
-    reg[DEPTH-1:0][WIDTH-1:0] data_reg;
+    reg[1-1:0][32-1:0] data_reg;
     reg[INDEX_BITS-1:0] head_reg;
     reg[INDEX_BITS-1:0] tail_reg;
     reg[COUNT_BITS-1:0] count_reg;

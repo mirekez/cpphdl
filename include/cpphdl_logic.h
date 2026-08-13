@@ -57,6 +57,26 @@ struct can_assign_from : std::false_type {};
 template<typename T, typename V>
 struct can_assign_from<T, V, std::void_t<decltype(std::declval<T&>() = std::declval<V>())>> : std::true_type {};
 
+// CppHDL headers retain C++17 compatibility, where the standard query is unavailable.
+// GCC and Clang expose the same constant-evaluation predicate as a builtin in that mode.
+// Conservatively select the constexpr path on compilers that provide neither facility.
+constexpr bool is_constant_evaluated_compat() noexcept
+{
+#if defined(__cpp_lib_is_constant_evaluated)
+    return std::is_constant_evaluated();
+#elif defined(__has_builtin)
+#if __has_builtin(__builtin_is_constant_evaluated)
+    return __builtin_is_constant_evaluated();
+#else
+    return true;
+#endif
+#elif defined(__GNUC__)
+    return __builtin_is_constant_evaluated();
+#else
+    return true;
+#endif
+}
+
 }
 
 template<size_t WIDTH>
@@ -91,8 +111,11 @@ struct logic : public bitops<logic<WIDTH>>
         }
     }
 
+    // A packed value such as cat can be a valid SystemVerilog constant expression.
+    // Mark the generic pack-aware constructor constexpr so that its constexpr pack()
+    // result can initialize logic without falling back to a runtime-only conversion.
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
-    logic(const T& other) : bytes{}
+    constexpr logic(const T& other) : bytes{}
     {
         if constexpr (detail::has_pack_method<T>::value) {
             *this = other.pack();
@@ -245,6 +268,48 @@ struct logic : public bitops<logic<WIDTH>>
     logic& operator^=(const logic<WIDTH1>& in)
     {
         return *this = *this ^ in;
+    }
+
+    // Package constants require logic bitwise expressions to remain constant-evaluable.
+    // Keep the byte-oriented bitops implementation for runtime performance, and use the
+    // declared-width bit loop only while the compiler evaluates a constant expression.
+    template<size_t WIDTH1>
+    constexpr logic operator&(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator&(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) && (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic operator|(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator|(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) || (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic operator^(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator^(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) != (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
     }
 
     // The inherited bitops complement was not constexpr for logic constants.
