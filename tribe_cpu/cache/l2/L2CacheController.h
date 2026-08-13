@@ -4,7 +4,8 @@
 
 template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Final port-compatible L2 cache controller: wires RAM/AXI ports, advances FSM state, and checkpoints registers.
-class L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
+class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=L2CacheReplacement.sv;")]]
+L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
     using Base = L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
@@ -176,8 +177,6 @@ public:
         uint32_t i;
         uint32_t way;
         uint32_t bank_addr;
-        uint32_t data_ram_index;
-        uint32_t tag_ram_index;
         bool bank_read;
         bool bank_write;
         uint32_t bank_data;
@@ -275,12 +274,10 @@ public:
                     (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.next_word :
                     (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
             if (bank_write) {
-                data_ram_index = (uint32_t)bank_addr * DATA_BANKS + i;
-                data_ram[data_ram_index] = bank_data;
+                data_ram[i][bank_addr] = bank_data;
             }
             if (bank_read) {
-                data_ram_index = (uint32_t)bank_addr * DATA_BANKS + i;
-                data_q_reg._next[i] = data_ram[data_ram_index];
+                data_q_reg._next[i] = data_ram[i][bank_addr];
             }
         }
 
@@ -291,12 +288,10 @@ public:
                 (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit && hit_lookup.way == way);
             if (tag_bank_write) {
-                tag_ram_index = (uint32_t)((state_reg == ST_INIT) ? init_set_reg : bank_addr) * WAYS + way;
-                tag_ram[tag_ram_index] = tag_bank_data;
+                tag_ram[way][(state_reg == ST_INIT) ? init_set_reg : bank_addr] = tag_bank_data;
             }
             if (tag_bank_read) {
-                tag_ram_index = (uint32_t)((state_reg == ST_INIT) ? init_set_reg : bank_addr) * WAYS + way;
-                tag_q_reg._next[way] = tag_ram[tag_ram_index];
+                tag_q_reg._next[way] = tag_ram[way][(state_reg == ST_INIT) ? init_set_reg : bank_addr];
             }
         }
 
@@ -735,8 +730,8 @@ public:
 
     void _strobe_l2_clock()
     {
-        data_ram.apply();
-        tag_ram.apply();
+        for (size_t bank = 0; bank < DATA_BANKS; ++bank) data_ram[bank].apply();
+        for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply();
         data_q_reg.strobe();
         tag_q_reg.strobe();
         state_reg.strobe();
@@ -767,8 +762,8 @@ public:
     // when a checkpoint is requested on an intervening CPU clock.
     void checkpoint_l2(FILE* checkpoint_fd)
     {
-        data_ram.apply(checkpoint_fd);
-        tag_ram.apply(checkpoint_fd);
+        for (size_t bank = 0; bank < DATA_BANKS; ++bank) data_ram[bank].apply(checkpoint_fd);
+        for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply(checkpoint_fd);
         data_q_reg.strobe(checkpoint_fd);
         tag_q_reg.strobe(checkpoint_fd);
         state_reg.strobe(checkpoint_fd);

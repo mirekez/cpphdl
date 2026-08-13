@@ -204,12 +204,15 @@ protected:
         word = 0;
         beat_word = 0;
         evict_line_comb = 0;
-        for (word = (uint32_t)evict_beat_reg * PORT_WORDS;
-             word < ((uint32_t)evict_beat_reg + 1u) * PORT_WORDS && word < LINE_WORDS;
-             ++word) {
-            beat_word = word - (uint32_t)evict_beat_reg * PORT_WORDS;
-            evict_line_comb.bits(beat_word * 32 + 31, beat_word * 32) =
-                evict_line_reg.bits(word * 32 + 31, word * 32);
+        // A fixed trip count is required for Vivado to unroll this logic.
+        // The previous data-dependent initial value tripped its convergence
+        // limit even though the C++ loop was bounded.
+        for (beat_word = 0; beat_word < PORT_WORDS; ++beat_word) {
+            word = (uint32_t)evict_beat_reg * PORT_WORDS + beat_word;
+            if (word < LINE_WORDS) {
+                evict_line_comb.bits(beat_word * 32 + 31, beat_word * 32) =
+                    evict_line_reg.bits(word * 32 + 31, word * 32);
+            }
         }
         return evict_line_comb;
     }

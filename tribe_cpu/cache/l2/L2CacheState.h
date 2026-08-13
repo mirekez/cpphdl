@@ -216,11 +216,13 @@ public:
     bool debugen_in;
 
 protected:
-    // Flattened memories avoid array-of-memory dimension reversal in generated SV.
-    // Index helpers in the controller map (set, way/word-bank) into one address.
-    memory<u8, 4, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS) * DATA_BANKS> data_ram;
+    // One cpphdl::memory primitive per word bank gives each bank one independent
+    // synchronous access port and maps naturally onto FPGA block RAM.
+    // (* ram_style = "block" *)
+    memory<u8, 4, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[DATA_BANKS];
+    // (* ram_style = "block" *)
     memory<u8, (((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8)),
-        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS) * WAYS> tag_ram; // {valid, dirty, tag}
+        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[WAYS]; // {valid, dirty, tag}
     reg<array<DATA_BANKS, logic<32>, true>> data_q_reg;
     reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
 

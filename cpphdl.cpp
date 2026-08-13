@@ -351,6 +351,20 @@ std::vector<std::string> fieldInlineAnnotations(const FieldDecl* FD, const ASTCo
         return annotations;
     }
 
+    constexpr std::string_view attribute_prefix = "CPPHDL_ATTRIBUTE=";
+    for (const Attr* attr : FD->attrs()) {
+        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+            std::string text = ann->getAnnotation().str();
+            if (text.rfind(attribute_prefix, 0) == 0) {
+                text.erase(0, attribute_prefix.size());
+                text = trimText(std::move(text));
+                if (!text.empty()) {
+                    annotations.push_back(std::move(text));
+                }
+            }
+        }
+    }
+
     const SourceManager& sm = ctx.getSourceManager();
     SourceLocation loc = sm.getSpellingLoc(FD->getBeginLoc());
     if (!loc.isValid()) {
@@ -451,6 +465,20 @@ std::filesystem::path resolveAnnotationPath(const std::string& annotation_path, 
     }
 
     const SourceManager& sm = ctx.getSourceManager();
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const ClassTemplateDecl* TD = CTSD->getSpecializedTemplate()) {
+            if (const CXXRecordDecl* templated = TD->getTemplatedDecl()) {
+                std::string templateSource = sm.getFilename(
+                    sm.getSpellingLoc(templated->getLocation())).str();
+                if (!templateSource.empty()) {
+                    fs::path fromTemplate = fs::path(templateSource).parent_path() / path;
+                    if (fs::exists(fromTemplate)) {
+                        return fromTemplate;
+                    }
+                }
+            }
+        }
+    }
     std::string source = sm.getFilename(sm.getSpellingLoc(RD->getLocation())).str();
     if (!source.empty()) {
         fs::path from_source = fs::path(source).parent_path() / path;

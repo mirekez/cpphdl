@@ -32,7 +32,7 @@ class TribeTest : public Module
     static constexpr size_t L2_ADDRESS_BITS = ADDR_BITS; // Fixes the CPU-visible address width.
     static constexpr size_t L2_RAM_ADDRESS_BITS = clog2(MAX_RAM_SIZE); // Sizes downstream RAM addresses.
     static constexpr size_t L2_PORT_COUNT = L2_MEM_PORTS; // Counts external memory and device routes.
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
     static constexpr size_t ATOMIC_OWNER_BITS = CPU_CORES > 1 ? clog2(CPU_CORES) : 1; // Identifies the core holding the shared AMO transaction.
 #endif
 
@@ -49,7 +49,7 @@ protected:
     reg<L1PeerStoreState> peer_store_reg[CPU_CORES]; // Holds each store and address through L2 completion.
 
 private:
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
     reg<u1> atomic_owner_valid_reg; // Holds the arbiter while one core completes an AMO read-modify-write.
     reg<u<ATOMIC_OWNER_BITS>> atomic_owner_reg; // Selects the only core allowed onto the data-side L2 path during an AMO.
     reg<u<ATOMIC_OWNER_BITS>> atomic_rr_reg; // Starts the next AMO grant after the previous owner.
@@ -77,7 +77,7 @@ public:
     _PORT(bool) sbi_set_timer_out = _ASSIGN_COMB(cores[0].sbi_set_timer_out());
     _PORT(uint32_t) sbi_timer_lo_out = _ASSIGN_COMB(cores[0].sbi_timer_lo_out());
     _PORT(uint32_t) sbi_timer_hi_out = _ASSIGN_COMB(cores[0].sbi_timer_hi_out());
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
     _PORT(bool) sbi_set_timer_per_core_out[CPU_CORES];
     _PORT(uint32_t) sbi_timer_lo_per_core_out[CPU_CORES];
     _PORT(uint32_t) sbi_timer_hi_per_core_out[CPU_CORES];
@@ -148,7 +148,7 @@ public:
         return peer_invalidate_comb;
     }
 
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
     static bool sbi_hart_selected(uint32_t mask, uint32_t base, uint32_t target)
     {
         if (base == 0xffffffffu) {
@@ -192,6 +192,7 @@ public:
     }
 
     // Route remote address-translation invalidation to the SBI-selected harts.
+#ifdef ENABLE_MMU_TLB
     _LAZY_COMB(sbi_sfence_targets_comb, logic<CPU_CORES>)
         uint32_t source;
         uint32_t target;
@@ -207,7 +208,9 @@ public:
         }
         return sbi_sfence_targets_comb;
     }
+#endif
 
+#ifdef ENABLE_RV32IA
     // Grants an AMO only after the clocked arbiter has selected one requester.
     _LAZY_COMB(atomic_grant_comb, logic<CPU_CORES>)
         atomic_grant_comb = 0;
@@ -231,6 +234,7 @@ public:
         }
         return atomic_data_access_comb;
     }
+#endif
 #endif
 
     // Connects all cores to the shared L2 and preserves the legacy external AXI boundary.
@@ -304,13 +308,13 @@ public:
             cores[i].time_lo_in = time_lo_in;
             cores[i].time_hi_in = time_hi_in;
 #endif
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
             cores[i].atomic_grant_in = _ASSIGN_I(atomic_grant_comb_func()[i]);
 #endif
             cores[i].i_mem_out.read_data_out = i_mem_cdc[i].fast_in.read_data_out;
             cores[i].i_mem_out.wait_out = i_mem_cdc[i].fast_in.wait_out;
             cores[i].d_mem_out.read_data_out = d_mem_cdc[i].fast_in.read_data_out;
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
             cores[i].d_mem_out.wait_out = _ASSIGN_I(
                 !atomic_data_access_comb_func()[i] || d_mem_cdc[i].fast_in.wait_out());
 #else
@@ -328,7 +332,7 @@ public:
             i_mem_cdc[i].fast_in.write_data_in = cores[i].i_mem_out.write_data_in;
             i_mem_cdc[i].fast_in.write_mask_in = cores[i].i_mem_out.write_mask_in;
             i_mem_cdc[i].fast_in.cache_disable_in = cores[i].i_mem_out.cache_disable_in;
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
             d_mem_cdc[i].fast_in.read_in = _ASSIGN_I(
                 atomic_data_access_comb_func()[i] && cores[i].d_mem_out.read_in());
             d_mem_cdc[i].fast_in.write_in = _ASSIGN_I(
@@ -366,7 +370,7 @@ public:
     void work_clk_func(bool reset)
     {
         uint32_t i;
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
         bool atomic_selected;
         bool ordinary_data_pending;
         uint32_t atomic_candidate;
@@ -397,7 +401,7 @@ public:
             // peer generation counter and could eventually alias stale tags.
             peer_store_reg[i]._next.valid = false;
             if (cores[i].dmem_write_out()
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
                 && atomic_data_access_comb_func()[i]
 #endif
                 && !d_mem_cdc[i].fast_in.wait_out()) {
@@ -405,7 +409,7 @@ public:
                 peer_store_reg[i]._next.addr = cores[i].dmem_addr_out();
             }
         }
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
         atomic_selected = false;
         ordinary_data_pending = false;
         for (i = 0; i < CPU_CORES; ++i) {
@@ -446,7 +450,7 @@ public:
                 peer_store_reg[i]._next.valid = false;
                 peer_store_reg[i]._next.addr = 0;
             }
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
             atomic_owner_valid_reg.clr();
             atomic_owner_reg.clr();
             atomic_rr_reg.clr();
@@ -491,7 +495,7 @@ public:
         for (i = 0; i < CPU_CORES; ++i) {
             peer_store_reg[i].strobe();
         }
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
         atomic_owner_valid_reg.strobe();
         atomic_owner_reg.strobe();
         atomic_rr_reg.strobe();
@@ -518,7 +522,7 @@ public:
         for (uint32_t i = 0; i < CPU_CORES; ++i) {
             peer_store_reg[i].strobe(checkpoint_fd);
         }
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
         atomic_owner_valid_reg.strobe(checkpoint_fd);
         atomic_owner_reg.strobe(checkpoint_fd);
         atomic_rr_reg.strobe(checkpoint_fd);
