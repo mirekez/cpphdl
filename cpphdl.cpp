@@ -2246,6 +2246,22 @@ struct MyFrontendActionFactory : public tooling::FrontendActionFactory
     bool firstSource = true;
 };
 
+tooling::CommandLineArguments adjustCppInputKind(
+    const tooling::CommandLineArguments& arguments, llvm::StringRef filename)
+{
+    tooling::CommandLineArguments adjusted = arguments;
+    const std::string_view sourceName(filename.data(), filename.size());
+    const bool isHeader = sourceName.ends_with(".h") || sourceName.ends_with(".hpp");
+
+    for (size_t i = 0; i + 1 < adjusted.size(); ++i) {
+        if (adjusted[i] == "-x") {
+            adjusted[i + 1] = isHeader ? "c++-header" : "c++";
+        }
+    }
+
+    return adjusted;
+}
+
 int main(int argc, const char **argv)
 {
     std::vector<const char*> replace;
@@ -2571,6 +2587,7 @@ int main(int argc, const char **argv)
     tooling::CommonOptionsParser& Options = ExpectedParser.get();
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
+    Tool.appendArgumentsAdjuster(adjustCppInputKind);
 
     // The comb optimizer can restrict method extraction to the concrete root.
     // Supplying it before Clang's AST walk avoids retaining unrelated module

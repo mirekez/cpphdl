@@ -3,6 +3,10 @@
 #endif
 #define MAIN_FILE_INCLUDED
 
+#ifndef ENABLE_RV32IA
+#define ENABLE_RV32IA
+#endif
+
 #include "cpphdl.h"
 #include "../spec/State.h"
 #include "../ExecuteMem.h"

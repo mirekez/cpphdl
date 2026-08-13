@@ -14,6 +14,11 @@ public:
     using Base::d_mem_in;
     using Base::axi_in;
     using Base::axi_out;
+    using Base::dma_line_valid_in;
+    using Base::dma_line_addr_in;
+    using Base::dma_line_data_in;
+    using Base::dma_line_keep_in;
+    using Base::dma_line_ready_out;
     using Base::debugen_in;
 
 private:
@@ -170,6 +175,7 @@ public:
             AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
             AXI4_DRIVER_FROM_COMB_INDEXED(axi_out[i], axi_out_comb_func(), i);
         }
+        dma_line_ready_out = _ASSIGN((uint32_t)state_reg == ST_IDLE);
     }
 
     void _work_l2_clock(bool reset)
@@ -180,6 +186,12 @@ public:
         bool bank_read;
         bool bank_write;
         uint32_t bank_data;
+        uint32_t dma_set;
+        uint32_t dma_tag;
+        uint32_t dma_way;
+        uint32_t dma_word;
+        uint32_t dma_byte;
+        bool dma_line_fire;
         bool tag_bank_read;
         bool tag_bank_write;
         uint32_t trace_line;
@@ -228,13 +240,21 @@ public:
         trace_word0 = 0;
         trace_word1 = 0;
 
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        dma_set = ((uint32_t)dma_line_addr_in() >> Base::LINE_BITS)
+            & (Base::SETS - 1);
+        dma_tag = (uint32_t)dma_line_addr_in()
+            >> (Base::LINE_BITS + Base::SET_BITS);
+        dma_way = WAYS <= 1 ? 0 : dma_tag % WAYS;
+
         // CPU/L1 has no response-ready input: expose its registered response
         // for exactly this clock, then free the slot for the next completion.
         for (i = 0; i < CPU_PORTS; ++i) {
             response_reg._next[CPU_RESPONSE_BASE + i].valid = false;
         }
 
-        bank_addr = (state_reg == ST_IDLE) ? active_request.set : request_geometry.set;
+        bank_addr = dma_line_fire ? dma_set :
+            ((state_reg == ST_IDLE) ? active_request.set : request_geometry.set);
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
         // cycle later from req_reg so generated SV cannot use a live input set
         // while ST_LOOKUP consumes stale registered RAM outputs.
@@ -243,6 +263,7 @@ public:
             // Fill writes only the words carried by the current AXI beat;
             // store hits update one or two addressed word banks.
             bank_write =
+                (dma_line_fire && dma_way == (i / LINE_WORDS)) ||
                 (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
@@ -257,7 +278,17 @@ public:
                     (request_geometry.word == (i % LINE_WORDS) ||
                      (((uint32_t)req_reg.addr & 3u) != 0 &&
                         (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS))));
-            bank_data = (state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
+            if (dma_line_fire) {
+                dma_word = (uint32_t)(dma_line_data_in() >>
+                    ((i % LINE_WORDS) * 32));
+                for (dma_byte = 0; dma_byte < 4; ++dma_byte) {
+                    if (!dma_line_keep_in()[(i % LINE_WORDS) * 4 + dma_byte]) {
+                        dma_word &= ~(0xffu << (dma_byte * 8));
+                    }
+                }
+                bank_data = dma_word;
+            }
+            else bank_data = (state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
                 (req_reg.from_slave ?
                     (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
                     ((((uint32_t)req_reg.addr & 3u) != 0 &&
@@ -282,9 +313,14 @@ public:
         }
 
         tag_bank_data = tag_write_data_comb_func();
+        if (dma_line_fire) {
+            tag_bank_data = ((uint64_t)1 << (Base::TAG_BITS + 1)) |
+                ((uint64_t)1 << Base::TAG_BITS) | dma_tag;
+        }
         for (way = 0; way < WAYS; ++way) {
             tag_bank_read = bank_read;
-            tag_bank_write = (state_reg == ST_INIT) ||
+            tag_bank_write = (dma_line_fire && dma_way == way) ||
+                (state_reg == ST_INIT) ||
                 (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit && hit_lookup.way == way);
             if (tag_bank_write) {

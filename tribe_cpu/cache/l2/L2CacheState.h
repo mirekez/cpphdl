@@ -213,6 +213,15 @@ public:
     // L2 master ports leave here toward RAM and device regions.
     Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH> axi_out[MEM_PORTS];
 
+    // Full cache-line allocation port for coherent high-bandwidth DMA.  The
+    // caller owns the backing-store policy for replaced dirty lines; SmartNIC
+    // uses this only for its reserved packet scratch window.
+    _PORT(bool) dma_line_valid_in;
+    _PORT(u<ADDR_BITS>) dma_line_addr_in;
+    _PORT(logic<CACHE_LINE_SIZE * 8>) dma_line_data_in;
+    _PORT(logic<CACHE_LINE_SIZE>) dma_line_keep_in;
+    _PORT(bool) dma_line_ready_out;
+
     bool debugen_in;
 
 protected:
