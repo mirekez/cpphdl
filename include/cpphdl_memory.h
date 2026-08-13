@@ -17,6 +17,25 @@ struct memory_row: public array<SIZE, T>
     std::vector<memory_row<T,SIZE>>* changes = 0;
     size_t pos = 0;
 
+    memory_row(const array<SIZE, T>& value,
+               std::vector<memory_row<T,SIZE>>* pending_changes,
+               size_t row_pos)
+        : array<SIZE, T>(value), changes(pending_changes), pos(row_pos)
+    {
+    }
+
+    memory_row(const memory_row&) = default;
+
+    // Generated partial writes merge into a memory_row and assign that row back.
+    // Without this overload C++ selects the implicit copy assignment and never queues the write.
+    // Keep same-type assignment consistent with every other deferred memory assignment overload.
+    memory_row& operator=(const memory_row& other)
+    {
+        array<SIZE, T>::operator=(static_cast<const array<SIZE, T>&>(other));
+        changes->push_back(*this);
+        return *this;
+    }
+
     template<size_t SIZE1>
     memory_row& operator=(const array<SIZE1, T>& other)
     {
@@ -136,6 +155,22 @@ struct memory
     {
         cpphdl_assert(i < DEPTH, "index " + std::to_string(i) + "is out of size " + std::to_string(DEPTH));
         return memory_row<T,SIZE>{data[i], &changes, i};
+    }
+
+    // Deferred part-select writes need the latest queued row as their merge base.
+    // Ordinary operator[] reads remain committed-state reads, matching nonblocking RTL.
+    // The returned row still schedules its final whole-row value through operator[].
+    memory_row<T,SIZE> pending(std::size_t i)
+    {
+        cpphdl_assert(i < DEPTH, "index " + std::to_string(i) + "is out of size " + std::to_string(DEPTH));
+        memory_row<T,SIZE> row{data[i], &changes, i};
+        for (auto it = changes.rbegin(); it != changes.rend(); ++it) {
+            if (it->pos == i) {
+                static_cast<array<SIZE, T>&>(row) = static_cast<const array<SIZE, T>&>(*it);
+                break;
+            }
+        }
+        return row;
     }
 
     void apply()

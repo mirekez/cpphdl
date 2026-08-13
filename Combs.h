@@ -23,7 +23,7 @@ struct CombDeps {
 
 class CombsOptimizer {
 public:
-  CombsOptimizer();
+  explicit CombsOptimizer(std::string rootModule = {});
   ~CombsOptimizer();
   CombsOptimizer(CombsOptimizer &&) noexcept;
   CombsOptimizer &operator=(CombsOptimizer &&) noexcept;
@@ -39,6 +39,13 @@ public:
   // This removes their per-cycle memoization call path and evaluates each
   // method body exactly once in dependency order.
   void setL1Scheduling(bool enabled);
+
+  // Collection-only invocations retain one bounded source hierarchy and can
+  // serialize it for a later optimizer process. Process isolation prevents
+  // Clang AST/PCH arenas from accumulating across very large projects.
+  void setCollectionOnly(bool enabled);
+  bool saveCollection(const std::string &path) const;
+  bool loadCollection(const std::string &path);
 
   // Replace recognized bit-level arithmetic networks with equivalent scalar
   // host expressions.  This pass operates on the flattened comb graph and is

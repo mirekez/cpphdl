@@ -488,6 +488,23 @@ public:
         __inst_name = "datatypes_test";
         _assign();
 
+        // A generated part-select write assigns a merged memory_row back to its memory.
+        // Verify that same-type assignment is deferred until apply(), then becomes visible.
+        // This specifically guards against the compiler-generated copy assignment dropping writes.
+        {
+            memory<logic<64>, 1, 2> deferred_memory;
+            // cpphdl::memory models uninitialized hardware storage, so establish
+            // a committed baseline before testing visibility of the next write.
+            deferred_memory[1] = 0;
+            deferred_memory.apply();
+            auto row = deferred_memory.pending(1);
+            row[0].bits(31, 0) = logic<32>(0x12345678u);
+            deferred_memory[1] = row;
+            check("deferred memory before apply", deferred_memory[1][0], logic<64>(0));
+            deferred_memory.apply();
+            check("deferred memory after apply", deferred_memory[1][0], logic<64>(0x12345678u));
+        }
+
         seed = 0;
         addr = 0;
         write = false;

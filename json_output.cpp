@@ -129,6 +129,9 @@ bool evalSizeExpr(const Expr& expr, size_t& value)
 
 size_t exprScalarWidth(Expr expr)
 {
+    if (expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_reg" && !expr.sub.empty()) {
+        return exprScalarWidth(expr.sub.front());
+    }
     if (expr.type == Expr::EXPR_TEMPLATE && expr.value.find("cpphdl_") == 0 && expr.sub.size()) {
         size_t width = 0;
         if (evalSizeExpr(expr.sub[0], width)) {
@@ -178,9 +181,19 @@ size_t fieldWidth(Field field)
     if (scalarWidth) {
         return scalarWidth;
     }
-    size_t structSize = getStructSize(field.expr.str());
-    if (structSize) {
-        return structSize;
+    Expr expr = field.expr;
+    const std::string typeName = expr.str();
+    for (auto& candidate : currProject->structs) {
+        if (candidate.name != typeName && candidate.origName != typeName && candidate.name != field.expr.value) {
+            continue;
+        }
+        if (!candidate.declSize) {
+            std::ofstream sizeOnly;
+            candidate.print(sizeOnly);
+        }
+        if (candidate.declSize) {
+            return candidate.declSize;
+        }
     }
     return 1;
 }
@@ -203,9 +216,15 @@ std::string portDirection(const Field& field)
     return str_ending(field.name, "_out") ? "output" : "input";
 }
 
-std::string cellPortDirection(const Field& field)
+std::string aggregatePortDirection(const std::string& name)
 {
-    return portDirection(field);
+    if (str_ending(name, "_out")) {
+        return "output";
+    }
+    if (str_ending(name, "_in")) {
+        return "input";
+    }
+    return "inout";
 }
 
 std::filesystem::path jsonPathFor(std::string filename)
@@ -268,13 +287,28 @@ std::string directPortRefName(const Expr& expr)
     return {};
 }
 
+std::string assignmentRefName(const Expr& expr)
+{
+    if (const auto direct = directPortRefName(expr); !direct.empty()) {
+        return direct;
+    }
+
+    const bool wrapper = expr.type == Expr::EXPR_BODY
+        || expr.type == Expr::EXPR_RETURN
+        || expr.type == Expr::EXPR_CAST
+        || expr.type == Expr::EXPR_PAREN
+        || expr.type == Expr::EXPR_UNARY
+        || (expr.type == Expr::EXPR_OPERATORCALL && (expr.value == "()" || expr.value == "&"));
+    if (wrapper && expr.sub.size() == 1) {
+        return assignmentRefName(expr.sub[0]);
+    }
+    return {};
+}
+
 std::map<std::string, std::string> collectDirectPortAliases(const Module& mod)
 {
     std::map<std::string, std::string> aliases;
     for (const auto& method : mod.methods) {
-        if (!str_ending(method.name, "_assign")) {
-            continue;
-        }
         for (const auto& stmt : method.statements) {
             Expr copy = stmt;
             copy.traverseIf([&](Expr& e) {
@@ -283,10 +317,14 @@ std::map<std::string, std::string> collectDirectPortAliases(const Module& mod)
                     || e.sub.size() != 2) {
                     return false;
                 }
-                const std::string lhs = directPortRefName(e.sub[0]);
-                const std::string rhs = directPortRefName(e.sub[1]);
-                if (!lhs.empty() && !rhs.empty() && lhs != rhs) {
+                const std::string lhs = assignmentRefName(e.sub[0]);
+                const std::string rhs = assignmentRefName(e.sub[1]);
+                const bool lhsChildPort = lhs.find("__") != std::string::npos;
+                const bool rhsChildPort = rhs.find("__") != std::string::npos;
+                if (!lhs.empty() && !rhs.empty() && lhs != rhs && lhsChildPort) {
                     aliases[lhs] = rhs;
+                } else if (!lhs.empty() && !rhs.empty() && lhs != rhs && rhsChildPort) {
+                    aliases[rhs] = lhs;
                 }
                 return false;
             });
@@ -314,16 +352,62 @@ std::string memberTypeName(const Field& member)
     return expr.str();
 }
 
-void writePortMap(std::ofstream& out, const Module& mod, JsonModule& json)
+struct LogicalPort
+{
+    std::string name;
+    std::string direction;
+    std::string kind = "signal";
+    std::vector<const Field*> fields;
+};
+
+std::vector<LogicalPort> logicalPorts(const Project& project, const Module& mod)
+{
+    std::vector<LogicalPort> ports;
+    std::map<std::string, size_t> aggregateIndices;
+    for (const auto& field : mod.ports) {
+        const auto separator = field.name.find("__");
+        if (separator == std::string::npos) {
+            Expr expr = field.expr;
+            const bool isStruct = field.definition.type != Struct::STRUCT_EMPTY
+                || std::any_of(project.structs.begin(), project.structs.end(), [&](const Struct& candidate) {
+                    return candidate.name == expr.value || candidate.origName == expr.value;
+                });
+            ports.push_back({field.name, portDirection(field), isStruct ? "struct" : "signal", {&field}});
+            continue;
+        }
+
+        const std::string aggregateName = field.name.substr(0, separator);
+        auto found = aggregateIndices.find(aggregateName);
+        if (found == aggregateIndices.end()) {
+            const size_t index = ports.size();
+            aggregateIndices.emplace(aggregateName, index);
+            ports.push_back({aggregateName, aggregatePortDirection(aggregateName), "interface", {&field}});
+        } else {
+            ports[found->second].fields.push_back(&field);
+        }
+    }
+    return ports;
+}
+
+size_t logicalPortWidth(const LogicalPort& port)
+{
+    size_t width = 0;
+    for (const auto* field : port.fields) {
+        width += fieldWidth(*field) * fieldElementCount(*field);
+    }
+    return std::max<size_t>(width, 1);
+}
+
+void writePortMap(std::ofstream& out, const Project& project, const Module& mod, JsonModule& json)
 {
     out << "      \"ports\": {";
     bool first = true;
-    for (const auto& port : mod.ports) {
-        size_t width = fieldWidth(port) * fieldElementCount(port);
+    for (const auto& port : logicalPorts(project, mod)) {
+        const size_t width = logicalPortWidth(port);
         auto& bits = json.ensureNet(port.name, width);
         out << (first ? "\n" : ",\n");
         out << "        \"" << jsonEscape(port.name) << "\": {\"direction\": \""
-            << portDirection(port) << "\", \"bits\": ";
+            << port.direction << "\", \"kind\": \"" << port.kind << "\", \"bits\": ";
         writeBits(out, bits);
         out << "}";
         first = false;
@@ -353,6 +437,7 @@ void writeCells(std::ofstream& out, const Project& project, const Module& mod, J
         }
 
         size_t instances = fieldElementCount(member);
+        const auto childPorts = logicalPorts(project, *child);
         for (size_t index = 0; index < instances; ++index) {
             const bool indexed = instances > 1;
             const std::string cellName = indexed
@@ -368,10 +453,10 @@ void writeCells(std::ofstream& out, const Project& project, const Module& mod, J
 
             out << "          \"port_directions\": {";
             bool firstPort = true;
-            for (const auto& port : child->ports) {
+            for (const auto& port : childPorts) {
                 out << (firstPort ? "\n" : ",\n");
                 out << "            \"" << jsonEscape(port.name) << "\": \""
-                    << cellPortDirection(port) << "\"";
+                    << port.direction << "\"";
                 firstPort = false;
             }
             if (!firstPort) {
@@ -381,13 +466,17 @@ void writeCells(std::ofstream& out, const Project& project, const Module& mod, J
 
             out << "          \"connections\": {";
             firstPort = true;
-            for (const auto& port : child->ports) {
-                size_t width = fieldWidth(port) * fieldElementCount(port);
-                std::string netName = member.name + "__" + port.name;
-                if (indexed) {
-                    netName += "[" + std::to_string(index) + "]";
+            for (const auto& port : childPorts) {
+                std::vector<int> bits;
+                for (const auto* field : port.fields) {
+                    const size_t width = fieldWidth(*field) * fieldElementCount(*field);
+                    std::string netName = member.name + "__" + field->name;
+                    if (indexed) {
+                        netName += "[" + std::to_string(index) + "]";
+                    }
+                    const auto& fieldBits = ensureMaybeAliasedNet(json, aliases, netName, width);
+                    bits.insert(bits.end(), fieldBits.begin(), fieldBits.end());
                 }
-                auto& bits = ensureMaybeAliasedNet(json, aliases, netName, width);
                 out << (firstPort ? "\n" : ",\n");
                 out << "            \"" << jsonEscape(port.name) << "\": ";
                 writeBits(out, bits);
@@ -402,6 +491,29 @@ void writeCells(std::ofstream& out, const Project& project, const Module& mod, J
         }
     }
     if (!firstCell) {
+        out << "\n      ";
+    }
+    out << "},\n";
+}
+
+void writeDataMembers(std::ofstream& out, const Module& mod)
+{
+    out << "      \"data_members\": {";
+    bool first = true;
+    for (const auto& field : mod.vars) {
+        Expr expr = field.expr;
+        const bool isRegister = expr.traverseIf([](Expr& item) {
+            return item.type == Expr::EXPR_TEMPLATE && item.value == "cpphdl_reg";
+        });
+        const std::string kind = isRegister ? "register"
+            : (str_ending(field.name, "_comb") ? "combinational" : "signal");
+        const size_t width = fieldWidth(field) * fieldElementCount(field);
+        out << (first ? "\n" : ",\n");
+        out << "        \"" << jsonEscape(field.name) << "\": {\"kind\": \""
+            << kind << "\", \"width\": " << width << "}";
+        first = false;
+    }
+    if (!first) {
         out << "\n      ";
     }
     out << "},\n";
@@ -432,8 +544,9 @@ void writeModule(std::ofstream& out, const Project& project, const Module& mod)
 
     out << "    \"" << jsonEscape(mod.name) << "\": {\n";
     out << "      \"attributes\": {},\n";
-    writePortMap(out, mod, json);
+    writePortMap(out, project, mod, json);
     writeCells(out, project, mod, json);
+    writeDataMembers(out, mod);
     writeNetnames(out, json);
     out << "    }";
 }

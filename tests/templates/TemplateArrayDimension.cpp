@@ -30,6 +30,7 @@ public:
 
 private:
     array<VALUES_IN_WORD, BF16E8> bf16_sum_a_comb;
+    reg<array<VALUES_IN_WORD, logic<DWIDTH_BYTES>>> buffered_reg;
     u<16> data_comb;
 
     u<16>& data_comb_func()
@@ -102,6 +103,10 @@ static bool check_generated_sv()
         "concrete and symbolic cpphdl::array dimensions were both emitted");
     require(top.find("BF16E8[VALUES_IN_WORD-1:0]") != std::string::npos,
         "cpphdl::array dimension was not emitted once with its symbolic constexpr");
+    require(top.find(
+                "reg[VALUES_IN_WORD-1:0][DWIDTH_BYTES-1:0] TemplateArrayDimensionBase___buffered_reg;")
+            != std::string::npos,
+        "cpphdl::array dimensions nested in reg<T> were frozen to a concrete specialization");
     return ok;
 }
 

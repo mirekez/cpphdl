@@ -28,6 +28,7 @@
 #include <cstring>
 #include <cstdio>
 #include <deque>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,6 +38,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 using namespace clang;
 
@@ -346,6 +351,20 @@ std::vector<std::string> fieldInlineAnnotations(const FieldDecl* FD, const ASTCo
         return annotations;
     }
 
+    constexpr std::string_view attribute_prefix = "CPPHDL_ATTRIBUTE=";
+    for (const Attr* attr : FD->attrs()) {
+        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+            std::string text = ann->getAnnotation().str();
+            if (text.rfind(attribute_prefix, 0) == 0) {
+                text.erase(0, attribute_prefix.size());
+                text = trimText(std::move(text));
+                if (!text.empty()) {
+                    annotations.push_back(std::move(text));
+                }
+            }
+        }
+    }
+
     const SourceManager& sm = ctx.getSourceManager();
     SourceLocation loc = sm.getSpellingLoc(FD->getBeginLoc());
     if (!loc.isValid()) {
@@ -446,6 +465,20 @@ std::filesystem::path resolveAnnotationPath(const std::string& annotation_path, 
     }
 
     const SourceManager& sm = ctx.getSourceManager();
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const ClassTemplateDecl* TD = CTSD->getSpecializedTemplate()) {
+            if (const CXXRecordDecl* templated = TD->getTemplatedDecl()) {
+                std::string templateSource = sm.getFilename(
+                    sm.getSpellingLoc(templated->getLocation())).str();
+                if (!templateSource.empty()) {
+                    fs::path fromTemplate = fs::path(templateSource).parent_path() / path;
+                    if (fs::exists(fromTemplate)) {
+                        return fromTemplate;
+                    }
+                }
+            }
+        }
+    }
     std::string source = sm.getFilename(sm.getSpellingLoc(RD->getLocation())).str();
     if (!source.empty()) {
         fs::path from_source = fs::path(source).parent_path() / path;
@@ -607,8 +640,25 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
         return;
     }
 
-    if (expr1.type == expr2.type && expr1.value == expr2.value && expr1.sub.size() == expr2.sub.size()) {
-        for (size_t i=0; i < expr1.sub.size(); ++i) {
+    if (expr1.type == expr2.type && expr1.value == expr2.value) {
+        size_t commonSubexpressions = 0;
+        if (expr1.sub.size() == expr2.sub.size()) {
+            commonSubexpressions = expr1.sub.size();
+        }
+        else if (expr1.type == cpphdl::Expr::EXPR_TEMPLATE) {
+            // A concrete specialization includes defaulted template arguments,
+            // while the primary-template expression contains only arguments
+            // written at the declaration site.  Compare their shared explicit
+            // argument prefix and leave concrete-only defaults untouched.
+            const size_t concreteArgs = !expr1.sub.empty()
+                    && expr1.sub.back().type == cpphdl::Expr::EXPR_TYPE
+                ? expr1.sub.size() - 1 : expr1.sub.size();
+            const size_t abstractArgs = !expr2.sub.empty()
+                    && expr2.sub.back().type == cpphdl::Expr::EXPR_TYPE
+                ? expr2.sub.size() - 1 : expr2.sub.size();
+            commonSubexpressions = std::min(concreteArgs, abstractArgs);
+        }
+        for (size_t i = 0; i < commonSubexpressions; ++i) {
             updateExpr(expr1.sub[i], expr2.sub[i]);
         }
     }
@@ -2147,11 +2197,20 @@ bool appendClockDomain(std::vector<cpphdl::ClockDomain>& clocks, const char* nam
 
 struct MyFrontendAction : public ASTFrontendAction
 {
-    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr)
-        : combsOptimizer(combsOptimizer) {}
+    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr,
+                              bool trimPreviousAst = false)
+        : combsOptimizer(combsOptimizer), trimPreviousAst(trimPreviousAst) {}
 
     bool BeginSourceFileAction(CompilerInstance &CI) override
     {
+#if defined(__GLIBC__)
+        // Clang has destroyed the previous CompilerInstance before creating
+        // this action. Return its released AST arenas before collecting the
+        // next bounded optimizer input instead of accumulating them per TU.
+        if (trimPreviousAst) {
+            malloc_trim(0);
+        }
+#endif
         // Fetched Clang 21 can report failed include-search candidates here
         // even when a later search directory opens the header successfully.
         CI.getDiagnostics().setSeverity(
@@ -2167,6 +2226,7 @@ struct MyFrontendAction : public ASTFrontendAction
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool trimPreviousAst;
 };
 
 struct MyFrontendActionFactory : public tooling::FrontendActionFactory
@@ -2176,10 +2236,14 @@ struct MyFrontendActionFactory : public tooling::FrontendActionFactory
 
     std::unique_ptr<FrontendAction> create() override
     {
-        return std::make_unique<MyFrontendAction>(combsOptimizer);
+        auto action = std::make_unique<MyFrontendAction>(combsOptimizer,
+                                                         !firstSource);
+        firstSource = false;
+        return action;
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool firstSource = true;
 };
 
 int main(int argc, const char **argv)
@@ -2190,6 +2254,8 @@ int main(int argc, const char **argv)
     std::string json_output;
     std::string optimize_combs_root;
     bool optimize_combs_l1 = false;
+    std::string optimize_combs_collection_output;
+    std::vector<std::string> optimize_combs_collection_inputs;
     bool optimize_math = false;
     size_t optimize_threads = 1;
     bool optimize_threads_specified = false;
@@ -2297,6 +2363,43 @@ int main(int argc, const char **argv)
             continue;
         }
 
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-collect") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_output = argv[++i];
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-collect=", 25) == 0) {
+            optimize_combs_collection_output = arg + 25;
+            if (optimize_combs_collection_output.empty()) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-load") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.emplace_back(argv[++i]);
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-load=", 22) == 0) {
+            std::string input = arg + 22;
+            if (input.empty()) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.push_back(std::move(input));
+            continue;
+        }
+
         if (!saw_double_dash && std::strcmp(arg, "--optimize-math") == 0) {
             optimize_math = true;
             continue;
@@ -2382,6 +2485,12 @@ int main(int argc, const char **argv)
         llvm::errs() << "--secondary_clock requires --primary_clock\n";
         return 1;
     }
+    if (optimize_combs_root.empty() &&
+        (!optimize_combs_collection_output.empty() ||
+         !optimize_combs_collection_inputs.empty())) {
+        llvm::errs() << "--optimize-combs-collect/load requires --optimize-combs or --optimize-combs-l1\n";
+        return 1;
+    }
     if (!primary_clocks.empty()) {
         for (const auto& secondary : secondary_clocks) {
             if (secondary.name == primary_clocks.front().name) {
@@ -2463,19 +2572,51 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
 
-    cpphdl::CombsOptimizer combsOptimizer;
+    // The comb optimizer can restrict method extraction to the concrete root.
+    // Supplying it before Clang's AST walk avoids retaining unrelated module
+    // implementations from the same generated umbrella header.
+    cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
+    combsOptimizer.setCollectionOnly(!optimize_combs_collection_output.empty());
+    for (const auto& input : optimize_combs_collection_inputs) {
+        if (!combsOptimizer.loadCollection(input)) {
+            return 1;
+        }
+    }
     combsOptimizer.setMathOptimization(optimize_math);
     combsOptimizer.setThreadCount(optimize_threads);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
+    const bool trace_phases = std::getenv("CPPHDL_TRACE_PHASES") != nullptr;
+    const auto parse_started = std::chrono::steady_clock::now();
     int ret = Tool.run(&actionFactory);
+    if (trace_phases) {
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - parse_started).count();
+        llvm::errs() << "cpphdl phase: AST collection " << elapsed << " s\n";
+    }
     if (ret != 0) {
         return ret;
     }
+    if (!optimize_combs_collection_output.empty()) {
+        return combsOptimizer.saveCollection(optimize_combs_collection_output)
+            ? 0 : 1;
+    }
     if (!optimize_combs_root.empty()) {
+#if defined(__GLIBC__)
+        // Clang releases its AST before Tool.run() returns, but glibc can retain
+        // those multi-gigabyte arenas.  The graph is a separate allocation phase,
+        // so return unused AST pages before constructing the optimized schedule.
+        malloc_trim(0);
+#endif
+        const auto generate_started = std::chrono::steady_clock::now();
         if (!combsOptimizer.generate(optimize_combs_root, generated_dir)) {
             return 1;
+        }
+        if (trace_phases) {
+            const auto elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - generate_started).count();
+            llvm::errs() << "cpphdl phase: comb generation " << elapsed << " s\n";
         }
     } else {
         if (!currProject->generate(generated_dir)) {

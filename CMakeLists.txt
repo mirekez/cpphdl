@@ -338,6 +338,7 @@ foreach(flag -std=c++26 -std=c++2c -std=c++23)
 endforeach()
 
 target_link_libraries(cpphdl PRIVATE
+  z
   clangTooling
   clangBasic
   clangASTMatchers

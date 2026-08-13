@@ -1,8 +1,11 @@
 package FP32_8_pkg;
 
-parameter WIDTH = 32;
-parameter EXP_WIDTH = 8;
-parameter MANT_WIDTH = 32 - 8 - 1;
+parameter MANT_WIDTH = 64'h17;
+parameter WIDTH = 64'h20;
+parameter EXP_WIDTH = 64'h8;
+parameter EXP_MAX = 64'hFF;
+parameter MANT_MAX = 64'h7FFFFF;
+parameter EXP_BIAS = 'h7F;
 typedef struct packed {
     union packed {
         struct packed {

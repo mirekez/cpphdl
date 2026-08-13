@@ -290,6 +290,15 @@ struct value_type_for_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>>
     using type = TYPE;
 };
 
+// Selecting through more than one packed dimension produces a logic_bits proxy.
+// Generated expressions need the assignable value represented by that proxy,
+// not its deliberately non-copyable addressable implementation type.
+template<size_t WIDTH>
+struct value_type_for_ref<logic_bits<WIDTH>>
+{
+    using type = logic<WIDTH>;
+};
+
 } // namespace detail
 
 template<typename T>
@@ -507,8 +516,11 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         *this = init;
     }
 
+    // Constant RTL configuration constructs packed arrays from complete bit vectors.
+    // The operation only delegates to constexpr logic assignment and has no runtime state.
+    // Keep construction and whole-value assignment available during constant evaluation.
     template<typename T>
-    array(const T& other)
+    constexpr array(const T& other)
     {
         data = other;
     }
@@ -531,7 +543,7 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
     }
 
     template<typename T>
-    array& operator=(const T& other)
+    constexpr array& operator=(const T& other)
     {
         data = other;
         return *this;
@@ -543,7 +555,10 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return detail::array_packed_ref<TYPE, SIZE_BITS, ELEMENT_BITS>(&data, i);
     }
 
-    TYPE operator[](std::size_t i) const
+    // Constant configuration code must read packed elements without creating proxies.
+    // This value overload only performs constexpr logic get/set operations.
+    // Mark it constexpr so read-only packed indexing works in non-type template arguments.
+    constexpr TYPE operator[](std::size_t i) const
     {
         cpphdl_assert(i < COUNT, "wrong array index");
         logic<ELEMENT_BITS> tmp = 0;

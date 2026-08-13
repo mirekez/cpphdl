@@ -205,6 +205,122 @@ set_target_properties(optimizer_procedural_comb PROPERTIES
 add_test(NAME optimizer_procedural_comb
          COMMAND "$<TARGET_FILE:optimizer_procedural_comb>")
 
+# A discarded generate branch may contain deliberately invalid widths. The
+# comb optimizer must retain the _assign() constexpr guard instead of eagerly
+# scheduling that branch, so exercise generation, compilation, and execution.
+add_test(
+    NAME optimizer_constexpr_binding
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ConstexprBindingTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_constexpr_binding PROPERTIES TIMEOUT 120)
+
+# A lazy comb cycle retains storage at the edge reached recursively from the
+# first _work demand. Verify static scheduling preserves that demand order
+# instead of selecting a different edge through graph node creation order.
+add_test(
+    NAME optimizer_lazy_cycle_order
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/LazyCycleOrderTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_lazy_cycle_order PROPERTIES TIMEOUT 120)
+
+# Dynamic ordinary comb methods repeat, while _LAZY_COMB and ports cache.
+# Exercise all three through conditionally retained graph dependencies.
+# The optimized model must preserve their distinct same-clock behavior.
+add_test(
+    NAME optimizer_dynamic_comb_repeat
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/DynamicCombRepeatTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
+
+# A helper called from _work may mutate module storage by non-const reference.
+# Readers of that storage must remain lazy until their original demand point
+# instead of being evaluated before the side-effecting work call.
+add_test(
+    NAME optimizer_work_mutation
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/WorkMutationTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_work_mutation PROPERTIES TIMEOUT 120)
+
+# A large work conditional can cross the generated translation-unit limit.
+# Keep continuation clauses attached to their owning statement so chunking
+# cannot emit a standalone `else` and both runtime branches remain intact.
+add_test(
+    NAME optimizer_work_split
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/WorkSplitTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_work_split PROPERTIES TIMEOUT 120)
+
+# Calls through a dynamically indexed child-module array cannot be replaced
+# by one statically elaborated graph edge. Keep their consumers on demand so
+# the original function_ref chain is entered at the source demand point.
+add_test(
+    NAME optimizer_module_array_call
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ModuleArrayCallTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_module_array_call PROPERTIES TIMEOUT 120)
+
+# Very large concrete classes may remain ordinary CppHDL subtrees while the
+# surrounding hierarchy is flattened. Preserve their lifecycle calls, and
+# never move structural _assign() setup into generated runtime functions.
+add_test(
+    NAME optimizer_opaque_subtree
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/OpaqueSubtreeTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_opaque_subtree PROPERTIES TIMEOUT 120)
+
+# Concrete specialization aliases are the stable public names emitted by the
+# hdlcpp optimizer. Accept one as the comb root while collecting behavior from
+# its underlying class-template specialization.
+add_test(
+    NAME optimizer_alias_root
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/AliasRootTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_alias_root PROPERTIES TIMEOUT 120)
+
+# Structural non-type template arguments can have no valid semantic source
+# spelling. Deduce them from the concrete module specialization when moving a
+# dependent comb body out of class scope instead of serializing the value.
+add_test(
+    NAME optimizer_structural_nttp
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/StructuralNttpTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_structural_nttp PROPERTIES TIMEOUT 120)
+
 set(CPPHDL_OPTIMIZE_L1_NORMAL_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/generated_combs_optimize_l1_normal")
 set(CPPHDL_OPTIMIZE_L1_L1_DIR

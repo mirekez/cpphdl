@@ -138,10 +138,14 @@ public:
     _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
     _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
     _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
     _PORT(bool)      sbi_send_ipi_out = _ASSIGN_COMB(sbi_send_ipi_comb_func());
     _PORT(bool)      sbi_remote_fence_i_out = _ASSIGN_COMB(sbi_remote_fence_i_comb_func());
+#endif
+#if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
     _PORT(bool)      sbi_remote_sfence_vma_out = _ASSIGN_COMB(sbi_remote_sfence_vma_comb_func());
+#endif
+#if defined(MULTICORE) && defined(ENABLE_ISR)
     _PORT(uint32_t)  sbi_hart_mask_out = _ASSIGN_COMB(sbi_hart_mask_comb_func());
     _PORT(uint32_t)  sbi_hart_base_out = _ASSIGN_COMB(sbi_hart_base_comb_func());
 #endif
@@ -243,8 +247,13 @@ public:
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
         csr.hartid_in = boot_hartid_in;
+#ifdef ENABLE_ISR
         csr.time_lo_in = time_lo_in;
         csr.time_hi_in = time_hi_in;
+#else
+        csr.time_lo_in = _ASSIGN((uint32_t)0);
+        csr.time_hi_in = _ASSIGN((uint32_t)0);
+#endif
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
         csr.interrupt_cause_in = irq.interrupt_cause_out;
@@ -984,7 +993,7 @@ private:
                 sbi_ret_value_comb = (probe_ext == SBI_EXT_BASE ||
                     probe_ext == SBI_EXT_TIME ||
                     probe_ext == SBI_EXT_RFENCE
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
                     || probe_ext == SBI_EXT_IPI
 #endif
                     ) ? 1 : 0;
@@ -1000,9 +1009,13 @@ private:
     bool& sbi_writes_a1_comb_func()
     {
         return sbi_writes_a1_comb = sbi_base_comb_func() || sbi_set_timer_comb_func()
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
             || sbi_send_ipi_comb_func() || sbi_remote_fence_i_comb_func() ||
+#ifdef ENABLE_MMU_TLB
                 sbi_remote_sfence_vma_comb_func()
+#else
+                false
+#endif
 #endif
             ;
     }
@@ -1012,14 +1025,18 @@ private:
     bool& sbi_handled_comb_func()
     {
         return sbi_handled_comb = sbi_set_timer_comb_func() || sbi_noop_comb_func() || sbi_base_comb_func()
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
             || sbi_send_ipi_comb_func() || sbi_remote_fence_i_comb_func() ||
+#ifdef ENABLE_MMU_TLB
                 sbi_remote_sfence_vma_comb_func()
+#else
+                false
+#endif
 #endif
             ;
     }
 
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
     // SBI v0.2 IPI requests carry a direct hart mask and base in a0/a1.
     _LAZY_COMB(sbi_send_ipi_comb, bool)
         return sbi_send_ipi_comb = sbi_legacy_ecall_comb_func() &&
@@ -1033,12 +1050,14 @@ private:
     }
 
     // Both remote SFENCE.VMA variants can conservatively invalidate the full target TLB.
+#ifdef ENABLE_MMU_TLB
     _LAZY_COMB(sbi_remote_sfence_vma_comb, bool)
         uint32_t function_id;
         function_id = sbi_arg_value(16);
         return sbi_remote_sfence_vma_comb = sbi_legacy_ecall_comb_func() &&
             sbi_arg_value(17) == SBI_EXT_RFENCE && (function_id == 1 || function_id == 2);
     }
+#endif
 
     _LAZY_COMB(sbi_hart_mask_comb, uint32_t)
         return sbi_hart_mask_comb = sbi_arg_value(10);
@@ -1255,7 +1274,7 @@ private:
     // translations only and must not turn every context switch into an I-cache clear.
     _LAZY_COMB(icache_invalidate_comb, bool)
         return icache_invalidate_comb =
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
             remote_fence_i_in() ||
 #endif
             (state_reg[0].valid &&
@@ -1266,7 +1285,7 @@ private:
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
     _LAZY_COMB(sfence_vma_comb, bool)
         return sfence_vma_comb =
-#ifdef MULTICORE
+#if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
             remote_sfence_vma_in() ||
 #endif
             (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func());

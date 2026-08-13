@@ -151,7 +151,7 @@ struct cat : logic<SUM<N...>()>
     }
 
     template<typename... Args>
-    constexpr cat(const Args&... args)
+    constexpr cat(const Args&... args) : logic<WIDTH>()
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
@@ -196,6 +196,14 @@ struct cat : logic<SUM<N...>()>
     constexpr operator uint64_t() const
     {
         return static_cast<const logic<WIDTH>*>(this)->to_uint64_constexpr();
+    }
+
+    // cat derives from logic, but exact-type logic traits do not recognize it.
+    // Generic packing therefore selected cat's uint64_t conversion and lost high bits.
+    // Expose the complete packed value so wide concatenations remain bit-accurate.
+    constexpr logic<WIDTH> pack() const
+    {
+        return static_cast<const logic<WIDTH>&>(*this);
     }
 
     template<typename T, typename std::enable_if_t<std::is_integral_v<T>, int> = 0>

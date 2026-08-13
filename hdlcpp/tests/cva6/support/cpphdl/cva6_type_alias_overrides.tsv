@@ -1,0 +1,13 @@
+rvfi_instr_t	cpphdl_rvfi::instr_t<CVA6Cfg>
+rvfi_csr_elmt_t	cpphdl_rvfi::csr_elmt_t<CVA6Cfg>
+rvfi_csr_t	cpphdl_rvfi::csr_t<CVA6Cfg>
+rvfi_to_iti_t	cpphdl_rvfi::to_iti_t<CVA6Cfg>
+iti_to_encoder_t	cpphdl_rvfi::encoder_t<CVA6Cfg>
+rvfi_probes_instr_t	cpphdl_rvfi::probes_instr_t<CVA6Cfg>
+rvfi_probes_csr_t	cpphdl_rvfi::probes_csr_t<CVA6Cfg>
+hpdcache_decoder.in_t	logic<N>
+hpdcache_decoder.out_t	logic<Pow2N>
+hpdcache_mux.data_t	logic<DATA_WIDTH>
+hpdcache_mux.sel_t	logic<SEL_WIDTH>
+hpdcache_demux.data_t	logic<DATA_WIDTH>
+hpdcache_demux.sel_t	logic<SEL_WIDTH>

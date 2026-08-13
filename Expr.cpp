@@ -349,7 +349,12 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub[0].type == EXPR_TEMPLATE && sub[0].value == "cpphdl_memory") {
                 ASSERT1(sub[0].sub.size() >= 3, std::string("cpphdl_memory subs size = ") + std::to_string(sub.size()) );
                 sub[0].sub[0].flags |= Expr::FLAG_REG;
-                return indent_str + prefix + sub[0].sub[0].str("", std::string("[") + sub[0].sub[1].str() + "-1:0]") + " " + escapeIdentifier(value) + "[" + sub[0].sub[2].str() + "]";
+                const std::string word_count = sub[0].sub[1].str();
+                const std::string word_dimension = numericWidth(word_count) == 1
+                    ? ""
+                    : std::string("[") + word_count + "-1:0]";
+                return indent_str + prefix + sub[0].sub[0].str("", word_dimension)
+                    + " " + escapeIdentifier(value) + suffix + "[" + sub[0].sub[2].str() + "]";
             } else
             if (sub[0].type == EXPR_NUM) {
                 str += indent_str + prefix + escapeIdentifier(value) + suffix + " = " + sub[0].str();  // const initializer

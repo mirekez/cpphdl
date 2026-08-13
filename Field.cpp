@@ -101,6 +101,11 @@ std::string packedDims(const std::vector<Expr>& dims)
     return text;
 }
 
+bool isCpphdlMemory(const Expr& expr)
+{
+    return expr.type == Expr::EXPR_TEMPLATE && expr.value == "cpphdl_memory";
+}
+
 std::vector<Expr> sliceDims(const std::vector<Expr>& dims, size_t begin, size_t count)
 {
     std::vector<Expr> out;
@@ -252,6 +257,13 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
             auto packed = sliceDims(array, unpackCount, packCount);
             auto unpacked = sliceDims(array, 0, unpackCount);
             out << tmp.sub[0].str("", packedDims(packed)) << " " << name << nameSuffix << unpackedDims(unpacked) << ";\n";
+        }
+        else if (isCpphdlMemory(tmp.sub[0])) {
+            // A C++ array of memories is indexed outer-array first and memory
+            // address second: memory<T,W,D> banks[N] -> banks[N][D].  Putting
+            // the dimensions after Expr::str() reverses those indices and can
+            // collapse a banked RAM into one multi-access memory.
+            out << tmp.str("", nameSuffix + unpackedDims(array)) + ";\n";
         }
         else {
             out << tmp.str("", nameSuffix) + unpackedDims(array) + ";\n";

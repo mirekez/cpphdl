@@ -11,6 +11,7 @@
 #include "slang/syntax/AllSyntax.h"
 #include "slang/syntax/SyntaxTree.h"
 #include "slang/syntax/SyntaxVisitor.h"
+#include "slang/text/SourceManager.h"
 
 #include <algorithm>
 #include <chrono>
@@ -28,6 +29,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>

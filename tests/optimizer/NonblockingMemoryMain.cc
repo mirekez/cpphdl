@@ -25,6 +25,7 @@ int main() {
     return 2;
   }
 
+  ++_system_clock;
   dut.write_enable = false;
   calc_all(dut);
   commit_optimized_regs(dut);

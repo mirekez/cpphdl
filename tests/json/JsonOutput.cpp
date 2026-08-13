@@ -114,16 +114,11 @@ int main()
         "\"modules\":",
         "\"JsonLeaf\":",
         "\"JsonParent\":",
-        "\"start_in\": {\"direction\": \"input\"",
-        "\"payload_in\": {\"direction\": \"input\"",
-        "\"payload_in\": {\"direction\": \"input\", \"bits\": [5, 6, 7, 8",
-        "\"result_out\": {\"direction\": \"output\"",
-        "\"axi__awvalid_in\": {\"direction\": \"input\"",
-        "\"axi__awready_out\": {\"direction\": \"output\"",
-        "\"axi__awaddr_in\": {\"direction\": \"input\", \"bits\": [31, 32, 33, 34",
-        "\"axi__wdata_in\": {\"direction\": \"input\"",
-        "\"axi__wdata_in\": {\"direction\": \"input\", \"bits\": [53, 54, 55, 56",
-        "\"axi__wstrb_in\": {\"direction\": \"input\", \"bits\": [85, 86, 87, 88]",
+        "\"start_in\": {\"direction\": \"input\", \"kind\": \"signal\"",
+        "\"payload_in\": {\"direction\": \"input\", \"kind\": \"struct\"",
+        "\"payload_in\": {\"direction\": \"input\", \"kind\": \"struct\", \"bits\": [5, 6, 7, 8",
+        "\"result_out\": {\"direction\": \"output\", \"kind\": \"signal\"",
+        "\"axi\": {\"direction\": \"inout\", \"kind\": \"interface\"",
         "\"leaf\":",
         "\"type\": \"JsonLeaf\"",
         "\"connections\":",
@@ -133,7 +128,10 @@ int main()
         "\"leaf__start_in\": {\"hide_name\": 0, \"bits\": [4]",
         "\"leaf__payload_in\"",
         "\"leaf__payload_in\": {\"hide_name\": 0, \"bits\": [5, 6, 7, 8",
+        "\"axi\": [",
         "\"leaf__axi__awvalid_in\"",
+        "\"data_members\":",
+        "\"result_comb\": {\"kind\": \"combinational\", \"width\": 17}",
         "\"netnames\":"
     };
 
@@ -141,6 +139,12 @@ int main()
         if (!contains(text, needle)) {
             return 1;
         }
+    }
+
+    if (text.find("\"axi__awvalid_in\": {\"direction\"") != std::string::npos ||
+            text.find("\"axi__awready_out\": {\"direction\"") != std::string::npos) {
+        std::cerr << "interface members leaked into the logical JSON port map\n";
+        return 1;
     }
 
     return 0;

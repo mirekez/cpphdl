@@ -68,7 +68,10 @@ int checkStructure() {
       return 3;
     }
   }
-  if (combs.find("n0.partial()") == std::string::npos ||
+  // The concrete hierarchy optimizer schedules unreplaced procedural combs
+  // directly in both modes. Keep the partial bit writes, rather than requiring
+  // the legacy non-L1 path to retain an out-of-line partial() call.
+  if (combs.find("partial_cache[0]") == std::string::npos ||
       l1.find("partial_cache[0]") == std::string::npos) {
     std::cerr << "partial comb was incorrectly replaced\n";
     return 3;
