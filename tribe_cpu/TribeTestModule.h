@@ -77,7 +77,7 @@ public:
     _PORT(bool) sbi_set_timer_out = _ASSIGN_COMB(cores[0].sbi_set_timer_out());
     _PORT(uint32_t) sbi_timer_lo_out = _ASSIGN_COMB(cores[0].sbi_timer_lo_out());
     _PORT(uint32_t) sbi_timer_hi_out = _ASSIGN_COMB(cores[0].sbi_timer_hi_out());
-#if defined(MULTICORE) && defined(ENABLE_ISR)
+#ifdef MULTICORE
     _PORT(bool) sbi_set_timer_per_core_out[CPU_CORES];
     _PORT(uint32_t) sbi_timer_lo_per_core_out[CPU_CORES];
     _PORT(uint32_t) sbi_timer_hi_per_core_out[CPU_CORES];
@@ -297,9 +297,6 @@ public:
             cores[i].sbi_ipi_in = _ASSIGN_I(sbi_ipi_targets_comb_func()[i]);
             cores[i].remote_fence_i_in = _ASSIGN_I(sbi_fence_i_targets_comb_func()[i]);
             cores[i].remote_sfence_vma_in = _ASSIGN_I(sbi_sfence_targets_comb_func()[i]);
-            sbi_set_timer_per_core_out[i] = cores[i].sbi_set_timer_out;
-            sbi_timer_lo_per_core_out[i] = cores[i].sbi_timer_lo_out;
-            sbi_timer_hi_per_core_out[i] = cores[i].sbi_timer_hi_out;
 #else
             cores[i].clint_msip_in = clint_msip_in;
             cores[i].clint_mtip_in = clint_mtip_in;
@@ -307,6 +304,11 @@ public:
 #endif
             cores[i].time_lo_in = time_lo_in;
             cores[i].time_hi_in = time_hi_in;
+#endif
+#ifdef MULTICORE
+            sbi_set_timer_per_core_out[i] = cores[i].sbi_set_timer_out;
+            sbi_timer_lo_per_core_out[i] = cores[i].sbi_timer_lo_out;
+            sbi_timer_hi_per_core_out[i] = cores[i].sbi_timer_hi_out;
 #endif
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
             cores[i].atomic_grant_in = _ASSIGN_I(atomic_grant_comb_func()[i]);
