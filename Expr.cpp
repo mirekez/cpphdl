@@ -1292,6 +1292,13 @@ std::string Expr::typeToSV(std::string type, std::string size)
         declSize = 32;
     }
     else {
+        // Packed structs/unions are user-defined data types.  They still need
+        // an explicit net kind on module ports and child-port connections when
+        // generated under `default_nettype none`; Vivado otherwise rejects an
+        // ANSI declaration such as `input MyStruct value_in`.
+        if (flags & FLAG_WIRE) {
+            str = "wire " + str;
+        }
         str += size;
     }
     return str;
