@@ -72,6 +72,8 @@ int checkGeneratedStructure() {
 
   if (l1.find("procedural()") != std::string::npos ||
       l1.find("_optimized_value()") != std::string::npos ||
+      l1.find("optimize_l1_root_input()") != std::string::npos ||
+      l1.find("_optimized_root_input_in_binding()") != std::string::npos ||
       l1.find("procedural_clock = _system_clock") != std::string::npos ||
       l1.find("procedural_clock == _system_clock") != std::string::npos) {
     std::cerr << "L1 output retained a comb call or memoization clock\n";
@@ -82,7 +84,7 @@ int checkGeneratedStructure() {
 
 uint64_t expectedResult(uint64_t input, bool enable) {
   const uint64_t term = (input + 3) & 0xffffu;
-  return ((enable ? 6u : 4u) * term) & 0xffffu;
+  return (((enable ? 6u : 4u) * term) + input) & 0xffffu;
 }
 
 } // namespace
@@ -109,6 +111,7 @@ int main() {
     const unsigned normal_calls = normal.leaf->procedural_invocations;
     const unsigned optimized_calls = optimized.leaf->procedural_invocations;
 
+    _optimized_root_instance = &normal;
     normal._work(false);
     normal._strobe();
     calc_all(optimized);
