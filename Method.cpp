@@ -22,16 +22,24 @@ std::string indexedRootName(Expr expr)
 
 std::string assignedWireName(Expr expr)
 {
+    std::string name;
     if (expr.type == Expr::EXPR_MEMBER && expr.sub.size() && expr.sub[0].type == Expr::EXPR_INDEX) {
-        return indexedRootName(expr.sub[0]) + "__" + expr.value;
+        name = indexedRootName(expr.sub[0]) + "__" + expr.value;
     }
-    if (expr.type == Expr::EXPR_INDEX) {
-        return indexedRootName(expr);
+    else if (expr.type == Expr::EXPR_INDEX) {
+        name = indexedRootName(expr);
     }
-    if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() > 1) {
-        return expr.sub[1].str();
+    else if (expr.type == Expr::EXPR_ARRAY && expr.sub.size() > 1) {
+        name = expr.sub[1].str();
     }
-    return expr.str();
+    else {
+        name = expr.str();
+    }
+    const size_t firstIndex = name.find('[');
+    if (firstIndex != std::string::npos) {
+        name.resize(firstIndex);
+    }
+    return name;
 }
 
 bool exprContainsValue(const Expr& expr, const std::string& value)
@@ -45,6 +53,15 @@ bool exprContainsValue(const Expr& expr, const std::string& value)
         }
     }
     return false;
+}
+
+bool isCurrentModuleEndpoint(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_NONE) {
+        return true;
+    }
+    return expr.type == Expr::EXPR_DEREF && expr.sub.size() == 1 &&
+        expr.sub[0].type == Expr::EXPR_NONE;
 }
 
 bool fieldCanNameWireOrPort(const Field& field, const std::string& name)
@@ -384,19 +401,60 @@ bool Method::printAssigns(std::ofstream& out)
                         IndexedSignalRef rightRef = indexedSignalRef(e.sub[4]);
                         const std::string& left = leftRef.name;
                         const std::string& right = rightRef.name;
-                        for (auto& wire : currModule->wires) {
-                            if (wire.name.find(left) == 0 && str_ending(wire.name, "_in")) {
-                                std::string peer = wire.name;
-                                str_replace(peer, left.c_str(), right.c_str());
-                                peer.replace(peer.length() - 3, 3, "_out");
-                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{wire.name + leftRef.indices, Expr::EXPR_VAR}, Expr{peer + rightRef.indices, Expr::EXPR_VAR}}});
+                        const bool leftIsCurrent = isCurrentModuleEndpoint(e.sub[1]);
+                        const bool rightIsCurrent = isCurrentModuleEndpoint(e.sub[2]);
+                        const std::string leftPrefix = left + "__";
+                        auto expandSignal = [&](const Field& signal) {
+                            if (signal.name.find(leftPrefix) != 0 ||
+                                (!str_ending(signal.name, "_in") && !str_ending(signal.name, "_out"))) {
+                                return;
                             }
-                            if (wire.name.find(left) == 0 && str_ending(wire.name, "_out")) {
-                                std::string peer = wire.name;
-                                str_replace(peer, left.c_str(), right.c_str());
-                                peer.replace(peer.length() - 4, 4, "_in");
-                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY, {Expr{peer + rightRef.indices, Expr::EXPR_VAR}, Expr{wire.name + leftRef.indices, Expr::EXPR_VAR}}});
+
+                            std::string peer = signal.name;
+                            peer.replace(0, left.length(), right);
+                            if (!leftIsCurrent && !rightIsCurrent) {
+                                peer = flippedInterfaceDirectionName(peer);
                             }
+                            if (!moduleHasExactSignal(*currModule, peer)) {
+                                return;
+                            }
+
+                            Expr leftSignal{signal.name + leftRef.indices, Expr::EXPR_VAR};
+                            Expr rightSignal{peer + rightRef.indices, Expr::EXPR_VAR};
+                            if (leftIsCurrent) {
+                                if (str_ending(signal.name, "_in")) {
+                                    tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                        {std::move(rightSignal), std::move(leftSignal)}});
+                                }
+                                else {
+                                    tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                        {std::move(leftSignal), std::move(rightSignal)}});
+                                }
+                            }
+                            else if (rightIsCurrent) {
+                                if (str_ending(signal.name, "_in")) {
+                                    tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                        {std::move(leftSignal), std::move(rightSignal)}});
+                                }
+                                else {
+                                    tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                        {std::move(rightSignal), std::move(leftSignal)}});
+                                }
+                            }
+                            else if (str_ending(signal.name, "_in")) {
+                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                    {std::move(leftSignal), std::move(rightSignal)}});
+                            }
+                            else {
+                                tmp.sub.push_back(Expr{"=", Expr::EXPR_BINARY,
+                                    {std::move(rightSignal), std::move(leftSignal)}});
+                            }
+                        };
+                        for (const auto& wire : currModule->wires) {
+                            expandSignal(wire);
+                        }
+                        for (const auto& port : currModule->ports) {
+                            expandSignal(port);
                         }
                         e = tmp;
                     }
