@@ -57,6 +57,26 @@ struct can_assign_from : std::false_type {};
 template<typename T, typename V>
 struct can_assign_from<T, V, std::void_t<decltype(std::declval<T&>() = std::declval<V>())>> : std::true_type {};
 
+// CppHDL headers retain C++17 compatibility, where the standard query is unavailable.
+// GCC and Clang expose the same constant-evaluation predicate as a builtin in that mode.
+// Conservatively select the constexpr path on compilers that provide neither facility.
+constexpr bool is_constant_evaluated_compat() noexcept
+{
+#if defined(__cpp_lib_is_constant_evaluated)
+    return std::is_constant_evaluated();
+#elif defined(__has_builtin)
+#if __has_builtin(__builtin_is_constant_evaluated)
+    return __builtin_is_constant_evaluated();
+#else
+    return true;
+#endif
+#elif defined(__GNUC__)
+    return __builtin_is_constant_evaluated();
+#else
+    return true;
+#endif
+}
+
 }
 
 template<size_t WIDTH>
@@ -91,8 +111,11 @@ struct logic : public bitops<logic<WIDTH>>
         }
     }
 
+    // A packed value such as cat can be a valid SystemVerilog constant expression.
+    // Mark the generic pack-aware constructor constexpr so that its constexpr pack()
+    // result can initialize logic without falling back to a runtime-only conversion.
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
-    logic(const T& other) : bytes{}
+    constexpr logic(const T& other) : bytes{}
     {
         if constexpr (detail::has_pack_method<T>::value) {
             *this = other.pack();
@@ -161,6 +184,8 @@ struct logic : public bitops<logic<WIDTH>>
 
     logic_bits<WIDTH> bits(size_t last, size_t first);
     constexpr logic<WIDTH> bits(size_t last, size_t first) const;
+    template<size_t LAST, size_t FIRST>
+    constexpr logic<LAST - FIRST + 1> slice() const;
     logic_bits<WIDTH> operator[](size_t bitnum);
     constexpr logic<1> operator[](size_t bitnum) const;
 
@@ -243,6 +268,48 @@ struct logic : public bitops<logic<WIDTH>>
     logic& operator^=(const logic<WIDTH1>& in)
     {
         return *this = *this ^ in;
+    }
+
+    // Package constants require logic bitwise expressions to remain constant-evaluable.
+    // Keep the byte-oriented bitops implementation for runtime performance, and use the
+    // declared-width bit loop only while the compiler evaluates a constant expression.
+    template<size_t WIDTH1>
+    constexpr logic operator&(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator&(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) && (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic operator|(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator|(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) || (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
+    }
+
+    template<size_t WIDTH1>
+    constexpr logic operator^(const logic<WIDTH1>& rhs) const
+    {
+        if (!detail::is_constant_evaluated_compat()) {
+            return bitops<logic<WIDTH>>::operator^(rhs);
+        }
+        logic result{};
+        for (size_t i = 0; i < WIDTH; ++i) {
+            result.set(i, get(i) != (i < WIDTH1 ? rhs.get(i) : 0));
+        }
+        return result;
     }
 
     // The inherited bitops complement was not constexpr for logic constants.
@@ -390,6 +457,32 @@ constexpr logic<WIDTH>& logic<WIDTH>::operator=(const logic_bits<WIDTH1>& other)
         bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
     }
     return *this;
+}
+
+template<size_t WIDTH>
+template<size_t LAST, size_t FIRST>
+constexpr logic<LAST - FIRST + 1> logic<WIDTH>::slice() const
+{
+    static_assert(FIRST <= LAST, "slice first bit must not exceed last bit");
+    static_assert(LAST < WIDTH, "slice exceeds source width");
+    constexpr size_t RESULT_WIDTH = LAST - FIRST + 1;
+    constexpr size_t SOURCE_BYTE = FIRST / 8;
+    constexpr size_t SHIFT = FIRST % 8;
+    logic<RESULT_WIDTH> result{};
+
+    for (size_t dst = 0; dst < logic<RESULT_WIDTH>::SIZE; ++dst) {
+        const size_t src = SOURCE_BYTE + dst;
+        uint16_t pair = src < SIZE ? bytes[src] : 0;
+        if constexpr (SHIFT != 0) {
+            if (src + 1 < SIZE)
+                pair |= static_cast<uint16_t>(bytes[src + 1]) << 8;
+        }
+        result.bytes[dst] = static_cast<uint8_t>(pair >> SHIFT);
+    }
+    if constexpr ((RESULT_WIDTH % 8) != 0)
+        result.bytes[logic<RESULT_WIDTH>::SIZE - 1] &=
+            static_cast<uint8_t>((1u << (RESULT_WIDTH % 8)) - 1u);
+    return result;
 }
 
 template<size_t WIDTH>

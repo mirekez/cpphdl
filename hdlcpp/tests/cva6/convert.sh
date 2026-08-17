@@ -9,11 +9,29 @@ TARGET="${TARGET:-cv32a6_imac_sv32}"
 RISCV="${RISCV:-/home/me/riscv}"
 JOBS="${JOBS:-1}"
 HDLCPP_JOBS="${HDLCPP_JOBS:-1}"
-HDLCPP="${HDLCPP:-/home/me/cpphdl/hdlcpp/build/hdlcpp}"
+# Large explicit-instantiation units make GCC retain several gigabytes of template state.
+# Group small specializations by generated definition size while leaving large modules alone.
+# This preserves the generated model and keeps the serial CVA6 build below the host memory limit.
+HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="${HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE:-24}"
+HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="${HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE:-200000}"
+DEFAULT_HDLCPP="/home/me/cpphdl/hdlcpp/build/hdlcpp"
+HDLCPP="${HDLCPP:-$DEFAULT_HDLCPP}"
+CPPHDL="${CPPHDL:-/home/me/cpphdl/build/cpphdl}"
 CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
+CPPHDL_CVA6_ONLY="${CPPHDL_CVA6_ONLY:-}"
+CPPHDL_CVA6_FINALIZE_ONLY="${CPPHDL_CVA6_FINALIZE_ONLY:-0}"
+CPPHDL_CVA6_RESUME_TRAITS="${CPPHDL_CVA6_RESUME_TRAITS:-0}"
+CPPHDL_CVA6_KEEP_METADATA="${CPPHDL_CVA6_KEEP_METADATA:-0}"
+CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN="${CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN:-0}"
+CPPHDL_CVA6_SKIP_OPTIMIZE="${CPPHDL_CVA6_SKIP_OPTIMIZE:-0}"
 
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" && "${CPPHDL_OUT:-}" == "" ]]; then
-    OUT="$SCRIPT_DIR/cpphdl_native"
+    OUT="$SCRIPT_DIR/cpphdl_testharness"
+fi
+
+RUNNER="run_cpphdl_matrix.cpp"
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+    RUNNER="run_cpphdl_testharness.cpp"
 fi
 
 if [[ ! -d "$SRC/core" ]]; then
@@ -24,17 +42,25 @@ if [[ ! -d "$SUPPORT/tools" ]]; then
     echo "missing conversion support directory: $SUPPORT" >&2
     exit 2
 fi
-if [[ ! -x "$HDLCPP" ]]; then
+hdlcpp_source_newer=0
+if [[ "$HDLCPP" == "$DEFAULT_HDLCPP" && -x "$HDLCPP" ]] &&
+   find /home/me/cpphdl/hdlcpp -maxdepth 1 -type f \
+       \( -name '*.cc' -o -name '*.h' \) -newer "$HDLCPP" -print -quit | grep -q .; then
+    hdlcpp_source_newer=1
+fi
+if [[ ! -x "$HDLCPP" || "$hdlcpp_source_newer" == "1" ]]; then
     make -C /home/me/cpphdl/hdlcpp/build -j"$JOBS" hdlcpp
 fi
 export HDLCPP
 
-rm -rf "$OUT"
-mkdir -p "$OUT"
-cp -a "$SUPPORT"/. "$OUT"/
-touch "$OUT/cva6_assign_suffix_code.tsv"
-python3 - "$OUT" <<'PY'
+if [[ -z "$CPPHDL_CVA6_ONLY" && "$CPPHDL_CVA6_FINALIZE_ONLY" != "1" && "$CPPHDL_CVA6_RESUME_TRAITS" != "1" ]]; then
+    rm -rf "$OUT"
+    mkdir -p "$OUT"
+    cp -a "$SUPPORT"/. "$OUT"/
+    touch "$OUT/cva6_assign_suffix_code.tsv"
+    python3 - "$OUT" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 out = Path(sys.argv[1]).resolve()
@@ -43,6 +69,26 @@ for path in out.glob("*.tsv"):
     text = text.replace("/home/me/cva6/cpphdl", str(out))
     path.write_text(text)
 PY
+elif [[ ! -d "$OUT/generated" ]]; then
+    echo "incremental conversion requires existing output: $OUT" >&2
+    exit 2
+else
+    # Incremental optimization must use the maintained runner, not a stale copy
+    # left in the output directory by an earlier full conversion.
+    cp "$SUPPORT/$RUNNER" "$OUT/$RUNNER"
+    cp "$SUPPORT/cva6_generate_param_values.tsv" "$OUT/cva6_generate_param_values.tsv"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        rm -f "$OUT/CpphdlOptimizedRoot.h" \
+            "$OUT/CpphdlCombOptimizedRoot.h" \
+            "$OUT/cpphdl_comb_optimized_externs.h"
+        cp "$SUPPORT"/run_cpphdl_testharness_model* "$OUT"/
+        cp "$SUPPORT"/run_cpphdl_testharness_optimized* "$OUT"/
+        cp "$SUPPORT/run_cpphdl_testharness_optimize_seed.cpp" "$OUT"/
+        cp "$SUPPORT/prepare_optimize_combs.py" "$OUT"/
+        cp "$SUPPORT/run_optimize_combs.sh" "$OUT"/
+        cp "$SUPPORT/run_optimize_combs_l1.sh" "$OUT"/
+    fi
+fi
 
 HELPER_DIR="$SRC/.cpphdl_convert/tools"
 mkdir -p "$HELPER_DIR"
@@ -85,7 +131,7 @@ ln -s "$OUT" "$SRC_CPPHDL"
     export HDLCPP_ENUM_WIDTH_PREFIXES="$OUT/cva6_enum_width_prefixes.tsv"
     export HDLCPP_SKIP_USING_NAMESPACE_IMPORTS="${HDLCPP_SKIP_USING_NAMESPACE_IMPORTS:-cvxif_instr_pkg}"
     export HDLCPP_VAR_TYPE_PATCHES="$OUT/cva6_var_type_patches.tsv"
-    export HDLCPP_INLINE_COMB_MODULES="${HDLCPP_INLINE_COMB_MODULES:-rr_arb_tree}"
+    export HDLCPP_INLINE_COMB_MODULES="${HDLCPP_INLINE_COMB_MODULES:-}"
     export HDLCPP_INLINE_COMB_BODIES="$OUT/cva6_inline_comb_bodies.tsv"
     export HDLCPP_WORK_PRECOMB_CALLS="$OUT/cva6_work_precomb_calls.tsv"
     export HDLCPP_BEFORE_STROBE_LINE_CALLS="$OUT/cva6_strobe_hooks.tsv"
@@ -93,7 +139,7 @@ ln -s "$OUT" "$SRC_CPPHDL"
     export HDLCPP_ASSIGN_PREFIX_CODE="$OUT/cva6_assign_prefix_code.tsv"
     export HDLCPP_ASSIGN_SUFFIX_CODE="$OUT/cva6_assign_suffix_code.tsv"
     export HDLCPP_ASSIGN_LINE_PATCHES="$OUT/cva6_assign_line_patches.tsv"
-    export HDLCPP_SKIP_ASSIGN_MODULES="${HDLCPP_SKIP_ASSIGN_MODULES:-rr_arb_tree}"
+    export HDLCPP_SKIP_ASSIGN_MODULES="${HDLCPP_SKIP_ASSIGN_MODULES:-}"
     export HDLCPP_SKIP_ASSIGN_LINE_PREFIXES="${HDLCPP_SKIP_ASSIGN_LINE_PREFIXES:-issue_stage|issue_instr_o_out,issue_stage|issue_instr_hs_o_out}"
     export HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES="${HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES:-instr_tracer}"
     export HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES="${HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES:-acc_dispatcher,fpu_wrap}"
@@ -115,15 +161,195 @@ ln -s "$OUT" "$SRC_CPPHDL"
     HDLCPP="$HDLCPP" \
     HDLCPP_JOBS="$HDLCPP_JOBS" \
     CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" \
+    CPPHDL_CVA6_ONLY="$CPPHDL_CVA6_ONLY" \
+    CPPHDL_CVA6_FINALIZE_ONLY="$CPPHDL_CVA6_FINALIZE_ONLY" \
+    CPPHDL_CVA6_RESUME_TRAITS="$CPPHDL_CVA6_RESUME_TRAITS" \
+    CPPHDL_CVA6_KEEP_METADATA="$CPPHDL_CVA6_KEEP_METADATA" \
+    CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN="$CPPHDL_CVA6_SKIP_STALE_TRAIT_SCAN" \
     python3 "$HELPER_DIR/convert_cva6.py"
 )
 
-if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" != "1" ]]; then
-    (
-        cd "$OUT"
-        "$HDLCPP" --optimize run_cpphdl_matrix.cpp
-    )
+rename_cpp_global_collisions() {
+    python3 - "$OUT" <<'PY'
+from pathlib import Path
+import re
+import sys
 
+out = Path(sys.argv[1])
+for path in out.rglob("*"):
+    if path.suffix not in {".h", ".hh", ".hpp", ".cc", ".cpp"} or not path.is_file():
+        continue
+    text = path.read_text()
+    updated = re.sub(r"\bsync\b", "cpphdl_sv_sync", text)
+    updated = updated.replace("cpphdl_sv_sync.h\"", "sync.h\"")
+    if updated != text:
+        path.write_text(updated)
+PY
+}
+
+rename_cpp_global_collisions
+
+# Trait convergence and generated-header debugging do not need concrete template
+# specialization or comb collection. Keep this CVA6-only control in the fixture so
+# the generic hdlcpp converter remains free of test-design workflow policy.
+if [[ "$CPPHDL_CVA6_SKIP_OPTIMIZE" == "1" ]]; then
+    echo "skipped CppHDL specialization and comb optimization"
+    exit 0
+fi
+
+(
+    cd "$OUT"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        cp "$RUNNER" "$RUNNER.runtime"
+        cp "run_cpphdl_testharness_optimize_seed.cpp" "$RUNNER"
+        trap 'if [[ -f "$RUNNER.runtime" ]]; then mv "$RUNNER.runtime" "$RUNNER"; fi' EXIT
+    fi
+    HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="$HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE" \
+    HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="$HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE" \
+        "$HDLCPP" --optimize "$RUNNER"
+    if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+        mv "$RUNNER.runtime" "$RUNNER"
+        trap - EXIT
+        cp "$RUNNER" cpphdl_optimized_main.cpp
+        if [[ ! -x "$CPPHDL" ]]; then
+            echo "missing cpphdl executable: $CPPHDL" >&2
+            exit 2
+        fi
+        python3 prepare_optimize_combs.py . \
+            --collection-chunk-size "${CPPHDL_COMB_COLLECTION_CHUNK_SIZE:-64}" \
+            --collection-max-definition-bytes "${CPPHDL_COMB_COLLECTION_MAX_DEFINITION_BYTES:-4000000}" \
+            --collection-isolate-definition-bytes "${CPPHDL_COMB_COLLECTION_ISOLATE_DEFINITION_BYTES:-1000000000}"
+        python3 - <<'PY'
+from pathlib import Path
+
+for pattern in ("CpphdlOptimizedRoot_optimized_combs*", "cpphdl_opt_t0_optimized_combs*"):
+    for path in Path(".").glob(pattern):
+        if path.is_file():
+            path.unlink()
+PY
+        CPPHDL="$CPPHDL" CPPHDL_COMB_OPTIMIZER_MODE="${CPPHDL_COMB_OPTIMIZER_MODE:-full}" \
+            bash run_optimize_combs.sh .
+        python3 - <<'PY'
+from pathlib import Path
+import re
+
+# Keep the runner, narrow model bridges, and global comb schedule in separate
+# translation units. A Make wildcard follows every chunk emitted by either comb
+# optimizer mode without baking the chunk count from one conversion into it.
+makefile = Path("Makefile.optimize")
+text = makefile.read_text()
+model_sources = [
+    "run_cpphdl_testharness_model_create.cpp",
+    "run_cpphdl_testharness_optimized_bind.cpp",
+    "run_cpphdl_testharness_optimized_cycle.cpp",
+    "run_cpphdl_testharness_model_memory.cpp",
+    "run_cpphdl_testharness_model_observe.cpp",
+]
+comb_sources = sorted(Path(".").glob("cpphdl_opt_t0_optimized_combs*.cpp"))
+if not comb_sources:
+    raise SystemExit("cpphdl comb optimizer generated no implementation sources")
+model_objects = [f"build/opt/{Path(source).stem}.o" for source in model_sources]
+objects = " \\\n        ".join(model_objects)
+text = text.replace(
+    "OBJS := ",
+    "COMB_SOURCES := $(sort $(wildcard cpphdl_opt_t0_optimized_combs*.cpp))\n"
+    "COMB_OBJS := $(patsubst %.cpp,build/opt/%.o,$(COMB_SOURCES))\n"
+    f"MODEL_OBJS := {objects} $(COMB_OBJS)\nOBJS := $(MODEL_OBJS) ",
+    1,
+)
+
+# A complete flattened schedule replaces recursive _work/_strobe throughout
+# the known hierarchy. Remove their dead explicit instantiations only after the
+# generated sources confirm that no opaque subtree still calls either method.
+legacy_cycle_call = re.compile(r"(?:\.|->)_(?:work|strobe)\s*\(")
+fully_flattened = not any(
+    legacy_cycle_call.search(source.read_text()) for source in comb_sources
+)
+cycle_instantiation = re.compile(
+    r"^template void cpphdl_opt_t\d+::_(?:work\(bool\)|strobe\(\));\s*$",
+    re.MULTILINE,
+)
+elaboration_objects = []
+for source in Path(".").glob("cpphdl_optimized_inst_*.cpp"):
+    source_text = source.read_text()
+    root_cycle = ("template void cpphdl_opt_t0::_work(bool);" in source_text or
+                  "template void cpphdl_opt_t0::_strobe();" in source_text)
+    if not fully_flattened and not root_cycle:
+        continue
+    filtered = cycle_instantiation.sub("", source_text)
+    if filtered == source_text:
+        continue
+    object_path = f"build/opt/{source.stem}.o"
+    if "cpphdl_optimized_root_work" in filtered or "cpphdl_optimized_root_strobe" in filtered:
+        text = text.replace(f" \\\n        {object_path}", "")
+        text = text.replace(f" {object_path}", "")
+        continue
+    source.write_text(filtered)
+    if not re.search(r"^template ", filtered, re.MULTILINE):
+        text = text.replace(f" \\\n        {object_path}", "")
+        text = text.replace(f" {object_path}", "")
+    else:
+        elaboration_objects.append(object_path)
+
+# Different aliases can resolve to the same concrete C++ specialization. Keep
+# one primary model type per translation unit while packing up to twenty small
+# elaboration models together to amortize the generated-header parse.
+alias_types = {}
+for match in re.finditer(
+        r"^using (cpphdl_opt_t\d+) = ([^;]+);$",
+        Path("cpphdl_optimized_externs.h").read_text(), re.MULTILINE):
+    alias_types[match.group(1)] = match.group(2).split("<", 1)[0].strip()
+declarations = {}
+for object_path in elaboration_objects:
+    source = Path(Path(object_path).stem + ".cpp")
+    for line in source.read_text().splitlines():
+        match = re.match(r"^template (?:void )?(cpphdl_opt_t\d+)::", line)
+        if match:
+            declarations.setdefault(match.group(1), []).append(line)
+
+packed_units = []
+for alias, lines in declarations.items():
+    primary_type = alias_types[alias]
+    for unit in packed_units:
+        if len(unit["aliases"]) < 20 and primary_type not in unit["types"]:
+            break
+    else:
+        unit = {"aliases": [], "types": set()}
+        packed_units.append(unit)
+    unit["aliases"].append((alias, lines))
+    unit["types"].add(primary_type)
+
+for object_path in elaboration_objects:
+    text = text.replace(f" \\\n        {object_path}", "")
+    text = text.replace(f" {object_path}", "")
+repacked_objects = []
+for unit, target_object in zip(packed_units, elaboration_objects):
+    target_source = Path(Path(target_object).stem + ".cpp")
+    body = "\n\n".join("\n".join(lines) for _, lines in unit["aliases"])
+    target_source.write_text('#include "cpphdl_optimized_externs.h"\n\n' + body + "\n")
+    marker = "\nDEPS := $(OBJS:.o=.d)"
+    text = text.replace(marker, f" \\\n        {target_object}" + marker, 1)
+    repacked_objects.append(target_object)
+elaboration_objects = repacked_objects
+
+# After lifecycle removal, mixed small-model units contain only constructors
+# and _assign bindings. Give them the same low-cost flags as isolated
+# elaboration units while preserving -O2 for every generated cycle partition.
+rules = "".join(
+    f"{obj}: override CXXFLAGS += $(CONSTRUCTOR_CXXFLAGS)\n"
+    for obj in elaboration_objects
+    if f"{obj}: override CXXFLAGS" not in text
+)
+if rules:
+    text = text.replace("build/opt/%.o: %.cpp", rules + "\nbuild/opt/%.o: %.cpp", 1)
+makefile.write_text(text)
+PY
+    fi
+)
+
+rename_cpp_global_collisions
+
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" != "1" ]]; then
     python3 - "$OUT/generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h" <<'PY'
 from pathlib import Path
 import sys

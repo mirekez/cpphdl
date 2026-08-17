@@ -14,7 +14,7 @@ Win64 requires the following to be done:
 
 And for Linux:
  - git clone ssh://github.com/mirekez/cpphdl; cd cpphdl
- - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; ./Miniconda3-latest-Linux-x86_64.sh
+ - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; chmod a+x Miniconda3-latest-Linux-x86_64.sh; ./Miniconda3-latest-Linux-x86_64.sh
  - source ~/miniconda3/bin/activate; conda init
 
 Then for both Win&Lin:
@@ -25,9 +25,10 @@ Then for both Win&Lin:
 
 ```
 cd build
+make
 ctest
-# be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run CPU tests
-# you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe/tests/ if you want to run CPU tests
+# be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run Tribe CPU tests
+# you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe_cpu/tests/ if you want to run CPU tests
 ```
 
 ## author
@@ -38,8 +39,6 @@ This work is not subsidized or paid.
 
 ## development plan
 
-- asynchronous resets
-- CDC approach
 - comb. hierarchy checks
 - regs/luts usage estimation
 - timing estimation
@@ -49,4 +48,3 @@ This work is not subsidized or paid.
 - this chapter is to collect verilog gotchas which are inexplicable for non verilog-guru and fixed for C++-native
 
 1. In verilog {a*b} has size of a or b, not size(a)+size(b). In C++ this works correctly. Cpphdl will explicitly widen both operands to act as C++ and try to save result
-

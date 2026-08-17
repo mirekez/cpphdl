@@ -1,0 +1,1 @@
+decoder|instruction_o.valid = instruction_o_out().ex.valid;	instruction_o.valid = instruction_o.ex.valid;

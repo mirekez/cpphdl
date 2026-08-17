@@ -147,7 +147,7 @@ Use this skill when developing and debugging new CppHDL module, device, example 
 ## Hard Rules
 
 - If you see bug in cpphdl functionality and fixing it - develop a new test in root tests/ folder or add section to correspondent old test
-- If you see bug in Tribe cpu code or modules or devices and fixing it - develop a new test in tribe/tests folder or add section to correspondent old test
+- If you see bug in Tribe cpu code or modules or devices and fixing it - develop a new test in tribe_cpu/tests folder or add section to correspondent old test
 
 # CppHDL Template Specialization Conversion
 

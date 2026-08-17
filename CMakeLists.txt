@@ -338,6 +338,7 @@ foreach(flag -std=c++26 -std=c++2c -std=c++23)
 endforeach()
 
 target_link_libraries(cpphdl PRIVATE
+  z
   clangTooling
   clangBasic
   clangASTMatchers
@@ -390,7 +391,7 @@ if(CPPHDL_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 if(CPPHDL_BUILD_TRIBE)
-  add_subdirectory(tribe)
+  add_subdirectory(tribe_cpu)
 endif()
 if(CPPHDL_BUILD_HDLCPP)
   add_subdirectory(hdlcpp)

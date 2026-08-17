@@ -59,6 +59,11 @@ struct cpphdl_exception
 // Some Verilator installations still expect user code to provide this
 // timestamp hook even when tests do not use delays or SystemC. Keep the shared
 // harness linkable with both conda and system Verilator headers.
+// The generated model is the only caller, so force the inline definition into
+// the testbench object even when that translation unit does not call it.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((used))
+#endif
 inline double sc_time_stamp()
 {
     return 0.0;
@@ -494,19 +499,28 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 
 #endif
 
-#if defined(__has_include)
+#if !defined(CPPHDL_DISABLE_STD_FORMAT) && defined(__has_include)
 #if __has_include(<format>)
 #include <format>
 #endif
-#if __has_include(<print>)
-#include <print>
-#define CPPHDL_HAS_STD_PRINT 1
-#endif
-#else
+#elif !defined(CPPHDL_DISABLE_STD_FORMAT)
 #include <format>
-#include <print>
-#define CPPHDL_HAS_STD_PRINT 1
 #endif
 
-#define CPPHDL_WANT_STD_PRINT_STUBS 1
-#include "cpphdl_std_format.h"
+#if defined(CPPHDL_DISABLE_STD_PRINT)
+#ifdef CPPHDL_HAS_STD_PRINT
+#undef CPPHDL_HAS_STD_PRINT
+#endif
+#elif defined(__has_include)
+#if __has_include(<print>)
+#include <print>
+#if defined(__cpp_lib_print) && (__cpp_lib_print >= 202207L)
+#define CPPHDL_HAS_STD_PRINT 1
+#endif
+#endif
+#else
+#include <print>
+#if defined(__cpp_lib_print) && (__cpp_lib_print >= 202207L)
+#define CPPHDL_HAS_STD_PRINT 1
+#endif
+#endif

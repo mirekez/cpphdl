@@ -4,14 +4,24 @@
 
 #define __PACKED __attribute__((packed))
 
-#if defined(__has_include)
+#if !defined(CPPHDL_DISABLE_STD_FORMAT) && defined(__has_include)
 #if __has_include(<format>)
 #include <format>
 #endif
-#else
+#elif !defined(CPPHDL_DISABLE_STD_FORMAT)
 #include <format>
 #endif
-#include "cpphdl_std_format.h"
+
+#ifndef CPPHDL_STD_FORMAT_COMPAT_H
+#define CPPHDL_STD_FORMAT_COMPAT_H
+#if defined(CPPHDL_DISABLE_STD_FORMAT)
+#ifdef CPPHDL_HAS_STD_FORMAT
+#undef CPPHDL_HAS_STD_FORMAT
+#endif
+#elif defined(__cpp_lib_format) && (__cpp_lib_format >= 201907L)
+#define CPPHDL_HAS_STD_FORMAT 1
+#endif
+#endif // CPPHDL_STD_FORMAT_COMPAT_H
 
 //     u& operator= (const u& v) = default;
 

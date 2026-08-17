@@ -1,0 +1,175 @@
+# mode	needle	replacement
+replace	ariane_pkg::SMODE_STATUS_WRITE_MASK.bits(	logic<64>(ariane_pkg::SMODE_STATUS_WRITE_MASK).bits(
+replace	ariane_pkg::HSTATUS_WRITE_MASK.bits(	logic<64>(ariane_pkg::HSTATUS_WRITE_MASK).bits(
+replace	SMODE_STATUS_READ_MASK.bits(	logic<64>(SMODE_STATUS_READ_MASK).bits(
+replace	logic<1>(MaxNumWords).bits(	logic<32>(MaxNumWords).bits(
+replace	logic<1>(AxiRdBlenIcache).bits(	logic<32>(AxiRdBlenIcache).bits(
+replace	logic<1>(AxiRdBlenDcache).bits(	logic<32>(AxiRdBlenDcache).bits(
+replace	(uint64_t)(trap_vector_base_o)	(uint64_t)(trap_vector_base_o_comb)
+replace	logic<1>(new_index[0])	logic<1>(((uint64_t)(new_index) & 1ull))
+replace	instr_comb_func().rtype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().itype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().stype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().atype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().r4type.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().rtype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().itype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().utype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().atype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().r4type.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rftype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rvftype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rtype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().itype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().stype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().atype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().r4type.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().rtype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().itype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().stype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().atype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().r4type.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rftype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rvftype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rtype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().stype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().atype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().r4type.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rftype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rvftype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rtype.funct7	logic<7>(instruction_i_in().bits(31,25))
+replace	instr_comb_func().itype.imm	logic<12>(instruction_i_in().bits(31,20))
+replace	instr_comb_func().stype.imm	logic<7>(instruction_i_in().bits(31,25))
+replace	instr_comb_func().stype.imm0	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().utype.imm	logic<20>(instruction_i_in().bits(31,12))
+replace	instr_comb_func().atype.funct5	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().atype.aq	logic<1>(instruction_i_in()[26])
+replace	instr_comb_func().atype.rl	logic<1>(instruction_i_in()[25])
+replace	instr_comb_func().r4type.rs3	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().r4type.funct2	logic<2>(instruction_i_in().bits(26,25))
+replace	instr_comb_func().rftype.funct5	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().rftype.fmt	logic<2>(instruction_i_in().bits(26,25))
+replace	instr_comb_func().rftype.rm	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().rvftype.funct2	logic<2>(instruction_i_in().bits(31,30))
+replace	instr_comb_func().rvftype.vecfltop	logic<5>(instruction_i_in().bits(29,25))
+replace	instr_comb_func().rvftype.repl	logic<1>(instruction_i_in()[14])
+replace	instr_comb_func().rvftype.vfmt	logic<2>(instruction_i_in().bits(13,12))
+replace	instr_comb_func().instr.bits(31,27)	instruction_i_in().bits(31,27)
+replace	instr_comb_func().instr.bits(31,26)	instruction_i_in().bits(31,26)
+replace	instr_comb_func().instr.bits(31,25)	instruction_i_in().bits(31,25)
+replace	instr_comb_func().instr.bits(31,24)	instruction_i_in().bits(31,24)
+replace	instr_comb_func().instr.bits(31,20)	instruction_i_in().bits(31,20)
+replace	instr_comb_func().instr.bits(24,20)	instruction_i_in().bits(24,20)
+replace	instr_comb_func().instr[25]	instruction_i_in()[25]
+replace	instr_comb_func().rftype.rs2.bits(24,23)	instruction_i_in().bits(24,23)
+replace	instr_comb_func().rftype.rs2.bits(24,22)	instruction_i_in().bits(24,22)
+replace	instr_comb_func().rftype.rs2.bits(22,20)	instruction_i_in().bits(22,20)
+replace	instr_comb_func().rvftype.rs2.bits(21,20)	instruction_i_in().bits(21,20)
+replace	logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))	logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))
+replace	logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))	logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))
+replace	(((((uint64_t)(instr_comb_func()	((((uint64_t)(instr_comb_func()
+replace	static_cast<riscv::priv_lvl_t>({	riscv::priv_lvl_t({
+replace	cva6_cfg_t'(0)	{}
+replace	config_pkg::cva6_cfg_t'(0)	{}
+replace	CVA6Cfg.logic<PLEN>	logic<CVA6Cfg.PLEN>
+replace	CVA6Cfg.logic<GPLEN>	logic<CVA6Cfg.GPLEN>
+replace	CVA6Cfg.logic<XLEN>	logic<CVA6Cfg.XLEN>
+replace	CVA6Cfg.logic<VpnLen>	logic<CVA6Cfg.VpnLen>
+replace	CVA6Cfg.logic<AxiAddrWidth>	logic<CVA6Cfg.AxiAddrWidth>
+replace	array<logic<CVA6Cfg.XLEN>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;	array<logic<CVA6Cfg.FLen>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;
+replace	logic<1>((uint64_t)(icache_areq_i_in().fetch_paddr))	logic<CVA6Cfg.PLEN>((uint64_t)(icache_areq_i_in().fetch_paddr))
+replace	logic<1>((uint64_t)(areq_i_in().fetch_paddr))	logic<CVA6Cfg.PLEN>((uint64_t)(areq_i_in().fetch_paddr))
+replace	flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>	rs2_forwarding_comb_func();\n        flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>
+replace	logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(CVA6Cfg.INSTR_PER_FETCH - 1))])	logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(((uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16))+1,(uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16)))))
+replace	logic<REQ_ID_BITS>	logic<(CVA6Cfg.NrLoadBufEntries > 1 ? clog2(CVA6Cfg.NrLoadBufEntries) : 1)>
+replace	CVA6Cfg.PMPAddrRstVal[i].bits(	logic<64>(CVA6Cfg.PMPAddrRstVal[i]).bits(
+replace	fpnew_pkg::static_cast<fp_format_e>(	sv_cast<fpnew_pkg::fp_format_e>(
+replace	fpnew_pkg::static_cast<int_format_e>(	sv_cast<fpnew_pkg::int_format_e>(
+replace	fpnew_pkg::static_cast<opgroup_e>(	sv_cast<fpnew_pkg::opgroup_e>(
+replace	fpnew_pkg::static_cast<operation_e>(	sv_cast<fpnew_pkg::operation_e>(
+replace	fpnew_pkg::static_cast<roundmode_e>(	sv_cast<fpnew_pkg::roundmode_e>(
+replace	fpnew_pkg::fp_format_e'(	sv_cast<fpnew_pkg::fp_format_e>(
+replace	fpnew_pkg::int_format_e'(	sv_cast<fpnew_pkg::int_format_e>(
+replace	fpnew_pkg::opgroup_e'(	sv_cast<fpnew_pkg::opgroup_e>(
+replace	fpnew_pkg::operation_e'(	sv_cast<fpnew_pkg::operation_e>(
+replace	fpnew_pkg::roundmode_e'(	sv_cast<fpnew_pkg::roundmode_e>(
+replace	logic<1>((uint64_t)(lsu_ctrl_comb_func().vaddr))	logic<CVA6Cfg.VLEN>((uint64_t)(lsu_ctrl_comb_func().vaddr))
+replace	((((uint64_t)(fu_data_i_in().operation)) & ((1ull << 1) - 1ull)))	((uint64_t)(fu_data_i_in().operation))
+replace	pc_q._next = pc_d;	reset_address_d_comb_func();\n            pc_q._next = pc_d;
+replace	reset_address_q._next = reset_address_d_comb_func();	reset_address_q._next = reset_address_d_comb;
+replace	issue_pointer_q._next = issue_pointer_n_comb_func();	mem_n_comb_func();\n            issue_pointer_q._next = issue_pointer_n_comb_func();
+replace	fu_data_bypass_comb.operand_a = result_o_comb_func()[(unsigned)((uint64_t)(0))];	fu_data_bypass_comb.operand_a = alu_i.result_o_out();
+replace	fu_data_bypass_comb.operand_b = result_o_comb_func()[(unsigned)((uint64_t)(0))];	fu_data_bypass_comb.operand_b = alu_i.result_o_out();
+replace	logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])	logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))
+replace	!logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])	!logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))
+replace	if (icache_first_q) {	if (icache_first_q && axi_rd_last_comb_func()) {
+replace	if (dcache_first_q) {	if (dcache_first_q && axi_rd_last_comb_func()) {
+replace	(((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[i].fu))
+replace	(((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[0].fu))
+replace	(((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[1].fu))
+replace	((((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[i].fu))
+replace	((((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[0].fu))
+replace	((((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[1].fu))
+replace	(((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull))	((uint64_t)(lsu_ctrl_comb_func().fu))
+replace	((((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull)))	((uint64_t)(lsu_ctrl_comb_func().fu))
+whole-contains	lsu_req_i_comb = cat{logic<1>((uint64_t)(lsu_valid_i_in()))	lsu_req_i_comb = 0;\n        lsu_req_i_comb.valid = lsu_valid_i_in();\n        lsu_req_i_comb.vaddr = vaddr_i_comb_func();\n        lsu_req_i_comb.tinst = tinst_i_in();\n        lsu_req_i_comb.hs_ld_st_inst = hs_ld_st_inst_comb_func();\n        lsu_req_i_comb.hlvx_inst = hlvx_inst_comb_func();\n        lsu_req_i_comb.overflow = overflow_comb_func();\n        lsu_req_i_comb.g_overflow = g_overflow_comb_func();\n        lsu_req_i_comb.data = fu_data_i_in().operand_b;\n        lsu_req_i_comb.be = be_i_comb_func();\n        lsu_req_i_comb.fu = fu_data_i_in().fu;\n        lsu_req_i_comb.operation = fu_data_i_in().operation;\n        lsu_req_i_comb.trans_id = fu_data_i_in().trans_id;\n        lsu_req_i_comb.is_speculative_load = speculative_load_i_in();\n        lsu_req_i_comb.is_speculative_load_miss = logic<1>(0b0);
+replace	atop.bits(	logic<6>(atop).bits(
+replace	axi_pkg::ATOP_ATOMICSWAP.bits(	logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(
+replace	== logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4)	== logic<2>(logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4))
+replace	$high(div_shift_comb_func())	clog2((uint64_t)(WIDTH) + ((uint64_t)(1) & ((1ull << 32) - 1ull)))
+replace	$high(op_a_i_in())	((uint64_t)(WIDTH) - 1)
+whole-contains	bin_comb[(unsigned)(uint64_t)((uint64_t)((uint64_t)(i)))] = logic<1>((((uint64_t)((logic<	            { logic<(uint64_t)(((uint64_t)(ONEHOT_WIDTH) & ((1ull << 32) - 1ull)))> tmp_mask{};\n            for (unsigned __cpphdl_j = 0; ((uint64_t)(__cpphdl_j) < ((uint64_t)(ONEHOT_WIDTH) & ((1ull << 32) - 1ull))); ++__cpphdl_j) {\n                tmp_mask[(unsigned)(uint64_t)(__cpphdl_j)] = logic<1>((((uint64_t)(__cpphdl_j) >> (unsigned)(uint64_t)(i)) & 1ull) != 0);\n            }\n            bin_comb[(unsigned)(uint64_t)(i)] = logic<1>((((uint64_t)(tmp_mask & onehot_in())) & (((uint64_t)((uint64_t)(ONEHOT_WIDTH)) >= 64) ? ~0ull : ((1ull << (uint64_t)((uint64_t)(ONEHOT_WIDTH))) - 1ull))) != 0);\n            }
+whole-contains	exists_match_comb[(unsigned)(uint64_t)((uint64_t)((uint64_t)(i)))] = (cpphdl::reduce_and(([&]() { mask_t exists_match_bits = {}; if (linked_data_q	            exists_match_comb[(unsigned)(uint64_t)(i)] = cpphdl::reduce_and(([&]() { mask_t exists_match_bits = {}; auto __cpphdl_data_bits = cpphdl::pack_value<type_width<data_t>()>(linked_data_q[(unsigned)(uint64_t)(i)].data); auto __cpphdl_mask_bits = cpphdl::pack_value<type_width<data_t>()>(exists_mask_i_in()); auto __cpphdl_exists_bits = cpphdl::pack_value<type_width<data_t>()>(exists_data_i_in()); for (unsigned k = 0; ((uint64_t)(k) < (uint64_t)(type_width<data_t>())); ++k) { if (linked_data_q[(unsigned)(uint64_t)(i)].free) { exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(0b0); } else if (!logic<1>((((uint64_t)(__cpphdl_mask_bits)) >> (unsigned)(uint64_t)(k)) & 1ull)) { exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(0b1); } else { bool __cpphdl_eq = (((uint64_t)(__cpphdl_data_bits) >> (unsigned)(uint64_t)(k)) & 1ull) == (((uint64_t)(__cpphdl_exists_bits) >> (unsigned)(uint64_t)(k)) & 1ull); exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(__cpphdl_eq); } } return exists_match_bits; }()));
+replace	$high(op_b_i_in())	((uint64_t)(WIDTH) - 1)
+replace	logic<REQ_ID_BITS>	logic<(ReqFifoDepth > 1 ? clog2(ReqFifoDepth) : 1)>
+replace	HS_DELEG_INTERRUPTS.bits(	logic<64>(HS_DELEG_INTERRUPTS).bits(
+replace	VS_DELEG_INTERRUPTS.bits(	logic<64>(VS_DELEG_INTERRUPTS).bits(
+whole-contains	icache_rd_shift_d = cat{	if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } icache_rd_shift_d[(CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }
+whole-contains	icache_rd_shift_user_d = cat{	if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_user_d[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } icache_rd_shift_user_d[(CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }
+whole-contains	dcache_rd_shift_d = cat{	if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } dcache_rd_shift_d[(CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }
+whole-contains	dcache_rd_shift_user_d_comb = cat{	if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_user_d_comb[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } dcache_rd_shift_user_d_comb[(CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }
+replace	fetch_entry_valid_o = _ASSIGN( !((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf)) );	if constexpr (CVA6Cfg.SuperscalarEn) { fetch_entry_valid_o[(unsigned)(uint64_t)((uint64_t)(NID))] = logic<1>(!((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf))); }
+replace	using acc_mmu_req_t = bool;	struct acc_mmu_req_t { logic<1> acc_mmu_req; logic<1> acc_mmu_is_store; exception_t acc_mmu_misaligned_ex; logic<CVA6Cfg.VLEN> acc_mmu_vaddr; template<size_t W> acc_mmu_req_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_req_t& operator=(T v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = logic<sizeof(acc_mmu_req_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_req_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_req_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_req_t)*8>&)*this).to_ullong(); } };
+replace	using acc_mmu_resp_t = bool;	struct acc_mmu_resp_t { logic<1> acc_mmu_valid; logic<CVA6Cfg.PLEN> acc_mmu_paddr; exception_t acc_mmu_exception; logic<1> acc_mmu_dtlb_hit; logic<CVA6Cfg.PPNW> acc_mmu_dtlb_ppn; template<size_t W> acc_mmu_resp_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_resp_t& operator=(T v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = logic<sizeof(acc_mmu_resp_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_resp_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_resp_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_resp_t)*8>&)*this).to_ullong(); } };
+whole-contains	static constexpr uint64_t IsaCode =	static constexpr uint64_t IsaCode = ((uint64_t)(CVA6Cfg.RVA) << 0) | ((uint64_t)(CVA6Cfg.RVB) << 1) | ((uint64_t)(CVA6Cfg.RVC) << 2) | ((uint64_t)(CVA6Cfg.RVD) << 3) | ((uint64_t)(CVA6Cfg.RVF) << 5) | ((uint64_t)(CVA6Cfg.RVH) << 7) | ((uint64_t)(1) << 8) | ((uint64_t)(1) << 12) | ((uint64_t)(0) << 13) | ((uint64_t)(CVA6Cfg.RVS) << 18) | ((uint64_t)(CVA6Cfg.RVU) << 20) | ((uint64_t)(CVA6Cfg.RVV) << 21) | ((uint64_t)(CVA6Cfg.NSX) << 23) | ((uint64_t)(CVA6Cfg.XLEN == 64 ? 2 : 1) << (CVA6Cfg.XLEN - 2));
+whole-contains	inline constexpr uint64_t napot_match(uint64_t base, uint64_t value)	template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base, const VALUE_T& value)
+whole-contains	inline constexpr uint64_t match_scontext(uint64_t scontext, uint64_t sselect, uint64_t sbytemask, uint64_t svalue, uint64_t flag)	template<typename SCONTEXT_T, typename SSELECT_T, typename SBYTEMASK_T, typename SVALUE_T, typename FLAG_T> inline uint64_t match_scontext(const SCONTEXT_T& scontext, const SSELECT_T& sselect, const SBYTEMASK_T& sbytemask, const SVALUE_T& svalue, const FLAG_T& flag)
+replace	static constexpr uint64_t HS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t VS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t HS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t VS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);
+replace	{cl_offset_q, 0b0}	((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))
+replace	{cl_offset_q, logic<3>(0b0)}	((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))
+replace	icache_areq_o_out().fetch_exception.cause	icache_areq_o.fetch_exception.cause
+replace	i_axi_shim.rd_req_i_in = _ASSIGN(axi_rd_req);	i_axi_shim.rd_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_req));
+replace	i_axi_shim.rd_addr_i_in = _ASSIGN(axi_rd_addr);	i_axi_shim.rd_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_addr));
+replace	i_axi_shim.rd_blen_i_in = _ASSIGN(axi_rd_blen);	i_axi_shim.rd_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_blen));
+replace	i_axi_shim.rd_size_i_in = _ASSIGN(axi_rd_size);	i_axi_shim.rd_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_size));
+replace	i_axi_shim.rd_id_i_in = _ASSIGN(axi_rd_id_in);	i_axi_shim.rd_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_id_in));
+replace	i_axi_shim.rd_rdy_i_in = _ASSIGN(axi_rd_rdy);	i_axi_shim.rd_rdy_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_rdy));
+replace	i_axi_shim.rd_lock_i_in = _ASSIGN(axi_rd_lock);	i_axi_shim.rd_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_lock));
+replace	i_axi_shim.wr_req_i_in = _ASSIGN(axi_wr_req);	i_axi_shim.wr_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_req));
+replace	i_axi_shim.wr_addr_i_in = _ASSIGN(axi_wr_addr);	i_axi_shim.wr_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_addr));
+replace	i_axi_shim.wr_data_i_in = _ASSIGN(axi_wr_data);	i_axi_shim.wr_data_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_data));
+replace	i_axi_shim.wr_user_i_in = _ASSIGN(axi_wr_user);	i_axi_shim.wr_user_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_user));
+replace	i_axi_shim.wr_be_i_in = _ASSIGN(axi_wr_be);	i_axi_shim.wr_be_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_be));
+replace	i_axi_shim.wr_size_i_in = _ASSIGN(axi_wr_size);	i_axi_shim.wr_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_size));
+replace	i_axi_shim.wr_id_i_in = _ASSIGN(axi_wr_id_in);	i_axi_shim.wr_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_id_in));
+replace	i_axi_shim.wr_atop_i_in = _ASSIGN(axi_wr_atop_comb_func());	i_axi_shim.wr_atop_i_in = _ASSIGN_COMB(axi_wr_atop_comb_func());
+replace	i_axi_shim.wr_blen_i_in = _ASSIGN(axi_wr_blen);	i_axi_shim.wr_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_blen));
+replace	i_axi_shim.wr_lock_i_in = _ASSIGN(axi_wr_lock);	i_axi_shim.wr_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_lock));
+replace	req_amo_op_type_comb = AMO_ADD;	req_amo_op_type_comb = l15_pkg::AMO_ADD;
+replace	req_amo_op_type_comb = AMO_AND;	req_amo_op_type_comb = l15_pkg::AMO_AND;
+replace	req_amo_op_type_comb = AMO_OR;	req_amo_op_type_comb = l15_pkg::AMO_OR;
+replace	req_amo_op_type_comb = AMO_XOR;	req_amo_op_type_comb = l15_pkg::AMO_XOR;
+replace	req_amo_op_type_comb = AMO_MAX;	req_amo_op_type_comb = l15_pkg::AMO_MAX;
+replace	req_amo_op_type_comb = AMO_MIN;	req_amo_op_type_comb = l15_pkg::AMO_MIN;
+replace	req_amo_op_type_comb = AMO_MAXU;	req_amo_op_type_comb = l15_pkg::AMO_MAXU;
+replace	req_amo_op_type_comb = AMO_MINU;	req_amo_op_type_comb = l15_pkg::AMO_MINU;
+replace	req_amo_op_type_comb = AMO_SWAP;	req_amo_op_type_comb = l15_pkg::AMO_SWAP;
+replace	req_amo_op_type_comb = AMO_LR;	req_amo_op_type_comb = l15_pkg::AMO_LR;
+replace	req_amo_op_type_comb = AMO_SC;	req_amo_op_type_comb = l15_pkg::AMO_SC;
+replace	req_amo_op_type_comb = AMO_NONE;	req_amo_op_type_comb = l15_pkg::AMO_NONE;
+replace	cat{logic<4>(0x0), dm::DataCount}	cat{logic<4>(0x0), logic<4>(dm::DataCount)}
+replace	cat{logic<4>(0x0), dm::ProgBufSize}	cat{logic<4>(0x0), logic<4>(dm::ProgBufSize)}
+replace	clk_gated_o = _ASSIGN_REG( clk_gated );	(void)clk_gated;

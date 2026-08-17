@@ -1,0 +1,13 @@
+/build/
+/cpphdl/
+/cpphdl_testharness/
+/cva6/
+/*.status
+/*.pid
+/*.traces
+/*.log
+/trace_*.dasm
+/cpphdl_short.status
+/support/cpphdl/cva6_auto_*
+/support/cpphdl/cva6_merged_*
+/support/cpphdl/tools/__pycache__/

@@ -2,11 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl}"
+CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+    OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl_testharness}"
+    RUNNER="run_cpphdl_testharness_opt"
+    MAX_CYCLES="${MAX_CYCLES:-500000}"
+else
+    OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl}"
+    RUNNER="run_cpphdl_matrix_opt"
+    MAX_CYCLES="${MAX_CYCLES:-20000}"
+fi
 SRC="${MATRIX_SRC:-$SCRIPT_DIR/matrix_multiply.cpp}"
 ELF="${ELF:-$SCRIPT_DIR/matrix_multiply.riscv}"
 TOHOST="${TOHOST:-0x80001000}"
-MAX_CYCLES="${MAX_CYCLES:-20000}"
 RISCV="${RISCV:-/home/me/riscv}"
 TARGET_ROOT="${CVA6_SRC:-$SCRIPT_DIR/cva6}"
 ISA="${ISA:-rv32imac_zicsr_zifencei_zbkb_zbkx_zkne_zknd_zknh}"
@@ -34,25 +42,47 @@ build_elf() {
         -lgcc -march="$ISA" -mabi="$MABI" -o "$ELF"
 }
 
-if [[ ! -f "$ELF" || "$SRC" -nt "$ELF" || "$SCRIPT_DIR/matrix_runtime.c" -nt "$ELF" || "$SCRIPT_DIR/run.sh" -nt "$ELF" ]]; then
+if [[ ! -f "$ELF" || "$SRC" -nt "$ELF" || "$SCRIPT_DIR/matrix_runtime.c" -nt "$ELF" ]]; then
     build_elf
 fi
 
-if [[ ! -x "$OUT/run_cpphdl_matrix_opt" || "$OUT/cpphdl_optimized_main.cpp" -nt "$OUT/run_cpphdl_matrix_opt" ]]; then
-    "$SCRIPT_DIR/build.sh"
+if [[ ! -x "$OUT/$RUNNER" || "$OUT/cpphdl_optimized_main.cpp" -nt "$OUT/$RUNNER" ]]; then
+    CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" "$SCRIPT_DIR/build.sh"
 fi
 
-if ! output="$("$OUT/run_cpphdl_matrix_opt" "$ELF" "$TOHOST" "$MAX_CYCLES" 2>&1)"; then
-    printf '%s\n' "$output"
-    exit 1
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+    runner_args=("$ELF" "$MAX_CYCLES")
+else
+    runner_args=("$ELF" "$TOHOST" "$MAX_CYCLES")
 fi
 
-printf '%s\n' "$output"
-if ! grep -Fq "UART: PASSED" <<<"$output"; then
-    printf 'ERROR: missing UART success output: PASSED\n' >&2
-    exit 1
+run_log="$OUT/build/run.log"
+mkdir -p "$(dirname "$run_log")"
+set +e
+"$OUT/$RUNNER" "${runner_args[@]}" 2>&1 | tee "$run_log"
+runner_status=${PIPESTATUS[0]}
+set -e
+output="$(cat "$run_log")"
+if [[ "$runner_status" -ne 0 ]]; then
+    exit "$runner_status"
 fi
-if ! grep -Fq "cpphdl PASS" <<<"$output"; then
-    printf 'ERROR: missing cpphdl PASS line\n' >&2
-    exit 1
+
+if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
+    if ! grep -Eq '^PASSED\r?$' <<<"$output"; then
+        printf 'ERROR: missing UART success output: PASSED\n' >&2
+        exit 1
+    fi
+    if ! grep -Fq "*** SUCCESS ***" <<<"$output"; then
+        printf 'ERROR: missing exact-harness success line\n' >&2
+        exit 1
+    fi
+else
+    if ! grep -Fq "UART: PASSED" <<<"$output"; then
+        printf 'ERROR: missing UART success output: PASSED\n' >&2
+        exit 1
+    fi
+    if ! grep -Fq "cpphdl PASS" <<<"$output"; then
+        printf 'ERROR: missing cpphdl PASS line\n' >&2
+        exit 1
+    fi
 fi

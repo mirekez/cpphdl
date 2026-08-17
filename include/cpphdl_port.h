@@ -102,6 +102,7 @@ public:
     function_ref(F&& f, enable_if_pointer<F>* = nullptr)
     {
         func1_ = std::move(f);
+        func2_ = nullptr;
         assigned = true;
     }
 
@@ -109,11 +110,7 @@ public:
     function_ref(F&& f, enable_if_not_pointer<F>* = nullptr)
     {
         func2_ = std::move(f);
-        func1_ = [&]() -> A* {
-            a_tmp = func2_();
-            // Port value types may overload operator& for raw storage access.
-            return std::addressof(a_tmp);
-        };
+        func1_ = nullptr;
         assigned = true;
     }
 
@@ -121,6 +118,7 @@ public:
     function_ref& operator=(const F& f)  // we dont destroy source object
     {
         func1_ = f;
+        func2_ = nullptr;
         assigned = true;
         return *this;
     }
@@ -129,11 +127,7 @@ public:
     function_ref& operator=(const F& f)  // we dont destroy source object
     {
         func2_ = f;
-        func1_ = [&]() -> A* {
-            a_tmp = func2_();
-            // Port value types may overload operator& for raw storage access.
-            return std::addressof(a_tmp);
-        };
+        func1_ = nullptr;
         assigned = true;
         return *this;
     }
@@ -144,6 +138,15 @@ public:
         if (cache && prev_call__system_clock == _system_clock) {  // already calculated
             return *cache;
         }
+        return update_cache();
+    }
+
+private:
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    A& update_cache()
+    {
         if (!assigned) {
             fprintf(stderr, "Port is not assigned, check backtrace in gdb\n");
 #if defined(CPPHDL_USE_STACKTRACE)
@@ -155,11 +158,17 @@ public:
             *(volatile char*)0 = 0;
         }
         prev_call__system_clock = _system_clock;
-        cache = func1_();
+        if (func2_) {
+            a_tmp = func2_();
+            // Port value types may overload operator& for raw storage access.
+            cache = std::addressof(a_tmp);
+        }
+        else {
+            cache = func1_();
+        }
         return *cache;
     }
 
-private:
     func1_type func1_;
     func2_type func2_;
     A a_tmp;

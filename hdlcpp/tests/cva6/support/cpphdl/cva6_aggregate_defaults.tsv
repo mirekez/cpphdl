@@ -1,0 +1,5 @@
+config_pkg::cva6_user_cfg_t.NonIdempotentLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}
+config_pkg::cva6_user_cfg_t.ExecuteRegionAddrBase	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull, 0x10000ull, 0x0ull}
+config_pkg::cva6_user_cfg_t.ExecuteRegionLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull, 0x10000ull, 0x1000ull}
+config_pkg::cva6_user_cfg_t.CachedRegionAddrBase	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}
+config_pkg::cva6_user_cfg_t.CachedRegionLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull}

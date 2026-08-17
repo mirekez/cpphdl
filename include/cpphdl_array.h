@@ -62,6 +62,14 @@ struct has_to_string_method<TYPE,
     std::void_t<decltype(std::declval<const TYPE&>().to_string())>>
     : std::is_convertible<decltype(std::declval<const TYPE&>().to_string()), std::string> {};
 
+template<typename TYPE, typename = void>
+struct has_mutable_to_string_method : std::false_type {};
+
+template<typename TYPE>
+struct has_mutable_to_string_method<TYPE,
+    std::void_t<decltype(std::declval<TYPE&>().to_string())>>
+    : std::is_convertible<decltype(std::declval<TYPE&>().to_string()), std::string> {};
+
 template<size_t WIDTH, typename TYPE>
 logic<WIDTH> array_pack_value(const TYPE& value)
 {
@@ -282,6 +290,15 @@ struct value_type_for_ref<array_packed_ref<TYPE, TOTAL_BITS, ELEMENT_BITS>>
     using type = TYPE;
 };
 
+// Selecting through more than one packed dimension produces a logic_bits proxy.
+// Generated expressions need the assignable value represented by that proxy,
+// not its deliberately non-copyable addressable implementation type.
+template<size_t WIDTH>
+struct value_type_for_ref<logic_bits<WIDTH>>
+{
+    using type = logic<WIDTH>;
+};
+
 } // namespace detail
 
 template<typename T>
@@ -433,16 +450,37 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         return (array&)(*this = *this ^ other);
     }
 
+    std::string to_string()
+    {
+        if constexpr (detail::has_mutable_to_string_method<TYPE>::value) {
+            std::string str;
+            for (size_t i = COUNT; i-- > 0;) {
+                str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
+            }
+            return str;
+        }
+        else {
+            return static_cast<const array&>(*this).to_string();
+        }
+    }
+
     std::string to_string() const
     {
         std::string str;
-        for (int i=COUNT-1; i >= 0; --i) {
+        for (size_t i = COUNT; i-- > 0;) {
             if constexpr (detail::has_to_string_method<TYPE>::value) {
                 str += data[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             else {
-                char buf[10] = {};
-                std::snprintf(buf, sizeof(buf), "%.02lx", (uint64_t)data[i]);
+                char buf[2 * sizeof(uint64_t) + 1] = {};
+                std::snprintf(buf, sizeof(buf), "%02llx",
+                    (unsigned long long)(uint64_t)data[i]);
                 str += buf;
             }
         }
@@ -478,8 +516,11 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         *this = init;
     }
 
+    // Constant RTL configuration constructs packed arrays from complete bit vectors.
+    // The operation only delegates to constexpr logic assignment and has no runtime state.
+    // Keep construction and whole-value assignment available during constant evaluation.
     template<typename T>
-    array(const T& other)
+    constexpr array(const T& other)
     {
         data = other;
     }
@@ -502,7 +543,7 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
     }
 
     template<typename T>
-    array& operator=(const T& other)
+    constexpr array& operator=(const T& other)
     {
         data = other;
         return *this;
@@ -514,7 +555,10 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return detail::array_packed_ref<TYPE, SIZE_BITS, ELEMENT_BITS>(&data, i);
     }
 
-    TYPE operator[](std::size_t i) const
+    // Constant configuration code must read packed elements without creating proxies.
+    // This value overload only performs constexpr logic get/set operations.
+    // Mark it constexpr so read-only packed indexing works in non-type template arguments.
+    constexpr TYPE operator[](std::size_t i) const
     {
         cpphdl_assert(i < COUNT, "wrong array index");
         logic<ELEMENT_BITS> tmp = 0;
@@ -584,12 +628,34 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_ullong();
     }
 
+    std::string to_string()
+    {
+        if constexpr (detail::has_mutable_to_string_method<TYPE>::value) {
+            std::string str;
+            const auto& const_array = static_cast<const array&>(*this);
+            for (size_t i = COUNT; i-- > 0;) {
+                TYPE value = const_array[i];
+                str += value.to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
+            }
+            return str;
+        }
+        else {
+            return static_cast<const array&>(*this).to_string();
+        }
+    }
+
     std::string to_string() const
     {
         if constexpr (detail::has_to_string_method<TYPE>::value) {
             std::string str;
-            for (int i = COUNT - 1; i >= 0; --i) {
+            for (size_t i = COUNT; i-- > 0;) {
                 str += (*this)[i].to_string();
+                if (i != 0) {
+                    str += ' ';
+                }
             }
             return str;
         }
@@ -604,8 +670,18 @@ template<size_t COUNT, typename TYPE>
 array<COUNT, TYPE, true> array<COUNT, TYPE, false>::pack() const
 {
     array<COUNT, TYPE, true> packed;
-    for (size_t i = 0; i < COUNT; ++i) {
-        packed[i] = data[i];
+    constexpr size_t PACKED_ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
+    if constexpr (PACKED_ELEMENT_BITS == 8 && sizeof(TYPE) == 1 &&
+                  std::is_trivially_copyable_v<TYPE>) {
+        // Element zero is the low packed byte.  One-byte elements therefore
+        // already have the packed representation in memory; proxy assignment
+        // would repeatedly materialize the entire destination for every byte.
+        std::memcpy(packed.data.bytes, data, COUNT);
+    }
+    else {
+        for (size_t i = 0; i < COUNT; ++i) {
+            packed[i] = data[i];
+        }
     }
     return packed;
 }

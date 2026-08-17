@@ -1,8 +1,11 @@
 package FP16_5_pkg;
 
-parameter WIDTH = 16;
-parameter EXP_WIDTH = 5;
-parameter MANT_WIDTH = 16 - 5 - 1;
+parameter MANT_WIDTH = 64'hA;
+parameter WIDTH = 64'h10;
+parameter EXP_WIDTH = 64'h5;
+parameter EXP_MAX = 64'h1F;
+parameter MANT_MAX = 64'h3FF;
+parameter EXP_BIAS = 'hF;
 typedef struct packed {
     union packed {
         struct packed {

@@ -1,0 +1,1558 @@
+diff --git a/lib/Conversion/CMakeLists.txt b/lib/Conversion/CMakeLists.txt
+index 2d48742..249ff20 100644
+--- a/lib/Conversion/CMakeLists.txt
++++ b/lib/Conversion/CMakeLists.txt
+@@ -8,6 +8,7 @@ add_subdirectory(CombToSMT)
+ add_subdirectory(ConvertToArcs)
+ add_subdirectory(DCToHW)
+ add_subdirectory(ExportChiselInterface)
++add_subdirectory(ExportCppHDL)
+ add_subdirectory(ExportVerilog)
+ add_subdirectory(FIRRTLToHW)
+ add_subdirectory(FSMToSV)
+diff --git a/tools/firtool/CMakeLists.txt b/tools/firtool/CMakeLists.txt
+index 37fb822..1fe0f1e 100644
+--- a/tools/firtool/CMakeLists.txt
++++ b/tools/firtool/CMakeLists.txt
+@@ -10,6 +10,7 @@ add_circt_tool(firtool
+ )
+ llvm_update_compile_flags(firtool)
+ target_link_libraries(firtool PRIVATE
++  CIRCTExportCppHDL
+   CIRCTExportVerilog
+   CIRCTImportFIRFile
+   CIRCTFIRRTLTransforms
+diff --git a/tools/firtool/firtool.cpp b/tools/firtool/firtool.cpp
+index da247a9..c25e214 100644
+--- a/tools/firtool/firtool.cpp
++++ b/tools/firtool/firtool.cpp
+@@ -12,6 +12,7 @@
+ //===----------------------------------------------------------------------===//
+ 
+ #include "circt/Firtool/Firtool.h"
++#include "circt/Conversion/ExportCppHDL.h"
+ #include "circt/Conversion/ExportVerilog.h"
+ #include "circt/Conversion/Passes.h"
+ #include "circt/Dialect/Comb/CombDialect.h"
+@@ -171,6 +172,8 @@ enum OutputFormatKind {
+   OutputIRHW,
+   OutputIRSV,
+   OutputIRVerilog,
++  OutputCppHDL,
++  OutputSplitCppHDL,
+   OutputVerilog,
+   OutputBTOR2,
+   OutputSplitVerilog,
+@@ -188,6 +191,9 @@ static cl::opt<OutputFormatKind> outputFormat(
+         clEnumValN(OutputIRSV, "ir-sv", "Emit SV dialect"),
+         clEnumValN(OutputIRVerilog, "ir-verilog",
+                    "Emit IR after Verilog lowering"),
++        clEnumValN(OutputCppHDL, "cpphdl", "Emit C++HDL directly from FIRRTL"),
++        clEnumValN(OutputSplitCppHDL, "split-cpphdl",
++                   "Emit one C++HDL header/implementation pair per module"),
+         clEnumValN(OutputVerilog, "verilog", "Emit Verilog"),
+         clEnumValN(OutputBTOR2, "btor2", "Emit BTOR2"),
+         clEnumValN(OutputSplitVerilog, "split-verilog",
+@@ -422,7 +428,8 @@ static LogicalResult processBuffer(
+       if (failed(firtool::populateHWToBTOR2(pm, firtoolOptions,
+                                             (*outputFile)->os())))
+         return failure();
+-    if (outputFormat != OutputIRHW)
++    if (outputFormat != OutputIRHW && outputFormat != OutputCppHDL &&
++        outputFormat != OutputSplitCppHDL)
+       if (failed(firtool::populateHWToSV(pm, firtoolOptions)))
+         return failure();
+     if (!svPassPlugin.empty())
+@@ -480,6 +487,13 @@ static LogicalResult processBuffer(
+   if (failed(pm.run(module.get())))
+     return failure();
+ 
++  if (outputFormat == OutputCppHDL)
++    if (failed(exportCppHDL(*module, (*outputFile)->os())))
++      return failure();
++  if (outputFormat == OutputSplitCppHDL)
++    if (failed(exportSplitCppHDL(*module, firtoolOptions.getOutputFilename())))
++      return failure();
++
+   if (outputFormat == OutputIRFir || outputFormat == OutputIRHW ||
+       outputFormat == OutputIRSV || outputFormat == OutputIRVerilog) {
+     auto outputTimer = ts.nest("Print .mlir output");
+@@ -625,7 +639,8 @@ static LogicalResult executeFirtool(MLIRContext &context,
+ 
+   // Create the output directory or output file depending on our mode.
+   std::optional<std::unique_ptr<llvm::ToolOutputFile>> outputFile;
+-  if (outputFormat != OutputSplitVerilog) {
++  if (outputFormat != OutputSplitVerilog &&
++      outputFormat != OutputSplitCppHDL) {
+     // Create an output file.
+     outputFile.emplace(
+         openOutputFile(firtoolOptions.getOutputFilename(), &errorMessage));
+diff --git a/include/circt/Conversion/ExportCppHDL.h b/include/circt/Conversion/ExportCppHDL.h
+new file mode 100644
+index 0000000..98789d9
+--- /dev/null
++++ b/include/circt/Conversion/ExportCppHDL.h
+@@ -0,0 +1,29 @@
++//===- ExportCppHDL.h - C++HDL exporter -------------------------*- C++ -*-===//
++
++#ifndef CIRCT_CONVERSION_EXPORTCPPHDL_H
++#define CIRCT_CONVERSION_EXPORTCPPHDL_H
++
++#include "mlir/Support/LogicalResult.h"
++
++namespace llvm {
++class raw_ostream;
++class StringRef;
++}
++
++namespace mlir {
++class ModuleOp;
++}
++
++namespace circt {
++
++/// Emit a C++HDL representation of the lowered HW/Comb/Seq circuit.
++mlir::LogicalResult exportCppHDL(mlir::ModuleOp module,
++                                llvm::raw_ostream &os);
++
++/// Emit one header and implementation file per module into `directory`.
++mlir::LogicalResult exportSplitCppHDL(mlir::ModuleOp module,
++                                     llvm::StringRef directory);
++
++} // namespace circt
++
++#endif // CIRCT_CONVERSION_EXPORTCPPHDL_H
+diff --git a/lib/Conversion/ExportCppHDL/CMakeLists.txt b/lib/Conversion/ExportCppHDL/CMakeLists.txt
+new file mode 100644
+index 0000000..374acef
+--- /dev/null
++++ b/lib/Conversion/ExportCppHDL/CMakeLists.txt
+@@ -0,0 +1,12 @@
++add_circt_translation_library(CIRCTExportCppHDL
++  ExportCppHDL.cpp
++
++  LINK_COMPONENTS
++  Core
++
++  LINK_LIBS PUBLIC
++  CIRCTComb
++  CIRCTHW
++  CIRCTSeq
++  MLIRIR
++)
+diff --git a/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp b/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
+new file mode 100644
+index 0000000..49d9d6b
+--- /dev/null
++++ b/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
+@@ -0,0 +1,1410 @@
++//===- ExportCppHDL.cpp - C++HDL emitter --------------------------------===//
++
++#include "circt/Conversion/ExportCppHDL.h"
++
++#include "circt/Dialect/HW/HWOps.h"
++#include "circt/Dialect/HW/HWTypes.h"
++#include "circt/Dialect/Seq/SeqTypes.h"
++#include "circt/Dialect/Seq/SeqOps.h"
++#include "llvm/ADT/DenseMap.h"
++#include "llvm/ADT/DenseSet.h"
++#include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallString.h"
++#include "llvm/ADT/StringExtras.h"
++#include "llvm/ADT/StringMap.h"
++#include "llvm/ADT/StringSet.h"
++#include "llvm/ADT/StringSwitch.h"
++#include "llvm/Support/FormatVariadic.h"
++#include "llvm/Support/FileSystem.h"
++#include "llvm/Support/Path.h"
++#include "llvm/Support/raw_ostream.h"
++#include "mlir/IR/BuiltinOps.h"
++#include "mlir/IR/Operation.h"
++
++#include <algorithm>
++
++using namespace mlir;
++using namespace circt;
++
++namespace {
++
++static void emitCppHDLSupport(raw_ostream &os) {
++  os << "// Generated directly from FIRRTL by firtool.\n"
++        "#pragma once\n#include <cpphdl.h>\n#include <type_traits>\n\n"
++        "namespace firtool_cpphdl {\n"
++        "template <size_t Width> constexpr cpphdl::logic<Width> constant(std::initializer_list<uint64_t> words) {\n"
++        "  cpphdl::logic<Width> result = 0; size_t word = 0;\n"
++        "  for (uint64_t value : words) { for (size_t bit = 0; bit < 64 && word * 64 + bit < Width; ++bit)\n"
++        "    result.set(word * 64 + bit, (value >> bit) & 1); ++word; } return result;\n"
++        "}\n"
++        "template <size_t ElementWidth, size_t Count, typename Index>\n"
++        "cpphdl::logic<ElementWidth> array_get(const cpphdl::logic<ElementWidth * Count>& value, const Index& index) {\n"
++        "  cpphdl::logic<ElementWidth> result = 0; size_t first = static_cast<uint64_t>(index) * ElementWidth;\n"
++        "  for (size_t bit = 0; bit < ElementWidth; ++bit) if (first + bit < ElementWidth * Count) result.set(bit, value.get(first + bit));\n"
++        "  return result;\n"
++        "}\n"
++        "template <size_t Width, std::enable_if_t<(Width % 8) == 0, int> = 0>\n"
++        "constexpr const cpphdl::logic<Width>& truncate(const cpphdl::logic<Width>& value) {\n"
++        "  return value;\n"
++        "}\n"
++        "template <size_t Width, std::enable_if_t<(Width % 8) == 0, int> = 0>\n"
++        "cpphdl::logic<Width> truncate(cpphdl::logic<Width>&& value) {\n"
++        "  return std::move(value);\n"
++        "}\n"
++        "template <size_t Width, typename Value> cpphdl::logic<Width> truncate(const Value& value) {\n"
++        "  cpphdl::logic<Width> result(value);\n"
++        "  for (size_t bit = Width; bit < cpphdl::logic<Width>::SIZE * 8; ++bit) result.set(bit, 0);\n"
++        "  return result;\n"
++        "}\n"
++        "template <size_t Width, typename Value, typename Shift>\n"
++        "cpphdl::logic<Width> shlLow(const Value& value, const Shift& amount) {\n"
++        "  auto narrowed = truncate<Width>(value);\n"
++        "  return truncate<Width>(narrowed << static_cast<size_t>(static_cast<uint64_t>(amount)));\n"
++        "}\n"
++        "template <size_t Width, typename Shift> cpphdl::logic<Width> ashr(const cpphdl::logic<Width>& value, const Shift& amount) {\n"
++        "  cpphdl::logic<Width> result = 0; size_t shift = static_cast<uint64_t>(amount); bool sign = value.get(Width - 1);\n"
++        "  for (size_t bit = 0; bit < Width; ++bit) result.set(bit, bit + shift < Width ? value.get(bit + shift) : sign);\n"
++        "  return result;\n"
++        "}\n} // namespace firtool_cpphdl\n";
++}
++
++static FailureOr<std::unique_ptr<llvm::raw_fd_ostream>>
++openGeneratedFile(StringRef directory, const Twine &filename) {
++  SmallString<256> path(directory);
++  llvm::sys::path::append(path, filename.str());
++  std::error_code error;
++  auto stream = std::make_unique<llvm::raw_fd_ostream>(path, error);
++  if (error) {
++    llvm::errs() << "cannot create C++HDL file '" << path
++                 << "': " << error.message() << "\n";
++    return failure();
++  }
++  return std::move(stream);
++}
++
++static std::string cppIdentifier(StringRef value) {
++  std::string result;
++  result.reserve(value.size() + 1);
++  if (value.empty() || llvm::isDigit(value.front()))
++    result.push_back('_');
++  for (char ch : value)
++    result.push_back(llvm::isAlnum(ch) || ch == '_' ? ch : '_');
++  if (StringSwitch<bool>(result)
++          .Cases("alignas", "alignof", "and", "and_eq", "asm", true)
++          .Cases("atomic_cancel", "atomic_commit", "atomic_noexcept", true)
++          .Cases("auto", "bitand", "bitor", "bool", "break", true)
++          .Cases("case", "catch", "char", "char8_t", "char16_t", true)
++          .Cases("char32_t", "class", "compl", "concept", "const", true)
++          .Cases("consteval", "constexpr", "constinit", "const_cast", true)
++          .Cases("continue", "co_await", "co_return", "co_yield", true)
++          .Cases("decltype", "default", "delete", "do", "double", true)
++          .Cases("dynamic_cast", "else", "enum", "explicit", "export", true)
++          .Cases("extern", "false", "float", "for", "friend", true)
++          .Cases("goto", "if", "inline", "int", "long", true)
++          .Cases("mutable", "namespace", "new", "noexcept", "not", true)
++          .Cases("not_eq", "nullptr", "operator", "or", "or_eq", true)
++          .Cases("private", "protected", "public", "reflexpr", true)
++          .Cases("register", "reinterpret_cast", "requires", "return", true)
++          .Cases("short", "signed", "sizeof", "static", "static_assert", true)
++          .Cases("static_cast", "struct", "switch", "synchronized", true)
++          .Cases("template", "this", "thread_local", "throw", "true", true)
++          .Cases("try", "typedef", "typeid", "typename", "union", true)
++          .Cases("unsigned", "using", "virtual", "void", "volatile", true)
++          .Cases("wchar_t", "while", "xor", "xor_eq", true)
++          .Default(false))
++    result = "cpphdl_" + result;
++  return result;
++}
++
++static std::string cppInstanceName(StringRef value) {
++  return "inst_" + cppIdentifier(value);
++}
++
++static FailureOr<unsigned> bitWidth(Type type) {
++  if (isa<seq::ClockType>(type))
++    return 1;
++  auto width = hw::getBitWidth(type);
++  if (width <= 0)
++    return failure();
++  return static_cast<unsigned>(width);
++}
++
++static FailureOr<std::string> cppType(Type type) {
++  auto width = bitWidth(type);
++  if (failed(width))
++    return failure();
++  return (llvm::Twine("cpphdl::logic<") + llvm::Twine(*width) + ">").str();
++}
++
++class ModuleEmitter {
++public:
++  ModuleEmitter(ModuleOp circuit, hw::HWModuleOp module, raw_ostream &os,
++                raw_ostream *implementation = nullptr)
++      : circuit(circuit), module(module), os(os), implementation(implementation),
++        split(implementation != nullptr),
++        moduleName(cppIdentifier(module.getModuleName())) {}
++
++  LogicalResult emit() {
++    os << "class " << moduleName << " : public cpphdl::Module {\npublic:\n";
++
++    auto ports = module.getPortList();
++    // `_work` is the first input clock's posedge body.  Other clock operands
++    // are separate domains and must remain explicitly qualified.
++    Value primaryClock;
++    for (auto port : ports) {
++      if (port.isOutput() || !isa<seq::ClockType>(port.type))
++        continue;
++      primaryClock = module.getBodyBlock()->getArgument(port.argNum);
++      break;
++    }
++    auto *terminator = module.getBodyBlock()->getTerminator();
++    if (!terminator || terminator->getName().getStringRef() != "hw.output")
++      return module.emitError("C++HDL expected an hw.output terminator");
++    initializeLiveness(*terminator);
++    for (auto port : ports) {
++      auto type = cppType(port.type);
++      if (failed(type))
++        return module.emitError("C++HDL cannot emit port '")
++               << port.getName() << "' with type " << port.type;
++      auto name = cppIdentifier(port.getName());
++      reserveName(name);
++      os << "  _PORT(" << *type << ") " << name << ";";
++      os << " // " << (port.isOutput() ? "output" : port.isInOut() ? "inout" : "input")
++         << "\n";
++      if (!port.isOutput())
++        names[module.getBodyBlock()->getArgument(port.argNum)] = name + "()";
++    }
++
++    unsigned nextMemoryRead = 0;
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() == "hw.output")
++        continue;
++      for (Value result : op.getResults()) {
++        if (op.getName().getStringRef() == "seq.firmem") {
++          auto requested = op.getAttrOfType<StringAttr>("name");
++          auto base = requested && !requested.getValue().empty()
++                          ? cppIdentifier(requested.getValue())
++                          : "memory";
++          names[result] = uniqueName(base);
++        } else if (op.getName().getStringRef() == "hw.instance") {
++          auto instance = cppInstanceName(
++              op.getAttrOfType<StringAttr>("instanceName").getValue());
++          reserveName(instance);
++          auto resultNames = op.getAttrOfType<ArrayAttr>("resultNames");
++          auto resultIndex = mlir::cast<OpResult>(result).getResultNumber();
++          auto port = resultNames && resultIndex < resultNames.size()
++                          ? cppIdentifier(cast<StringAttr>(resultNames[resultIndex])
++                                              .getValue())
++                          : "result_" + std::to_string(resultIndex);
++          names[result] = instance + (split ? "->" : ".") + port + "()";
++        } else if (isCompileTimeConstant(op)) {
++          if (!liveValues.contains(result))
++            continue;
++          auto key = compileTimeConstantKey(op);
++          if (failed(key)) {
++            names[result] = uniqueName("constant") + "()";
++            continue;
++          }
++          auto existing = constantNames.find(*key);
++          if (existing != constantNames.end()) {
++            names[result] = existing->getValue();
++            continue;
++          }
++          auto width = bitWidth(result.getType());
++          auto candidate = uniqueName(
++              succeeded(width) ? "constant_" + std::to_string(*width)
++                               : "constant");
++          constantNames.try_emplace(*key, candidate);
++          names[result] = candidate;
++        } else if (isSynchronousMemoryRead(op)) {
++          names[result] = uniqueName("memory_read_" +
++                                     std::to_string(nextMemoryRead++));
++        } else if (op.getName().getStringRef() == "seq.firreg") {
++          auto requested = op.getAttrOfType<StringAttr>("name");
++          auto base = requested && !requested.getValue().empty()
++                          ? cppIdentifier(requested.getValue())
++                          : "reg";
++          names[result] = uniqueName(base);
++        }
++      }
++    }
++
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (!isPureValueOperation(op))
++        continue;
++      Value result = op.getResult(0);
++      if (!liveValues.contains(result) || isCompileTimeConstant(op) ||
++          liveUseCount(result) < 3)
++        continue;
++      materializeValue(result);
++    }
++    planBoundedExpressions(*terminator, ports);
++
++    os << "\nprivate:\n";
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "seq.firmem")
++        continue;
++      auto memoryType = dyn_cast<seq::FirMemType>(op.getResult(0).getType());
++      if (!memoryType)
++        return op.emitError("malformed C++HDL FIRRTL memory type");
++      os << "  cpphdl::memory<cpphdl::u8, "
++         << (memoryType.getWidth() + 7) / 8 << ", " << memoryType.getDepth()
++         << "> " << names.lookup(op.getResult(0)) << ";\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "hw.instance")
++        continue;
++      auto target = op.getAttrOfType<FlatSymbolRefAttr>("moduleName");
++      auto instanceName = op.getAttrOfType<StringAttr>("instanceName");
++      if (!target || !instanceName)
++        return op.emitError("malformed hw.instance for C++HDL");
++      os << "  " << cppIdentifier(target.getValue())
++         << (split ? "* " : " ") << cppInstanceName(instanceName.getValue())
++         << ";\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "seq.firreg")
++        continue;
++      auto type = cppType(op.getResult(0).getType());
++      if (failed(type))
++        return op.emitError("C++HDL cannot emit register type ")
++               << op.getResult(0).getType();
++      os << "  cpphdl::reg<" << *type << "> " << names.lookup(op.getResult(0))
++         << "{};\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (!isSynchronousMemoryRead(op))
++        continue;
++      auto type = cppType(op.getResult(0).getType());
++      if (failed(type))
++        return op.emitError("C++HDL cannot emit synchronous memory read type ")
++               << op.getResult(0).getType();
++      os << "  cpphdl::reg<" << *type << "> " << names.lookup(op.getResult(0))
++         << "{};\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (!isPureValueOperation(op))
++        continue;
++      Value result = op.getResult(0);
++      if (!liveValues.contains(result) ||
++          (!isCompileTimeConstant(op) && !materializedValues.contains(result)))
++        continue;
++      if (failed(emitValueOperation(op)))
++        return failure();
++    }
++
++    raw_ostream &body = split ? *implementation : os;
++    if (split) {
++      os << "\npublic:\n  " << moduleName << "();\n  ~" << moduleName
++         << "();\n  void _assign();\n  void _work(bool);\n  void _strobe();\n};\n";
++      body << moduleName << "::" << moduleName << "() {\n";
++      for (Operation &op : module.getBodyBlock()->getOperations()) {
++        if (op.getName().getStringRef() != "hw.instance")
++          continue;
++        auto target = op.getAttrOfType<FlatSymbolRefAttr>("moduleName");
++        auto instanceName = op.getAttrOfType<StringAttr>("instanceName");
++        body << "  " << cppInstanceName(instanceName.getValue()) << " = new "
++             << cppIdentifier(target.getValue()) << "();\n";
++      }
++      body << "}\n\n" << moduleName << "::~" << moduleName << "() {\n";
++      for (Operation &op : module.getBodyBlock()->getOperations())
++        if (op.getName().getStringRef() == "hw.instance")
++          body << "  delete "
++               << cppInstanceName(
++                      op.getAttrOfType<StringAttr>("instanceName").getValue())
++               << ";\n";
++      body << "}\n\nvoid " << moduleName << "::_assign() {\n";
++    } else {
++      os << "\npublic:\n  void _assign() {\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "hw.instance")
++        continue;
++      auto instanceName = cppInstanceName(
++          op.getAttrOfType<StringAttr>("instanceName").getValue());
++      auto argumentNames = op.getAttrOfType<ArrayAttr>("argNames");
++      for (auto [index, operand] : llvm::enumerate(op.getOperands())) {
++        auto value = valueExpr(operand);
++        if (failed(value))
++          return failure();
++        auto port = argumentNames && index < argumentNames.size()
++                        ? cppIdentifier(cast<StringAttr>(argumentNames[index])
++                                            .getValue())
++                        : "argument_" + std::to_string(index);
++        body << "    " << instanceName << (split ? "->" : ".") << port
++             << " = _ASSIGN(" << *value << ");\n";
++      }
++      body << "    " << instanceName << (split ? "->" : ".")
++           << "_assign();\n";
++    }
++    unsigned outputIndex = 0;
++    for (auto port : ports) {
++      if (!port.isOutput())
++        continue;
++      auto value = valueExpr(terminator->getOperand(outputIndex++));
++      if (failed(value))
++        return failure();
++      body << "    " << cppIdentifier(port.getName()) << " = _ASSIGN(" << *value
++           << ");\n";
++    }
++    if (split)
++      body << "}\n\nvoid " << moduleName << "::_work(bool) {\n";
++    else
++      body << "  }\n\n  void _work(bool) {\n";
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "seq.firreg")
++        continue;
++      if (op.getNumOperands() < 2)
++        return op.emitError("malformed seq.firreg for C++HDL");
++      auto input = valueExpr(op.getOperand(0));
++      auto clock = valueExpr(op.getOperand(1));
++      if (failed(input) || failed(clock))
++        return failure();
++      auto regName = names.lookup(op.getResult(0));
++      bool primaryClocked = primaryClock && op.getOperand(1) == primaryClock;
++      if (!primaryClocked)
++        body << "    if (" << *clock << ") {\n";
++      auto indent = primaryClocked ? "    " : "      ";
++      if (op.getNumOperands() >= 4) {
++        auto reset = valueExpr(op.getOperand(2));
++        auto resetValue = valueExpr(op.getOperand(3));
++        if (failed(reset) || failed(resetValue))
++          return failure();
++        body << indent << "if (" << *reset << ") " << regName << "._next = "
++             << *resetValue << "; else " << regName << "._next = " << *input
++             << ";\n";
++      } else {
++        body << indent << regName << "._next = " << *input << ";\n";
++      }
++      if (!primaryClocked)
++        body << "    }\n";
++    }
++    for (Operation &operation : module.getBodyBlock()->getOperations()) {
++      Value memory, address, clock, enable, mode;
++      if (auto read = dyn_cast<seq::FirMemReadOp>(operation)) {
++        memory = read.getMemory();
++        address = read.getAddress();
++        clock = read.getClk();
++        enable = read.getEnable();
++      } else if (auto readWrite = dyn_cast<seq::FirMemReadWriteOp>(operation)) {
++        memory = readWrite.getMemory();
++        address = readWrite.getAddress();
++        clock = readWrite.getClk();
++        enable = readWrite.getEnable();
++        mode = readWrite.getMode();
++      } else {
++        continue;
++      }
++      if (!isSynchronousMemoryRead(operation))
++        continue;
++      auto memoryExpr = valueExpr(memory);
++      auto addressExpr = valueExpr(address);
++      auto clockExpr = valueExpr(clock);
++      if (failed(memoryExpr) || failed(addressExpr) || failed(clockExpr))
++        return failure();
++      SmallVector<std::string> conditions;
++      if (!primaryClock || clock != primaryClock)
++        conditions.push_back(*clockExpr);
++      if (enable) {
++        auto enableExpr = valueExpr(enable);
++        if (failed(enableExpr))
++          return failure();
++        conditions.push_back(*enableExpr);
++      }
++      if (mode) {
++        auto modeExpr = valueExpr(mode);
++        if (failed(modeExpr))
++          return failure();
++        conditions.push_back("!(" + *modeExpr + ")");
++      }
++      auto memoryType = cast<seq::FirMemType>(memory.getType());
++      auto readName = names.lookup(operation.getResult(0));
++      body << "    ";
++      if (!conditions.empty())
++        body << "if (" << llvm::join(conditions, " && ") << ") ";
++      body << readName << "._next = " << *memoryExpr
++           << "[static_cast<uint64_t>(" << *addressExpr << ") % "
++           << memoryType.getDepth() << "];\n";
++    }
++    for (Operation &operation : module.getBodyBlock()->getOperations()) {
++      auto write = dyn_cast<seq::FirMemWriteOp>(operation);
++      if (!write)
++        continue;
++      auto memory = valueExpr(write.getMemory());
++      auto address = valueExpr(write.getAddress());
++      auto data = valueExpr(write.getData());
++      auto clock = valueExpr(write.getClk());
++      if (failed(memory) || failed(address) || failed(data) || failed(clock))
++        return failure();
++      std::string enable = "true";
++      if (write.getEnable()) {
++        auto value = valueExpr(write.getEnable());
++        if (failed(value))
++          return failure();
++        enable = *value;
++      }
++      SmallVector<std::string> conditions;
++      if (!primaryClock || write.getClk() != primaryClock)
++        conditions.push_back(*clock);
++      if (enable != "true")
++        conditions.push_back(enable);
++      body << "    ";
++      if (!conditions.empty())
++        body << "if (" << llvm::join(conditions, " && ") << ") ";
++      body << "{\n";
++      if (!write.getMask()) {
++        auto depth = cast<seq::FirMemType>(write.getMemory().getType()).getDepth();
++        body << "      " << *memory << "[static_cast<uint64_t>(" << *address
++             << ") % " << depth << "] = " << *data << ";\n";
++      } else {
++        auto mask = valueExpr(write.getMask());
++        auto memoryType = cast<seq::FirMemType>(write.getMemory().getType());
++        auto maskWidth = memoryType.getMaskWidth().value_or(1);
++        auto chunkWidth = memoryType.getWidth() / maskWidth;
++        if (failed(mask))
++          return failure();
++        body << "      auto row = " << *memory << "[static_cast<uint64_t>("
++           << *address << ") % " << memoryType.getDepth() << "];\n"
++           << "      cpphdl::logic<" << memoryType.getWidth()
++           << "> merged = row;\n"
++           << "      for (size_t chunk = 0; chunk < " << maskWidth
++           << "; ++chunk) if (" << *mask << ".get(chunk))\n"
++           << "        merged.bits((chunk + 1) * " << chunkWidth
++           << " - 1, chunk * " << chunkWidth << ") = " << *data
++           << ".bits((chunk + 1) * " << chunkWidth << " - 1, chunk * "
++           << chunkWidth << ");\n"
++           << "      row = merged;\n";
++      }
++      body << "    }\n";
++    }
++    for (Operation &operation : module.getBodyBlock()->getOperations()) {
++      auto write = dyn_cast<seq::FirMemReadWriteOp>(operation);
++      if (!write)
++        continue;
++      auto memory = valueExpr(write.getMemory());
++      auto address = valueExpr(write.getAddress());
++      auto data = valueExpr(write.getWriteData());
++      auto clock = valueExpr(write.getClk());
++      auto mode = valueExpr(write.getMode());
++      if (failed(memory) || failed(address) || failed(data) || failed(clock) ||
++          failed(mode))
++        return failure();
++      std::string enable = "true";
++      if (write.getEnable()) {
++        auto value = valueExpr(write.getEnable());
++        if (failed(value))
++          return failure();
++        enable = *value;
++      }
++      SmallVector<std::string> conditions;
++      if (!primaryClock || write.getClk() != primaryClock)
++        conditions.push_back(*clock);
++      if (enable != "true")
++        conditions.push_back(enable);
++      conditions.push_back(*mode);
++      body << "    if (" << llvm::join(conditions, " && ") << ") {\n";
++      auto memoryType = cast<seq::FirMemType>(write.getMemory().getType());
++      if (!write.getMask()) {
++        body << "      " << *memory << "[static_cast<uint64_t>(" << *address
++             << ") % " << memoryType.getDepth() << "] = " << *data << ";\n";
++      } else {
++        auto mask = valueExpr(write.getMask());
++        auto maskWidth = memoryType.getMaskWidth().value_or(1);
++        auto chunkWidth = memoryType.getWidth() / maskWidth;
++        if (failed(mask))
++          return failure();
++        body << "      auto row = " << *memory << "[static_cast<uint64_t>("
++             << *address << ") % " << memoryType.getDepth() << "];\n"
++             << "      cpphdl::logic<" << memoryType.getWidth()
++             << "> merged = row;\n"
++             << "      for (size_t chunk = 0; chunk < " << maskWidth
++             << "; ++chunk) if (" << *mask << ".get(chunk))\n"
++             << "        merged.bits((chunk + 1) * " << chunkWidth
++             << " - 1, chunk * " << chunkWidth << ") = " << *data
++             << ".bits((chunk + 1) * " << chunkWidth << " - 1, chunk * "
++             << chunkWidth << ");\n"
++             << "      row = merged;\n";
++      }
++      body << "    }\n";
++    }
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "hw.instance")
++        continue;
++      auto instance = cppInstanceName(
++          op.getAttrOfType<StringAttr>("instanceName").getValue());
++      SmallVector<Value> clocks;
++      for (Value operand : op.getOperands())
++        if (isa<seq::ClockType>(operand.getType()))
++          clocks.push_back(operand);
++      body << "    ";
++      if (clocks.size() == 1) {
++        if (!primaryClock || clocks.front() != primaryClock) {
++          auto clock = valueExpr(clocks.front());
++          if (failed(clock))
++            return failure();
++          body << "if (" << *clock << ") ";
++        }
++      }
++      body << instance << (split ? "->_work(false);\n" : "._work(false);\n");
++    }
++    if (split)
++      body << "}\n\nvoid " << moduleName << "::_strobe() {\n";
++    else
++      body << "  }\n\n  void _strobe() {\n";
++    for (Operation &op : module.getBodyBlock()->getOperations())
++      if (op.getName().getStringRef() == "seq.firreg")
++        body << "    " << names.lookup(op.getResult(0)) << ".strobe();\n";
++    for (Operation &op : module.getBodyBlock()->getOperations())
++      if (isSynchronousMemoryRead(op))
++        body << "    " << names.lookup(op.getResult(0)) << ".strobe();\n";
++    for (Operation &op : module.getBodyBlock()->getOperations())
++      if (op.getName().getStringRef() == "seq.firmem")
++        body << "    " << names.lookup(op.getResult(0)) << ".apply();\n";
++    for (Operation &op : module.getBodyBlock()->getOperations())
++      if (op.getName().getStringRef() == "hw.instance")
++        body << "    "
++           << cppInstanceName(op.getAttrOfType<StringAttr>("instanceName").getValue())
++           << (split ? "->_strobe();\n" : "._strobe();\n");
++    body << (split ? "}\n\n" : "  }\n};\n\n");
++    return success();
++  }
++
++private:
++  static bool isCompileTimeConstant(Operation &op) {
++    auto name = op.getName().getStringRef();
++    return name == "hw.constant" || name == "hw.aggregate_constant";
++  }
++
++  bool isPureValueOperation(Operation &op) const {
++    if (op.getNumResults() != 1 || op.getNumRegions() != 0)
++      return false;
++    auto name = op.getName().getStringRef();
++    return name != "seq.firreg" && name != "seq.firmem" &&
++           name != "hw.instance" && !isSynchronousMemoryRead(op);
++  }
++
++  static bool isValueSink(Operation &op) {
++    auto name = op.getName().getStringRef();
++    return name == "hw.output" || name == "hw.instance" ||
++           name == "seq.firreg" || name.starts_with("seq.firmem.");
++  }
++
++  void markLive(Value value) {
++    if (!liveValues.insert(value).second)
++      return;
++    if (auto *definition = value.getDefiningOp())
++      for (Value operand : definition->getOperands())
++        markLive(operand);
++  }
++
++  void initializeLiveness(Operation &terminator) {
++    for (Value operand : terminator.getOperands())
++      markLive(operand);
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      if (!isValueSink(op) || op.getName().getStringRef() == "hw.output")
++        continue;
++      for (Value operand : op.getOperands())
++        markLive(operand);
++    }
++  }
++
++  unsigned liveUseCount(Value value) const {
++    unsigned count = 0;
++    for (OpOperand &use : value.getUses()) {
++      Operation *owner = use.getOwner();
++      if (isValueSink(*owner)) {
++        ++count;
++        continue;
++      }
++      if (llvm::any_of(owner->getResults(),
++                       [&](Value result) { return liveValues.contains(result); }))
++        ++count;
++    }
++    return count;
++  }
++
++  void reserveName(StringRef name) { usedNames.insert(name); }
++
++  std::string uniqueName(StringRef requested) {
++    std::string base = cppIdentifier(requested);
++    if (base.empty())
++      base = "value";
++    std::string candidate = base;
++    unsigned suffix = 1;
++    while (!usedNames.insert(candidate).second)
++      candidate = base + "_" + std::to_string(suffix++);
++    return candidate;
++  }
++
++  std::string generatedValueName(Operation &op) {
++    if (auto hint = op.getAttrOfType<StringAttr>("sv.namehint"))
++      if (!hint.getValue().empty())
++        return cppIdentifier(hint.getValue());
++    auto operationName = op.getName().getStringRef();
++    auto separator = operationName.find('.');
++    auto mnemonic = separator == StringRef::npos
++                        ? operationName
++                        : operationName.substr(separator + 1);
++    return cppIdentifier(mnemonic) + "_expr_" +
++           std::to_string(nextGeneratedValue++);
++  }
++
++  void materializeValue(Value value, StringRef preferred = {}) {
++    if (names.contains(value))
++      return;
++    auto *definition = value.getDefiningOp();
++    assert(definition && isPureValueOperation(*definition));
++    auto base = preferred.empty() ? generatedValueName(*definition)
++                                  : cppIdentifier(preferred);
++    names[value] = uniqueName(base) + "()";
++    materializedValues.insert(value);
++    expressionCosts.clear();
++    inlineExpressions.clear();
++  }
++
++  unsigned expressionCost(Value value) {
++    if (names.contains(value))
++      return 1;
++    auto cached = expressionCosts.find(value);
++    if (cached != expressionCosts.end())
++      return cached->second;
++    auto *definition = value.getDefiningOp();
++    if (!definition || !isPureValueOperation(*definition))
++      return 1;
++    constexpr unsigned costLimit = 1000;
++    unsigned cost = 1;
++    for (Value operand : definition->getOperands()) {
++      cost += expressionCost(operand);
++      if (cost >= costLimit) {
++        cost = costLimit;
++        break;
++      }
++    }
++    expressionCosts[value] = cost;
++    return cost;
++  }
++
++  void planExpression(Value value, StringRef preferred = {}) {
++    if (names.contains(value))
++      return;
++    auto *definition = value.getDefiningOp();
++    if (!definition || !isPureValueOperation(*definition) ||
++        !liveValues.contains(value))
++      return;
++    constexpr unsigned maxInlineOperations = 24;
++    if (expressionCost(value) <= maxInlineOperations)
++      return;
++    materializeValue(value, preferred);
++    for (Value operand : definition->getOperands())
++      planExpression(operand);
++  }
++
++  void planBoundedExpressions(Operation &terminator,
++                              ArrayRef<hw::PortInfo> ports) {
++    SmallVector<Value> initialMaterialized(materializedValues.begin(),
++                                           materializedValues.end());
++    for (Value value : initialMaterialized)
++      for (Value operand : value.getDefiningOp()->getOperands())
++        planExpression(operand);
++
++    unsigned outputIndex = 0;
++    for (auto port : ports) {
++      if (!port.isOutput())
++        continue;
++      auto preferred = cppIdentifier(port.getName()) + "_value";
++      planExpression(terminator.getOperand(outputIndex++), preferred);
++    }
++
++    for (Operation &op : module.getBodyBlock()->getOperations()) {
++      auto name = op.getName().getStringRef();
++      if (name == "seq.firreg") {
++        if (op.getNumOperands() > 0) {
++          auto preferred = names.lookup(op.getResult(0)) + "_next";
++          planExpression(op.getOperand(0), preferred);
++        }
++        for (Value operand : op.getOperands().drop_front())
++          planExpression(operand);
++        continue;
++      }
++      if (name == "hw.instance" || name.starts_with("seq.firmem."))
++        for (Value operand : op.getOperands())
++          planExpression(operand);
++    }
++  }
++
++  FailureOr<std::string> compileTimeConstantKey(Operation &op) {
++    Attribute value;
++    if (op.getName().getStringRef() == "hw.constant")
++      value = op.getAttr("value");
++    else if (op.getName().getStringRef() == "hw.aggregate_constant")
++      value = op.getAttr("fields");
++    if (!value)
++      return failure();
++    std::string key;
++    llvm::raw_string_ostream stream(key);
++    stream << op.getName().getStringRef() << ':' << op.getResult(0).getType()
++           << ':' << value;
++    return key;
++  }
++
++  FailureOr<std::string> valueExpr(Value value) {
++    auto it = names.find(value);
++    if (it != names.end())
++      return it->second;
++    auto cached = inlineExpressions.find(value);
++    if (cached != inlineExpressions.end())
++      return cached->second;
++    auto *definition = value.getDefiningOp();
++    if (!definition || !isPureValueOperation(*definition) ||
++        !liveValues.contains(value)) {
++      mlir::emitError(value.getLoc(), "C++HDL has no expression for value");
++      return failure();
++    }
++    auto expression = operationExpr(*definition);
++    if (failed(expression))
++      return failure();
++    inlineExpressions[value] = *expression;
++    return *expression;
++  }
++
++  LogicalResult emitValueOperation(Operation &op) {
++    if (op.getNumResults() != 1)
++      return op.emitError("C++HDL currently requires one result per operation");
++    auto type = cppType(op.getResult(0).getType());
++    if (failed(type))
++      return op.emitError("C++HDL cannot emit result type ")
++             << op.getResult(0).getType();
++    auto expr = operationExpr(op);
++    if (failed(expr))
++      return failure();
++    auto functionCall = names.lookup(op.getResult(0));
++    if (isCompileTimeConstant(op)) {
++      if (!emittedConstants.insert(functionCall).second)
++        return success();
++      os << "  inline static constexpr " << *type << " " << functionCall
++         << " = " << *expr << ";\n";
++      return success();
++    }
++    auto functionName = StringRef(functionCall).drop_back(2);
++    if (split) {
++      os << "  " << *type << " " << functionName << "_cache{};\n"
++         << "  long " << functionName << "_clock = -1;\n"
++         << "  " << *type << "& " << functionName << "();\n";
++      *implementation << *type << "& " << moduleName << "::" << functionName
++                      << "() {\n  if (" << functionName
++                      << "_clock == _system_clock) return " << functionName
++                      << "_cache;\n  " << functionName
++                      << "_clock = _system_clock;\n  return " << functionName
++                      << "_cache = " << *expr << ";\n}\n";
++    } else {
++      os << "  " << *type << " " << functionName << "() { return " << *expr
++         << "; }\n";
++    }
++    return success();
++  }
++
++  std::string integerConstantExpr(const llvm::APInt &integer,
++                                  unsigned resultWidth) {
++    SmallVector<std::string> words;
++    for (unsigned bit = 0; bit < integer.getBitWidth(); bit += 64)
++      words.push_back((Twine("0x") +
++                       llvm::utohexstr(integer.extractBitsAsZExtValue(
++                           std::min(64U, integer.getBitWidth() - bit), bit)) +
++                       "ULL")
++                          .str());
++    return (Twine("firtool_cpphdl::constant<") + Twine(resultWidth) +
++            ">({" + llvm::join(words, ", ") + "})")
++        .str();
++  }
++
++  FailureOr<std::string> scalarShiftAmountExpr(Value amount) {
++    auto expression = valueExpr(amount);
++    if (failed(expression))
++      return failure();
++    std::string result =
++        (Twine("static_cast<size_t>(") + *expression + ")").str();
++
++    Operation *amountOp = amount.getDefiningOp();
++    if (!amountOp || amountOp->getName().getStringRef() != "comb.concat")
++      return result;
++
++    // logic's scalar conversion observes at most the low 64 bits.  Build only
++    // that portion when a shift amount was zero-extended with comb.concat.
++    constexpr unsigned scalarBits = 64;
++    unsigned remaining = scalarBits;
++    SmallVector<std::string> lowWidths;
++    SmallVector<std::string> lowOperands;
++    for (Value field : llvm::reverse(amountOp->getOperands())) {
++      if (remaining == 0)
++        break;
++      auto fieldWidth = bitWidth(field.getType());
++      auto fieldExpr = valueExpr(field);
++      if (failed(fieldWidth) || failed(fieldExpr))
++        return failure();
++      unsigned selected = std::min(*fieldWidth, remaining);
++      std::string selectedExpr;
++      if (selected == *fieldWidth) {
++        selectedExpr =
++            (Twine("firtool_cpphdl::truncate<") + Twine(selected) + ">(" +
++             *fieldExpr + ")")
++                .str();
++      } else {
++        selectedExpr = (Twine("(") + *fieldExpr + ").slice<" +
++                        Twine(selected - 1) + ", 0>()")
++                           .str();
++      }
++      lowWidths.insert(lowWidths.begin(), std::to_string(selected));
++      lowOperands.insert(lowOperands.begin(), std::move(selectedExpr));
++      remaining -= selected;
++    }
++    if (lowOperands.size() == 1)
++      return (Twine("static_cast<size_t>(") + lowOperands.front() + ")")
++          .str();
++    if (!lowOperands.empty())
++      return (Twine("static_cast<size_t>(cpphdl::cat<") +
++              llvm::join(lowWidths, ", ") + ">(" +
++              llvm::join(lowOperands, ", ") + "))")
++          .str();
++    return result;
++  }
++
++  struct WidthExpression {
++    unsigned width;
++    std::string expression;
++  };
++
++  FailureOr<WidthExpression> lowValueExpr(Value value, unsigned maximumWidth) {
++    auto width = bitWidth(value.getType());
++    if (failed(width))
++      return failure();
++    unsigned selectedWidth = std::min(*width, maximumWidth);
++
++    if (Operation *definition = value.getDefiningOp()) {
++      if (definition->getName().getStringRef() == "hw.constant") {
++        auto attr = definition->getAttrOfType<IntegerAttr>("value");
++        if (!attr)
++          return definition->emitError("C++HDL hw.constant has no value");
++        llvm::APInt bits = attr.getValue().zextOrTrunc(*width);
++        bits = bits.trunc(selectedWidth);
++        unsigned activeWidth = std::max(1u, bits.getActiveBits());
++        bits = bits.trunc(activeWidth);
++        return WidthExpression{activeWidth,
++                               integerConstantExpr(bits, activeWidth)};
++      }
++
++      if (definition->getName().getStringRef() == "comb.concat") {
++        struct SelectedField {
++          Value value;
++          unsigned width;
++          std::string expression;
++          bool zero = false;
++        };
++        unsigned remaining = selectedWidth;
++        SmallVector<SelectedField> fields;
++        for (Value field : llvm::reverse(definition->getOperands())) {
++          if (remaining == 0)
++            break;
++          auto fieldWidth = bitWidth(field.getType());
++          auto fieldExpr = valueExpr(field);
++          if (failed(fieldWidth) || failed(fieldExpr))
++            return failure();
++          unsigned selected = std::min(*fieldWidth, remaining);
++          std::string selectedExpr = selected == *fieldWidth
++                                         ? (Twine("firtool_cpphdl::truncate<") +
++                                            Twine(selected) + ">(" +
++                                            *fieldExpr + ")")
++                                               .str()
++                                         : (Twine("(") + *fieldExpr +
++                                            ").slice<" + Twine(selected - 1) +
++                                            ", 0>()")
++                                               .str();
++          bool zero = false;
++          if (Operation *fieldOp = field.getDefiningOp();
++              fieldOp &&
++              fieldOp->getName().getStringRef() == "hw.constant") {
++            if (auto attr = fieldOp->getAttrOfType<IntegerAttr>("value")) {
++              llvm::APInt bits = attr.getValue().zextOrTrunc(*fieldWidth);
++              zero = bits.extractBits(selected, 0).isZero();
++            }
++          }
++          fields.insert(fields.begin(),
++                        SelectedField{field, selected,
++                                      std::move(selectedExpr), zero});
++          remaining -= selected;
++        }
++
++        // The first field is the most significant selected field.  Leading
++        // zero fields are implicit in shlLow's destination-width extension.
++        while (fields.size() > 1 && fields.front().zero)
++          fields.erase(fields.begin());
++        if (fields.size() == 1 && fields.front().zero)
++          return WidthExpression{1, "cpphdl::logic<1>(0)"};
++        if (fields.size() == 1)
++          return WidthExpression{fields.front().width,
++                                 fields.front().expression};
++
++        SmallVector<std::string> widths;
++        SmallVector<std::string> expressions;
++        unsigned resultWidth = 0;
++        for (auto &field : fields) {
++          widths.push_back(std::to_string(field.width));
++          expressions.push_back(std::move(field.expression));
++          resultWidth += field.width;
++        }
++        return WidthExpression{
++            resultWidth,
++            (Twine("cpphdl::cat<") + llvm::join(widths, ", ") + ">(" +
++             llvm::join(expressions, ", ") + ")")
++                .str()};
++      }
++    }
++
++    auto expression = valueExpr(value);
++    if (failed(expression))
++      return failure();
++    if (*width <= maximumWidth)
++      return WidthExpression{*width, *expression};
++    return WidthExpression{
++        maximumWidth,
++        (Twine("(") + *expression + ").slice<" +
++         Twine(maximumWidth - 1) + ", 0>()")
++            .str()};
++  }
++
++  FailureOr<llvm::APInt> aggregateConstantBits(Attribute attr, Type type,
++                                                Operation &op) {
++    type = hw::getCanonicalType(type);
++
++    if (auto integer = dyn_cast<IntegerAttr>(attr)) {
++      auto width = bitWidth(type);
++      if (failed(width))
++        return op.emitError("unsupported C++HDL aggregate scalar type ")
++               << type;
++      return integer.getValue().zextOrTrunc(*width);
++    }
++
++    if (auto enumValue = dyn_cast<StringAttr>(attr)) {
++      auto enumType = dyn_cast<hw::EnumType>(type);
++      if (!enumType)
++        return op.emitError("C++HDL string aggregate field is not an enum");
++      auto index = enumType.indexOf(enumValue.getValue());
++      if (!index)
++        return op.emitError("unknown C++HDL aggregate enum value ")
++               << enumValue;
++      return llvm::APInt(enumType.getBitWidth(), *index);
++    }
++
++    auto fields = dyn_cast<ArrayAttr>(attr);
++    if (!fields)
++      return op.emitError("unsupported C++HDL aggregate constant attribute ")
++             << attr;
++
++    SmallVector<Type> fieldTypes;
++    if (auto structType = dyn_cast<hw::StructType>(type)) {
++      for (auto field : structType.getElements())
++        fieldTypes.push_back(field.type);
++    } else if (auto arrayType = dyn_cast<hw::ArrayType>(type)) {
++      fieldTypes.assign(arrayType.getNumElements(), arrayType.getElementType());
++    } else if (auto arrayType = dyn_cast<hw::UnpackedArrayType>(type)) {
++      fieldTypes.assign(arrayType.getNumElements(), arrayType.getElementType());
++    } else {
++      return op.emitError("unsupported C++HDL aggregate constant type ")
++             << type;
++    }
++
++    if (fields.size() != fieldTypes.size())
++      return op.emitError("C++HDL aggregate field count does not match type");
++
++    std::optional<llvm::APInt> packed;
++    for (auto [field, fieldType] : llvm::zip(fields, fieldTypes)) {
++      auto bits = aggregateConstantBits(field, fieldType, op);
++      if (failed(bits))
++        return failure();
++      if (!packed) {
++        packed = *bits;
++        continue;
++      }
++      unsigned width = packed->getBitWidth() + bits->getBitWidth();
++      *packed = packed->zext(width).shl(bits->getBitWidth()) |
++                bits->zext(width);
++    }
++    if (!packed)
++      return op.emitError("zero-width C++HDL aggregate constants are unsupported");
++    return *packed;
++  }
++
++  FailureOr<std::string> operationExpr(Operation &op) {
++    auto name = op.getName().getStringRef();
++    SmallVector<std::string> operands;
++    for (Value operand : op.getOperands()) {
++      auto value = valueExpr(operand);
++      if (failed(value))
++        return failure();
++      operands.push_back(*value);
++    }
++    auto resultWidth = bitWidth(op.getResult(0).getType());
++    if (failed(resultWidth))
++      return failure();
++    auto castResult = [&](const Twine &expr) {
++      return (Twine("firtool_cpphdl::truncate<") + Twine(*resultWidth) + ">(" +
++              expr + ")")
++          .str();
++    };
++
++    if (name == "hw.constant") {
++      auto value = op.getAttrOfType<IntegerAttr>("value");
++      if (!value)
++        return op.emitError("C++HDL hw.constant has no value");
++      return integerConstantExpr(value.getValue(), *resultWidth);
++    }
++    if (name == "hw.aggregate_constant") {
++      auto fields = op.getAttrOfType<ArrayAttr>("fields");
++      if (!fields)
++        return op.emitError("C++HDL aggregate constant has no fields");
++      auto packed = aggregateConstantBits(fields, op.getResult(0).getType(), op);
++      if (failed(packed))
++        return failure();
++      if (packed->getBitWidth() != *resultWidth)
++        return op.emitError("C++HDL aggregate width does not match result type");
++      return integerConstantExpr(*packed, *resultWidth);
++    }
++    if (name == "comb.mux" && operands.size() == 3)
++      return castResult(Twine("(") + operands[0] + " ? " +
++                        castResult(operands[1]) + " : " +
++                        castResult(operands[2]) + ")");
++
++    if ((name == "comb.shl" || name == "comb.shru") && operands.size() == 2) {
++      StringRef shiftToken = name == "comb.shl" ? " << " : " >> ";
++      auto shiftAmount = scalarShiftAmountExpr(op.getOperand(1));
++      if (failed(shiftAmount))
++        return failure();
++      return castResult(Twine("(firtool_cpphdl::truncate<") +
++                        Twine(*resultWidth) + ">(" + operands[0] + ")" +
++                        shiftToken + *shiftAmount + ")");
++    }
++
++    StringRef token;
++    if (name == "comb.and") token = " & ";
++    else if (name == "comb.or") token = " | ";
++    else if (name == "comb.xor") token = " ^ ";
++    else if (name == "comb.add") token = " + ";
++    else if (name == "comb.sub") token = " - ";
++    else if (name == "comb.mul") token = " * ";
++    if (!token.empty() && !operands.empty())
++      return castResult(Twine("(") + llvm::join(operands, token) + ")");
++
++    if (name == "comb.extract" && operands.size() == 1) {
++      auto low = op.getAttrOfType<IntegerAttr>("lowBit");
++      if (!low)
++        low = op.getAttrOfType<IntegerAttr>("low_bit");
++      if (!low)
++        return op.emitError("C++HDL comb.extract is missing low-bit attribute");
++      auto first = low.getInt();
++      if (first == 0) {
++        if (Operation *inputOp = op.getOperand(0).getDefiningOp();
++            inputOp && inputOp->getName().getStringRef() == "comb.shl") {
++          auto input = lowValueExpr(inputOp->getOperand(0), *resultWidth);
++          auto shift = scalarShiftAmountExpr(inputOp->getOperand(1));
++          if (failed(input) || failed(shift))
++            return failure();
++          return (Twine("firtool_cpphdl::shlLow<") +
++                  Twine(*resultWidth) + ">(" + input->expression + ", " +
++                  *shift + ")")
++              .str();
++        }
++      }
++      auto last = first + *resultWidth - 1;
++      return (Twine(operands[0]) + ".slice<" + Twine(last) + ", " +
++              Twine(first) + ">()")
++          .str();
++    }
++
++    if (name == "comb.concat" && !operands.empty()) {
++      SmallVector<std::string> widths;
++      SmallVector<std::string> typedOperands;
++      for (auto [operand, expression] : llvm::zip(op.getOperands(), operands)) {
++        auto width = bitWidth(operand.getType());
++        if (failed(width))
++          return failure();
++        widths.push_back(std::to_string(*width));
++        typedOperands.push_back(
++            (Twine("firtool_cpphdl::truncate<") + Twine(*width) + ">(" +
++             expression + ")")
++                .str());
++      }
++      return (Twine("cpphdl::cat<") + llvm::join(widths, ", ") + ">(" +
++              llvm::join(typedOperands, ", ") + ")").str();
++    }
++
++    if ((name == "hw.array_create" || name == "hw.array_concat") &&
++        !operands.empty()) {
++      SmallVector<std::string> widths;
++      SmallVector<std::string> typedOperands;
++      for (auto [operand, expression] : llvm::zip(op.getOperands(), operands)) {
++        auto width = bitWidth(operand.getType());
++        if (failed(width))
++          return failure();
++        widths.push_back(std::to_string(*width));
++        typedOperands.push_back(
++            (Twine("firtool_cpphdl::truncate<") + Twine(*width) + ">(" +
++             expression + ")")
++                .str());
++      }
++      return (Twine("cpphdl::cat<") + llvm::join(widths, ", ") + ">(" +
++              llvm::join(typedOperands, ", ") + ")")
++          .str();
++    }
++
++    if (name == "hw.array_get" && operands.size() == 2) {
++      auto inputWidth = bitWidth(op.getOperand(0).getType());
++      if (failed(inputWidth) || *inputWidth % *resultWidth)
++        return op.emitError("invalid C++HDL array_get widths");
++      return (Twine("firtool_cpphdl::array_get<") + Twine(*resultWidth) +
++              ", " + Twine(*inputWidth / *resultWidth) + ">(" + operands[0] +
++              ", " + operands[1] + ")")
++          .str();
++    }
++
++    if (name == "comb.replicate" && operands.size() == 1) {
++      auto inputWidth = bitWidth(op.getOperand(0).getType());
++      if (failed(inputWidth) || *resultWidth % *inputWidth)
++        return op.emitError("invalid C++HDL replicate widths");
++      return (Twine("cpphdl::repeat<") + Twine(*resultWidth / *inputWidth) +
++              ">(" + operands[0] + ")")
++          .str();
++    }
++
++    if (name == "comb.icmp" && operands.size() == 2) {
++      auto predicateAttr = op.getAttrOfType<IntegerAttr>("predicate");
++      if (!predicateAttr)
++        return op.emitError("C++HDL comparison has no predicate");
++      StringRef compare;
++      auto predicate = predicateAttr.getInt();
++      switch (predicate) {
++      case 0: case 10: case 12: compare = " == "; break;
++      case 1: case 11: case 13: compare = " != "; break;
++      case 2: case 6: compare = " < "; break;
++      case 3: case 7: compare = " <= "; break;
++      case 4: case 8: compare = " > "; break;
++      case 5: case 9: compare = " >= "; break;
++      default:
++        return op.emitError("unsupported C++HDL comparison predicate ")
++               << predicate;
++      }
++      bool isSigned = predicate >= 2 && predicate <= 5;
++      if (isSigned) {
++        auto inputWidth = bitWidth(op.getOperand(0).getType());
++        if (failed(inputWidth))
++          return failure();
++        operands[0] = (Twine("cpphdl::sv_signed<") + Twine(*inputWidth) +
++                       ">(" + operands[0] + ")")
++                          .str();
++        operands[1] = (Twine("cpphdl::sv_signed<") + Twine(*inputWidth) +
++                       ">(" + operands[1] + ")")
++                          .str();
++      }
++      return castResult(Twine("(") + operands[0] + compare + operands[1] + ")");
++    }
++
++    if ((name == "seq.from_clock" || name == "seq.to_clock") &&
++        operands.size() == 1)
++      return castResult(operands[0]);
++
++    if (name == "hw.wire" && operands.size() == 1)
++      return castResult(operands[0]);
++
++    if (name == "comb.shrs" && operands.size() == 2)
++      return (Twine("firtool_cpphdl::ashr<") + Twine(*resultWidth) + ">(" +
++              operands[0] + ", " + operands[1] + ")")
++          .str();
++
++    if (name == "seq.firmem.read_port" && operands.size() >= 2) {
++      auto memoryType = cast<seq::FirMemType>(op.getOperand(0).getType());
++      return castResult(Twine(operands[0]) + "[static_cast<uint64_t>(" +
++                        operands[1] + ") % " + Twine(memoryType.getDepth()) + "]");
++    }
++
++    if (name == "seq.firmem.read_write_port" && operands.size() >= 2) {
++      auto memoryType = cast<seq::FirMemType>(op.getOperand(0).getType());
++      return castResult(Twine(operands[0]) + "[static_cast<uint64_t>(" +
++                        operands[1] + ") % " + Twine(memoryType.getDepth()) + "]");
++    }
++
++    return op.emitError("unsupported operation in direct C++HDL emission: ") << name;
++  }
++
++  bool isSynchronousMemoryRead(Operation &op) const {
++    Value memory;
++    if (auto read = dyn_cast<seq::FirMemReadOp>(op))
++      memory = read.getMemory();
++    else if (auto readWrite = dyn_cast<seq::FirMemReadWriteOp>(op))
++      memory = readWrite.getMemory();
++    else
++      return false;
++    auto declaration = memory.getDefiningOp<seq::FirMemOp>();
++    return declaration && declaration.getReadLatency() > 0;
++  }
++
++  ModuleOp circuit;
++  hw::HWModuleOp module;
++  raw_ostream &os;
++  raw_ostream *implementation;
++  bool split;
++  std::string moduleName;
++  llvm::DenseMap<Value, std::string> names;
++  llvm::DenseMap<Value, std::string> inlineExpressions;
++  llvm::DenseMap<Value, unsigned> expressionCosts;
++  llvm::DenseSet<Value> liveValues;
++  llvm::DenseSet<Value> materializedValues;
++  llvm::StringMap<std::string> constantNames;
++  llvm::StringSet<> emittedConstants;
++  llvm::StringSet<> usedNames;
++  unsigned nextGeneratedValue = 0;
++};
++
++static LogicalResult emitSplitExternal(hw::HWModuleExternOp external,
++                                       raw_ostream &header,
++                                       raw_ostream &implementation) {
++  auto name = cppIdentifier(external.getModuleName());
++  header << "#pragma once\n#include \"cpphdl_support.h\"\n"
++            "#include <memory>\n#include <utility>\n\nclass "
++         << name << " : public cpphdl::Module {\npublic:\n";
++  for (auto port : external.getPortList()) {
++    auto type = cppType(port.type);
++    if (failed(type))
++      return external.emitError("C++HDL cannot emit external port type ")
++             << port.type;
++    header << "  _PORT(" << *type << ") " << cppIdentifier(port.getName())
++           << "; // " << (port.isOutput() ? "output" : "input") << "\n";
++  }
++  header << "\nprivate:\n  std::shared_ptr<void> cpphdlExternalState;\n";
++  for (auto port : external.getPortList()) {
++    if (!port.isOutput())
++      continue;
++    auto type = cppType(port.type);
++    header << "  " << *type << " value_" << cppIdentifier(port.getName())
++           << " = 0;\n";
++  }
++  header << "\npublic:\n";
++  for (auto port : external.getPortList()) {
++    if (!port.isOutput())
++      continue;
++    auto type = cppType(port.type);
++    header << "  void cpphdl_drive_" << cppIdentifier(port.getName())
++           << "(const " << *type << " &value) { value_"
++           << cppIdentifier(port.getName()) << " = value; }\n";
++  }
++  header << "  template <typename State, typename... Args>\n"
++            "  State &cpphdl_external_state(Args &&...args) {\n"
++            "    if (!cpphdlExternalState)\n"
++            "      cpphdlExternalState = std::make_shared<State>(std::forward<Args>(args)...);\n"
++            "    return *static_cast<State *>(cpphdlExternalState.get());\n"
++            "  }\n\n  void _assign();\n  void _work(bool);\n"
++            "  void _strobe() {}\n};\n";
++
++  implementation << "#include \"" << name << ".h\"\n"
++                    "#if __has_include(\"cpphdl_external_models.h\")\n"
++                    "#include \"cpphdl_external_models.h\"\n"
++                    "#else\nnamespace firtool_cpphdl_external {\n"
++                    "template <typename Module> void work(Module &, bool) {}\n"
++                    "}\n#endif\n\n"
++                 << "void " << name << "::_assign() {\n";
++  for (auto port : external.getPortList())
++    if (port.isOutput())
++      implementation << "  " << cppIdentifier(port.getName())
++                     << " = _ASSIGN_REG(value_"
++                     << cppIdentifier(port.getName()) << ");\n";
++  implementation << "}\n\nvoid " << name << "::_work(bool edge) {\n"
++                 << "  firtool_cpphdl_external::work(*this, edge);\n}\n";
++  return success();
++}
++
++} // namespace
++
++LogicalResult circt::exportCppHDL(ModuleOp module, raw_ostream &os) {
++  emitCppHDLSupport(os);
++  os << "\n";
++  for (auto external : module.getOps<hw::HWModuleExternOp>()) {
++    os << "class " << cppIdentifier(external.getModuleName())
++       << " : public cpphdl::Module {\npublic:\n";
++    for (auto port : external.getPortList()) {
++      auto type = cppType(port.type);
++      if (failed(type))
++        return external.emitError("C++HDL cannot emit external port type ")
++               << port.type;
++      os << "  _PORT(" << *type << ") " << cppIdentifier(port.getName())
++         << "; // " << (port.isOutput() ? "output" : "input") << "\n";
++    }
++    os << "  void _assign() {}\n  void _work(bool) {}\n  void _strobe() {}\n};\n\n";
++  }
++  for (auto hwModule : module.getOps<hw::HWModuleOp>())
++    if (failed(ModuleEmitter(module, hwModule, os).emit()))
++      return failure();
++  return success();
++}
++
++LogicalResult circt::exportSplitCppHDL(ModuleOp module, StringRef directory) {
++  if (auto error = llvm::sys::fs::create_directories(directory)) {
++    llvm::errs() << "cannot create C++HDL directory '" << directory
++                 << "': " << error.message() << "\n";
++    return failure();
++  }
++
++  auto support = openGeneratedFile(directory, "cpphdl_support.h");
++  if (failed(support))
++    return failure();
++  emitCppHDLSupport(**support);
++
++  SmallVector<std::string> sources;
++  for (auto external : module.getOps<hw::HWModuleExternOp>()) {
++    auto name = cppIdentifier(external.getModuleName());
++    auto header = openGeneratedFile(directory, name + ".h");
++    auto implementation = openGeneratedFile(directory, name + ".cpp");
++    if (failed(header) || failed(implementation))
++      return failure();
++    if (failed(emitSplitExternal(external, **header, **implementation)))
++      return failure();
++    sources.push_back(name + ".cpp");
++  }
++
++  for (auto hwModule : module.getOps<hw::HWModuleOp>()) {
++    auto name = cppIdentifier(hwModule.getModuleName());
++    auto header = openGeneratedFile(directory, name + ".h");
++    auto implementation = openGeneratedFile(directory, name + ".cpp");
++    if (failed(header) || failed(implementation))
++      return failure();
++    **header << "#pragma once\n#include \"cpphdl_support.h\"\n\n";
++    llvm::StringSet<> targets;
++    for (Operation &op : hwModule.getBodyBlock()->getOperations()) {
++      if (op.getName().getStringRef() != "hw.instance")
++        continue;
++      auto target = cppIdentifier(
++          op.getAttrOfType<FlatSymbolRefAttr>("moduleName").getValue());
++      if (targets.insert(target).second)
++        **header << "class " << target << ";\n";
++    }
++    **header << "\n";
++    **implementation << "#include \"" << name << ".h\"\n";
++    for (auto &target : targets)
++      **implementation << "#include \"" << target.getKey() << ".h\"\n";
++    **implementation << "\n";
++    if (failed(ModuleEmitter(module, hwModule, **header, &**implementation).emit()))
++      return failure();
++    sources.push_back(name + ".cpp");
++  }
++
++  auto cmake = openGeneratedFile(directory, "CMakeLists.txt");
++  if (failed(cmake))
++    return failure();
++  **cmake << "cmake_minimum_required(VERSION 3.20)\n"
++             "project(firtool_generated_cpphdl LANGUAGES CXX)\n"
++             "set(CMAKE_CXX_STANDARD 17)\n"
++             "set(CPPHDL_INCLUDE_DIR \"$ENV{HOME}/cpphdl/include\" CACHE PATH \"CppHDL include directory\")\n"
++             "add_library(firtool_generated_cpphdl OBJECT\n";
++  for (auto &source : sources)
++    **cmake << "  " << source << "\n";
++  **cmake << ")\nset(CPPHDL_OPT_LEVEL \"-O2\" CACHE STRING \"C++HDL simulator optimization flag\")\n"
++             "target_compile_options(firtool_generated_cpphdl PRIVATE ${CPPHDL_OPT_LEVEL})\n"
++             "target_include_directories(firtool_generated_cpphdl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CPPHDL_INCLUDE_DIR})\n";
++  return success();
++}

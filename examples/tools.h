@@ -491,6 +491,10 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
 {
     namespace fs = std::filesystem;
 
+    static_assert(CPU_CLK_MULTIPLIER > 0, "CPU_CLK_MULTIPLIER must be positive");
+    static_assert(100000000u % CPU_CLK_MULTIPLIER == 0,
+        "CPU_CLK_MULTIPLIER must divide the CPU clock frequency exactly");
+
     fs::path cpphdl = CpphdlToolFrom(source_root);
     if (!fs::exists(cpphdl)) {
         std::cout << "can't find cpphdl generator in CPPHDL_BUILD_DIR, near build directory, or source root\n";
@@ -500,7 +504,10 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     std::string command;
     command += ToolShellQuote(cpphdl);
     command += " --generated-dir " + ToolShellQuote(generated_dir);
-    command += " " + ToolShellQuote(source_root / "tribe" / "main.cpp");
+    command += " --primary_clock clk 100000000";
+    command += " --secondary_clock l2_clock "
+        + std::to_string(100000000u / CPU_CLK_MULTIPLIER);
+    command += " " + ToolShellQuote(source_root / "tribe_cpu" / "main.cpp");
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
@@ -508,9 +515,9 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
         command += " -DMULTICORE";
     }
     command += " -I " + ToolShellQuote(source_root / "include");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "common");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "spec");
-    command += " -I " + ToolShellQuote(source_root / "tribe" / "devices");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "common");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "spec");
+    command += " -I " + ToolShellQuote(source_root / "tribe_cpu" / "devices");
     return SystemEcho(command.c_str()) == 0;
 }
 #endif
@@ -574,10 +581,13 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
         includes_list += " -I" + include;
     }
     size_t n = 0;
-    // SV parameters substitution
-    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($0 ~ /parameter/) count++; if (count == ") + std::to_string(++n) +
-        " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " + std::to_string(args) +
-        "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
+    // SV parameter substitution. Replacement files may contain helper modules
+    // before the requested top (for example L2CacheRamBank before L2Cache), so
+    // count only parameters in the requested module's declaration.
+    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($1 == \"module\" && $2 == \"") + top_name +
+        "\") in_top = 1; if (in_top && $0 ~ /parameter/) count++; if (in_top && count == " +
+        std::to_string(++n) + " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " +
+        std::to_string(args) + "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
     // running Verilator
     const std::string verilator = ToolShellQuoteString(VerilatorTool());
     const std::string verilator_cxx_raw = VerilatorCxx();
@@ -613,6 +623,9 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
     std::vector<std::string> modules = {"File",
               "RAM",
               "L1Cache",
+              "Axi4SlowToFastCdc",
+              "Axi4FastToSlowCdc",
+              "L1MemFastToSlowCdc",
               "L2Cache",
               "Tribe",
               "BranchPredictor",
@@ -633,11 +646,11 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
     return VerilatorCompileInFolder(cpp_name, folder_name, "TribeTest", modules, {
 #endif
                   (source_root / "include").string(),
-                  (source_root / "tribe").string(),
-                  (source_root / "tribe" / "common").string(),
-                  (source_root / "tribe" / "spec").string(),
-                  (source_root / "tribe" / "cache").string(),
-                  (source_root / "tribe" / "devices").string()}, cpu_cores);
+                  (source_root / "tribe_cpu").string(),
+                  (source_root / "tribe_cpu" / "common").string(),
+                  (source_root / "tribe_cpu" / "spec").string(),
+                  (source_root / "tribe_cpu" / "cache").string(),
+                  (source_root / "tribe_cpu" / "devices").string()}, cpu_cores);
 }
 
 #define STRINGIFY_IMPL(x) #x

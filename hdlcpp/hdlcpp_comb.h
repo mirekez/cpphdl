@@ -13,6 +13,136 @@ struct CombExtractionPlan {
     std::vector<std::string> combined;
 };
 
+inline bool isIdentifierChar(char c);
+
+struct ProjectedMemberAccess {
+    size_t begin = 0;
+    size_t end = 0;
+    std::string indices;
+    std::string field;
+};
+
+inline std::vector<ProjectedMemberAccess> projectedMemberAccesses(const std::string& text,
+                                                                 const std::string& baseCall)
+{
+    std::vector<ProjectedMemberAccess> accesses;
+    if (baseCall.empty()) {
+        return accesses;
+    }
+    auto matchingBracket = [&](size_t open) {
+        int depth = 0;
+        for (size_t pos = open; pos < text.size(); ++pos) {
+            if (text[pos] == '[') {
+                ++depth;
+            }
+            else if (text[pos] == ']' && --depth == 0) {
+                return pos;
+            }
+        }
+        return std::string::npos;
+    };
+    for (size_t search = 0; (search = text.find(baseCall, search)) != std::string::npos;) {
+        auto before = search == 0 ? '\0' : text[search - 1];
+        if (isIdentifierChar(before)) {
+            search += baseCall.size();
+            continue;
+        }
+        size_t accessBegin = search;
+        size_t groupingDepth = 0;
+        while (accessBegin > 0 && text[accessBegin - 1] == '(') {
+            auto open = accessBegin - 1;
+            auto beforeOpen = open == 0 ? '\0' : text[open - 1];
+            if (isIdentifierChar(beforeOpen) || beforeOpen == ')' || beforeOpen == ']' ||
+                beforeOpen == '>') {
+                break;
+            }
+            accessBegin = open;
+            ++groupingDepth;
+        }
+        size_t pos = search + baseCall.size();
+        std::string indices;
+        size_t closedGroups = 0;
+        for (;;) {
+            bool advanced = false;
+            while (pos < text.size() && text[pos] == '[') {
+                auto close = matchingBracket(pos);
+                if (close == std::string::npos) {
+                    break;
+                }
+                indices += text.substr(pos, close - pos + 1);
+                pos = close + 1;
+                advanced = true;
+            }
+            if (closedGroups < groupingDepth && pos < text.size() && text[pos] == ')') {
+                ++pos;
+                ++closedGroups;
+                advanced = true;
+                continue;
+            }
+            if (!advanced) {
+                break;
+            }
+        }
+        if (closedGroups != groupingDepth) {
+            // A control construct such as `if (value.field)` places an opening
+            // parenthesis immediately before the base without grouping the base.
+            // Retry from the exact base so that parenthesis cannot hide the field.
+            accessBegin = search;
+            pos = search + baseCall.size();
+            indices.clear();
+            while (pos < text.size() && text[pos] == '[') {
+                auto close = matchingBracket(pos);
+                if (close == std::string::npos) {
+                    break;
+                }
+                indices += text.substr(pos, close - pos + 1);
+                pos = close + 1;
+            }
+        }
+        std::string field;
+        size_t fieldEnd = pos;
+        while (pos < text.size() && text[pos] == '.') {
+            auto dot = pos++;
+            auto start = pos;
+            if (start >= text.size() ||
+                (!std::isalpha(static_cast<unsigned char>(text[start])) && text[start] != '_')) {
+                pos = dot;
+                break;
+            }
+            while (pos < text.size() && isIdentifierChar(text[pos])) {
+                ++pos;
+            }
+            if (pos < text.size() && text[pos] == '(') {
+                pos = dot;
+                break;
+            }
+            if (!field.empty()) {
+                field += ".";
+            }
+            field += text.substr(start, pos - start);
+            fieldEnd = pos;
+        }
+        if (!field.empty()) {
+            accesses.push_back({accessBegin, fieldEnd, indices, field});
+            search = fieldEnd;
+        }
+        else {
+            search += baseCall.size();
+        }
+    }
+    return accesses;
+}
+
+inline std::string projectedFieldIdentifier(std::string field)
+{
+    for (auto& ch : field) {
+        if (!isIdentifierChar(ch)) {
+            ch = '_';
+        }
+    }
+    return field;
+}
+
 inline std::string trimCombText(std::string value)
 {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) {
@@ -266,8 +396,43 @@ inline bool replaceExactMember(std::string& text,
     return changed;
 }
 
+inline bool replaceMemberPrefix(std::string& text,
+                                const std::string& base,
+                                const std::string& field,
+                                const std::string& to)
+{
+    // Projecting an aggregate field rebases both the field itself and every nested
+    // member beneath it. Unlike exact leaf replacement, a following dot therefore
+    // remains a valid boundary and is preserved after replacing the common prefix.
+    if (base.empty() || field.empty() || to.empty()) {
+        return false;
+    }
+    const auto from = base + "." + field;
+    bool changed = false;
+    for (size_t pos = 0; (pos = text.find(from, pos)) != std::string::npos;) {
+        auto end = pos + from.size();
+        bool leftOk = pos == 0 || (!isIdentifierChar(text[pos - 1]) && text[pos - 1] != '.');
+        if (pos >= 2 && text[pos - 1] == ':' && text[pos - 2] == ':') {
+            leftOk = false;
+        }
+        bool rightOk = end >= text.size() || !isIdentifierChar(text[end]);
+        if (leftOk && rightOk) {
+            text.replace(pos, from.size(), to);
+            pos += to.size();
+            changed = true;
+        }
+        else {
+            pos = end;
+        }
+    }
+    return changed;
+}
+
 inline std::string localCombNameFor(const std::string& base)
 {
+    if (base.rfind("__comb_local_", 0) == 0) {
+        return base;
+    }
     return "__comb_local_" + base;
 }
 
@@ -412,6 +577,201 @@ inline bool isLoopMaintenanceLine(const std::string& text)
         }
     }
     return false;
+}
+
+inline std::vector<std::string> indexedAccessesForBase(const std::string& text,
+                                                       const std::string& base)
+{
+    std::vector<std::string> indices;
+    for (size_t search = 0; (search = text.find(base, search)) != std::string::npos;) {
+        const auto end = search + base.size();
+        const bool leftOk = search == 0 || !isIdentifierChar(text[search - 1]);
+        const bool rightOk = end >= text.size() || !isIdentifierChar(text[end]);
+        if (!leftOk || !rightOk || end >= text.size() || text[end] != '[') {
+            search = end;
+            continue;
+        }
+        int depth = 0;
+        size_t close = std::string::npos;
+        for (size_t pos = end; pos < text.size(); ++pos) {
+            if (text[pos] == '[') {
+                ++depth;
+            }
+            else if (text[pos] == ']' && --depth == 0) {
+                close = pos;
+                break;
+            }
+        }
+        if (close == std::string::npos) {
+            break;
+        }
+        indices.push_back(text.substr(end + 1, close - end - 1));
+        search = close + 1;
+    }
+    return indices;
+}
+
+inline bool loopVariableHasPositiveOffset(const std::string& expression,
+                                          const std::string& variable)
+{
+    for (size_t pos = 0; (pos = expression.find(variable, pos)) != std::string::npos;) {
+        const auto end = pos + variable.size();
+        const bool leftOk = pos == 0 || !isIdentifierChar(expression[pos - 1]);
+        const bool rightOk = end >= expression.size() || !isIdentifierChar(expression[end]);
+        if (!leftOk || !rightOk) {
+            pos = end;
+            continue;
+        }
+        auto next = end;
+        while (next < expression.size() &&
+               (std::isspace(static_cast<unsigned char>(expression[next])) ||
+                expression[next] == ')')) {
+            ++next;
+        }
+        if (next < expression.size() && expression[next] == '+') {
+            return true;
+        }
+        pos = end;
+    }
+    return false;
+}
+
+inline bool parseAscendingLoopHeader(const std::string& header,
+                                     std::string& declaration,
+                                     std::string& variable,
+                                     std::string& bound)
+{
+    auto text = trimCombText(header);
+    if (!isForHeader(text)) {
+        return false;
+    }
+    const auto open = text.find('(');
+    if (open == std::string::npos) {
+        return false;
+    }
+    std::vector<size_t> semicolons;
+    int depth = 0;
+    size_t close = std::string::npos;
+    for (size_t pos = open + 1; pos < text.size(); ++pos) {
+        if (text[pos] == '(') {
+            ++depth;
+        }
+        else if (text[pos] == ')') {
+            if (depth == 0) {
+                close = pos;
+                break;
+            }
+            --depth;
+        }
+        else if (text[pos] == ';' && depth == 0) {
+            semicolons.push_back(pos);
+        }
+    }
+    if (close == std::string::npos || semicolons.size() != 2) {
+        return false;
+    }
+    auto init = trimCombText(text.substr(open + 1, semicolons[0] - open - 1));
+    auto condition = trimCombText(text.substr(semicolons[0] + 1,
+                                              semicolons[1] - semicolons[0] - 1));
+    auto increment = trimCombText(text.substr(semicolons[1] + 1,
+                                              close - semicolons[1] - 1));
+    auto eq = init.find('=');
+    if (eq == std::string::npos) {
+        return false;
+    }
+    auto beforeEq = trimCombText(init.substr(0, eq));
+    auto initial = trimCombText(init.substr(eq + 1));
+    size_t nameBegin = beforeEq.size();
+    while (nameBegin > 0 && isIdentifierChar(beforeEq[nameBegin - 1])) {
+        --nameBegin;
+    }
+    variable = beforeEq.substr(nameBegin);
+    declaration = trimCombText(beforeEq.substr(0, nameBegin));
+    if (variable.empty() || declaration.empty() || initial != "0") {
+        return false;
+    }
+    auto compactIncrement = increment;
+    compactIncrement.erase(std::remove_if(compactIncrement.begin(), compactIncrement.end(),
+        [](char ch) { return std::isspace(static_cast<unsigned char>(ch)); }),
+        compactIncrement.end());
+    if (compactIncrement != variable + "++" && compactIncrement != "++" + variable) {
+        return false;
+    }
+    size_t less = std::string::npos;
+    for (size_t pos = 0; pos < condition.size(); ++pos) {
+        if (condition[pos] == '<' &&
+            (pos + 1 >= condition.size() || condition[pos + 1] != '<' && condition[pos + 1] != '=') &&
+            containsIdentifier(condition.substr(0, pos), variable)) {
+            less = pos;
+            break;
+        }
+    }
+    if (less == std::string::npos ||
+        !containsIdentifier(condition.substr(0, less), variable)) {
+        return false;
+    }
+    bound = trimCombText(condition.substr(less + 1));
+    return !bound.empty();
+}
+
+inline std::vector<std::string> dependencyOrderedContinuousLoopHeaders(
+    const std::vector<std::string>& headers,
+    const std::string& target,
+    const std::string& lhs,
+    const std::string& rhs)
+{
+    auto normalizeSelfReference = [&](std::string expression) {
+        // Earlier expression lowering may turn a read of the net currently being
+        // generated into its comb getter or storage name. Recover the SV net name
+        // here so loop dependency analysis sees the original indexed self-read.
+        for (const auto& alias : {target + "_comb_func()", target + "_comb"}) {
+            for (size_t pos = 0; (pos = expression.find(alias, pos)) != std::string::npos;) {
+                const auto end = pos + alias.size();
+                const bool leftOk = pos == 0 || !isIdentifierChar(expression[pos - 1]);
+                const bool rightOk = end == expression.size() || !isIdentifierChar(expression[end]);
+                if (leftOk && rightOk) {
+                    expression.replace(pos, alias.size(), target);
+                    pos += target.size();
+                }
+                else {
+                    pos = end;
+                }
+            }
+        }
+        return expression;
+    };
+    const auto normalizedLhs = normalizeSelfReference(lhs);
+    const auto normalizedRhs = normalizeSelfReference(rhs);
+    if (!containsIdentifier(normalizedRhs, target)) {
+        return headers;
+    }
+    const auto lhsIndices = indexedAccessesForBase(normalizedLhs, target);
+    const auto rhsIndices = indexedAccessesForBase(normalizedRhs, target);
+    if (lhsIndices.empty() || rhsIndices.empty()) {
+        return headers;
+    }
+    auto ordered = headers;
+    for (auto& header : ordered) {
+        std::string declaration;
+        std::string variable;
+        std::string bound;
+        if (!parseAscendingLoopHeader(header, declaration, variable, bound)) {
+            continue;
+        }
+        const bool lhsMovesForward = std::any_of(lhsIndices.begin(), lhsIndices.end(),
+            [&](const std::string& index) {
+                return loopVariableHasPositiveOffset(index, variable);
+            });
+        const bool rhsReadsLaterIteration = std::any_of(rhsIndices.begin(), rhsIndices.end(),
+            [&](const std::string& index) {
+                return loopVariableHasPositiveOffset(index, variable);
+            });
+        if (rhsReadsLaterIteration && !lhsMovesForward) {
+            header = "for (" + declaration + " " + variable + " = (unsigned)(" + bound + "); " +
+                     variable + "-- > 0;) {";
+        }
+    }
+    return ordered;
 }
 
 inline std::vector<std::string> pruneTargetCombLinesRange(const std::vector<std::string>& lines,
@@ -600,6 +960,12 @@ inline bool canExtractIndependentComb(const std::vector<std::string>& lines,
     int braceDepth = 0;
     for (const auto& line : lines) {
         auto eq = topLevelAssignPos(line);
+        if (eq == std::string::npos && containsIdentifier(line, target)) {
+            // A call can update an SV output/inout argument without an assignment
+            // operator in the statement. Keep the complete target dependency body
+            // so that this side effect is not discarded as an unrelated read.
+            return false;
+        }
         if (eq != std::string::npos) {
             auto lhsBase = assignmentBase(line);
             if (lhsBase == target) {
@@ -646,8 +1012,14 @@ inline std::vector<std::string> extractIndependentCombLines(const std::vector<st
     return out;
 }
 
+struct FieldLValueIndex {
+    size_t fieldOffset = 0;
+    std::string expression;
+};
+
 inline bool parseBaseFieldLValue(const std::string& lhs, const std::string& base,
-                                 std::string& indexExpr, std::string& field)
+                                 std::vector<FieldLValueIndex>& indices,
+                                 std::string& field)
 {
     auto text = trimCombText(lhs);
     if (base.empty() || text.compare(0, base.size(), base) != 0) {
@@ -658,29 +1030,37 @@ inline bool parseBaseFieldLValue(const std::string& lhs, const std::string& base
         return false;
     }
     size_t pos = boundary;
-    indexExpr.clear();
+    indices.clear();
     field.clear();
-    if (pos < text.size() && text[pos] == '[') {
-        int depth = 0;
-        auto begin = pos + 1;
-        size_t end = std::string::npos;
-        for (; pos < text.size(); ++pos) {
-            if (text[pos] == '[') {
-                ++depth;
-            }
-            else if (text[pos] == ']') {
-                --depth;
-                if (depth == 0) {
+    auto parseIndices = [&](size_t fieldOffset) {
+        while (pos < text.size() && text[pos] == '[') {
+            int depth = 0;
+            auto begin = pos + 1;
+            size_t end = std::string::npos;
+            for (; pos < text.size(); ++pos) {
+                if (text[pos] == '[') {
+                    ++depth;
+                }
+                else if (text[pos] == ']' && --depth == 0) {
                     end = pos;
                     break;
                 }
             }
+            if (end == std::string::npos) {
+                return false;
+            }
+            indices.push_back({fieldOffset,
+                               trimCombText(text.substr(begin, end - begin))});
+            pos = end + 1;
         }
-        if (end == std::string::npos) {
-            return false;
-        }
-        indexExpr = trimCombText(text.substr(begin, end - begin));
-        pos = end + 1;
+        return true;
+    };
+
+    // Preserve every packed selector and where it occurs in the member path.
+    // A projected field can itself be a multidimensional packed array, so dropping
+    // a later selector changes both the destination and its required value type.
+    if (!parseIndices(0)) {
+        return false;
     }
     if (pos >= text.size() || text[pos] != '.') {
         return false;
@@ -700,33 +1080,34 @@ inline bool parseBaseFieldLValue(const std::string& lhs, const std::string& base
             path += ".";
         }
         path += text.substr(start, pos - start);
-        if (pos < text.size() && text[pos] == '[') {
+        if (pos < text.size() && text[pos] == '(') {
+            // Generated C++ represents a packed SV part-select as `.bits(hi, lo)`.
+            // Keep that callable selector attached to the rebased field path; dropping
+            // its arguments turns a legal slice assignment into `.bits = value`.
+            auto callBegin = pos;
             int depth = 0;
-            auto begin = pos + 1;
-            size_t end = std::string::npos;
+            size_t callEnd = std::string::npos;
             for (; pos < text.size(); ++pos) {
-                if (text[pos] == '[') {
+                if (text[pos] == '(') {
                     ++depth;
                 }
-                else if (text[pos] == ']') {
-                    --depth;
-                    if (depth == 0) {
-                        end = pos;
-                        break;
-                    }
+                else if (text[pos] == ')' && --depth == 0) {
+                    callEnd = pos;
+                    break;
                 }
             }
-            if (end == std::string::npos) {
+            if (callEnd == std::string::npos) {
                 return false;
             }
-            if (indexExpr.empty()) {
-                indexExpr = trimCombText(text.substr(begin, end - begin));
-            }
-            pos = end + 1;
+            path += text.substr(callBegin, callEnd - callBegin + 1);
+            pos = callEnd + 1;
+        }
+        if (!parseIndices(path.size())) {
+            return false;
         }
     }
     field = path;
-    return !field.empty();
+    return !field.empty() && pos == text.size();
 }
 
 inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vector<std::string>& lines,
@@ -761,18 +1142,57 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
                 ++i;
                 continue;
             }
-            std::string lhsIndex;
+            std::vector<FieldLValueIndex> lhsIndices;
             std::string lhsField;
-            if (parseBaseFieldLValue(lhs, base, lhsIndex, lhsField) &&
+            auto parsedField = parseBaseFieldLValue(lhs, base, lhsIndices, lhsField);
+            auto projectedTarget = [&](const std::string& suffix, bool consumeFirstIndex) {
+                std::vector<std::string> inserts(suffix.size() + 1);
+                auto beginIndex = consumeFirstIndex && !lhsIndices.empty() ? size_t{1} : size_t{0};
+                for (size_t index = beginIndex; index < lhsIndices.size(); ++index) {
+                    auto relativeOffset = lhsIndices[index].fieldOffset > field.size()
+                        ? std::min(lhsIndices[index].fieldOffset - field.size(), suffix.size())
+                        : size_t{0};
+                    inserts[relativeOffset] += "[" + lhsIndices[index].expression + "]";
+                }
+                std::string target = resultName;
+                for (size_t offset = 0; offset <= suffix.size(); ++offset) {
+                    target += inserts[offset];
+                    if (offset < suffix.size()) {
+                        target += suffix[offset];
+                    }
+                }
+                return target;
+            };
+            if (parsedField &&
                 (lhsField == field || lhsField.rfind(field + ".", 0) == 0)) {
                 auto rhs = assignmentRhs(lines[i]);
-                auto target = resultName;
-                if (lhsField != field) {
-                    target += lhsField.substr(field.size());
-                }
+                auto suffix = lhsField == field ? std::string() : lhsField.substr(field.size());
+                auto consumesIndex = !indexName.empty() && !lhsIndices.empty();
+                auto target = projectedTarget(suffix, consumesIndex);
                 auto assign = target + " = " + rhs + ";";
-                if (!indexName.empty() && !lhsIndex.empty()) {
-                    out.push_back("if ((uint64_t)(" + lhsIndex + ") == (uint64_t)(" + indexName + ")) {");
+                if (consumesIndex) {
+                    out.push_back("if ((uint64_t)(" + lhsIndices.front().expression +
+                                  ") == (uint64_t)(" + indexName + ")) {");
+                    out.push_back("    " + assign);
+                    out.push_back("}");
+                }
+                else {
+                    out.push_back(assign);
+                }
+            }
+            else if (parsedField &&
+                     !lhsField.empty() && field.rfind(lhsField + ".", 0) == 0) {
+                auto rhs = assignmentRhs(lines[i]);
+                auto descendant = field.substr(lhsField.size() + 1);
+                auto projectedRhs = rhs == "0" || rhs == "0b0" || rhs == "0x0" || rhs == "{}"
+                    ? std::string("{}")
+                    : "(" + rhs + ")." + descendant;
+                auto consumesIndex = !indexName.empty() && !lhsIndices.empty();
+                auto target = projectedTarget("", consumesIndex);
+                auto assign = target + " = " + projectedRhs + ";";
+                if (consumesIndex) {
+                    out.push_back("if ((uint64_t)(" + lhsIndices.front().expression +
+                                  ") == (uint64_t)(" + indexName + ")) {");
                     out.push_back("    " + assign);
                     out.push_back("}");
                 }
@@ -864,7 +1284,365 @@ inline std::vector<std::string> extractTargetFieldCombLines(const std::vector<st
                                                             const std::string& resultName,
                                                             const std::string& indexName)
 {
-    return extractTargetFieldCombLinesRange(lines, base, field, resultName, indexName, 0, lines.size());
+    auto projected = extractTargetFieldCombLinesRange(
+        lines, base, field, resultName, indexName, 0, lines.size());
+    std::vector<std::string> variables{resultName};
+    for (const auto& line : projected) {
+        auto name = assignmentBase(line);
+        if (name.empty()) {
+            name = declarationName(line);
+        }
+        if (!name.empty() &&
+            std::find(variables.begin(), variables.end(), name) == variables.end()) {
+            variables.push_back(name);
+        }
+    }
+    // Field projection initially retains non-aggregate assignments because they may
+    // be temporaries feeding the selected member. Slice that projected program once
+    // more so unrelated temporary calculations cannot create false comb dependencies.
+    return extractTargetCombLines(projected, variables, resultName);
+}
+
+inline std::vector<std::string> extractProjectedArrayFieldCombLinesRange(
+    const std::vector<std::string>& lines,
+    const std::string& base,
+    const std::string& field,
+    const std::string& resultName,
+    size_t begin,
+    size_t end,
+    bool inForLoop = false)
+{
+    std::vector<std::string> out;
+    std::vector<std::pair<std::string, std::string>> deferredDeclarations;
+    auto generatedElementFieldUpdate = [&](const std::string& line)
+        -> std::optional<std::string> {
+        // Packed-array field writes are emitted as one read-modify-write lambda.
+        // Recover the outer array selection before inspecting the local field write,
+        // allowing a projected comb to discard the aggregate seed read entirely.
+        size_t outerAssign = std::string::npos;
+        size_t outerCursor = std::string::npos;
+        size_t scanBegin = 0;
+        size_t scanEnd = 0;
+        std::string indices;
+        auto topAssign = topLevelAssignPos(line);
+        if (topAssign != std::string::npos) {
+            auto outerLhs = trimCombText(line.substr(0, topAssign));
+            if (outerLhs.rfind(base, 0) == 0 &&
+                (outerLhs.size() == base.size() || outerLhs[base.size()] == '[')) {
+                auto cursor = base.size();
+                while (cursor < outerLhs.size() && outerLhs[cursor] == '[') {
+                    int depth = 0;
+                    auto beginIndex = cursor;
+                    for (; cursor < outerLhs.size(); ++cursor) {
+                        if (outerLhs[cursor] == '[') ++depth;
+                        else if (outerLhs[cursor] == ']' && --depth == 0) {
+                            ++cursor;
+                            break;
+                        }
+                    }
+                    if (depth != 0) {
+                        return std::nullopt;
+                    }
+                    indices += outerLhs.substr(beginIndex, cursor - beginIndex);
+                }
+                if (cursor == outerLhs.size()) {
+                    outerAssign = topAssign;
+                    outerCursor = line.size();
+                    scanBegin = topAssign + 1;
+                    scanEnd = line.size();
+                }
+            }
+        }
+        for (size_t search = 0;
+             outerAssign == std::string::npos &&
+             (search = line.find(base, search)) != std::string::npos;
+             search += base.size()) {
+            if ((search > 0 && isIdentifierChar(line[search - 1])) ||
+                (search + base.size() < line.size() &&
+                 isIdentifierChar(line[search + base.size()]))) {
+                continue;
+            }
+            auto cursor = search + base.size();
+            std::string candidateIndices;
+            while (cursor < line.size() && line[cursor] == '[') {
+                int depth = 0;
+                auto beginIndex = cursor;
+                for (; cursor < line.size(); ++cursor) {
+                    if (line[cursor] == '[') ++depth;
+                    else if (line[cursor] == ']' && --depth == 0) {
+                        ++cursor;
+                        break;
+                    }
+                }
+                if (depth != 0) {
+                    return std::nullopt;
+                }
+                candidateIndices += line.substr(beginIndex, cursor - beginIndex);
+            }
+            while (cursor < line.size() &&
+                   std::isspace(static_cast<unsigned char>(line[cursor]))) {
+                ++cursor;
+            }
+            if (cursor >= line.size() || line[cursor] != '=') {
+                continue;
+            }
+            auto rhsBegin = cursor + 1;
+            while (rhsBegin < line.size() &&
+                   std::isspace(static_cast<unsigned char>(line[rhsBegin]))) {
+                ++rhsBegin;
+            }
+            auto rhsEnd = line.find(';', rhsBegin);
+            if (rhsEnd == std::string::npos ||
+                trimCombText(line.substr(rhsBegin, rhsEnd - rhsBegin)) != "__cpphdl_elem") {
+                continue;
+            }
+            outerAssign = cursor;
+            outerCursor = search;
+            indices = std::move(candidateIndices);
+            scanBegin = 0;
+            scanEnd = search;
+            break;
+        }
+        if (outerAssign == std::string::npos) {
+            return std::nullopt;
+        }
+
+        const std::string elementPrefix = "__cpphdl_elem.";
+        bool sawElementUpdate = false;
+        for (size_t memberPos = scanBegin;
+             (memberPos = line.find(elementPrefix, memberPos)) != std::string::npos &&
+             memberPos < scanEnd;) {
+            sawElementUpdate = true;
+            auto memberStart = memberPos + elementPrefix.size();
+            auto memberEnd = memberStart;
+            while (memberEnd < line.size() &&
+                   (isIdentifierChar(line[memberEnd]) || line[memberEnd] == '.')) {
+                ++memberEnd;
+            }
+            auto member = line.substr(memberStart, memberEnd - memberStart);
+            auto cursor = memberEnd;
+            while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) {
+                ++cursor;
+            }
+            const bool writesRequestedField =
+                member == field || member.rfind(field + ".", 0) == 0;
+            const bool writesRequestedAncestor =
+                field.rfind(member + ".", 0) == 0;
+            if ((!writesRequestedField && !writesRequestedAncestor) ||
+                cursor >= line.size() || line[cursor] != '=') {
+                memberPos = memberEnd;
+                continue;
+            }
+            auto rhsStart = cursor + 1;
+            while (rhsStart < line.size() && std::isspace(static_cast<unsigned char>(line[rhsStart]))) {
+                ++rhsStart;
+            }
+            int paren = 0;
+            int bracket = 0;
+            int brace = 0;
+            auto rhsEnd = rhsStart;
+            for (; rhsEnd < line.size(); ++rhsEnd) {
+                auto ch = line[rhsEnd];
+                if (ch == '(') ++paren;
+                else if (ch == ')' && paren > 0) --paren;
+                else if (ch == '[') ++bracket;
+                else if (ch == ']' && bracket > 0) --bracket;
+                else if (ch == '{') ++brace;
+                else if (ch == '}' && brace > 0) --brace;
+                else if (ch == ';' && paren == 0 && bracket == 0 && brace == 0) break;
+            }
+            if (rhsEnd >= line.size()) {
+                return std::string{};
+            }
+            auto target = resultName + indices;
+            auto projectedRhs = trimCombText(line.substr(rhsStart, rhsEnd - rhsStart));
+            if (writesRequestedField && member != field) {
+                target += member.substr(field.size());
+            }
+            else if (writesRequestedAncestor) {
+                auto descendant = field.substr(member.size() + 1);
+                projectedRhs = projectedRhs == "0" || projectedRhs == "0b0" ||
+                               projectedRhs == "0x0" || projectedRhs == "{}"
+                    ? std::string("{}")
+                    : "(" + projectedRhs + ")." + descendant;
+            }
+            return target + " = " + projectedRhs + ";";
+        }
+        return sawElementUpdate
+            ? std::optional<std::string>(std::string{})
+            : std::nullopt;
+    };
+    for (size_t i = begin; i < end;) {
+        auto text = trimCombText(lines[i]);
+        if (inForLoop && isLoopMaintenanceLine(text)) {
+            out.push_back(lines[i++]);
+            continue;
+        }
+        if (auto declaration = declarationName(lines[i]); !declaration.empty()) {
+            deferredDeclarations.push_back({declaration, lines[i]});
+            ++i;
+            continue;
+        }
+        if (auto update = generatedElementFieldUpdate(lines[i]); update.has_value()) {
+            if (!update->empty()) {
+                out.push_back(std::move(*update));
+            }
+            ++i;
+            continue;
+        }
+        auto eq = topLevelAssignPos(lines[i]);
+        if (eq != std::string::npos) {
+            auto lhs = trimCombText(lines[i].substr(0, eq));
+            auto accesses = projectedMemberAccesses(lhs, base);
+            if (accesses.size() == 1 && accesses.front().begin == 0 &&
+                accesses.front().end == lhs.size()) {
+                const auto& access = accesses.front();
+                if (access.field == field || access.field.rfind(field + ".", 0) == 0) {
+                    auto target = resultName + access.indices;
+                    if (access.field != field) {
+                        target += access.field.substr(field.size());
+                    }
+                    out.push_back(target + " = " + assignmentRhs(lines[i]) + ";");
+                }
+                else if (!access.field.empty() && field.rfind(access.field + ".", 0) == 0) {
+                    auto rhs = assignmentRhs(lines[i]);
+                    auto descendant = field.substr(access.field.size() + 1);
+                    auto projectedRhs = rhs == "0" || rhs == "0b0" || rhs == "0x0" || rhs == "{}"
+                        ? std::string("{}")
+                        : "(" + rhs + ")." + descendant;
+                    out.push_back(resultName + access.indices + " = " + projectedRhs + ";");
+                }
+            }
+            else if (lhs.rfind(base, 0) == 0 &&
+                     (lhs.size() == base.size() || lhs[base.size()] == '[')) {
+                auto cursor = base.size();
+                std::string indices;
+                while (cursor < lhs.size() && lhs[cursor] == '[') {
+                    auto start = cursor;
+                    int depth = 0;
+                    for (; cursor < lhs.size(); ++cursor) {
+                        if (lhs[cursor] == '[') {
+                            ++depth;
+                        }
+                        else if (lhs[cursor] == ']' && --depth == 0) {
+                            ++cursor;
+                            break;
+                        }
+                    }
+                    indices += lhs.substr(start, cursor - start);
+                }
+                if (cursor == lhs.size()) {
+                    auto rhs = assignmentRhs(lines[i]);
+                    auto projectedRhs = rhs == "0" || rhs == "0b0" || rhs == "0x0" || rhs == "{}"
+                        ? std::string("{}")
+                        : "(" + rhs + ")." + field;
+                    out.push_back(resultName + indices + " = " + projectedRhs + ";");
+                }
+            }
+            ++i;
+            continue;
+        }
+        if (isIfChainHeader(text) && text.find('{') != std::string::npos) {
+            struct Branch {
+                std::string header;
+                std::vector<std::string> body;
+                std::string close;
+            };
+            std::vector<Branch> branches;
+            size_t next = i;
+            bool first = true;
+            while (next < end) {
+                auto header = trimCombText(lines[next]);
+                if ((first && !isIfChainHeader(header)) || (!first && !isElseHeader(header)) ||
+                    header.find('{') == std::string::npos) {
+                    break;
+                }
+                auto close = matchingBlockEnd(lines, next);
+                if (close <= next || close >= end) {
+                    break;
+                }
+                auto body = extractProjectedArrayFieldCombLinesRange(
+                    lines, base, field, resultName, next + 1, close, inForLoop);
+                branches.push_back({lines[next], std::move(body), lines[close]});
+                next = close + 1;
+                first = false;
+                if (next >= end || !isElseHeader(trimCombText(lines[next]))) {
+                    break;
+                }
+            }
+            bool relevant = std::any_of(branches.begin(), branches.end(),
+                                        [](const auto& branch) { return !branch.body.empty(); });
+            if (relevant) {
+                for (const auto& branch : branches) {
+                    out.push_back(branch.header);
+                    out.insert(out.end(), branch.body.begin(), branch.body.end());
+                    out.push_back(branch.close);
+                }
+            }
+            i = branches.empty() ? i + 1 : next;
+            continue;
+        }
+        if (startsControlBlock(text) && text.find('{') != std::string::npos) {
+            auto close = matchingBlockEnd(lines, i);
+            if (close > i && close < end) {
+                auto body = extractProjectedArrayFieldCombLinesRange(
+                    lines, base, field, resultName, i + 1, close,
+                    inForLoop || isForHeader(text));
+                if (!body.empty()) {
+                    out.push_back(lines[i]);
+                    out.insert(out.end(), body.begin(), body.end());
+                    out.push_back(lines[close]);
+                }
+                i = close + 1;
+                continue;
+            }
+        }
+        ++i;
+    }
+    bool addedDeclaration = true;
+    std::set<size_t> selectedDeclarations;
+    while (addedDeclaration) {
+        addedDeclaration = false;
+        for (size_t index = 0; index < deferredDeclarations.size(); ++index) {
+            if (selectedDeclarations.count(index)) {
+                continue;
+            }
+            const auto& declaration = deferredDeclarations[index];
+            bool used = std::any_of(out.begin(), out.end(), [&](const std::string& line) {
+                return containsIdentifier(line, declaration.first);
+            });
+            if (!used) {
+                for (auto selected : selectedDeclarations) {
+                    if (containsIdentifier(deferredDeclarations[selected].second, declaration.first)) {
+                        used = true;
+                        break;
+                    }
+                }
+            }
+            if (used) {
+                selectedDeclarations.insert(index);
+                addedDeclaration = true;
+            }
+        }
+    }
+    std::vector<std::string> declarations;
+    for (size_t index = 0; index < deferredDeclarations.size(); ++index) {
+        if (selectedDeclarations.count(index)) {
+            declarations.push_back(deferredDeclarations[index].second);
+        }
+    }
+    out.insert(out.begin(), declarations.begin(), declarations.end());
+    return out;
+}
+
+inline std::vector<std::string> extractProjectedArrayFieldCombLines(
+    const std::vector<std::string>& lines,
+    const std::string& base,
+    const std::string& field,
+    const std::string& resultName)
+{
+    return extractProjectedArrayFieldCombLinesRange(
+        lines, base, field, resultName, 0, lines.size());
 }
 
 inline std::set<std::string> controlCoupledCombVariables(const std::vector<std::string>& lines,

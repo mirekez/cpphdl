@@ -1,0 +1,3 @@
+is_inside_nonidempotent_regions	1
+is_inside_execute_regions	1
+is_inside_cacheable_regions	1

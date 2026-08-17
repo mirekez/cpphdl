@@ -23,10 +23,12 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <deque>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,12 +39,22 @@
 #include <unordered_set>
 #include <vector>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 using namespace clang;
 
 namespace
 {
 
 using AnnotationVars = std::unordered_map<std::string, std::string>;
+
+bool isModuleClockLifecycleMethod(const std::string& name)
+{
+    return name == "_work" || name == "_work_neg" || name == "_strobe" || name == "_strobe_neg"
+        || name.rfind("_work_", 0) == 0 || name.rfind("_strobe_", 0) == 0;
+}
 
 static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordDecl* owner)
 {
@@ -339,6 +351,20 @@ std::vector<std::string> fieldInlineAnnotations(const FieldDecl* FD, const ASTCo
         return annotations;
     }
 
+    constexpr std::string_view attribute_prefix = "CPPHDL_ATTRIBUTE=";
+    for (const Attr* attr : FD->attrs()) {
+        if (const auto* ann = dyn_cast<AnnotateAttr>(attr)) {
+            std::string text = ann->getAnnotation().str();
+            if (text.rfind(attribute_prefix, 0) == 0) {
+                text.erase(0, attribute_prefix.size());
+                text = trimText(std::move(text));
+                if (!text.empty()) {
+                    annotations.push_back(std::move(text));
+                }
+            }
+        }
+    }
+
     const SourceManager& sm = ctx.getSourceManager();
     SourceLocation loc = sm.getSpellingLoc(FD->getBeginLoc());
     if (!loc.isValid()) {
@@ -439,6 +465,20 @@ std::filesystem::path resolveAnnotationPath(const std::string& annotation_path, 
     }
 
     const SourceManager& sm = ctx.getSourceManager();
+    if (const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+        if (const ClassTemplateDecl* TD = CTSD->getSpecializedTemplate()) {
+            if (const CXXRecordDecl* templated = TD->getTemplatedDecl()) {
+                std::string templateSource = sm.getFilename(
+                    sm.getSpellingLoc(templated->getLocation())).str();
+                if (!templateSource.empty()) {
+                    fs::path fromTemplate = fs::path(templateSource).parent_path() / path;
+                    if (fs::exists(fromTemplate)) {
+                        return fromTemplate;
+                    }
+                }
+            }
+        }
+    }
     std::string source = sm.getFilename(sm.getSpellingLoc(RD->getLocation())).str();
     if (!source.empty()) {
         fs::path from_source = fs::path(source).parent_path() / path;
@@ -600,8 +640,25 @@ void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspo
         return;
     }
 
-    if (expr1.type == expr2.type && expr1.value == expr2.value && expr1.sub.size() == expr2.sub.size()) {
-        for (size_t i=0; i < expr1.sub.size(); ++i) {
+    if (expr1.type == expr2.type && expr1.value == expr2.value) {
+        size_t commonSubexpressions = 0;
+        if (expr1.sub.size() == expr2.sub.size()) {
+            commonSubexpressions = expr1.sub.size();
+        }
+        else if (expr1.type == cpphdl::Expr::EXPR_TEMPLATE) {
+            // A concrete specialization includes defaulted template arguments,
+            // while the primary-template expression contains only arguments
+            // written at the declaration site.  Compare their shared explicit
+            // argument prefix and leave concrete-only defaults untouched.
+            const size_t concreteArgs = !expr1.sub.empty()
+                    && expr1.sub.back().type == cpphdl::Expr::EXPR_TYPE
+                ? expr1.sub.size() - 1 : expr1.sub.size();
+            const size_t abstractArgs = !expr2.sub.empty()
+                    && expr2.sub.back().type == cpphdl::Expr::EXPR_TYPE
+                ? expr2.sub.size() - 1 : expr2.sub.size();
+            commonSubexpressions = std::min(concreteArgs, abstractArgs);
+        }
+        for (size_t i = 0; i < commonSubexpressions; ++i) {
             updateExpr(expr1.sub[i], expr2.sub[i]);
         }
     }
@@ -1591,7 +1648,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     if (hlp.mod->origName != MD->getParent()->getQualifiedNameAsString()) {  // method of base class or external object (not current mod)
         std::string parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
         if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
-            if (MD->getNameAsString() == "_work" || MD->getNameAsString() == "_assign") {
+            if (isModuleClockLifecycleMethod(MD->getNameAsString()) || MD->getNameAsString() == "_assign") {
                 return "";  // we need not work functions from third party classes (not Modules)
             }
 
@@ -2080,13 +2137,80 @@ struct MethodConsumer : public ASTConsumer
 
 static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
+namespace
+{
+
+bool validClockName(std::string_view name)
+{
+    if (name.empty() || name == "reset" || is_systemverilog_keyword(std::string(name))) {
+        return false;
+    }
+    if (!(std::isalpha(static_cast<unsigned char>(name.front())) || name.front() == '_')) {
+        return false;
+    }
+    return std::all_of(name.begin() + 1, name.end(), [](char ch) {
+        return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+    });
+}
+
+bool parseClockFrequency(const char* text, uint64_t& frequency)
+{
+    std::string_view value(text ? text : "");
+    const char* begin = value.data();
+    const char* end = begin + value.size();
+    auto result = std::from_chars(begin, end, frequency);
+    return !value.empty() && result.ec == std::errc{} && result.ptr == end && frequency != 0;
+}
+
+bool parsePositiveSize(const char* text, size_t& value)
+{
+    std::string_view input(text ? text : "");
+    const char* begin = input.data();
+    const char* end = begin + input.size();
+    auto result = std::from_chars(begin, end, value);
+    return !input.empty() && result.ec == std::errc{} && result.ptr == end && value != 0;
+}
+
+bool appendClockDomain(std::vector<cpphdl::ClockDomain>& clocks, const char* name,
+    const char* frequencyText, const char* option)
+{
+    uint64_t frequency = 0;
+    if (!validClockName(name ? name : "")) {
+        llvm::errs() << option << " requires a valid non-keyword clock identifier\n";
+        return false;
+    }
+    if (!parseClockFrequency(frequencyText, frequency)) {
+        llvm::errs() << option << " requires a positive integer frequency\n";
+        return false;
+    }
+    if (std::any_of(clocks.begin(), clocks.end(), [&](const auto& clock) {
+            return clock.name == name;
+        })) {
+        llvm::errs() << "clock '" << name << "' is declared more than once\n";
+        return false;
+    }
+    clocks.push_back({name, frequency});
+    return true;
+}
+
+}
+
 struct MyFrontendAction : public ASTFrontendAction
 {
-    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr)
-        : combsOptimizer(combsOptimizer) {}
+    explicit MyFrontendAction(cpphdl::CombsOptimizer* combsOptimizer = nullptr,
+                              bool trimPreviousAst = false)
+        : combsOptimizer(combsOptimizer), trimPreviousAst(trimPreviousAst) {}
 
     bool BeginSourceFileAction(CompilerInstance &CI) override
     {
+#if defined(__GLIBC__)
+        // Clang has destroyed the previous CompilerInstance before creating
+        // this action. Return its released AST arenas before collecting the
+        // next bounded optimizer input instead of accumulating them per TU.
+        if (trimPreviousAst) {
+            malloc_trim(0);
+        }
+#endif
         // Fetched Clang 21 can report failed include-search candidates here
         // even when a later search directory opens the header successfully.
         CI.getDiagnostics().setSeverity(
@@ -2102,6 +2226,7 @@ struct MyFrontendAction : public ASTFrontendAction
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool trimPreviousAst;
 };
 
 struct MyFrontendActionFactory : public tooling::FrontendActionFactory
@@ -2111,11 +2236,31 @@ struct MyFrontendActionFactory : public tooling::FrontendActionFactory
 
     std::unique_ptr<FrontendAction> create() override
     {
-        return std::make_unique<MyFrontendAction>(combsOptimizer);
+        auto action = std::make_unique<MyFrontendAction>(combsOptimizer,
+                                                         !firstSource);
+        firstSource = false;
+        return action;
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
+    bool firstSource = true;
 };
+
+tooling::CommandLineArguments adjustCppInputKind(
+    const tooling::CommandLineArguments& arguments, llvm::StringRef filename)
+{
+    tooling::CommandLineArguments adjusted = arguments;
+    const std::string_view sourceName(filename.data(), filename.size());
+    const bool isHeader = sourceName.ends_with(".h") || sourceName.ends_with(".hpp");
+
+    for (size_t i = 0; i + 1 < adjusted.size(); ++i) {
+        if (adjusted[i] == "-x") {
+            adjusted[i + 1] = isHeader ? "c++-header" : "c++";
+        }
+    }
+
+    return adjusted;
+}
 
 int main(int argc, const char **argv)
 {
@@ -2124,6 +2269,12 @@ int main(int argc, const char **argv)
     std::string generated_dir = "generated";
     std::string json_output;
     std::string optimize_combs_root;
+    bool optimize_combs_l1 = false;
+    std::string optimize_combs_collection_output;
+    std::vector<std::string> optimize_combs_collection_inputs;
+    bool optimize_math = false;
+    size_t optimize_threads = 1;
+    bool optimize_threads_specified = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
     // Callers need to select whether preprocessing follows synthesis guards.
     // Keep synthesis as the default while recording an explicit opt-out here.
@@ -2131,6 +2282,8 @@ int main(int argc, const char **argv)
     bool saw_double_dash = false;
     bool injected_double_dash = false;
     std::filesystem::path cpphdl_source_include;
+    std::vector<cpphdl::ClockDomain> primary_clocks;
+    std::vector<cpphdl::ClockDomain> secondary_clocks;
 
 #ifdef CPPHDL_SOURCE_DIR
     cpphdl_source_include = std::filesystem::path(CPPHDL_SOURCE_DIR) / "include";
@@ -2156,12 +2309,62 @@ int main(int argc, const char **argv)
             continue;
         }
 
+        if (!saw_double_dash && std::strcmp(arg, "--primary_clock") == 0) {
+            if (i + 2 >= argc) {
+                llvm::errs() << "--primary_clock requires <clk_name> <frequency>\n";
+                return 1;
+            }
+            if (!primary_clocks.empty()) {
+                llvm::errs() << "--primary_clock may be specified only once\n";
+                return 1;
+            }
+            if (!appendClockDomain(primary_clocks, argv[i + 1], argv[i + 2], "--primary_clock")) {
+                return 1;
+            }
+            i += 2;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--secondary_clock") == 0) {
+            if (i + 2 >= argc) {
+                llvm::errs() << "--secondary_clock requires <clk_name> <frequency>\n";
+                return 1;
+            }
+            if (!appendClockDomain(secondary_clocks, argv[i + 1], argv[i + 2], "--secondary_clock")) {
+                return 1;
+            }
+            i += 2;
+            continue;
+        }
+
         if (!saw_double_dash && std::strcmp(arg, "--optimize-combs") == 0) {
             if (i + 1 >= argc) {
                 llvm::errs() << "--optimize-combs requires a root module class\n";
                 return 1;
             }
             optimize_combs_root = argv[++i];
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-l1") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_root = argv[++i];
+            optimize_combs_l1 = true;
+            add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-l1=", 20) == 0) {
+            optimize_combs_root = arg + 20;
+            if (optimize_combs_root.empty()) {
+                llvm::errs() << "--optimize-combs-l1 requires a root module class\n";
+                return 1;
+            }
+            optimize_combs_l1 = true;
             add_synthesis_flag = false;
             continue;
         }
@@ -2173,6 +2376,67 @@ int main(int argc, const char **argv)
                 return 1;
             }
             add_synthesis_flag = false;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-collect") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_output = argv[++i];
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-collect=", 25) == 0) {
+            optimize_combs_collection_output = arg + 25;
+            if (optimize_combs_collection_output.empty()) {
+                llvm::errs() << "--optimize-combs-collect requires a file name\n";
+                return 1;
+            }
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-combs-load") == 0) {
+            if (i + 1 >= argc) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.emplace_back(argv[++i]);
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-combs-load=", 22) == 0) {
+            std::string input = arg + 22;
+            if (input.empty()) {
+                llvm::errs() << "--optimize-combs-load requires a file name\n";
+                return 1;
+            }
+            optimize_combs_collection_inputs.push_back(std::move(input));
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-math") == 0) {
+            optimize_math = true;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--optimize-threads") == 0) {
+            if (i + 1 >= argc || !parsePositiveSize(argv[i + 1], optimize_threads)) {
+                llvm::errs() << "--optimize-threads requires a positive integer\n";
+                return 1;
+            }
+            optimize_threads_specified = true;
+            ++i;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strncmp(arg, "--optimize-threads=", 19) == 0) {
+            if (!parsePositiveSize(arg + 19, optimize_threads)) {
+                llvm::errs() << "--optimize-threads requires a positive integer\n";
+                return 1;
+            }
+            optimize_threads_specified = true;
             continue;
         }
 
@@ -2233,6 +2497,33 @@ int main(int argc, const char **argv)
         }
     }
 
+    if (!secondary_clocks.empty() && primary_clocks.empty()) {
+        llvm::errs() << "--secondary_clock requires --primary_clock\n";
+        return 1;
+    }
+    if (optimize_combs_root.empty() &&
+        (!optimize_combs_collection_output.empty() ||
+         !optimize_combs_collection_inputs.empty())) {
+        llvm::errs() << "--optimize-combs-collect/load requires --optimize-combs or --optimize-combs-l1\n";
+        return 1;
+    }
+    if (!primary_clocks.empty()) {
+        for (const auto& secondary : secondary_clocks) {
+            if (secondary.name == primary_clocks.front().name) {
+                llvm::errs() << "clock '" << secondary.name << "' is declared more than once\n";
+                return 1;
+            }
+            if (secondary.frequency > primary_clocks.front().frequency) {
+                llvm::errs() << "primary clock '" << primary_clocks.front().name
+                             << "' must have the highest frequency\n";
+                return 1;
+            }
+        }
+        currProject->clocks = primary_clocks;
+        currProject->clocks.insert(currProject->clocks.end(),
+            secondary_clocks.begin(), secondary_clocks.end());
+    }
+
     std::vector<std::string> cpphdl_include_args;
 #ifdef CPPHDL_SOURCE_DIR
     if (std::filesystem::exists(cpphdl_source_include / "cpphdl.h")) {
@@ -2269,6 +2560,17 @@ int main(int argc, const char **argv)
     new_argv.push_back(nullptr);
     int new_argc = (int)new_argv.size() - 1;
 
+    if (optimize_math && optimize_combs_root.empty()) {
+        llvm::errs() << "--optimize-math requires --optimize-combs or "
+                        "--optimize-combs-l1\n";
+        return 1;
+    }
+    if (optimize_threads_specified && optimize_combs_root.empty()) {
+        llvm::errs() << "--optimize-threads requires --optimize-combs or "
+                        "--optimize-combs-l1\n";
+        return 1;
+    }
+
     if (cpphdlDebugEnabled) {
         llvm::errs() << "CppHDL clang args:";
         for (const auto& arg : args) {
@@ -2285,20 +2587,58 @@ int main(int argc, const char **argv)
     tooling::CommonOptionsParser& Options = ExpectedParser.get();
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
+    Tool.appendArgumentsAdjuster(adjustCppInputKind);
 
-    cpphdl::CombsOptimizer combsOptimizer;
+    // The comb optimizer can restrict method extraction to the concrete root.
+    // Supplying it before Clang's AST walk avoids retaining unrelated module
+    // implementations from the same generated umbrella header.
+    cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
+    combsOptimizer.setL1Scheduling(optimize_combs_l1);
+    combsOptimizer.setCollectionOnly(!optimize_combs_collection_output.empty());
+    for (const auto& input : optimize_combs_collection_inputs) {
+        if (!combsOptimizer.loadCollection(input)) {
+            return 1;
+        }
+    }
+    combsOptimizer.setMathOptimization(optimize_math);
+    combsOptimizer.setThreadCount(optimize_threads);
     MyFrontendActionFactory actionFactory(
         optimize_combs_root.empty() ? nullptr : &combsOptimizer);
+    const bool trace_phases = std::getenv("CPPHDL_TRACE_PHASES") != nullptr;
+    const auto parse_started = std::chrono::steady_clock::now();
     int ret = Tool.run(&actionFactory);
+    if (trace_phases) {
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - parse_started).count();
+        llvm::errs() << "cpphdl phase: AST collection " << elapsed << " s\n";
+    }
     if (ret != 0) {
         return ret;
     }
+    if (!optimize_combs_collection_output.empty()) {
+        return combsOptimizer.saveCollection(optimize_combs_collection_output)
+            ? 0 : 1;
+    }
     if (!optimize_combs_root.empty()) {
+#if defined(__GLIBC__)
+        // Clang releases its AST before Tool.run() returns, but glibc can retain
+        // those multi-gigabyte arenas.  The graph is a separate allocation phase,
+        // so return unused AST pages before constructing the optimized schedule.
+        malloc_trim(0);
+#endif
+        const auto generate_started = std::chrono::steady_clock::now();
         if (!combsOptimizer.generate(optimize_combs_root, generated_dir)) {
             return 1;
         }
+        if (trace_phases) {
+            const auto elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - generate_started).count();
+            llvm::errs() << "cpphdl phase: comb generation " << elapsed << " s\n";
+        }
     } else {
-        currProject->generate(generated_dir);
+        if (!currProject->generate(generated_dir)) {
+            return 1;
+        }
     }
     if (!json_output.empty() && !cpphdl::writeJsonOutput(*currProject, json_output)) {
         return 1;

@@ -1,0 +1,2 @@
+cva6_fifo_v3|read_pointer_q._next = read_pointer_n;	fifo_ram_read_address_comb_func()
+wt_axi_adapter|icache_first_q._next = icache_first_d;	dcache_wr_pop_comb_func(),dcache_rd_shift_user_d_comb_func()

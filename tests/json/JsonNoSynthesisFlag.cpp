@@ -7,15 +7,37 @@
 
 using namespace cpphdl;
 
-class JsonTestHarness : public Module
+class JsonAliasLeaf : public Module
 {
 public:
-    _PORT(bool) trigger_in;
-    _PORT(bool) observed_out;
+    _PORT(bool) request_in;
+    _PORT(bool) response_out;
 
     void _work(bool) {}
     void _strobe() {}
     void _assign() {}
+};
+
+class JsonTestHarness : public Module
+{
+    JsonAliasLeaf dut;
+    reg<u1> request_reg;
+    bool response_value = false;
+
+public:
+    _PORT(bool) trigger_in;
+    _PORT(bool) observed_out;
+
+    void _work(bool)
+    {
+        response_value = dut.response_out();
+    }
+    void _strobe() {}
+    void _assign()
+    {
+        dut.request_in = _ASSIGN_REG(request_reg);
+        dut._assign();
+    }
 };
 
 #endif
@@ -43,7 +65,11 @@ int main()
         std::istreambuf_iterator<char>());
     if (text.find("\"JsonTestHarness\"") == std::string::npos ||
             text.find("\"trigger_in\"") == std::string::npos ||
-            text.find("\"observed_out\"") == std::string::npos) {
+            text.find("\"observed_out\"") == std::string::npos ||
+            text.find("\"request_reg\": {\"hide_name\": 0, \"bits\": [6]") == std::string::npos ||
+            text.find("\"dut__request_in\": {\"hide_name\": 0, \"bits\": [6]") == std::string::npos ||
+            text.find("\"response_value\": {\"hide_name\": 0, \"bits\": [7]") == std::string::npos ||
+            text.find("\"dut__response_out\": {\"hide_name\": 0, \"bits\": [7]") == std::string::npos) {
         std::cerr << "test-only module is missing from JSON output\n";
         return 1;
     }

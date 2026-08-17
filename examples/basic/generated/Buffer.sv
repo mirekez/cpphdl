@@ -4,8 +4,8 @@ import Predef_pkg::*;
 
 
 module Buffer #(
-    parameter WIDTH
-,   parameter DEPTH
+    parameter WIDTH = 64
+,   parameter DEPTH = 8
  )
  (
     input wire clk

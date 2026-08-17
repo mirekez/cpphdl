@@ -1,6 +1,16 @@
+# 1.3
+
+ - asynchronous resets initial code
+ - CDC initial code and tests
+
+# 1.2
+
+ - Multicore Tribe CPU and multicore L2Cache
  - Tribe cpu has SD(H) device and ethgig device, ping works from Linux
  - several bugs in C++ templates conversion are fixed
  - several bugs in L2 Cache are fixed
+ - --optimize-combs experimental mode in development
+ - hdlcpp tool in development
 
 # 1.1
 
@@ -12,7 +22,7 @@
 # 1.0
 
  - lots of tests in examples/ and tests/
- - Tribe RISC-V CPU is developed in tribe/ folder and has it's own tests/ and linux/ folders for running Linux demo in simulator
+ - Tribe RISC-V CPU is developed in tribe_cpu/ folder and has it's own tests/ and linux/ folders for running Linux demo in simulator
  - experimental backwards SV->CPP conversion tool hdlcpp/
  - wrote documents "best_practice" and "tribe_cpu"
  - added CHANGELOG.md

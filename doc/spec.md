@@ -39,7 +39,7 @@ void _assign()
 
 &nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
 
-&nbsp;&nbsp;&nbsp;&nbsp;All SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
+&nbsp;&nbsp;&nbsp;&nbsp;In the default single-clock flow, all SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog. Multi-clock designs use one named work method per clock and edge, as described in the Clock Domain Crossing chapter.
 
 SystemVerilog:
 
@@ -101,7 +101,7 @@ u<32> read_data_comb_func()
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in a strobe method, not in `_assign()`, a work method, or comb functions. Multi-clock designs use a separate named strobe method for each clock and edge.
 
 ```cpp
 void _strobe()
@@ -165,7 +165,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 ## Limitations
 
 * CppHDL supports only digital design components written using blocking assignments
-* Currently no multiclock or CDC is supported. Each clock domain should be developed separately
+* Multi-clock RTL and common digital CDC structures are supported, but analog behavior, physical implementation, and timing constraints require external CDC and implementation tools
 * Timing- or power-critical sections should be isolated at the architectural level
 
 &nbsp;&nbsp;&nbsp;&nbsp;CppHDL is intended to bring ease and speed to the development of various digital circuits such as controllers,
@@ -401,8 +401,7 @@ use packed *structs* to achieve proper `<8`bit fields packing.
 
 ## Clock and reset
 
-&nbsp;&nbsp;&nbsp;&nbsp;Currently, only one clock is used, named *clk*. Reset is the main *reset* parameter of the work function.
-It is possible to define any synchronous reset sequence. Asynchronous reset is not supported yet.
+&nbsp;&nbsp;&nbsp;&nbsp;The default flow uses one clock named *clk*. Multi-clock designs declare a primary clock and one or more secondary clocks on the `cpphdl` command line. Each declared clock becomes a module port and has its own work and strobe methods. Reset is the main *reset* parameter of each work function. Named multi-clock processes support synchronous reset and active-high asynchronous reset assertion. Asynchronous-reset method naming, ownership, and release requirements are described in the Clock Domain Crossing chapter.
 
 ## Variables list
 
@@ -440,6 +439,7 @@ Only *._next* value of registers should be changed directly.
 &nbsp;&nbsp;&nbsp;&nbsp;The strobe function should contain all registers of the module and call `.strobe()` functions for them.
 Also, `_strobe()` should be called for each nested instance of the class.
 Forgotten registers will be reported by *cpphdl* tool.
+In a multi-clock design, each register or memory must be committed by exactly one clock-and-edge-specific strobe method.
 
 ## Comb methods
 
@@ -826,6 +826,270 @@ interfaces such as valid-ready, where one module drives `valid` and `data`, whil
 `ready`. Use it from a parent module or test wrapper after setting instance names. Check
 `examples/axi/Axi4MuxFromSlave.cpp`, `examples/axi/Axi4MuxToMaster.cpp`, and
 `tests/interface/ValidReady.cpp` for larger examples.
+
+\newpage
+
+# Clock Domain Crossing (CDC)
+
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL can generate and simulate modules with multiple independent clock domains. The converter creates one clock input port and one sequential SystemVerilog process for each declared clock and edge. CppHDL does not make an unsafe crossing safe automatically: the RTL author must select an appropriate synchronizer, handshake, or asynchronous FIFO for every value crossing between domains.
+
+## Declaring clock domains
+
+&nbsp;&nbsp;&nbsp;&nbsp;Declare clocks before the source file in the `cpphdl` command line:
+
+```bash
+cpphdl \
+    --primary_clock fast_clk 100000000 \
+    --secondary_clock slow_clk 40000000 \
+    TwoClocksCdc.cpp -I../include
+```
+
+The clock options follow these rules:
+
+* `--primary_clock <clk_name> <frequency>` declares the design's primary clock.
+* `--secondary_clock <clk_name> <frequency>` may be repeated for additional clocks.
+* A secondary clock requires a primary clock.
+* Clock names must be valid, unique, non-keyword C++ identifiers.
+* Frequencies are positive integers. Use one consistent unit, normally hertz.
+* The primary clock frequency must be greater than or equal to every secondary clock frequency.
+* With no clock options, CppHDL retains the legacy `clk`, `_work(bool reset)`, and `_strobe()` flow.
+* A single named primary clock changes the generated clock port name but retains the legacy `_work(bool reset)` and `_strobe()` methods.
+* With two or more clocks, clock declarations are design-global. Every generated module receives every declared clock port.
+
+&nbsp;&nbsp;&nbsp;&nbsp;The frequency values describe and validate the clock topology. They do not create a clock source and do not automatically schedule native C++ simulation edges. A testbench must drive each clock with the required period, phase, and edge ordering.
+
+## Clock process methods
+
+&nbsp;&nbsp;&nbsp;&nbsp;For every declared clock `<clk_name>` in a multi-clock design, every generated module must define this positive-edge pair:
+
+```cpp
+void _work_<clk_name>(bool reset);
+void _strobe_<clk_name>();
+```
+
+An optional negative-edge process requires both methods:
+
+```cpp
+void _work_neg_<clk_name>(bool reset);
+void _strobe_neg_<clk_name>();
+```
+
+Defining only one method of a negative-edge pair is an error. A domain with no positive-edge state still requires an empty positive-edge work/strobe pair because clocks are currently design-global.
+
+The following example transfers a single-bit level through a two-register destination-domain synchronizer:
+
+```cpp
+class LevelCdc : public Module
+{
+public:
+    _PORT(bool) source_in;
+    _PORT(bool) synchronized_out = _ASSIGN_REG(sync2_reg);
+
+private:
+    reg<u1> source_reg;
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> sync1_reg;
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> sync2_reg;
+
+public:
+    void _work_fast_clk(bool reset)
+    {
+        source_reg._next = source_in();
+        if (reset) {
+            source_reg.clr();
+        }
+    }
+
+    void _strobe_fast_clk()
+    {
+        source_reg.strobe();
+    }
+
+    void _work_slow_clk(bool reset)
+    {
+        sync1_reg._next = source_reg;
+        sync2_reg._next = sync1_reg;
+        if (reset) {
+            sync1_reg.clr();
+            sync2_reg.clr();
+        }
+    }
+
+    void _strobe_slow_clk()
+    {
+        sync1_reg.strobe();
+        sync2_reg.strobe();
+    }
+
+    void _assign() {}
+};
+```
+
+The converter emits separate clock ports and sequential blocks equivalent to:
+
+```systemverilog
+module LevelCdc (
+    input wire fast_clk,
+    input wire slow_clk,
+    input wire reset
+    // ports omitted
+);
+
+always_ff @(posedge fast_clk) begin
+    _work_fast_clk(reset);
+end
+
+always_ff @(posedge slow_clk) begin
+    _work_slow_clk(reset);
+end
+endmodule
+```
+
+## Register and memory ownership
+
+&nbsp;&nbsp;&nbsp;&nbsp;A register or memory belongs to exactly one clock and edge. Its next value must be written by the corresponding work method, and it must be committed by the matching strobe method. The converter rejects these structural errors:
+
+* A register is written by a work method but omitted from its matching strobe method.
+* A register is strobed by more than one clock or edge.
+* A positive-edge work/strobe method required by a declared clock is missing.
+* Only one method of an optional negative-edge pair is present.
+
+Do not write the same storage from two domains. Cross a control value into the destination domain first, then let destination-owned logic update destination-owned storage. For memory-backed asynchronous FIFOs, one domain owns the write operation while the other reads through the FIFO's defined read path; Gray-coded pointers cross between the domains.
+
+## Reset ownership and sequencing
+
+&nbsp;&nbsp;&nbsp;&nbsp;A generated multi-clock module has one shared `reset` input, driven by the parent module or testbench and connected to every nested module. Reset is a level, not a one-time event and not a transaction consumed by one clock. Each clock process samples that same level only on its own active edge and resets only the storage owned by that clock and edge. Consequently, a fast-clock edge does not reset slow-domain storage, and there is no second reset of fast-domain storage when the slow clock later samples reset.
+
+Reset is complete only after `reset` has remained asserted across at least one active edge of every clock-and-edge process that owns storage. If both positive- and negative-edge state exist, both edges must observe reset. Holding reset for additional edges repeats the reset assignments and must be harmless. A one-primary-clock-cycle reset pulse is unsafe because a slower or stopped clock can miss it entirely.
+
+Use this sequence in native CppHDL and Verilator testbenches:
+
+1. Quiesce normal transaction inputs and keep all declared clocks running.
+2. Assert the shared `reset` input before any reset edge is evaluated.
+3. Drive enough complete cycles that every positive- and negative-edge owner observes asserted reset. Designs with initialization state machines may require more cycles.
+4. Keep reset asserted until the slowest domain has observed it.
+5. Deassert reset according to each domain's synchronous timing requirements. Use a per-domain synchronization chain when reset release can arrive asynchronously.
+6. Resume traffic only after every required domain-local reset-release indication is active.
+
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL statically lints the structural part of this protocol. Every named work method must have the `void _work_<clk_name>(bool reset)` signature, where the C++ parameter may be unnamed, every strobe method must have a `void _strobe_<clk_name>()` signature, required method pairs must exist, and each register must have one clock/edge owner. The converter cannot prove that a testbench holds reset long enough, that every register is intentionally reset, that clocks continue running during reset, or that an external reset meets recovery/removal timing. Those properties require dynamic regression checks, generated-SystemVerilog assertions, and implementation CDC/reset-domain-crossing analysis.
+
+`test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native CppHDL and Verilator flows.
+
+## Native and Verilator simulation
+
+&nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. On an active edge, call the work method before the matching strobe method:
+
+```cpp
+if (fast_positive_edge) {
+    dut._work_fast_clk(reset);
+    dut._strobe_fast_clk();
+}
+if (slow_positive_edge) {
+    dut._work_slow_clk(reset);
+    dut._strobe_slow_clk();
+}
+if (fast_negative_edge) {
+    dut._work_neg_fast_clk(reset);
+    dut._strobe_neg_fast_clk();
+}
+```
+
+&nbsp;&nbsp;&nbsp;&nbsp;A Verilator testbench drives the generated clock ports and calls `eval()` after every level change. Tests should use different periods and a nontrivial phase relationship so simultaneous edges are not assumed. Reset behavior must be exercised independently in every domain. Compare externally visible transactions rather than internal scheduling details when checking native and Verilator equivalence.
+
+## CDC implementation patterns
+
+Use a CDC structure that matches the transferred information:
+
+* Stable single-bit levels: use at least a two-register destination-domain synchronizer.
+* Multi-bit counters and FIFO pointers: convert to Gray code, synchronize the Gray bus, then consume it in the destination domain.
+* Narrow pulses: encode the event as a toggling bit, synchronize it, and detect a toggle in the destination domain.
+* Coherent multi-bit payloads: hold data stable while a request/acknowledge handshake crosses the domains.
+* Streams: use a dual-clock asynchronous FIFO with domain-local binary pointers and synchronized Gray pointers.
+* Reset release: assert reset through clocked logic and release it through a per-domain synchronizer.
+
+&nbsp;&nbsp;&nbsp;&nbsp;Synchronizer registers can carry synthesis attributes through an adjacent CppHDL annotation comment:
+
+```cpp
+// (* ASYNC_REG = "TRUE" *)
+reg<u1> request_sync1_reg;
+// (* ASYNC_REG = "TRUE" *)
+reg<u1> request_sync2_reg;
+```
+
+This emits the corresponding `ASYNC_REG` attributes in generated SystemVerilog. The attribute assists synthesis and implementation tools, but does not replace CDC timing constraints or CDC signoff.
+
+## Covered CDC Features
+
+Each item has dedicated regression coverage in `tests/cdc/TwoClocksCdc.cpp` or
+`tests/reset/AsyncReset.cpp`:
+
+* Independent clocks with unrelated phase/frequency
+* Generated clock ports and separate edge blocks
+* Exclusive register ownership per clock/edge
+* Two-flop single-bit synchronization
+* Gray-coded multi-bit counter transfer
+* Toggle-based narrow-pulse transfer
+* Request/acknowledge coherent data mailbox
+* Memory-backed asynchronous FIFO
+* Shared-reset sampling and completion across all clock domains
+* Active-high asynchronous reset assertion for positive- and negative-edge processes
+* Synchronized reset release
+* Positive/negative-edge processes
+* `ASYNC_REG` synthesis attributes
+
+The expanded regression passes in both native CppHDL and Verilator flows. Existing CLI failure tests and the legacy `code_VarInit` test also pass. No additional converter defect was exposed by this coverage.
+
+## Current Limits
+
+The following behavior cannot presently be validated or fully represented by CppHDL:
+
+* Analog metastability behavior and mean time between failures (MTBF)
+* Physical synchronizer placement and routing skew
+* SDC false-path, multicycle, and generated-clock constraints
+* Automatic detection of unsafe raw buses, reconvergence, or lost pulses
+* Active-low reset polarity and independent per-domain reset ports; asynchronous handlers currently use the shared active-high `reset`
+* Dynamic clock gating or clock multiplexing
+* Jitter, drift, and precise phase relationships
+* Module-local clock subsets or clock-name remapping; clocks are currently design-global
+* Power-domain isolation and level-shifter behavior
+
+These limits require dedicated CDC analysis, static timing analysis, physical implementation constraints, and hardware signoff outside CppHDL.
+
+\newpage
+
+# Asynchronous Reset
+
+&nbsp;&nbsp;&nbsp;&nbsp;Named clock processes support asynchronous assertion through optional active-high reset handlers:
+
+```cpp
+void _reset_pos_fast_clk()
+{
+    fast_state_reg.clr();
+}
+
+void _reset_neg_fast_clk()
+{
+    fast_neg_state_reg.clr();
+}
+```
+
+`_reset_pos_<clk_name>()` belongs to the positive clock-edge process, while `_reset_neg_<clk_name>()` belongs to the negative clock-edge process. The suffix describes the clock edge, not reset polarity. Generated RTL uses the shared active-high `reset`:
+
+```systemverilog
+always_ff @(posedge fast_clk or posedge reset) begin
+    if (reset)
+        _reset_pos_fast_clk();
+    else
+        _work_fast_clk(reset);
+end
+```
+
+Reset handlers must return `void`, take no arguments, and modify only registers owned and strobed by the matching clock edge. A negative-edge handler requires matching `_work_neg_<clk_name>(bool)` and `_strobe_neg_<clk_name>()` methods.
+
+In native simulation, call the reset handler followed by its matching strobe method when reset is asserted. In Verilator, change `reset` from `0` to `1` and call `eval()`; no clock edge is required. Reset release must still satisfy each clock domain's recovery/removal requirements, normally through synchronized release logic.
+
+See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 
 # CppHDL SV Conversion tool
 
