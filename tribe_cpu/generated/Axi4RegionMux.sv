@@ -55,7 +55,7 @@ module Axi4RegionMux #(
 ,   input wire[31:0] region_base_in[N]
 ,   input wire[31:0] region_size_in[N]
 );
-    parameter  SEL_BITS = (N<='h1) ? ('h1) : ($clog2(N));
+    localparam  SEL_BITS = (N<='h1) ? ('h1) : ($clog2(N));
 
 
     // regs and combs

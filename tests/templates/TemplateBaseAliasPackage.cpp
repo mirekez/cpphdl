@@ -112,9 +112,9 @@ static bool check_generated_sv()
     require(text.find("parameter WIDTH_ = 'h9") != std::string::npos
             || text.find("parameter WIDTH_ = 9") != std::string::npos,
         "numeric template parameter WIDTH_ was not emitted with a standalone default");
-    require(text.find("parameter  LOCAL_WIDTH") != std::string::npos,
+    require(text.find("localparam  LOCAL_WIDTH") != std::string::npos,
         "local constexpr derived from Base alias was not emitted");
-    require(text.find("parameter  WIDTH = WIDTH;") == std::string::npos,
+    require(text.find("localparam  WIDTH = WIDTH;") == std::string::npos,
         "re-exported constexpr was emitted as a circular self-reference");
     require(text.find("unknown") == std::string::npos,
         "generated SV contains unresolved expression");

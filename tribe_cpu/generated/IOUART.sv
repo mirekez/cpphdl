@@ -34,8 +34,8 @@ module IOUART #(
 ,   output wire uart_valid_out
 ,   output wire[7:0] uart_data_out
 );
-    parameter  REG_TXDATA = 'h0;
-    parameter  REG_STATUS = 'h4;
+    localparam  REG_TXDATA = 'h0;
+    localparam  REG_STATUS = 'h4;
 
 
     // regs and combs

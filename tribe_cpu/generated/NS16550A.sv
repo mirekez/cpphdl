@@ -38,14 +38,14 @@ module NS16550A #(
 ,   output wire uart_rx_ready_out
 ,   output wire irq_out
 );
-    parameter  REG_RBR_THR_DLL = 'h0;
-    parameter  REG_IER_DLM = 'h1;
-    parameter  REG_IIR_FCR = 'h2;
-    parameter  REG_LCR = 'h3;
-    parameter  REG_MCR = 'h4;
-    parameter  REG_LSR = 'h5;
-    parameter  REG_MSR = 'h6;
-    parameter  REG_SCR = 'h7;
+    localparam  REG_RBR_THR_DLL = 'h0;
+    localparam  REG_IER_DLM = 'h1;
+    localparam  REG_IIR_FCR = 'h2;
+    localparam  REG_LCR = 'h3;
+    localparam  REG_MCR = 'h4;
+    localparam  REG_LSR = 'h5;
+    localparam  REG_MSR = 'h6;
+    localparam  REG_SCR = 'h7;
 
 
     // regs and combs

@@ -16,8 +16,8 @@ module CastTypes #(
 ,   output wire[32-1:0] direct_functional_out
 ,   output wire[32-1:0] constructor_template_out
 );
-    parameter  WIDTH = WIDTH_PARAM;
-    parameter  CAST_BITS = (WIDTH<='h1) ? ('h1) : ($clog2(WIDTH));
+    localparam  WIDTH = WIDTH_PARAM;
+    localparam  CAST_BITS = (WIDTH<='h1) ? ('h1) : ($clog2(WIDTH));
 
 
     // regs and combs

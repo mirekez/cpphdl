@@ -14,9 +14,9 @@ module Fifo2clk (
 ,   output wire read_valid_out
 ,   output wire[8-1:0] read_data_out
 );
-    parameter  DEPTH = 64'h10;
-    parameter  ADDR_BITS = 64'h4;
-    parameter  PTR_BITS = 64'h5;
+    localparam  DEPTH = 64'h10;
+    localparam  ADDR_BITS = 64'h4;
+    localparam  PTR_BITS = 64'h5;
 
 
     // regs and combs

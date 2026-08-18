@@ -131,23 +131,23 @@ module L2Cache #(
 ,   output wire dma_line_ready_out
 ,   input wire debugen_in
 );
-    parameter  LINE_WORDS = CACHE_LINE_SIZE/'h4;
-    parameter  PORT_BYTES = PORT_BITWIDTH/'h8;
-    parameter  PORT_WORDS = PORT_BITWIDTH/'h20;
-    parameter  LINE_BEATS = CACHE_LINE_SIZE/PORT_BYTES;
-    parameter  SETS = (CACHE_SIZE/CACHE_LINE_SIZE)/WAYS;
-    parameter  SET_BITS = $clog2(SETS);
-    parameter  LINE_BITS = $clog2(CACHE_LINE_SIZE);
-    parameter  TAG_BITS = (ADDR_BITS - SET_BITS) - LINE_BITS;
-    parameter  DATA_BANKS = WAYS*LINE_WORDS;
-    parameter  CPU_RESPONSE_BASE = 'h8;
-    parameter  RESPONSE_SLOTS = 'h10;
-    parameter  MEM_ADDR_MASK64 = ((MEM_ADDR_BITS>='h40)) ? (~64'h0) : ((((64'h1 <<< MEM_ADDR_BITS)) - 64'h1));
-    parameter  LINE_BEAT_BITS = (LINE_BEATS<='h1) ? ('h1) : ($clog2(LINE_BEATS));
-    parameter  WORD_BITS = $clog2(LINE_WORDS);
-    parameter  WAY_BITS = (WAYS<='h1) ? ('h1) : ($clog2(WAYS));
-    parameter  TAG_RAM_BITS = (((((TAG_BITS + 'h2) + 'h7))/'h8))*'h8;
-    parameter  MEM_PORT_BITS = $clog2(MEM_PORTS);
+    localparam  LINE_WORDS = CACHE_LINE_SIZE/'h4;
+    localparam  PORT_BYTES = PORT_BITWIDTH/'h8;
+    localparam  PORT_WORDS = PORT_BITWIDTH/'h20;
+    localparam  LINE_BEATS = CACHE_LINE_SIZE/PORT_BYTES;
+    localparam  SETS = (CACHE_SIZE/CACHE_LINE_SIZE)/WAYS;
+    localparam  SET_BITS = $clog2(SETS);
+    localparam  LINE_BITS = $clog2(CACHE_LINE_SIZE);
+    localparam  TAG_BITS = (ADDR_BITS - SET_BITS) - LINE_BITS;
+    localparam  DATA_BANKS = WAYS*LINE_WORDS;
+    localparam  CPU_RESPONSE_BASE = 'h8;
+    localparam  RESPONSE_SLOTS = 'h10;
+    localparam  MEM_ADDR_MASK64 = ((MEM_ADDR_BITS>='h40)) ? (~64'h0) : ((((64'h1 <<< MEM_ADDR_BITS)) - 64'h1));
+    localparam  LINE_BEAT_BITS = (LINE_BEATS<='h1) ? ('h1) : ($clog2(LINE_BEATS));
+    localparam  WORD_BITS = $clog2(LINE_WORDS);
+    localparam  WAY_BITS = (WAYS<='h1) ? ('h1) : ($clog2(WAYS));
+    localparam  TAG_RAM_BITS = (((((TAG_BITS + 'h2) + 'h7))/'h8))*'h8;
+    localparam  MEM_PORT_BITS = $clog2(MEM_PORTS);
 
 
     // regs and combs

@@ -1241,6 +1241,7 @@ endpackage
 ## Templates
 
 * During conversion, cpphdl uses numeric `Module` class template parameters as SystemVerilog module parameters. These numeric parameters stay symbolic in generated module ports, members, constants, and methods so one SV module can be instantiated with different numeric values.
+* Static `constexpr` values declared by a module or its base classes are emitted as SystemVerilog `localparam` declarations inside the module. They may depend on numeric module parameters, but they are implementation constants and cannot be overridden by an instance.
 * cpphdl creates a separate SV module for each instantiated combination of non-numeric `Module` template parameters. Type parameters and textual/string-like declaration parameters are specialization identity and are added to the generated module name.
 * Template structs and unions are emitted only as concrete specializations. Numeric, type, and textual/string-like template arguments are all added to the generated package/type name, and an unspecialized template struct package must not be generated.
 * Static `constexpr` values inside a template struct package are emitted as exact concrete values for that specialization. They must not reference unresolved template parameter names such as `WIDTH`, `CONV_TYPE`, or `TAG`.

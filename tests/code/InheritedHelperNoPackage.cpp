@@ -116,8 +116,8 @@ static bool check_generated_sv()
     require(top.find("InheritedGeometry5_pkg::") == std::string::npos, "geometry helper produced a package reference");
     require(top.find("InheritedByteOpsInheritedGeometry5_pkg::") == std::string::npos, "operation helper produced a package reference");
     require(top.find("typedef") == std::string::npos, "helper-only inherited class produced an SV typedef");
-    require(top.find("parameter  HELP_WIDTH") != std::string::npos, "inherited HELP_WIDTH constexpr was not emitted as a local parameter");
-    require(top.find("parameter  HELP_RESULT_BITS") != std::string::npos, "dependent HELP_RESULT_BITS constexpr was not emitted as a local parameter");
+    require(top.find("localparam  HELP_WIDTH") != std::string::npos, "inherited HELP_WIDTH constexpr was not emitted as a local parameter");
+    require(top.find("localparam  HELP_RESULT_BITS") != std::string::npos, "dependent HELP_RESULT_BITS constexpr was not emitted as a local parameter");
     require(top.find("function logic[15:0] InheritedByteOpsInheritedGeometry5___fold") != std::string::npos,
         "inherited helper method was not emitted into the module");
     require(top.find("unknown(") == std::string::npos, "generated SV contains an unknown call");

@@ -714,7 +714,7 @@ bool Module::print(std::ofstream& out)
 
     for (auto& f : consts) {
 //        out << f.expr.debug();
-        out << "    parameter ";
+        out << "    localparam ";
         f.expr.value = f.name;
         if (!f.print(out)) {
             return false;

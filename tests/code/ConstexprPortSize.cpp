@@ -150,7 +150,10 @@ static bool check_generated_sv()
     require(child.find("parameter WIDTH") != std::string::npos
             || child.find("parameter  WIDTH") != std::string::npos,
         "child template parameter WIDTH was not emitted");
-    require(child.find("parameter  AAA") != std::string::npos, "child static constexpr AAA was not emitted");
+    require(child.find("localparam  AAA") != std::string::npos,
+        "child static constexpr AAA was not emitted as a localparam");
+    require(child.find("parameter  AAA") == std::string::npos,
+        "child static constexpr AAA remained externally overridable");
     require(parent.find("[AAA]") == std::string::npos, "parent leaked child constexpr AAA as an undefined local name");
     require(parent.find("child__bit_in[4]") != std::string::npos,
         "parent did not emit a resolved child bit_in wire array size");
