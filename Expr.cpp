@@ -1292,6 +1292,13 @@ std::string Expr::typeToSV(std::string type, std::string size)
         declSize = 32;
     }
     else {
+        // A user-defined SystemVerilog type still needs an explicit net kind
+        // when it is used for a module port.  In particular, omitting `wire`
+        // makes these declarations invalid with `default_nettype none` in some
+        // synthesis tools.  Built-in types acquire the net kind above.
+        if (flags & FLAG_WIRE) {
+            str = "wire " + str;
+        }
         str += size;
     }
     return str;
