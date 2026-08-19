@@ -47,7 +47,7 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 }
 
 template<size_t WIDTH, size_t WORDS>
-static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+static void verilator_logic_to_wide(EData (&out)[WORDS], const logic<WIDTH>& bits)
 {
     static_assert(WIDTH <= WORDS * 32);
     memset(out, 0, sizeof(out));
@@ -71,7 +71,7 @@ static uint32_t port_word(const VlWide<WORDS>& bits, size_t word)
 }
 
 template<size_t WORDS>
-static uint32_t port_word(const WData (&bits)[WORDS], size_t word)
+static uint32_t port_word(const EData (&bits)[WORDS], size_t word)
 {
     return bits[word];
 }
