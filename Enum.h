@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@ struct Enum
 {
     std::string name;
     std::string origName;
+    size_t bitWidth = 32;
+    bool isSigned = true;
 
     std::vector<Field> fields;
 

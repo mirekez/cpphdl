@@ -401,6 +401,24 @@ static bool generated_sv_has_struct_package_imports()
     return ok;
 }
 
+static bool generated_sv_has_four_state_enum_base()
+{
+    const auto path = generated_sv_path("AlignMode_MODES_pkg.sv");
+    std::ifstream in(path);
+    if (!in) {
+        std::print("\nERROR: can't open generated SystemVerilog file {}\n", path.string());
+        return false;
+    }
+
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.find("typedef enum logic") == std::string::npos ||
+        text.find("[32-1:0] {") == std::string::npos) {
+        std::print("\nERROR: {} does not declare a 32-bit four-state enum base\n", path.string());
+        return false;
+    }
+    return true;
+}
+
 class TestStructAlignment : Module
 {
 #ifdef VERILATOR
@@ -600,6 +618,7 @@ int main(int argc, char** argv)
     bool ok = true;
 #ifndef VERILATOR
     ok &= regenerate_struct_alignment_sv();
+    ok &= generated_sv_has_four_state_enum_base();
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
         auto start = std::chrono::high_resolution_clock::now();

@@ -609,6 +609,11 @@ void addEnumPackageImport(EnumDecl* ED, cpphdl::Struct* st)
     }
 
     cpphdl::Enum en{name, ED->getQualifiedNameAsString()};
+    QualType integerType = ED->getIntegerType();
+    if (!integerType.isNull()) {
+        en.bitWidth = ED->getASTContext().getTypeSize(integerType);
+        en.isSigned = integerType->isSignedIntegerType();
+    }
     for (const EnumConstantDecl* ECD : ED->enumerators()) {
         if (ECD->getInitExpr()) {
             en.fields.emplace_back(cpphdl::Field{ECD->getName().str(),
