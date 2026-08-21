@@ -1,7 +1,7 @@
 ---
 title: "CppHDL Specification"
 author: "Mike Reznikov"
-date: 2026-01-10
+date: 2026-08-21
 version: "v0.9"
 ---
 
@@ -15,7 +15,7 @@ Content may change significantly before final approval.
 
 # Mapping of SystemVerilog Expressions to C++
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are written in the `_assign()` section. This section runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in `_assign()`.
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are declared in port member initializers or written in the `_assign()` section. This connection setup runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in those static connection contexts.
 
 SystemVerilog:
 
@@ -239,7 +239,7 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 #pragma once
 
 #include "cpphdl.h"
-#include "Memory.h"
+#include "Memory.cpp"
 #include <print>
 
 using namespace cpphdl;
@@ -256,8 +256,8 @@ public:
     _PORT(bool)                         read_in;
     _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
 
-    _PORT(bool)                         empty_out      = _ASSIGN_REG( empty_comb_func() );
-    _PORT(bool)                         full_out       = _ASSIGN_REG( full_comb_func() );
+    _PORT(bool)                         empty_out      = _ASSIGN_COMB( empty_comb_func() );
+    _PORT(bool)                         full_out       = _ASSIGN_COMB( full_comb_func() );
     _PORT(bool)                         clear_in       = _ASSIGN( false );
     _PORT(bool)                         afull_out      = _ASSIGN_REG( afull_reg );
 
@@ -274,7 +274,6 @@ public:
     void _assign()
     {
         mem.write_data_in = write_data_in;
-        mem.write_data_in = write_data_in;
         mem.write_in      = write_in;
         mem.write_mask_in = _ASSIGN( 0xFFFFFFFFFFFFFFFFULL );
         mem.write_addr_in = _ASSIGN_REG( wp_reg );
@@ -285,13 +284,13 @@ public:
         mem._assign();
     }
 
-    u1 full_comb;
+    bool full_comb;
     bool& full_comb_func()
     {
         return full_comb = (wp_reg == rp_reg) && full_reg;
     }
 
-    u1 empty_comb;
+    bool empty_comb;
     bool& empty_comb_func()
     {
         return empty_comb = (wp_reg == rp_reg) && !full_reg;
@@ -376,7 +375,7 @@ public:
 
 ## Input/output ports
 
-&nbsp;&nbsp;&nbsp;&nbsp;All ports are of type *std::function<`data_type()`>* in CppHDL. This allows instant recalculation of complete combinational function chains.
+&nbsp;&nbsp;&nbsp;&nbsp;All ports are `cpphdl::function_ref<data_type>` objects, declared through `_PORT(data_type)`. A port stores either a value-producing expression or a reference-producing binding and caches the resolved value for the current `_system_clock`. This allows an entire combinational function chain to be recalculated on demand without exposing heap-owning `std::function` as the port API.
 
 * Macro *\_PORT( `data_type` )* allows simple port declaration.
 
@@ -394,7 +393,7 @@ public:
 
 &nbsp;&nbsp;&nbsp;&nbsp;It is recommended to initialize all output ports directly in the class description when possible.
 In more complex situations, it is recommended to initialize output ports in a special *\_assign*() function.
-Input ports can be assigned the *\_ASSIGN(0)* value to emulate Verilog unassigned input behavior.
+Input ports can be assigned an explicit *\_ASSIGN(0)* tie-off when the surrounding native simulation does not provide a source.
 
 &nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus interface between a CppHDL module and a third-party SV module,
 use packed *structs* to achieve proper `<8`bit fields packing.
@@ -448,9 +447,9 @@ In a multi-clock design, each register or memory must be committed by exactly on
 * The name of the function should contain *\_comb_func*() suffix
 * A corresponding variable should be defined in the module class: *var_name_comb*
 * The combinational function should calculate and assign a value to the *var_name_comb* variable, then return a reference to it
-* **NOTE!** The global variable *sys_clock* is used to cache and update all combinational values only after a clock edge switch. Use of this variable is mandatory (see examples)
+* **NOTE!** The global variable `_system_clock` is used to invalidate cached port and lazy-combinational values after a simulation step. A native testbench must define it and increment it as shown in the examples.
 
-&nbsp;&nbsp;&nbsp;&nbsp;It will be converted to a corresponding Verilog variable and `always @(*)` block during conversion.
+&nbsp;&nbsp;&nbsp;&nbsp;It will be converted to a corresponding SystemVerilog variable and `always_comb` block during conversion.
 
 &nbsp;&nbsp;&nbsp;&nbsp;It is important to avoid loops in combinational function call chains.
 
@@ -461,10 +460,11 @@ SystemVerilog datatype. Currently, the list of CppHDL datatypes includes:
 
 * *logic`<WIDTH>`* - any width variable, optimized for bit-access
 * *u`<WIDTH>`*, u1, u8, u16, u32, u64 - unsigned variables
-* *s`<WIDTH>`*, s1, s8, s16, s32, s64 - signed variables (reserved but not implemented because of lack of demand and examples)
+* *i8*, *i16*, *i32*, *i64* - fixed-width signed native aliases
 * *reg`<TYPE>`* - register definition, works only with CppHDL types or any structs
-* *array`<TYPE,SIZE>`* - variable optimized for large array access and element changes
-* *memory`<TYPE,SIZE>`* - special registered container implementing optimal memory access with strobing
+* *array`<COUNT,TYPE,PACKED=false>`* - fixed-size packed or unpacked array
+* *array2D*, *array3D*, *array4D* - multidimensional array aliases
+* *memory`<TYPE,ROW_SIZE,DEPTH>`* - deferred-write memory container committed by `apply()`
 * *Cat`{...}`* - concatenation helper that maps to SystemVerilog `{...}` expressions
 
 ### RTL index widths
@@ -489,7 +489,7 @@ logic<MEM_WIDTH_BYTES*8> data_out_comb;
 &nbsp;&nbsp;&nbsp;&nbsp;Example usage as a port:
 
 ```cpp
-_PORT(logic<MEM_WIDTH_BYTES*8>) data_in = nullptr;
+_PORT(logic<MEM_WIDTH_BYTES*8>) data_in;
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The logic`<>` type provides read/write access to individual bits using *operator[]* and to partial bitmaps using the *.bits(hi,lo)* method:
@@ -534,8 +534,7 @@ edited_comb.bits(word * 8 + 7, word * 8) =
 
 ### u`<WIDTH>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;*u`<>`* is a basic unsigned value of variable size that supports all math operators and can be cast to a logic`<>` variable.
-Although *u`<>`* can be of any size, it supports a maximum of 64-bit math. Example usage of *u`<>`*:
+&nbsp;&nbsp;&nbsp;&nbsp;*u`<>`* is a basic unsigned value with a width from 1 through 64 bits. It supports the usual arithmetic and bitwise operators and can be cast to a logic`<>` variable. Example usage of *u`<>`*:
 
 ```cpp
 u<STEPS_SIZE> cmd_steps;
@@ -584,7 +583,7 @@ The destination type must be wide enough for the concatenation result. Width mis
 
 ### u1, u8, u16, u32, u64
 
-&nbsp;&nbsp;&nbsp;&nbsp;*u1*, *u8*, *u16*, *u32*, and *u64* are aliases for *u`<1>`*, *u`<8>`*, *u`<16>`*, *u`<32>`*, and *u`<64>`*, respectively.
+&nbsp;&nbsp;&nbsp;&nbsp;*u1*, *u8*, *u16*, *u32*, and *u64* are fixed-width convenience classes that map to 1-, 8-, 16-, 32-, and 64-bit unsigned RTL values, respectively.
 
 ### reg`<TYPE>`
 
@@ -595,7 +594,7 @@ Examples of reg`<>` usage are provided below:
 ```cpp
 reg<State> state;
 reg<u16> size;
-reg<array<u8,WIDTH/8>> buffer1;
+reg<array<WIDTH/8, u8>> buffer1;
 reg<logic<WIDTH/8>> buffer1_byteenable;
 ```
 
@@ -614,15 +613,19 @@ buffer1_byteenable._next[i] = buffer2_byteenable[i];
 mask._next.bits((i+1)*32-1,i*32) = 0;
 ```
 
-### array`<SIZE>`
+### array`<COUNT, TYPE, PACKED>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;The array`<>` type is used for storing a vector of similar types. It can be used with the reg`<>` template.
+&nbsp;&nbsp;&nbsp;&nbsp;The `array<>` type stores `COUNT` elements of `TYPE` and can be used with `reg<>`. `PACKED` defaults to `false`; pass `true` when a packed CppHDL representation is required. The `array2D`, `array3D`, and `array4D` aliases take all dimensions first, followed by the element type and optional packed flag.
 
 ```cpp
-_PORT(array<u8,WIDTH/8>) avmm_writedata_out = _ASSIGN_REG( buffer1 );
+reg<array<WIDTH/8, u8>> buffer1;
+_PORT(array<WIDTH/8, u8>) avmm_writedata_out = _ASSIGN_REG(buffer1);
+
+array2D<4, 8, u16> matrix;
+array3D<2, 3, 4, u8, true> packed_volume;
 ```
 
-### memory`<TYPE,SIZE>`
+### memory`<TYPE, ROW_SIZE, DEPTH>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;The *memory`<>`* type is developed for optimal access performance to registered memory, with the ability to change one word per clock cycle.
 It cannot be used as a port. It uses the *apply*() method for strobing data. The following example shows how memory`<>`
@@ -642,8 +645,6 @@ class Memory : public Module
     reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
     memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
 
-    size_t i;
-
 public:
     _PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
     _PORT(bool)                      write_in;
@@ -652,7 +653,7 @@ public:
 
     _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
     _PORT(bool)                      read_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_REG( data_out_comb_func() );
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_COMB( data_out_comb_func() );
 
     bool                      debugen_in;
 
@@ -670,10 +671,11 @@ public:
         return data_out_comb;
     }
 
-    logic<MEM_WIDTH_BYTES*8> mask;
-
     void _work(bool reset)
     {
+        uint32_t i;
+        logic<MEM_WIDTH_BYTES*8> mask;
+
         if (write_in()) {
             mask = 0;
             for (i=0; i < MEM_WIDTH_BYTES; ++i) {
@@ -1091,9 +1093,123 @@ In native simulation, call the reset handler followed by its matching strobe met
 
 See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 
+# VCD dumping
+
+&nbsp;&nbsp;&nbsp;&nbsp;Native CppHDL simulation can write a Value Change Dump file with the lightweight `VcdFile` helper from `cpphdl_vcd.h`. VCD dumping is controlled by the C++ testbench; the converter does not automatically discover signals or sample simulation time.
+
+Register each signal with a stable name, its RTL width in bits, and a pointer to storage that remains alive for the complete trace:
+
+```cpp
+#include <cpphdl.h>
+#if !defined(SYNTHESIS)
+#include <cpphdl_vcd.h>
+#endif
+
+using namespace cpphdl;
+
+long _system_clock = -1;
+
+class Counter : public Module
+{
+    reg<u<8>> count_reg;
+
+public:
+    _PORT(u<8>) count_out = _ASSIGN_REG(count_reg);
+
+    void _work(bool reset)
+    {
+        if (reset) {
+            count_reg.clr();
+        }
+        else {
+            count_reg._next = count_reg + 1;
+        }
+    }
+
+    void _strobe()
+    {
+        count_reg.strobe();
+    }
+
+    void _assign() {}
+
+#if !defined(SYNTHESIS)
+    void add_vcd_signals(VcdFile& vcd, const std::string& prefix)
+    {
+        vcd.signals.push_back({prefix + "count_reg", 8, &count_reg});
+    }
+#endif
+};
+```
+
+Create the file after all signals have been registered, then call `sample()` at monotonically increasing timestamps:
+
+```cpp
+Counter dut;
+VcdFile vcd;
+
+dut._assign();
+dut.add_vcd_signals(vcd, "dut.");
+vcd.create("output.vcd");
+
+dut._work(true);
+vcd.sample(0);
+
+for (unsigned cycle = 1; cycle <= 100; ++cycle) {
+    dut._strobe();
+    ++_system_clock;
+    dut._work(false);
+    vcd.sample(cycle);
+}
+```
+
+`VcdFile::create()` currently emits a `1ns` timescale. The argument to `sample(time_ns)` is therefore the VCD timestamp in nanoseconds; it does not advance the model. For multiple clocks, sample after every clock transition or scheduled event and use timestamps that represent the testbench's actual edge schedule.
+
+The signal pointer must refer to contiguous raw storage such as a CppHDL scalar, `logic<>`, `reg<>`, or array whose layout is suitable for raw bit reading. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
+
+This helper traces the native CppHDL model. To trace internal signals of generated RTL under Verilator, build the generated SystemVerilog with Verilator's `--trace` option. The testbench must enable tracing before time advances, register the model, and call `dump()` after every evaluated clock transition:
+
+```cpp
+#include <verilated.h>
+#include <verilated_vcd_c.h>
+#include "VTop.h"
+
+int main(int argc, char** argv)
+{
+    Verilated::commandArgs(argc, argv);
+    Verilated::traceEverOn(true);
+
+    VTop dut;
+    VerilatedVcdC trace;
+    dut.trace(&trace, 99);
+    trace.open("output.vcd");
+
+    vluint64_t time = 0;
+    dut.reset = 1;
+    for (unsigned cycle = 0; cycle < 100; ++cycle) {
+        dut.clk = 0;
+        dut.eval();
+        trace.dump(time++);
+
+        dut.clk = 1;
+        dut.eval();
+        trace.dump(time++);
+
+        if (cycle == 1) {
+            dut.reset = 0;
+        }
+    }
+
+    trace.close();
+    dut.final();
+}
+```
+
+For example, pass `--trace` alongside the usual Verilator generation options before building the generated model. Replace `VTop` and `VTop.h` with the selected top-module model. The repository's normal `VerilatorCompile()` test helper does not enable internal tracing automatically.
+
 # CppHDL SV Conversion tool
 
-&nbsp;&nbsp;&nbsp;&nbsp;The main purposes of *cpphdl* tool is to
+&nbsp;&nbsp;&nbsp;&nbsp;The main purposes of the *cpphdl* tool are to
 
 * Provide conversion of CppHDL code to SystemVerilog models
 * Check dependencies in combinational chains and forgotten strobe calls in CppHDL source code
@@ -1105,7 +1221,8 @@ See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 * Anonymous structures and unions declared inside other structures get 'anon' name substitution
 * CppHDL aligns non-bitfield structure members to byte boundaries and emits hidden `_alignN` fields when padding is needed
 * Packed unions use the largest branch size; smaller struct/union branches get hidden `_padN` fields so all union alternatives have the same packed width
-* `cpphdl::array<T,N>` fields are emitted as packed SystemVerilog arrays inside the generated struct package
+* `cpphdl::array<N,T>` fields are emitted as packed SystemVerilog arrays inside the generated struct package
+* C++ enums are emitted with a four-state SystemVerilog `logic` base preserving the C++ underlying width and signedness
 
 Example from `tests/structs/ArrayInStruct.cpp`:
 
@@ -1113,9 +1230,9 @@ Example from `tests/structs/ArrayInStruct.cpp`:
 struct ArrayPayload
 {
     unsigned prefix:4;
-    array<u8, 3> bytes;
+    array<3, u8> bytes;
     unsigned mid:3;
-    array<u16, 1> halfs;
+    array<1, u16> halfs;
     unsigned tail:5;
 } __PACKED;
 ```
@@ -1253,10 +1370,14 @@ endpackage
 
 ## Syntax
 
-&nbsp;&nbsp;&nbsp;&nbsp;The *generated* folder is created after a *cpphdl* call and contains `.sv` files. The syntax of the *cpphdl* tool is the following:
+&nbsp;&nbsp;&nbsp;&nbsp;By default, a `generated` folder is created after a `cpphdl` call and contains the emitted `.sv` files. Use `--generated-dir <path>` to select another output directory. Converter options precede the source files; Clang compilation arguments such as defines and include directories follow them.
 
 ```bash
-cpphdl <source.h> <source.cpp> ... [compilation parameters]
+cpphdl [--generated-dir <path>] \
+    [--primary_clock <name> <frequency>] \
+    [--secondary_clock <name> <frequency>] ... \
+    <source.h> <source.cpp> ... \
+    [-DNAME=value] [-I<include-dir>] ...
 ```
 
 &nbsp;&nbsp;&nbsp;&nbsp;The cpphdl tool is based on llvm clang and supports all usual C++ command line parameters.
@@ -1266,7 +1387,9 @@ cpphdl <source.h> <source.cpp> ... [compilation parameters]
 ## CPPHDL_REPLACEMENT
 
 * `[[clang::annotate("CPPHDL_REPLACEMENT=...;")]]` can be attached to a `cpphdl::Module` class.
-* During conversion cpphdl stores the text after `CPPHDL_REPLACEMENT=` in `Module::replacement`; a trailing metadata `;` is stripped.
+* `CPPHDL_REPLACEMENT_FILE=<path>;` reads the complete replacement from a file. Relative paths are resolved from the annotated class's source file when possible.
+* `CPPHDL_REPLACEMENT_SCRIPT=<script> [arguments...];` executes a script and uses its standard output as the replacement. A relative script path is resolved in the same way as a replacement file.
+* During conversion cpphdl resolves the inline text, file contents, or script output into `Module::replacement`; a trailing annotation metadata `;` is stripped from the annotation value.
 * When project generation sees replacement text, it writes that text directly to the module `.sv` file.
 * Normal import, port, register, method, and module body generation is skipped for that module.
 
@@ -1290,7 +1413,7 @@ class [[clang::annotate(
 {
 public:
     _PORT(u<8>) value_in;
-    _PORT(u<8>) value_out = _ASSIGN_REG(value_comb_func());
+    _PORT(u<8>) value_out = _ASSIGN_COMB(value_comb_func());
 
 private:
     u<8> value_comb;
