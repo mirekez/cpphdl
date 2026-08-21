@@ -23,8 +23,6 @@ protected:
     using Base::TAG_BITS;
     using Base::DATA_BANKS;
     using Base::MEM_ADDR_MASK64;
-    using Base::data_q_reg;
-    using Base::tag_q_reg;
     using Base::lookup_data_reg;
     using Base::lookup_tag_reg;
     using Base::state_reg;

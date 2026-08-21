@@ -16,8 +16,6 @@ protected:
     using Base::PORT_WORDS;
     using Base::TAG_BITS;
     using Base::DATA_BANKS;
-    using Base::data_q_reg;
-    using Base::tag_q_reg;
     using Base::lookup_data_reg;
     using Base::lookup_tag_reg;
     using Base::state_reg;

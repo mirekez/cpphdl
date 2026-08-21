@@ -2,14 +2,25 @@
 
 #include "L2CacheWait.h"
 
+// Module-array port binding must be compile-time unrolled for the CppHDL SV
+// backend. Supported L2 geometries use one, two, or four ways and eight
+// 32-bit banks per way.
+#define L2_FOR_EACH_DATA_BANK(M) \
+    M(0) M(1) M(2) M(3) M(4) M(5) M(6) M(7) \
+    M(8) M(9) M(10) M(11) M(12) M(13) M(14) M(15) \
+    M(16) M(17) M(18) M(19) M(20) M(21) M(22) M(23) \
+    M(24) M(25) M(26) M(27) M(28) M(29) M(30) M(31)
+#define L2_FOR_EACH_TAG_BANK(M) M(0) M(1) M(2) M(3)
+
 template<size_t CACHE_SIZE = 16384, size_t PORT_BITWIDTH = 256, size_t CACHE_LINE_SIZE = 32, size_t WAYS = 4, size_t ADDR_BITS = 32, size_t MEM_ADDR_BITS = ADDR_BITS, size_t MEM_PORTS = 1, size_t CPU_PORTS = 1>
 // Final port-compatible L2 cache controller: wires RAM/AXI ports, advances FSM state, and checkpoints registers.
-class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=L2CacheReplacement.sv;")]]
-L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
+class L2Cache : public L2CacheWait<CACHE_SIZE, PORT_BITWIDTH,
+    CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>
 {
 protected:
     using Base = L2CacheWait<CACHE_SIZE, PORT_BITWIDTH, CACHE_LINE_SIZE, WAYS, ADDR_BITS, MEM_ADDR_BITS, MEM_PORTS, CPU_PORTS>;
 public:
+    using Base::__inst_name;
     using Base::i_mem_in;
     using Base::d_mem_in;
     using Base::axi_in;
@@ -26,13 +37,15 @@ private:
     using Base::PORT_WORDS;
     using Base::LINE_BEATS;
     using Base::SETS;
+    using Base::SET_BITS;
+    using Base::LINE_BITS;
+    using Base::TAG_BITS;
+    using Base::TAG_RAM_BITS;
     using Base::DATA_BANKS;
     using Base::CPU_RESPONSE_BASE;
     using Base::RESPONSE_SLOTS;
     using Base::data_ram;
     using Base::tag_ram;
-    using Base::data_q_reg;
-    using Base::tag_q_reg;
     using Base::lookup_data_reg;
     using Base::lookup_tag_reg;
     using Base::lookup_hit_reg;
@@ -75,10 +88,201 @@ private:
 
     Axi4Responder<4,256> axi_in_comb[MEM_PORTS];
     Axi4Driver<32,4,256> axi_out_comb[MEM_PORTS];
+    // Spell the template geometry locally for declarations. The CppHDL SV
+    // emitter resolves inherited constants in expressions, but not in storage
+    // declarations owned by this derived template.
+    static constexpr size_t LOCAL_DATA_BANKS = WAYS * (CACHE_LINE_SIZE / 4);
+    static constexpr size_t LOCAL_SET_BITS =
+        clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS);
+    static constexpr size_t LOCAL_TAG_RAM_BITS =
+        ((ADDR_BITS - LOCAL_SET_BITS - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8;
+    uint32_t data_bank_data_comb[LOCAL_DATA_BANKS];
+    logic<LOCAL_DATA_BANKS> data_bank_write_comb;
+    logic<WAYS> tag_bank_write_comb;
+    logic<LOCAL_TAG_RAM_BITS> tag_bank_data_comb;
 #ifndef SYNTHESIS
     long prev_axi_in_comb_clock = -1;
     long prev_axi_out_comb_clock = -1;
 #endif
+
+    _LAZY_COMB(l2_bank_addr_comb, u<LOCAL_SET_BITS>)
+        uint32_t address;
+        uint32_t dma_set;
+        bool dma_line_fire;
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        dma_set = ((uint32_t)dma_line_addr_in() >> LINE_BITS) & (SETS - 1);
+        address = dma_line_fire ? dma_set :
+            ((state_reg == ST_IDLE) ?
+                (uint32_t)active_request_comb_func().set :
+                (uint32_t)request_geometry_comb_func().set);
+        return l2_bank_addr_comb = (u<LOCAL_SET_BITS>)address;
+    }
+
+    _LAZY_COMB(tag_bank_addr_comb, u<LOCAL_SET_BITS>)
+        return tag_bank_addr_comb = (state_reg == ST_INIT) ?
+            (u<LOCAL_SET_BITS>)init_set_reg : l2_bank_addr_comb_func();
+    }
+
+    _LAZY_COMB(l2_bank_read_comb, bool)
+        bool dma_line_fire;
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        return l2_bank_read_comb =
+            (state_reg == ST_READ || state_reg == ST_CROSS_WRITE_READ) &&
+            !dma_line_fire;
+    }
+
+    logic<LOCAL_DATA_BANKS>& data_bank_write_comb_func()
+    {
+        uint32_t bank;
+        uint32_t dma_tag;
+        uint32_t dma_way;
+        bool dma_line_fire;
+        L2HitLookupComb hit_lookup;
+        L2RequestGeometryComb request_geometry;
+
+        data_bank_write_comb = 0;
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        dma_tag = (uint32_t)dma_line_addr_in() >> (LINE_BITS + SET_BITS);
+        dma_way = WAYS <= 1 ? 0 : dma_tag % WAYS;
+        hit_lookup = hit_lookup_comb_func();
+        request_geometry = request_geometry_comb_func();
+        for (bank = 0; bank < DATA_BANKS; ++bank) {
+            data_bank_write_comb[bank] =
+                (dma_line_fire && dma_way == (bank / LINE_WORDS)) ||
+                (state_reg == ST_AXI_R_WRITE &&
+                    fill_way_reg == (bank / LINE_WORDS) &&
+                    (bank % LINE_WORDS) >=
+                        (uint32_t)fill_beat_reg * PORT_WORDS &&
+                    (bank % LINE_WORDS) <
+                        ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
+                (state_reg == ST_LOOKUP && req_reg.from_slave &&
+                    req_reg.write && hit_lookup.hit &&
+                    hit_lookup.way == (bank / LINE_WORDS) &&
+                    (bank % LINE_WORDS) >=
+                        (uint32_t)request_geometry.beat * PORT_WORDS &&
+                    (bank % LINE_WORDS) <
+                        ((uint32_t)request_geometry.beat + 1u) * PORT_WORDS &&
+                    req_reg.write_word_mask[
+                        (bank % LINE_WORDS) % PORT_WORDS]) ||
+                ((state_reg == ST_LOOKUP ||
+                    state_reg == ST_CROSS_WRITE_LOOKUP) &&
+                    req_reg.write && hit_lookup.hit &&
+                    !req_reg.from_slave &&
+                    hit_lookup.way == (bank / LINE_WORDS) &&
+                    (request_geometry.word == (bank % LINE_WORDS) ||
+                     (((uint32_t)req_reg.addr & 3u) != 0 &&
+                        (uint32_t)request_geometry.word + 1 ==
+                            (bank % LINE_WORDS))));
+        }
+        return data_bank_write_comb;
+    }
+
+    uint32_t (&data_bank_data_comb_func())[LOCAL_DATA_BANKS]
+    {
+        uint32_t bank;
+        uint32_t dma_byte;
+        uint32_t dma_word;
+        bool dma_line_fire;
+        L2RequestGeometryComb request_geometry;
+        L2WordPairComb hit_write_pair;
+        L2WordPairComb fill_write_pair;
+
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        request_geometry = request_geometry_comb_func();
+        hit_write_pair = hit_write_pair_comb_func();
+        fill_write_pair = fill_write_pair_comb_func();
+        for (bank = 0; bank < DATA_BANKS; ++bank) {
+            if (dma_line_fire) {
+                dma_word = (uint32_t)(dma_line_data_in() >>
+                    ((bank % LINE_WORDS) * 32));
+                for (dma_byte = 0; dma_byte < 4; ++dma_byte) {
+                    if (!dma_line_keep_in()[
+                        (bank % LINE_WORDS) * 4 + dma_byte]) {
+                        dma_word &= ~(0xffu << (dma_byte * 8));
+                    }
+                }
+                data_bank_data_comb[bank] = dma_word;
+            }
+            else {
+                data_bank_data_comb[bank] =
+                    (state_reg == ST_LOOKUP ||
+                        state_reg == ST_CROSS_WRITE_LOOKUP) ?
+                    (req_reg.from_slave ?
+                        (uint32_t)(req_reg.write_beat >>
+                            ((bank % PORT_WORDS) * 32)) :
+                        ((((uint32_t)req_reg.addr & 3u) != 0 &&
+                            (uint32_t)request_geometry.word + 1 ==
+                                (bank % LINE_WORDS)) ?
+                            (uint32_t)hit_write_pair.next_word :
+                            (uint32_t)hit_write_pair.word)) :
+                    ((req_reg.from_slave && req_reg.write &&
+                        request_geometry.beat == fill_beat_reg &&
+                        (bank % LINE_WORDS) >=
+                            (uint32_t)fill_beat_reg * PORT_WORDS &&
+                        (bank % LINE_WORDS) <
+                            ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
+                        (req_reg.write_word_mask[
+                            (bank % LINE_WORDS) % PORT_WORDS] ?
+                            (uint32_t)(req_reg.write_beat >>
+                                ((bank % PORT_WORDS) * 32)) :
+                            (uint32_t)(refill_data_reg >>
+                                (((bank % LINE_WORDS) % PORT_WORDS) * 32))) :
+                     (req_reg.write && request_geometry.word ==
+                        (bank % LINE_WORDS)) ?
+                        (uint32_t)fill_write_pair.word :
+                     (req_reg.write &&
+                        ((uint32_t)req_reg.addr & 3u) != 0 &&
+                        (uint32_t)request_geometry.word + 1 ==
+                            (bank % LINE_WORDS)) ?
+                        (uint32_t)fill_write_pair.next_word :
+                        (uint32_t)(refill_data_reg >>
+                            (((bank % LINE_WORDS) % PORT_WORDS) * 32)));
+            }
+        }
+        return data_bank_data_comb;
+    }
+
+    logic<WAYS>& tag_bank_write_comb_func()
+    {
+        uint32_t way;
+        uint32_t dma_tag;
+        uint32_t dma_way;
+        bool dma_line_fire;
+        L2HitLookupComb hit_lookup;
+
+        tag_bank_write_comb = 0;
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        dma_tag = (uint32_t)dma_line_addr_in() >> (LINE_BITS + SET_BITS);
+        dma_way = WAYS <= 1 ? 0 : dma_tag % WAYS;
+        hit_lookup = hit_lookup_comb_func();
+        for (way = 0; way < WAYS; ++way) {
+            tag_bank_write_comb[way] =
+                (dma_line_fire && dma_way == way) ||
+                state_reg == ST_INIT ||
+                (state_reg == ST_AXI_R_WRITE &&
+                    fill_beat_reg == LINE_BEATS - 1 &&
+                    fill_way_reg == way) ||
+                ((state_reg == ST_LOOKUP ||
+                    state_reg == ST_CROSS_WRITE_LOOKUP) &&
+                    req_reg.write && hit_lookup.hit &&
+                    hit_lookup.way == way);
+        }
+        return tag_bank_write_comb;
+    }
+
+    logic<LOCAL_TAG_RAM_BITS>& tag_bank_data_comb_func()
+    {
+        uint32_t dma_tag;
+        bool dma_line_fire;
+        dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
+        dma_tag = (uint32_t)dma_line_addr_in() >> (LINE_BITS + SET_BITS);
+        tag_bank_data_comb = tag_write_data_comb_func();
+        if (dma_line_fire) {
+            tag_bank_data_comb = ((uint64_t)1 << (TAG_BITS + 1)) |
+                ((uint64_t)1 << TAG_BITS) | dma_tag;
+        }
+        return tag_bank_data_comb;
+    }
 
     // Build all AXI slave-side responder bundles and return the array so comb users depend on the driven values.
     Axi4Responder<4,256> (&axi_in_comb_func())[MEM_PORTS]
@@ -182,6 +386,32 @@ public:
             AXI4_RESPONDER_FROM_COMB_INDEXED(axi_in[i], axi_in_comb_func(), i);
             AXI4_DRIVER_FROM_COMB_INDEXED(axi_out[i], axi_out_comb_func(), i);
         }
+#define L2_BIND_DATA_BANK(number) \
+        data_ram[number].addr_in = _ASSIGN_COMB(l2_bank_addr_comb_func()); \
+        data_ram[number].wr_in = _ASSIGN((number < LOCAL_DATA_BANKS) ? \
+            (bool)data_bank_write_comb_func()[number] : false); \
+        data_ram[number].rd_in = _ASSIGN((number < LOCAL_DATA_BANKS) ? \
+            l2_bank_read_comb_func() : false); \
+        data_ram[number].data_in = _ASSIGN((number < LOCAL_DATA_BANKS) ? \
+            (logic<32>)data_bank_data_comb_func()[number] : (logic<32>)0); \
+        data_ram[number].__inst_name = __inst_name + "/data_ram" + \
+            std::to_string(number); \
+        data_ram[number]._assign();
+        L2_FOR_EACH_DATA_BANK(L2_BIND_DATA_BANK)
+#undef L2_BIND_DATA_BANK
+#define L2_BIND_TAG_BANK(number) \
+        tag_ram[number].addr_in = _ASSIGN_COMB(tag_bank_addr_comb_func()); \
+        tag_ram[number].wr_in = _ASSIGN((number < WAYS) ? \
+            (bool)tag_bank_write_comb_func()[number] : false); \
+        tag_ram[number].rd_in = _ASSIGN((number < WAYS) ? \
+            l2_bank_read_comb_func() : false); \
+        tag_ram[number].data_in = _ASSIGN((number < WAYS) ? \
+            tag_bank_data_comb_func() : (logic<LOCAL_TAG_RAM_BITS>)0); \
+        tag_ram[number].__inst_name = __inst_name + "/tag_ram" + \
+            std::to_string(number); \
+        tag_ram[number]._assign();
+        L2_FOR_EACH_TAG_BANK(L2_BIND_TAG_BANK)
+#undef L2_BIND_TAG_BANK
         // Uncached I/O forwarding does not touch the tag/data RAMs.  Permit a
         // line allocation in parallel with those states; MMIO polling would
         // otherwise reduce SmartNIC allocation bandwidth below wire rate.
@@ -208,18 +438,7 @@ public:
     {
         uint32_t i;
         uint32_t way;
-        uint32_t bank_addr;
-        bool bank_read;
-        bool bank_write;
-        uint32_t bank_data;
-        uint32_t dma_set;
-        uint32_t dma_tag;
-        uint32_t dma_way;
-        uint32_t dma_word;
-        uint32_t dma_byte;
         bool dma_line_fire;
-        bool tag_bank_read;
-        bool tag_bank_write;
         uint32_t trace_line;
         bool trace_line_enabled;
         bool trace_req_line;
@@ -236,7 +455,6 @@ public:
         L2WordPairComb hit_write_pair;
         L2WordPairComb fill_write_pair;
         logic<256> completion_data;
-        logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8> tag_bank_data;
         active_request = active_request_comb_func();
         request_geometry = request_geometry_comb_func();
         evict_candidate = evict_candidate_comb_func();
@@ -271,11 +489,12 @@ public:
         trace_word1 = 0;
 
         dma_line_fire = dma_line_valid_in() && dma_line_ready_out();
-        dma_set = ((uint32_t)dma_line_addr_in() >> Base::LINE_BITS)
-            & (Base::SETS - 1);
-        dma_tag = (uint32_t)dma_line_addr_in()
-            >> (Base::LINE_BITS + Base::SET_BITS);
-        dma_way = WAYS <= 1 ? 0 : dma_tag % WAYS;
+        for (i = 0; i < DATA_BANKS; ++i) {
+            data_ram[i]._work_l2_clock(reset);
+        }
+        for (i = 0; i < WAYS; ++i) {
+            tag_ram[i]._work_l2_clock(reset);
+        }
 
         // CPU/L1 has no response-ready input: expose its registered response
         // for exactly this clock, then free the slot for the next completion.
@@ -283,92 +502,12 @@ public:
             response_reg._next[CPU_RESPONSE_BASE + i].valid = false;
         }
 
-        bank_addr = dma_line_fire ? dma_set :
-            ((state_reg == ST_IDLE) ? (uint32_t)active_request.set :
-                (uint32_t)request_geometry.set);
-        // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
-        // cycle later from req_reg so generated SV cannot use a live input set
-        // while ST_LOOKUP consumes stale registered RAM outputs.
-        bank_read = (state_reg == ST_READ || state_reg == ST_CROSS_WRITE_READ)
-            && !dma_line_fire;
-        for (i = 0; i < DATA_BANKS; ++i) {
-            // Fill writes only the words carried by the current AXI beat;
-            // store hits update one or two addressed word banks.
-            bank_write =
-                (dma_line_fire && dma_way == (i / LINE_WORDS)) ||
-                (state_reg == ST_AXI_R_WRITE && fill_way_reg == (i / LINE_WORDS) &&
-                    (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
-                    (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
-                (state_reg == ST_LOOKUP && req_reg.from_slave && req_reg.write && hit_lookup.hit &&
-                    hit_lookup.way == (i / LINE_WORDS) &&
-                    (i % LINE_WORDS) >= (uint32_t)request_geometry.beat * PORT_WORDS &&
-                    (i % LINE_WORDS) < ((uint32_t)request_geometry.beat + 1u) * PORT_WORDS &&
-                    req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS]) ||
-                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit &&
-                    !req_reg.from_slave &&
-                    hit_lookup.way == (i / LINE_WORDS) &&
-                    (request_geometry.word == (i % LINE_WORDS) ||
-                     (((uint32_t)req_reg.addr & 3u) != 0 &&
-                        (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS))));
-            if (dma_line_fire) {
-                dma_word = (uint32_t)(dma_line_data_in() >>
-                    ((i % LINE_WORDS) * 32));
-                for (dma_byte = 0; dma_byte < 4; ++dma_byte) {
-                    if (!dma_line_keep_in()[(i % LINE_WORDS) * 4 + dma_byte]) {
-                        dma_word &= ~(0xffu << (dma_byte * 8));
-                    }
-                }
-                bank_data = dma_word;
-            }
-            else bank_data = (state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) ?
-                (req_reg.from_slave ?
-                    (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
-                    ((((uint32_t)req_reg.addr & 3u) != 0 &&
-                        (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ?
-                        (uint32_t)hit_write_pair.next_word : (uint32_t)hit_write_pair.word)) :
-                ((req_reg.from_slave && req_reg.write && request_geometry.beat == fill_beat_reg &&
-                    (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
-                    (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
-                    (req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS] ?
-                        (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
-                        (uint32_t)(refill_data_reg >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
-                 (req_reg.write && request_geometry.word == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.word :
-                 (req_reg.write && ((uint32_t)req_reg.addr & 3u) != 0 &&
-                    (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.next_word :
-                    (uint32_t)(refill_data_reg >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
-            if (bank_write) {
-                data_ram[i][bank_addr] = bank_data;
-            }
-            if (bank_read) {
-                data_q_reg._next[i] = data_ram[i][bank_addr];
-            }
-        }
-
-        tag_bank_data = tag_write_data_comb_func();
-        if (dma_line_fire) {
-            tag_bank_data = ((uint64_t)1 << (Base::TAG_BITS + 1)) |
-                ((uint64_t)1 << Base::TAG_BITS) | dma_tag;
-        }
-        for (way = 0; way < WAYS; ++way) {
-            tag_bank_read = bank_read;
-            tag_bank_write = (dma_line_fire && dma_way == way) ||
-                (state_reg == ST_INIT) ||
-                (state_reg == ST_AXI_R_WRITE && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
-                ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit && hit_lookup.way == way);
-            if (tag_bank_write) {
-                tag_ram[way][(state_reg == ST_INIT) ? init_set_reg : bank_addr] = tag_bank_data;
-            }
-            if (tag_bank_read) {
-                tag_q_reg._next[way] = tag_ram[way][(state_reg == ST_INIT) ? init_set_reg : bank_addr];
-            }
-        }
-
         if (state_reg == ST_LOOKUP_CAPTURE || state_reg == ST_CROSS_WRITE_CAPTURE) {
             for (i = 0; i < DATA_BANKS; ++i) {
-                lookup_data_reg._next[i] = data_q_reg[i];
+                lookup_data_reg._next[i] = data_ram[i].data_out();
             }
             for (way = 0; way < WAYS; ++way) {
-                lookup_tag_reg._next[way] = tag_q_reg[way];
+                lookup_tag_reg._next[way] = tag_ram[way].data_out();
             }
         }
 
@@ -837,8 +976,6 @@ public:
             }
             slave_aw_novelty_reg.clr();
             slave_ar_novelty_reg.clr();
-            data_q_reg.clr();
-            tag_q_reg.clr();
             lookup_data_reg.clr();
             lookup_tag_reg.clr();
             lookup_hit_reg.clr();
@@ -849,10 +986,10 @@ public:
 
     void _strobe_l2_clock()
     {
-        for (size_t bank = 0; bank < DATA_BANKS; ++bank) data_ram[bank].apply();
-        for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply();
-        data_q_reg.strobe();
-        tag_q_reg.strobe();
+        for (size_t bank = 0; bank < DATA_BANKS; ++bank)
+            data_ram[bank]._strobe_l2_clock();
+        for (size_t way = 0; way < WAYS; ++way)
+            tag_ram[way]._strobe_l2_clock();
         lookup_data_reg.strobe();
         lookup_tag_reg.strobe();
         lookup_hit_reg.strobe();
@@ -888,10 +1025,10 @@ public:
     // when a checkpoint is requested on an intervening CPU clock.
     void checkpoint_l2(FILE* checkpoint_fd)
     {
-        for (size_t bank = 0; bank < DATA_BANKS; ++bank) data_ram[bank].apply(checkpoint_fd);
-        for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply(checkpoint_fd);
-        data_q_reg.strobe(checkpoint_fd);
-        tag_q_reg.strobe(checkpoint_fd);
+        for (size_t bank = 0; bank < DATA_BANKS; ++bank)
+            data_ram[bank].checkpoint_l2(checkpoint_fd);
+        for (size_t way = 0; way < WAYS; ++way)
+            tag_ram[way].checkpoint_l2(checkpoint_fd);
         lookup_data_reg.strobe(checkpoint_fd);
         lookup_tag_reg.strobe(checkpoint_fd);
         lookup_hit_reg.strobe(checkpoint_fd);
@@ -925,3 +1062,6 @@ public:
     void _work_clk(bool) {}
     void _strobe_clk() {}
 };
+
+#undef L2_FOR_EACH_TAG_BANK
+#undef L2_FOR_EACH_DATA_BANK

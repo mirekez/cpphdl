@@ -5,7 +5,7 @@
 using namespace cpphdl;
 
 template<size_t WIDTH, size_t DEPTH>
-class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=RAMReplacement.sv;")]]
+class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=RAMPrimitive.sv;")]]
 RAM : public Module
 {
 public:

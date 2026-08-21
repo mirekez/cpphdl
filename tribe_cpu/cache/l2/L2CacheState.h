@@ -3,6 +3,7 @@
 #include "cpphdl.h"
 #include "Axi4.h"
 #include "../L1MemIf.h"
+#include "L2CacheRamBank.h"
 
 using namespace cpphdl;
 
@@ -84,6 +85,17 @@ struct L2AxiRequestNoveltyComb
 {
     logic<8> aw;                  // AW payload differs from the last accepted AW, or AWVALID previously dropped.
     logic<8> ar;                  // AR payload differs from the last accepted AR, or ARVALID previously dropped.
+};
+
+// Concrete address-channel state used only for the L2's eight bookkeeping
+// slots. L2 accepts 32-bit physical addresses, so retaining a template type
+// here leaves an unresolved ADDR_BITS token once the full-module replacement
+// is removed.
+struct L2AxiAddressState
+{
+    u1 valid;
+    u32 addr;
+    u<4> id;
 };
 
 // One registered completion record type serves every L2 input endpoint. AXI read
@@ -189,6 +201,7 @@ protected:
     static_assert(PORT_BITWIDTH <= 256, "L2Cache AXI read response struct storage is sized for up to 256-bit ports");
     static_assert(CPU_PORTS >= 1, "L2Cache must have at least one CPU port pair");
     static_assert(CPU_PORTS <= 8, "L2Cache CPU response bookkeeping supports up to 8 CPU port pairs");
+    static_assert(WAYS <= 4, "L2Cache RAM-bank primitive supports up to four ways");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
     static constexpr size_t PORT_BYTES = PORT_BITWIDTH / 8;
@@ -239,15 +252,15 @@ public:
     bool debugen_in;
 
 protected:
-    // One cpphdl::memory primitive per word bank gives each bank one independent
-    // synchronous access port and maps naturally onto FPGA block RAM.
-    // (* ram_style = "block" *)
-    memory<u8, 4, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[DATA_BANKS];
-    // (* ram_style = "block" *)
-    memory<u8, (((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8)),
-        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[WAYS]; // {valid, dirty, tag}
-    reg<array<DATA_BANKS, logic<32>, true>> data_q_reg;
-    reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
+    // Independent leaf modules avoid a full L2 SystemVerilog replacement and
+    // avoid emitting the banks as one 3-D packed RAM. Fixed maximum module
+    // arrays let CppHDL unroll every leaf binding; only DATA_BANKS/WAYS entries
+    // are active for the selected cache geometry.
+    L2CacheRamBank<32, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[32];
+    L2CacheRamBank<
+        ((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS)
+            - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8,
+        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[4];
     // Snapshot synchronous RAM outputs before associative compare and response
     // selection. This prevents BRAM clock-to-out plus the complete hit mux
     // from occupying one L2 period.
@@ -276,11 +289,11 @@ protected:
     reg<logic<CACHE_LINE_SIZE * 8>> evict_line_reg;
     static_assert(MEM_PORTS <= 8, "L2Cache AXI slave bookkeeping storage supports up to 8 ports");
     // Keep split AW state as one AXI address payload so delayed W handshakes retain address and ID together.
-    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_reg;
+    reg<array<8, L2AxiAddressState>> slave_aw_reg;
     // Remember the last accepted AW payload until AWVALID drops or changes, preventing a sticky master from replaying it at B retirement.
-    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_seen_reg;
+    reg<array<8, L2AxiAddressState>> slave_aw_seen_reg;
     // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
-    reg<array<8, Axi4ReadAddress<ADDR_BITS, 4>>> slave_ar_seen_reg;
+    reg<array<8, L2AxiAddressState>> slave_ar_seen_reg;
     // Pipeline the wide sticky-payload comparisons.  Arbitration consumes
     // these one-bit decisions on the next L2 cycle instead of putting an
     // address compare, priority selection, payload mux, and req_reg CE in one
