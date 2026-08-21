@@ -1983,7 +1983,7 @@ int main(int argc, char** argv)
             if (only != -1 && only != index) {
                 return true;
             }
-            return VerilatorCompile(verilator_source, L2CACHE_TEST_TOP_NAME, {},
+            return VerilatorCompile(verilator_source, L2CACHE_TEST_TOP_NAME, {"L2CacheRamBank"},
                 {(source_root / "include").string(),
                  (source_root / "tribe_cpu").string(),
                  (source_root / "tribe_cpu" / "common").string(),

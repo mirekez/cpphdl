@@ -456,12 +456,14 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
         return false;
     }
 #endif
-    std::vector<std::string> modules = {"File",
+    std::vector<std::string> modules = {"FileStorage",
+              "File",
               "RAM",
               "L1Cache",
               "Axi4SlowToFastCdc",
               "Axi4FastToSlowCdc",
               "L1MemFastToSlowCdc",
+              "L2CacheRamBank",
               "L2Cache",
               "Tribe",
               "BranchPredictor",
