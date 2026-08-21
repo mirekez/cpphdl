@@ -30,7 +30,21 @@ enum L2CacheFsmState : uint64_t
     ST_IO_B = 17,
     ST_IO_AR = 18,
     ST_IO_R = 19,
-    ST_READ = 20
+    ST_READ = 20,
+    ST_LOOKUP_CAPTURE = 21,
+    ST_CROSS_WRITE_READ = 22,
+    ST_CROSS_WRITE_CAPTURE = 23,
+    ST_LOOKUP_RESULT = 24,
+    ST_CROSS_WRITE_RESULT = 25,
+    // Capture a selected backing-memory read beat before merging it into the
+    // cache banks.  Without this boundary the registered request address
+    // traverses region routing, the MEM_PORTS rdata mux, store merging, and a
+    // BRAM data input in one L2 period.
+    ST_AXI_R_WRITE = 26,
+    // Uncached read responses use the same registered beat boundary as cache
+    // refills.  This prevents state/region routing and the MEM_PORTS rdata mux
+    // from driving a wide response register directly.
+    ST_IO_R_RESULT = 27
 };
 
 // Captured L2 request payload after arbitration. Widths use the cache-supported
@@ -234,6 +248,15 @@ protected:
         (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[WAYS]; // {valid, dirty, tag}
     reg<array<DATA_BANKS, logic<32>, true>> data_q_reg;
     reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
+    // Snapshot synchronous RAM outputs before associative compare and response
+    // selection. This prevents BRAM clock-to-out plus the complete hit mux
+    // from occupying one L2 period.
+    reg<array<DATA_BANKS, logic<32>, true>> lookup_data_reg;
+    reg<array<WAYS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> lookup_tag_reg;
+    // A second boundary separates the associative compare/wide line select
+    // from response and miss-control fanout.
+    reg<L2HitLookupComb> lookup_hit_reg;
+    reg<L2EvictCandidateComb> lookup_evict_reg;
 
     reg<u<5>> state_reg;
     reg<CacheRequest> req_reg;
@@ -246,6 +269,7 @@ protected:
     reg<array<16, CacheResponse>> response_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
+    reg<logic<PORT_BITWIDTH>> refill_data_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> fill_beat_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> evict_beat_reg;
     reg<u<ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE)>> evict_tag_reg;
@@ -257,5 +281,12 @@ protected:
     reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_seen_reg;
     // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
     reg<array<8, Axi4ReadAddress<ADDR_BITS, 4>>> slave_ar_seen_reg;
+    // Pipeline the wide sticky-payload comparisons.  Arbitration consumes
+    // these one-bit decisions on the next L2 cycle instead of putting an
+    // address compare, priority selection, payload mux, and req_reg CE in one
+    // 156 MHz path.  AXI requires payload stability until READY, so delaying
+    // READY by one cycle is protocol-safe.
+    reg<logic<8>> slave_aw_novelty_reg;
+    reg<logic<8>> slave_ar_novelty_reg;
 
 };

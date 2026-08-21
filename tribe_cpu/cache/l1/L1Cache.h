@@ -70,7 +70,7 @@ Background and delayed activities:
    2.2. A flush without read_in() leaves no request and returns to L1_ST_IDLE.
 
 3. A lookup miss starts line refill so a complete 32-byte line can be installed,
-   achieved by clearing refill accumulators and entering L1_ST_REFILL.
+   achieved by resetting refill progress and entering L1_ST_REFILL.
    3.1. L1MemDriver emits each line-aligned address plus refill_reg.beat.
    3.2. mem_out.wait_out() prevents beat counters and line images from advancing
         until returned data is accepted.

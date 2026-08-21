@@ -25,6 +25,8 @@ protected:
     using Base::MEM_ADDR_MASK64;
     using Base::data_q_reg;
     using Base::tag_q_reg;
+    using Base::lookup_data_reg;
+    using Base::lookup_tag_reg;
     using Base::state_reg;
     using Base::req_reg;
     using Base::victim_reg;
@@ -182,16 +184,16 @@ protected:
             (uint32_t)victim_reg : (uint32_t)fill_way_reg;
         for (i = 0; i < WAYS; ++i) {
             if ((uint32_t)evict_candidate_comb.way == i) {
-                evict_candidate_comb.valid = (bool)tag_q_reg[i][TAG_BITS + 1];
-                evict_candidate_comb.dirty = (bool)tag_q_reg[i][TAG_BITS];
-                evict_candidate_comb.tag = (uint64_t)tag_q_reg[i].bits(TAG_BITS - 1, 0);
+                evict_candidate_comb.valid = (bool)lookup_tag_reg[i][TAG_BITS + 1];
+                evict_candidate_comb.dirty = (bool)lookup_tag_reg[i][TAG_BITS];
+                evict_candidate_comb.tag = (uint64_t)lookup_tag_reg[i].bits(TAG_BITS - 1, 0);
             }
         }
         for (i = 0; i < DATA_BANKS; ++i) {
             way = i / LINE_WORDS;
             word = i % LINE_WORDS;
             if ((uint32_t)evict_candidate_comb.way == way) {
-                evict_candidate_comb.line.bits(word * 32 + 31, word * 32) = data_q_reg[i];
+                evict_candidate_comb.line.bits(word * 32 + 31, word * 32) = lookup_data_reg[i];
             }
         }
         return evict_candidate_comb;

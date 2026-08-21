@@ -1351,10 +1351,15 @@ public:
             (force_evict ? 0x00000840u : 0x00000740u);
         uint32_t cpu_base = 0x80000000u + local_base;
         constexpr uint32_t set_stride = (L2_SIZE / LINE_SIZE / WAYS) * LINE_SIZE;
-        uint8_t expected[PORT_BITS / 8];
+        // The Ethernet header edits below span bytes 2..35.  This used to use
+        // one AXI beat of storage, so the 64-bit test overwrote adjacent stack
+        // locals (including saved_memory_base) and made all following address
+        // decodes fail.  Cover two complete cache lines and check every beat.
+        constexpr size_t TEST_BYTES = 2 * LINE_SIZE;
+        uint8_t expected[TEST_BYTES];
 
         memory_base = 0x80000000u;
-        for (size_t word = 0; word < PORT_BITS / 32; ++word) {
+        for (size_t word = 0; word < TEST_BYTES / 4; ++word) {
             uint32_t value = 0x44332211u + (uint32_t)word * 0x11111111u;
             set_backing_word(local_base + (uint32_t)word * 4u, value);
             expected[word * 4u + 0u] = (uint8_t)(value >> 0);
@@ -1397,13 +1402,16 @@ public:
             }
         }
 
-        logic<PORT_BITS> beat = axi_read_beat(0, local_base);
-        for (size_t i = 0; i < PORT_BITS / 8; ++i) {
-            uint8_t got = (uint8_t)beat.bits(i * 8u + 7u, i * 8u);
-            if (got != expected[i]) {
-                std::print("\nCPU byte store AXI visibility ERROR fill_before_store={} force_evict={} byte={} got={:#x} expected={:#x}\n",
-                    fill_before_store, force_evict, i, got, expected[i]);
-                error = true;
+        for (size_t beat_offset = 0; beat_offset < TEST_BYTES; beat_offset += PORT_BITS / 8) {
+            logic<PORT_BITS> beat = axi_read_beat(0, local_base + (uint32_t)beat_offset);
+            for (size_t lane = 0; lane < PORT_BITS / 8; ++lane) {
+                size_t i = beat_offset + lane;
+                uint8_t got = (uint8_t)beat.bits(lane * 8u + 7u, lane * 8u);
+                if (got != expected[i]) {
+                    std::print("\nCPU byte store AXI visibility ERROR fill_before_store={} force_evict={} byte={} got={:#x} expected={:#x}\n",
+                        fill_before_store, force_evict, i, got, expected[i]);
+                    error = true;
+                }
             }
         }
         memory_base = saved_memory_base;

@@ -81,6 +81,10 @@ struct State
     uint16_t csr_addr:12;
     uint8_t csr_op:3;
     uint8_t csr_imm:5;
+    // CSR legality is decoded while this instruction enters the execute
+    // stage.  Carrying the registered result with the pipeline state avoids
+    // putting the full CSR address/support decoder on trap-register enables.
+    uint8_t csr_illegal:1;
     uint8_t sys_op:4;
     uint8_t trap_op:4;
 };//__PACKED;

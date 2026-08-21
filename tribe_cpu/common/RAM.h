@@ -5,7 +5,8 @@
 using namespace cpphdl;
 
 template<size_t WIDTH, size_t DEPTH>
-class RAM : public Module
+class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=RAMReplacement.sv;")]]
+RAM : public Module
 {
 public:
     _PORT(u<clog2(DEPTH)>) addr_in;

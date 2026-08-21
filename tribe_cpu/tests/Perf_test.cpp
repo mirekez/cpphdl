@@ -103,7 +103,7 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     const auto start = std::chrono::high_resolution_clock::now();
     const std::string progress_marker = "SBI RFENCE extension detected";
     const bool run_ok = test.run(elf.string(),
-        0, "/dev/null", 5000000, 0, 0x80000000, TRIBE_RAM_BYTES / 4, false,
+        0, "/dev/null", 7000000, 0, 0x80000000, TRIBE_RAM_BYTES / 4, false,
         0, 0x81f00000, 1, true, 0x80000000u - 0xc0000000u, dtb.string(), false,
         initramfs.string(), 0x81c00000, "", "", 0, false, "", false,
         progress_marker, "Linux boot perf slice");
@@ -138,26 +138,26 @@ static bool run_perf_test(bool debug, bool check_wall_time)
 
     bool ok = execution_progress_ok;
 #ifdef VERILATOR
-    constexpr uint64_t expected_clocks = 4267088;
+    constexpr uint64_t expected_clocks = 6018940;
     constexpr uint64_t expected_wall_us = 30000000;
-    constexpr double expected_stall_pct = 63.85;
-    constexpr double expected_issue_pct = 7.05;
-    constexpr double expected_total_stall_pct = 70.90;
-    constexpr double expected_hazard_pct = 0.11;
-    constexpr double expected_dcache_wait_pct = 23.79;
-    constexpr double expected_icache_wait_pct = 40.87;
-    constexpr double expected_branch_pct = 0.24;
+    constexpr double expected_stall_pct = 60.01;
+    constexpr double expected_issue_pct = 29.80;
+    constexpr double expected_total_stall_pct = 89.81;
+    constexpr double expected_hazard_pct = 0.10;
+    constexpr double expected_dcache_wait_pct = 21.22;
+    constexpr double expected_icache_wait_pct = 39.91;
+    constexpr double expected_branch_pct = 1.30;
     constexpr double expected_icache_refill_pct = 40.02;
 #else
-    constexpr uint64_t expected_clocks = 4267088;
+    constexpr uint64_t expected_clocks = 6018940;
     constexpr uint64_t expected_wall_us = 37510000;
-    constexpr double expected_stall_pct = 63.85;
-    constexpr double expected_issue_pct = 7.05;
-    constexpr double expected_total_stall_pct = 70.90;
-    constexpr double expected_hazard_pct = 0.11;
-    constexpr double expected_dcache_wait_pct = 23.79;
-    constexpr double expected_icache_wait_pct = 40.87;
-    constexpr double expected_branch_pct = 0.24;
+    constexpr double expected_stall_pct = 60.01;
+    constexpr double expected_issue_pct = 29.80;
+    constexpr double expected_total_stall_pct = 89.81;
+    constexpr double expected_hazard_pct = 0.10;
+    constexpr double expected_dcache_wait_pct = 21.22;
+    constexpr double expected_icache_wait_pct = 39.91;
+    constexpr double expected_branch_pct = 1.30;
     constexpr double expected_icache_refill_pct = 40.02;
 #endif
 

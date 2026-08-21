@@ -209,6 +209,12 @@ public:
             }
         }
         else if (state_reg == L1_ST_LOOKUP && req_reg.read) {
+            // Initialize the small refill bookkeeping speculatively while the
+            // tag RAM result is being checked.  These fields are irrelevant on
+            // a hit, and this keeps the tag/miss decision off their D/reset
+            // paths at the 312 MHz boundary.
+            refill_reg._next.beat = 0;
+            refill_reg._next.req_data_valid = false;
             if (lookup.hit) {
                 if (stall_in()) {
                     response_reg._next.addr = req_reg.addr;
@@ -231,10 +237,9 @@ public:
                 }
             }
             else {
-                refill_reg._next.beat = 0;
-                refill_reg._next.even_line = 0;
-                refill_reg._next.odd_line = 0;
-                refill_reg._next.req_data_valid = false;
+                // Each word in both split images is overwritten by accepted
+                // refill beats before installation.  Avoid clearing the wide
+                // accumulators from the tag-hit/miss decision in this cycle.
                 state_reg._next = L1_ST_REFILL;
             }
         }

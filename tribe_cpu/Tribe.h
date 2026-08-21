@@ -104,11 +104,19 @@ class Tribe: public Module
     MMU_TLB<8>      immu;
     MMU_TLB<8>      dmmu;
 #endif
-    File<32,32>     regs;
+    // Tribe forwards every primary writeback source explicitly in forward().
+    // Disable the generic write-first read bypass here so memory-stage ready
+    // cannot feed backward through decode, branch prediction, and both MMUs.
+    // The independent write2 SBI return bypass remains enabled in File.
+    File<32,32,false> regs;
     L1Cache<L1_ICACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,0,ADDR_BITS,TRIBE_L2_AXI_WIDTH> icache;
     L1Cache<L1_DCACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
     reg<u1> icache_invalidate_issued_reg;
+    // One-cycle interlock used when writeback updates an implicit SBI argument
+    // register immediately before an ECALL.  This replaces a cache-data to
+    // execute-redirect combinational bypass.
+    reg<u1> sbi_arg_wait_reg;
 
 public:
 
@@ -185,12 +193,17 @@ public:
     {
 //        dec.state_in       = _ASSIGN_REG( state_reg[0] );  // execute stage input is same
         dec.pc_in          = _ASSIGN_REG( pc );
+        // Decode consumes only the registered fetch response.  A live L1
+        // BRAM output must not pass through decode/hazard control and feed the
+        // I-cache address or enable inputs again in the same 312 MHz cycle.
+        dec.instr_in       = _ASSIGN_REG(fetch_instr_reg);
         dec.instr_valid_in = _ASSIGN(fetch_valid_comb_func());
         dec.regs_data0_in  = _ASSIGN( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
         dec.regs_data1_in  = _ASSIGN( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
         dec._assign();  // outputs are ready
 
         exe.state_in       = _ASSIGN_COMB( exe_state_comb_func() );
+        exe.multicycle_state_in = _ASSIGN_REG(state_reg[0]);
         exe._assign();  // outputs are ready
 
         exe_mem.state_in = _ASSIGN_COMB(exe_state_comb_func());
@@ -200,7 +213,7 @@ public:
 #ifdef ENABLE_MMU_TLB
         // AMO read responses are tagged by the physical D-cache address; match
         // them against the translated MMU address, not the architectural VA.
-        exe_mem.dcache_read_expected_addr_in = dmmu.paddr_out;
+        exe_mem.dcache_read_expected_addr_in = _ASSIGN_REG(dmmu_paddr_reg);
 #else
         exe_mem.dcache_read_expected_addr_in = exe_mem.mem_read_addr_out;
 #endif
@@ -217,7 +230,7 @@ public:
         wb_mem.alu_result_in =
 #ifdef ENABLE_MMU_TLB
             _ASSIGN(dcache.read_valid_out() ? (uint32_t)dcache.read_addr_out() :
-                ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg));
+                ((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu_paddr_reg : (uint32_t)alu_result_reg));
 #else
             _ASSIGN_REG(alu_result_reg);
 #endif
@@ -245,6 +258,12 @@ public:
 #endif
         csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
+        csr.legality_state_in = _ASSIGN_COMB(dec.state_out());
+        // The same-cycle Execute redirect only needs the current architectural
+        // instruction.  MMU fault state is committed through csr.state_in and
+        // selects its vector separately below; feeding it back here creates a
+        // fetch/translation/redirect combinational cycle.
+        csr.redirect_state_in = _ASSIGN_REG(state_reg[0]);
         csr.reset_priv_in = boot_priv_in;
         csr.hartid_in = boot_hartid_in;
 #ifdef ENABLE_ISR
@@ -256,8 +275,8 @@ public:
 #endif
 #ifdef ENABLE_ISR
         csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
-        csr.interrupt_cause_in = irq.interrupt_cause_out;
-        csr.interrupt_to_supervisor_in = irq.interrupt_to_supervisor_out;
+        csr.interrupt_cause_in = _ASSIGN_REG(interrupt_cause_reg);
+        csr.interrupt_to_supervisor_in = _ASSIGN_REG(interrupt_to_supervisor_reg);
         csr.irq_pending_bits_in = irq.mip_out;
 #ifdef MULTICORE
         csr.software_irq_set_in = sbi_ipi_in;
@@ -273,13 +292,17 @@ public:
 #endif
 
 #ifdef ENABLE_MMU_TLB
-        immu.vaddr_in = _ASSIGN(fetch_addr_comb_func());
+        // Translate only the registered fetch PC.  An execute-stage branch
+        // redirect updates pc at the clock edge; feeding its combinational
+        // target directly into the MMU creates an execute -> translation ->
+        // fault/CSR path in one 312 MHz cycle.
+        immu.vaddr_in = _ASSIGN((uint32_t)pc);
         immu.read_in = _ASSIGN(false);
         immu.write_in = _ASSIGN(false);
         // Only a live front-end fetch may request instruction translation.
         // During redirects and bubbles fetch_addr_comb can be a placeholder; translating
         // it would create a spurious instruction page fault.
-        immu.execute_in = _ASSIGN((bool)valid);
+        immu.execute_in = _ASSIGN((bool)valid && !immu_result_match_comb_func());
 #ifdef ENABLE_ZICSR
         immu.satp_in = csr.satp_out;
         immu.priv_in = csr.priv_out;
@@ -343,7 +366,7 @@ public:
         wb.mem_data_hi_in = _ASSIGN((uint32_t)0);
         wb.mem_addr_in    =
 #ifdef ENABLE_MMU_TLB
-            _ASSIGN((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu.paddr_out() : (uint32_t)alu_result_reg);
+            _ASSIGN((state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) ? (uint32_t)dmmu_paddr_reg : (uint32_t)alu_result_reg);
 #else
             _ASSIGN_REG(alu_result_reg);
 #endif
@@ -353,9 +376,7 @@ public:
 
         regs.read_addr0_in = _ASSIGN( (uint8_t)dec.rs1_out() );
         regs.read_addr1_in = _ASSIGN( (uint8_t)dec.rs2_out() );
-        regs.write_in = _ASSIGN(wb.regs_write_out() &&
-            !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out()));
+        regs.write_in = _ASSIGN_COMB(register_write_commit_comb_func());
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
         regs.write2_in = _ASSIGN((bool)sbi_ret_a1_valid_reg);
@@ -368,11 +389,22 @@ public:
         regs._assign();
 
         dcache.read_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_read_out() && !dcache.busy_out()
+            // A cache/MMIO response now crosses two WritebackMem register
+            // boundaries.  Once the first boundary owns a beat, do not issue
+            // the same architectural read again while writeback assembles it.
+            // This is essential for read-to-pop devices such as NS16550 RBR.
+            && !wb_mem.load_ready_out()
+            && (exe_mem.split_load_out() ?
+                !(((uint32_t)dcache.addr_in() == (uint32_t)exe_mem.split_load_low_out() &&
+                    wb_mem.debug_split_low_valid_out()) ||
+                  ((uint32_t)dcache.addr_in() == (uint32_t)exe_mem.split_load_high_out() &&
+                    wb_mem.debug_split_high_valid_out())) :
+                !wb_mem.debug_held_load_valid_out())
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
             && (!atomic_request_comb_func() || atomic_grant_in())
 #endif
 #ifdef ENABLE_MMU_TLB
-            && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
+            && dmmu_result_match_comb_func() && !dmmu_fault_reg
 #endif
             );
         dcache.write_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_write_out() && !dcache.busy_out()
@@ -380,18 +412,22 @@ public:
             && (!atomic_request_comb_func() || atomic_grant_in())
 #endif
 #ifdef ENABLE_MMU_TLB
-            && !dmmu.busy_out() && !dmmu.fault_out() && dmmu_access_ready_comb_func()
+            && dmmu_result_match_comb_func() && !dmmu_fault_reg
 #endif
             );
         dcache.addr_in =
 #ifdef ENABLE_MMU_TLB
-            dmmu.paddr_out;
+            _ASSIGN_REG(dmmu_paddr_reg);
 #else
             _ASSIGN( exe_mem.mem_read_out() ? (uint32_t)exe_mem.mem_read_addr_out() : (uint32_t)exe_mem.mem_write_addr_out() );
 #endif
         dcache.write_data_in = exe_mem.mem_write_data_out;
         dcache.write_mask_in = exe_mem.mem_write_mask_out;
-        dcache.stall_in = _ASSIGN(branch_stall_comb_func());
+        // A memory-stage request is older than an execute-stage branch
+        // redirect and must be allowed to drain.  Stalling L1 here deadlocks a
+        // cache-hit load: its younger taken branch waits for memory while the
+        // branch stall simultaneously suppresses the load response.
+        dcache.stall_in = _ASSIGN(false);
         dcache.flush_in = _ASSIGN(false);
 #ifdef MULTICORE
         dcache.invalidate_in = external_cache_invalidate_in;
@@ -432,7 +468,10 @@ public:
         wb_mem.dcache_write_data_in = dcache.mem_out.write_data_in;
         wb_mem.dcache_write_mask_in = dcache.mem_out.write_mask_in;
 
-        bp.lookup_valid_in = _ASSIGN(decode_branch_valid_comb_func());
+        // At 312 MHz the I-cache/decode/predictor/PC cone cannot be a single
+        // cycle. Keep predictor training, but fetch sequentially and redirect
+        // taken branches from the registered execute stage.
+        bp.lookup_valid_in = _ASSIGN(false);
         bp.lookup_pc_in = _ASSIGN((uint32_t)dec.state_out().pc);
         bp.lookup_target_in = _ASSIGN(decode_branch_target_comb_func());
         bp.lookup_fallthrough_in = _ASSIGN(decode_fallthrough_comb_func());
@@ -446,28 +485,32 @@ public:
 
         icache.read_in = _ASSIGN( (bool)valid
 #ifdef ENABLE_MMU_TLB
-            && !immu.busy_out() && !immu.fault_out()
+            && immu_result_match_comb_func() && !immu_fault_reg
 #endif
             );
         icache.addr_in =
 #ifdef ENABLE_MMU_TLB
-            immu.paddr_out;
+            _ASSIGN_REG(immu_paddr_reg);
 #else
-            _ASSIGN( fetch_addr_comb_func() );
+            _ASSIGN((uint32_t)pc);
 #endif
         icache.write_in = _ASSIGN( false );
         icache.write_data_in = _ASSIGN( (uint32_t)0 );
         icache.write_mask_in = _ASSIGN( (uint8_t)0 );
-        icache.stall_in = _ASSIGN(memory_wait_comb_func() || stall_comb_func());
-        icache.flush_in = _ASSIGN(branch_mispredict_comb_func() && !memory_wait_comb_func());
+        // The core pipeline itself holds PC/decode state during a data-memory
+        // wait.  Feeding that wait back into the I-cache couples the complete
+        // DMMU -> D-cache completion cone to the I-cache BRAM enable.  The
+        // I-cache may finish or replay the registered PC while the pipeline is
+        // held.  PC and the fetch buffer provide the required backpressure;
+        // feeding decode hazards into L1 creates a BRAM -> decode -> BRAM
+        // address loop that is much longer than one 312 MHz cycle.
+        icache.stall_in = _ASSIGN(false);
+        icache.flush_in = _ASSIGN(branch_mispredict_comb_func());
         icache.invalidate_in = _ASSIGN_COMB(icache_invalidate_comb_func());
         icache.cache_disable_in = _ASSIGN(false);
         icache.debugen_in = debugen_in;
         icache.__inst_name = __inst_name + "/icache";
         icache._assign();
-        // Decode must copy the now-bound instruction response function.
-        dec.instr_in = icache.read_data_out;
-
         i_mem_out.read_in = icache.mem_out.read_in;
         i_mem_out.write_in = _ASSIGN(false);
         i_mem_out.addr_in = icache.mem_out.addr_in;
@@ -475,12 +518,17 @@ public:
         i_mem_out.write_mask_in = _ASSIGN((uint8_t)0);
         i_mem_out.cache_disable_in = _ASSIGN(false);
         // CPU data misses and MMU page-table walks share the L2 data-side request path.
-        d_mem_out.read_in = _ASSIGN(dcache.mem_out.read_in()
+        d_mem_out.read_in =
 #ifdef ENABLE_MMU_TLB
-            || dmmu_ptw_selected_comb_func() || immu_ptw_selected_comb_func()
-#endif
-            );
+            _ASSIGN(dmmu_ptw_selected_comb_func() ? dmmu.mem_read_out() :
+                (immu_ptw_selected_comb_func() ? immu.mem_read_out() :
+                    dcache.mem_out.read_in()));
+        d_mem_out.write_in = _ASSIGN(l2_ptw_owner_reg == L2_PTW_OWNER_NONE &&
+            dcache.mem_out.write_in());
+#else
+            dcache.mem_out.read_in;
         d_mem_out.write_in = dcache.mem_out.write_in;
+#endif
         d_mem_out.addr_in = _ASSIGN_COMB(l2_data_addr_comb_func());
         d_mem_out.write_data_in = dcache.mem_out.write_data_in;
         d_mem_out.write_mask_in = dcache.mem_out.write_mask_in;
@@ -494,7 +542,12 @@ public:
         // The parent binds response functions before _assign(), allowing L1 to
         // retain the complete shared-L2 return path during structural wiring.
         dcache.mem_out.read_data_out = d_mem_out.read_data_out;
+#ifdef ENABLE_MMU_TLB
+        dcache.mem_out.wait_out = _ASSIGN(
+            l2_ptw_owner_reg != L2_PTW_OWNER_NONE || d_mem_out.wait_out());
+#else
         dcache.mem_out.wait_out = d_mem_out.wait_out;
+#endif
         icache.mem_out.read_data_out = i_mem_out.read_data_out;
         icache.mem_out.wait_out = i_mem_out.wait_out;
 
@@ -607,7 +660,7 @@ public:
     }
 
     _LAZY_COMB(debug_decode_comb, TribeDecodeDebug)
-        debug_decode_comb.instr = icache.read_data_out();
+        debug_decode_comb.instr = fetch_instr_reg;
         debug_decode_comb.pc = (uint32_t)dec.state_out().pc;
         debug_decode_comb.br = (uint8_t)dec.state_out().br_op;
         debug_decode_comb.imm = (uint32_t)dec.state_out().imm;
@@ -631,8 +684,14 @@ private:
     reg<u32>        pc;
     reg<u1>         valid;
 
-    reg<u32>        alu_result_reg;
+    // Explicit instruction-fetch response stage.  The cache response address
+    // is retained with the instruction so redirects can discard stale data
+    // without relying on the live I-cache output.
+    reg<u1>         fetch_buffer_valid_reg;
+    reg<u32>        fetch_instr_reg;
+    reg<u32>        fetch_pc_reg;
 
+    reg<u32>        alu_result_reg;
     reg<array<STAGES_NUM-1,State>> state_reg;
     reg<array<STAGES_NUM-1,u32>> predicted_next_reg;
     reg<array<STAGES_NUM-1,u32>> fallthrough_reg;
@@ -645,8 +704,37 @@ private:
     reg<u1>         debug_branch_taken_reg;
     reg<u1>         output_write_active_reg;
     reg<u1>         interrupt_entry_guard_reg;
+    // Capture interrupt metadata before redirecting the CSR and fetch paths.
+    // The register boundary removes memory readiness from the same-cycle
+    // trap-vector/front-end control cone.
+    reg<u1>         interrupt_accept_reg;
+    reg<u32>        interrupt_cause_reg;
+    reg<u1>         interrupt_to_supervisor_reg;
     reg<u1>         sbi_ret_a1_valid_reg;
     reg<u32>        sbi_ret_a1_reg;
+#ifdef ENABLE_MMU_TLB
+    // Instruction translation is also an explicit 312 MHz stage. The I-cache
+    // and fault/CSR logic consume only this registered result, never the live
+    // associative TLB lookup.
+    reg<u1>         immu_result_valid_reg;
+    reg<u32>        immu_vaddr_reg;
+    reg<u32>        immu_paddr_reg;
+    reg<u1>         immu_fault_reg;
+    // Data translation is a separate 312 MHz pipeline stage.  The memory-stage
+    // virtual address remains held until these registers contain its DMMU
+    // result; D-cache then sees only a registered physical address/fault.
+    reg<u1>         dmmu_result_valid_reg;
+    reg<u32>        dmmu_vaddr_reg;
+    reg<u32>        dmmu_paddr_reg;
+    reg<u1>         dmmu_fault_reg;
+    // D-cache remains the implicit owner of the shared data port. Page-table
+    // walks acquire a registered grant only while D-cache has no outgoing L2
+    // request, and retain it until the granted MMU drops mem_read_out.
+    static constexpr uint8_t L2_PTW_OWNER_NONE = 0;
+    static constexpr uint8_t L2_PTW_OWNER_DMMU = 1;
+    static constexpr uint8_t L2_PTW_OWNER_IMMU = 2;
+    reg<u<2>>       l2_ptw_owner_reg;
+#endif
 
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
     // Request cluster ownership for the complete lifetime of an AMO instruction.
@@ -730,10 +818,10 @@ private:
     // bypass attribute always describe the same D-cache or page-table access.
     _LAZY_COMB(l2_data_addr_comb, uint32_t)
 #ifdef ENABLE_MMU_TLB
-        l2_data_addr_comb = dcache.mem_out.read_in() || dcache.mem_out.write_in() ?
-            (uint32_t)dcache.mem_out.addr_in() :
-            (dmmu_ptw_selected_comb_func() ? (uint32_t)dmmu.mem_addr_out() :
-                (uint32_t)immu.mem_addr_out());
+        l2_data_addr_comb = dmmu_ptw_selected_comb_func() ?
+            (uint32_t)dmmu.mem_addr_out() :
+            (immu_ptw_selected_comb_func() ? (uint32_t)immu.mem_addr_out() :
+                (uint32_t)dcache.mem_out.addr_in());
 #else
         l2_data_addr_comb = dcache.mem_out.addr_in();
 #endif
@@ -741,16 +829,15 @@ private:
     }
 
 #ifdef ENABLE_MMU_TLB
-    // DMMU page-table walks share the L2 data port after normal CPU data requests.
+    // Registered page-table-walk grants sever live D-cache hit/miss selection
+    // from both MMU state machines.
     _LAZY_COMB(dmmu_ptw_selected_comb, bool)
-        dmmu_ptw_selected_comb = dmmu.mem_read_out() && !dcache.mem_out.read_in() && !dcache.mem_out.write_in();
+        dmmu_ptw_selected_comb = l2_ptw_owner_reg == L2_PTW_OWNER_DMMU;
         return dmmu_ptw_selected_comb;
     }
 
-    // IMMU page-table walks use the shared L2 data port only when DMMU and D-cache are idle.
     _LAZY_COMB(immu_ptw_selected_comb, bool)
-        immu_ptw_selected_comb = immu.mem_read_out() && !dmmu.mem_read_out() &&
-            !dcache.mem_out.read_in() && !dcache.mem_out.write_in();
+        immu_ptw_selected_comb = l2_ptw_owner_reg == L2_PTW_OWNER_IMMU;
         return immu_ptw_selected_comb;
     }
 
@@ -769,12 +856,49 @@ private:
         mmu_l2_read_word_comb = (uint32_t)d_mem_out.read_data_out().bits(lane * 32 + 31, lane * 32);
         return mmu_l2_read_word_comb;
     }
+
+    _LAZY_COMB(immu_result_match_comb, bool)
+        immu_result_match_comb = valid && immu_result_valid_reg &&
+            (uint32_t)immu_vaddr_reg == (uint32_t)pc;
+        return immu_result_match_comb;
+    }
+
+    _LAZY_COMB(immu_active_fault_comb, bool)
+        immu_active_fault_comb = immu_result_match_comb_func() && immu_fault_reg;
+        return immu_active_fault_comb;
+    }
+
     // Do not let D-cache consume dmmu.paddr_out until the current translated access has a TLB hit.
     _LAZY_COMB(dmmu_access_ready_comb, bool)
         bool access;
         access = state_reg[1].valid && (exe_mem.mem_read_out() || exe_mem.mem_write_out());
         dmmu_access_ready_comb = !access || !dmmu.translated_out() || dmmu.hit_out() || dmmu.fault_out();
         return dmmu_access_ready_comb;
+    }
+
+    _LAZY_COMB(dmmu_vaddr_comb, uint32_t)
+        dmmu_vaddr_comb = exe_mem.mem_read_out() ?
+            (uint32_t)exe_mem.mem_read_addr_out() :
+            (uint32_t)exe_mem.mem_write_addr_out();
+        return dmmu_vaddr_comb;
+    }
+
+    _LAZY_COMB(dmmu_result_match_comb, bool)
+        bool live_request;
+        bool memory_owner;
+        live_request = state_reg[1].valid &&
+            (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+        memory_owner = state_reg[1].valid &&
+            (live_request || state_reg[1].mem_op == Mem::STORE ||
+                state_reg[1].wb_op == Wb::MEM);
+        // ExecuteMem drops its read/write level after the cache accepts the
+        // transaction, while WritebackMem deliberately keeps the same
+        // instruction in the memory stage for two registered response
+        // boundaries.  With no live request there is only one possible owner,
+        // so the saved translation remains its match until retirement.
+        dmmu_result_match_comb = memory_owner && dmmu_result_valid_reg &&
+            (!live_request || (uint32_t)dmmu_vaddr_reg == dmmu_vaddr_comb_func());
+        return dmmu_result_match_comb;
     }
 #endif
 
@@ -792,10 +916,12 @@ private:
             (state_reg[0].mem_op == Mem::LOAD || state_reg[0].mem_op == Mem::STORE);
         dmmu_faulted_access = false;
 #ifdef ENABLE_MMU_TLB
-        dmmu_faulted_access = state_reg[1].valid && dmmu.fault_out() &&
-            (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+        dmmu_faulted_access = dmmu_result_match_comb_func() && dmmu_fault_reg;
 #endif
         memory_wait_comb =
+#ifdef ENABLE_ISR
+            interrupt_capture_comb_func() ||
+#endif
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
             (atomic_request_comb_func() && !atomic_grant_in()) ||
 #endif
@@ -807,10 +933,11 @@ private:
             // pending. An older data-memory operation is the exception: it must
             // retire so the shared D-memory path remains available to the page
             // table walk that will resume instruction fetch.
-            ((bool)valid && immu.busy_out() && !data_mem_access) ||
-            (data_mem_access && !dmmu_faulted_access && dmmu.busy_out()) ||
-            (data_mem_access && !dmmu_faulted_access && !dmmu_access_ready_comb_func()) ||
+            ((bool)valid && !immu_result_match_comb_func() && !data_mem_access) ||
+            (data_mem_access && !dmmu_faulted_access && !dmmu_result_match_comb_func()) ||
 #endif
+            sbi_arg_hazard_comb_func() ||
+            exe.multicycle_wait_out() ||
             (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
@@ -825,20 +952,29 @@ private:
         return memory_wait_comb;
     }
 
-    // Fetched instruction is valid only when it matches the current PC or translated physical PC.
-    _LAZY_COMB(fetch_valid_comb, bool)
-        return fetch_valid_comb = valid && icache.read_valid_out() &&
+    // A live I-cache response may enter the fetch-response register only when
+    // it belongs to the current architectural fetch PC.
+    _LAZY_COMB(icache_response_match_comb, bool)
+        return icache_response_match_comb = valid && icache.read_valid_out() &&
 #ifdef ENABLE_MMU_TLB
             // I-cache stores physical refill addresses; the architectural PC can be virtual.
-            icache.read_addr_out() == (uint32_t)immu.paddr_out();
+            immu_result_match_comb_func() &&
+            icache.read_addr_out() == (uint32_t)immu_paddr_reg;
 #else
             icache.read_addr_out() == (uint32_t)pc;
 #endif
     }
 
+    // Decode sees only a clocked fetch response.  Comparing the saved virtual
+    // PC rejects an old response immediately after a branch or trap redirect.
+    _LAZY_COMB(fetch_valid_comb, bool)
+        return fetch_valid_comb = valid && fetch_buffer_valid_reg &&
+            (uint32_t)fetch_pc_reg == (uint32_t)pc;
+    }
+
     // Sequential next PC respects 16-bit compressed and 32-bit instructions.
     _LAZY_COMB(decode_fallthrough_comb, uint32_t)
-        return decode_fallthrough_comb = pc + ((dec.instr_in()&3)==3?4:2);
+        return decode_fallthrough_comb = fetch_pc_reg + ((dec.instr_in()&3)==3?4:2);
     }
 
     // Predictor sees only direct branches in decode. Register-indirect JALR/JR
@@ -890,12 +1026,11 @@ private:
         return branch_mispredict_comb;
     }
 
-    // Fetch address, with execute redirect taking priority over sequential PC.
+    // Fetch address is deliberately registered.  Redirect resolution writes
+    // pc in _work(), and the corrected translation/cache request starts on the
+    // following cycle.
     _LAZY_COMB(fetch_addr_comb, uint32_t)
         fetch_addr_comb = pc;
-        if (branch_mispredict_comb_func()) {
-            fetch_addr_comb = branch_actual_next_comb_func();
-        }
         return fetch_addr_comb;
     }
 
@@ -916,14 +1051,31 @@ private:
             csr.priv_out() == (u<2>)1;
     }
 
+    // Architectural writeback pulse.  Keeping this separate from the global
+    // front-end wait allows an older result to commit while fetch is stopped.
+    _LAZY_COMB(register_write_commit_comb, bool)
+        return register_write_commit_comb = wb.regs_write_out() &&
+            !interrupt_retire_wait_comb_func() &&
+            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out());
+    }
+
+    // ECALL arguments a0/a1/a6/a7 are implicit and therefore absent from the
+    // decoded rs fields.  If one is written in this cycle, hold the ECALL once
+    // so it observes the clocked register-file value on the following cycle.
+    _LAZY_COMB(sbi_arg_hazard_comb, bool)
+        uint32_t rd;
+        bool writes_argument;
+        rd = wb.regs_wr_id_out();
+        writes_argument = rd == 10 || rd == 11 || rd == 16 || rd == 17;
+        return sbi_arg_hazard_comb = sbi_legacy_ecall_comb_func() &&
+            !sbi_arg_wait_reg && register_write_commit_comb_func() &&
+            writes_argument;
+    }
+
     uint32_t sbi_arg_value(uint8_t reg_id)
     {
-        // SBI arguments are not explicit ECALL source registers in Decode.
-        // Forward the writeback stage so sequences such as "li a7,6; ecall"
-        // observe the freshly produced extension ID before it is committed.
-        if (wb.regs_write_out() && wb.regs_wr_id_out() == reg_id) {
-            return wb.regs_data_out();
-        }
+        // A preceding implicit-argument write is serialized by
+        // sbi_arg_hazard_comb_func(), so all SBI logic reads registered values.
         if (reg_id == 10) {
             return regs.x10_out();
         }
@@ -1106,10 +1258,10 @@ private:
         return sbi_a0_debug_comb = sbi_arg_value(10);
     }
 
-    // Keep raw pending interrupt state visible in mip/sip, but accept an
-    // interrupt only at a normal execute boundary. Waiting here is important:
-    // the PC redirect and CSR trap update must happen in the same cycle.
-    _LAZY_COMB(interrupt_accept_comb, bool)
+    // Capture an interrupt only at a normal execute boundary. The capture
+    // cycle holds the pipeline; CSR/PC redirection uses the registered event
+    // on the following cycle.
+    _LAZY_COMB(interrupt_capture_comb, bool)
 #ifdef ENABLE_ISR
         bool trap_redirect;
         trap_redirect = state_reg[0].valid &&
@@ -1120,76 +1272,115 @@ private:
              state_reg[0].sys_op == Sys::TRAP ||
              state_reg[0].trap_op != Trap::TNONE ||
              csr.illegal_trap_out());
-        return interrupt_accept_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
-            !interrupt_entry_guard_reg && !trap_redirect
+        return interrupt_capture_comb = state_reg[0].valid && irq.interrupt_valid_out() &&
+            !interrupt_entry_guard_reg && !interrupt_accept_reg && !trap_redirect
 #ifdef ENABLE_RV32IA
             // Do not flush an atomic instruction in the cycle before
             // ExecuteMem's registered atomic_busy indication becomes visible.
             && state_reg[0].amo_op == Amo::AMONONE
 #endif
-            && !memory_wait_comb_func() &&
-            !hazard_stall_comb_func();
+            // A decode/load-use stall is younger than this execute boundary
+            // and will be flushed by trap entry. Including it here creates a
+            // redirect -> Execute -> split hazard -> interrupt feedback loop.
+            && !interrupt_retire_wait_comb_func();
+#else
+        return interrupt_capture_comb = false;
+#endif
+    }
+
+    _LAZY_COMB(interrupt_accept_comb, bool)
+#ifdef ENABLE_ISR
+        return interrupt_accept_comb = interrupt_accept_reg && state_reg[0].valid;
 #else
         return interrupt_accept_comb = false;
 #endif
     }
 
-    // Execute input state after trap/xret/fence redirection and late load forwarding.
+    // Only an older memory-stage instruction can prevent interrupt entry.  A
+    // front-end translation wait or the current Execute result is restartable;
+    // including either in this decision closes a redirect -> fetch/MMU -> wait
+    // -> interrupt loop.  All signals below originate in registered memory,
+    // cache, MMU, and pipeline state.
+    _LAZY_COMB(interrupt_retire_wait_comb, bool)
+        bool data_mem_access;
+        bool dmmu_faulted_access;
+        data_mem_access = state_reg[1].valid && (
+            exe_mem.mem_read_out() || exe_mem.mem_write_out() ||
+            state_reg[1].mem_op == Mem::STORE || state_reg[1].wb_op == Wb::MEM);
+        dmmu_faulted_access = false;
+#ifdef ENABLE_MMU_TLB
+        dmmu_faulted_access = dmmu_result_match_comb_func() && dmmu_fault_reg;
+#endif
+        interrupt_retire_wait_comb =
+#if defined(MULTICORE) && defined(ENABLE_RV32IA)
+            (state_reg[1].valid && state_reg[1].amo_op != Amo::AMONONE &&
+                !atomic_grant_in()) ||
+#endif
+#ifdef ENABLE_RV32IA
+            (data_mem_access && !dmmu_faulted_access && exe_mem.atomic_busy_out()) ||
+#endif
+#ifdef ENABLE_MMU_TLB
+            (data_mem_access && !dmmu_faulted_access && !dmmu_result_match_comb_func()) ||
+#endif
+            // Load completion is represented by WritebackMem's registered
+            // result-ready bit below. Stores that miss are covered by the
+            // shared-memory wait terms. A live L1 busy/hit decision here would
+            // otherwise drive every CSR clock enable in the same cycle.
+            (data_mem_access && !dmmu_faulted_access && exe_mem.mem_split_busy_out()) ||
+            (data_mem_access && !dmmu_faulted_access &&
+                dcache.mem_out.read_in() && d_mem_out.wait_out()) ||
+            (data_mem_access && !dmmu_faulted_access &&
+                (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) &&
+                d_mem_out.wait_out()) ||
+            (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+                !dmmu_faulted_access && !wb_mem.load_ready_out());
+        return interrupt_retire_wait_comb;
+    }
+
+    // Execute sees only registered pipeline state.  Synthetic SBI completion
+    // is constructed in its prioritized retirement branch below; exposing the
+    // a7/a6/a0 SBI decode to Execute couples register-file reads to branch
+    // resolution, front-end stall, instruction translation, and CSR commit.
     _LAZY_COMB(exe_state_comb, State)
         exe_state_comb = state_reg[0];
 #ifdef ENABLE_ZICSR
-        if (sbi_handled_comb_func()) {
-            exe_state_comb.sys_op = Sys::SNONE;
-            exe_state_comb.trap_op = Trap::TNONE;
-            exe_state_comb.csr_op = Csr::CNONE;
-            exe_state_comb.mem_op = Mem::MNONE;
-            exe_state_comb.br_op = Br::BNONE;
-            exe_state_comb.alu_op = Alu::ADD;
-            exe_state_comb.rs1_val = 0;
-            exe_state_comb.rs2_val = 0;
-            exe_state_comb.imm = 0;
-            exe_state_comb.rd = 10;
-            exe_state_comb.wb_op = Wb::ALU;
-        }
-        if (state_reg[0].valid &&
-            !sbi_handled_comb_func() &&
-            (
-#ifdef ENABLE_ISR
-             interrupt_accept_comb_func() ||
+        // Trap/xRET/FENCE.I redirection is handled by the explicit, prioritized
+        // paths in _work().  Do not rewrite Execute operands or branch controls
+        // for those operations: their results are discarded at the same edge,
+        // while exposing them to Execute creates a redirect -> fetch/MMU/cache
+        // -> global-wait feedback path.  Decoded system instructions already
+        // carry BNONE/MNONE/WNONE where required.
 #endif
-             state_reg[0].sys_op == Sys::ECALL ||
-             state_reg[0].sys_op == Sys::EBREAK ||
-             state_reg[0].sys_op == Sys::TRAP ||
-             state_reg[0].trap_op != Trap::TNONE ||
-             csr.illegal_trap_out())) {
-            exe_state_comb.rs1_val = csr.trap_vector_out();
-            exe_state_comb.imm = 0;
-            exe_state_comb.br_op = Br::JR;
-            exe_state_comb.mem_op = Mem::MNONE;
-            exe_state_comb.wb_op = Wb::WNONE;
-#ifdef ENABLE_RV32IA
-            exe_state_comb.amo_op = Amo::AMONONE;
-#endif
-        }
-        else if (state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
-            exe_state_comb.rs1_val = csr.epc_out();
-            exe_state_comb.imm = 0;
-        }
-        if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI) {
-            exe_state_comb.rs1_val = state_reg[0].pc + 4;
-            exe_state_comb.imm = 0;
-        }
-#endif
-        if (wb_mem.load_ready_out() && state_reg[1].rd != 0) {
-            if (state_reg[0].rs1 == state_reg[1].rd) {
-                exe_state_comb.rs1_val = wb_mem.load_result_out();
-            }
-            if (state_reg[0].rs2 == state_reg[1].rd) {
-                exe_state_comb.rs2_val = wb_mem.load_result_out();
-            }
-        }
+        // Load forwarding is captured at a clock boundary: forward() supplies
+        // a newly decoded consumer when the pipe advances, and the memory-wait
+        // path below updates an already-held consumer.  Driving the live
+        // Execute operands directly from D-cache data would couple the L1 tag
+        // lookup to branch/SBI redirect and the entire instruction front end.
         return exe_state_comb;
     }
+
+#if defined(ENABLE_ZICSR) && defined(ENABLE_MMU_TLB)
+    // Page-fault vector selection depends only on registered CSR state.  It is
+    // deliberately separate from CSR's current-instruction redirect output so
+    // an instruction-fetch fault cannot feed back into its own virtual address.
+    _LAZY_COMB(inst_page_fault_vector_comb, uint32_t)
+        uint32_t tvec;
+        tvec = ((uint32_t)csr.priv_out() != 3u &&
+            (((uint32_t)csr.medeleg_out() >> 12) & 1u)) ?
+            (uint32_t)csr.stvec_out() : (uint32_t)csr.mtvec_out();
+        return inst_page_fault_vector_comb = tvec & ~3u;
+    }
+
+    _LAZY_COMB(data_page_fault_vector_comb, uint32_t)
+        uint32_t cause;
+        uint32_t tvec;
+        cause = exe_mem.mem_write_out() ? 15u : 13u;
+        tvec = ((uint32_t)csr.priv_out() != 3u &&
+            (((uint32_t)csr.medeleg_out() >> cause) & 1u)) ?
+            (uint32_t)csr.stvec_out() : (uint32_t)csr.mtvec_out();
+        return data_page_fault_vector_comb = tvec & ~3u;
+    }
+#endif
 
 #ifdef ENABLE_ZICSR
 #ifdef ENABLE_MMU_TLB
@@ -1197,8 +1388,7 @@ private:
     // actively reading or writing. After a trap flush the DMMU fault output can
     // remain asserted for one cycle, but it must not overwrite sepc/stval.
     _LAZY_COMB(dmmu_active_fault_comb, bool)
-        return dmmu_active_fault_comb = state_reg[1].valid && dmmu.fault_out() &&
-            (exe_mem.mem_read_out() || exe_mem.mem_write_out());
+        return dmmu_active_fault_comb = dmmu_result_match_comb_func() && dmmu_fault_reg;
     }
 #endif
 
@@ -1211,7 +1401,7 @@ private:
             csr_state_comb.csr_op = Csr::CNONE;
         }
 #ifdef ENABLE_MMU_TLB
-        if (immu.fault_out() && !state_reg[0].valid && !state_reg[1].valid) {
+        if (immu_active_fault_comb_func() && !state_reg[0].valid && !state_reg[1].valid) {
             csr_state_comb = State{};
             csr_state_comb.valid = true;
             csr_state_comb.pc = fetch_addr_comb_func();
@@ -1259,9 +1449,15 @@ private:
             csr_state_comb.wb_op = Wb::WNONE;
             csr_state_comb.br_op = Br::JR;
         }
-        if (memory_wait_comb_func()
+        // CSR/trap commit waits only for an older memory-stage instruction.
+        // Front-end translation/cache readiness must not feed the CSR write
+        // enable or make a completed CSR instruction execute repeatedly.
+        if (interrupt_retire_wait_comb_func()
+#ifdef ENABLE_ISR
+            && !interrupt_accept_comb_func()
+#endif
 #ifdef ENABLE_MMU_TLB
-            && !immu.fault_out() && !dmmu_active_fault_comb_func()
+            && !immu_active_fault_comb_func() && !dmmu_active_fault_comb_func()
 #endif
             ) {
             csr_state_comb.valid = false;
@@ -1487,6 +1683,18 @@ public:
 #ifdef ENABLE_ZICSR
             std::print(trace_pc_write_out, " csr_illegal={}", (bool)csr.illegal_trap_out());
 #endif
+#if defined(ENABLE_RV32IA) && defined(MULTICORE)
+            std::print(trace_pc_write_out,
+                " atomic_request={} atomic_grant={} atomic_data={} atomic_complete={} atomic_busy={} dcache_valid={} dcache_addr={:08x} wb_ready={}",
+                (bool)atomic_request_comb_func(),
+                (bool)atomic_grant_in(),
+                (bool)atomic_data_request_comb_func(),
+                (bool)atomic_complete_comb_func(),
+                (bool)exe_mem.atomic_busy_out(),
+                (bool)dcache.read_valid_out(),
+                (uint32_t)dcache.read_addr_out(),
+                (bool)wb_mem.load_ready_out());
+#endif
 #ifdef ENABLE_ZICSR
             std::print(trace_pc_write_out, " priv={} stvec={:08x} sepc={:08x} scause={:08x} stval={:08x} mepc={:08x} mtvec={:08x}",
                 (uint32_t)csr.priv_out(),
@@ -1503,8 +1711,86 @@ public:
         if (debugen_in && !reset) {
             debug();
         }
+#ifdef ENABLE_MMU_TLB
+        l2_ptw_owner_reg._next = l2_ptw_owner_reg;
+        if (l2_ptw_owner_reg == L2_PTW_OWNER_NONE) {
+            if (!(dcache.mem_out.read_in() || dcache.mem_out.write_in())) {
+                if (dmmu.mem_read_out()) {
+                    l2_ptw_owner_reg._next = L2_PTW_OWNER_DMMU;
+                }
+                else if (immu.mem_read_out()) {
+                    l2_ptw_owner_reg._next = L2_PTW_OWNER_IMMU;
+                }
+            }
+        }
+        else if ((l2_ptw_owner_reg == L2_PTW_OWNER_DMMU && !dmmu.mem_read_out()) ||
+                 (l2_ptw_owner_reg == L2_PTW_OWNER_IMMU && !immu.mem_read_out())) {
+            l2_ptw_owner_reg._next = L2_PTW_OWNER_NONE;
+        }
+#endif
+        fetch_buffer_valid_reg._next = fetch_buffer_valid_reg;
+        fetch_instr_reg._next = fetch_instr_reg;
+        fetch_pc_reg._next = fetch_pc_reg;
+        if (!valid || (fetch_buffer_valid_reg && (uint32_t)fetch_pc_reg != (uint32_t)pc)) {
+            fetch_buffer_valid_reg._next = false;
+        }
+        if (icache_response_match_comb_func() &&
+            (!fetch_buffer_valid_reg || (uint32_t)fetch_pc_reg != (uint32_t)pc)) {
+            fetch_buffer_valid_reg._next = true;
+            fetch_instr_reg._next = icache.read_data_out();
+            fetch_pc_reg._next = pc;
+        }
         sbi_ret_a1_valid_reg._next = false;
         sbi_ret_a1_reg._next = sbi_ret_a1_reg;
+#ifdef ENABLE_MMU_TLB
+        if (!valid) {
+            immu_result_valid_reg._next = false;
+        }
+        else if (!immu_result_match_comb_func() && !immu.busy_out()) {
+            immu_result_valid_reg._next = true;
+            immu_vaddr_reg._next = pc;
+            immu_paddr_reg._next = immu.paddr_out();
+            immu_fault_reg._next = immu.fault_out();
+        }
+        if (!(state_reg[1].valid &&
+            (exe_mem.mem_read_out() || exe_mem.mem_write_out() ||
+                state_reg[1].mem_op == Mem::STORE || state_reg[1].wb_op == Wb::MEM))) {
+            dmmu_result_valid_reg._next = false;
+        }
+        else if (!dmmu_result_match_comb_func() && !dmmu.busy_out() &&
+            dmmu_access_ready_comb_func()) {
+            dmmu_result_valid_reg._next = true;
+            dmmu_vaddr_reg._next = dmmu_vaddr_comb_func();
+            dmmu_paddr_reg._next = dmmu.paddr_out();
+            dmmu_fault_reg._next = dmmu.fault_out();
+        }
+        if (sfence_vma_comb_func()) {
+            immu_result_valid_reg._next = false;
+            dmmu_result_valid_reg._next = false;
+        }
+#endif
+#ifdef ENABLE_ISR
+        interrupt_accept_reg._next = interrupt_accept_reg;
+        interrupt_cause_reg._next = interrupt_cause_reg;
+        interrupt_to_supervisor_reg._next = interrupt_to_supervisor_reg;
+        if (interrupt_accept_comb_func()) {
+            interrupt_accept_reg._next = false;
+        }
+        else if (interrupt_capture_comb_func()) {
+            interrupt_accept_reg._next = true;
+            interrupt_cause_reg._next = irq.interrupt_cause_out();
+            interrupt_to_supervisor_reg._next = irq.interrupt_to_supervisor_out();
+        }
+#endif
+        if (!state_reg[0].valid || state_reg[0].sys_op != Sys::ECALL) {
+            sbi_arg_wait_reg._next = false;
+        }
+        else if (sbi_arg_hazard_comb_func()) {
+            sbi_arg_wait_reg._next = true;
+        }
+        else if (!memory_wait_comb_func()) {
+            sbi_arg_wait_reg._next = false;
+        }
 
         if (dmem_addr_out() == 0x11223344 && dmem_write_out() && !output_write_active_reg) {
             FILE* out = fopen("out.txt", "a");
@@ -1538,7 +1824,11 @@ public:
         }
         else
         if (!reset && state_reg[0].valid &&
-            !memory_wait_comb_func() &&
+            (!interrupt_retire_wait_comb_func()
+#ifdef ENABLE_ISR
+             || interrupt_accept_comb_func()
+#endif
+            ) &&
             !sbi_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
@@ -1573,7 +1863,7 @@ public:
             ;
         }
         else
-        if (!reset && immu.fault_out() && (state_reg[0].valid || state_reg[1].valid) &&
+        if (!reset && immu_active_fault_comb_func() && (state_reg[0].valid || state_reg[1].valid) &&
             !dmmu_active_fault_comb_func() && !memory_wait_comb_func()) {
             // Fetch faults are younger than both pipeline stages. Drain one
             // stage per cycle so loads and JAL/JALR links retire before the
@@ -1608,10 +1898,12 @@ public:
             interrupt_entry_guard_reg._next = false;
         }
         else
-        if (!reset && (immu.fault_out() || dmmu_active_fault_comb_func())) {
-            pc._next = csr.trap_vector_out();
+        if (!reset && (immu_active_fault_comb_func() || dmmu_active_fault_comb_func())) {
+            pc._next = dmmu_active_fault_comb_func() ?
+                data_page_fault_vector_comb_func() : inst_page_fault_vector_comb_func();
 #ifndef SYNTHESIS
-            trace_pc_write("mmu-fault-trap", (uint32_t)csr.trap_vector_out());
+            trace_pc_write("mmu-fault-trap", dmmu_active_fault_comb_func() ?
+                data_page_fault_vector_comb_func() : inst_page_fault_vector_comb_func());
 #endif
             valid._next = false;
             state_reg._next[0] = State{};
@@ -1622,7 +1914,8 @@ public:
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
-            debug_branch_target_reg._next = csr.trap_vector_out();
+            debug_branch_target_reg._next = dmmu_active_fault_comb_func() ?
+                data_page_fault_vector_comb_func() : inst_page_fault_vector_comb_func();
             debug_branch_taken_reg._next = true;
             interrupt_entry_guard_reg._next = false;
         }
@@ -1659,7 +1952,18 @@ public:
             valid._next = false;
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
-            state_reg._next[1] = exe_state_comb_func();
+            state_reg._next[1] = state_reg[0];
+            state_reg._next[1].sys_op = Sys::SNONE;
+            state_reg._next[1].trap_op = Trap::TNONE;
+            state_reg._next[1].csr_op = Csr::CNONE;
+            state_reg._next[1].mem_op = Mem::MNONE;
+            state_reg._next[1].br_op = Br::BNONE;
+            state_reg._next[1].alu_op = Alu::ADD;
+            state_reg._next[1].rs1_val = 0;
+            state_reg._next[1].rs2_val = 0;
+            state_reg._next[1].imm = 0;
+            state_reg._next[1].rd = 10;
+            state_reg._next[1].wb_op = Wb::ALU;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -1707,12 +2011,6 @@ public:
                 trace_pc_write("fetch-fallthrough", decode_fallthrough_comb_func());
 #endif
             }
-            if (decode_branch_valid_comb_func()) {
-                pc._next = bp.predict_next_out();
-#ifndef SYNTHESIS
-                trace_pc_write("decode-predict", (uint32_t)bp.predict_next_out());
-#endif
-            }
             if (branch_mispredict_comb_func()) {
 #ifndef SYNTHESIS
                 if (std::getenv("TRIBE_TRACE_BAD_BRANCH") != nullptr) {
@@ -1739,7 +2037,18 @@ public:
 
             valid._next = !decode_indirect_branch_valid_comb_func();
 
-            if (hazard_stall_comb_func()) {
+            if (branch_mispredict_comb_func()) {
+                // Redirect resolution has priority over all live fetch/decode
+                // inputs.  Materializing the bubble explicitly prevents the
+                // branch result from reaching every State bit through the
+                // I-cache/MMU/fetch-valid selection cone.
+                state_reg._next[0] = State{};
+                state_reg._next[0].valid = false;
+                predicted_next_reg._next[0] = pc;
+                fallthrough_reg._next[0] = pc;
+                predicted_taken_reg._next[0] = false;
+            }
+            else if (hazard_stall_comb_func()) {
                 state_reg._next[0] = State{};
                 state_reg._next[0].valid = false;
                 predicted_next_reg._next[0] = pc;
@@ -1749,10 +2058,14 @@ public:
             else {
                 if (fetch_valid_comb_func()) {
                     state_reg._next[0] = dec.state_out();
+                    // Align the CSR legality result with the instruction as it
+                    // crosses the decode/execute register.  Copies, holds, and
+                    // flushes of State then preserve alignment automatically.
+                    state_reg._next[0].csr_illegal = csr.legality_out();
                     state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
-                    predicted_next_reg._next[0] = decode_branch_valid_comb_func() ? (uint32_t)bp.predict_next_out() : decode_fallthrough_comb_func();
+                    predicted_next_reg._next[0] = decode_fallthrough_comb_func();
                     fallthrough_reg._next[0] = decode_fallthrough_comb_func();
-                    predicted_taken_reg._next[0] = decode_branch_valid_comb_func() && bp.predict_taken_out();
+                    predicted_taken_reg._next[0] = false;
                     forward();
                 }
                 else {
@@ -1813,14 +2126,34 @@ public:
             trace_pc_write("reset", (uint32_t)reset_pc_in());
 #endif
             valid.clr();
+            fetch_buffer_valid_reg.clr();
+            fetch_instr_reg.clr();
+            fetch_pc_reg.clr();
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
             output_write_active_reg.clr();
             interrupt_entry_guard_reg.clr();
+#ifdef ENABLE_ISR
+            interrupt_accept_reg.clr();
+            interrupt_cause_reg.clr();
+            interrupt_to_supervisor_reg.clr();
+#endif
             sbi_ret_a1_valid_reg.clr();
             sbi_ret_a1_reg.clr();
             icache_invalidate_issued_reg.clr();
+            sbi_arg_wait_reg.clr();
+#ifdef ENABLE_MMU_TLB
+            immu_result_valid_reg.clr();
+            immu_vaddr_reg.clr();
+            immu_paddr_reg.clr();
+            immu_fault_reg.clr();
+            dmmu_result_valid_reg.clr();
+            dmmu_vaddr_reg.clr();
+            dmmu_paddr_reg.clr();
+            dmmu_fault_reg.clr();
+            l2_ptw_owner_reg.clr();
+#endif
         }
     }
 
@@ -1831,7 +2164,7 @@ public:
     void debug()
     {
         State tmp;
-        Zicsr instr = {{{icache.read_data_out()}}};
+        Zicsr instr = {{{(uint32_t)fetch_instr_reg}}};
         instr.decode(tmp);
 
         std::print("({:d}/{:d}){} st[h{} b{} dc{} ic{} is{} ds{} ih{}]: [{:s}]{:08x}  rs{:02d}/{:02d},imm:{:08x},rd{:02d} => ({:d})ops:{:02d}/{}/{}/{} sys{} rs{:02d}/{:02d}:{:08x}/{:08x},imm:{:08x},alu:{:09x},rd{:02d} br({:d}){:08x} => mem({:d}/{:d}@{:08x}){:08x}/{:01x} ({:d})wop({:x}),r({:d}){:08x}@{:02d}",
@@ -1883,6 +2216,10 @@ public:
     {
         pc.strobe(checkpoint_fd);
         valid.strobe(checkpoint_fd);
+        // Fetch response state is transient and is refilled after restore.
+        fetch_buffer_valid_reg.strobe();
+        fetch_instr_reg.strobe();
+        fetch_pc_reg.strobe();
         state_reg.strobe(checkpoint_fd);
         predicted_next_reg.strobe(checkpoint_fd);
         fallthrough_reg.strobe(checkpoint_fd);
@@ -1894,9 +2231,29 @@ public:
         debug_branch_taken_reg.strobe(checkpoint_fd);
         output_write_active_reg.strobe(checkpoint_fd);
         interrupt_entry_guard_reg.strobe(checkpoint_fd);
+#ifdef ENABLE_ISR
+        interrupt_accept_reg.strobe(checkpoint_fd);
+        interrupt_cause_reg.strobe(checkpoint_fd);
+        interrupt_to_supervisor_reg.strobe(checkpoint_fd);
+#endif
         sbi_ret_a1_valid_reg.strobe(checkpoint_fd);
         sbi_ret_a1_reg.strobe(checkpoint_fd);
         icache_invalidate_issued_reg.strobe(checkpoint_fd);
+        sbi_arg_wait_reg.strobe(checkpoint_fd);
+#ifdef ENABLE_MMU_TLB
+        // Transient translation-stage state is deliberately omitted from the
+        // checkpoint stream; restored fetch and memory operations simply
+        // translate again before touching their L1 caches.
+        immu_result_valid_reg.strobe();
+        immu_vaddr_reg.strobe();
+        immu_paddr_reg.strobe();
+        immu_fault_reg.strobe();
+        dmmu_result_valid_reg.strobe();
+        dmmu_vaddr_reg.strobe();
+        dmmu_paddr_reg.strobe();
+        dmmu_fault_reg.strobe();
+        l2_ptw_owner_reg.strobe();
+#endif
 
         regs._strobe(checkpoint_fd);
         exe._strobe(checkpoint_fd);

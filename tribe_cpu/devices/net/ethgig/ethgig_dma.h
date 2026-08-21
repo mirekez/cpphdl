@@ -508,6 +508,16 @@ public:
             axi_read_id_reg._next = axi_in.arid_in();
             axi_read_data_reg._next = mmio_read_data_from_addr((uint32_t)axi_in.araddr_in());
             axi_read_valid_reg._next = true;
+#ifndef SYNTHESIS
+            if (trace_eth) {
+                std::print(trace_eth_file,
+                    "ethdma-mmio cycle={} read addr={:08x} data={} tx_sr={:08x} rx_sr={:08x}\n",
+                    _system_clock, (uint32_t)axi_in.araddr_in(),
+                    mmio_read_data_from_addr((uint32_t)axi_in.araddr_in()),
+                    (uint32_t)tx_sr_reg, (uint32_t)rx_sr_reg);
+                std::fflush(trace_eth_file);
+            }
+#endif
         }
         else if (axi_read_valid_reg && axi_in.rready_in()) {
             axi_read_valid_reg._next = false;

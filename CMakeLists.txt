@@ -14,8 +14,25 @@ cmake_minimum_required(VERSION 3.22...3.30)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
+# -----------------------------------------------------------------------------
+# LLVM/Clang dependency policy
+#
+# Normal CppHDL builds should use a prebuilt LLVM and Clang Tooling installation.
+# The supported and recommended setup is the repository-local Conda environment
+# in .conda (created from requirements.yaml); CPPHDL_USE_LOCAL_CONDA selects it
+# automatically when it is present. A compatible system LLVM/Clang development
+# installation is also supported.
+#
+# CPPHDL_FETCH_LLVM is an exceptional bootstrap fallback for a machine that
+# cannot use Conda and does not have compatible system LLVM/Clang development
+# packages. Enabling it downloads the large llvm-project source repository and
+# builds LLVM and Clang from source, substantially increasing configure time,
+# disk use, memory use, and build time. It is not required for ordinary CppHDL
+# development, Tribe CPU tests, or building the RISC-V GNU toolchain. Keep this
+# option OFF unless that specific source-bootstrap fallback is intentional.
+# -----------------------------------------------------------------------------
 set(CPPHDL_USE_LOCAL_CONDA ON CACHE BOOL "Use the repository .conda toolchain prefix when it exists")
-set(CPPHDL_FETCH_LLVM OFF CACHE BOOL "Fetch and build LLVM+Clang when no complete local/system Clang tooling install is available")
+set(CPPHDL_FETCH_LLVM OFF CACHE BOOL "Exceptional fallback: download and build LLVM+Clang from source")
 set(CPPHDL_FETCH_LLVM_TAG "llvmorg-21.1.3" CACHE STRING "LLVM tag used by CPPHDL_FETCH_LLVM")
 set(CPPHDL_HOST_OPT_FLAGS "" CACHE STRING "Extra host CPU optimization flags for examples/tests, for example -mavx2")
 
@@ -274,7 +291,10 @@ if(CPPHDL_LLVM_PREFIXES)
   include_directories(${CLANG_INCLUDE_DIRS})
 elseif(CPPHDL_FETCH_LLVM)
   set(CPPHDL_USING_FETCHED_LLVM TRUE)
-  message(STATUS "CppHDL using fetched LLVM/Clang")
+  message(WARNING
+    "CPPHDL_FETCH_LLVM=ON: downloading and building LLVM/Clang from source. "
+    "This is intended only for hosts without the recommended .conda toolchain "
+    "or compatible system LLVM/Clang development packages.")
   include(FetchContent)
   set(LLVM_ENABLE_PROJECTS clang CACHE STRING "" FORCE)
   set(LLVM_TARGETS_TO_BUILD Native CACHE STRING "" FORCE)
@@ -365,7 +385,9 @@ foreach(dependency
     clangFrontend
     clangRewrite)
   if(TARGET ${dependency})
-    message(STATUS "cpphdl depends on fetched Clang target ${dependency}")
+    # These targets can come from the recommended prebuilt Conda/system Clang
+    # packages as well as from the exceptional CPPHDL_FETCH_LLVM fallback.
+    message(STATUS "cpphdl depends on available Clang target ${dependency}")
     add_dependencies(cpphdl ${dependency})
   endif()
 endforeach()

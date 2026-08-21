@@ -9,6 +9,14 @@ class CSR: public Module
 public:
     _PORT(State) state_in;
     _PORT(State) trap_check_state_in;
+    // Classify the decode-stage instruction before it enters Tribe's execute
+    // register.  The registered result travels in State::csr_illegal.
+    _PORT(State) legality_state_in;
+    _PORT(bool) legality_out = _ASSIGN_COMB(legality_comb_func());
+    // Feed-forward state used only to choose the same-cycle trap/xRET redirect.
+    // Keeping this separate from state_in prevents the redirect output from
+    // feeding back through Tribe's forwarded CSR commit state.
+    _PORT(State) redirect_state_in;
     _PORT(u<2>) reset_priv_in = _ASSIGN((u<2>)3);
     _PORT(uint32_t) hartid_in = _ASSIGN((uint32_t)0);
     _PORT(bool) interrupt_valid_in;
@@ -33,6 +41,7 @@ public:
     _PORT(uint32_t) mstatus_out = _ASSIGN_REG(mstatus_reg);
     _PORT(uint32_t) mie_out = _ASSIGN_COMB(interrupt_enable_comb_func());
     _PORT(uint32_t) mideleg_out = _ASSIGN_REG(mideleg_reg);
+    _PORT(uint32_t) medeleg_out = _ASSIGN_REG(medeleg_reg);
     _PORT(uint32_t) mip_sw_out = _ASSIGN_COMB(software_pending_comb_func());
 #ifdef ENABLE_MMU_TLB
     _PORT(uint32_t) satp_out = _ASSIGN_REG(satp_reg);
@@ -120,6 +129,35 @@ private:
     reg<u<2>> priv_reg;
 #endif
 
+    // state_in can remain unchanged while Tribe waits for a registered MMU or
+    // cache result.  CSR writes, traps, xRET and instret are architectural
+    // retirement events, so they must occur once for that held instruction.
+    // Keeping the one-shot decision local avoids putting Tribe's global wait
+    // network back on every CSR register enable.
+    reg<u1> commit_seen_valid_reg;
+    reg<u32> commit_seen_pc_reg;
+    reg<u<12>> commit_seen_csr_addr_reg;
+    reg<u<3>> commit_seen_csr_op_reg;
+    reg<u<4>> commit_seen_sys_op_reg;
+    reg<u<5>> commit_seen_trap_op_reg;
+    reg<u32> commit_seen_imm_reg;
+    reg<u32> csr_read_data_reg;
+
+    _LAZY_COMB(commit_seen_match_comb, bool)
+        commit_seen_match_comb = commit_seen_valid_reg && state_in().valid &&
+            (uint32_t)commit_seen_pc_reg == state_in().pc &&
+            (uint32_t)commit_seen_csr_addr_reg == state_in().csr_addr &&
+            (uint32_t)commit_seen_csr_op_reg == state_in().csr_op &&
+            (uint32_t)commit_seen_sys_op_reg == state_in().sys_op &&
+            (uint32_t)commit_seen_trap_op_reg == state_in().trap_op &&
+            (uint32_t)commit_seen_imm_reg == state_in().imm;
+        return commit_seen_match_comb;
+    }
+
+    _LAZY_COMB(commit_new_comb, bool)
+        return commit_new_comb = state_in().valid && !commit_seen_match_comb_func();
+    }
+
     uint32_t sanitize_mstatus(uint32_t value)
     {
         return value & MSTATUS_WRITABLE;
@@ -137,22 +175,22 @@ private:
         return interrupt_enable_comb = (uint32_t)mie_reg | (uint32_t)sie_reg;
     }
 
-    uint32_t trap_cause_code()
+    uint32_t trap_cause_code(State state)
     {
 #ifdef ENABLE_ISR
         if (interrupt_valid_in()) {
             return interrupt_cause_in();
         }
 #endif
-        if (state_in().sys_op == Sys::ECALL) {
+        if (state.sys_op == Sys::ECALL) {
 #ifdef ENABLE_TRAPS
             if (priv_reg == PRIV_U) { return 8; }
             if (priv_reg == PRIV_S) { return 9; }
 #endif
             return 11;
         }
-        if (state_in().sys_op == Sys::EBREAK) { return 3; }
-        switch (state_in().trap_op) {
+        if (state.sys_op == Sys::EBREAK) { return 3; }
+        switch (state.trap_op) {
             case Trap::TNONE: return 2;
             case Trap::INST_MISALIGNED: return 0;
             case Trap::ILLEGAL_INST: return 2;
@@ -187,7 +225,7 @@ private:
     _LAZY_COMB(trap_vector_comb, uint32_t)
         uint32_t cause;
         uint32_t tvec;
-        cause = trap_cause_code();
+        cause = trap_cause_code(redirect_state_in());
         tvec = trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg;
         trap_vector_comb = tvec & ~3u;
 #ifdef ENABLE_ISR
@@ -201,7 +239,7 @@ private:
     _LAZY_COMB(epc_comb, uint32_t)
         epc_comb = mepc_reg;
 #ifdef ENABLE_TRAPS
-        if (state_in().sys_op == Sys::SRET) {
+        if (redirect_state_in().sys_op == Sys::SRET) {
             epc_comb = sepc_reg;
         }
 #endif
@@ -209,8 +247,15 @@ private:
     }
 
     _LAZY_COMB(illegal_trap_comb, bool)
-        illegal_trap_comb = state_causes_illegal_trap(trap_check_state_in());
+        // trap_check_state_in is registered pipeline state; its predecoded bit
+        // is therefore a short, register-to-register trap decision.
+        illegal_trap_comb = trap_check_state_in().csr_illegal;
         return illegal_trap_comb;
+    }
+
+    _LAZY_COMB(legality_comb, bool)
+        legality_comb = state_causes_illegal_trap(legality_state_in());
+        return legality_comb;
     }
 
     uint32_t csr_read(uint32_t addr)
@@ -413,23 +458,29 @@ public:
 private:
     bool sync_trap()
     {
-        return state_in().valid && (
+        // Tribe has already classified illegal CSR/xRET operations before
+        // driving state_in: csr_state_comb converts them to an explicit
+        // TRAP/ILLEGAL_INST state and clears csr_op.  Re-running the complete
+        // privilege/address/support decoder here put csr_addr on the clock
+        // enable path of every trap CSR (mcause, mtval, mepc, ...), producing
+        // the dominant 49-level CPU timing cone.  The explicit trap marker is
+        // sufficient at the commit boundary.
+        return commit_new_comb_func() && (
 #ifdef ENABLE_ISR
             interrupt_valid_in() ||
 #endif
             state_in().sys_op == Sys::ECALL ||
             state_in().sys_op == Sys::EBREAK ||
             state_in().sys_op == Sys::TRAP ||
-            state_in().trap_op != Trap::TNONE ||
-            state_causes_illegal_trap(state_in()));
+            state_in().trap_op != Trap::TNONE);
     }
 
     bool csr_writes()
     {
-        if (state_causes_illegal_trap(state_in())) {
-            return false;
-        }
-        return csr_state_writes(state_in());
+        // Illegal CSR states reach this module with csr_op == CNONE; avoid a
+        // second copy of the same wide legality decoder in the write-enable
+        // cone as well.
+        return commit_new_comb_func() && csr_state_writes(state_in());
     }
 
     void csr_write(uint32_t addr, uint32_t value)
@@ -476,7 +527,12 @@ private:
     }
 
     _LAZY_COMB(read_data_comb, uint32_t)
-        return read_data_comb = csr_read(state_in().csr_addr);
+        // Preserve the pre-write CSR value for as long as the same pipeline
+        // instruction is held.  This is the architectural rd result of every
+        // CSR read/modify/write instruction.
+        return read_data_comb = commit_seen_match_comb_func() &&
+            state_in().csr_op != Csr::CNONE ?
+            (uint32_t)csr_read_data_reg : csr_read(state_in().csr_addr);
     }
 
 public:
@@ -516,7 +572,24 @@ public:
 #endif
 
         cycle_reg._next = inhibit_cycle ? cycle_reg : uint64_t(cycle_reg) + 1;
-        instret_reg._next = (inhibit_instret || !state_in().valid) ? instret_reg : uint64_t(instret_reg) + 1;
+        instret_reg._next = (inhibit_instret || !commit_new_comb_func()) ?
+            instret_reg : uint64_t(instret_reg) + 1;
+
+        if (commit_new_comb_func()) {
+            commit_seen_valid_reg._next = true;
+            commit_seen_pc_reg._next = state_in().pc;
+            commit_seen_csr_addr_reg._next = state_in().csr_addr;
+            commit_seen_csr_op_reg._next = state_in().csr_op;
+            commit_seen_sys_op_reg._next = state_in().sys_op;
+            commit_seen_trap_op_reg._next = state_in().trap_op;
+            commit_seen_imm_reg._next = state_in().imm;
+            if (state_in().csr_op != Csr::CNONE) {
+                csr_read_data_reg._next = csr_read(state_in().csr_addr);
+            }
+        }
+        else if (!state_in().valid) {
+            commit_seen_valid_reg._next = false;
+        }
 
         if (csr_writes()) {
             if (trace_csr_events &&
@@ -537,7 +610,7 @@ public:
 
 #ifdef ENABLE_TRAPS
         if (sync_trap()) {
-            cause = trap_cause_code();
+            cause = trap_cause_code(state_in());
             is_interrupt = false;
 #ifdef ENABLE_ISR
             is_interrupt = interrupt_valid_in();
@@ -576,7 +649,7 @@ public:
                 priv_reg._next = PRIV_M;
             }
         }
-        if (state_in().valid && state_in().sys_op == Sys::MRET) {
+        if (commit_new_comb_func() && state_in().sys_op == Sys::MRET) {
             uint32_t mpp;
             uint32_t mie_restore;
             mpp = (mstatus_reg & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT;
@@ -585,7 +658,7 @@ public:
             mstatus_reg._next =
                 ((mstatus_reg & ~MSTATUS_MIE) | mie_restore | MSTATUS_MPIE) & ~MSTATUS_MPP_MASK;
         }
-        if (state_in().valid && state_in().sys_op == Sys::SRET) {
+        if (commit_new_comb_func() && state_in().sys_op == Sys::SRET) {
             uint32_t spp;
             uint32_t sie_restore;
             spp = (mstatus_reg & MSTATUS_SPP) ? PRIV_S : PRIV_U;
@@ -604,7 +677,7 @@ public:
             mstatus_reg._next = ((mstatus_reg & ~MSTATUS_SIE) | sie_restore | MSTATUS_SPIE) & ~MSTATUS_SPP;
         }
 #else
-        if (state_in().valid && state_in().sys_op == Sys::ECALL) {
+        if (commit_new_comb_func() && state_in().sys_op == Sys::ECALL) {
             mepc_reg._next = state_in().pc;
             mcause_reg._next = 11;
         }
@@ -665,6 +738,14 @@ public:
             dscratch1_reg.clr();
             cycle_reg.clr();
             instret_reg.clr();
+            commit_seen_valid_reg.clr();
+            commit_seen_pc_reg.clr();
+            commit_seen_csr_addr_reg.clr();
+            commit_seen_csr_op_reg.clr();
+            commit_seen_sys_op_reg.clr();
+            commit_seen_trap_op_reg.clr();
+            commit_seen_imm_reg.clr();
+            csr_read_data_reg.clr();
 #ifdef ENABLE_TRAPS
             priv_reg._next = reset_priv_in();
 #endif
@@ -705,6 +786,14 @@ public:
         dscratch1_reg.strobe(checkpoint_fd);
         cycle_reg.strobe(checkpoint_fd);
         instret_reg.strobe(checkpoint_fd);
+        commit_seen_valid_reg.strobe(checkpoint_fd);
+        commit_seen_pc_reg.strobe(checkpoint_fd);
+        commit_seen_csr_addr_reg.strobe(checkpoint_fd);
+        commit_seen_csr_op_reg.strobe(checkpoint_fd);
+        commit_seen_sys_op_reg.strobe(checkpoint_fd);
+        commit_seen_trap_op_reg.strobe(checkpoint_fd);
+        commit_seen_imm_reg.strobe(checkpoint_fd);
+        csr_read_data_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_TRAPS
         priv_reg.strobe(checkpoint_fd);
 #endif

@@ -53,9 +53,29 @@ file(CHMOD "${TRIBE_TEST_ALL_SCRIPT}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 set(TRIBE_RISCV_TOOLCHAIN_RUNNER "${CMAKE_CURRENT_BINARY_DIR}/run_if_riscv_toolchain.sh")
-file(WRITE "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" [=[
-#!/usr/bin/env bash
-set -euo pipefail
+get_filename_component(TRIBE_HOST_TOOLS_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+file(WRITE "${TRIBE_RISCV_TOOLCHAIN_RUNNER}"
+    "#!/usr/bin/env bash\nset -euo pipefail\n\n"
+    "# CTest test-specific ENVIRONMENT properties intentionally replace one another.\n"
+    "# Always expose the configured host-tool directory so the conda Verilator\n"
+    "# used to build CppHDL remains available to every native/RTL regression.\n"
+    "export PATH=\"${TRIBE_HOST_TOOLS_DIR}:\${PATH}\"\n\n")
+file(APPEND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" [=[
+
+# Normalize the toolchain location for nested Python/shell harnesses.  Merely
+# finding $HOME/riscv here is insufficient: run_spike_fragments.py and the
+# architectural-test makefiles perform their own PATH lookups after this
+# wrapper has exec'd them.
+if [[ -n "${RISCV_HOME:-}" && -d "${RISCV_HOME}/bin" ]]; then
+    export PATH="${RISCV_HOME}/bin:${PATH}"
+elif [[ -n "${RISCV:-}" && -d "${RISCV}/bin" ]]; then
+    export RISCV_HOME="${RISCV}"
+    export PATH="${RISCV}/bin:${PATH}"
+elif [[ -d "${HOME}/riscv/bin" ]]; then
+    export RISCV_HOME="${HOME}/riscv"
+    export RISCV="${HOME}/riscv"
+    export PATH="${HOME}/riscv/bin:${PATH}"
+fi
 
 have_tool()
 {
@@ -64,11 +84,21 @@ have_tool()
     if [[ -n "${RISCV_HOME:-}" && -x "${RISCV_HOME}/bin/${name}" ]]; then
         return 0
     fi
-    command -v "${name}" >/dev/null 2>&1
+    if command -v "${name}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [[ -n "${RISCV:-}" && -x "${RISCV}/bin/${name}" ]]; then
+        return 0
+    fi
+    # Match tribe_build_baremetal.sh's final lookup.  CTest deliberately uses a
+    # small per-test environment, so a toolchain installed by
+    # .load_sail_riscv_sim.sh/.load_spike.sh under $HOME/riscv may not be on
+    # PATH and must not make every Tribe regression silently report "Skipped".
+    [[ -x "${HOME}/riscv/bin/${name}" ]]
 }
 
 if ! have_tool riscv32-unknown-elf-gcc || ! have_tool riscv32-unknown-elf-g++; then
-    echo "SKIP: RISCV_HOME is not set to a RISC-V toolchain and riscv32-unknown-elf-gcc/g++ are not in PATH"
+    echo "SKIP: no RISC-V toolchain found in RISCV_HOME, PATH, RISCV, or $HOME/riscv"
     exit 77
 fi
 

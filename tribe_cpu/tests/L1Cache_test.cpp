@@ -26,8 +26,8 @@ using namespace cpphdl;
 long _system_clock = -1;
 
 static constexpr size_t LINE_SIZE = 32;
-static constexpr size_t ADDR_BITS = 17;
-static constexpr size_t RAM_WORDS = 32768;
+static constexpr size_t ADDR_BITS = 18;
+static constexpr size_t RAM_WORDS = (1u << ADDR_BITS) / sizeof(uint32_t);
 
 #ifdef VERILATOR
 #define PORT_VALUE(val) val
@@ -1156,12 +1156,12 @@ int main(int argc, char** argv)
             std::chrono::high_resolution_clock::now() - start)).count());
         std::cout << "Executing tests... ===========================================================================\n";
         ok = ok &&
-            std::system("L1Cache_1024_32_1_0_17_32/obj_dir/VL1Cache 0") == 0 &&
-            std::system("L1Cache_1024_32_2_0_17_32/obj_dir/VL1Cache 1") == 0 &&
-            std::system("L1Cache_1024_32_4_0_17_32/obj_dir/VL1Cache 2") == 0 &&
-            std::system("L1Cache_8192_32_1_0_17_32/obj_dir/VL1Cache 3") == 0 &&
-            std::system("L1Cache_8192_32_2_0_17_32/obj_dir/VL1Cache 4") == 0 &&
-            std::system("L1Cache_8192_32_4_0_17_32/obj_dir/VL1Cache 5") == 0;
+            std::system("L1Cache_1024_32_1_0_18_32/obj_dir/VL1Cache 0") == 0 &&
+            std::system("L1Cache_1024_32_2_0_18_32/obj_dir/VL1Cache 1") == 0 &&
+            std::system("L1Cache_1024_32_4_0_18_32/obj_dir/VL1Cache 2") == 0 &&
+            std::system("L1Cache_8192_32_1_0_18_32/obj_dir/VL1Cache 3") == 0 &&
+            std::system("L1Cache_8192_32_2_0_18_32/obj_dir/VL1Cache 4") == 0 &&
+            std::system("L1Cache_8192_32_4_0_18_32/obj_dir/VL1Cache 5") == 0;
         std::cout << "Verilator compilation time: " << compile_us << " microseconds\n";
     }
 #else

@@ -26,6 +26,7 @@ private:
     // (* ASYNC_REG = "TRUE" *)
     reg<u1> response_fast2_reg;
     reg<u1> response_ack_fast_reg;
+    reg<logic<PORT_BITWIDTH>> read_data_fast_reg;
 
     // (* ASYNC_REG = "TRUE" *)
     reg<u1> request_slow1_reg;
@@ -33,13 +34,19 @@ private:
     reg<u1> request_slow2_reg;
     reg<u1> request_seen_slow_reg;
     reg<u1> request_active_slow_reg;
+    reg<u1> read_slow_reg;
+    reg<u1> write_slow_reg;
+    reg<u32> addr_slow_reg;
+    reg<u32> write_data_slow_reg;
+    reg<u8> write_mask_slow_reg;
+    reg<u1> cache_disable_slow_reg;
     reg<logic<PORT_BITWIDTH>> read_data_slow_reg;
     reg<u1> response_slow_reg;
 
 public:
     void _assign()
     {
-        fast_in.read_data_out = _ASSIGN((logic<PORT_BITWIDTH>)read_data_slow_reg);
+        fast_in.read_data_out = _ASSIGN_REG(read_data_fast_reg);
         fast_in.wait_out = _ASSIGN(
             (fast_in.read_in() || fast_in.write_in()) &&
             !(request_active_fast_reg &&
@@ -52,12 +59,12 @@ public:
                      fast_in.write_mask_in() == (uint8_t)write_mask_fast_reg)) &&
                 fast_in.cache_disable_in() == (bool)cache_disable_fast_reg));
 
-        slow_out.read_in = _ASSIGN((bool)(request_active_slow_reg && read_fast_reg));
-        slow_out.write_in = _ASSIGN((bool)(request_active_slow_reg && write_fast_reg));
-        slow_out.addr_in = _ASSIGN((uint32_t)addr_fast_reg);
-        slow_out.write_data_in = _ASSIGN((uint32_t)write_data_fast_reg);
-        slow_out.write_mask_in = _ASSIGN((uint8_t)write_mask_fast_reg);
-        slow_out.cache_disable_in = _ASSIGN((bool)cache_disable_fast_reg);
+        slow_out.read_in = _ASSIGN((bool)(request_active_slow_reg && read_slow_reg));
+        slow_out.write_in = _ASSIGN((bool)(request_active_slow_reg && write_slow_reg));
+        slow_out.addr_in = _ASSIGN_REG(addr_slow_reg);
+        slow_out.write_data_in = _ASSIGN_REG(write_data_slow_reg);
+        slow_out.write_mask_in = _ASSIGN_REG(write_mask_slow_reg);
+        slow_out.cache_disable_in = _ASSIGN_REG(cache_disable_slow_reg);
     }
 
     void work_clk_func(bool reset)
@@ -66,6 +73,12 @@ public:
         request = fast_in.read_in() || fast_in.write_in();
         response_fast1_reg._next = response_slow_reg;
         response_fast2_reg._next = response_fast1_reg;
+        if (response_fast1_reg != response_fast2_reg) {
+            // The response payload was stable before the toggle entered stage
+            // 1.  Capture it when the toggle advances to stage 2 so no L2-clock
+            // register drives CPU logic combinationally.
+            read_data_fast_reg._next = read_data_slow_reg;
+        }
 
         if (request_active_fast_reg && response_fast2_reg != response_ack_fast_reg) {
             response_ack_fast_reg._next = response_fast2_reg;
@@ -97,6 +110,7 @@ public:
             response_fast1_reg.clr();
             response_fast2_reg.clr();
             response_ack_fast_reg.clr();
+            read_data_fast_reg.clr();
         }
     }
 
@@ -116,6 +130,7 @@ public:
         response_fast1_reg.strobe();
         response_fast2_reg.strobe();
         response_ack_fast_reg.strobe();
+        read_data_fast_reg.strobe();
     }
 
     void _strobe(FILE* checkpoint_fd = nullptr)
@@ -131,6 +146,7 @@ public:
         response_fast1_reg.strobe(checkpoint_fd);
         response_fast2_reg.strobe(checkpoint_fd);
         response_ack_fast_reg.strobe(checkpoint_fd);
+        read_data_fast_reg.strobe(checkpoint_fd);
     }
 
     void _work_l2_clock(bool reset)
@@ -140,6 +156,15 @@ public:
 
         if (!request_active_slow_reg && request_slow2_reg != request_seen_slow_reg) {
             request_seen_slow_reg._next = request_slow2_reg;
+            // Capture the bundled request only after its toggle has traversed
+            // both synchronizer stages.  The fast-side payload remains held
+            // until the response returns.
+            read_slow_reg._next = read_fast_reg;
+            write_slow_reg._next = write_fast_reg;
+            addr_slow_reg._next = addr_fast_reg;
+            write_data_slow_reg._next = write_data_fast_reg;
+            write_mask_slow_reg._next = write_mask_fast_reg;
+            cache_disable_slow_reg._next = cache_disable_fast_reg;
             request_active_slow_reg._next = true;
         }
         else if (request_active_slow_reg && !slow_out.wait_out()) {
@@ -153,6 +178,12 @@ public:
             request_slow2_reg.clr();
             request_seen_slow_reg.clr();
             request_active_slow_reg.clr();
+            read_slow_reg.clr();
+            write_slow_reg.clr();
+            addr_slow_reg.clr();
+            write_data_slow_reg.clr();
+            write_mask_slow_reg.clr();
+            cache_disable_slow_reg.clr();
             read_data_slow_reg.clr();
             response_slow_reg.clr();
         }
@@ -164,6 +195,12 @@ public:
         request_slow2_reg.strobe();
         request_seen_slow_reg.strobe();
         request_active_slow_reg.strobe();
+        read_slow_reg.strobe();
+        write_slow_reg.strobe();
+        addr_slow_reg.strobe();
+        write_data_slow_reg.strobe();
+        write_mask_slow_reg.strobe();
+        cache_disable_slow_reg.strobe();
         read_data_slow_reg.strobe();
         response_slow_reg.strobe();
     }
@@ -176,6 +213,12 @@ public:
         request_slow2_reg.strobe(checkpoint_fd);
         request_seen_slow_reg.strobe(checkpoint_fd);
         request_active_slow_reg.strobe(checkpoint_fd);
+        read_slow_reg.strobe(checkpoint_fd);
+        write_slow_reg.strobe(checkpoint_fd);
+        addr_slow_reg.strobe(checkpoint_fd);
+        write_data_slow_reg.strobe(checkpoint_fd);
+        write_mask_slow_reg.strobe(checkpoint_fd);
+        cache_disable_slow_reg.strobe(checkpoint_fd);
         read_data_slow_reg.strobe(checkpoint_fd);
         response_slow_reg.strobe(checkpoint_fd);
     }

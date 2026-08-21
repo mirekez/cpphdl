@@ -7,7 +7,7 @@ using namespace cpphdl;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
-template<size_t MEM_WIDTH, size_t MEM_DEPTH>
+template<size_t MEM_WIDTH, size_t MEM_DEPTH, bool PRIMARY_WRITE_FIRST = true>
 class File : public Module
 {
     using DTYPE = std::conditional_t<(MEM_WIDTH <= 32),uint32_t,uint64_t>;
@@ -43,7 +43,7 @@ private:
         // Register files are normally write-first for same-cycle WB/decode.
         // Without this bypass a dependent instruction decoded while WB commits
         // can see the previous architectural value and lose high address bits.
-        if (write_in() && write_addr_in() == read_addr0_in()) {
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == read_addr0_in()) {
             data0_out_comb = write_data_in();
         }
         else if (write2_in() && write2_addr_in() == read_addr0_in()) {
@@ -56,7 +56,7 @@ private:
     }
 
     _LAZY_COMB(data1_out_comb, DTYPE)
-        if (write_in() && write_addr_in() == read_addr1_in()) {
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == read_addr1_in()) {
             data1_out_comb = write_data_in();
         }
         else if (write2_in() && write2_addr_in() == read_addr1_in()) {
@@ -73,43 +73,55 @@ private:
     }
 
     _LAZY_COMB(x10_comb, DTYPE)
-        if (write_in() && write_addr_in() == 10) {
-            return x10_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 10) {
+            x10_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 10) {
-            return x10_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 10) {
+            x10_comb = write2_data_in();
         }
-        return x10_comb = (DTYPE)buffer[10];
+        else {
+            x10_comb = (DTYPE)buffer[10];
+        }
+        return x10_comb;
     }
 
     _LAZY_COMB(x11_comb, DTYPE)
-        if (write_in() && write_addr_in() == 11) {
-            return x11_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 11) {
+            x11_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 11) {
-            return x11_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 11) {
+            x11_comb = write2_data_in();
         }
-        return x11_comb = (DTYPE)buffer[11];
+        else {
+            x11_comb = (DTYPE)buffer[11];
+        }
+        return x11_comb;
     }
 
     _LAZY_COMB(x16_comb, DTYPE)
-        if (write_in() && write_addr_in() == 16) {
-            return x16_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 16) {
+            x16_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 16) {
-            return x16_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 16) {
+            x16_comb = write2_data_in();
         }
-        return x16_comb = (DTYPE)buffer[16];
+        else {
+            x16_comb = (DTYPE)buffer[16];
+        }
+        return x16_comb;
     }
 
     _LAZY_COMB(x17_comb, DTYPE)
-        if (write_in() && write_addr_in() == 17) {
-            return x17_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 17) {
+            x17_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 17) {
-            return x17_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 17) {
+            x17_comb = write2_data_in();
         }
-        return x17_comb = (DTYPE)buffer[17];
+        else {
+            x17_comb = (DTYPE)buffer[17];
+        }
+        return x17_comb;
     }
 
 public:

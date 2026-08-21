@@ -28,6 +28,8 @@ protected:
     using Base::slave_aw_reg;
     using Base::slave_aw_seen_reg;
     using Base::slave_ar_seen_reg;
+    using Base::slave_aw_novelty_reg;
+    using Base::slave_ar_novelty_reg;
 
     // Derive AW and AR novelty together so every request/ready consumer applies
     // the same sticky-valid replay rule for all external ports.
@@ -35,12 +37,8 @@ protected:
         uint32_t index;
         slave_request_novelty_comb = {};
         for (index = 0; index < MEM_PORTS; ++index) {
-            slave_request_novelty_comb.aw[index] = !slave_aw_seen_reg[index].valid ||
-                slave_aw_seen_reg[index].addr != axi_in[index].awaddr_in() ||
-                slave_aw_seen_reg[index].id != axi_in[index].awid_in();
-            slave_request_novelty_comb.ar[index] = !slave_ar_seen_reg[index].valid ||
-                slave_ar_seen_reg[index].addr != axi_in[index].araddr_in() ||
-                slave_ar_seen_reg[index].id != axi_in[index].arid_in();
+            slave_request_novelty_comb.aw[index] = slave_aw_novelty_reg[index];
+            slave_request_novelty_comb.ar[index] = slave_ar_novelty_reg[index];
         }
         return slave_request_novelty_comb;
     }

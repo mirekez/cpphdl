@@ -33,6 +33,10 @@ private:
     using Base::tag_ram;
     using Base::data_q_reg;
     using Base::tag_q_reg;
+    using Base::lookup_data_reg;
+    using Base::lookup_tag_reg;
+    using Base::lookup_hit_reg;
+    using Base::lookup_evict_reg;
     using Base::state_reg;
     using Base::req_reg;
     using Base::cpu_rr_reg;
@@ -42,6 +46,7 @@ private:
     using Base::response_reg;
     using Base::cross_low_reg;
     using Base::cross_high_reg;
+    using Base::refill_data_reg;
     using Base::fill_beat_reg;
     using Base::evict_beat_reg;
     using Base::evict_tag_reg;
@@ -49,6 +54,8 @@ private:
     using Base::slave_aw_reg;
     using Base::slave_aw_seen_reg;
     using Base::slave_ar_seen_reg;
+    using Base::slave_aw_novelty_reg;
+    using Base::slave_ar_novelty_reg;
     using Base::slave_request_novelty_comb_func;
     using Base::active_request_comb_func;
     using Base::request_geometry_comb_func;
@@ -182,6 +189,10 @@ public:
             || (uint32_t)state_reg == ST_READ
             || ((uint32_t)state_reg == ST_LOOKUP
                 && (!req_reg.write || req_uncached_region_comb_func()))
+            || (uint32_t)state_reg == ST_LOOKUP_CAPTURE
+            || (uint32_t)state_reg == ST_LOOKUP_RESULT
+            || (uint32_t)state_reg == ST_CROSS_WRITE_CAPTURE
+            || (uint32_t)state_reg == ST_CROSS_WRITE_RESULT
             || (uint32_t)state_reg == ST_AXI_AR
             || (uint32_t)state_reg == ST_EVICT_AW
             || (uint32_t)state_reg == ST_EVICT_W
@@ -230,6 +241,10 @@ public:
         request_geometry = request_geometry_comb_func();
         evict_candidate = evict_candidate_comb_func();
         hit_lookup = hit_lookup_comb_func();
+        if (state_reg == ST_LOOKUP_RESULT || state_reg == ST_CROSS_WRITE_RESULT) {
+            evict_candidate = lookup_evict_reg;
+            hit_lookup = lookup_hit_reg;
+        }
         hit_write_pair = hit_write_pair_comb_func();
         fill_write_pair = fill_write_pair_comb_func();
         completion_data = 0;
@@ -274,14 +289,14 @@ public:
         // ST_IDLE only latches the arbitrated request. Read tag/data RAMs one
         // cycle later from req_reg so generated SV cannot use a live input set
         // while ST_LOOKUP consumes stale registered RAM outputs.
-        bank_read = (state_reg == ST_READ && !dma_line_fire)
-            || state_reg == ST_CROSS_WRITE_LOOKUP;
+        bank_read = (state_reg == ST_READ || state_reg == ST_CROSS_WRITE_READ)
+            && !dma_line_fire;
         for (i = 0; i < DATA_BANKS; ++i) {
             // Fill writes only the words carried by the current AXI beat;
             // store hits update one or two addressed word banks.
             bank_write =
                 (dma_line_fire && dma_way == (i / LINE_WORDS)) ||
-                (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_way_reg == (i / LINE_WORDS) &&
+                (state_reg == ST_AXI_R_WRITE && fill_way_reg == (i / LINE_WORDS) &&
                     (i % LINE_WORDS) >= (uint32_t)fill_beat_reg * PORT_WORDS &&
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ||
                 (state_reg == ST_LOOKUP && req_reg.from_slave && req_reg.write && hit_lookup.hit &&
@@ -316,11 +331,11 @@ public:
                     (i % LINE_WORDS) < ((uint32_t)fill_beat_reg + 1u) * PORT_WORDS) ?
                     (req_reg.write_word_mask[(i % LINE_WORDS) % PORT_WORDS] ?
                         (uint32_t)(req_reg.write_beat >> (((i % PORT_WORDS) * 32))) :
-                        (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
+                        (uint32_t)(refill_data_reg >> ((((i % LINE_WORDS) % PORT_WORDS) * 32)))) :
                  (req_reg.write && request_geometry.word == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.word :
                  (req_reg.write && ((uint32_t)req_reg.addr & 3u) != 0 &&
                     (uint32_t)request_geometry.word + 1 == (i % LINE_WORDS)) ? (uint32_t)fill_write_pair.next_word :
-                    (uint32_t)(axi_out_selected_resp_comb_func().r.data >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
+                    (uint32_t)(refill_data_reg >> ((((i % LINE_WORDS) % PORT_WORDS) * 32))));
             if (bank_write) {
                 data_ram[i][bank_addr] = bank_data;
             }
@@ -338,7 +353,7 @@ public:
             tag_bank_read = bank_read;
             tag_bank_write = (dma_line_fire && dma_way == way) ||
                 (state_reg == ST_INIT) ||
-                (state_reg == ST_AXI_R && axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
+                (state_reg == ST_AXI_R_WRITE && fill_beat_reg == LINE_BEATS - 1 && fill_way_reg == way) ||
                 ((state_reg == ST_LOOKUP || state_reg == ST_CROSS_WRITE_LOOKUP) && req_reg.write && hit_lookup.hit && hit_lookup.way == way);
             if (tag_bank_write) {
                 tag_ram[way][(state_reg == ST_INIT) ? init_set_reg : bank_addr] = tag_bank_data;
@@ -348,7 +363,22 @@ public:
             }
         }
 
+        if (state_reg == ST_LOOKUP_CAPTURE || state_reg == ST_CROSS_WRITE_CAPTURE) {
+            for (i = 0; i < DATA_BANKS; ++i) {
+                lookup_data_reg._next[i] = data_q_reg[i];
+            }
+            for (way = 0; way < WAYS; ++way) {
+                lookup_tag_reg._next[way] = tag_q_reg[way];
+            }
+        }
+
         for (i = 0; i < MEM_PORTS; ++i) {
+            slave_aw_novelty_reg._next[i] = !slave_aw_seen_reg[i].valid ||
+                slave_aw_seen_reg[i].addr != axi_in[i].awaddr_in() ||
+                slave_aw_seen_reg[i].id != axi_in[i].awid_in();
+            slave_ar_novelty_reg._next[i] = !slave_ar_seen_reg[i].valid ||
+                slave_ar_seen_reg[i].addr != axi_in[i].araddr_in() ||
+                slave_ar_seen_reg[i].id != axi_in[i].arid_in();
             if (!axi_in[i].awvalid_in()) {
                 slave_aw_seen_reg._next[i].valid = false;
             }
@@ -422,9 +452,17 @@ public:
         else if (state_reg == ST_READ) {
             // Packet DMA owns the single RAM port on an allocation cycle.
             // Retry the registered lookup read on the next free L2 clock.
-            if (!dma_line_fire) state_reg._next = ST_LOOKUP;
+            if (!dma_line_fire) state_reg._next = ST_LOOKUP_CAPTURE;
+        }
+        else if (state_reg == ST_LOOKUP_CAPTURE) {
+            state_reg._next = ST_LOOKUP;
         }
         else if (state_reg == ST_LOOKUP) {
+            lookup_hit_reg._next = hit_lookup;
+            lookup_evict_reg._next = evict_candidate;
+            state_reg._next = ST_LOOKUP_RESULT;
+        }
+        else if (state_reg == ST_LOOKUP_RESULT) {
             if (!request_geometry.addr_in_memory) {
                 if (trace_req_line) {
                     std::print("trace-l2 cycle={} lookup-outside addr={:08x} rd={} wr={}\n",
@@ -483,7 +521,7 @@ public:
                     req_reg._next.write_data = request_geometry.cross_write_data;
                     req_reg._next.write_mask = request_geometry.cross_write_mask;
                     req_reg._next.write_strobe = active_request.request.write_strobe;
-                    state_reg._next = ST_CROSS_WRITE_LOOKUP;
+                    state_reg._next = ST_CROSS_WRITE_READ;
                 }
                 else {
                     if (!req_reg.from_slave) {
@@ -515,7 +553,18 @@ public:
                     ((evict_candidate.valid && evict_candidate.dirty) ? ST_EVICT_AW : ST_AXI_AR);
             }
         }
+        else if (state_reg == ST_CROSS_WRITE_READ) {
+            if (!dma_line_fire) state_reg._next = ST_CROSS_WRITE_CAPTURE;
+        }
+        else if (state_reg == ST_CROSS_WRITE_CAPTURE) {
+            state_reg._next = ST_CROSS_WRITE_LOOKUP;
+        }
         else if (state_reg == ST_CROSS_WRITE_LOOKUP) {
+            lookup_hit_reg._next = hit_lookup;
+            lookup_evict_reg._next = evict_candidate;
+            state_reg._next = ST_CROSS_WRITE_RESULT;
+        }
+        else if (state_reg == ST_CROSS_WRITE_RESULT) {
             if (!request_geometry.addr_in_memory) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
@@ -589,9 +638,14 @@ public:
         }
         else if (state_reg == ST_AXI_R) {
             if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
+                refill_data_reg._next = axi_out_selected_resp_comb_func().r.data;
+                state_reg._next = ST_AXI_R_WRITE;
+            }
+        }
+        else if (state_reg == ST_AXI_R_WRITE) {
                 if (trace_req_line) {
-                    trace_word0 = (uint32_t)axi_out_selected_resp_comb_func().r.data;
-                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(axi_out_selected_resp_comb_func().r.data >> 32) : 0;
+                    trace_word0 = (uint32_t)refill_data_reg;
+                    trace_word1 = PORT_WORDS > 1 ? (uint32_t)(refill_data_reg >> 32) : 0;
                     std::print("trace-l2 cycle={} fill addr={:08x} beat={} data0={:08x} data1={:08x} req_word={} req_beat={}\n",
                         _system_clock, (uint32_t)axi_route_comb_func().ar_full_addr, (uint32_t)fill_beat_reg,
                         trace_word0, trace_word1, (uint32_t)request_geometry.word,
@@ -600,7 +654,7 @@ public:
                 if (req_reg.read && fill_beat_reg == request_geometry.beat) {
                     // Preserve an early requested beat in the unified response
                     // stage until the complete cache line has been installed.
-                    response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = axi_out_selected_resp_comb_func().r.data;
+                    response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = refill_data_reg;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -610,7 +664,7 @@ public:
                         req_reg._next.write_data = request_geometry.cross_write_data;
                         req_reg._next.write_mask = request_geometry.cross_write_mask;
                         req_reg._next.write_strobe = active_request.request.write_strobe;
-                        state_reg._next = ST_CROSS_WRITE_LOOKUP;
+                        state_reg._next = ST_CROSS_WRITE_READ;
                     }
                     else {
                         if (req_reg.from_slave) {
@@ -621,7 +675,7 @@ public:
                                         // fill beat, return data retained in the response stage.
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == request_geometry.beat) ?
-                                                axi_out_selected_resp_comb_func().r.data :
+                                                refill_data_reg :
                                                 response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data);
                                     }
                                     if (req_reg.write) {
@@ -634,7 +688,7 @@ public:
                         else {
                             completion_data = req_reg.read ?
                                 ((fill_beat_reg == request_geometry.beat) ?
-                                    axi_out_selected_resp_comb_func().r.data :
+                                    refill_data_reg :
                                     response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data) : logic<256>(0);
                             send_cpu_response(completion_data);
                             state_reg._next = ST_IDLE;
@@ -645,7 +699,6 @@ public:
                     fill_beat_reg._next = fill_beat_reg + 1;
                     state_reg._next = ST_AXI_AR;
                 }
-            }
         }
         else if (state_reg == ST_CROSS_AR0) {
             if (axi_out_driver_comb_func().ar.valid && axi_out_selected_resp_comb_func().ar.ready) {
@@ -719,19 +772,23 @@ public:
         }
         else if (state_reg == ST_IO_R) {
             if (axi_out_selected_resp_comb_func().r.valid && axi_out_driver_comb_func().r.ready) {
+                refill_data_reg._next = axi_out_selected_resp_comb_func().r.data;
+                state_reg._next = ST_IO_R_RESULT;
+            }
+        }
+        else if (state_reg == ST_IO_R_RESULT) {
                 if (req_reg.from_slave) {
                     for (i = 0; i < MEM_PORTS; ++i) {
                         if (req_reg.slave_index == i) {
-                            send_slave_read_response(i, req_reg.slave_id, axi_out_selected_resp_comb_func().r.data);
+                            send_slave_read_response(i, req_reg.slave_id, refill_data_reg);
                         }
                     }
                     state_reg._next = ST_IDLE;
                 }
                 else {
-                    send_cpu_response(axi_out_selected_resp_comb_func().r.data);
+                    send_cpu_response(refill_data_reg);
                     state_reg._next = ST_IDLE;
                 }
-            }
         }
         else if (state_reg == ST_DONE) {
             // Retained for checkpoint/state-number compatibility; all new
@@ -748,6 +805,7 @@ public:
             init_set_reg.clr();
             cross_low_reg.clr();
             cross_high_reg.clr();
+            refill_data_reg.clr();
             fill_beat_reg.clr();
             evict_beat_reg.clr();
             evict_tag_reg.clr();
@@ -777,8 +835,14 @@ public:
                 slave_ar_seen_reg._next[i].addr = 0;
                 slave_ar_seen_reg._next[i].id = 0;
             }
+            slave_aw_novelty_reg.clr();
+            slave_ar_novelty_reg.clr();
             data_q_reg.clr();
             tag_q_reg.clr();
+            lookup_data_reg.clr();
+            lookup_tag_reg.clr();
+            lookup_hit_reg.clr();
+            lookup_evict_reg.clr();
             state_reg._next = ST_INIT;
         }
     }
@@ -789,6 +853,10 @@ public:
         for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply();
         data_q_reg.strobe();
         tag_q_reg.strobe();
+        lookup_data_reg.strobe();
+        lookup_tag_reg.strobe();
+        lookup_hit_reg.strobe();
+        lookup_evict_reg.strobe();
         state_reg.strobe();
         req_reg.strobe();
         // Arbitration order is transient and must not change the checkpoint stream format.
@@ -799,6 +867,7 @@ public:
         response_reg.strobe();
         cross_low_reg.strobe();
         cross_high_reg.strobe();
+        refill_data_reg.strobe();
         fill_beat_reg.strobe();
         evict_beat_reg.strobe();
         // Transient eviction metadata is intentionally omitted from the
@@ -808,6 +877,8 @@ public:
         slave_aw_reg.strobe();
         slave_aw_seen_reg.strobe();
         slave_ar_seen_reg.strobe();
+        slave_aw_novelty_reg.strobe();
+        slave_ar_novelty_reg.strobe();
     }
 
 #ifndef SYNTHESIS
@@ -821,6 +892,10 @@ public:
         for (size_t way = 0; way < WAYS; ++way) tag_ram[way].apply(checkpoint_fd);
         data_q_reg.strobe(checkpoint_fd);
         tag_q_reg.strobe(checkpoint_fd);
+        lookup_data_reg.strobe(checkpoint_fd);
+        lookup_tag_reg.strobe(checkpoint_fd);
+        lookup_hit_reg.strobe(checkpoint_fd);
+        lookup_evict_reg.strobe(checkpoint_fd);
         state_reg.strobe(checkpoint_fd);
         req_reg.strobe(checkpoint_fd);
         // Arbitration order is transient and is not part of the stream.
@@ -831,6 +906,7 @@ public:
         response_reg.strobe(checkpoint_fd);
         cross_low_reg.strobe(checkpoint_fd);
         cross_high_reg.strobe(checkpoint_fd);
+        refill_data_reg.strobe(checkpoint_fd);
         fill_beat_reg.strobe(checkpoint_fd);
         evict_beat_reg.strobe(checkpoint_fd);
         // Transient eviction and request-novelty metadata remain omitted for
@@ -840,6 +916,8 @@ public:
         slave_aw_reg.strobe(checkpoint_fd);
         slave_aw_seen_reg.strobe();
         slave_ar_seen_reg.strobe();
+        slave_aw_novelty_reg.strobe();
+        slave_ar_novelty_reg.strobe();
     }
 #endif
 

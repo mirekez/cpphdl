@@ -8,9 +8,12 @@ REPO_DIR="${SAIL_RISCV_REPO_DIR:-${SCRIPT_DIR}/sail-riscv}"
 REPO_URL="${SAIL_RISCV_REPO_URL:-https://github.com/riscv/sail-riscv.git}"
 RISCV_ARCH_TEST_DIR="${RISCV_ARCH_TEST_DIR:-${SCRIPT_DIR}/riscv-arch-test}"
 RISCV_ARCH_TEST_REPO_URL="${RISCV_ARCH_TEST_REPO_URL:-https://github.com/riscv-non-isa/riscv-arch-test.git}"
-SAIL_RISCV_VERSION="${SAIL_RISCV_VERSION:-0.11}"
-SAIL_COMPILER_VERSION="${SAIL_COMPILER_VERSION:-0.20.1}"
-SAIL_COMPILER_REQUIRED_VERSION="${SAIL_COMPILER_REQUIRED_VERSION:-0.20.1}"
+# Keep the reference model aligned with the ACT4 framework in the fetched
+# riscv-arch-test checkout.  ACT4 validates this version before generating
+# tests because signatures and supported extension behavior are versioned.
+SAIL_RISCV_VERSION="${SAIL_RISCV_VERSION:-0.13.1}"
+SAIL_COMPILER_VERSION="${SAIL_COMPILER_VERSION:-0.20.2}"
+SAIL_COMPILER_REQUIRED_VERSION="${SAIL_COMPILER_REQUIRED_VERSION:-0.20.2}"
 SAIL_COMPILER_REPO="${SAIL_COMPILER_REPO:-https://github.com/rems-project/sail}"
 MISE_PREFIX="${MISE_PREFIX:-${HOME}/.local}"
 MISE_INSTALL_URL="${MISE_INSTALL_URL:-https://mise.jdx.dev/install.sh}"
@@ -95,6 +98,8 @@ install_sail_compiler() {
   local machine
   local asset
   local url
+  local fallback_url
+  local archive
 
   kernel="$(uname -s)"
   machine="$(uname -m)"
@@ -112,9 +117,20 @@ install_sail_compiler() {
       ;;
   esac
 
-  url="${SAIL_COMPILER_REPO}/releases/download/${SAIL_COMPILER_VERSION}/${asset}"
+  # Recent Sail releases publish platform archives from a separate
+  # `<version>-binary` release/tag.  Older releases placed the same archive on
+  # the plain version tag, so retain that URL as a compatibility fallback.
+  url="${SAIL_COMPILER_REPO}/releases/download/${SAIL_COMPILER_VERSION}-binary/${asset}"
+  fallback_url="${SAIL_COMPILER_REPO}/releases/download/${SAIL_COMPILER_VERSION}/${asset}"
+  archive="$(mktemp)"
+  trap 'rm -f "${archive}"' EXIT
   echo "Installing Sail compiler ${SAIL_COMPILER_VERSION} into ${PREFIX}"
-  curl --fail --location "${url}" | tar xz --directory="${PREFIX}" --strip-components=1
+  if ! curl --fail --location --output "${archive}" "${url}"; then
+    curl --fail --location --output "${archive}" "${fallback_url}"
+  fi
+  tar xzf "${archive}" --directory="${PREFIX}" --strip-components=1
+  rm -f "${archive}"
+  trap - EXIT
 }
 
 need_sail_install=0

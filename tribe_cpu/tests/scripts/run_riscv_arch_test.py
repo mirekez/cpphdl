@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -142,15 +143,49 @@ def write_tribe_rvmodel_macros(path: pathlib.Path) -> None:
     )
 
 
-def write_tribe_rvtest_config(path: pathlib.Path) -> None:
-    path.write_text(
-        """#define RVMODEL_PMP_GRAIN 4
-#define RVMODEL_NUM_PMPS 0
+def write_tribe_udb_config(source: pathlib.Path, destination: pathlib.Path) -> None:
+    """Write the ACT UDB profile for Tribe's implemented ISA.
 
-#define ZCA_SUPPORTED
-""",
-        encoding="utf-8",
+    The convenient upstream spike-RVI20U32 profile includes F, D, Zcf, and
+    Zcd.  EXCLUDE_EXTENSIONS only filters which architectural tests ACT builds;
+    it deliberately does not alter the DUT profile.  Copying the Spike profile
+    verbatim therefore defines F_SUPPORTED in generated rvtest_config.h and
+    makes even integer tests execute FP register initialization in rvmodel_boot.
+    Tribe has no floating-point unit, so those instructions trap forever.
+
+    Keep this adaptation in the runner rather than modifying the downloaded
+    riscv-arch-test checkout.  That makes it reproducible after every loader
+    refresh and leaves the upstream test repository pristine.
+    """
+    text = source.read_text(encoding="utf-8")
+    unsupported_extensions = ("F", "D", "Zcf", "Zcd")
+    for extension in unsupported_extensions:
+        text, count = re.subn(
+            rf"^\s*-\s*\{{\s*name:\s*{extension},[^\n]*\}}\s*\n",
+            "",
+            text,
+            flags=re.MULTILINE,
+        )
+        if count != 1:
+            raise RuntimeError(f"expected one {extension} entry in {source}, found {count}")
+
+    unsupported_params = (
+        "MUTABLE_MISA_F",
+        "HW_MSTATUS_FS_DIRTY_UPDATE",
+        "MSTATUS_FS_LEGAL_VALUES",
+        "MUTABLE_MISA_D",
     )
+    for parameter in unsupported_params:
+        text, count = re.subn(
+            rf"^\s*{parameter}:.*\n",
+            "",
+            text,
+            flags=re.MULTILINE,
+        )
+        if count != 1:
+            raise RuntimeError(f"expected one {parameter} entry in {source}, found {count}")
+    text = re.sub(r"^\s*#\s*[FD] params\s*\n", "", text, flags=re.MULTILINE)
+    destination.write_text(text, encoding="utf-8")
 
 
 def prewarm_udb_z3_cache(env: dict[str, str]) -> None:
@@ -229,9 +264,20 @@ def main(argv: list[str]) -> int:
     prepare_work_dir(work, checkout)
 
     env = os.environ.copy()
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
     riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
     env["RISCV_HOME"] = riscv_home
-    env["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
+    # .load_sail_riscv_sim.sh installs mise under ~/.local/bin and installs
+    # uv with --target under build/pydeps/bin.  Its exported PATH disappears
+    # when the loader exits, so reconstruct it here for standalone CTest runs.
+    env["PATH"] = os.pathsep.join(
+        (
+            str(pathlib.Path(riscv_home) / "bin"),
+            str(pathlib.Path.home() / ".local" / "bin"),
+            str(repo_root / "build" / "pydeps" / "bin"),
+            env.get("PATH", ""),
+        )
+    )
     env.setdefault("RISCV", riscv_home)
     env.setdefault("UV_CACHE_DIR", str(work / "uv-cache"))
     env.setdefault("XDG_DATA_HOME", str(work / "xdg-data"))
@@ -344,8 +390,17 @@ def main(argv: list[str]) -> int:
         src = source_config.with_name(name)
         if src.exists():
             shutil.copy2(src, overlay / name)
+    write_tribe_udb_config(
+        source_config.with_name("spike-RVI20U32.yaml"),
+        overlay / "spike-RVI20U32.yaml",
+    )
     write_tribe_rvmodel_macros(overlay / "rvmodel_macros.h")
-    write_tribe_rvtest_config(overlay / "rvtest_config.h")
+    # ACT4 generates a complete UDB-derived rvtest_config.h in each output
+    # directory.  A legacy DUT header here shadows it (this include directory
+    # comes first) and leaves UDB_MXLEN undefined, which makes RV32 macros fall
+    # through to their 128-bit lq/sq variants.  Remove stale files produced by
+    # older versions of this runner and let ACT4 own the generated header.
+    (overlay / "rvtest_config.h").unlink(missing_ok=True)
 
     cmd = [
         "make",

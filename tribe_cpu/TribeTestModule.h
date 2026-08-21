@@ -48,6 +48,25 @@ public:
 protected:
     reg<L1PeerStoreState> peer_store_reg[CPU_CORES]; // Holds each store and address through L2 completion.
 
+    // DMA writes complete in the L2 clock domain, but private-cache
+    // invalidation is consumed in the faster CPU domain.  Keep the address
+    // stable in an acknowledged toggle mailbox instead of driving a CPU
+    // cache directly from l2_clock logic.
+    reg<u1> dma_invalidate_request_l2_reg;
+    reg<u32> dma_invalidate_addr_l2_reg;
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> dma_invalidate_ack_l21_reg;
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> dma_invalidate_ack_l22_reg;
+
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> dma_invalidate_request_cpu1_reg;
+    // (* ASYNC_REG = "TRUE" *)
+    reg<u1> dma_invalidate_request_cpu2_reg;
+    reg<u1> dma_invalidate_seen_cpu_reg;
+    reg<u1> dma_invalidate_pulse_cpu_reg;
+    reg<u32> dma_invalidate_addr_cpu_reg;
+
 private:
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
     reg<u1> atomic_owner_valid_reg; // Holds the arbiter while one core completes an AMO read-modify-write.
@@ -56,6 +75,15 @@ private:
 #endif
 
 public:
+
+    // The L2 source cannot accept another DMA line until the CPU side has
+    // consumed the previous invalidation and its acknowledgement has crossed
+    // back through both synchronizer stages.
+    _LAZY_COMB(dma_invalidate_ready_l2_comb, bool)
+        dma_invalidate_ready_l2_comb =
+            dma_invalidate_request_l2_reg == dma_invalidate_ack_l22_reg;
+        return dma_invalidate_ready_l2_comb;
+    }
 
     _PORT(bool) dmem_write_out = _ASSIGN_COMB(cores[0].dmem_write_out());
     _PORT(uint32_t) dmem_write_data_out = _ASSIGN_COMB(cores[0].dmem_write_data_out());
@@ -272,11 +300,13 @@ public:
         l2cache.mem_region_uncached_in[2] = _ASSIGN(false);
         l2cache.mem_region_uncached_in[3] = _ASSIGN(true);
         l2cache.debugen_in = debugen_in;
-        l2cache.dma_line_valid_in = dma_line_valid_in;
+        l2cache.dma_line_valid_in = _ASSIGN(
+            dma_line_valid_in() && dma_invalidate_ready_l2_comb_func());
         l2cache.dma_line_addr_in = dma_line_addr_in;
         l2cache.dma_line_data_in = dma_line_data_in;
         l2cache.dma_line_keep_in = dma_line_keep_in;
-        dma_line_ready_out = l2cache.dma_line_ready_out;
+        dma_line_ready_out = _ASSIGN(
+            l2cache.dma_line_ready_out() && dma_invalidate_ready_l2_comb_func());
         l2cache.__inst_name = __inst_name + "/l2cache";
         l2cache._assign();
 
@@ -293,10 +323,10 @@ public:
 #ifdef MULTICORE
             cores[i].peer_cache_invalidate_in = _ASSIGN_I(
                 peer_invalidate_comb_func()[i].valid ||
-                (dma_line_valid_in() && dma_line_ready_out()));
+                dma_invalidate_pulse_cpu_reg);
             cores[i].peer_cache_invalidate_addr_in = _ASSIGN_I(
-                (dma_line_valid_in() && dma_line_ready_out()) ?
-                    (uint32_t)dma_line_addr_in() :
+                dma_invalidate_pulse_cpu_reg ?
+                    (uint32_t)dma_invalidate_addr_cpu_reg :
                     (uint32_t)peer_invalidate_comb_func()[i].addr);
 #endif
             cores[i].memory_base_in = memory_base_in;
@@ -412,6 +442,19 @@ public:
             axi_out_cdc[i]._work(reset);
         }
 #endif
+
+        dma_invalidate_request_cpu1_reg._next = dma_invalidate_request_l2_reg;
+        dma_invalidate_request_cpu2_reg._next = dma_invalidate_request_cpu1_reg;
+        dma_invalidate_pulse_cpu_reg._next = false;
+        if (dma_invalidate_request_cpu2_reg != dma_invalidate_seen_cpu_reg) {
+            // The L2 address has been stable since before the request toggle
+            // entered stage 1, so capture the bundled payload only when stage
+            // 2 exposes the new request to CPU-domain logic.
+            dma_invalidate_addr_cpu_reg._next = dma_invalidate_addr_l2_reg;
+            dma_invalidate_seen_cpu_reg._next = dma_invalidate_request_cpu2_reg;
+            dma_invalidate_pulse_cpu_reg._next = true;
+        }
+
         for (i = 0; i < CPU_CORES; ++i) {
             // Convert the L2 ready/write handshake into one delayed pulse. A
             // level held during L2 backpressure would repeatedly advance the
@@ -461,6 +504,11 @@ public:
         }
 #endif
         if (reset) {
+            dma_invalidate_request_cpu1_reg.clr();
+            dma_invalidate_request_cpu2_reg.clr();
+            dma_invalidate_seen_cpu_reg.clr();
+            dma_invalidate_pulse_cpu_reg.clr();
+            dma_invalidate_addr_cpu_reg.clr();
             for (i = 0; i < CPU_CORES; ++i) {
                 // Indexed struct registers must reset through their fields so SV keeps
                 // the array index after the flattened register name.
@@ -512,6 +560,11 @@ public:
         for (i = 0; i < CPU_CORES; ++i) {
             peer_store_reg[i].strobe();
         }
+        dma_invalidate_request_cpu1_reg.strobe();
+        dma_invalidate_request_cpu2_reg.strobe();
+        dma_invalidate_seen_cpu_reg.strobe();
+        dma_invalidate_pulse_cpu_reg.strobe();
+        dma_invalidate_addr_cpu_reg.strobe();
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
         atomic_owner_valid_reg.strobe();
         atomic_owner_reg.strobe();
@@ -539,6 +592,11 @@ public:
         for (uint32_t i = 0; i < CPU_CORES; ++i) {
             peer_store_reg[i].strobe(checkpoint_fd);
         }
+        dma_invalidate_request_cpu1_reg.strobe(checkpoint_fd);
+        dma_invalidate_request_cpu2_reg.strobe(checkpoint_fd);
+        dma_invalidate_seen_cpu_reg.strobe(checkpoint_fd);
+        dma_invalidate_pulse_cpu_reg.strobe(checkpoint_fd);
+        dma_invalidate_addr_cpu_reg.strobe(checkpoint_fd);
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
         atomic_owner_valid_reg.strobe(checkpoint_fd);
         atomic_owner_reg.strobe(checkpoint_fd);
@@ -551,6 +609,13 @@ public:
     // L2 edge, giving the faster L1 domain time to retire the request.
     void _work_l2_clock(bool reset)
     {
+        dma_invalidate_ack_l21_reg._next = dma_invalidate_seen_cpu_reg;
+        dma_invalidate_ack_l22_reg._next = dma_invalidate_ack_l21_reg;
+        if (dma_line_valid_in() && dma_line_ready_out()) {
+            dma_invalidate_addr_l2_reg._next = dma_line_addr_in();
+            dma_invalidate_request_l2_reg._next = !dma_invalidate_request_l2_reg;
+        }
+
 #ifdef SYNTHESIS
         // Converter discovery calls: child clock blocks own the actual state.
         l2cache._work_l2_clock(reset);
@@ -569,6 +634,12 @@ public:
             axi_out_cdc[i]._work_l2_clock(reset);
         }
 #endif
+        if (reset) {
+            dma_invalidate_request_l2_reg.clr();
+            dma_invalidate_addr_l2_reg.clr();
+            dma_invalidate_ack_l21_reg.clr();
+            dma_invalidate_ack_l22_reg.clr();
+        }
     }
 
     void _strobe_l2_clock()
@@ -591,6 +662,10 @@ public:
             axi_out_cdc[i]._strobe_l2_clock();
         }
 #endif
+        dma_invalidate_request_l2_reg.strobe();
+        dma_invalidate_addr_l2_reg.strobe();
+        dma_invalidate_ack_l21_reg.strobe();
+        dma_invalidate_ack_l22_reg.strobe();
     }
 
 #ifndef SYNTHESIS
@@ -604,6 +679,10 @@ public:
             axi_in_cdc[i].checkpoint(checkpoint_fd);
             axi_out_cdc[i].checkpoint(checkpoint_fd);
         }
+        dma_invalidate_request_l2_reg.strobe(checkpoint_fd);
+        dma_invalidate_addr_l2_reg.strobe(checkpoint_fd);
+        dma_invalidate_ack_l21_reg.strobe(checkpoint_fd);
+        dma_invalidate_ack_l22_reg.strobe(checkpoint_fd);
     }
 #endif
 };

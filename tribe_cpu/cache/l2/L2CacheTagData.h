@@ -18,12 +18,15 @@ protected:
     using Base::DATA_BANKS;
     using Base::data_q_reg;
     using Base::tag_q_reg;
+    using Base::lookup_data_reg;
+    using Base::lookup_tag_reg;
     using Base::state_reg;
     using Base::req_reg;
     using Base::CPU_RESPONSE_BASE;
     using Base::response_reg;
     using Base::cross_low_reg;
     using Base::cross_high_reg;
+    using Base::refill_data_reg;
     using Base::request_geometry_comb_func;
     using Base::axi_out_selected_resp_comb_func;
 
@@ -43,8 +46,8 @@ protected:
         byte = (uint32_t)req_reg.addr & 3u;
         word_data = 0;
         for (i = 0; i < WAYS; ++i) {
-            if (tag_q_reg[i][TAG_BITS + 1] &&
-                tag_q_reg[i].bits(TAG_BITS - 1, 0) == request_geometry_comb_func().tag) {
+            if (lookup_tag_reg[i][TAG_BITS + 1] &&
+                lookup_tag_reg[i].bits(TAG_BITS - 1, 0) == request_geometry_comb_func().tag) {
                 hit_lookup_comb.hit = true;
                 hit_lookup_comb.way = i;
             }
@@ -53,7 +56,7 @@ protected:
             way = i / LINE_WORDS;
             word_index = i % LINE_WORDS;
             if (hit_lookup_comb.hit && (uint32_t)hit_lookup_comb.way == way) {
-                word_data = (uint32_t)data_q_reg[i];
+                word_data = (uint32_t)lookup_data_reg[i];
                 if (request_geometry_comb_func().word == word_index) {
                     hit_lookup_comb.aligned_word = word_data;
                     hit_lookup_comb.read_word |= word_data >> (byte * 8u);
@@ -68,7 +71,7 @@ protected:
                     word_index < ((uint32_t)request_geometry_comb_func().beat + 1u) * PORT_WORDS) {
                     beat_word = word_index - (uint32_t)request_geometry_comb_func().beat * PORT_WORDS;
                     // Preserve AXI/L1 beat order: word zero occupies bits [31:0], and so on.
-                    hit_lookup_comb.beat.bits(beat_word * 32 + 31, beat_word * 32) = data_q_reg[i];
+                    hit_lookup_comb.beat.bits(beat_word * 32 + 31, beat_word * 32) = lookup_data_reg[i];
                 }
             }
         }
@@ -120,10 +123,14 @@ protected:
         byte = (uint32_t)req_reg.addr & 3u;
         word = (uint32_t)request_geometry_comb_func().word % PORT_WORDS;
         next_word = ((uint32_t)request_geometry_comb_func().word + 1u) % PORT_WORDS;
-        old_word = (uint32_t)(axi_out_selected_resp_comb_func().r.data >> (word * 32u));
+        // ST_AXI_R captures the selected AXI beat before ST_AXI_R_WRITE uses
+        // it.  Do not reach back through the live AXI response mux here: the
+        // responder may already have dropped r.valid/data, and that path also
+        // reconnects request routing directly to the BRAM write inputs.
+        old_word = (uint32_t)(refill_data_reg >> (word * 32u));
         old_next_word = 0;
         if ((uint32_t)request_geometry_comb_func().word + 1u < LINE_WORDS) {
-            old_next_word = (uint32_t)(axi_out_selected_resp_comb_func().r.data >> (next_word * 32u));
+            old_next_word = (uint32_t)(refill_data_reg >> (next_word * 32u));
         }
         word_mask = 0;
         next_word_mask = 0;
