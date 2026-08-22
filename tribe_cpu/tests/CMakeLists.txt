@@ -1,5 +1,10 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+add_test(
+    NAME scripts_RiscvArchConfig
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_arch_config.py"
+)
+
 set(TRIBE_CTEST_ENVIRONMENT
     "CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS};TRIBE_KEEP_WORKDIR=1;CPPHDL_BUILD_DIR=${CMAKE_BINARY_DIR}"
 )

@@ -188,6 +188,30 @@ def write_tribe_udb_config(source: pathlib.Path, destination: pathlib.Path) -> N
     destination.write_text(text, encoding="utf-8")
 
 
+def write_tribe_rvtest_config(path: pathlib.Path) -> None:
+    """Write the DUT header consumed directly by architecture-test sources.
+
+    ACT releases differ in whether they generate this header from UDB.  Keep
+    the overlay self-contained so both layouts compile the same Tribe profile.
+    """
+    path.write_text(
+        """#ifndef CPPHDL_TRIBE_RVTEST_CONFIG_H
+#define CPPHDL_TRIBE_RVTEST_CONFIG_H
+
+#define UDB_MXLEN 32
+#define RVMODEL_PMP_GRAIN 4
+#define RVMODEL_NUM_PMPS 0
+
+#define ZAAMO_SUPPORTED
+#define ZALRSC_SUPPORTED
+#define ZCA_SUPPORTED
+
+#endif
+""",
+        encoding="utf-8",
+    )
+
+
 def prewarm_udb_z3_cache(env: dict[str, str]) -> None:
     dest = pathlib.Path(env["XDG_CACHE_HOME"]) / "udb" / "z3"
     source = pathlib.Path.home() / ".cache" / "udb" / "z3"
@@ -386,7 +410,7 @@ def main(argv: list[str]) -> int:
     config_text = config_text.replace("ref_model_exe: sail_riscv_sim", f"ref_model_exe: {ref_model}")
     local_config = overlay / "test_config.yaml"
     local_config.write_text(config_text, encoding="utf-8")
-    for name in ("spike-RVI20U32.yaml", "link.ld", "rvtest_config.h", "rvtest_config.svh", "sail.json"):
+    for name in ("spike-RVI20U32.yaml", "link.ld", "rvtest_config.svh", "sail.json"):
         src = source_config.with_name(name)
         if src.exists():
             shutil.copy2(src, overlay / name)
@@ -395,12 +419,7 @@ def main(argv: list[str]) -> int:
         overlay / "spike-RVI20U32.yaml",
     )
     write_tribe_rvmodel_macros(overlay / "rvmodel_macros.h")
-    # ACT4 generates a complete UDB-derived rvtest_config.h in each output
-    # directory.  A legacy DUT header here shadows it (this include directory
-    # comes first) and leaves UDB_MXLEN undefined, which makes RV32 macros fall
-    # through to their 128-bit lq/sq variants.  Remove stale files produced by
-    # older versions of this runner and let ACT4 own the generated header.
-    (overlay / "rvtest_config.h").unlink(missing_ok=True)
+    write_tribe_rvtest_config(overlay / "rvtest_config.h")
 
     cmd = [
         "make",
