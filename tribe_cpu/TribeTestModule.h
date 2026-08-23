@@ -684,6 +684,16 @@ public:
         dma_invalidate_ack_l21_reg.strobe(checkpoint_fd);
         dma_invalidate_ack_l22_reg.strobe(checkpoint_fd);
     }
+
+    void checkpoint_l2_pipeline(FILE* checkpoint_fd)
+    {
+        l2cache.checkpoint_l2_pipeline(checkpoint_fd);
+    }
+
+    void clear_checkpoint_l2_pipeline()
+    {
+        l2cache.clear_checkpoint_l2_pipeline();
+    }
 #endif
 };
 

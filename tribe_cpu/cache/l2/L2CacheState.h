@@ -74,7 +74,7 @@ struct CacheRequest
 struct L2ActiveRequestComb
 {
     CacheRequest request;         // Complete request payload selected from AXI, D, or I input.
-    u32 set;                      // Cache set derived from the selected live request address.
+    u32 cache_set;                // Cache set derived from the selected live request address.
     u1 valid;                     // At least one read or write operation was selected.
     u1 cross_line_read;           // Selected instruction read crosses the cache-line boundary.
 };
@@ -87,16 +87,17 @@ struct L2AxiRequestNoveltyComb
     logic<8> ar;                  // AR payload differs from the last accepted AR, or ARVALID previously dropped.
 };
 
-// Concrete address-channel state used only for the L2's eight bookkeeping
-// slots. L2 accepts 32-bit physical addresses, so retaining a template type
-// here leaves an unresolved ADDR_BITS token once the full-module replacement
-// is removed.
-struct L2AxiAddressState
+// Fixed maxima keep the generated package concrete while the controller uses
+// only DATA_BANKS and WAYS entries for its selected cache configuration.
+struct L2RamControlsComb
 {
-    u1 valid;
     u32 addr;
-    u<4> id;
-};
+    u1 read;
+    logic<32> data_write;
+    array<32, u32> data;
+    logic<4> tag_write;
+    u32 tag_data;
+} __PACKED;
 
 // One registered completion record type serves every L2 input endpoint. AXI read
 // and write channels are independent so one endpoint can retain both replies
@@ -195,13 +196,13 @@ protected:
     static_assert(PORT_BITWIDTH >= 32 && PORT_BITWIDTH % 32 == 0, "L2Cache port must be a whole number of 32-bit words");
     static_assert((CACHE_LINE_SIZE * 8) % PORT_BITWIDTH == 0, "L2Cache port must divide a cache line");
     static_assert(WAYS > 0, "L2Cache needs at least one way");
+    static_assert(WAYS <= 4, "L2Cache RAM control bundle supports at most four ways");
     static_assert(CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L2Cache geometry must divide evenly");
     static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
     static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
     static_assert(PORT_BITWIDTH <= 256, "L2Cache AXI read response struct storage is sized for up to 256-bit ports");
     static_assert(CPU_PORTS >= 1, "L2Cache must have at least one CPU port pair");
     static_assert(CPU_PORTS <= 8, "L2Cache CPU response bookkeeping supports up to 8 CPU port pairs");
-    static_assert(WAYS <= 4, "L2Cache RAM-bank primitive supports up to four ways");
 
     static constexpr size_t LINE_WORDS = CACHE_LINE_SIZE / 4;
     static constexpr size_t PORT_BYTES = PORT_BITWIDTH / 8;
@@ -216,6 +217,7 @@ protected:
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t TAG_RAM_BITS = ((TAG_BITS + 2 + 7) / 8) * 8;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
+    static_assert(DATA_BANKS <= 32, "L2Cache RAM control bundle supports at most 32 data banks");
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
     // Slots 0..7 are AXI endpoints and slots 8..15 independently acknowledge CPU port pairs.
     static constexpr uint32_t CPU_RESPONSE_BASE = 8;
@@ -252,14 +254,13 @@ public:
     bool debugen_in;
 
 protected:
-    // Independent leaf modules avoid a full L2 SystemVerilog replacement and
-    // avoid emitting the banks as one 3-D packed RAM. Fixed maximum module
-    // arrays let CppHDL unroll every leaf binding; only DATA_BANKS/WAYS entries
-    // are active for the selected cache geometry.
+    // Only these storage leaves are FPGA-specific; all addressing, write
+    // enables, replacement policy and cache control remain generated CppHDL.
+    // Fixed maxima allow _assign() to bind every leaf with literal indices.
+    // Inactive leaves are tied off by the zeroed control bundle and are pruned
+    // for one- and two-way configurations.
     L2CacheRamBank<32, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[32];
-    L2CacheRamBank<
-        ((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS)
-            - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8,
+    L2CacheRamBank<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8,
         (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[4];
     // Snapshot synchronous RAM outputs before associative compare and response
     // selection. This prevents BRAM clock-to-out plus the complete hit mux
@@ -270,9 +271,19 @@ protected:
     // from response and miss-control fanout.
     reg<L2HitLookupComb> lookup_hit_reg;
     reg<L2EvictCandidateComb> lookup_evict_reg;
+    // Store-merge result captured with the associative lookup.  Hit writes
+    // consume this value in ST_*_RESULT so req_reg address decoding and byte
+    // shifting never feed a block-RAM data input in the same cycle.
+    reg<L2WordPairComb> lookup_write_pair_reg;
 
     reg<u<5>> state_reg;
     reg<CacheRequest> req_reg;
+    // Registered arbitration boundary.  The live L1/AXI fan-in is captured
+    // while L2 is idle, then the FSM consumes only this registered bundle on
+    // the following cycle. The synchronous RAM read is issued on that consume
+    // edge, preserving the pre-pipeline normal-request controller cycle count.
+    reg<L2ActiveRequestComb> request_pipe_reg;
+    reg<u1> request_pipe_valid_reg;
     // Round-robin start pair prevents a continuously requesting low index from starving another CPU.
     reg<u<3>> cpu_rr_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> victim_reg;
@@ -289,11 +300,11 @@ protected:
     reg<logic<CACHE_LINE_SIZE * 8>> evict_line_reg;
     static_assert(MEM_PORTS <= 8, "L2Cache AXI slave bookkeeping storage supports up to 8 ports");
     // Keep split AW state as one AXI address payload so delayed W handshakes retain address and ID together.
-    reg<array<8, L2AxiAddressState>> slave_aw_reg;
+    reg<array<8, Axi4WriteAddress<32, 4>>> slave_aw_reg;
     // Remember the last accepted AW payload until AWVALID drops or changes, preventing a sticky master from replaying it at B retirement.
-    reg<array<8, L2AxiAddressState>> slave_aw_seen_reg;
+    reg<array<8, Axi4WriteAddress<32, 4>>> slave_aw_seen_reg;
     // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
-    reg<array<8, L2AxiAddressState>> slave_ar_seen_reg;
+    reg<array<8, Axi4ReadAddress<32, 4>>> slave_ar_seen_reg;
     // Pipeline the wide sticky-payload comparisons.  Arbitration consumes
     // these one-bit decisions on the next L2 cycle instead of putting an
     // address compare, priority selection, payload mux, and req_reg CE in one

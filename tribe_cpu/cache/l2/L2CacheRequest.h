@@ -181,7 +181,7 @@ protected:
             }
         }
 
-        active_request_comb.set = ((uint32_t)active_request_comb.request.addr >> LINE_BITS) & (SETS - 1);
+        active_request_comb.cache_set = ((uint32_t)active_request_comb.request.addr >> LINE_BITS) & (SETS - 1);
         byte = (uint32_t)active_request_comb.request.addr & 3u;
         word = ((uint32_t)active_request_comb.request.addr >> 2) & (LINE_WORDS - 1);
         active_request_comb.valid = active_request_comb.request.read || active_request_comb.request.write;

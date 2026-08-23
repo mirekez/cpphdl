@@ -88,7 +88,13 @@ protected:
             if (state_reg == L1_ST_LOOKUP && req_reg.read && lookup_comb_func().hit &&
                 addr_in() != (uint32_t)req_reg.addr) input_request_comb.start = true;
         }
-        input_request_comb.issue = (flush_in() && read_in()) || input_request_comb.start;
+        // A branch redirect updates the core's registered PC at this edge, so
+        // addr_in still contains the discarded PC while flush_in is asserted.
+        // Reading the RAM for that address cannot satisfy the redirected fetch
+        // and puts Execute's complete branch/target cone on every BRAM enable.
+        // The flush handler returns to IDLE; the corrected registered PC issues
+        // normally on the following cycle.
+        input_request_comb.issue = input_request_comb.start;
         return input_request_comb;
     }
 

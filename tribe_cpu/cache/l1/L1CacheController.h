@@ -139,6 +139,15 @@ public:
         invalidate_epoch_wrap = invalidate_line_in() &&
             tag_set_epoch_reg[invalidate_set] == 0xffu;
 
+        // Initialize refill bookkeeping solely from registered cache state.
+        // It is harmless when a higher-priority invalidate or branch flush
+        // aborts this lookup, and keeping it outside that priority mux prevents
+        // live branch resolution from driving the refill counters' reset pins.
+        if (state_reg == L1_ST_LOOKUP && req_reg.read) {
+            refill_reg._next.beat = 0;
+            refill_reg._next.req_data_valid = false;
+        }
+
         if (invalidate_line_in()) {
             // A per-set generation counter invalidates peer data without taking the
             // single-port tag RAM away from an unrelated local lookup/refill.
@@ -183,13 +192,17 @@ public:
             state_reg._next = L1_ST_INIT;
         }
         else if (flush_in()) {
-            req_reg._next.addr = addr_in();
-            req_reg._next.read = read_in();
-            req_reg._next.cacheable = input_request.cacheable;
-            req_reg._next.cache_disable = cache_disable_in();
+            // addr_in is the old PC until the redirecting clock edge.  Drop
+            // the wrong-path request and let IDLE accept the new registered PC
+            // on the next cycle instead of entering LOOKUP with no matching
+            // synchronous RAM read result.
+            req_reg._next.read = false;
+            req_reg._next.cacheable = false;
             response_reg._next.valid = false;
-            refill_reg._next.req_data_valid = false;
-            state_reg._next = read_in() ? L1_ST_LOOKUP : L1_ST_IDLE;
+            // Refill bookkeeping is ignored in IDLE and is initialized before
+            // the next refill.  Leaving it untouched keeps the live branch
+            // decision off the refill counter/reset cone.
+            state_reg._next = L1_ST_IDLE;
         }
         else if (state_reg == L1_ST_INIT) {
             req_reg._next.read = false;
@@ -209,12 +222,6 @@ public:
             }
         }
         else if (state_reg == L1_ST_LOOKUP && req_reg.read) {
-            // Initialize the small refill bookkeeping speculatively while the
-            // tag RAM result is being checked.  These fields are irrelevant on
-            // a hit, and this keeps the tag/miss decision off their D/reset
-            // paths at the 312 MHz boundary.
-            refill_reg._next.beat = 0;
-            refill_reg._next.req_data_valid = false;
             if (lookup.hit) {
                 if (stall_in()) {
                     response_reg._next.addr = req_reg.addr;

@@ -50,7 +50,7 @@ Request-facing actions that can directly answer an input request:
         req_reg.slave_index, and req_reg.slave_id.
    1.7. Present the selected set to tag_ram[] and data_ram[] so lookup data is
         ready next cycle; drive the RAM addresses from
-        active_request_comb_func().set.
+        active_request_comb_func().cache_set.
    1.8. Latch an external AW independently so split AXI AW/W writes can later
         be treated as one cache operation; store address and ID in
         slave_aw_reg[i].valid, slave_aw_reg[i].addr, and slave_aw_reg[i].id.
@@ -134,8 +134,8 @@ Request-facing actions that can directly answer an input request:
    6.2. Release only the completed CPU port so arbitration remains precise;
         cpu_wait_comb_func().instruction/data deassert wait according to
         the registered address, operation, and data-port flag.
-   6.3. Clear the CPU valid bit after one clock while permitting an unrelated
-        AXI request to enter the request pipeline in parallel.
+   6.3. Clear the CPU valid bit after one clock so the response slot is free
+        before a later unrelated request is accepted.
 
 Background and delayed activities:
 

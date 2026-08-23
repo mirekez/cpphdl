@@ -1349,12 +1349,14 @@ public:
 #ifndef VERILATOR
         if (checkpoint_fd) {
             static constexpr uint64_t AXI_CDC_CHECKPOINT_MAGIC = 0x3143444349584134ull;
+            static constexpr uint64_t L2_PIPELINE_CHECKPOINT_MAGIC = 0x3145504950324c43ull;
             uint64_t magic = AXI_CDC_CHECKPOINT_MAGIC;
             if (checkpoint_reading(checkpoint_fd)) {
                 FILE* fd = checkpoint_file(checkpoint_fd);
                 int first = std::fgetc(fd);
                 if (first == EOF) {
                     clearerr(fd);
+                    tribe.clear_checkpoint_l2_pipeline();
                     return;
                 }
                 std::ungetc(first, fd);
@@ -1364,6 +1366,23 @@ public:
                 throw checkpoint_io_error{"read AXI CDC trailer", sizeof(magic), 0, 0};
             }
             tribe.checkpoint_axi_cdc(checkpoint_fd);
+
+            magic = L2_PIPELINE_CHECKPOINT_MAGIC;
+            if (checkpoint_reading(checkpoint_fd)) {
+                FILE* fd = checkpoint_file(checkpoint_fd);
+                int first = std::fgetc(fd);
+                if (first == EOF) {
+                    clearerr(fd);
+                    tribe.clear_checkpoint_l2_pipeline();
+                    return;
+                }
+                std::ungetc(first, fd);
+            }
+            checkpoint_value(checkpoint_fd, magic);
+            if (magic != L2_PIPELINE_CHECKPOINT_MAGIC) {
+                throw checkpoint_io_error{"read L2 pipeline trailer", sizeof(magic), 0, 0};
+            }
+            tribe.checkpoint_l2_pipeline(checkpoint_fd);
         }
 #endif
     }

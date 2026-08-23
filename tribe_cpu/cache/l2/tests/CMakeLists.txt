@@ -2,11 +2,15 @@ file(GLOB TRIBE_L2_CACHE_TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp"
 )
 
+set(TRIBE_L2_CACHE_TEST_RUNTIME
+    "${CMAKE_CURRENT_SOURCE_DIR}/L2CacheTestRuntime.cpp"
+)
+
 foreach(src ${TRIBE_L2_CACHE_TEST_SOURCES})
     get_filename_component(name ${src} NAME_WE)
     set(target_name "cache_l2_${name}")
 
-    add_executable(${target_name} ${src})
+    add_executable(${target_name} ${src} ${TRIBE_L2_CACHE_TEST_RUNTIME})
 
     set_target_properties(${target_name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}

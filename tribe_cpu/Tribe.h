@@ -692,6 +692,10 @@ private:
     reg<u32>        fetch_pc_reg;
 
     reg<u32>        alu_result_reg;
+    // Keep pipeline flush/redirect selection in the data cone.  Mapping it to
+    // hundreds of FDRE synchronous-reset pins gives the reset arc a tighter
+    // setup requirement and prevents normal LUT packing on the critical path.
+    // (* extract_reset = "no" *)
     reg<array<STAGES_NUM-1,State>> state_reg;
     reg<array<STAGES_NUM-1,u32>> predicted_next_reg;
     reg<array<STAGES_NUM-1,u32>> fallthrough_reg;
@@ -1282,7 +1286,7 @@ private:
             // A decode/load-use stall is younger than this execute boundary
             // and will be flushed by trap entry. Including it here creates a
             // redirect -> Execute -> split hazard -> interrupt feedback loop.
-            && !interrupt_retire_wait_comb_func();
+            && !interrupt_entry_wait_comb_func();
 #else
         return interrupt_capture_comb = false;
 #endif
@@ -1335,6 +1339,21 @@ private:
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
                 !dmmu_faulted_access && !wb_mem.load_ready_out());
         return interrupt_retire_wait_comb;
+    }
+
+    // Interrupt entry needs one stricter store boundary than ordinary
+    // writeback/CSR retirement.  On the cycle in which L1 reports completion,
+    // ExecuteMem still owns the registered store request; accepting an
+    // interrupt on that edge can save the store PC and replay the MMIO write
+    // after xRET.  Keep that registered indication out of the general commit
+    // gate so unrelated register and CSR retirement does not lose a cycle for
+    // every store.
+    _LAZY_COMB(interrupt_entry_wait_comb, bool)
+        bool registered_store_pending;
+        registered_store_pending = state_reg[1].valid &&
+            (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE);
+        return interrupt_entry_wait_comb =
+            interrupt_retire_wait_comb_func() || registered_store_pending;
     }
 
     // Execute sees only registered pipeline state.  Synthetic SBI completion
