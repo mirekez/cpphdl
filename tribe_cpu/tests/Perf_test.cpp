@@ -140,25 +140,25 @@ static bool run_perf_test(bool debug, bool check_wall_time)
 #ifdef VERILATOR
     constexpr uint64_t expected_clocks = 6018940;
     constexpr uint64_t expected_wall_us = 30000000;
-    constexpr double expected_stall_pct = 60.01;
-    constexpr double expected_issue_pct = 29.80;
-    constexpr double expected_total_stall_pct = 89.81;
+    constexpr double expected_stall_pct = 76.18;
+    constexpr double expected_issue_pct = 2.14;
+    constexpr double expected_total_stall_pct = 78.32;
     constexpr double expected_hazard_pct = 0.10;
     constexpr double expected_dcache_wait_pct = 21.22;
-    constexpr double expected_icache_wait_pct = 39.91;
+    constexpr double expected_icache_wait_pct = 56.72;
     constexpr double expected_branch_pct = 1.30;
-    constexpr double expected_icache_refill_pct = 40.02;
+    constexpr double expected_icache_refill_pct = 51.59;
 #else
     constexpr uint64_t expected_clocks = 6018940;
     constexpr uint64_t expected_wall_us = 37510000;
-    constexpr double expected_stall_pct = 60.01;
-    constexpr double expected_issue_pct = 29.80;
-    constexpr double expected_total_stall_pct = 89.81;
+    constexpr double expected_stall_pct = 76.18;
+    constexpr double expected_issue_pct = 2.14;
+    constexpr double expected_total_stall_pct = 78.32;
     constexpr double expected_hazard_pct = 0.10;
     constexpr double expected_dcache_wait_pct = 21.22;
-    constexpr double expected_icache_wait_pct = 39.91;
+    constexpr double expected_icache_wait_pct = 56.72;
     constexpr double expected_branch_pct = 1.30;
-    constexpr double expected_icache_refill_pct = 40.02;
+    constexpr double expected_icache_refill_pct = 51.59;
 #endif
 
     // This guards the real early Linux boot path instead of a synthetic ELF.

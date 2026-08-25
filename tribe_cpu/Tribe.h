@@ -87,6 +87,28 @@ struct TribePerf
     L1CachePerf dcache;
 } __PACKED;
 
+// Clocked classification of one supervisor ECALL.  Register-file values stop
+// here; trap/CSR control and the external SBI side effects consume this state
+// on the following cycle.
+struct TribeSbiDecodeState
+{
+    u1 args_valid;
+    u1 valid;
+    u1 handled;
+    u1 set_timer;
+    u1 base;
+    u1 noop;
+    u1 writes_a1;
+    u1 send_ipi;
+    u1 remote_fence_i;
+    u1 remote_sfence_vma;
+    u32 a0;
+    u32 a1;
+    u32 a6;
+    u32 a7;
+    u32 ret_a1;
+};
+
 class Tribe: public Module
 {
     Decode          dec;
@@ -113,10 +135,14 @@ class Tribe: public Module
     L1Cache<L1_DCACHE_SIZE,CACHE_LINE_SIZE,L1_CACHE_ASSOCIATIONS,1,ADDR_BITS,TRIBE_L2_AXI_WIDTH> dcache;
     BranchPredictor<BRANCH_PREDICTOR_ENTRIES, BRANCH_PREDICTOR_COUNTER_BITS> bp;
     reg<u1> icache_invalidate_issued_reg;
+#ifdef ENABLE_MMU_TLB
+    reg<u1> sfence_vma_issued_reg;
+#endif
     // One-cycle interlock used when writeback updates an implicit SBI argument
     // register immediately before an ECALL.  This replaces a cache-data to
     // execute-redirect combinational bypass.
     reg<u1> sbi_arg_wait_reg;
+    reg<TribeSbiDecodeState> sbi_decode_reg;
 
 public:
 
@@ -143,19 +169,19 @@ public:
     _PORT(TribeBranchDebug)    debug_branch_out = _ASSIGN_COMB(debug_branch_comb_func());
     _PORT(TribeDecodeDebug)    debug_decode_out = _ASSIGN_COMB(debug_decode_comb_func());
 #endif
-    _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_comb_func());
-    _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_comb_func());
-    _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_comb_func());
+    _PORT(bool)      sbi_set_timer_out = _ASSIGN_COMB(sbi_set_timer_output_comb_func());
+    _PORT(uint32_t)  sbi_timer_lo_out = _ASSIGN_COMB(sbi_timer_lo_output_comb_func());
+    _PORT(uint32_t)  sbi_timer_hi_out = _ASSIGN_COMB(sbi_timer_hi_output_comb_func());
 #if defined(MULTICORE) && defined(ENABLE_ISR)
-    _PORT(bool)      sbi_send_ipi_out = _ASSIGN_COMB(sbi_send_ipi_comb_func());
-    _PORT(bool)      sbi_remote_fence_i_out = _ASSIGN_COMB(sbi_remote_fence_i_comb_func());
+    _PORT(bool)      sbi_send_ipi_out = _ASSIGN_COMB(sbi_send_ipi_output_comb_func());
+    _PORT(bool)      sbi_remote_fence_i_out = _ASSIGN_COMB(sbi_remote_fence_i_output_comb_func());
 #endif
 #if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
-    _PORT(bool)      sbi_remote_sfence_vma_out = _ASSIGN_COMB(sbi_remote_sfence_vma_comb_func());
+    _PORT(bool)      sbi_remote_sfence_vma_out = _ASSIGN_COMB(sbi_remote_sfence_vma_output_comb_func());
 #endif
 #if defined(MULTICORE) && defined(ENABLE_ISR)
-    _PORT(uint32_t)  sbi_hart_mask_out = _ASSIGN_COMB(sbi_hart_mask_comb_func());
-    _PORT(uint32_t)  sbi_hart_base_out = _ASSIGN_COMB(sbi_hart_base_comb_func());
+    _PORT(uint32_t)  sbi_hart_mask_out = _ASSIGN_COMB(sbi_hart_mask_output_comb_func());
+    _PORT(uint32_t)  sbi_hart_base_out = _ASSIGN_COMB(sbi_hart_base_output_comb_func());
 #endif
     _PORT(TribeSbiDebug) debug_sbi_out = _ASSIGN_COMB(debug_sbi_comb_func());
     _PORT(uint32_t)  reset_pc_in;
@@ -198,8 +224,10 @@ public:
         // I-cache address or enable inputs again in the same 312 MHz cycle.
         dec.instr_in       = _ASSIGN_REG(fetch_instr_reg);
         dec.instr_valid_in = _ASSIGN(fetch_valid_comb_func());
-        dec.regs_data0_in  = _ASSIGN( dec.rs1_out() == 0 ? 0 : regs.read_data0_out() );
-        dec.regs_data1_in  = _ASSIGN( dec.rs2_out() == 0 ? 0 : regs.read_data1_out() );
+        // Operand values are attached after the registered decode boundary.
+        // Decode itself produces control, immediates, and register addresses.
+        dec.regs_data0_in  = _ASSIGN((uint32_t)0);
+        dec.regs_data1_in  = _ASSIGN((uint32_t)0);
         dec._assign();  // outputs are ready
 
         exe.state_in       = _ASSIGN_COMB( exe_state_comb_func() );
@@ -207,7 +235,7 @@ public:
         exe._assign();  // outputs are ready
 
         exe_mem.state_in = _ASSIGN_COMB(exe_state_comb_func());
-        exe_mem.alu_result_in = exe.alu_result_out;
+        exe_mem.alu_result_in = exe.mem_addr_out;
         exe_mem.transaction_owner_valid_in = _ASSIGN((bool)state_reg[1].valid);
 #ifdef ENABLE_RV32IA
 #ifdef ENABLE_MMU_TLB
@@ -239,7 +267,7 @@ public:
         wb_mem.split_load_high_addr_in = exe_mem.split_load_high_out;
         wb_mem.store_forward_enable_in = _ASSIGN(
             (uint32_t)wb_mem.alu_result_in() < memory_base_in() + mem_region_size_in[0]() + mem_region_size_in[1]() + mem_region_size_in[2]());
-        wb_mem.hold_in = _ASSIGN(memory_wait_comb_func());
+        wb_mem.retire_in = _ASSIGN_REG(load_retire_ready_reg);
         wb_mem.__inst_name = __inst_name + "/wb_mem";
         wb_mem._assign();
 
@@ -256,7 +284,9 @@ public:
         irq.__inst_name = __inst_name + "/irq";
         irq._assign();
 #endif
-        csr.state_in       = _ASSIGN_COMB( csr_state_comb_func() );
+        csr.state_in       = _ASSIGN_REG(csr_commit_state_reg);
+        csr.commit_in      = _ASSIGN_REG(csr_commit_fire_reg);
+        csr.read_state_in  = _ASSIGN_REG(state_reg[0]);
         csr.trap_check_state_in = _ASSIGN_REG(state_reg[0]);
         csr.legality_state_in = _ASSIGN_COMB(dec.state_out());
         // The same-cycle Execute redirect only needs the current architectural
@@ -274,9 +304,12 @@ public:
         csr.time_hi_in = _ASSIGN((uint32_t)0);
 #endif
 #ifdef ENABLE_ISR
-        csr.interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
-        csr.interrupt_cause_in = _ASSIGN_REG(interrupt_cause_reg);
-        csr.interrupt_to_supervisor_in = _ASSIGN_REG(interrupt_to_supervisor_reg);
+        csr.interrupt_valid_in = _ASSIGN_REG(csr_commit_interrupt_valid_reg);
+        csr.interrupt_cause_in = _ASSIGN_REG(csr_commit_interrupt_cause_reg);
+        csr.interrupt_to_supervisor_in = _ASSIGN_REG(csr_commit_interrupt_to_supervisor_reg);
+        csr.redirect_interrupt_valid_in = _ASSIGN_COMB(interrupt_accept_comb_func());
+        csr.redirect_interrupt_cause_in = _ASSIGN_REG(interrupt_cause_reg);
+        csr.redirect_interrupt_to_supervisor_in = _ASSIGN_REG(interrupt_to_supervisor_reg);
         csr.irq_pending_bits_in = irq.mip_out;
 #ifdef MULTICORE
         csr.software_irq_set_in = sbi_ipi_in;
@@ -285,6 +318,9 @@ public:
         csr.interrupt_valid_in = _ASSIGN(false);
         csr.interrupt_cause_in = _ASSIGN((uint32_t)0);
         csr.interrupt_to_supervisor_in = _ASSIGN(false);
+        csr.redirect_interrupt_valid_in = _ASSIGN(false);
+        csr.redirect_interrupt_cause_in = _ASSIGN((uint32_t)0);
+        csr.redirect_interrupt_to_supervisor_in = _ASSIGN(false);
         csr.irq_pending_bits_in = _ASSIGN((uint32_t)0);
 #endif
         csr.__inst_name = __inst_name + "/csr";
@@ -374,8 +410,8 @@ public:
         wb.alu_result_in  = _ASSIGN_REG( alu_result_reg );
         wb._assign();  // outputs are ready
 
-        regs.read_addr0_in = _ASSIGN( (uint8_t)dec.rs1_out() );
-        regs.read_addr1_in = _ASSIGN( (uint8_t)dec.rs2_out() );
+        regs.read_addr0_in = _ASSIGN((uint8_t)decode_state_reg.rs1);
+        regs.read_addr1_in = _ASSIGN((uint8_t)decode_state_reg.rs2);
         regs.write_in = _ASSIGN_COMB(register_write_commit_comb_func());
         regs.write_addr_in = wb.regs_wr_id_out;
         regs.write_data_in = wb.regs_data_out;
@@ -408,6 +444,9 @@ public:
 #endif
             );
         dcache.write_in = _ASSIGN( state_reg[1].valid && exe_mem.mem_write_out() && !dcache.busy_out()
+#ifdef ENABLE_RV32IA
+            && !(state_reg[1].wb_op == Wb::MEM && atomic_write_accepted_reg)
+#endif
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
             && (!atomic_request_comb_func() || atomic_grant_in())
 #endif
@@ -505,7 +544,11 @@ public:
         // feeding decode hazards into L1 creates a BRAM -> decode -> BRAM
         // address loop that is much longer than one 312 MHz cycle.
         icache.stall_in = _ASSIGN(false);
-        icache.flush_in = _ASSIGN(branch_mispredict_comb_func());
+        // Flush one cycle after execute redirects PC.  The fetch response is
+        // address-tagged and therefore rejects the wrong-path beat in the
+        // intervening cycle.  This register boundary keeps the branch compare
+        // and target add off every I-cache controller/BRAM clock enable.
+        icache.flush_in = _ASSIGN_REG(icache_flush_reg);
         icache.invalidate_in = _ASSIGN_COMB(icache_invalidate_comb_func());
         icache.cache_disable_in = _ASSIGN(false);
         icache.debugen_in = debugen_in;
@@ -645,9 +688,7 @@ public:
     _LAZY_COMB(debug_regs_comb, TribeRegsDebug)
         debug_regs_comb.ra = regs.x1_out();
         debug_regs_comb.write = wb.regs_write_out();
-        debug_regs_comb.write_actual = wb.regs_write_out() &&
-            !memory_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out());
+        debug_regs_comb.write_actual = register_write_commit_comb_func();
         debug_regs_comb.wr_id = wb.regs_wr_id_out();
         debug_regs_comb.data = wb.regs_data_out();
         return debug_regs_comb;
@@ -670,12 +711,12 @@ public:
 
     _LAZY_COMB(debug_sbi_comb, TribeSbiDebug)
         debug_sbi_comb.ecall = sbi_ecall_debug_comb_func();
-        debug_sbi_comb.a7 = sbi_a7_debug_comb_func();
-        debug_sbi_comb.a6 = sbi_a6_debug_comb_func();
-        debug_sbi_comb.a0 = sbi_a0_debug_comb_func();
-        debug_sbi_comb.base = sbi_base_comb_func();
-        debug_sbi_comb.noop = sbi_noop_comb_func();
-        debug_sbi_comb.handled = sbi_handled_comb_func();
+        debug_sbi_comb.a7 = sbi_decode_reg.a7;
+        debug_sbi_comb.a6 = sbi_decode_reg.a6;
+        debug_sbi_comb.a0 = sbi_decode_reg.a0;
+        debug_sbi_comb.base = sbi_decode_active_comb_func() && sbi_decode_reg.base;
+        debug_sbi_comb.noop = sbi_decode_active_comb_func() && sbi_decode_reg.noop;
+        debug_sbi_comb.handled = sbi_decode_handled_comb_func();
         return debug_sbi_comb;
     }
 
@@ -690,7 +731,51 @@ private:
     reg<u1>         fetch_buffer_valid_reg;
     reg<u32>        fetch_instr_reg;
     reg<u32>        fetch_pc_reg;
+    reg<u1>         icache_flush_reg;
 
+    // Front-end issue boundary. Decode control and register addresses cross
+    // this register before the distributed register file is read. This keeps
+    // fetch instruction bits out of the same-cycle LUTRAM-read/forwarding cone
+    // that writes the execute State register.
+    // (* extract_reset = "no" *)
+    reg<State>      decode_state_reg;
+    reg<u32>        decode_fallthrough_reg;
+
+    // Capture result availability separately from final retirement readiness.
+    // AMOs produce their old-value result before the following write drains.
+    reg<u1>         load_result_pending_reg;
+    // The owner may retire only after both the result and transport are ready.
+    // This costs one hold cycle per load, but keeps the live WritebackMem ready
+    // cone off the broad CSR and pipeline-state enables.
+    reg<u1>         load_retire_ready_reg;
+#ifdef ENABLE_RV32IA
+    // An AMO write remains presented while the L1/L2 path applies
+    // backpressure, then is suppressed after its first accepted cycle. The
+    // result-pending bit cannot provide this state because it becomes set on
+    // the same edge that creates the write request.
+    reg<u1>         atomic_write_accepted_reg;
+#endif
+
+#ifdef ENABLE_ZICSR
+    // CSR/trap state crosses an explicit architectural retirement boundary.
+    // Live cache/L2 readiness may decide whether this record is captured, but
+    // it can no longer drive the reset/enable pins of every CSR register.
+    // Payload is meaningful only with csr_commit_state_reg.valid.
+    // (* extract_reset = "no" *)
+    reg<State>      csr_commit_state_reg;
+    reg<u1>         csr_commit_fire_reg;
+    reg<u1>         csr_commit_serialized_reg;
+#ifdef ENABLE_ISR
+    reg<u1>         csr_commit_interrupt_valid_reg;
+    reg<u32>        csr_commit_interrupt_cause_reg;
+    reg<u1>         csr_commit_interrupt_to_supervisor_reg;
+#endif
+#endif
+
+    // ALU payload validity is carried by state_reg[1].valid. Keep exceptional
+    // zero/hold selection in LUT data logic instead of turning global memory
+    // readiness into synchronous reset timing on every result bit.
+    // (* extract_reset = "no" *)
     reg<u32>        alu_result_reg;
     // Keep pipeline flush/redirect selection in the data cone.  Mapping it to
     // hundreds of FDRE synchronous-reset pins gives the reset arc a tighter
@@ -765,16 +850,17 @@ private:
 
 #endif
 
-    // Hold decode/execute when a pending load, split access, or atomic op would be observed too early.
+    // Hold decode/execute when a producer result would be observed before its
+    // registered writeback boundary, or while a split/atomic access is active.
     _LAZY_COMB(hazard_stall_comb, bool)
         hazard_stall_comb = false;
-        if (fetch_valid_comb_func() && state_reg[0].valid && state_reg[0].wb_op == Wb::MEM && state_reg[0].rd != 0) {  // Ex hazard
-            const auto& dec_state_tmp = dec.state_out();
-
-            if (state_reg[0].rd == dec_state_tmp.rs1) {
+        if (decode_state_reg.valid && state_reg[0].valid &&
+            (state_reg[0].wb_op == Wb::MEM || state_reg[0].wb_op == Wb::ALU) &&
+            state_reg[0].rd != 0) {
+            if (state_reg[0].rd == decode_state_reg.rs1) {
                 hazard_stall_comb = true;
             }
-            if (state_reg[0].rd == dec_state_tmp.rs2) {
+            if (state_reg[0].rd == decode_state_reg.rs2) {
                 hazard_stall_comb = true;
             }
         }
@@ -906,6 +992,35 @@ private:
     }
 #endif
 
+#ifdef ENABLE_ZICSR
+    _LAZY_COMB(csr_commit_serializing_comb, bool)
+        csr_commit_serializing_comb = csr_commit_state_reg.valid &&
+            (csr_commit_state_reg.csr_op != Csr::CNONE ||
+             csr_commit_state_reg.sys_op != Sys::SNONE ||
+             csr_commit_state_reg.trap_op != Trap::TNONE);
+        return csr_commit_serializing_comb;
+    }
+
+    // CSR/system retirement is serialized locally. The first cycle lets CSR
+    // consume the registered record; a decoded CSR write command then gets one
+    // additional cycle to update architectural state before a younger read.
+    // Ordinary ALU/load/store records remain fully pipelined at one per cycle.
+    _LAZY_COMB(csr_commit_wait_comb, bool)
+        return csr_commit_wait_comb = csr.write_pending_out() ||
+            (csr_commit_serializing_comb_func() && !csr_commit_serialized_reg);
+    }
+#endif
+
+    // FENCE.I must not invalidate the instruction cache on the same edge that
+    // an older data-side store is accepted. Keep the fence in execute for one
+    // more cycle so the completed store can leave the memory-stage register.
+    _LAZY_COMB(fence_i_registered_store_pending_comb, bool)
+        return fence_i_registered_store_pending_comb =
+            state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI &&
+            state_reg[1].valid &&
+            (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE);
+    }
+
     // Pipeline wait for operations already in decode/execute or memory/writeback.
     _LAZY_COMB(memory_wait_comb, bool)
         bool data_mem_access;
@@ -923,6 +1038,9 @@ private:
         dmmu_faulted_access = dmmu_result_match_comb_func() && dmmu_fault_reg;
 #endif
         memory_wait_comb =
+#ifdef ENABLE_ZICSR
+            csr_commit_wait_comb_func() ||
+#endif
 #ifdef ENABLE_ISR
             interrupt_capture_comb_func() ||
 #endif
@@ -941,6 +1059,9 @@ private:
             (data_mem_access && !dmmu_faulted_access && !dmmu_result_match_comb_func()) ||
 #endif
             sbi_arg_hazard_comb_func() ||
+            sbi_decode_wait_comb_func() ||
+#ifdef ENABLE_ZICSR
+#endif
             exe.multicycle_wait_out() ||
             (next_data_mem_access && dcache.busy_out()) ||
             (data_mem_access && !dmmu_faulted_access && dcache.busy_out()) ||
@@ -950,9 +1071,12 @@ private:
                 (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) && d_mem_out.wait_out()) ||
             (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCE &&
                 (dcache.busy_out() || d_mem_out.wait_out() || i_mem_out.wait_out())) ||
+            (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI &&
+                (fence_i_registered_store_pending_comb_func() ||
+                 !icache_invalidate_issued_reg || icache.busy_out())) ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
             !dmmu_faulted_access &&
-            !wb_mem.load_ready_out());
+            !load_retire_ready_reg);
         return memory_wait_comb;
     }
 
@@ -1025,8 +1149,13 @@ private:
 
     // Detect when the decoded prediction does not match execute resolution.
     _LAZY_COMB(branch_mispredict_comb, bool)
-        branch_mispredict_comb = state_reg[0].valid && exe_state_comb_func().br_op != Br::BNONE &&
-            branch_actual_next_comb_func() != (uint32_t)predicted_next_reg[0];
+        // The timing-oriented front end fetches sequentially (BP lookup is
+        // disabled above), so every taken branch is a redirect and every
+        // non-taken branch is already on the correct path.  Comparing the
+        // selected 32-bit next PC against the recorded fallthrough puts a
+        // second carry/comparison chain after the branch operand comparator.
+        branch_mispredict_comb = state_reg[0].valid &&
+            exe_state_comb_func().br_op != Br::BNONE && exe.branch_taken_out();
         return branch_mispredict_comb;
     }
 
@@ -1055,12 +1184,29 @@ private:
             csr.priv_out() == (u<2>)1;
     }
 
+    // Hold a supervisor ECALL for one cycle while its implicit register
+    // arguments are classified.  Once valid, only clocked SBI state reaches
+    // CSR/trap control.
+    _LAZY_COMB(sbi_decode_active_comb, bool)
+        return sbi_decode_active_comb = sbi_decode_reg.valid &&
+            sbi_legacy_ecall_comb_func();
+    }
+
+    _LAZY_COMB(sbi_decode_wait_comb, bool)
+        return sbi_decode_wait_comb = sbi_legacy_ecall_comb_func() &&
+            !sbi_decode_reg.valid;
+    }
+
+    _LAZY_COMB(sbi_decode_handled_comb, bool)
+        return sbi_decode_handled_comb = sbi_decode_active_comb_func() &&
+            sbi_decode_reg.handled;
+    }
+
     // Architectural writeback pulse.  Keeping this separate from the global
     // front-end wait allows an older result to commit while fetch is stopped.
     _LAZY_COMB(register_write_commit_comb, bool)
         return register_write_commit_comb = wb.regs_write_out() &&
-            !interrupt_retire_wait_comb_func() &&
-            (state_reg[1].wb_op != Wb::MEM || wb_mem.load_ready_out());
+            (state_reg[1].wb_op != Wb::MEM || load_retire_ready_reg);
     }
 
     // ECALL arguments a0/a1/a6/a7 are implicit and therefore absent from the
@@ -1238,6 +1384,101 @@ private:
         return sbi_timer_hi_comb = sbi_arg_value(11);
     }
 
+    // The second SBI stage classifies only the registered argument snapshot.
+    // These functions deliberately never read File outputs.
+    _LAZY_COMB(sbi_registered_noop_comb, bool)
+        uint32_t ext;
+        ext = sbi_decode_reg.a7;
+        return sbi_registered_noop_comb = ext == 5 || ext == 6 || ext == 7
+#ifndef MULTICORE
+            || ext == SBI_EXT_RFENCE
+#endif
+            ;
+    }
+
+    _LAZY_COMB(sbi_registered_base_comb, bool)
+        return sbi_registered_base_comb = sbi_decode_reg.a7 == SBI_EXT_BASE;
+    }
+
+    _LAZY_COMB(sbi_registered_set_timer_comb, bool)
+        return sbi_registered_set_timer_comb = sbi_decode_reg.a7 == 0 ||
+            (sbi_decode_reg.a7 == SBI_EXT_TIME && sbi_decode_reg.a6 == 0);
+    }
+
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+    _LAZY_COMB(sbi_registered_send_ipi_comb, bool)
+        return sbi_registered_send_ipi_comb =
+            sbi_decode_reg.a7 == SBI_EXT_IPI && sbi_decode_reg.a6 == 0;
+    }
+
+    _LAZY_COMB(sbi_registered_remote_fence_i_comb, bool)
+        return sbi_registered_remote_fence_i_comb =
+            sbi_decode_reg.a7 == SBI_EXT_RFENCE && sbi_decode_reg.a6 == 0;
+    }
+#endif
+
+#if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
+    _LAZY_COMB(sbi_registered_remote_sfence_vma_comb, bool)
+        return sbi_registered_remote_sfence_vma_comb =
+            sbi_decode_reg.a7 == SBI_EXT_RFENCE &&
+            (sbi_decode_reg.a6 == 1 || sbi_decode_reg.a6 == 2);
+    }
+#endif
+
+    _LAZY_COMB(sbi_registered_writes_a1_comb, bool)
+        return sbi_registered_writes_a1_comb =
+            sbi_registered_base_comb_func() || sbi_registered_set_timer_comb_func()
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+            || sbi_registered_send_ipi_comb_func() ||
+            sbi_registered_remote_fence_i_comb_func()
+#ifdef ENABLE_MMU_TLB
+            || sbi_registered_remote_sfence_vma_comb_func()
+#endif
+#endif
+            ;
+    }
+
+    _LAZY_COMB(sbi_registered_handled_comb, bool)
+        return sbi_registered_handled_comb =
+            sbi_registered_set_timer_comb_func() ||
+            sbi_registered_noop_comb_func() ||
+            sbi_registered_base_comb_func()
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+            || sbi_registered_send_ipi_comb_func() ||
+            sbi_registered_remote_fence_i_comb_func()
+#ifdef ENABLE_MMU_TLB
+            || sbi_registered_remote_sfence_vma_comb_func()
+#endif
+#endif
+            ;
+    }
+
+    _LAZY_COMB(sbi_registered_ret_value_comb, uint32_t)
+        uint32_t value;
+        value = 0;
+        if (sbi_decode_reg.a7 == SBI_EXT_BASE) {
+            if (sbi_decode_reg.a6 == 0) {
+                value = 2;
+            }
+            else if (sbi_decode_reg.a6 == 1) {
+                value = 0;
+            }
+            else if (sbi_decode_reg.a6 == 2) {
+                value = 1;
+            }
+            else if (sbi_decode_reg.a6 == 3) {
+                value = (sbi_decode_reg.a0 == SBI_EXT_BASE ||
+                    sbi_decode_reg.a0 == SBI_EXT_TIME ||
+                    sbi_decode_reg.a0 == SBI_EXT_RFENCE
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+                    || sbi_decode_reg.a0 == SBI_EXT_IPI
+#endif
+                    ) ? 1 : 0;
+            }
+        }
+        return sbi_registered_ret_value_comb = value;
+    }
+
     bool sbi_ecall_debug_comb;
     bool& sbi_ecall_debug_comb_func()
     {
@@ -1261,6 +1502,46 @@ private:
     {
         return sbi_a0_debug_comb = sbi_arg_value(10);
     }
+
+    _LAZY_COMB(sbi_set_timer_output_comb, bool)
+        return sbi_set_timer_output_comb = sbi_decode_active_comb_func() &&
+            sbi_decode_reg.set_timer;
+    }
+
+    _LAZY_COMB(sbi_timer_lo_output_comb, uint32_t)
+        return sbi_timer_lo_output_comb = sbi_decode_reg.a0;
+    }
+
+    _LAZY_COMB(sbi_timer_hi_output_comb, uint32_t)
+        return sbi_timer_hi_output_comb = sbi_decode_reg.a1;
+    }
+
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+    _LAZY_COMB(sbi_send_ipi_output_comb, bool)
+        return sbi_send_ipi_output_comb = sbi_decode_active_comb_func() &&
+            sbi_decode_reg.send_ipi;
+    }
+
+    _LAZY_COMB(sbi_remote_fence_i_output_comb, bool)
+        return sbi_remote_fence_i_output_comb = sbi_decode_active_comb_func() &&
+            sbi_decode_reg.remote_fence_i;
+    }
+
+    _LAZY_COMB(sbi_hart_mask_output_comb, uint32_t)
+        return sbi_hart_mask_output_comb = sbi_decode_reg.a0;
+    }
+
+    _LAZY_COMB(sbi_hart_base_output_comb, uint32_t)
+        return sbi_hart_base_output_comb = sbi_decode_reg.a1;
+    }
+#endif
+
+#if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
+    _LAZY_COMB(sbi_remote_sfence_vma_output_comb, bool)
+        return sbi_remote_sfence_vma_output_comb = sbi_decode_active_comb_func() &&
+            sbi_decode_reg.remote_sfence_vma;
+    }
+#endif
 
     // Capture an interrupt only at a normal execute boundary. The capture
     // cycle holds the pipeline; CSR/PC redirection uses the registered event
@@ -1300,12 +1581,10 @@ private:
 #endif
     }
 
-    // Only an older memory-stage instruction can prevent interrupt entry.  A
-    // front-end translation wait or the current Execute result is restartable;
-    // including either in this decision closes a redirect -> fetch/MMU -> wait
-    // -> interrupt loop.  All signals below originate in registered memory,
-    // cache, MMU, and pipeline state.
-    _LAZY_COMB(interrupt_retire_wait_comb, bool)
+    // Remaining transport work for the current memory-stage owner. Keep this
+    // separate from result availability: an AMO read result can be ready while
+    // its following write transaction is still draining through the cache.
+    _LAZY_COMB(memory_stage_transport_wait_comb, bool)
         bool data_mem_access;
         bool dmmu_faulted_access;
         data_mem_access = state_reg[1].valid && (
@@ -1315,7 +1594,7 @@ private:
 #ifdef ENABLE_MMU_TLB
         dmmu_faulted_access = dmmu_result_match_comb_func() && dmmu_fault_reg;
 #endif
-        interrupt_retire_wait_comb =
+        memory_stage_transport_wait_comb =
 #if defined(MULTICORE) && defined(ENABLE_RV32IA)
             (state_reg[1].valid && state_reg[1].amo_op != Amo::AMONONE &&
                 !atomic_grant_in()) ||
@@ -1335,9 +1614,24 @@ private:
                 dcache.mem_out.read_in() && d_mem_out.wait_out()) ||
             (data_mem_access && !dmmu_faulted_access &&
                 (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE) &&
-                d_mem_out.wait_out()) ||
+                d_mem_out.wait_out());
+        return memory_stage_transport_wait_comb;
+    }
+
+    // Only an older memory-stage instruction can prevent interrupt entry.  A
+    // front-end translation wait or the current Execute result is restartable;
+    // including either in this decision closes a redirect -> fetch/MMU -> wait
+    // -> interrupt loop.  All signals below originate in registered memory,
+    // cache, MMU, and pipeline state.
+    _LAZY_COMB(interrupt_retire_wait_comb, bool)
+        bool dmmu_faulted_access;
+        dmmu_faulted_access = false;
+#ifdef ENABLE_MMU_TLB
+        dmmu_faulted_access = dmmu_result_match_comb_func() && dmmu_fault_reg;
+#endif
+        interrupt_retire_wait_comb = memory_stage_transport_wait_comb_func() ||
             (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
-                !dmmu_faulted_access && !wb_mem.load_ready_out());
+                !dmmu_faulted_access && !load_retire_ready_reg);
         return interrupt_retire_wait_comb;
     }
 
@@ -1353,7 +1647,11 @@ private:
         registered_store_pending = state_reg[1].valid &&
             (exe_mem.mem_write_out() || state_reg[1].mem_op == Mem::STORE);
         return interrupt_entry_wait_comb =
-            interrupt_retire_wait_comb_func() || registered_store_pending;
+            interrupt_retire_wait_comb_func() || registered_store_pending
+#ifdef ENABLE_ZICSR
+            || csr_commit_wait_comb_func()
+#endif
+            ;
     }
 
     // Execute sees only registered pipeline state.  Synthetic SBI completion
@@ -1414,7 +1712,7 @@ private:
     // CSR/trap stage input, including synthesized page faults and locally emulated SBI timer calls.
     _LAZY_COMB(csr_state_comb, State)
         csr_state_comb = exe_state_comb_func();
-        if (sbi_handled_comb_func()) {
+        if (sbi_decode_wait_comb_func() || sbi_decode_handled_comb_func()) {
             csr_state_comb.sys_op = Sys::SNONE;
             csr_state_comb.trap_op = Trap::TNONE;
             csr_state_comb.csr_op = Csr::CNONE;
@@ -1494,7 +1792,11 @@ private:
 #endif
             (state_reg[0].valid &&
             state_reg[0].sys_op == Sys::FENCEI &&
-            !memory_wait_comb_func() && !icache_invalidate_issued_reg);
+            // Only older memory ownership blocks invalidation. Local CSR
+            // command serialization must not feed the I-cache BRAM enables.
+            !interrupt_retire_wait_comb_func() &&
+            !fence_i_registered_store_pending_comb_func() &&
+            !icache_invalidate_issued_reg);
     }
 
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
@@ -1503,12 +1805,13 @@ private:
 #if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
             remote_sfence_vma_in() ||
 #endif
-            (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA && !memory_wait_comb_func());
+            (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA &&
+             !interrupt_retire_wait_comb_func() && !sfence_vma_issued_reg);
     }
 
     void forward()
     {
-        const auto& dec_state_tmp = dec.state_out();
+        const auto& dec_state_tmp = decode_state_reg;
 
         if (state_reg[1].valid && state_reg[1].wb_op == Wb::ALU && state_reg[1].rd != 0) {  // Mem/Wb alu
             if (dec_state_tmp.rs1 == state_reg[1].rd) {
@@ -1553,37 +1856,6 @@ private:
                 if (debugen_in) {
                     printf("forwarding %.08x from LINK to RS2\n", link_value);
                 }
-            }
-        }
-
-        if (state_reg[0].valid && state_reg[0].wb_op == Wb::ALU && state_reg[0].rd != 0) {  // Ex/Mem alu/csr
-            if (dec_state_tmp.rs1 == state_reg[0].rd) {
-                state_reg._next[0].rs1_val =
-#ifdef ENABLE_RV32IA
-                        state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS1\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
-                }
-#else
-                        exe.alu_result_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS1\n", (uint32_t)exe.alu_result_out());
-                }
-#endif
-            }
-            if (dec_state_tmp.rs2 == state_reg[0].rd) {
-                state_reg._next[0].rs2_val =
-#ifdef ENABLE_RV32IA
-                        state_reg[0].csr_op != Csr::CNONE ? csr.read_data_out() : exe.alu_result_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS2\n", state_reg[0].csr_op != Csr::CNONE ? (uint32_t)csr.read_data_out() : (uint32_t)exe.alu_result_out());
-                }
-#else
-                        exe.alu_result_out();
-                if (debugen_in) {
-                    printf("forwarding %.08x from ALU to RS2\n", (uint32_t)exe.alu_result_out());
-                }
-#endif
             }
         }
 
@@ -1750,6 +2022,79 @@ public:
         fetch_buffer_valid_reg._next = fetch_buffer_valid_reg;
         fetch_instr_reg._next = fetch_instr_reg;
         fetch_pc_reg._next = fetch_pc_reg;
+        decode_state_reg._next = decode_state_reg;
+        decode_fallthrough_reg._next = decode_fallthrough_reg;
+        icache_flush_reg._next = branch_mispredict_comb_func();
+        load_result_pending_reg._next = load_result_pending_reg;
+        load_retire_ready_reg._next = load_retire_ready_reg;
+#ifdef ENABLE_RV32IA
+        atomic_write_accepted_reg._next = atomic_write_accepted_reg;
+#endif
+        if (!memory_wait_comb_func()) {
+            // The current owner advances on this edge.  A following load must
+            // acquire its own completion indication rather than inheriting it.
+            load_result_pending_reg._next = false;
+            load_retire_ready_reg._next = false;
+#ifdef ENABLE_RV32IA
+            atomic_write_accepted_reg._next = false;
+#endif
+        }
+        else if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM) {
+            if (wb_mem.load_ready_out()) {
+                load_result_pending_reg._next = true;
+            }
+            if ((load_result_pending_reg || wb_mem.load_ready_out()) &&
+                !memory_stage_transport_wait_comb_func()) {
+                load_retire_ready_reg._next = true;
+            }
+        }
+#ifdef ENABLE_RV32IA
+        // wait_out is the acceptance boundary for the write-through D-cache.
+        // Keep retrying while it is asserted, and remember exactly one
+        // accepted AMO write while the architectural owner remains held.
+        if (state_reg[1].valid && state_reg[1].wb_op == Wb::MEM &&
+            dcache.write_in() && !d_mem_out.wait_out() && memory_wait_comb_func()) {
+            atomic_write_accepted_reg._next = true;
+        }
+#endif
+#ifdef ENABLE_ZICSR
+        csr_commit_state_reg._next = csr_commit_state_reg;
+        // A held retirement record is not a second architectural event.
+        csr_commit_fire_reg._next = false;
+        csr_commit_serialized_reg._next = csr_commit_serialized_reg;
+#ifdef ENABLE_ISR
+        csr_commit_interrupt_valid_reg._next = csr_commit_interrupt_valid_reg;
+        csr_commit_interrupt_cause_reg._next = csr_commit_interrupt_cause_reg;
+        csr_commit_interrupt_to_supervisor_reg._next = csr_commit_interrupt_to_supervisor_reg;
+#endif
+        if (csr_commit_wait_comb_func()) {
+            // CSR consumes the registered record on this edge.  Keep the
+            // record stable for one more cycle while commit_fire is cleared,
+            // so the pipeline can prepare to advance without a duplicate.
+            csr_commit_serialized_reg._next = true;
+        }
+        else if (csr_commit_serializing_comb_func() && csr_commit_serialized_reg) {
+            // The pipeline still presents the retiring CSR/system instruction
+            // on its release edge.  Do not capture and fire that same record a
+            // second time; clear it and let the younger instruction enter on
+            // the following cycle.
+            csr_commit_state_reg._next.valid = false;
+            csr_commit_serialized_reg._next = false;
+#ifdef ENABLE_ISR
+            csr_commit_interrupt_valid_reg._next = false;
+#endif
+        }
+        else if (!memory_wait_comb_func() || !csr_commit_state_reg.valid) {
+            csr_commit_state_reg._next = csr_state_comb_func();
+            csr_commit_fire_reg._next = csr_state_comb_func().valid;
+            csr_commit_serialized_reg._next = false;
+#ifdef ENABLE_ISR
+            csr_commit_interrupt_valid_reg._next = interrupt_accept_comb_func();
+            csr_commit_interrupt_cause_reg._next = interrupt_cause_reg;
+            csr_commit_interrupt_to_supervisor_reg._next = interrupt_to_supervisor_reg;
+#endif
+        }
+#endif
         if (!valid || (fetch_buffer_valid_reg && (uint32_t)fetch_pc_reg != (uint32_t)pc)) {
             fetch_buffer_valid_reg._next = false;
         }
@@ -1761,6 +2106,40 @@ public:
         }
         sbi_ret_a1_valid_reg._next = false;
         sbi_ret_a1_reg._next = sbi_ret_a1_reg;
+        sbi_decode_reg._next = sbi_decode_reg;
+        if (!sbi_legacy_ecall_comb_func()) {
+            sbi_decode_reg._next.args_valid = false;
+            sbi_decode_reg._next.valid = false;
+        }
+        else if (!sbi_decode_reg.args_valid && !sbi_arg_hazard_comb_func() &&
+            !interrupt_retire_wait_comb_func()) {
+            sbi_decode_reg._next.args_valid = true;
+            sbi_decode_reg._next.a0 = sbi_arg_value(10);
+            sbi_decode_reg._next.a1 = sbi_arg_value(11);
+            sbi_decode_reg._next.a6 = sbi_arg_value(16);
+            sbi_decode_reg._next.a7 = sbi_arg_value(17);
+        }
+        else if (!sbi_decode_reg.valid) {
+            sbi_decode_reg._next.valid = true;
+            sbi_decode_reg._next.handled = sbi_registered_handled_comb_func();
+            sbi_decode_reg._next.set_timer = sbi_registered_set_timer_comb_func();
+            sbi_decode_reg._next.base = sbi_registered_base_comb_func();
+            sbi_decode_reg._next.noop = sbi_registered_noop_comb_func();
+            sbi_decode_reg._next.writes_a1 = sbi_registered_writes_a1_comb_func();
+            sbi_decode_reg._next.ret_a1 = sbi_registered_ret_value_comb_func();
+#if defined(MULTICORE) && defined(ENABLE_ISR)
+            sbi_decode_reg._next.send_ipi = sbi_registered_send_ipi_comb_func();
+            sbi_decode_reg._next.remote_fence_i = sbi_registered_remote_fence_i_comb_func();
+#else
+            sbi_decode_reg._next.send_ipi = false;
+            sbi_decode_reg._next.remote_fence_i = false;
+#endif
+#if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
+            sbi_decode_reg._next.remote_sfence_vma = sbi_registered_remote_sfence_vma_comb_func();
+#else
+            sbi_decode_reg._next.remote_sfence_vma = false;
+#endif
+        }
 #ifdef ENABLE_MMU_TLB
         if (!valid) {
             immu_result_valid_reg._next = false;
@@ -1833,6 +2212,7 @@ public:
             state_reg._next[0].valid = false;
             state_reg._next[1] = State{};
             state_reg._next[1].valid = false;
+            decode_state_reg._next.valid = false;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -1848,7 +2228,8 @@ public:
              || interrupt_accept_comb_func()
 #endif
             ) &&
-            !sbi_handled_comb_func() &&
+            !sbi_decode_wait_comb_func() &&
+            !sbi_decode_handled_comb_func() &&
             (
 #ifdef ENABLE_ISR
              interrupt_accept_comb_func() ||
@@ -1867,6 +2248,7 @@ public:
             state_reg._next[0].valid = false;
             state_reg._next[1] = State{};
             state_reg._next[1].valid = false;
+            decode_state_reg._next.valid = false;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -1900,6 +2282,7 @@ public:
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
             state_reg._next[1] = state_reg[0];
+            decode_state_reg._next.valid = false;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -1929,6 +2312,7 @@ public:
             state_reg._next[0].valid = false;
             state_reg._next[1] = State{};
             state_reg._next[1].valid = false;
+            decode_state_reg._next.valid = false;
             alu_result_reg._next = alu_result_reg;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
@@ -1952,6 +2336,7 @@ public:
             state_reg._next[0].valid = false;
             state_reg._next[1] = State{};
             state_reg._next[1].valid = false;
+            decode_state_reg._next.valid = false;
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -1962,7 +2347,7 @@ public:
         }
         else
 #endif
-        if (sbi_handled_comb_func()) {
+        if (sbi_decode_handled_comb_func() && !memory_wait_comb_func()) {
             interrupt_entry_guard_reg._next = false;
             pc._next = pc;
 #ifndef SYNTHESIS
@@ -1972,6 +2357,7 @@ public:
             state_reg._next[0] = State{};
             state_reg._next[0].valid = false;
             state_reg._next[1] = state_reg[0];
+            decode_state_reg._next.valid = false;
             state_reg._next[1].sys_op = Sys::SNONE;
             state_reg._next[1].trap_op = Trap::TNONE;
             state_reg._next[1].csr_op = Csr::CNONE;
@@ -1987,8 +2373,10 @@ public:
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
             alu_result_reg._next = 0;
-            sbi_ret_a1_valid_reg._next = sbi_writes_a1_comb_func();
-            sbi_ret_a1_reg._next = sbi_ret_value_comb_func();
+            sbi_ret_a1_valid_reg._next = sbi_decode_reg.writes_a1;
+            sbi_ret_a1_reg._next = sbi_decode_reg.ret_a1;
+            sbi_decode_reg._next.args_valid = false;
+            sbi_decode_reg._next.valid = false;
             debug_branch_target_reg._next = pc;
             debug_branch_taken_reg._next = false;
         }
@@ -2001,6 +2389,13 @@ public:
             interrupt_entry_guard_reg._next = false;
             valid._next = valid;
             state_reg._next = state_reg;
+            // The global wait keeps FENCE.I in execute. Once its older store
+            // has completed, retire only that memory-stage slot so the next
+            // cycle can issue invalidation after the store's clock boundary.
+            if (fence_i_registered_store_pending_comb_func() &&
+                !interrupt_retire_wait_comb_func()) {
+                state_reg._next[1].valid = false;
+            }
             predicted_next_reg._next = predicted_next_reg;
             fallthrough_reg._next = fallthrough_reg;
             predicted_taken_reg._next = predicted_taken_reg;
@@ -2048,13 +2443,20 @@ public:
                     }
                 }
 #endif
-                pc._next = branch_actual_next_comb_func();
+                // branch_mispredict is true only for a taken branch in the
+                // sequential-fetch profile, so no target/fallthrough mux is
+                // needed on the PC data input.
+                pc._next = exe.branch_target_out();
 #ifndef SYNTHESIS
-                trace_pc_write("execute-redirect", branch_actual_next_comb_func());
+                trace_pc_write("execute-redirect", exe.branch_target_out());
 #endif
             }
 
-            valid._next = !decode_indirect_branch_valid_comb_func();
+            // Keep fetch stopped while an indirect redirect waits at the
+            // front-end issue boundary. It resumes on the execute redirect.
+            valid._next = !(decode_indirect_branch_valid_comb_func() ||
+                (decode_state_reg.valid &&
+                 (decode_state_reg.br_op == Br::JALR || decode_state_reg.br_op == Br::JR)));
 
             if (branch_mispredict_comb_func()) {
                 // Redirect resolution has priority over all live fetch/decode
@@ -2063,6 +2465,7 @@ public:
                 // I-cache/MMU/fetch-valid selection cone.
                 state_reg._next[0] = State{};
                 state_reg._next[0].valid = false;
+                decode_state_reg._next.valid = false;
                 predicted_next_reg._next[0] = pc;
                 fallthrough_reg._next[0] = pc;
                 predicted_taken_reg._next[0] = false;
@@ -2075,15 +2478,20 @@ public:
                 predicted_taken_reg._next[0] = false;
             }
             else {
-                if (fetch_valid_comb_func()) {
-                    state_reg._next[0] = dec.state_out();
-                    // Align the CSR legality result with the instruction as it
-                    // crosses the decode/execute register.  Copies, holds, and
-                    // flushes of State then preserve alignment automatically.
-                    state_reg._next[0].csr_illegal = csr.legality_out();
-                    state_reg._next[0].valid = dec.instr_valid_in() && !branch_stall_comb_func() && !branch_flush_comb_func();
-                    predicted_next_reg._next[0] = decode_fallthrough_comb_func();
-                    fallthrough_reg._next[0] = decode_fallthrough_comb_func();
+                if (decode_state_reg.valid) {
+                    state_reg._next[0] = decode_state_reg;
+                    // Preserve decode-provided pseudo-operands such as the PC
+                    // used by AUIPC; only architectural register operands are
+                    // populated from the register file here.
+                    if (decode_state_reg.rs1 != 0) {
+                        state_reg._next[0].rs1_val = regs.read_data0_out();
+                    }
+                    if (decode_state_reg.rs2 != 0) {
+                        state_reg._next[0].rs2_val = regs.read_data1_out();
+                    }
+                    state_reg._next[0].valid = true;
+                    predicted_next_reg._next[0] = decode_fallthrough_reg;
+                    fallthrough_reg._next[0] = decode_fallthrough_reg;
                     predicted_taken_reg._next[0] = false;
                     forward();
                 }
@@ -2093,6 +2501,20 @@ public:
                     predicted_next_reg._next[0] = pc;
                     fallthrough_reg._next[0] = pc;
                     predicted_taken_reg._next[0] = false;
+                }
+
+                if (fetch_valid_comb_func()) {
+                    decode_state_reg._next = dec.state_out();
+#ifdef ENABLE_ZICSR
+                    // Legality is evaluated beside decode control and crosses
+                    // the same front-end issue boundary as the instruction.
+                    decode_state_reg._next.csr_illegal = csr.legality_out();
+#endif
+                    decode_state_reg._next.valid = dec.instr_valid_in();
+                    decode_fallthrough_reg._next = decode_fallthrough_comb_func();
+                }
+                else {
+                    decode_state_reg._next.valid = false;
                 }
             }
             state_reg._next[1] = state_reg[0];
@@ -2129,13 +2551,32 @@ public:
         dcache._work(reset);
         bp._work(reset);
 
-        if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI &&
-            !memory_wait_comb_func()) {
-            icache_invalidate_issued_reg._next = true;
+        if (icache_invalidate_comb_func()) {
+            // The cache drops its own request/response state, but the CPU may
+            // already hold the fall-through instruction decoded from that old
+            // cache line. A local FENCE.I may also have advanced PC past that
+            // instruction, so restart at its architectural fall-through.
+            if (state_reg[0].valid && state_reg[0].sys_op == Sys::FENCEI) {
+                icache_invalidate_issued_reg._next = true;
+                pc._next = (uint32_t)state_reg[0].pc + 4u;
+            }
+            valid._next = false;
+            fetch_buffer_valid_reg._next = false;
+            decode_state_reg._next.valid = false;
         }
         else if (!state_reg[0].valid || state_reg[0].sys_op != Sys::FENCEI) {
             icache_invalidate_issued_reg._next = false;
         }
+
+#ifdef ENABLE_MMU_TLB
+        if (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA &&
+            !interrupt_retire_wait_comb_func() && !sfence_vma_issued_reg) {
+            sfence_vma_issued_reg._next = true;
+        }
+        else if (!state_reg[0].valid || state_reg[0].sys_op != Sys::SFENCE_VMA) {
+            sfence_vma_issued_reg._next = false;
+        }
+#endif
 
         if (reset) {
             state_reg._next[0].valid = 0;
@@ -2148,6 +2589,24 @@ public:
             fetch_buffer_valid_reg.clr();
             fetch_instr_reg.clr();
             fetch_pc_reg.clr();
+            icache_flush_reg.clr();
+            decode_state_reg.clr();
+            decode_fallthrough_reg.clr();
+            load_result_pending_reg.clr();
+            load_retire_ready_reg.clr();
+#ifdef ENABLE_RV32IA
+            atomic_write_accepted_reg.clr();
+#endif
+#ifdef ENABLE_ZICSR
+            csr_commit_state_reg.clr();
+            csr_commit_fire_reg.clr();
+            csr_commit_serialized_reg.clr();
+#ifdef ENABLE_ISR
+            csr_commit_interrupt_valid_reg.clr();
+            csr_commit_interrupt_cause_reg.clr();
+            csr_commit_interrupt_to_supervisor_reg.clr();
+#endif
+#endif
             predicted_next_reg.clr();
             fallthrough_reg.clr();
             predicted_taken_reg.clr();
@@ -2161,7 +2620,11 @@ public:
             sbi_ret_a1_valid_reg.clr();
             sbi_ret_a1_reg.clr();
             icache_invalidate_issued_reg.clr();
+#ifdef ENABLE_MMU_TLB
+            sfence_vma_issued_reg.clr();
+#endif
             sbi_arg_wait_reg.clr();
+            sbi_decode_reg.clr();
 #ifdef ENABLE_MMU_TLB
             immu_result_valid_reg.clr();
             immu_vaddr_reg.clr();
@@ -2239,6 +2702,24 @@ public:
         fetch_buffer_valid_reg.strobe();
         fetch_instr_reg.strobe();
         fetch_pc_reg.strobe();
+        icache_flush_reg.strobe();
+        decode_state_reg.strobe(checkpoint_fd);
+        decode_fallthrough_reg.strobe(checkpoint_fd);
+        load_result_pending_reg.strobe();
+        load_retire_ready_reg.strobe();
+#ifdef ENABLE_RV32IA
+        atomic_write_accepted_reg.strobe();
+#endif
+#ifdef ENABLE_ZICSR
+        csr_commit_state_reg.strobe(checkpoint_fd);
+        csr_commit_fire_reg.strobe(checkpoint_fd);
+        csr_commit_serialized_reg.strobe();
+#ifdef ENABLE_ISR
+        csr_commit_interrupt_valid_reg.strobe();
+        csr_commit_interrupt_cause_reg.strobe();
+        csr_commit_interrupt_to_supervisor_reg.strobe();
+#endif
+#endif
         state_reg.strobe(checkpoint_fd);
         predicted_next_reg.strobe(checkpoint_fd);
         fallthrough_reg.strobe(checkpoint_fd);
@@ -2258,7 +2739,11 @@ public:
         sbi_ret_a1_valid_reg.strobe(checkpoint_fd);
         sbi_ret_a1_reg.strobe(checkpoint_fd);
         icache_invalidate_issued_reg.strobe(checkpoint_fd);
+#ifdef ENABLE_MMU_TLB
+        sfence_vma_issued_reg.strobe();
+#endif
         sbi_arg_wait_reg.strobe(checkpoint_fd);
+        sbi_decode_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_MMU_TLB
         // Transient translation-stage state is deliberately omitted from the
         // checkpoint stream; restored fetch and memory operations simply

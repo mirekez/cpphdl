@@ -18,6 +18,21 @@ inline std::string VerilatorExtraCflags()
     return extra ? std::string(" ") + extra : std::string();
 }
 
+inline std::string VerilatorConfigCflags()
+{
+    std::string flags;
+#ifdef TRIBE_CFG_RV32IA
+    flags += " -DTRIBE_CFG_RV32IA=" + std::to_string(TRIBE_CFG_RV32IA);
+#endif
+#ifdef TRIBE_CFG_ISR
+    flags += " -DTRIBE_CFG_ISR=" + std::to_string(TRIBE_CFG_ISR);
+#endif
+#ifdef TRIBE_CFG_MMU_TLB
+    flags += " -DTRIBE_CFG_MMU_TLB=" + std::to_string(TRIBE_CFG_MMU_TLB);
+#endif
+    return flags;
+}
+
 inline int SystemEcho(const char* cmd)
 {
     std::cout << cmd << "\n";
@@ -347,6 +362,15 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+#ifdef TRIBE_CFG_RV32IA
+    command += " -DTRIBE_CFG_RV32IA=" + std::to_string(TRIBE_CFG_RV32IA);
+#endif
+#ifdef TRIBE_CFG_ISR
+    command += " -DTRIBE_CFG_ISR=" + std::to_string(TRIBE_CFG_ISR);
+#endif
+#ifdef TRIBE_CFG_MMU_TLB
+    command += " -DTRIBE_CFG_MMU_TLB=" + std::to_string(TRIBE_CFG_MMU_TLB);
+#endif
     if (cpu_cores > 1) {
         command += " -DMULTICORE";
     }
@@ -430,7 +454,7 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
     const std::string compiler_params = VerilatorCompilerParams(verilator_cxx_raw);
     if (SystemEcho((std::string("cd ") + folder_name +
             "; " + verilator + " -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
-            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorExtraCflags() + "\"").c_str()) != 0) {
+            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorConfigCflags() + VerilatorExtraCflags() + "\"").c_str()) != 0) {
         return false;
     }
     const std::string verilator_cxx = ToolShellQuoteString(verilator_cxx_raw);
