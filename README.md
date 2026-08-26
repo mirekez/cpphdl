@@ -48,3 +48,29 @@ This work is not subsidized or paid.
 - this chapter is to collect verilog gotchas which are inexplicable for non verilog-guru and fixed for C++-native
 
 1. In verilog {a*b} has size of a or b, not size(a)+size(b). In C++ this works correctly. Cpphdl will explicitly widen both operands to act as C++ and try to save result
+
+## Enable all Tribe CPU tests
+
+Tribe CPU models and tests are disabled by default. Install a RISC-V GNU
+toolchain under `RISCV_HOME`, prepare the external Spike, Sail,
+`riscv-tests`, `riscv-arch-test`, and `riscv-dv` dependencies, and configure
+CppHDL with both Tribe and CTest enabled:
+
+```bash
+export RISCV_HOME="$HOME/riscv"
+export PATH="$RISCV_HOME/bin:$PATH"
+
+./tribe_cpu/tests/.load_spike.sh
+./tribe_cpu/tests/.load_sail_riscv_sim.sh
+
+cmake -S . -B build -G "Unix Makefiles" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCPPHDL_BUILD_TRIBE=ON \
+    -DBUILD_TESTING=ON
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+`RISCV_HOME/bin` must contain `riscv32-unknown-elf-gcc` and
+`riscv32-unknown-elf-g++`. Without the toolchain or prepared external test
+repositories, the corresponding Tribe tests are listed by CTest but skipped.
