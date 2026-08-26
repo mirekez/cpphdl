@@ -1,6 +1,6 @@
 package Mem_pkg;
 
-enum {
+typedef enum logic[32-1:0] {
     MNONE,
     LOAD,
     STORE

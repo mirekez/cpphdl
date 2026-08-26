@@ -17,8 +17,8 @@ module MemberAssignGenvars (
 
     // members
     genvar __i, __j, __k, __l;
-      wire[32-1:0] expr4__value_in[2][2][2][2];
-      wire[32-1:0] expr4__value_out[2][2][2][2];
+    wire[32-1:0] expr4__value_in[2][2][2][2];
+    wire[32-1:0] expr4__value_out[2][2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -35,8 +35,8 @@ module MemberAssignGenvars (
         end
     end
     endgenerate
-      wire[32-1:0] var4__value_in[2][2][2][2];
-      wire[32-1:0] var4__value_out[2][2][2][2];
+    wire[32-1:0] var4__value_in[2][2][2][2];
+    wire[32-1:0] var4__value_out[2][2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -58,22 +58,22 @@ module MemberAssignGenvars (
 
 
     always_comb begin : result_comb_func  // result_comb_func
-        source5['h0]['h0]['h0]['h0]['h1] = seed_in + unsigned'(32'('h7D1));
-        source5['h0]['h0]['h0]['h1]['h1] = seed_in + unsigned'(32'('h7D2));
-        source5['h0]['h0]['h1]['h0]['h1] = seed_in + unsigned'(32'('h7D3));
-        source5['h0]['h0]['h1]['h1]['h1] = seed_in + unsigned'(32'('h7D4));
-        source5['h0]['h1]['h0]['h0]['h1] = seed_in + unsigned'(32'('h7DB));
-        source5['h0]['h1]['h0]['h1]['h1] = seed_in + unsigned'(32'('h7DC));
-        source5['h0]['h1]['h1]['h0]['h1] = seed_in + unsigned'(32'('h7DD));
-        source5['h0]['h1]['h1]['h1]['h1] = seed_in + unsigned'(32'('h7DE));
-        source5['h1]['h0]['h0]['h0]['h1] = seed_in + unsigned'(32'('h835));
-        source5['h1]['h0]['h0]['h1]['h1] = seed_in + unsigned'(32'('h836));
-        source5['h1]['h0]['h1]['h0]['h1] = seed_in + unsigned'(32'('h837));
-        source5['h1]['h0]['h1]['h1]['h1] = seed_in + unsigned'(32'('h838));
-        source5['h1]['h1]['h0]['h0]['h1] = seed_in + unsigned'(32'('h83F));
-        source5['h1]['h1]['h0]['h1]['h1] = seed_in + unsigned'(32'('h840));
-        source5['h1]['h1]['h1]['h0]['h1] = seed_in + unsigned'(32'('h841));
-        source5['h1]['h1]['h1]['h1]['h1] = seed_in + unsigned'(32'('h842));
+        source5['h0]['h0]['h0]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7D1)));
+        source5['h0]['h0]['h0]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7D2)));
+        source5['h0]['h0]['h1]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7D3)));
+        source5['h0]['h0]['h1]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7D4)));
+        source5['h0]['h1]['h0]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7DB)));
+        source5['h0]['h1]['h0]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7DC)));
+        source5['h0]['h1]['h1]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7DD)));
+        source5['h0]['h1]['h1]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h7DE)));
+        source5['h1]['h0]['h0]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h835)));
+        source5['h1]['h0]['h0]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h836)));
+        source5['h1]['h0]['h1]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h837)));
+        source5['h1]['h0]['h1]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h838)));
+        source5['h1]['h1]['h0]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h83F)));
+        source5['h1]['h1]['h0]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h840)));
+        source5['h1]['h1]['h1]['h0]['h1] = seed_in + unsigned'(32'(unsigned'(32'h841)));
+        source5['h1]['h1]['h1]['h1]['h1] = seed_in + unsigned'(32'(unsigned'(32'h842)));
         result_comb = expr4__value_out['h0]['h0]['h0]['h0] + var4__value_out['h0]['h0]['h0]['h0];
         result_comb += expr4__value_out['h0]['h0]['h0]['h1] + var4__value_out['h0]['h0]['h0]['h1];
         result_comb += expr4__value_out['h0]['h0]['h1]['h0] + var4__value_out['h0]['h0]['h1]['h0];
@@ -90,7 +90,6 @@ module MemberAssignGenvars (
         result_comb += expr4__value_out['h1]['h1]['h0]['h1] + var4__value_out['h1]['h1]['h0]['h1];
         result_comb += expr4__value_out['h1]['h1]['h1]['h0] + var4__value_out['h1]['h1]['h1]['h0];
         result_comb += expr4__value_out['h1]['h1]['h1]['h1] + var4__value_out['h1]['h1]['h1]['h1];
-        disable result_comb_func;
     end
 
     task _work (input logic reset);
@@ -110,7 +109,7 @@ module MemberAssignGenvars (
                     for (gd = 'h0;gd < 'h2;gd=gd+1) begin
                         for (ge = 'h0;ge < 'h2;ge=ge+1) begin
                             if (ge == 'h0) begin
-                                assign expr4__value_in[ga][gb][gc][gd] = seed_in + unsigned'(32'(((((('h3E8 + (ga*'h64)) + (gb*'hA)) + (gc*'h2)) + gd) + ge)));
+                                assign expr4__value_in[ga][gb][gc][gd] = seed_in + unsigned'(32'(unsigned'(32'(((((('h3E8 + (ga*'h64)) + (gb*'hA)) + (gc*'h2)) + gd) + ge)))));
                             end
                             if (ge == 'h1) begin
                                 assign var4__value_in[ga][gb][gc][gd] = source5[ga][gb][gc][gd][ge];

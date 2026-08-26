@@ -1,8 +1,8 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import ExecuteCalcint_int_0_0_State_pkg::*;
 import DecodeFetchint_int_0_0_State_pkg::*;
+import ExecuteCalcint_int_0_0_State_pkg::*;
 import MemWBint_int_0_0_State_pkg::*;
 import MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_pkg::*;
 import Alu_pkg::*;
@@ -11,24 +11,26 @@ import Br_pkg::*;
 
 
 module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State #(
-    parameter ID
-,   parameter LENGTH
+    parameter ID = 1
+,   parameter LENGTH = 3
  )
  (
     input wire clk
 ,   input wire reset
 ,   output wire mem_write_out
-,   output logic[31:0] mem_write_addr_out
-,   output logic[31:0] mem_write_data_out
-,   output logic[7:0] mem_write_mask_out
+,   output wire[31:0] mem_write_addr_out
+,   output wire[31:0] mem_write_data_out
+,   output wire[7:0] mem_write_mask_out
 ,   output wire mem_read_out
-,   output logic[31:0] mem_read_addr_out
-,   output logic[31:0] alu_result_out
+,   output wire[31:0] mem_read_addr_out
+,   output wire[31:0] alu_result_out
 ,   output wire branch_taken_out
-,   output logic[31:0] branch_target_out
-,   input MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[LENGTH-1:0] state_in
-,   output ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] state_out
+,   output wire[31:0] branch_target_out
+,   input wire MakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State[LENGTH-1:0] state_in
+,   output wire ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] state_out
 );
+
+    typedef ExecuteCalcint_int_0_0_State STATE;
 
     // regs and combs
     reg[32-1:0] mem_addr_reg;
@@ -51,140 +53,138 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     // members
 
     // tmp variables
-    logic[32-1:0] mem_addr_reg_tmp;
-    logic[32-1:0] mem_data_reg_tmp;
     logic[8-1:0] mem_mask_reg_tmp;
     logic mem_write_reg_tmp;
     logic mem_read_reg_tmp;
     ExecuteCalcint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg_tmp;
 
 
-    always @(*) begin  // alu_a_comb_func
-        alu_a_comb = state_in[ID - 1].rs1_val;
+    always_comb begin : alu_a_comb_func  // alu_a_comb_func
+        alu_a_comb=state_in[ID - 'h1].rs1_val;
     end
 
-    always @(*) begin  // alu_b_comb_func
-        alu_b_comb = (state_in[ID - 1].alu_op == Alu_pkg::ADD && state_in[ID - 1].mem_op != Mem_pkg::MNONE) ? unsigned'(32'(state_in[ID - 1].imm)) : (state_in[ID - 1].rs2 || state_in[ID - 1].br_op == Br_pkg::BEQZ || state_in[ID - 1].br_op == Br_pkg::BNEZ) ? state_in[ID - 1].rs2_val : unsigned'(32'(state_in[ID - 1].imm));
+    always_comb begin : alu_b_comb_func  // alu_b_comb_func
+        alu_b_comb=(((state_in[(ID - 'h1)].alu_op == Alu_pkg::ADD) && (state_in[(ID - 'h1)].mem_op != Mem_pkg::MNONE))) ? (unsigned'(32'(state_in[ID - 'h1].imm))) : ((((state_in[(ID - 'h1)].rs2 || (state_in[(ID - 'h1)].br_op == Br_pkg::BEQZ)) || (state_in[(ID - 'h1)].br_op == Br_pkg::BNEZ))) ? (state_in[ID - 'h1].rs2_val) : (unsigned'(32'(state_in[ID - 'h1].imm))));
     end
 
-    always @(*) begin  // alu_result_comb_func
+    always_comb begin : alu_result_comb_func  // alu_result_comb_func
         logic[31:0] a;
         logic[31:0] b;
         logic[31:0] alu_op;
-        a = alu_a_comb;
-        b = alu_b_comb;
-        alu_result_comb = 0;
-        alu_op = state_in[ID - 1].alu_op;
+        a=alu_a_comb;
+        b=alu_b_comb;
+        alu_result_comb='h0;
+        alu_op=state_in[ID - 'h1].alu_op;
         case (alu_op)
         Alu_pkg::ADD: begin
-            alu_result_comb = a + b;
+            alu_result_comb=a + b;
         end
         Alu_pkg::SUB: begin
-            alu_result_comb = a - b;
+            alu_result_comb=a - b;
         end
         Alu_pkg::AND: begin
-            alu_result_comb = a & b;
+            alu_result_comb=a & b;
         end
         Alu_pkg::OR: begin
-            alu_result_comb = a | b;
+            alu_result_comb=a | b;
         end
         Alu_pkg::XOR: begin
-            alu_result_comb = a ^ b;
+            alu_result_comb=a ^ b;
         end
         Alu_pkg::SLL: begin
-            alu_result_comb = a <<< (b & 31);
+            alu_result_comb=a <<< ((b & 'h1F));
         end
         Alu_pkg::SRL: begin
-            alu_result_comb = a >>> (b & 31);
+            alu_result_comb=a >>> ((b & 'h1F));
         end
         Alu_pkg::SRA: begin
-            alu_result_comb = unsigned'(32'(signed'(32'(a)) >>> (b & 31)));
+            alu_result_comb=unsigned'(32'(signed'(32'(a)) >>> ((b & 'h1F))));
         end
         Alu_pkg::SLT: begin
-            alu_result_comb = (signed'(32'(a)) < signed'(32'(b)));
+            alu_result_comb=(signed'(32'(a)) < signed'(32'(b)));
         end
         Alu_pkg::SLTU: begin
-            alu_result_comb = (a < b);
+            alu_result_comb=(a < b);
         end
         Alu_pkg::PASS: begin
-            alu_result_comb = b;
+            alu_result_comb=b;
         end
         Alu_pkg::MUL: begin
-            alu_result_comb = a*b;
+            alu_result_comb=a*b;
         end
         Alu_pkg::MULH: begin
-            alu_result_comb = (unsigned'(64'(a))*b) >>> 32;
+            alu_result_comb=((unsigned'(64'(a))*b)) >>> 'h20;
         end
         Alu_pkg::DIV: begin
-            alu_result_comb = a/b;
+            alu_result_comb=a/b;
         end
         Alu_pkg::REM: begin
-            alu_result_comb = a % b;
+            alu_result_comb=a % b;
         end
         Alu_pkg::ANONE: begin
         end
         endcase
-        if (alu_op == Alu_pkg::SLT || alu_op == Alu_pkg::SLTU) begin
-            alu_result_comb |= (unsigned'(64'((a == b)))) <<< 32;
+        if ((alu_op == Alu_pkg::SLT) || (alu_op == Alu_pkg::SLTU)) begin
+            alu_result_comb|=(unsigned'(64'(((a == b))))) <<< 'h20;
         end
     end
 
-    always @(*) begin  // branch_taken_comb_func
+    always_comb begin : branch_taken_comb_func  // branch_taken_comb_func
         logic[63:0] alu_result;
-        alu_result = alu_result_comb;
-        branch_taken_comb = 0;
-        case (state_in[ID - 1].br_op)
+        alu_result=alu_result_comb;
+        branch_taken_comb=0;
+        case (state_in[ID - 'h1].br_op)
         Br_pkg::BEQZ: begin
-            branch_taken_comb = alu_result >>> 32;
+            branch_taken_comb=alu_result >>> 'h20;
         end
         Br_pkg::BNEZ: begin
-            branch_taken_comb = !(alu_result >>> 32);
+            branch_taken_comb=!(alu_result >>> 'h20);
         end
         Br_pkg::BEQ: begin
-            branch_taken_comb = alu_result >>> 32;
+            branch_taken_comb=alu_result >>> 'h20;
         end
         Br_pkg::BNE: begin
-            branch_taken_comb = !(alu_result >>> 32);
+            branch_taken_comb=!(alu_result >>> 'h20);
         end
         Br_pkg::BLT: begin
-            branch_taken_comb = alu_result & 4294967295;
+            branch_taken_comb=alu_result & 'hFFFFFFFF;
         end
         Br_pkg::BGE: begin
-            branch_taken_comb = !(alu_result & 4294967295);
+            branch_taken_comb=!(alu_result & 'hFFFFFFFF);
         end
         Br_pkg::BLTU: begin
-            branch_taken_comb = alu_result & 4294967295;
+            branch_taken_comb=alu_result & 'hFFFFFFFF;
         end
         Br_pkg::BGEU: begin
-            branch_taken_comb = !(alu_result & 4294967295);
+            branch_taken_comb=!(alu_result & 'hFFFFFFFF);
         end
         Br_pkg::JAL: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::JALR: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::JR: begin
-            branch_taken_comb = 1;
+            branch_taken_comb=1;
         end
         Br_pkg::BNONE: begin
         end
         endcase
-        branch_taken_comb = branch_taken_comb && state_in[ID - 1].valid;
+        branch_taken_comb=branch_taken_comb && state_in[(ID - 'h1)].valid;
     end
 
-    always @(*) begin  // branch_target_comb_func
-        branch_target_comb = 0;
-        if (state_in[ID - 1].br_op != Br_pkg::BNONE) begin
-            if (state_in[ID - 1].br_op == Br_pkg::JAL) begin
-                branch_target_comb = state_in[ID - 1].pc + state_in[ID - 1].imm;
+    always_comb begin : branch_target_comb_func  // branch_target_comb_func
+        branch_target_comb='h0;
+        if (state_in[(ID - 'h1)].br_op != Br_pkg::BNONE) begin
+            if (state_in[(ID - 'h1)].br_op == Br_pkg::JAL) begin
+                branch_target_comb=state_in[(ID - 'h1)].pc + state_in[(ID - 'h1)].imm;
             end
             else begin
-                if (state_in[ID - 1].br_op == Br_pkg::JALR || state_in[ID - 1].br_op == Br_pkg::JR) begin
-                    branch_target_comb = (state_in[ID - 1].rs1_val + state_in[ID - 1].imm) & ~1;
+                if ((state_in[(ID - 'h1)].br_op == Br_pkg::JALR) || (state_in[(ID - 'h1)].br_op == Br_pkg::JR)) begin
+                    branch_target_comb=((state_in[(ID - 'h1)].rs1_val + state_in[(ID - 'h1)].imm)) & ~'h1;
                 end
                 else begin
-                    branch_target_comb = state_in[ID - 1].pc + state_in[ID - 1].imm;
+                    branch_target_comb=state_in[(ID - 'h1)].pc + state_in[(ID - 'h1)].imm;
                 end
             end
         end
@@ -192,53 +192,53 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     task do_execute ();
     begin: do_execute
-        PipelineStage___state_reg_tmp[0].alu_result = alu_result_comb;
-        PipelineStage___state_reg_tmp[0].debug_alu_a = alu_a_comb;
-        PipelineStage___state_reg_tmp[0].debug_alu_b = alu_b_comb;
-        PipelineStage___state_reg_tmp[0].debug_branch_target = branch_target_comb;
-        PipelineStage___state_reg_tmp[0].debug_branch_taken = branch_taken_comb;
+        PipelineStage___state_reg_tmp['h0].alu_result=alu_result_comb;
+        PipelineStage___state_reg_tmp['h0].debug_alu_a=alu_a_comb;
+        PipelineStage___state_reg_tmp['h0].debug_alu_b=alu_b_comb;
+        PipelineStage___state_reg_tmp['h0].debug_branch_target=branch_target_comb;
+        PipelineStage___state_reg_tmp['h0].debug_branch_taken=branch_taken_comb;
     end
     endtask
 
     task start_memory ();
     begin: start_memory
-        mem_addr_reg_tmp = alu_result_comb;
-        mem_data_reg_tmp = state_in[ID - 1].rs2_val;
-        mem_write_reg_tmp = 0;
-        mem_mask_reg_tmp = 0;
-        if (state_in[ID - 1].mem_op == Mem_pkg::STORE && state_in[ID - 1].valid) begin
-            case (state_in[ID - 1].funct3)
-            0: begin
-                mem_write_reg_tmp = state_in[ID - 1].valid;
-                mem_mask_reg_tmp = 1;
+        mem_addr_reg <= unsigned'(32'(alu_result_comb));
+        mem_data_reg <= unsigned'(32'(state_in[ID - 'h1].rs2_val));
+        mem_write_reg_tmp = unsigned'(1'h0);
+        mem_mask_reg_tmp = unsigned'(8'h0);
+        if ((state_in[(ID - 'h1)].mem_op == Mem_pkg::STORE) && state_in[(ID - 'h1)].valid) begin
+            case (state_in[ID - 'h1].funct3)
+            'h0: begin
+                mem_write_reg_tmp = unsigned'(1'(state_in[ID - 'h1].valid));
+                mem_mask_reg_tmp = unsigned'(8'h1);
             end
-            1: begin
-                mem_write_reg_tmp = state_in[ID - 1].valid;
-                mem_mask_reg_tmp = 3;
+            'h1: begin
+                mem_write_reg_tmp = unsigned'(1'(state_in[ID - 'h1].valid));
+                mem_mask_reg_tmp = unsigned'(8'h3);
             end
-            2: begin
-                mem_write_reg_tmp = state_in[ID - 1].valid;
-                mem_mask_reg_tmp = 15;
+            'h2: begin
+                mem_write_reg_tmp = unsigned'(1'(state_in[ID - 'h1].valid));
+                mem_mask_reg_tmp = unsigned'(8'hF);
             end
             endcase
         end
-        mem_read_reg_tmp = 0;
-        if (state_in[ID - 1].mem_op == Mem_pkg::LOAD && state_in[ID - 1].valid) begin
-            case (state_in[ID - 1].funct3)
-            0: begin
-                mem_read_reg_tmp = 1;
+        mem_read_reg_tmp = unsigned'(1'h0);
+        if ((state_in[(ID - 'h1)].mem_op == Mem_pkg::LOAD) && state_in[(ID - 'h1)].valid) begin
+            case (state_in[ID - 'h1].funct3)
+            'h0: begin
+                mem_read_reg_tmp = unsigned'(1'h1);
             end
-            1: begin
-                mem_read_reg_tmp = 1;
+            'h1: begin
+                mem_read_reg_tmp = unsigned'(1'h1);
             end
-            2: begin
-                mem_read_reg_tmp = 1;
+            'h2: begin
+                mem_read_reg_tmp = unsigned'(1'h1);
             end
-            4: begin
-                mem_read_reg_tmp = 1;
+            'h4: begin
+                mem_read_reg_tmp = unsigned'(1'h1);
             end
-            5: begin
-                mem_read_reg_tmp = 1;
+            'h5: begin
+                mem_read_reg_tmp = unsigned'(1'h1);
             end
             default: begin
             end
@@ -250,8 +250,8 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     task PipelineStage____work (input logic reset);
     begin: PipelineStage____work
         logic[63:0] i;
-        for (i = 1;i < LENGTH - ID;i=i+1) begin
-            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 1];
+        for (i='h1;i < (LENGTH - ID);i=i+1) begin
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 'h1];
         end
     end
     endtask
@@ -262,17 +262,24 @@ module ExecuteCalcExecuteCalcint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
             mem_write_reg_tmp = '0;
             mem_read_reg_tmp = '0;
         end
-        PipelineStage___state_reg_tmp[0] = 0;
+        PipelineStage____work(reset);
+        PipelineStage___state_reg_tmp['h0] = 0;
         do_execute();
         start_memory();
     end
     endtask
 
+    generate  // _assign
+    endgenerate
+
     always @(posedge clk) begin
+        mem_mask_reg_tmp = mem_mask_reg;
+        mem_write_reg_tmp = mem_write_reg;
+        mem_read_reg_tmp = mem_read_reg;
+        PipelineStage___state_reg_tmp = PipelineStage___state_reg;
+
         _work(reset);
 
-        mem_addr_reg <= mem_addr_reg_tmp;
-        mem_data_reg <= mem_data_reg_tmp;
         mem_mask_reg <= mem_mask_reg_tmp;
         mem_write_reg <= mem_write_reg_tmp;
         mem_read_reg <= mem_read_reg_tmp;

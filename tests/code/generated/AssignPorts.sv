@@ -22,24 +22,24 @@ module AssignPorts (
 
     // members
     genvar __i, __j, __k;
-      wire[16-1:0] expr_leaf__value_in;
-      wire[16-1:0] expr_leaf__value_out;
+    wire[16-1:0] expr_leaf__value_in;
+    wire[16-1:0] expr_leaf__value_out;
     AssignPortsLeaf      expr_leaf (
         .clk(clk)
 ,       .reset(reset)
 ,       .value_in(expr_leaf__value_in)
 ,       .value_out(expr_leaf__value_out)
     );
-      wire[16-1:0] var_leaf__value_in;
-      wire[16-1:0] var_leaf__value_out;
+    wire[16-1:0] var_leaf__value_in;
+    wire[16-1:0] var_leaf__value_out;
     AssignPortsLeaf      var_leaf (
         .clk(clk)
 ,       .reset(reset)
 ,       .value_in(var_leaf__value_in)
 ,       .value_out(var_leaf__value_out)
     );
-      wire[16-1:0] expr_i__value_in[3];
-      wire[16-1:0] expr_i__value_out[3];
+    wire[16-1:0] expr_i__value_in[3];
+    wire[16-1:0] expr_i__value_out[3];
     generate
     for (__i=0; __i < 3; __i = __i + 1) begin
         AssignPortsLeaf          expr_i (
@@ -50,8 +50,8 @@ module AssignPorts (
         );
     end
     endgenerate
-      wire[16-1:0] var_i__value_in[3];
-      wire[16-1:0] var_i__value_out[3];
+    wire[16-1:0] var_i__value_in[3];
+    wire[16-1:0] var_i__value_out[3];
     generate
     for (__i=0; __i < 3; __i = __i + 1) begin
         AssignPortsLeaf          var_i (
@@ -62,8 +62,8 @@ module AssignPorts (
         );
     end
     endgenerate
-      wire[16-1:0] expr_j__value_in[3];
-      wire[16-1:0] expr_j__value_out[3];
+    wire[16-1:0] expr_j__value_in[3];
+    wire[16-1:0] expr_j__value_out[3];
     generate
     for (__i=0; __i < 3; __i = __i + 1) begin
         AssignPortsLeaf          expr_j (
@@ -74,8 +74,8 @@ module AssignPorts (
         );
     end
     endgenerate
-      wire[16-1:0] var_j__value_in[3];
-      wire[16-1:0] var_j__value_out[3];
+    wire[16-1:0] var_j__value_in[3];
+    wire[16-1:0] var_j__value_out[3];
     generate
     for (__i=0; __i < 3; __i = __i + 1) begin
         AssignPortsLeaf          var_j (
@@ -86,8 +86,8 @@ module AssignPorts (
         );
     end
     endgenerate
-      wire[16-1:0] expr_ij__value_in[2][3];
-      wire[16-1:0] expr_ij__value_out[2][3];
+    wire[16-1:0] expr_ij__value_in[2][3];
+    wire[16-1:0] expr_ij__value_out[2][3];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 3; __j = __j + 1) begin
@@ -100,8 +100,8 @@ module AssignPorts (
         end
     end
     endgenerate
-      wire[16-1:0] var_ij__value_in[2][3];
-      wire[16-1:0] var_ij__value_out[2][3];
+    wire[16-1:0] var_ij__value_in[2][3];
+    wire[16-1:0] var_ij__value_out[2][3];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 3; __j = __j + 1) begin
@@ -114,8 +114,8 @@ module AssignPorts (
         end
     end
     endgenerate
-      wire[16-1:0] expr_ijk__value_in[2][2][2];
-      wire[16-1:0] expr_ijk__value_out[2][2][2];
+    wire[16-1:0] expr_ijk__value_in[2][2][2];
+    wire[16-1:0] expr_ijk__value_out[2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -130,8 +130,8 @@ module AssignPorts (
         end
     end
     endgenerate
-      wire[16-1:0] var_ijk__value_in[2][2][2];
-      wire[16-1:0] var_ijk__value_out[2][2][2];
+    wire[16-1:0] var_ijk__value_in[2][2][2];
+    wire[16-1:0] var_ijk__value_out[2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -146,8 +146,8 @@ module AssignPorts (
         end
     end
     endgenerate
-      wire[16-1:0] expr_cap__value_in[2][2][2];
-      wire[16-1:0] expr_cap__value_out[2][2][2];
+    wire[16-1:0] expr_cap__value_in[2][2][2];
+    wire[16-1:0] expr_cap__value_out[2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -162,8 +162,8 @@ module AssignPorts (
         end
     end
     endgenerate
-      wire[16-1:0] var_cap__value_in[2][2][2];
-      wire[16-1:0] var_cap__value_out[2][2][2];
+    wire[16-1:0] var_cap__value_in[2][2][2];
+    wire[16-1:0] var_cap__value_out[2][2][2];
     generate
     for (__i=0; __i < 2; __i = __i + 1) begin
         for (__j=0; __j < 2; __j = __j + 1) begin
@@ -183,35 +183,35 @@ module AssignPorts (
 
 
     always_comb begin : result_comb_func  // result_comb_func
-        scalar_source = seed_in + unsigned'(16'(unsigned'(16'('h2))));
-        i_source['h0] = seed_in + unsigned'(16'(unsigned'(16'('h64))));
-        i_source['h1] = seed_in + unsigned'(16'(unsigned'(16'('h65))));
-        i_source['h2] = seed_in + unsigned'(16'(unsigned'(16'('h66))));
-        j_source['h0] = seed_in + unsigned'(16'(unsigned'(16'('h8C))));
-        j_source['h1] = seed_in + unsigned'(16'(unsigned'(16'('h8D))));
-        j_source['h2] = seed_in + unsigned'(16'(unsigned'(16'('h8E))));
-        ij_source['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'('hC8))));
-        ij_source['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'('hC9))));
-        ij_source['h0]['h2] = seed_in + unsigned'(16'(unsigned'(16'('hCA))));
-        ij_source['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'('hD2))));
-        ij_source['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'('hD3))));
-        ij_source['h1]['h2] = seed_in + unsigned'(16'(unsigned'(16'('hD4))));
-        ijk_source['h0]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h12C))));
-        ijk_source['h0]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h12D))));
-        ijk_source['h0]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h136))));
-        ijk_source['h0]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h137))));
-        ijk_source['h1]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h190))));
-        ijk_source['h1]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h191))));
-        ijk_source['h1]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h19A))));
-        ijk_source['h1]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h19B))));
-        cap_source['h0]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h1F4))));
-        cap_source['h0]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h1F5))));
-        cap_source['h0]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h1FE))));
-        cap_source['h0]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h1FF))));
-        cap_source['h1]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h258))));
-        cap_source['h1]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h259))));
-        cap_source['h1]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'('h262))));
-        cap_source['h1]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'('h263))));
+        scalar_source = seed_in + unsigned'(16'(unsigned'(16'h2)));
+        i_source['h0] = seed_in + unsigned'(16'(unsigned'(16'h64)));
+        i_source['h1] = seed_in + unsigned'(16'(unsigned'(16'h65)));
+        i_source['h2] = seed_in + unsigned'(16'(unsigned'(16'h66)));
+        j_source['h0] = seed_in + unsigned'(16'(unsigned'(16'h8C)));
+        j_source['h1] = seed_in + unsigned'(16'(unsigned'(16'h8D)));
+        j_source['h2] = seed_in + unsigned'(16'(unsigned'(16'h8E)));
+        ij_source['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'hC8)));
+        ij_source['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'hC9)));
+        ij_source['h0]['h2] = seed_in + unsigned'(16'(unsigned'(16'hCA)));
+        ij_source['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'hD2)));
+        ij_source['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'hD3)));
+        ij_source['h1]['h2] = seed_in + unsigned'(16'(unsigned'(16'hD4)));
+        ijk_source['h0]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'h12C)));
+        ijk_source['h0]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'h12D)));
+        ijk_source['h0]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'h136)));
+        ijk_source['h0]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'h137)));
+        ijk_source['h1]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'h190)));
+        ijk_source['h1]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'h191)));
+        ijk_source['h1]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'h19A)));
+        ijk_source['h1]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'h19B)));
+        cap_source['h0]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'h1F4)));
+        cap_source['h0]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'h1F5)));
+        cap_source['h0]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'h1FE)));
+        cap_source['h0]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'h1FF)));
+        cap_source['h1]['h0]['h0] = seed_in + unsigned'(16'(unsigned'(16'h258)));
+        cap_source['h1]['h0]['h1] = seed_in + unsigned'(16'(unsigned'(16'h259)));
+        cap_source['h1]['h1]['h0] = seed_in + unsigned'(16'(unsigned'(16'h262)));
+        cap_source['h1]['h1]['h1] = seed_in + unsigned'(16'(unsigned'(16'h263)));
         result_comb = expr_leaf__value_out + var_leaf__value_out;
         result_comb += expr_i__value_out['h0] + var_i__value_out['h0];
         result_comb += expr_i__value_out['h1] + var_i__value_out['h1];
@@ -255,7 +255,7 @@ module AssignPorts (
         genvar gx;
         genvar gy;
         genvar gz;
-        assign expr_leaf__value_in = seed_in + unsigned'(16'(unsigned'(16'('h1))));
+        assign expr_leaf__value_in = seed_in + unsigned'(16'(unsigned'(16'h1)));
         assign var_leaf__value_in = scalar_source;
         for (gi = 'h0;gi < 'h3;gi=gi+1) begin
             assign expr_i__value_in[gi] = seed_in + unsigned'(16'(unsigned'(16'(('hA + gi)))));

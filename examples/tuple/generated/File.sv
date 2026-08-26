@@ -4,25 +4,27 @@ import Predef_pkg::*;
 
 
 module File #(
-    parameter MEM_WIDTH
-,   parameter MEM_DEPTH
+    parameter MEM_WIDTH = 32
+,   parameter MEM_DEPTH = 32
  )
  (
     input wire clk
 ,   input wire reset
-,   input logic[7:0] write_addr_in
+,   input wire[7:0] write_addr_in
 ,   input wire write_in
-,   input logic[31:0] write_data_in
-,   input logic[7:0] read_addr0_in
-,   input logic[7:0] read_addr1_in
+,   input wire[31:0] write_data_in
+,   input wire[7:0] read_addr0_in
+,   input wire[7:0] read_addr1_in
 ,   input wire read_in
-,   output logic[31:0] read_data0_out
-,   output logic[31:0] read_data1_out
+,   output wire[31:0] read_data0_out
+,   output wire[31:0] read_data1_out
 ,   input wire debugen_in
 );
 
+    typedef logic[31:0] DTYPE;
+
     // regs and combs
-    reg[MEM_WIDTH/32-1:0][32-1:0] buffer[MEM_DEPTH];
+    reg[MEM_WIDTH/'h20-1:0][32-1:0] buffer[MEM_DEPTH];
     logic[31:0] data0_out_comb;
 ;
     logic[31:0] data1_out_comb;
@@ -36,29 +38,33 @@ module File #(
     task _work (input logic reset);
     begin: _work
         logic[7:0] i;
-        if (reset) begin
-            for (i = 0;i < MEM_DEPTH;i=i+1) begin
-                buffer[i] <= 0;
-            end
-        end
         if (debugen_in) begin
-            $write("%m: port0: @%x(%x)%x, port1: @%x(%x)%x @%x(%x)%x\n", write_addr_in, write_in, write_data_in, read_addr0_in, read_in, read_data0_out, read_addr1_in, read_in, read_data1_out);
+            $write("%m: r(%d) port0: @%x(%d)%x, port1: @%x(%d)%x @%x(%d)%x\n", reset, write_addr_in, signed'(32'(write_in)), write_data_in, read_addr0_in, signed'(32'(read_in)), read_data0_out, read_addr1_in, signed'(32'(read_in)), read_data1_out);
         end
         if (write_in) begin
             buffer[write_addr_in] <= write_data_in;
         end
+        if (reset) begin
+            for (i='h0;i < MEM_DEPTH;i=i+1) begin
+                buffer[i] <= 'h0;
+            end
+        end
     end
     endtask
 
-    always @(*) begin  // data0_out_comb_func
-        data0_out_comb = buffer[(read_addr0_in)];
+    generate  // _assign
+    endgenerate
+
+    always_comb begin : data0_out_comb_func  // data0_out_comb_func
+        data0_out_comb=buffer[read_addr0_in];
     end
 
-    always @(*) begin  // data1_out_comb_func
-        data1_out_comb = buffer[(read_addr1_in)];
+    always_comb begin : data1_out_comb_func  // data1_out_comb_func
+        data1_out_comb=buffer[read_addr1_in];
     end
 
     always @(posedge clk) begin
+
         _work(reset);
 
     end

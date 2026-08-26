@@ -4,10 +4,10 @@ import Predef_pkg::*;
 
 
 module Axi4MuxToMaster #(
-    parameter N
-,   parameter ADDR_WIDTH
-,   parameter ID_WIDTH
-,   parameter DATA_WIDTH
+    parameter N = 8
+,   parameter ADDR_WIDTH = 64
+,   parameter ID_WIDTH = 16
+,   parameter DATA_WIDTH = 512
  )
  (
     input wire clk
@@ -67,7 +67,6 @@ module Axi4MuxToMaster #(
     logic[$clog2(N)-1:0] ar_next_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[$clog2(N)-1:0] rr_aw_tmp;
@@ -78,14 +77,14 @@ module Axi4MuxToMaster #(
     logic ar_active_tmp;
 
 
-    always @(*) begin  // aw_next_comb_func
+    always_comb begin : aw_next_comb_func  // aw_next_comb_func
+        logic found;
         logic[8-1:0] i;
         logic[8-1:0] idx;
-        logic found;
-        idx = rr_aw;
+        idx = unsigned'(8'(unsigned'(2'(rr_aw))));
         found=0;
-        for (i = 'h0;i < N;i++) begin
-            logic[8-1:0] candidate; candidate = ((rr_aw + i)) % N;
+        for (i = unsigned'(8'h0);i < N;i++) begin
+            logic[8-1:0] candidate; candidate = unsigned'(8'(((rr_aw + i)) % N));
             if (!found && slaves_in__awvalid_in[candidate]) begin
                 idx = candidate;
                 found=1;
@@ -94,14 +93,14 @@ module Axi4MuxToMaster #(
         aw_next_comb = idx;
     end
 
-    always @(*) begin  // ar_next_comb_func
+    always_comb begin : ar_next_comb_func  // ar_next_comb_func
+        logic found;
         logic[8-1:0] i;
         logic[8-1:0] idx;
-        logic found;
-        idx = rr_ar;
+        idx = unsigned'(8'(unsigned'(2'(rr_ar))));
         found=0;
-        for (i = 'h0;i < N;i++) begin
-            logic[8-1:0] candidate; candidate = ((rr_ar + i)) % N;
+        for (i = unsigned'(8'h0);i < N;i++) begin
+            logic[8-1:0] candidate; candidate = unsigned'(8'(((rr_ar + i)) % N));
             if (!found && slaves_in__arvalid_in[candidate]) begin
                 idx = candidate;
                 found=1;
@@ -111,31 +110,32 @@ module Axi4MuxToMaster #(
     end
 
     generate  // _assign
+        genvar gi;
         assign master_out__awvalid_out = !aw_active && slaves_in__awvalid_in[aw_next_comb];
-        assign master_out__awaddr_out = slaves_in__awaddr_in[aw_next_comb];
-        assign master_out__awid_out = slaves_in__awid_in[aw_next_comb];
-        for (gi = 'h0;gi < N;gi++) begin
+        assign master_out__awaddr_out = unsigned'(32'(slaves_in__awaddr_in[aw_next_comb]));
+        assign master_out__awid_out = unsigned'(8'(slaves_in__awid_in[aw_next_comb]));
+        for (gi = unsigned'(8'h0);gi < N;gi++) begin
             assign slaves_in__awready_out[gi] = ((!aw_active && (aw_next_comb == gi))) ? (master_out__awready_in) : ('h0);
         end
         assign master_out__wvalid_out = (aw_active) ? (slaves_in__wvalid_in[aw_sel]) : ('h0);
         assign master_out__wdata_out = slaves_in__wdata_in[aw_sel];
         assign master_out__wlast_out = slaves_in__wlast_in[aw_sel];
-        for (gi = 'h0;gi < N;gi++) begin
+        for (gi = unsigned'(8'h0);gi < N;gi++) begin
             assign slaves_in__wready_out[gi] = ((aw_active && (aw_sel == gi))) ? (master_out__wready_in) : ('h0);
         end
         assign master_out__bready_out = slaves_in__bready_in[aw_sel];
-        for (gi = 'h0;gi < N;gi++) begin
+        for (gi = unsigned'(8'h0);gi < N;gi++) begin
             assign slaves_in__bvalid_out[gi] = ((aw_sel == gi)) ? (master_out__bvalid_in) : ('h0);
             assign slaves_in__bid_out[gi] = master_out__bid_in;
         end
         assign master_out__arvalid_out = !ar_active && slaves_in__arvalid_in[ar_next_comb];
-        assign master_out__araddr_out = slaves_in__araddr_in[ar_next_comb];
-        assign master_out__arid_out = slaves_in__arid_in[ar_next_comb];
-        for (gi = 'h0;gi < N;gi++) begin
+        assign master_out__araddr_out = unsigned'(32'(slaves_in__araddr_in[ar_next_comb]));
+        assign master_out__arid_out = unsigned'(8'(slaves_in__arid_in[ar_next_comb]));
+        for (gi = unsigned'(8'h0);gi < N;gi++) begin
             assign slaves_in__arready_out[gi] = ((!ar_active && (ar_next_comb == gi))) ? (master_out__arready_in) : ('h0);
         end
         assign master_out__rready_out = slaves_in__rready_in[ar_sel];
-        for (gi = 'h0;gi < N;gi++) begin
+        for (gi = unsigned'(8'h0);gi < N;gi++) begin
             assign slaves_in__rvalid_out[gi] = ((ar_sel == gi)) ? (master_out__rvalid_in) : ('h0);
             assign slaves_in__rdata_out[gi] = master_out__rdata_in;
             assign slaves_in__rlast_out[gi] = master_out__rlast_in;
@@ -146,25 +146,25 @@ module Axi4MuxToMaster #(
     task _work (input logic reset);
     begin: _work
         if ((!ar_active && master_out__arvalid_out) && master_out__arready_in) begin
-            ar_active_tmp = 'h1;
+            ar_active_tmp = unsigned'(1'h1);
             ar_sel_tmp = ar_next_comb;
             rr_ar_tmp = ar_next_comb + 'h1;
         end
         if ((master_out__rvalid_in && slaves_in__rready_in[ar_sel]) && master_out__rlast_in) begin
-            ar_active_tmp = 'h0;
+            ar_active_tmp = unsigned'(1'h0);
         end
         if ((!aw_active && master_out__awvalid_out) && master_out__awready_in) begin
-            aw_active_tmp = 'h1;
+            aw_active_tmp = unsigned'(1'h1);
             aw_sel_tmp = aw_next_comb;
             rr_aw_tmp = aw_next_comb + 'h1;
         end
         if (master_out__bvalid_in && slaves_in__bready_in[aw_sel]) begin
-            aw_active_tmp = 'h0;
+            aw_active_tmp = unsigned'(1'h0);
         end
         if (reset) begin
-            ar_active_tmp = 'h0;
+            ar_active_tmp = unsigned'(1'h0);
             rr_ar_tmp = 'h0;
-            aw_active_tmp = 'h0;
+            aw_active_tmp = unsigned'(1'h0);
             rr_aw_tmp = 'h0;
         end
     end

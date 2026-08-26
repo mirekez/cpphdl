@@ -328,8 +328,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
     }
 
+    unsigned childFlags = flags;
+    if (type == EXPR_TEMPLATE && value.rfind("cpphdl_", 0) != 0) {
+        // A user-defined template specialization is one SV data type.  Port
+        // net qualifiers belong to that completed type, not to the template
+        // arguments used to form its generated specialization name.
+        childFlags &= ~FLAG_WIRE;
+    }
     for (auto& e : sub) {
-        e.flags |= flags;
+        e.flags |= childFlags;
     }
 
     switch (type)

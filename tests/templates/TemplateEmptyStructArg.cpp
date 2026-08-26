@@ -78,6 +78,7 @@ static std::string read_file(const std::filesystem::path& path)
 static bool check_generated_sv()
 {
     const std::filesystem::path dir = generated_dir();
+    const std::string module_text = read_file(dir / "TemplateEmptyStructArg.sv");
     bool ok = true;
     bool found_empty_state_pkg = false;
     bool found_big_state_pkg = false;
@@ -88,6 +89,12 @@ static bool check_generated_sv()
             ok = false;
         }
     };
+
+    require(module_text.find("input wire TemplateEmptyStructArgBigStateTemplateEmptyStructArgFullState_TemplateEmptyStructArgStageint_State state_in") != std::string::npos,
+        "wire qualifier contaminated a user-defined template port type");
+    require(module_text.find("BigStatewire") == std::string::npos
+            && module_text.find("FullState_wire") == std::string::npos,
+        "generated template specialization name contains a port net qualifier");
 
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         const std::string file_name = entry.path().filename().string();

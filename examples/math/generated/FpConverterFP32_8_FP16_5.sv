@@ -12,14 +12,14 @@ module FpConverterFP32_8_FP16_5 #(
  (
     input wire clk
 ,   input wire reset
-,   input FP32_8[LENGTH-1:0] data_in
-,   output FP16_5[LENGTH-1:0] data_out
+,   input wire FP32_8[LENGTH-1:0] data_in
+,   output wire FP16_5[LENGTH-1:0] data_out
 ,   input wire debugen_in
 );
 
 
     // regs and combs
-    FP16_5[16-1:0] out_reg;
+    FP16_5[LENGTH-1:0] out_reg;
     FP16_5[LENGTH-1:0] conv_comb;
 
     // members
