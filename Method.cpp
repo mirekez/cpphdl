@@ -229,7 +229,16 @@ bool Method::print(std::ofstream& out)
     currMethod = this;
     const std::vector<std::string> formatted_buffers = formattedBufferNames(statements);
 
-    if (name == "_strobe") {
+    // Strobe methods describe C++ simulation register commits and clock-domain
+    // ownership; they are never synthesizable tasks. Inherited methods are
+    // qualified as e.g. `Base____strobe_clk`, so inspect the unqualified tail
+    // as well as the legacy top-level spelling.
+    const size_t qualified = name.rfind("___");
+    const std::string lifecycle = qualified == std::string::npos
+        ? name : name.substr(qualified + 3);
+    if (lifecycle == "_strobe" || lifecycle == "strobe"
+        || lifecycle.starts_with("_strobe_")
+        || lifecycle.starts_with("strobe_")) {
         return true;
     }
 
