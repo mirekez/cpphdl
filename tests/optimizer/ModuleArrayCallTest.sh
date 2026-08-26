@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
+
 cpphdl="$1"
 include_dir="$2"
 source_dir="$3"
@@ -19,7 +21,7 @@ trap 'rm -rf "$build_dir"' EXIT
 # A dynamic child index must dispatch over the elaborated graph instances.
 # No generated evaluator or eager chunk may retain a legacy child-array port
 # call, which could re-enter stale function_ref caches outside graph ordering.
-if rg -q 'children\s*\[[^]]+\]\.output\s*\(' \
+if search_q 'children\s*\[[^]]+\]\.output\s*\(' \
     "$build_dir"/ModuleArrayCallRoot_optimized_combs*.cpp; then
     printf 'legacy child-array port call remained in optimized output\n' >&2
     exit 1
@@ -27,7 +29,7 @@ fi
 
 # A cast-wrapped constexpr index is one concrete graph edge. It must not emit
 # a selector against every elaborated child and falsely couple their graphs.
-if [[ "$(rg -o ' == [01]\) return' \
+if [[ "$(search_o ' == [01]\) return' \
         "$build_dir"/ModuleArrayCallRoot_optimized_combs*.cpp | wc -l)" -ne 2 ]]; then
     printf 'constant module-array index emitted a runtime dispatcher\n' >&2
     exit 1
