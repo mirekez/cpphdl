@@ -1057,6 +1057,26 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     ret += indent_str + "disable " + method_name;
                     return ret;
                 }
+                auto unwrapAssignment = [](Expr* expression) {
+                    while ((expression->type == EXPR_CAST || expression->type == EXPR_PAREN) &&
+                           expression->sub.size() == 1) {
+                        expression = &expression->sub[0];
+                    }
+                    return expression;
+                };
+                Expr* assignment = unwrapAssignment(&sub[0]);
+                if ((assignment->type == EXPR_OPERATORCALL || assignment->type == EXPR_BINARY) &&
+                    assignment->value.length() &&
+                    assignment->value.back() == '=' && assignment->value[0] != '!' &&
+                    (assignment->value[0] != '=' || assignment->value.length() == 1)) {
+                    ASSERT(assignment->sub.size() >= 2);
+                    std::string assignmentStatement = assignment->str();
+                    Expr returnValue = sub[0];
+                    Expr* returnAssignment = unwrapAssignment(&returnValue);
+                    *returnAssignment = returnAssignment->sub[0];
+                    return indent_str + assignmentStatement + ";\n" + indent_str +
+                        "return " + returnValue.str();
+                }
                 return indent_str + "return " + sub[0].str();
             }
             else {

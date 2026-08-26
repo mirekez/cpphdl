@@ -19,6 +19,8 @@ module CodeReturn (
     logic[32-1:0] value_comb;
     logic[32-1:0] task_value_comb;
     logic[32-1:0] function_value_comb;
+    logic[32-1:0] function_return_cache;
+    logic bool_return_cache;
     reg[32-1:0] indexed_reg[2];
 
     // members
@@ -51,11 +53,18 @@ module CodeReturn (
         value_task(task_value_comb);
     end
 
+    function logic bool_return_function (input logic value);
+        bool_return_cache=value;
+        return bool_return_cache;
+    endfunction
+
     function logic[32-1:0] value_function (input logic[32-1:0] _context);
-        if (early_in) begin
-            return unsigned'(32'(first_in + unsigned'(32'(unsigned'(32'h255)))));
+        if (bool_return_function(early_in)) begin
+            function_return_cache = first_in + unsigned'(32'(unsigned'(32'h255)));
+            return unsigned'(32'(function_return_cache));
         end
-        return unsigned'(32'(_context + unsigned'(32'(unsigned'(32'h2AA)))));
+        function_return_cache = _context + unsigned'(32'(unsigned'(32'h2AA)));
+        return unsigned'(32'(function_return_cache));
     endfunction
 
     always_comb begin : function_value_comb_func  // function_value_comb_func
