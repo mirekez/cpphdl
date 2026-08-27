@@ -13,6 +13,15 @@ class ResponseProbe : public L1CacheResponse<1024, 32, 2, 0, 17, 64>
     logic<64> memory_data = 0;
     bool input_read = false;
 public:
+    ResponseProbe()
+    {
+        state_reg.clr();
+        req_reg.clr();
+        epoch_wrap_pending_reg.clr();
+        response_reg.clr();
+        lookup_reg.clr();
+        selected_line_reg.clr();
+    }
     void _assign()
     {
         mem_out.read_data_out = _ASSIGN_REG(memory_data);
