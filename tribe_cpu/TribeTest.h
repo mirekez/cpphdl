@@ -101,7 +101,7 @@ static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
 }
 
 template<size_t WORDS>
-static logic<WORDS * 32> verilator_wide_to_logic(const WData (&bits)[WORDS])
+static logic<WORDS * 32> verilator_wide_to_logic(const EData (&bits)[WORDS])
 {
     logic<WORDS * 32> out = 0;
     memcpy(out.bytes, bits, sizeof(out.bytes));
@@ -132,7 +132,7 @@ static T verilator_packed_to_struct(const VlWide<WORDS>& bits)
 }
 
 template<typename T, size_t WORDS>
-static T verilator_packed_to_struct(const WData (&bits)[WORDS])
+static T verilator_packed_to_struct(const EData (&bits)[WORDS])
 {
     T out = {};
     static_assert(sizeof(T) <= WORDS * sizeof(uint32_t));
@@ -149,7 +149,7 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 }
 
 template<size_t WIDTH, size_t WORDS>
-static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+static void verilator_logic_to_wide(EData (&out)[WORDS], const logic<WIDTH>& bits)
 {
     static_assert(WIDTH <= WORDS * 32);
     memset(out, 0, sizeof(out));
@@ -1349,12 +1349,14 @@ public:
 #ifndef VERILATOR
         if (checkpoint_fd) {
             static constexpr uint64_t AXI_CDC_CHECKPOINT_MAGIC = 0x3143444349584134ull;
+            static constexpr uint64_t L2_PIPELINE_CHECKPOINT_MAGIC = 0x3145504950324c43ull;
             uint64_t magic = AXI_CDC_CHECKPOINT_MAGIC;
             if (checkpoint_reading(checkpoint_fd)) {
                 FILE* fd = checkpoint_file(checkpoint_fd);
                 int first = std::fgetc(fd);
                 if (first == EOF) {
                     clearerr(fd);
+                    tribe.clear_checkpoint_l2_pipeline();
                     return;
                 }
                 std::ungetc(first, fd);
@@ -1364,6 +1366,23 @@ public:
                 throw checkpoint_io_error{"read AXI CDC trailer", sizeof(magic), 0, 0};
             }
             tribe.checkpoint_axi_cdc(checkpoint_fd);
+
+            magic = L2_PIPELINE_CHECKPOINT_MAGIC;
+            if (checkpoint_reading(checkpoint_fd)) {
+                FILE* fd = checkpoint_file(checkpoint_fd);
+                int first = std::fgetc(fd);
+                if (first == EOF) {
+                    clearerr(fd);
+                    tribe.clear_checkpoint_l2_pipeline();
+                    return;
+                }
+                std::ungetc(first, fd);
+            }
+            checkpoint_value(checkpoint_fd, magic);
+            if (magic != L2_PIPELINE_CHECKPOINT_MAGIC) {
+                throw checkpoint_io_error{"read L2 pipeline trailer", sizeof(magic), 0, 0};
+            }
+            tribe.checkpoint_l2_pipeline(checkpoint_fd);
         }
 #endif
     }

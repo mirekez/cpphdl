@@ -166,7 +166,13 @@ static bool generated_sv_has_fifo_clock_domains()
     }
     const std::string write_task = text.substr(write_task_begin, read_task_begin - write_task_begin);
     const std::string read_task = text.substr(read_task_begin, write_begin - read_task_begin);
-    return text.find(" data_mem[16];") != std::string::npos
+    return text.find("    localparam  DEPTH = 64'h10;") != std::string::npos
+        && text.find("    localparam  ADDR_BITS = 64'h4;") != std::string::npos
+        && text.find("    localparam  PTR_BITS = 64'h5;") != std::string::npos
+        && text.find("    parameter  DEPTH") == std::string::npos
+        && text.find("    parameter  ADDR_BITS") == std::string::npos
+        && text.find("    parameter  PTR_BITS") == std::string::npos
+        && text.find(" data_mem[16];") != std::string::npos
         && write_task.find("data_mem[") != std::string::npos
         && read_task.find("data_mem[") == std::string::npos
         && text.find("data_mem_tmp") == std::string::npos;

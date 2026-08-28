@@ -67,35 +67,35 @@ module SDController #(
 ,   output wire[31:0] debug_count_out
 ,   output wire[31:0] debug_len_out
 );
-    parameter  DATA_BYTES = DATA_WIDTH/'h8;
-    parameter  HEADER_BYTES = 'h7;
-    parameter  C_REG_TXDATA = 'h18;
-    parameter  C_REG_DMA_DESC_ADDR = 'h28;
-    parameter  C_REG_DMA_DESC_LEN = 'h2C;
-    parameter  C_REG_DMA_DESC_PUSH = 'h30;
-    parameter  C_REG_DMA_DESC_STATUS = 'h34;
-    parameter  C_STATUS_DESC_READY = 'h1 <<< 'h6;
-    parameter  C_DESC_STATUS_READY = 'h1 <<< 'h0;
-    parameter  C_DESC_STATUS_EMPTY = 'h1 <<< 'h1;
-    parameter  C_DESC_STATUS_FULL = 'h1 <<< 'h2;
-    parameter  C_DESC_STATUS_COUNT_SHIFT = 'h8;
-    parameter  ST_IDLE = 'h0;
-    parameter  ST_HEADER = 'h1;
-    parameter  ST_PIO_READ = 'h2;
-    parameter  ST_PIO_WRITE = 'h3;
-    parameter  ST_WAIT_ACK = 'h4;
-    parameter  ST_DMA_READ_RECV = 'h5;
-    parameter  ST_DMA_READ_AW = 'h6;
-    parameter  ST_DMA_READ_W = 'h7;
-    parameter  ST_DMA_READ_B = 'h8;
-    parameter  ST_DMA_WRITE_AR = 'h9;
-    parameter  ST_DMA_WRITE_R = 'hA;
-    parameter  ST_DMA_WRITE_SEND = 'hB;
-    parameter  ST_DONE = 'hC;
-    parameter  ST_ERROR = 'hD;
-    parameter  ST_DMA_LOAD_DESC = 'hE;
-    parameter  FIFO_INDEX_BITS = $clog2(FIFO_DEPTH);
-    parameter  FIFO_COUNT_BITS = $clog2(FIFO_DEPTH + 'h1);
+    localparam  DATA_BYTES = DATA_WIDTH/'h8;
+    localparam  HEADER_BYTES = 'h7;
+    localparam  C_REG_TXDATA = 'h18;
+    localparam  C_REG_DMA_DESC_ADDR = 'h28;
+    localparam  C_REG_DMA_DESC_LEN = 'h2C;
+    localparam  C_REG_DMA_DESC_PUSH = 'h30;
+    localparam  C_REG_DMA_DESC_STATUS = 'h34;
+    localparam  C_STATUS_DESC_READY = 'h1 <<< 'h6;
+    localparam  C_DESC_STATUS_READY = 'h1 <<< 'h0;
+    localparam  C_DESC_STATUS_EMPTY = 'h1 <<< 'h1;
+    localparam  C_DESC_STATUS_FULL = 'h1 <<< 'h2;
+    localparam  C_DESC_STATUS_COUNT_SHIFT = 'h8;
+    localparam  ST_IDLE = 'h0;
+    localparam  ST_HEADER = 'h1;
+    localparam  ST_PIO_READ = 'h2;
+    localparam  ST_PIO_WRITE = 'h3;
+    localparam  ST_WAIT_ACK = 'h4;
+    localparam  ST_DMA_READ_RECV = 'h5;
+    localparam  ST_DMA_READ_AW = 'h6;
+    localparam  ST_DMA_READ_W = 'h7;
+    localparam  ST_DMA_READ_B = 'h8;
+    localparam  ST_DMA_WRITE_AR = 'h9;
+    localparam  ST_DMA_WRITE_R = 'hA;
+    localparam  ST_DMA_WRITE_SEND = 'hB;
+    localparam  ST_DONE = 'hC;
+    localparam  ST_ERROR = 'hD;
+    localparam  ST_DMA_LOAD_DESC = 'hE;
+    localparam  FIFO_INDEX_BITS = $clog2(FIFO_DEPTH);
+    localparam  FIFO_COUNT_BITS = $clog2(FIFO_DEPTH + 'h1);
 
 
     // regs and combs

@@ -42,6 +42,13 @@ private:
     reg<u32> load_pc_reg;
     reg<u<5>> load_rd_reg;
     reg<u1>  load_data_valid_reg;
+    // The first boundary captures the L1 word.  This second boundary captures
+    // byte-lane assembly plus store forwarding so neither the address tag
+    // compare nor forwarding network reaches CPU pipeline registers directly.
+    reg<u32> load_raw_result_reg;
+    reg<u32> load_result_pc_reg;
+    reg<u<5>> load_result_rd_reg;
+    reg<u1>  load_result_valid_reg;
     reg<u32> split_load_low_reg;
     reg<u32> split_load_high_reg;
     reg<u1>  split_load_low_valid_reg;
@@ -82,6 +89,13 @@ private:
         return held_load_valid_comb;
     }
 
+    _LAZY_COMB(held_load_result_valid_comb, bool)
+        held_load_result_valid_comb = load_result_valid_reg &&
+            (uint32_t)load_result_pc_reg == state_in().pc &&
+            (uint8_t)load_result_rd_reg == state_in().rd;
+        return held_load_result_valid_comb;
+    }
+
     _LAZY_COMB(split_load_current_low_valid_comb, bool)
         split_load_current_low_valid_comb = dcache_read_valid_in() &&
             dcache_read_addr_in() == split_load_low_addr_in();
@@ -95,12 +109,15 @@ private:
     }
 
     _LAZY_COMB(split_load_low_ready_comb, bool)
-        split_load_low_ready_comb = split_load_low_valid_reg || split_load_current_low_valid_comb_func();
+        // Cache data is accepted into the split registers before it is exposed
+        // to writeback. Do not let a live L1 tag/data lookup continue through
+        // byte assembly, store forwarding, and the CPU pipeline in one cycle.
+        split_load_low_ready_comb = split_load_low_valid_reg;
         return split_load_low_ready_comb;
     }
 
     _LAZY_COMB(split_load_high_ready_comb, bool)
-        split_load_high_ready_comb = split_load_high_valid_reg || split_load_current_high_valid_comb_func();
+        split_load_high_ready_comb = split_load_high_valid_reg;
         return split_load_high_ready_comb;
     }
 
@@ -111,32 +128,24 @@ private:
     }
 
     _LAZY_COMB(split_load_low_data_comb, uint32_t)
-        split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg :
-            (split_load_current_low_valid_comb_func() ? dcache_read_data_in() : (uint32_t)0);
+        split_load_low_data_comb = split_load_low_valid_reg ? (uint32_t)split_load_low_reg : (uint32_t)0;
         return split_load_low_data_comb;
     }
 
     _LAZY_COMB(split_load_high_data_comb, uint32_t)
-        split_load_high_data_comb = split_load_high_valid_reg ? (uint32_t)split_load_high_reg :
-            (split_load_current_high_valid_comb_func() ? dcache_read_data_in() : (uint32_t)0);
+        split_load_high_data_comb = split_load_high_valid_reg ? (uint32_t)split_load_high_reg : (uint32_t)0;
         return split_load_high_data_comb;
     }
 
     _LAZY_COMB(load_ready_comb, bool)
-        if (split_load_in()) {
-            load_ready_comb = split_load_low_ready_comb_func() && split_load_high_ready_comb_func();
-        }
-        else {
-            // The core has only one non-split load outstanding. The D-cache
-            // valid/data pair is still address-tagged; a held response from a
-            // previous load must not complete the current writeback load.
-            load_ready_comb = state_in().valid && state_in().wb_op == Wb::MEM &&
-                (held_load_valid_comb_func() || non_split_current_valid_comb_func());
-        }
+        // Both ordinary and split loads retire only after the completely
+        // assembled/forwarded raw word crosses the second register boundary.
+        load_ready_comb = state_in().valid && state_in().wb_op == Wb::MEM &&
+            held_load_result_valid_comb_func();
         return load_ready_comb;
     }
 
-    _LAZY_COMB(load_raw_comb, uint32_t)
+    _LAZY_COMB(load_candidate_raw_comb, uint32_t)
         uint32_t raw;
         uint32_t result;
         uint32_t load_addr;
@@ -155,7 +164,7 @@ private:
                 (split_load_high_data_comb_func() << (32u - shift));
         }
         else {
-            raw = held_load_valid_comb_func() ? (uint32_t)load_data_reg : dcache_read_data_in();
+            raw = held_load_valid_comb_func() ? (uint32_t)load_data_reg : (uint32_t)0;
         }
 
         result = raw;
@@ -227,7 +236,13 @@ private:
             }
         }
 
-        load_raw_comb = result;
+        load_candidate_raw_comb = result;
+        return load_candidate_raw_comb;
+    }
+
+    _LAZY_COMB(load_raw_comb, uint32_t)
+        load_raw_comb = held_load_result_valid_comb_func() ?
+            (uint32_t)load_raw_result_reg : (uint32_t)0;
         return load_raw_comb;
     }
 
@@ -236,9 +251,7 @@ private:
             wb_mem_data_comb = split_load_low_data_comb_func();
         }
         else {
-            wb_mem_data_comb = held_load_valid_comb_func() ? (uint32_t)load_data_reg :
-                ((state_in().valid && state_in().wb_op == Wb::MEM && non_split_current_valid_comb_func()) ?
-                    dcache_read_data_in() : (uint32_t)0);
+            wb_mem_data_comb = held_load_valid_comb_func() ? (uint32_t)load_data_reg : (uint32_t)0;
         }
         return wb_mem_data_comb;
     }
@@ -311,11 +324,23 @@ public:
             load_data_valid_reg._next = true;
         }
 
+        if (state_in().valid && state_in().wb_op == Wb::MEM &&
+            !held_load_result_valid_comb_func() &&
+            (split_load_in() ?
+                (split_load_low_valid_reg && split_load_high_valid_reg) :
+                held_load_valid_comb_func())) {
+            load_raw_result_reg._next = load_candidate_raw_comb_func();
+            load_result_pc_reg._next = state_in().pc;
+            load_result_rd_reg._next = state_in().rd;
+            load_result_valid_reg._next = true;
+        }
+
         // A response consumed without a pipeline hold must not survive into a
         // later dynamic execution of the same load instruction. PC/RD identify
         // the held instruction, but loop iterations can legitimately reuse both.
         if (!hold_in()) {
             load_data_valid_reg._next = false;
+            load_result_valid_reg._next = false;
             split_load_low_valid_reg._next = false;
             split_load_high_valid_reg._next = false;
         }
@@ -326,6 +351,10 @@ public:
             load_pc_reg.clr();
             load_rd_reg.clr();
             load_data_valid_reg.clr();
+            load_raw_result_reg.clr();
+            load_result_pc_reg.clr();
+            load_result_rd_reg.clr();
+            load_result_valid_reg.clr();
             split_load_low_reg.clr();
             split_load_high_reg.clr();
             split_load_low_valid_reg.clr();
@@ -344,6 +373,10 @@ public:
         load_pc_reg.strobe(checkpoint_fd);
         load_rd_reg.strobe(checkpoint_fd);
         load_data_valid_reg.strobe(checkpoint_fd);
+        load_raw_result_reg.strobe(checkpoint_fd);
+        load_result_pc_reg.strobe(checkpoint_fd);
+        load_result_rd_reg.strobe(checkpoint_fd);
+        load_result_valid_reg.strobe(checkpoint_fd);
         split_load_low_reg.strobe(checkpoint_fd);
         split_load_high_reg.strobe(checkpoint_fd);
         split_load_low_valid_reg.strobe(checkpoint_fd);

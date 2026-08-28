@@ -154,7 +154,16 @@ def git_head_file(checkout: pathlib.Path, relpath: str) -> str:
     return result.stdout
 
 
-def patch_riscv_dv_amo_pygen(checkout: pathlib.Path) -> None:
+def patch_riscv_dv_pygen(checkout: pathlib.Path) -> None:
+    # The pinned riscv-dv pygen still imports reload from Python's removed
+    # ``imp`` module.  Python 3.12 deleted that compatibility module; reload
+    # has lived in importlib since Python 3.4.  Always regenerate this patch
+    # from the checkout's HEAD so refreshing .load_spike.sh stays repeatable.
+    instr_path = checkout / "pygen" / "pygen_src" / "isa" / "riscv_instr.py"
+    text = git_head_file(checkout, "pygen/pygen_src/isa/riscv_instr.py")
+    text = text.replace("from imp import reload\n", "from importlib import reload\n")
+    instr_path.write_text(text, encoding="utf-8")
+
     path = checkout / "pygen" / "pygen_src" / "riscv_amo_instr_lib.py"
     text = git_head_file(checkout, "pygen/pygen_src/riscv_amo_instr_lib.py")
     text = text.replace(
@@ -242,7 +251,7 @@ def main(argv: list[str]) -> int:
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
     subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "run.py"], check=True)
-    patch_riscv_dv_amo_pygen(checkout)
+    patch_riscv_dv_pygen(checkout)
 
     python = os.environ.get("TRIBE_RISCV_DV_PYTHON", "/usr/bin/python3")
     if shutil.which(python) is None:

@@ -229,8 +229,8 @@ static bool check_generated_sv()
     bool ok = true;
     ok &= decoder.find("TemplateMemberArithmeticCONV_TYPE") == std::string::npos;
     ok &= decoder.find("CONV_TYPE") == std::string::npos;
-    ok &= decoder.find("parameter  VALUE_BITS") != std::string::npos;
-    ok &= decoder.find("parameter  VALUES_IN_WORD") != std::string::npos;
+    ok &= decoder.find("localparam  VALUE_BITS") != std::string::npos;
+    ok &= decoder.find("localparam  VALUES_IN_WORD") != std::string::npos;
     ok &= decoder.find("logic[31:0] VALUE_BITS") == std::string::npos;
     ok &= decoder.find("logic[31:0] VALUES_IN_WORD") == std::string::npos;
     ok &= decoder.find("TemplateMemberArithmeticTemplateMemberConv16 #(") != std::string::npos;

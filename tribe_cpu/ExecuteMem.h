@@ -214,6 +214,31 @@ private:
 #endif
             return;
         }
+#ifdef ENABLE_RV32IA
+        // A tagged D-cache response is already an accepted result even when
+        // the cache's registered busy indication has not dropped yet.  Consume
+        // it before the generic stall path.  WritebackMem captures this same
+        // response and suppresses duplicate architectural reads; postponing
+        // atomic completion until !busy would therefore leave LR/AMO pending
+        // forever with no legal second response to wake it.
+        if (atomic_pending_reg && atomic_read_ready_comb_func()) {
+            if ((uint8_t)atomic_op_reg == Amo::LR_W) {
+                reservation_valid_reg._next = true;
+                reservation_addr_reg._next = atomic_addr_reg;
+                reservation_physical_addr_reg._next =
+                    dcache_read_expected_addr_in() & ~3u;
+            }
+            else {
+                mem_addr_reg._next = atomic_addr_reg;
+                mem_data_reg._next = atomic_write_data_comb_func();
+                mem_write_reg._next = true;
+                mem_mask_reg._next = 0xf;
+                reservation_valid_reg._next = false;
+            }
+            atomic_pending_reg._next = false;
+            return;
+        }
+#endif
         if (mem_stall_in()) {
             mem_addr_reg._next = mem_addr_reg;
             mem_data_reg._next = mem_data_reg;
@@ -244,26 +269,8 @@ private:
 
 #ifdef ENABLE_RV32IA
         if (atomic_pending_reg) {
-            if (atomic_read_ready_comb_func()) {
-                if ((uint8_t)atomic_op_reg == Amo::LR_W) {
-                    reservation_valid_reg._next = true;
-                    reservation_addr_reg._next = atomic_addr_reg;
-                    reservation_physical_addr_reg._next =
-                        dcache_read_expected_addr_in() & ~3u;
-                }
-                else {
-                    mem_addr_reg._next = atomic_addr_reg;
-                    mem_data_reg._next = atomic_write_data_comb_func();
-                    mem_write_reg._next = true;
-                    mem_mask_reg._next = 0xf;
-                    reservation_valid_reg._next = false;
-                }
-                atomic_pending_reg._next = false;
-            }
-            else {
-                mem_addr_reg._next = atomic_addr_reg;
-                mem_read_reg._next = true;
-            }
+            mem_addr_reg._next = atomic_addr_reg;
+            mem_read_reg._next = true;
             return;
         }
 #endif

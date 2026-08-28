@@ -38,17 +38,17 @@ module MMU_TLB #(
 ,   output wire[31:0] debug_last_pte_out
 ,   output wire[31:0] debug_last_addr_out
 );
-    parameter  PTE_V = 'h1 <<< 'h0;
-    parameter  PTE_R = 'h1 <<< 'h1;
-    parameter  PTE_W = 'h1 <<< 'h2;
-    parameter  PTE_X = 'h1 <<< 'h3;
-    parameter  PTE_U = 'h1 <<< 'h4;
-    parameter  PTE_A = 'h1 <<< 'h6;
-    parameter  PTE_D = 'h1 <<< 'h7;
-    parameter  ST_IDLE = 'h0;
-    parameter  ST_READ_L1 = 'h1;
-    parameter  ST_READ_L0 = 'h2;
-    parameter  ST_FAULT = 'h3;
+    localparam  PTE_V = 'h1 <<< 'h0;
+    localparam  PTE_R = 'h1 <<< 'h1;
+    localparam  PTE_W = 'h1 <<< 'h2;
+    localparam  PTE_X = 'h1 <<< 'h3;
+    localparam  PTE_U = 'h1 <<< 'h4;
+    localparam  PTE_A = 'h1 <<< 'h6;
+    localparam  PTE_D = 'h1 <<< 'h7;
+    localparam  ST_IDLE = 'h0;
+    localparam  ST_READ_L1 = 'h1;
+    localparam  ST_READ_L0 = 'h2;
+    localparam  ST_FAULT = 'h3;
 
 
     // regs and combs

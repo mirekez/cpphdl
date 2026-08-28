@@ -116,8 +116,8 @@ static bool check_generated_sv()
     require(top.find("TemplateBaseGeometry6_pkg::") == std::string::npos, "template geometry base produced package reference");
     require(top.find("TemplateBaseOpsTemplateBaseGeometry6_pkg::") == std::string::npos, "template operation base produced package reference");
     require(top.find("typedef") == std::string::npos, "template class base produced an SV typedef");
-    require(top.find("parameter  MODULE_BITS") != std::string::npos, "derived module constexpr was not emitted locally");
-    require(top.find("parameter  TOTAL_BITS") != std::string::npos, "template base constexpr was not emitted locally");
+    require(top.find("localparam  MODULE_BITS") != std::string::npos, "derived module constexpr was not emitted locally");
+    require(top.find("localparam  TOTAL_BITS") != std::string::npos, "template base constexpr was not emitted locally");
     require(top.find("function logic[15:0] TemplateBaseOpsTemplateBaseGeometry6___encode") != std::string::npos,
         "template base method was not emitted into the module");
     require(top.find("unknown(") == std::string::npos, "generated SV contains an unknown call");

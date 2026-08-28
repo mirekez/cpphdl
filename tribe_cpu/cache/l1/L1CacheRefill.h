@@ -30,10 +30,15 @@ protected:
         refill_lines_comb.odd = refill_reg.odd_line;
         for (i = 0; i < PORT_WORDS; ++i) {
             word = (uint32_t)refill_reg.beat * PORT_WORDS + i;
-            refill_lines_comb.even.bits(word * 16 + 15, word * 16) =
-                (uint32_t)mem_out.read_data_out().bits(i * 32 + 15, i * 32);
-            refill_lines_comb.odd.bits(word * 16 + 15, word * 16) =
-                (uint32_t)mem_out.read_data_out().bits(i * 32 + 31, i * 32 + 16);
+            // This helper is evaluated combinationally even when no refill is
+            // active. Keep stale/inactive beat values from selecting beyond
+            // the split line images; active refill beats always satisfy this.
+            if (word < LINE_WORDS) {
+                refill_lines_comb.even.bits(word * 16 + 15, word * 16) =
+                    (uint32_t)mem_out.read_data_out().bits(i * 32 + 15, i * 32);
+                refill_lines_comb.odd.bits(word * 16 + 15, word * 16) =
+                    (uint32_t)mem_out.read_data_out().bits(i * 32 + 31, i * 32 + 16);
+            }
         }
         return refill_lines_comb;
     }

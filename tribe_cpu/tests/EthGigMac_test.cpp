@@ -558,9 +558,8 @@ public:
 static bool generate_sv()
 {
     const auto source_root = source_root_dir();
-    const auto build_root = source_root / "build";
     std::string cmd;
-    cmd += shell_quote(build_root / "cpphdl");
+    cmd += shell_quote(CpphdlToolFrom(source_root));
     cmd += " " + shell_quote(std::filesystem::path(__FILE__));
     cmd += " -I " + shell_quote(source_root / "include");
     cmd += " -I " + shell_quote(source_root / "tribe_cpu");

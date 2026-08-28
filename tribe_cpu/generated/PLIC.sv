@@ -35,11 +35,11 @@ module PLIC #(
 ,   input wire source_irq_in[SOURCES]
 ,   output wire external_irq_out
 );
-    parameter  PRIORITY_BASE = 'h0;
-    parameter  PENDING_BASE = 'h1000;
-    parameter  ENABLE_BASE = 'h2000;
-    parameter  CONTEXT_BASE = 'h200000;
-    parameter  CLAIM_OFFSET = 'h4;
+    localparam  PRIORITY_BASE = 'h0;
+    localparam  PENDING_BASE = 'h1000;
+    localparam  ENABLE_BASE = 'h2000;
+    localparam  CONTEXT_BASE = 'h200000;
+    localparam  CLAIM_OFFSET = 'h4;
 
 
     // regs and combs

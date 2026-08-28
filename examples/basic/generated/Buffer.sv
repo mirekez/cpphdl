@@ -17,8 +17,8 @@ module Buffer #(
 ,   output wire[WIDTH-1:0] data_out
 ,   input wire ready_in
 );
-    parameter  INDEX_BITS = (DEPTH<='h1) ? ('h1) : ($clog2(DEPTH));
-    parameter  COUNT_BITS = $clog2(DEPTH + 'h1);
+    localparam  INDEX_BITS = (DEPTH<='h1) ? ('h1) : ($clog2(DEPTH));
+    localparam  COUNT_BITS = $clog2(DEPTH + 'h1);
 
 
     // regs and combs

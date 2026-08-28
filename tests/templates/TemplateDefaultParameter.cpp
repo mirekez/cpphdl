@@ -139,12 +139,12 @@ static bool check_generated_sv()
     require(leaf.find("parameter WIDTH_") != std::string::npos
             && leaf.find("parameter ADD_") != std::string::npos,
         "numeric template parameters were not preserved as SV parameters");
-    require(leaf.find("parameter  WIDTH = WIDTH_") != std::string::npos,
+    require(leaf.find("localparam  WIDTH = WIDTH_") != std::string::npos,
         "constexpr WIDTH re-export did not reference WIDTH_");
-    require(leaf.find("parameter  ADD = ADD_") != std::string::npos,
+    require(leaf.find("localparam  ADD = ADD_") != std::string::npos,
         "constexpr ADD re-export did not reference ADD_");
-    require(leaf.find("parameter  WIDTH = WIDTH;") == std::string::npos
-            && leaf.find("parameter  ADD = ADD;") == std::string::npos,
+    require(leaf.find("localparam  WIDTH = WIDTH;") == std::string::npos
+            && leaf.find("localparam  ADD = ADD;") == std::string::npos,
         "constexpr re-export was emitted as a circular self-reference");
     require(top.find("TemplateDefaultLeaf") != std::string::npos,
         "parent did not instantiate TemplateDefaultLeaf");

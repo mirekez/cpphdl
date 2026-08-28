@@ -36,26 +36,26 @@ module CSR (
 ,   output wire[31:0] satp_out
 ,   output wire[2-1:0] priv_out
 );
-    parameter  MISA_RV32IMC = ((('h40000000 | (('h1 <<< ((73 - 65))))) | (('h1 <<< ((77 - 65))))) | (('h1 <<< ((67 - 65))))) | (('h1 <<< ((65 - 65))));
-    parameter  PRIV_U = 'h0;
-    parameter  PRIV_S = 'h1;
-    parameter  PRIV_M = 'h3;
-    parameter  MSTATUS_UIE = 'h1 <<< 'h0;
-    parameter  MSTATUS_SIE = 'h1 <<< 'h1;
-    parameter  MSTATUS_MIE = 'h1 <<< 'h3;
-    parameter  MSTATUS_UPIE = 'h1 <<< 'h4;
-    parameter  MSTATUS_SPIE = 'h1 <<< 'h5;
-    parameter  MSTATUS_MPIE = 'h1 <<< 'h7;
-    parameter  MSTATUS_SPP = 'h1 <<< 'h8;
-    parameter  MSTATUS_MPP_SHIFT = 'hB;
-    parameter  MSTATUS_MPP_MASK = 'h3 <<< MSTATUS_MPP_SHIFT;
-    parameter  MSTATUS_WRITABLE = (((((((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_MIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_MPIE) | MSTATUS_SPP) | MSTATUS_MPP_MASK) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h3 <<< 'h11))) | (('h1 <<< 'h12))) | (('h1 <<< 'h13));
-    parameter  SSTATUS_MASK = ((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_SPP) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h1 <<< 'h12));
-    parameter  IRQ_SSIP = 'h1 <<< 'h1;
-    parameter  IRQ_STIP = 'h1 <<< 'h5;
-    parameter  IRQ_SEIP = 'h1 <<< 'h9;
-    parameter  XIP_VISIBLE_MASK = (IRQ_SSIP | IRQ_STIP) | IRQ_SEIP;
-    parameter  XIP_SOFTWARE_WRITABLE_MASK = IRQ_SSIP;
+    localparam  MISA_RV32IMC = ((('h40000000 | (('h1 <<< ((73 - 65))))) | (('h1 <<< ((77 - 65))))) | (('h1 <<< ((67 - 65))))) | (('h1 <<< ((65 - 65))));
+    localparam  PRIV_U = 'h0;
+    localparam  PRIV_S = 'h1;
+    localparam  PRIV_M = 'h3;
+    localparam  MSTATUS_UIE = 'h1 <<< 'h0;
+    localparam  MSTATUS_SIE = 'h1 <<< 'h1;
+    localparam  MSTATUS_MIE = 'h1 <<< 'h3;
+    localparam  MSTATUS_UPIE = 'h1 <<< 'h4;
+    localparam  MSTATUS_SPIE = 'h1 <<< 'h5;
+    localparam  MSTATUS_MPIE = 'h1 <<< 'h7;
+    localparam  MSTATUS_SPP = 'h1 <<< 'h8;
+    localparam  MSTATUS_MPP_SHIFT = 'hB;
+    localparam  MSTATUS_MPP_MASK = 'h3 <<< MSTATUS_MPP_SHIFT;
+    localparam  MSTATUS_WRITABLE = (((((((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_MIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_MPIE) | MSTATUS_SPP) | MSTATUS_MPP_MASK) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h3 <<< 'h11))) | (('h1 <<< 'h12))) | (('h1 <<< 'h13));
+    localparam  SSTATUS_MASK = ((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_SPP) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h1 <<< 'h12));
+    localparam  IRQ_SSIP = 'h1 <<< 'h1;
+    localparam  IRQ_STIP = 'h1 <<< 'h5;
+    localparam  IRQ_SEIP = 'h1 <<< 'h9;
+    localparam  XIP_VISIBLE_MASK = (IRQ_SSIP | IRQ_STIP) | IRQ_SEIP;
+    localparam  XIP_SOFTWARE_WRITABLE_MASK = IRQ_SSIP;
 
 
     // regs and combs
