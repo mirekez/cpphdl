@@ -345,6 +345,52 @@ static bool build_cpu_time_csr_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_csr_order_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_csr_order.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " " + shell_quote(code_dir / "cpu_csr_order.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU CSR ordering bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
+static bool build_cpu_fence_i_order_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_fence_i_order.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr_zifencei -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " " + shell_quote(code_dir / "cpu_fence_i_order.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU FENCE.I ordering bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
@@ -470,6 +516,30 @@ static bool run_cpu_time_csr_cpp(bool debug)
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU time CSR");
 }
 
+static bool run_cpu_csr_order_cpp(bool debug)
+{
+    const auto expected = std::filesystem::current_path() / "cpu_csr_order.expected";
+    if (!write_file(expected, "CSR_ORDER\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_csr_order.elf").string(),
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU CSR ordering");
+}
+
+static bool run_cpu_fence_i_order_cpp(bool debug)
+{
+    const auto expected = std::filesystem::current_path() / "cpu_fence_i_order.expected";
+    if (!write_file(expected, "FENCE_I_ORDER\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence_i_order.elf").string(),
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU FENCE.I ordering");
+}
+
 static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "cpu_bytecopy.elf";
@@ -564,11 +634,16 @@ static bool check_csr_redirect_state_is_feed_forward()
     uint32_t time_hi = 0;
 
     csr.state_in = _ASSIGN(commit_state);
+    csr.commit_in = _ASSIGN(true);
+    csr.read_state_in = _ASSIGN(commit_state);
     csr.trap_check_state_in = _ASSIGN(trap_check_state);
     csr.redirect_state_in = _ASSIGN(redirect_state);
     csr.interrupt_valid_in = _ASSIGN(interrupt_valid);
     csr.interrupt_cause_in = _ASSIGN(interrupt_cause);
     csr.interrupt_to_supervisor_in = _ASSIGN(interrupt_to_supervisor);
+    csr.redirect_interrupt_valid_in = _ASSIGN(interrupt_valid);
+    csr.redirect_interrupt_cause_in = _ASSIGN(interrupt_cause);
+    csr.redirect_interrupt_to_supervisor_in = _ASSIGN(interrupt_to_supervisor);
     csr.irq_pending_bits_in = _ASSIGN(irq_pending);
     csr.software_irq_set_in = _ASSIGN(software_irq_set);
     csr.time_lo_in = _ASSIGN(time_lo);
@@ -587,6 +662,13 @@ static bool check_csr_redirect_state_is_feed_forward()
         commit_state.rs1 = 1;
         commit_state.rs1_val = value;
         redirect_state = commit_state;
+        csr._work(false);
+        csr._strobe();
+        ++_system_clock;
+        // CSR writes cross the decoded one-hot command boundary before they
+        // update architectural state.
+        commit_state = State{};
+        redirect_state = State{};
         csr._work(false);
         csr._strobe();
         ++_system_clock;
@@ -829,6 +911,95 @@ static bool check_l1mem_cdc_payload_capture()
     return true;
 }
 
+static bool check_l1mem_cdc_orphaned_response()
+{
+    L1MemFastToSlowCdc<256> cdc;
+    bool fast_read = false;
+    uint32_t fast_addr = 0;
+    logic<256> slow_read_data = 0;
+    bool slow_wait = true;
+
+    cdc.fast_in.read_in = _ASSIGN(fast_read);
+    cdc.fast_in.write_in = _ASSIGN(false);
+    cdc.fast_in.addr_in = _ASSIGN(fast_addr);
+    cdc.fast_in.write_data_in = _ASSIGN((uint32_t)0);
+    cdc.fast_in.write_mask_in = _ASSIGN((uint8_t)0);
+    cdc.fast_in.cache_disable_in = _ASSIGN(false);
+    cdc.slow_out.read_data_out = _ASSIGN(slow_read_data);
+    cdc.slow_out.wait_out = _ASSIGN(slow_wait);
+    cdc._assign();
+
+    auto fast_tick = [&](bool reset) {
+        cdc._work_clk(reset);
+        cdc._strobe_clk();
+        ++_system_clock;
+    };
+    auto slow_tick = [&](bool reset) {
+        cdc._work_l2_clock(reset);
+        cdc._strobe_l2_clock();
+    };
+
+    fast_tick(true);
+    slow_tick(true);
+    fast_tick(false);
+    slow_tick(false);
+
+    // Launch request A and wait until the slow side owns it.
+    fast_addr = 0x1000u;
+    fast_read = true;
+    for (size_t cycle = 0; cycle < 6 && !cdc.slow_out.read_in(); ++cycle) {
+        fast_tick(false);
+        fast_tick(false);
+        slow_tick(false);
+    }
+    if (!cdc.slow_out.read_in()) {
+        std::print("L1 CDC orphan test failed to launch request A\n");
+        return false;
+    }
+
+    // Withdraw A for one fast edge, then present request B before A's response
+    // has crossed back.  B must remain waiting while A is discarded.
+    fast_read = false;
+    fast_tick(false);
+    fast_addr = 0x2000u;
+    fast_read = true;
+    slow_read_data = 0xaaaaaaaau;
+    slow_wait = false;
+    slow_tick(false);
+    fast_tick(false);
+    fast_tick(false);
+    if (!cdc.fast_in.wait_out()) {
+        std::print("L1 CDC orphan response was accepted by request B\n");
+        return false;
+    }
+
+    // After the orphan is acknowledged, B is captured as a new transaction.
+    slow_wait = true;
+    for (size_t cycle = 0; cycle < 8 &&
+        !(cdc.slow_out.read_in() && cdc.slow_out.addr_in() == 0x2000u); ++cycle) {
+        fast_tick(false);
+        fast_tick(false);
+        slow_tick(false);
+    }
+    if (!cdc.slow_out.read_in() || cdc.slow_out.addr_in() != 0x2000u) {
+        std::print("L1 CDC failed to relaunch request B after orphan discard\n");
+        return false;
+    }
+    slow_read_data = 0xbbbbbbbbu;
+    slow_wait = false;
+    slow_tick(false);
+    fast_tick(false);
+    fast_tick(false);
+    if (cdc.fast_in.wait_out() ||
+        (uint32_t)cdc.fast_in.read_data_out() != 0xbbbbbbbbu) {
+        std::print("L1 CDC request B completion failed: wait={} data={:08x}\n",
+            (bool)cdc.fast_in.wait_out(),
+            (uint32_t)cdc.fast_in.read_data_out());
+        return false;
+    }
+    return true;
+}
+
 static bool check_writeback_mem_address_tags()
 {
     WritebackMem wb;
@@ -865,7 +1036,7 @@ static bool check_writeback_mem_address_tags()
     wb.dcache_write_data_in = _ASSIGN(dcache_write_data);
     wb.dcache_write_mask_in = _ASSIGN(dcache_write_mask);
     wb.store_forward_enable_in = _ASSIGN(true);
-    wb.hold_in = _ASSIGN(hold);
+    wb.retire_in = _ASSIGN(!hold);
     wb._assign();
 
     auto tick = [&]() {
@@ -1020,15 +1191,30 @@ int main(int argc, char** argv)
     ok = ok && check_iterative_divider();
     ok = ok && check_iterative_multiplier();
     ok = ok && check_l1mem_cdc_payload_capture();
+    ok = ok && check_l1mem_cdc_orphaned_response();
     if (run_selected("writeback_mem_addr")) {
         ok = ok && check_writeback_mem_address_tags();
     }
     // Scenario: RISC-V time/timeh CSRs must expose the platform timer used by
     // CLINT/SBI, not the raw CPU cycle counter. Linux uses rdtime as its
     // clocksource and SBI set_timer deadlines are in the same timebase.
+#ifdef ENABLE_ISR
     if (run_selected("csr_time")) {
         ok = ok && build_cpu_time_csr_elf();
         ok = ok && run_cpu_time_csr_cpp(debug);
+    }
+#endif
+    // Scenario: consecutive CSR read/modify/write instructions targeting the
+    // same CSR must return the value from before their own deferred write.
+    if (run_selected("csr_order")) {
+        ok = ok && build_cpu_csr_order_elf();
+        ok = ok && run_cpu_csr_order_cpp(debug);
+    }
+    // Scenario: a store that modifies executable memory must become visible
+    // before FENCE.I invalidates and refills the instruction cache.
+    if (run_selected("fence_i_order")) {
+        ok = ok && build_cpu_fence_i_order_elf();
+        ok = ok && run_cpu_fence_i_order_cpp(debug);
     }
     // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
     // access. The fence must drain/serialize memory traffic without wedging the
@@ -1040,10 +1226,12 @@ int main(int argc, char** argv)
     // Scenario: SFENCE.VMA invalidates translations but must not clear the
     // instruction cache. The final FENCE.I proves that cache invalidation still
     // occurs for the instruction that architecturally requires it.
+#ifdef ENABLE_MMU_TLB
     if (run_selected("sfence")) {
         ok = ok && build_cpu_sfence_elf();
         ok = ok && run_cpu_sfence_cpp(debug);
     }
+#endif
     // Scenario: byte loads and stores around unaligned offsets must observe
     // dirty cached data instead of bypassing to stale RAM contents.
     if (run_selected("bytecopy")) {
@@ -1082,17 +1270,21 @@ int main(int argc, char** argv)
     // Scenario: a UART/PLIC external interrupt can arrive while the main code
     // is continuously creating load-use dependencies. Trap-vector fetch must
     // not be held by a stale load hazard when no fetched instruction is valid.
+#ifdef ENABLE_ISR
     if (run_selected("irq_load_hazard")) {
         ok = ok && build_cpu_irq_load_hazard_elf();
         ok = ok && run_cpu_irq_load_hazard_cpp(debug);
     }
+#endif
     // Scenario: an interrupt must not enter while LR/SC is holding the memory
     // pipeline busy. Otherwise the trap flush can leave atomic_busy asserted
     // with no valid instruction left, wedging trap-vector fetch at stvec.
+#if defined(ENABLE_ISR) && defined(ENABLE_RV32IA)
     if (run_selected("irq_atomic_hazard")) {
         ok = ok && build_cpu_irq_atomic_hazard_elf();
         ok = ok && run_cpu_irq_atomic_hazard_cpp(debug);
     }
+#endif
 
 #ifndef VERILATOR
     if (ok && !noveril) {

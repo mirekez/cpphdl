@@ -16,14 +16,12 @@ module MemberArrayLeaf (
     logic[16-1:0] value_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
 
 
     always_comb begin : value_comb_func  // value_comb_func
         value_comb = base_in + add_in;
-        disable value_comb_func;
     end
 
     task _work (input logic reset);

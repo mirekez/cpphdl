@@ -28,7 +28,6 @@ module VRResponder #(
     logic error_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[32-1:0] state_reg_tmp;
@@ -40,12 +39,10 @@ module VRResponder #(
 
     always_comb begin : done_comb_func  // done_comb_func
         done_comb=received_reg>='h100;
-        disable done_comb_func;
     end
 
     always_comb begin : error_comb_func  // error_comb_func
         error_comb=error_reg;
-        disable error_comb_func;
     end
 
     generate  // _assign
@@ -55,9 +52,9 @@ module VRResponder #(
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            state_reg_tmp = unsigned'(32'('h13579BDF));
+            state_reg_tmp = unsigned'(32'(unsigned'(32'h13579BDF)));
             received_reg_tmp = '0;
-            ready_lfsr_reg_tmp = unsigned'(8'('h5A));
+            ready_lfsr_reg_tmp = unsigned'(8'(unsigned'(8'h5A)));
             ready_reg_tmp = '0;
             error_reg_tmp = '0;
             disable _work;
@@ -67,18 +64,18 @@ module VRResponder #(
         ready_lfsr_reg_tmp = ready_lfsr_reg;
         ready_reg_tmp = ready_reg;
         error_reg_tmp = error_reg;
-        ready_lfsr_reg_tmp = ((ready_lfsr_reg <<< 'h1)) ^ unsigned'(8'(((((((unsigned'(64'(ready_lfsr_reg)) >>> 'h7)) ^ ((unsigned'(64'(ready_lfsr_reg)) >>> 'h5))) ^ 'h1)) & 'h1)));
-        ready_reg_tmp = ((unsigned'(64'(ready_lfsr_reg)) & 'h7)) != 'h0;
+        ready_lfsr_reg_tmp = ((ready_lfsr_reg <<< 'h1)) ^ unsigned'(8'(unsigned'(8'(((((((unsigned'(64'(ready_lfsr_reg)) >>> 'h7)) ^ ((unsigned'(64'(ready_lfsr_reg)) >>> 'h5))) ^ 'h1)) & 'h1)))));
+        ready_reg_tmp = unsigned'(1'(((unsigned'(64'(ready_lfsr_reg)) & 'h7)) != 'h0));
         if (sink_in__valid_in && sink_in__ready_out) begin
             expected_data = 'h0;
             expected_data['h0 +:32] = state_reg;
             expected_data['h20 +:16] = received_reg;
             expected_data['h30 +:16] = (((unsigned'(64'(state_reg))) & 'hFFFF)) ^ received_reg;
             if (sink_in__data_in != expected_data) begin
-                error_reg_tmp = 'h1;
+                error_reg_tmp = unsigned'(1'h1);
             end
-            state_reg_tmp = (state_reg*unsigned'(32'('h19660D))) + unsigned'(32'('h3C6EF35F));
-            received_reg_tmp = received_reg + unsigned'(16'('h1));
+            state_reg_tmp = (state_reg*unsigned'(32'(unsigned'(32'h19660D)))) + unsigned'(32'(unsigned'(32'h3C6EF35F)));
+            received_reg_tmp = received_reg + unsigned'(16'(unsigned'(16'h1)));
         end
     end
     endtask

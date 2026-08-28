@@ -22,7 +22,16 @@ class TemplateInheritedArrayBase : public Module
 {
 protected:
     TemplateInheritedArrayLeaf leaf[COUNT];
+    u8 value_comb;
+
+    u8& value_comb_func()
+    {
+        value_comb = leaf[0].value_out();
+        return value_comb;
+    }
 public:
+    _PORT(u8) value_out = _ASSIGN_COMB(value_comb_func());
+
     void _assign()
     {
         size_t i;
@@ -43,6 +52,18 @@ public:
 template<size_t COUNT = 2>
 class TemplateInheritedBaseArray : public TemplateInheritedArrayBase<COUNT>
 {
+    using Base = TemplateInheritedArrayBase<COUNT>;
+
+public:
+    void _assign()
+    {
+        Base::_assign();
+    }
+
+    void _work(bool reset)
+    {
+        Base::_work(reset);
+    }
 };
 
 template class TemplateInheritedBaseArray<1>;
@@ -69,6 +90,12 @@ static bool check_generated_sv()
     bool ok = in.good() || !text.empty();
     ok &= text.find("TemplateInheritedArrayBase___leaf__value_in[COUNT]") != std::string::npos;
     ok &= text.find("TemplateInheritedArrayBase___leaf__value_in[1]") == std::string::npos;
+    ok &= text.find("TemplateInheritedArrayBase___value_comb_func") != std::string::npos;
+    ok &= text.find("TemplateInheritedArrayBase2___value_comb_func") == std::string::npos;
+    ok &= text.find("TemplateInheritedArrayBase2____assign") == std::string::npos;
+    const size_t comb = text.find("always_comb begin : TemplateInheritedArrayBase___value_comb_func");
+    ok &= comb != std::string::npos
+        && text.find("always_comb begin : TemplateInheritedArrayBase___value_comb_func", comb + 1) == std::string::npos;
     if (!ok) std::print("ERROR: inherited template member array did not retain COUNT\n");
     return ok;
 }

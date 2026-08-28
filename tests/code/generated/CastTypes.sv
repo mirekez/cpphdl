@@ -4,7 +4,7 @@ import Predef_pkg::*;
 
 
 module CastTypes #(
-    parameter WIDTH_PARAM
+    parameter WIDTH_PARAM = 'h8
  )
  (
     input wire clk
@@ -49,12 +49,14 @@ module CastTypes #(
     end
 
     always_comb begin : direct_cstyle_comb_func  // direct_cstyle_comb_func
-        logic[31:0] v; v = scaled_value();
+        logic[31:0] v;
+        v = scaled_value();
         direct_cstyle_comb = unsigned'(32'((unsigned'($clog2(WIDTH_PARAM)'(unsigned'($clog2(WIDTH_PARAM)'(v)))))));
     end
 
     always_comb begin : direct_functional_comb_func  // direct_functional_comb_func
-        logic[31:0] v; v = scaled_value();
+        logic[31:0] v;
+        v = scaled_value();
         direct_functional_comb = unsigned'(32'((unsigned'($clog2(WIDTH_PARAM)'(unsigned'($clog2(WIDTH_PARAM)'(v)))))));
     end
 

@@ -238,6 +238,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
         COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src} ${CPPHDL_TOOLCHAIN_ARG_LIST}
                 ${TRIBE_CPPHDL_CLOCK_ARGS}
+                ${TRIBE_CPPHDL_FEATURE_ARGS}
                 ${cpphdl_extra_defines}
                 -I ${CMAKE_SOURCE_DIR}/include
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/..

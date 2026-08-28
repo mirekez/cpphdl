@@ -20,7 +20,7 @@ module Fifo2clk (
 
 
     // regs and combs
-    reg[1-1:0][8-1:0] data_mem[16];
+    reg[8-1:0] data_mem[16];
     reg[5-1:0] write_bin_reg;
     reg[5-1:0] write_gray_reg;
     reg[5-1:0] read_gray_write1_reg;

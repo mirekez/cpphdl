@@ -1700,7 +1700,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
             }
             else {
                 parentName = genTypeName(MD->getParent()->getNameAsString());
-                appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                // Module bases are flattened under their primary class name,
+                // including their fields and comb backing values. Keep methods
+                // under that same prefix when a derived module calls them.
+                // Non-module helper bases still need their type specialization
+                // in the method name to distinguish concrete helper APIs.
+                if (!MD->getParent()->isDerivedFrom(ModuleClass)) {
+                    appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
+                }
             }
             DEBUG_AST1(" - base Module method: (" << hlp.mod->name << " " << MD->getParent()->getQualifiedNameAsString() << ")");
         }

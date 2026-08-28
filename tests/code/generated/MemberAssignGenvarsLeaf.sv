@@ -20,8 +20,7 @@ module MemberAssignGenvarsLeaf (
 
 
     always_comb begin : value_comb_func  // value_comb_func
-        value_comb = (value_in*unsigned'(32'('h7))) + unsigned'(32'('h3));
-        disable value_comb_func;
+        value_comb = (value_in*unsigned'(32'(unsigned'(32'h7)))) + unsigned'(32'(unsigned'(32'h3)));
     end
 
     task _work (input logic reset);

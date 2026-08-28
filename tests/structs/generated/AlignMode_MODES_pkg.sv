@@ -1,6 +1,6 @@
 package AlignMode_MODES_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     MODE_ZERO,
     MODE_ONE,
     MODE_TWO,

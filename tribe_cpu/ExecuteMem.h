@@ -100,15 +100,21 @@ private:
 
     // Detect memory accesses that cross a 32-byte L1 cache line.
     _LAZY_COMB(mem_split_comb, bool)
-        uint32_t addr;
+        uint8_t addr_offset;
         uint32_t size;
-        addr = alu_result_in();
+        // A line-crossing decision needs only the low five effective-address
+        // bits.  Derive those directly from the registered operands instead
+        // of consuming Execute's full ALU result: otherwise the ALU opcode
+        // mux and address carry chain feed split-hazard and global retirement
+        // control in the same cycle.
+        addr_offset = (uint8_t)(((state_in().rs1_val & 0x1fu) +
+            (uint32_t(state_in().imm) & 0x1fu)) & 0x1fu);
         size = mem_size_comb_func();
         mem_split_comb = state_in().valid &&
             (state_in().mem_op == Mem::LOAD || state_in().mem_op == Mem::STORE) &&
             state_in().amo_op == Amo::AMONONE &&
             size != 0 &&
-            ((addr & 0x1f) + size > 32);
+            ((uint32_t)addr_offset + size > 32);
         return mem_split_comb;
     }
 
@@ -178,16 +184,6 @@ private:
         overflow = (uint32_t)mem_split_offset_reg + (uint32_t)mem_split_size_reg - 4u;
         second_split_mask_comb = (uint8_t)((1u << overflow) - 1u);
         return second_split_mask_comb;
-    }
-
-    // Low aligned word address used later to match the first split-load response.
-    _LAZY_COMB(split_load_low_addr_comb, uint32_t)
-        return split_load_low_addr_comb = alu_result_in() & ~3u;
-    }
-
-    // High aligned word address used later to match the second split-load response.
-    _LAZY_COMB(split_load_high_addr_comb, uint32_t)
-        return split_load_high_addr_comb = split_load_low_addr_comb_func() + 4;
     }
 
     void do_memory()
@@ -283,6 +279,15 @@ private:
             mem_read_reg._next = mem_split_read_reg;
             mem_mask_reg._next = second_split_mask_comb_func();
             mem_split_pending_reg._next = false;
+            // The first cache response cannot precede this registered
+            // second-beat state.  Build response tags from the captured split
+            // address here so the issue cycle does not contain effective-
+            // address addition followed by another +4 address chain.
+            if (mem_split_read_reg) {
+                split_load_low_addr_reg._next = (uint32_t)mem_split_addr_reg & ~3u;
+                split_load_high_addr_reg._next =
+                    ((uint32_t)mem_split_addr_reg & ~3u) + 4u;
+            }
             return;
         }
 
@@ -301,8 +306,6 @@ private:
         mem_addr_reg._next = state_in().amo_op != Amo::AMONONE ? (alu_result_in() & ~3u) : alu_result_in();
         mem_data_reg._next = state_in().rs2_val;
         split_load_reg._next = state_in().valid && state_in().mem_op == Mem::LOAD && mem_split_comb_func();
-        split_load_low_addr_reg._next = split_load_low_addr_comb_func();
-        split_load_high_addr_reg._next = split_load_high_addr_comb_func();
 
 #ifdef ENABLE_RV32IA
         if (state_in().valid && state_in().amo_op != Amo::AMONONE) {

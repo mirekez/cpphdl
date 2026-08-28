@@ -23,7 +23,9 @@ public:
     _PORT(uint8_t)  dcache_write_mask_in;
     _PORT(bool)     store_forward_enable_in;
 
-    _PORT(bool)     hold_in;
+    // Registered owner-retirement token. Cache busy/global pipeline wait must
+    // not directly reset every response-stage valid register.
+    _PORT(bool)     retire_in;
 
     _PORT(bool)     load_ready_out    = _ASSIGN_COMB(load_ready_comb_func());
     _PORT(uint32_t) load_raw_out      = _ASSIGN_COMB(load_raw_comb_func());
@@ -39,15 +41,11 @@ public:
 private:
     reg<u32> load_data_reg;
     reg<u32> load_addr_reg;
-    reg<u32> load_pc_reg;
-    reg<u<5>> load_rd_reg;
     reg<u1>  load_data_valid_reg;
     // The first boundary captures the L1 word.  This second boundary captures
     // byte-lane assembly plus store forwarding so neither the address tag
     // compare nor forwarding network reaches CPU pipeline registers directly.
     reg<u32> load_raw_result_reg;
-    reg<u32> load_result_pc_reg;
-    reg<u<5>> load_result_rd_reg;
     reg<u1>  load_result_valid_reg;
     reg<u32> split_load_low_reg;
     reg<u32> split_load_high_reg;
@@ -57,6 +55,14 @@ private:
     reg<array<2,u32>> store_forward_data_reg;
     reg<array<2,u8>>  store_forward_mask_reg;
     reg<array<2,u1>>  store_forward_valid_reg;
+    // Pre-expanded byte metadata turns load/store overlap checking into a
+    // parallel equality CAM. The prior per-byte subtract/range checks placed
+    // eight full-width carry chains between D-cache response state and the
+    // assembled load-result register.
+    reg<array<4,u32>> load_byte_addr_reg;
+    reg<array<2,array<4,u32>>> store_forward_byte_addr_reg;
+    reg<array<2,array<4,u8>>> store_forward_byte_data_reg;
+    reg<array<2,array<4,u1>>> store_forward_byte_valid_reg;
 
     _LAZY_COMB(debug_load_data_valid_comb, bool)
         debug_load_data_valid_comb = load_data_valid_reg;
@@ -78,21 +84,17 @@ private:
         return debug_split_high_valid_comb;
     }
 
-    // A held non-split load response belongs to the single outstanding
-    // architectural load in writeback. Tag it by instruction identity instead
-    // of the live translated address mux; the MMU physical-address output can
-    // move while the pipe is held.
+    // Tribe permits only one outstanding architectural load. The pipeline is
+    // held from response capture through result retirement, and both valid
+    // bits are cleared on the first advancing edge. Identity comparisons here
+    // are therefore redundant and put state PC/RD in the byte-forwarding cone.
     _LAZY_COMB(held_load_valid_comb, bool)
-        held_load_valid_comb = load_data_valid_reg &&
-            (uint32_t)load_pc_reg == state_in().pc &&
-            (uint8_t)load_rd_reg == state_in().rd;
+        held_load_valid_comb = load_data_valid_reg;
         return held_load_valid_comb;
     }
 
     _LAZY_COMB(held_load_result_valid_comb, bool)
-        held_load_result_valid_comb = load_result_valid_reg &&
-            (uint32_t)load_result_pc_reg == state_in().pc &&
-            (uint8_t)load_result_rd_reg == state_in().rd;
+        held_load_result_valid_comb = load_result_valid_reg;
         return held_load_result_valid_comb;
     }
 
@@ -147,15 +149,13 @@ private:
 
     _LAZY_COMB(load_candidate_raw_comb, uint32_t)
         uint32_t raw;
-        uint32_t result;
-        uint32_t load_addr;
-        uint32_t byte_addr;
-        uint32_t store_addr;
-        uint32_t store_data;
-        uint32_t store_byte;
-        uint32_t diff;
-        uint8_t store_mask;
+        logic<32> result;
         uint32_t shift;
+        uint32_t lane;
+        uint32_t store_slot_order;
+        uint32_t store_slot;
+        uint32_t store_lane;
+        uint32_t forwarded_byte;
         bool allow_store_forward;
 
         if (split_load_in()) {
@@ -168,72 +168,28 @@ private:
         }
 
         result = raw;
-        load_addr = held_load_valid_comb_func() ? (uint32_t)load_addr_reg : dcache_read_addr_in();
         // Store forwarding is only valid for normal memory. MMIO registers
         // can be read-to-clear or write-one-to-complete, so forwarding a
         // previous device write into a following device read corrupts state.
         allow_store_forward = store_forward_enable_in() && state_in().amo_op == Amo::AMONONE;
 
-        if (allow_store_forward && store_forward_valid_reg[1]) {
-            store_addr = store_forward_addr_reg[1];
-            store_data = store_forward_data_reg[1];
-            store_mask = store_forward_mask_reg[1];
-
-            byte_addr = load_addr;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xffu) | store_byte;
+        // Each load byte compares with old-store bytes and then newer-store
+        // bytes. All addresses were expanded at earlier clock boundaries, so
+        // this stage contains equality and byte muxes but no address carries.
+        for (lane = 0; lane < 4; ++lane) {
+            forwarded_byte = (raw >> (lane * 8u)) & 0xffu;
+            for (store_slot_order = 0; store_slot_order < 2; ++store_slot_order) {
+                store_slot = 1u - store_slot_order;
+                for (store_lane = 0; store_lane < 4; ++store_lane) {
+                    if (allow_store_forward &&
+                        store_forward_byte_valid_reg[store_slot][store_lane] &&
+                        load_byte_addr_reg[lane] ==
+                            store_forward_byte_addr_reg[store_slot][store_lane]) {
+                        forwarded_byte = store_forward_byte_data_reg[store_slot][store_lane];
+                    }
+                }
             }
-            byte_addr = load_addr + 1u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff00u) | (store_byte << 8u);
-            }
-            byte_addr = load_addr + 2u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff0000u) | (store_byte << 16u);
-            }
-            byte_addr = load_addr + 3u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff000000u) | (store_byte << 24u);
-            }
-        }
-
-        if (allow_store_forward && store_forward_valid_reg[0]) {
-            store_addr = store_forward_addr_reg[0];
-            store_data = store_forward_data_reg[0];
-            store_mask = store_forward_mask_reg[0];
-
-            byte_addr = load_addr;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xffu) | store_byte;
-            }
-            byte_addr = load_addr + 1u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff00u) | (store_byte << 8u);
-            }
-            byte_addr = load_addr + 2u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff0000u) | (store_byte << 16u);
-            }
-            byte_addr = load_addr + 3u;
-            diff = byte_addr - store_addr;
-            if (byte_addr >= store_addr && diff < 4 && (store_mask & (1u << diff))) {
-                store_byte = (store_data >> (diff * 8u)) & 0xffu;
-                result = (result & ~0xff000000u) | (store_byte << 24u);
-            }
+            result.bits(lane * 8 + 7, lane * 8) = forwarded_byte;
         }
 
         load_candidate_raw_comb = result;
@@ -278,6 +234,13 @@ private:
 public:
     void _work(bool reset)
     {
+        uint32_t lane;
+        if (state_in().valid && state_in().wb_op == Wb::MEM) {
+            for (lane = 0; lane < 4; ++lane) {
+                load_byte_addr_reg._next[lane] = alu_result_in() + lane;
+            }
+        }
+
         if (dcache_write_valid_in() && dcache_write_mask_in()) {
             bool same_head = store_forward_valid_reg[0] &&
                 (uint32_t)store_forward_addr_reg[0] == dcache_write_addr_in() &&
@@ -288,17 +251,31 @@ public:
                 store_forward_data_reg._next[1] = store_forward_data_reg[0];
                 store_forward_mask_reg._next[1] = store_forward_mask_reg[0];
                 store_forward_valid_reg._next[1] = store_forward_valid_reg[0];
+                store_forward_byte_addr_reg._next[1] = store_forward_byte_addr_reg[0];
+                store_forward_byte_data_reg._next[1] = store_forward_byte_data_reg[0];
+                store_forward_byte_valid_reg._next[1] = store_forward_byte_valid_reg[0];
             }
             store_forward_addr_reg._next[0] = dcache_write_addr_in();
             store_forward_data_reg._next[0] = dcache_write_data_in();
             store_forward_mask_reg._next[0] = dcache_write_mask_in();
             store_forward_valid_reg._next[0] = true;
+            for (lane = 0; lane < 4; ++lane) {
+                store_forward_byte_addr_reg._next[0][lane] = dcache_write_addr_in() + lane;
+                store_forward_byte_data_reg._next[0][lane] =
+                    (dcache_write_data_in() >> (lane * 8u)) & 0xffu;
+                store_forward_byte_valid_reg._next[0][lane] =
+                    (dcache_write_mask_in() & (1u << lane)) != 0;
+            }
         }
         else {
             // A completed write is already visible through L1/L2; retaining it
             // would overwrite a later coherent load with stale forwarded data.
             store_forward_valid_reg._next[0] = false;
             store_forward_valid_reg._next[1] = false;
+            for (lane = 0; lane < 4; ++lane) {
+                store_forward_byte_valid_reg._next[0][lane] = false;
+                store_forward_byte_valid_reg._next[1][lane] = false;
+            }
         }
 
         if (split_load_in()) {
@@ -319,8 +296,6 @@ public:
             // same cycle by another wait source.
             load_data_reg._next = dcache_read_data_in();
             load_addr_reg._next = dcache_read_addr_in();
-            load_pc_reg._next = state_in().pc;
-            load_rd_reg._next = state_in().rd;
             load_data_valid_reg._next = true;
         }
 
@@ -330,15 +305,13 @@ public:
                 (split_load_low_valid_reg && split_load_high_valid_reg) :
                 held_load_valid_comb_func())) {
             load_raw_result_reg._next = load_candidate_raw_comb_func();
-            load_result_pc_reg._next = state_in().pc;
-            load_result_rd_reg._next = state_in().rd;
             load_result_valid_reg._next = true;
         }
 
-        // A response consumed without a pipeline hold must not survive into a
-        // later dynamic execution of the same load instruction. PC/RD identify
-        // the held instruction, but loop iterations can legitimately reuse both.
-        if (!hold_in()) {
+        // A response consumed by the registered retirement token must not
+        // survive into a later dynamic execution of the same load instruction.
+        // PC/RD can legitimately repeat in a polling loop.
+        if (retire_in() || !state_in().valid || state_in().wb_op != Wb::MEM) {
             load_data_valid_reg._next = false;
             load_result_valid_reg._next = false;
             split_load_low_valid_reg._next = false;
@@ -348,12 +321,8 @@ public:
         if (reset) {
             load_data_reg.clr();
             load_addr_reg.clr();
-            load_pc_reg.clr();
-            load_rd_reg.clr();
             load_data_valid_reg.clr();
             load_raw_result_reg.clr();
-            load_result_pc_reg.clr();
-            load_result_rd_reg.clr();
             load_result_valid_reg.clr();
             split_load_low_reg.clr();
             split_load_high_reg.clr();
@@ -363,6 +332,10 @@ public:
             store_forward_data_reg.clr();
             store_forward_mask_reg.clr();
             store_forward_valid_reg.clr();
+            load_byte_addr_reg.clr();
+            store_forward_byte_addr_reg.clr();
+            store_forward_byte_data_reg.clr();
+            store_forward_byte_valid_reg.clr();
         }
     }
 
@@ -370,12 +343,8 @@ public:
     {
         load_data_reg.strobe(checkpoint_fd);
         load_addr_reg.strobe(checkpoint_fd);
-        load_pc_reg.strobe(checkpoint_fd);
-        load_rd_reg.strobe(checkpoint_fd);
         load_data_valid_reg.strobe(checkpoint_fd);
         load_raw_result_reg.strobe(checkpoint_fd);
-        load_result_pc_reg.strobe(checkpoint_fd);
-        load_result_rd_reg.strobe(checkpoint_fd);
         load_result_valid_reg.strobe(checkpoint_fd);
         split_load_low_reg.strobe(checkpoint_fd);
         split_load_high_reg.strobe(checkpoint_fd);
@@ -385,6 +354,10 @@ public:
         store_forward_data_reg.strobe(checkpoint_fd);
         store_forward_mask_reg.strobe(checkpoint_fd);
         store_forward_valid_reg.strobe(checkpoint_fd);
+        load_byte_addr_reg.strobe(checkpoint_fd);
+        store_forward_byte_addr_reg.strobe(checkpoint_fd);
+        store_forward_byte_data_reg.strobe(checkpoint_fd);
+        store_forward_byte_valid_reg.strobe(checkpoint_fd);
     }
 
     void _assign()

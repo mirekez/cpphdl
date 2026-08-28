@@ -1,0 +1,57 @@
+{
+  "creator": "cpphdl",
+  "modules": {
+    "JsonAliasLeaf": {
+      "attributes": {},
+      "ports": {
+        "request_in": {"direction": "input", "kind": "signal", "bits": [4]},
+        "response_out": {"direction": "output", "kind": "signal", "bits": [5]}
+      },
+      "cells": {},
+      "data_members": {},
+      "netnames": {
+        "clk": {"hide_name": 0, "bits": [2], "attributes": {}},
+        "request_in": {"hide_name": 0, "bits": [4], "attributes": {}},
+        "reset": {"hide_name": 0, "bits": [3], "attributes": {}},
+        "response_out": {"hide_name": 0, "bits": [5], "attributes": {}}
+      }
+    },
+    "JsonTestHarness": {
+      "attributes": {},
+      "ports": {
+        "trigger_in": {"direction": "input", "kind": "signal", "bits": [4]},
+        "observed_out": {"direction": "output", "kind": "signal", "bits": [5]}
+      },
+      "cells": {
+        "dut": {
+          "hide_name": 0,
+          "type": "JsonAliasLeaf",
+          "parameters": {},
+          "attributes": {},
+          "port_directions": {
+            "request_in": "input",
+            "response_out": "output"
+          },
+          "connections": {
+            "request_in": [6],
+            "response_out": [7]
+          }
+        }
+      },
+      "data_members": {
+        "request_reg": {"kind": "register", "width": 1},
+        "response_value": {"kind": "signal", "width": 1}
+      },
+      "netnames": {
+        "clk": {"hide_name": 0, "bits": [2], "attributes": {}},
+        "dut__request_in": {"hide_name": 0, "bits": [6], "attributes": {}},
+        "dut__response_out": {"hide_name": 0, "bits": [7], "attributes": {}},
+        "observed_out": {"hide_name": 0, "bits": [5], "attributes": {}},
+        "request_reg": {"hide_name": 0, "bits": [6], "attributes": {}},
+        "reset": {"hide_name": 0, "bits": [3], "attributes": {}},
+        "response_value": {"hide_name": 0, "bits": [7], "attributes": {}},
+        "trigger_in": {"hide_name": 0, "bits": [4], "attributes": {}}
+      }
+    }
+  }
+}

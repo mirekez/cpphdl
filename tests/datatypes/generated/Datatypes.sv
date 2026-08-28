@@ -11,6 +11,7 @@ module Datatypes (
 ,   input wire write_in
 ,   output wire[512-1:0] digest_out
 ,   output wire[512-1:0] memory_out
+,   output wire[512-1:0] slice_widen_out
 );
 
 
@@ -178,9 +179,9 @@ module Datatypes (
     reg[64-1:0][8-1:0] byte_memory[16];
     logic[512-1:0] digest_comb;
     logic[512-1:0] memory_comb;
+    logic[512-1:0] slice_widen_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[1-1:0] u1_reg_tmp;
@@ -515,12 +516,35 @@ module Datatypes (
         digest_comb['h0 +:64] = digest_comb['h0 +:64] ^ array_u8_reg;
         digest_comb['h40 +:64] = digest_comb['h40 +:64] ^ array_u16_reg;
         digest_comb['h80 +:128] = digest_comb['h80 +:128] ^ array_logic_reg;
-        disable digest_comb_func;
     end
 
     always_comb begin : memory_comb_func  // memory_comb_func
         memory_comb = byte_memory[unsigned'(64'(addr_in)) & 'hF];
-        disable memory_comb_func;
+    end
+
+    always_comb begin : slice_widen_comb_func  // slice_widen_comb_func
+        logic[32-1:0] src32;
+        logic[34-1:0] ctor34;
+        logic[40-1:0] assign40;
+        logic[37-1:0] src37;
+        logic[29-1:0] ctor29;
+        logic[128-1:0] src128;
+        logic[512-1:0] wide512;
+        src32 = 'h80000004;
+        ctor34 = src32['h0 +:32];
+        assign40 = src32['h0 +:32];
+        src37 = 64'h1ABCDEF123;
+        ctor29 = src37['h4 +:25];
+        src128 = 'h0;
+        src128['h78 +:8] = 'hA5;
+        src128['h40 +:32] = 'h80000004;
+        src128['h0 +:8] = 'h5A;
+        wide512 = src128['h0 +:128];
+        slice_widen_comb = 'h0;
+        slice_widen_comb['h0 +:34] = ctor34;
+        slice_widen_comb['h28 +:40] = assign40;
+        slice_widen_comb['h50 +:29] = ctor29;
+        slice_widen_comb['h80 +:128] = wide512['h0 +:128];
     end
 
     task _work (input logic reset);
@@ -614,42 +638,42 @@ module Datatypes (
             array_logic_reg_tmp = '0;
             disable _work;
         end
-        u1_reg_tmp = unsigned'(1'(unsigned'(64'(seed_in)) + 'h1));
-        u1_reg_tmp = u1_reg_tmp - unsigned'(1'(('h1/'h8)));
-        u1_reg_tmp = u1_reg_tmp + unsigned'(1'((((unsigned'(64'(u1_reg_tmp)) >>> (('h1 - 'h1)))) & 'h1)));
-        u8_reg_tmp = unsigned'(8'(unsigned'(64'(seed_in)) + 'h8));
-        u8_reg_tmp = u8_reg_tmp - unsigned'(8'(('h8/'h8)));
-        u8_reg_tmp = u8_reg_tmp + unsigned'(8'((((unsigned'(64'(u8_reg_tmp)) >>> (('h8 - 'h1)))) & 'h1)));
-        u16_reg_tmp = unsigned'(16'(unsigned'(64'(seed_in)) + 'h10));
-        u16_reg_tmp = u16_reg_tmp - unsigned'(16'(('h10/'h8)));
-        u16_reg_tmp = u16_reg_tmp + unsigned'(16'((((unsigned'(64'(u16_reg_tmp)) >>> (('h10 - 'h1)))) & 'h1)));
-        u24_reg_tmp = unsigned'(24'(unsigned'(64'(seed_in)) + 'h18));
-        u24_reg_tmp = u24_reg_tmp - unsigned'(24'(('h18/'h8)));
-        u24_reg_tmp = u24_reg_tmp + unsigned'(24'((((unsigned'(64'(u24_reg_tmp)) >>> (('h18 - 'h1)))) & 'h1)));
-        u32_reg_tmp = unsigned'(32'(unsigned'(64'(seed_in)) + 'h20));
-        u32_reg_tmp = u32_reg_tmp - unsigned'(32'(('h20/'h8)));
-        u32_reg_tmp = u32_reg_tmp + unsigned'(32'((((unsigned'(64'(u32_reg_tmp)) >>> (('h20 - 'h1)))) & 'h1)));
-        u40_reg_tmp = unsigned'(40'(unsigned'(64'(seed_in)) + 'h28));
-        u40_reg_tmp = u40_reg_tmp - unsigned'(40'(('h28/'h8)));
-        u40_reg_tmp = u40_reg_tmp + unsigned'(40'((((unsigned'(64'(u40_reg_tmp)) >>> (('h28 - 'h1)))) & 'h1)));
-        u48_reg_tmp = unsigned'(48'(unsigned'(64'(seed_in)) + 'h30));
-        u48_reg_tmp = u48_reg_tmp - unsigned'(48'(('h30/'h8)));
-        u48_reg_tmp = u48_reg_tmp + unsigned'(48'((((unsigned'(64'(u48_reg_tmp)) >>> (('h30 - 'h1)))) & 'h1)));
-        u56_reg_tmp = unsigned'(56'(unsigned'(64'(seed_in)) + 'h38));
-        u56_reg_tmp = u56_reg_tmp - unsigned'(56'(('h38/'h8)));
-        u56_reg_tmp = u56_reg_tmp + unsigned'(56'((((unsigned'(64'(u56_reg_tmp)) >>> (('h38 - 'h1)))) & 'h1)));
-        u64_reg_tmp = unsigned'(64'(unsigned'(64'(seed_in)) + 'h40));
-        u64_reg_tmp = u64_reg_tmp - unsigned'(64'(('h40/'h8)));
-        u64_reg_tmp = u64_reg_tmp + unsigned'(64'((((unsigned'(64'(u64_reg_tmp)) >>> (('h40 - 'h1)))) & 'h1)));
-        alias_u1_reg_tmp = unsigned'(1'(unsigned'(64'(seed_in)) & 'h1));
-        alias_u8_reg_tmp = unsigned'(8'(unsigned'(64'(seed_in)) + 'h11));
-        alias_u16_reg_tmp = unsigned'(16'((unsigned'(64'(seed_in))*'h3) + 'h1234));
-        alias_u32_reg_tmp = unsigned'(32'((unsigned'(64'(seed_in))*'h5) + 'h12345678));
-        alias_u64_reg_tmp = unsigned'(64'((unsigned'(64'(seed_in))*'h7) + 'h123456789ABCDEF0));
-        alias_i8_reg_tmp = signed'(8'(signed'(8'((signed'(32'(seed_in)) - 'h64)))));
-        alias_i16_reg_tmp = signed'(16'(signed'(16'(((signed'(32'(seed_in))*'h2) - 'h3E8)))));
-        alias_i32_reg_tmp = signed'(32'(signed'(32'(((signed'(32'(seed_in))*'h3) - 'h186A0)))));
-        alias_i64_reg_tmp = signed'(64'(signed'(64'(((signed'(32'(seed_in))*'h4) - 'h2540BE400)))));
+        u1_reg_tmp = unsigned'(1'(unsigned'(1'(unsigned'(64'(seed_in)) + 'h1))));
+        u1_reg_tmp = u1_reg_tmp - unsigned'(1'(unsigned'(1'(('h1/'h8)))));
+        u1_reg_tmp = u1_reg_tmp + unsigned'(1'(unsigned'(1'((((unsigned'(64'(u1_reg_tmp)) >>> (('h1 - 'h1)))) & 'h1)))));
+        u8_reg_tmp = unsigned'(8'(unsigned'(8'(unsigned'(64'(seed_in)) + 'h8))));
+        u8_reg_tmp = u8_reg_tmp - unsigned'(8'(unsigned'(8'(('h8/'h8)))));
+        u8_reg_tmp = u8_reg_tmp + unsigned'(8'(unsigned'(8'((((unsigned'(64'(u8_reg_tmp)) >>> (('h8 - 'h1)))) & 'h1)))));
+        u16_reg_tmp = unsigned'(16'(unsigned'(16'(unsigned'(64'(seed_in)) + 'h10))));
+        u16_reg_tmp = u16_reg_tmp - unsigned'(16'(unsigned'(16'(('h10/'h8)))));
+        u16_reg_tmp = u16_reg_tmp + unsigned'(16'(unsigned'(16'((((unsigned'(64'(u16_reg_tmp)) >>> (('h10 - 'h1)))) & 'h1)))));
+        u24_reg_tmp = unsigned'(24'(unsigned'(24'(unsigned'(64'(seed_in)) + 'h18))));
+        u24_reg_tmp = u24_reg_tmp - unsigned'(24'(unsigned'(24'(('h18/'h8)))));
+        u24_reg_tmp = u24_reg_tmp + unsigned'(24'(unsigned'(24'((((unsigned'(64'(u24_reg_tmp)) >>> (('h18 - 'h1)))) & 'h1)))));
+        u32_reg_tmp = unsigned'(32'(unsigned'(32'(unsigned'(64'(seed_in)) + 'h20))));
+        u32_reg_tmp = u32_reg_tmp - unsigned'(32'(unsigned'(32'(('h20/'h8)))));
+        u32_reg_tmp = u32_reg_tmp + unsigned'(32'(unsigned'(32'((((unsigned'(64'(u32_reg_tmp)) >>> (('h20 - 'h1)))) & 'h1)))));
+        u40_reg_tmp = unsigned'(40'(unsigned'(40'(unsigned'(64'(seed_in)) + 'h28))));
+        u40_reg_tmp = u40_reg_tmp - unsigned'(40'(unsigned'(40'(('h28/'h8)))));
+        u40_reg_tmp = u40_reg_tmp + unsigned'(40'(unsigned'(40'((((unsigned'(64'(u40_reg_tmp)) >>> (('h28 - 'h1)))) & 'h1)))));
+        u48_reg_tmp = unsigned'(48'(unsigned'(48'(unsigned'(64'(seed_in)) + 'h30))));
+        u48_reg_tmp = u48_reg_tmp - unsigned'(48'(unsigned'(48'(('h30/'h8)))));
+        u48_reg_tmp = u48_reg_tmp + unsigned'(48'(unsigned'(48'((((unsigned'(64'(u48_reg_tmp)) >>> (('h30 - 'h1)))) & 'h1)))));
+        u56_reg_tmp = unsigned'(56'(unsigned'(56'(unsigned'(64'(seed_in)) + 'h38))));
+        u56_reg_tmp = u56_reg_tmp - unsigned'(56'(unsigned'(56'(('h38/'h8)))));
+        u56_reg_tmp = u56_reg_tmp + unsigned'(56'(unsigned'(56'((((unsigned'(64'(u56_reg_tmp)) >>> (('h38 - 'h1)))) & 'h1)))));
+        u64_reg_tmp = unsigned'(64'(unsigned'(64'(unsigned'(64'(seed_in)) + 'h40))));
+        u64_reg_tmp = u64_reg_tmp - unsigned'(64'(unsigned'(64'(('h40/'h8)))));
+        u64_reg_tmp = u64_reg_tmp + unsigned'(64'(unsigned'(64'((((unsigned'(64'(u64_reg_tmp)) >>> (('h40 - 'h1)))) & 'h1)))));
+        alias_u1_reg_tmp = unsigned'(1'(unsigned'(1'(unsigned'(64'(seed_in)) & 'h1))));
+        alias_u8_reg_tmp = unsigned'(8'(unsigned'(8'(unsigned'(64'(seed_in)) + 'h11))));
+        alias_u16_reg_tmp = unsigned'(16'(unsigned'(16'((unsigned'(64'(seed_in))*'h3) + 'h1234))));
+        alias_u32_reg_tmp = unsigned'(32'(unsigned'(32'((unsigned'(64'(seed_in))*'h5) + 'h12345678))));
+        alias_u64_reg_tmp = unsigned'(64'(unsigned'(64'((unsigned'(64'(seed_in))*'h7) + 64'h123456789ABCDEF0))));
+        alias_i8_reg_tmp = signed'(8'(signed'(8'(signed'(8'((signed'(32'(seed_in)) - 'h64)))))));
+        alias_i16_reg_tmp = signed'(16'(signed'(16'(signed'(16'(((signed'(32'(seed_in))*'h2) - 'h3E8)))))));
+        alias_i32_reg_tmp = signed'(32'(signed'(32'(signed'(32'(((signed'(32'(seed_in))*'h3) - 'h186A0)))))));
+        alias_i64_reg_tmp = signed'(64'(signed'(64'(signed'(64'(((signed'(32'(seed_in))*'h4) - 64'h2540BE400)))))));
         logic1_reg_tmp = seed_in + 'h1;
         logic1_reg_tmp = logic1_reg_tmp - 'h0;
         logic1_reg_tmp['h0] = ((unsigned'(64'(seed_in)) + 'h1)) & 'h1;
@@ -910,21 +934,21 @@ module Datatypes (
         logic512_reg_tmp = logic512_reg_tmp - 'h200/'h8;
         logic512_reg_tmp['h0] = ((unsigned'(64'(seed_in)) + 'h200)) & 'h1;
         logic512_reg_tmp['h0 +:8] = unsigned'(64'(('hA5 + 'h200)));
-        array_u8_reg_tmp['h0] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h0)));
-        array_u8_reg_tmp['h1] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h1)));
-        array_u8_reg_tmp['h2] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h2)));
-        array_u8_reg_tmp['h3] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h3)));
-        array_u8_reg_tmp['h4] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h4)));
-        array_u8_reg_tmp['h5] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h5)));
-        array_u8_reg_tmp['h6] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h6)));
-        array_u8_reg_tmp['h7] = unsigned'(8'((unsigned'(64'(seed_in)) + 'h7)));
-        array_u16_reg_tmp['h0] = unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h0));
+        array_u8_reg_tmp['h0] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h0)))));
+        array_u8_reg_tmp['h1] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h1)))));
+        array_u8_reg_tmp['h2] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h2)))));
+        array_u8_reg_tmp['h3] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h3)))));
+        array_u8_reg_tmp['h4] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h4)))));
+        array_u8_reg_tmp['h5] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h5)))));
+        array_u8_reg_tmp['h6] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h6)))));
+        array_u8_reg_tmp['h7] = unsigned'(8'(unsigned'(8'((unsigned'(64'(seed_in)) + 'h7)))));
+        array_u16_reg_tmp['h0] = unsigned'(16'(unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h0))));
         array_logic_reg_tmp['h0] = (unsigned'(64'(seed_in)) + 'h10000) + 'h0;
-        array_u16_reg_tmp['h1] = unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h1));
+        array_u16_reg_tmp['h1] = unsigned'(16'(unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h1))));
         array_logic_reg_tmp['h1] = (unsigned'(64'(seed_in)) + 'h10000) + 'h1;
-        array_u16_reg_tmp['h2] = unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h2));
+        array_u16_reg_tmp['h2] = unsigned'(16'(unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h2))));
         array_logic_reg_tmp['h2] = (unsigned'(64'(seed_in)) + 'h10000) + 'h2;
-        array_u16_reg_tmp['h3] = unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h3));
+        array_u16_reg_tmp['h3] = unsigned'(16'(unsigned'(16'((unsigned'(64'(seed_in)) + 'h100) + 'h3))));
         array_logic_reg_tmp['h3] = (unsigned'(64'(seed_in)) + 'h10000) + 'h3;
         if (write_in) begin
             logic[512-1:0] mem_word;
@@ -1182,6 +1206,8 @@ module Datatypes (
     assign digest_out = digest_comb;
 
     assign memory_out = memory_comb;
+
+    assign slice_widen_out = slice_widen_comb;
 
 
 endmodule

@@ -1,0 +1,61 @@
+`default_nettype none
+
+import Predef_pkg::*;
+
+
+module AnnotateManyParent (
+    input wire clk
+,   input wire reset
+,   input wire[8-1:0] value_in
+,   output wire[8-1:0] value_out
+);
+
+
+    // regs and combs
+    logic[8-1:0] value_comb;
+
+    // members
+    wire[8-1:0] first__value_in;
+    wire[8-1:0] first__value_out;
+    AnnotateManyFirst      first (
+        .clk(clk)
+,       .reset(reset)
+,       .value_in(first__value_in)
+,       .value_out(first__value_out)
+    );
+    wire[8-1:0] second__value_in;
+    wire[8-1:0] second__value_out;
+    AnnotateManySecond      second (
+        .clk(clk)
+,       .reset(reset)
+,       .value_in(second__value_in)
+,       .value_out(second__value_out)
+    );
+
+    // tmp variables
+
+
+    always_comb begin : value_comb_func  // value_comb_func
+        value_comb = first__value_out ^ second__value_out;
+    end
+
+    generate  // _assign
+        assign first__value_in = value_in;
+        assign second__value_in = value_in;
+    endgenerate
+
+    task _work (input logic reset);
+    begin: _work
+    end
+    endtask
+
+    always @(posedge clk) begin
+
+        _work(reset);
+
+    end
+
+    assign value_out = value_comb;
+
+
+endmodule

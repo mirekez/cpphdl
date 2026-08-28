@@ -13,17 +13,22 @@ proc env_or_default {name fallback} {
 }
 
 set script_dir [file dirname [file normalize [info script]]]
-set rtl_dir [file join $script_dir cpphdl_tribe256_multicore generated]
+set rtl_dir [file normalize [env_or_default TRIBE_RTL_DIR \
+    [file join $script_dir cpphdl_tribe256_multicore generated]]]
 set run_dir [file normalize [env_or_default TRIBE_RUN_DIR \
     [file join $script_dir vivado_cpu_312]]]
 set report_dir [file join $run_dir reports]
 set checkpoint_dir [file join $run_dir checkpoints]
-set part xc7k325tffg676-3
-set cpu_period [expr {1000.0 / 312.0}]
+set part [env_or_default TRIBE_PART xc7k325tffg676-3]
+set cpu_period [env_or_default TRIBE_CPU_PERIOD_NS [expr {1000.0 / 312.0}]]
 
 file mkdir $report_dir
 file mkdir $checkpoint_dir
 
+set resume_placed [env_or_default TRIBE_RESUME_PLACED ""]
+if {$resume_placed ne ""} {
+    open_checkpoint [file normalize $resume_placed]
+} else {
 set prerequisite_packages [list \
     Predef_pkg.sv \
     Axi4WriteAddress32_4_pkg.sv \
@@ -76,6 +81,7 @@ if {[info exists ::env(TRIBE_STOP_AFTER_PLACE)] && $::env(TRIBE_STOP_AFTER_PLACE
     puts "TRIBE_CPU_RAW_PLACE_DONE"
     exit
 }
+}
 phys_opt_design -directive AggressiveExplore
 write_checkpoint -force [file join $checkpoint_dir post_place.dcp]
 route_design -directive AggressiveExplore
@@ -89,5 +95,9 @@ report_timing -delay_type max -max_paths 100 -nworst 20 -unique_pins \
     -from [get_clocks cpu_clk] -to [get_clocks cpu_clk] \
     -file [file join $report_dir timing_cpu_to_cpu.rpt]
 report_methodology -file [file join $report_dir methodology_post_route.rpt]
+check_timing -verbose -loop_limit 1000 \
+    -file [file join $report_dir check_timing_post_route.rpt]
+report_high_fanout_nets -timing -max_nets 100 \
+    -file [file join $report_dir high_fanout_post_route.rpt]
 
 puts [format "TRIBE_CPU_DONE period=%.6fns" $cpu_period]

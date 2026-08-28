@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
+
 cpphdl="$1"
 include_dir="$2"
 source_dir="$3"
@@ -22,7 +24,7 @@ grep -q 'n1\._strobe()' \
     "$build_dir"/OpaqueSubtreeRoot_optimized_combs_strobe_*.cpp
 grep -q 'n1\.output()' \
     "$build_dir"/OpaqueSubtreeRoot_optimized_combs*.cpp
-if rg -q 'n1\._assign\(' "$build_dir"/OpaqueSubtreeRoot_optimized_combs*.cpp; then
+if search_q 'n1\._assign\(' "$build_dir"/OpaqueSubtreeRoot_optimized_combs*.cpp; then
     printf 'opaque _assign call was emitted into optimized runtime code\n' >&2
     exit 1
 fi

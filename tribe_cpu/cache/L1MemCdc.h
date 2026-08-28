@@ -21,6 +21,11 @@ private:
     reg<u1> cache_disable_fast_reg;
     reg<u1> request_fast_reg;
     reg<u1> request_active_fast_reg;
+    // The level protocol requires the source payload to remain stable while a
+    // request is active.  A cache flush can nevertheless withdraw the level
+    // before the slow response returns.  Remember that withdrawal explicitly
+    // so a later request cannot consume the orphaned response.
+    reg<u1> request_orphaned_fast_reg;
     // (* ASYNC_REG = "TRUE" *)
     reg<u1> response_fast1_reg;
     // (* ASYNC_REG = "TRUE" *)
@@ -47,17 +52,17 @@ public:
     void _assign()
     {
         fast_in.read_data_out = _ASSIGN_REG(read_data_fast_reg);
+        // Completion depends only on registered transaction ownership.  The
+        // previous implementation compared every live payload bit against the
+        // captured request here; that placed address/cacheability arithmetic
+        // and a wide identity comparator directly in the CPU retirement loop.
+        // Legal level-sensitive requesters hold their payload until wait_out
+        // drops.  request_orphaned_fast_reg covers the only legal exception:
+        // an explicit withdrawal caused by a flush.
         fast_in.wait_out = _ASSIGN(
             (fast_in.read_in() || fast_in.write_in()) &&
-            !(request_active_fast_reg &&
-                response_fast2_reg != response_ack_fast_reg &&
-                fast_in.read_in() == (bool)read_fast_reg &&
-                fast_in.write_in() == (bool)write_fast_reg &&
-                fast_in.addr_in() == (uint32_t)addr_fast_reg &&
-                (!fast_in.write_in() ||
-                    (fast_in.write_data_in() == (uint32_t)write_data_fast_reg &&
-                     fast_in.write_mask_in() == (uint8_t)write_mask_fast_reg)) &&
-                fast_in.cache_disable_in() == (bool)cache_disable_fast_reg));
+            !(request_active_fast_reg && !request_orphaned_fast_reg &&
+                response_fast2_reg != response_ack_fast_reg));
 
         slow_out.read_in = _ASSIGN((bool)(request_active_slow_reg && read_slow_reg));
         slow_out.write_in = _ASSIGN((bool)(request_active_slow_reg && write_slow_reg));
@@ -86,6 +91,7 @@ public:
             // sample the shared L1/MMU request mux until the following edge,
             // after its new owner and payload have become stable.
             request_active_fast_reg._next = false;
+            request_orphaned_fast_reg._next = false;
         }
         else if (!request_active_fast_reg && request) {
             read_fast_reg._next = fast_in.read_in();
@@ -96,6 +102,13 @@ public:
             cache_disable_fast_reg._next = fast_in.cache_disable_in();
             request_fast_reg._next = !request_fast_reg;
             request_active_fast_reg._next = true;
+            request_orphaned_fast_reg._next = false;
+        }
+        else if (request_active_fast_reg && !request) {
+            // Do not allow a request asserted after this withdrawal to observe
+            // the outstanding response.  The response is acknowledged and
+            // discarded by the first branch above when it arrives.
+            request_orphaned_fast_reg._next = true;
         }
 
         if (reset) {
@@ -107,6 +120,7 @@ public:
             cache_disable_fast_reg.clr();
             request_fast_reg.clr();
             request_active_fast_reg.clr();
+            request_orphaned_fast_reg.clr();
             response_fast1_reg.clr();
             response_fast2_reg.clr();
             response_ack_fast_reg.clr();
@@ -127,6 +141,7 @@ public:
         cache_disable_fast_reg.strobe();
         request_fast_reg.strobe();
         request_active_fast_reg.strobe();
+        request_orphaned_fast_reg.strobe();
         response_fast1_reg.strobe();
         response_fast2_reg.strobe();
         response_ack_fast_reg.strobe();
@@ -143,6 +158,7 @@ public:
         cache_disable_fast_reg.strobe(checkpoint_fd);
         request_fast_reg.strobe(checkpoint_fd);
         request_active_fast_reg.strobe(checkpoint_fd);
+        request_orphaned_fast_reg.strobe(checkpoint_fd);
         response_fast1_reg.strobe(checkpoint_fd);
         response_fast2_reg.strobe(checkpoint_fd);
         response_ack_fast_reg.strobe(checkpoint_fd);

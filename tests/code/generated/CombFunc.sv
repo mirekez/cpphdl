@@ -29,8 +29,8 @@ module CombFunc (
 
 
     always_comb begin : plain_comb_func  // plain_comb_func
-        plain_comb = seed_in + unsigned'(32'(unsigned'(32'('h1))));
-        plain_comb = plain_comb + unsigned'(32'(unsigned'(32'('h2))));
+        plain_comb = seed_in + unsigned'(32'(unsigned'(32'h1)));
+        plain_comb = plain_comb + unsigned'(32'(unsigned'(32'h2)));
     end
 
     always_comb begin : array_comb_func  // array_comb_func
@@ -53,12 +53,12 @@ module CombFunc (
     end
 
     always_comb begin : early_comb_func  // early_comb_func
-        early_comb = seed_in + unsigned'(32'(unsigned'(32'('h3E8))));
+        early_comb = seed_in + unsigned'(32'(unsigned'(32'h3E8)));
         if (early_in) begin
-            early_comb = seed_in + unsigned'(32'(unsigned'(32'('h7D0))));
+            early_comb = seed_in + unsigned'(32'(unsigned'(32'h7D0)));
             disable early_comb_func;
         end
-        early_comb = seed_in + unsigned'(32'(unsigned'(32'('hBB8))));
+        early_comb = seed_in + unsigned'(32'(unsigned'(32'hBB8)));
     end
 
     task _work (input logic reset);

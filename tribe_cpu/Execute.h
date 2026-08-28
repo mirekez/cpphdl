@@ -14,6 +14,9 @@ public:
     _PORT(State)  multicycle_state_in;
 
     _PORT(uint32_t) alu_result_out      = _ASSIGN( (uint32_t)alu_result_comb_func() );
+    // Load/store address generation is independent from the general ALU opcode
+    // and result mux.  ExecuteMem consumes this dedicated path.
+    _PORT(uint32_t) mem_addr_out        = _ASSIGN_COMB(mem_addr_comb_func());
     _PORT(uint32_t) debug_alu_a_out     = _ASSIGN_COMB( alu_a_comb_func() );
     _PORT(uint32_t) debug_alu_b_out     = _ASSIGN_COMB( alu_b_comb_func() );
     _PORT(bool)     branch_taken_out    = _ASSIGN_COMB( branch_taken_comb_func() );
@@ -97,8 +100,12 @@ private:
 
         return alu_b_comb = (state_in().alu_op == Alu::ADD && state_in().mem_op != Mem::MNONE) ?
                                                uint32_t(state_in().imm) :      // load/store address calc uses imm
-                            (state_in().br_op != Br::BNONE || state_in().rs2) ?
+                            state_in().rs2 ?
                                 state_in().rs2_val : uint32_t(state_in().imm);
+    }
+
+    _LAZY_COMB(mem_addr_comb, uint32_t)
+        return mem_addr_comb = state_in().rs1_val + (uint32_t)state_in().imm;
     }
 
     _LAZY_COMB(alu_result_comb, uint64_t)
@@ -110,27 +117,32 @@ private:
         b = alu_b_comb_func();
         alu_result_comb = 0;
         alu_op = state_in().alu_op;
-        switch (alu_op) {
-            case Alu::ADD:  alu_result_comb = a + b;                              break;
-            case Alu::SUB:  alu_result_comb = a - b;                              break;
-            case Alu::AND:  alu_result_comb = a & b;                              break;
-            case Alu::OR:   alu_result_comb = a | b;                              break;
-            case Alu::XOR:  alu_result_comb = a ^ b;                              break;
-            case Alu::SLL:  alu_result_comb = a << (b & 0x1F);                    break;
-            case Alu::SRL:  alu_result_comb = a >> (b & 0x1F);                    break;
-            case Alu::SRA:  alu_result_comb = uint32_t(int32_t(a) >> (b & 0x1F)); break;
-            case Alu::SLT:  alu_result_comb = (int32_t(a) < int32_t(b));          break;
-            case Alu::SLTU: alu_result_comb = (a < b);                            break;
-            case Alu::PASS: alu_result_comb = b;                                  break;
-            case Alu::MUL:  alu_result_comb = mul_result_reg;                    break;
-            case Alu::MULH: alu_result_comb = mul_result_reg;                    break;
-            case Alu::MULHSU: alu_result_comb = mul_result_reg;                  break;
-            case Alu::MULHU: alu_result_comb = mul_result_reg;                   break;
-            case Alu::DIV:  alu_result_comb = div_result_reg;                    break;
-            case Alu::DIVU: alu_result_comb = div_result_reg;                    break;
-            case Alu::REM:  alu_result_comb = div_result_reg;                    break;
-            case Alu::REMU: alu_result_comb = div_result_reg;                    break;
-            case Alu::ANONE:                                                      break;
+        // Branches write PC+2/PC+4 through Writeback and never consume the ALU
+        // result. Keeping their compare independent prevents synthesis from
+        // folding the ALU add/sub carry chain into branch redirect control.
+        if (state_in().br_op == Br::BNONE) {
+            switch (alu_op) {
+                case Alu::ADD:  alu_result_comb = a + b;                              break;
+                case Alu::SUB:  alu_result_comb = a - b;                              break;
+                case Alu::AND:  alu_result_comb = a & b;                              break;
+                case Alu::OR:   alu_result_comb = a | b;                              break;
+                case Alu::XOR:  alu_result_comb = a ^ b;                              break;
+                case Alu::SLL:  alu_result_comb = a << (b & 0x1F);                    break;
+                case Alu::SRL:  alu_result_comb = a >> (b & 0x1F);                    break;
+                case Alu::SRA:  alu_result_comb = uint32_t(int32_t(a) >> (b & 0x1F)); break;
+                case Alu::SLT:  alu_result_comb = (int32_t(a) < int32_t(b));          break;
+                case Alu::SLTU: alu_result_comb = (a < b);                            break;
+                case Alu::PASS: alu_result_comb = b;                                  break;
+                case Alu::MUL:  alu_result_comb = mul_result_reg;                    break;
+                case Alu::MULH: alu_result_comb = mul_result_reg;                    break;
+                case Alu::MULHSU: alu_result_comb = mul_result_reg;                  break;
+                case Alu::MULHU: alu_result_comb = mul_result_reg;                   break;
+                case Alu::DIV:  alu_result_comb = div_result_reg;                    break;
+                case Alu::DIVU: alu_result_comb = div_result_reg;                    break;
+                case Alu::REM:  alu_result_comb = div_result_reg;                    break;
+                case Alu::REMU: alu_result_comb = div_result_reg;                    break;
+                case Alu::ANONE:                                                      break;
+            }
         }
         return alu_result_comb;
     }
@@ -140,8 +152,8 @@ private:
         uint32_t a;
         uint32_t b;
         bool signed_less;
-        a = alu_a_comb_func();
-        b = alu_b_comb_func();
+        a = state_in().rs1_val;
+        b = state_in().rs2_val;
         // Express signed comparison using only unsigned operations.  Some
         // SystemVerilog tools make a mixed signed/unsigned relational
         // expression unsigned; in particular, the CppHDL translation of

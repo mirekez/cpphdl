@@ -2,6 +2,7 @@ package Instr_pkg;
 
 typedef union packed {
     struct packed {
+        logic[16-1:0] unused;
         logic[3-1:0] funct3;
         logic[1-1:0] b12;
         logic[5-1:0] rs1;
@@ -9,6 +10,7 @@ typedef union packed {
         logic[2-1:0] opcode;
     } q2;
     struct packed {
+        logic[16-1:0] unused;
         logic[3-1:0] funct3;
         logic[1-1:0] b12;
         logic[5-1:0] rs1;
@@ -17,6 +19,7 @@ typedef union packed {
         logic[2-1:0] opcode;
     } q1;
     struct packed {
+        logic[16-1:0] unused;
         logic[3-1:0] funct3;
         logic[1-1:0] b12;
         logic[2-1:0] bits11_10;

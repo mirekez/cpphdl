@@ -7,7 +7,13 @@ using namespace cpphdl;
 class CSR: public Module
 {
 public:
+    // Registered architectural retirement record.  CSR writes, traps, xRET,
+    // and instret consume only this interface.
     _PORT(State) state_in;
+    _PORT(bool) commit_in;
+    // Execute-stage state used only for the old CSR value written to rd.  It is
+    // intentionally independent from state_in so retirement can be pipelined.
+    _PORT(State) read_state_in;
     _PORT(State) trap_check_state_in;
     // Classify the decode-stage instruction before it enters Tribe's execute
     // register.  The registered result travels in State::csr_illegal.
@@ -22,9 +28,17 @@ public:
     _PORT(bool) interrupt_valid_in;
     _PORT(uint32_t) interrupt_cause_in;
     _PORT(bool) interrupt_to_supervisor_in;
+    // Feed-forward interrupt metadata used only by the same-cycle redirect
+    // vector.  The commit metadata above travels with the retirement record.
+    _PORT(bool) redirect_interrupt_valid_in = _ASSIGN(false);
+    _PORT(uint32_t) redirect_interrupt_cause_in = _ASSIGN((uint32_t)0);
+    _PORT(bool) redirect_interrupt_to_supervisor_in = _ASSIGN(false);
     _PORT(uint32_t) irq_pending_bits_in;
     _PORT(bool) software_irq_set_in = _ASSIGN(false);
-    _PORT(uint32_t) read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    // A decoded CSR write command is applied one cycle after capture. Tribe
+    // holds younger CSR/system instructions while this bit is asserted.
+    _PORT(bool) write_pending_out = _ASSIGN_COMB(write_pending_comb_func());
+    _PORT(uint32_t) read_data_out = _ASSIGN_COMB(execute_read_data_comb_func());
     _PORT(uint32_t) time_lo_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t) time_hi_in = _ASSIGN((uint32_t)0);
     _PORT(uint32_t) trap_vector_out = _ASSIGN_COMB(trap_vector_comb_func());
@@ -125,37 +139,23 @@ private:
 
     reg<u64> cycle_reg;
     reg<u64> instret_reg;
+    // One-hot target plus data forms a narrow registered command boundary.
+    // csr_addr and csr_op terminate here instead of fanning into every CSR D.
+    reg<u32> csr_write_select_reg;
+    reg<u32> csr_write_value_reg;
+    // Preserve the architectural value returned in rd while this instruction's
+    // deferred write command crosses the registered commit boundary.
+    reg<u32> csr_read_data_reg;
 #ifdef ENABLE_TRAPS
     reg<u<2>> priv_reg;
 #endif
 
-    // state_in can remain unchanged while Tribe waits for a registered MMU or
-    // cache result.  CSR writes, traps, xRET and instret are architectural
-    // retirement events, so they must occur once for that held instruction.
-    // Keeping the one-shot decision local avoids putting Tribe's global wait
-    // network back on every CSR register enable.
-    reg<u1> commit_seen_valid_reg;
-    reg<u32> commit_seen_pc_reg;
-    reg<u<12>> commit_seen_csr_addr_reg;
-    reg<u<3>> commit_seen_csr_op_reg;
-    reg<u<4>> commit_seen_sys_op_reg;
-    reg<u<5>> commit_seen_trap_op_reg;
-    reg<u32> commit_seen_imm_reg;
-    reg<u32> csr_read_data_reg;
-
-    _LAZY_COMB(commit_seen_match_comb, bool)
-        commit_seen_match_comb = commit_seen_valid_reg && state_in().valid &&
-            (uint32_t)commit_seen_pc_reg == state_in().pc &&
-            (uint32_t)commit_seen_csr_addr_reg == state_in().csr_addr &&
-            (uint32_t)commit_seen_csr_op_reg == state_in().csr_op &&
-            (uint32_t)commit_seen_sys_op_reg == state_in().sys_op &&
-            (uint32_t)commit_seen_trap_op_reg == state_in().trap_op &&
-            (uint32_t)commit_seen_imm_reg == state_in().imm;
-        return commit_seen_match_comb;
+    _LAZY_COMB(commit_new_comb, bool)
+        return commit_new_comb = state_in().valid && commit_in();
     }
 
-    _LAZY_COMB(commit_new_comb, bool)
-        return commit_new_comb = state_in().valid && !commit_seen_match_comb_func();
+    _LAZY_COMB(write_pending_comb, bool)
+        return write_pending_comb = csr_write_select_reg != 0;
     }
 
     uint32_t sanitize_mstatus(uint32_t value)
@@ -222,14 +222,61 @@ private:
 #endif
     }
 
+    uint32_t redirect_trap_cause_code(State state)
+    {
+#ifdef ENABLE_ISR
+        if (redirect_interrupt_valid_in()) {
+            return redirect_interrupt_cause_in();
+        }
+#endif
+        if (state.sys_op == Sys::ECALL) {
+#ifdef ENABLE_TRAPS
+            if (priv_reg == PRIV_U) { return 8; }
+            if (priv_reg == PRIV_S) { return 9; }
+#endif
+            return 11;
+        }
+        if (state.sys_op == Sys::EBREAK) { return 3; }
+        switch (state.trap_op) {
+            case Trap::TNONE: return 2;
+            case Trap::INST_MISALIGNED: return 0;
+            case Trap::ILLEGAL_INST: return 2;
+            case Trap::BREAKPOINT: return 3;
+            case Trap::LOAD_MISALIGNED: return 4;
+            case Trap::STORE_MISALIGNED: return 6;
+            case Trap::INST_PAGE_FAULT: return 12;
+            case Trap::LOAD_PAGE_FAULT: return 13;
+            case Trap::STORE_PAGE_FAULT: return 15;
+            case Trap::ECALL_U: return 8;
+            case Trap::ECALL_S: return 9;
+            case Trap::ECALL_M: return 11;
+            default: return 2;
+        }
+        return 2;
+    }
+
+    bool redirect_trap_to_supervisor(uint32_t cause)
+    {
+#ifdef ENABLE_ISR
+        if (redirect_interrupt_valid_in()) {
+            return redirect_interrupt_to_supervisor_in();
+        }
+#endif
+#ifdef ENABLE_TRAPS
+        return priv_reg != PRIV_M && ((medeleg_reg >> cause) & 1u);
+#else
+        return false;
+#endif
+    }
+
     _LAZY_COMB(trap_vector_comb, uint32_t)
         uint32_t cause;
         uint32_t tvec;
-        cause = trap_cause_code(redirect_state_in());
-        tvec = trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg;
+        cause = redirect_trap_cause_code(redirect_state_in());
+        tvec = redirect_trap_to_supervisor(cause) ? (uint32_t)stvec_reg : (uint32_t)mtvec_reg;
         trap_vector_comb = tvec & ~3u;
 #ifdef ENABLE_ISR
-        if (interrupt_valid_in() && ((tvec & 3u) == 1u)) {
+        if (redirect_interrupt_valid_in() && ((tvec & 3u) == 1u)) {
             trap_vector_comb = (tvec & ~3u) + cause * 4u;
         }
 #endif
@@ -483,56 +530,104 @@ private:
         return commit_new_comb_func() && csr_state_writes(state_in());
     }
 
-    void csr_write(uint32_t addr, uint32_t value)
+    uint32_t csr_write_select(uint32_t addr)
     {
         switch (addr) {
-            case 0x100: mstatus_reg._next = (mstatus_reg & ~SSTATUS_MASK) | (value & SSTATUS_MASK); sstatus_reg._next = value & SSTATUS_MASK; break;
-            case 0x104: sie_reg._next = value; break;
-            case 0x105: stvec_reg._next = value; break;
-            case 0x106: scounteren_reg._next = value; break;
-            case 0x140: sscratch_reg._next = value; break;
-            case 0x141: sepc_reg._next = value & ~1u; break;
-            case 0x142: scause_reg._next = value; break;
-            case 0x143: stval_reg._next = value; break;
-            case 0x144: sip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; break;
+            case 0x100: return 1u << 0;
+            case 0x104: return 1u << 1;
+            case 0x105: return 1u << 2;
+            case 0x106: return 1u << 3;
+            case 0x140: return 1u << 4;
+            case 0x141: return 1u << 5;
+            case 0x142: return 1u << 6;
+            case 0x143: return 1u << 7;
+            case 0x144: return 1u << 8;
 #ifdef ENABLE_MMU_TLB
-            case 0x180: satp_reg._next = value & 0x803fffffu; break;
+            case 0x180: return 1u << 9;
 #endif
-
-            case 0x300: mstatus_reg._next = sanitize_mstatus(value); sstatus_reg._next = value & SSTATUS_MASK; break;
-            case 0x302: medeleg_reg._next = value; break;
-            case 0x303: mideleg_reg._next = value; break;
-            case 0x304: mie_reg._next = value; break;
-            case 0x305: mtvec_reg._next = value; break;
-            case 0x306: mcounteren_reg._next = value; break;
-            case 0x320: mcountinhibit_reg._next = value; break;
-            case 0x340: mscratch_reg._next = value; break;
-            case 0x341: mepc_reg._next = value & ~1u; break;
-            case 0x342: mcause_reg._next = value; break;
-            case 0x343: mtval_reg._next = value; break;
-            case 0x344: mip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; break;
-            case 0x348: mscratchcsw_reg._next = value; break;
-            case 0x349: mscratchcswl_reg._next = value; break;
-
-            case 0xB00: cycle_reg._next = (uint64_t(uint32_t(uint64_t(cycle_reg) >> 32)) << 32) | value; break;
-            case 0xB80: cycle_reg._next = (uint64_t(value) << 32) | (uint32_t)cycle_reg; break;
-            case 0xB02: instret_reg._next = (uint64_t(uint32_t(uint64_t(instret_reg) >> 32)) << 32) | value; break;
-            case 0xB82: instret_reg._next = (uint64_t(value) << 32) | (uint32_t)instret_reg; break;
-
-            case 0x7B0: dcsr_reg._next = value; break;
-            case 0x7B1: dpc_reg._next = value & ~1u; break;
-            case 0x7B2: dscratch0_reg._next = value; break;
-            case 0x7B3: dscratch1_reg._next = value; break;
+            case 0x300: return 1u << 10;
+            case 0x302: return 1u << 11;
+            case 0x303: return 1u << 12;
+            case 0x304: return 1u << 13;
+            case 0x305: return 1u << 14;
+            case 0x306: return 1u << 15;
+            case 0x320: return 1u << 16;
+            case 0x340: return 1u << 17;
+            case 0x341: return 1u << 18;
+            case 0x342: return 1u << 19;
+            case 0x343: return 1u << 20;
+            case 0x344: return 1u << 21;
+            case 0x348: return 1u << 22;
+            case 0x349: return 1u << 23;
+            case 0xB00: return 1u << 24;
+            case 0xB80: return 1u << 25;
+            case 0xB02: return 1u << 26;
+            case 0xB82: return 1u << 27;
+            case 0x7B0: return 1u << 28;
+            case 0x7B1: return 1u << 29;
+            case 0x7B2: return 1u << 30;
+            case 0x7B3: return 1u << 31;
         }
+        return 0;
     }
 
-    _LAZY_COMB(read_data_comb, uint32_t)
-        // Preserve the pre-write CSR value for as long as the same pipeline
-        // instruction is held.  This is the architectural rd result of every
-        // CSR read/modify/write instruction.
-        return read_data_comb = commit_seen_match_comb_func() &&
-            state_in().csr_op != Csr::CNONE ?
-            (uint32_t)csr_read_data_reg : csr_read(state_in().csr_addr);
+    void csr_write_selected(uint32_t select, uint32_t value)
+    {
+        if (select & (1u << 0)) { mstatus_reg._next = (mstatus_reg & ~SSTATUS_MASK) | (value & SSTATUS_MASK); sstatus_reg._next = value & SSTATUS_MASK; }
+        if (select & (1u << 1)) { sie_reg._next = value; }
+        if (select & (1u << 2)) { stvec_reg._next = value; }
+        if (select & (1u << 3)) { scounteren_reg._next = value; }
+        if (select & (1u << 4)) { sscratch_reg._next = value; }
+        if (select & (1u << 5)) { sepc_reg._next = value & ~1u; }
+        if (select & (1u << 6)) { scause_reg._next = value; }
+        if (select & (1u << 7)) { stval_reg._next = value; }
+        if (select & (1u << 8)) { sip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; }
+#ifdef ENABLE_MMU_TLB
+        if (select & (1u << 9)) { satp_reg._next = value & 0x803fffffu; }
+#endif
+        if (select & (1u << 10)) { mstatus_reg._next = sanitize_mstatus(value); sstatus_reg._next = value & SSTATUS_MASK; }
+        if (select & (1u << 11)) { medeleg_reg._next = value; }
+        if (select & (1u << 12)) { mideleg_reg._next = value; }
+        if (select & (1u << 13)) { mie_reg._next = value; }
+        if (select & (1u << 14)) { mtvec_reg._next = value; }
+        if (select & (1u << 15)) { mcounteren_reg._next = value; }
+        if (select & (1u << 16)) { mcountinhibit_reg._next = value; }
+        if (select & (1u << 17)) { mscratch_reg._next = value; }
+        if (select & (1u << 18)) { mepc_reg._next = value & ~1u; }
+        if (select & (1u << 19)) { mcause_reg._next = value; }
+        if (select & (1u << 20)) { mtval_reg._next = value; }
+        if (select & (1u << 21)) { mip_reg._next = value & XIP_SOFTWARE_WRITABLE_MASK; }
+        if (select & (1u << 22)) { mscratchcsw_reg._next = value; }
+        if (select & (1u << 23)) { mscratchcswl_reg._next = value; }
+        if (select & (1u << 24)) { cycle_reg._next = (uint64_t(uint32_t(uint64_t(cycle_reg) >> 32)) << 32) | value; }
+        if (select & (1u << 25)) { cycle_reg._next = (uint64_t(value) << 32) | (uint32_t)cycle_reg; }
+        if (select & (1u << 26)) { instret_reg._next = (uint64_t(uint32_t(uint64_t(instret_reg) >> 32)) << 32) | value; }
+        if (select & (1u << 27)) { instret_reg._next = (uint64_t(value) << 32) | (uint32_t)instret_reg; }
+        if (select & (1u << 28)) { dcsr_reg._next = value; }
+        if (select & (1u << 29)) { dpc_reg._next = value & ~1u; }
+        if (select & (1u << 30)) { dscratch0_reg._next = value; }
+        if (select & (1u << 31)) { dscratch1_reg._next = value; }
+    }
+
+    _LAZY_COMB(commit_read_data_comb, uint32_t)
+        // commit_in is a one-cycle pulse aligned with state_in, so the old
+        // architectural CSR value is consumed exactly once without comparing
+        // the record against a shadow copy.
+        return commit_read_data_comb = csr_read(state_in().csr_addr);
+    }
+
+    _LAZY_COMB(execute_read_data_comb, uint32_t)
+        bool matching_commit;
+        // A CSR instruction remains in execute while its deferred write is
+        // applied. Keep returning the value captured before that write until
+        // the matching commit record is released. The PC comparison is needed
+        // for consecutive accesses to the same CSR.
+        matching_commit = state_in().valid && read_state_in().valid &&
+            state_in().csr_op != Csr::CNONE && read_state_in().csr_op != Csr::CNONE &&
+            state_in().pc == read_state_in().pc &&
+            state_in().csr_addr == read_state_in().csr_addr;
+        return execute_read_data_comb = matching_commit ?
+            (uint32_t)csr_read_data_reg : csr_read(read_state_in().csr_addr);
     }
 
 public:
@@ -575,20 +670,13 @@ public:
         instret_reg._next = (inhibit_instret || !commit_new_comb_func()) ?
             instret_reg : uint64_t(instret_reg) + 1;
 
-        if (commit_new_comb_func()) {
-            commit_seen_valid_reg._next = true;
-            commit_seen_pc_reg._next = state_in().pc;
-            commit_seen_csr_addr_reg._next = state_in().csr_addr;
-            commit_seen_csr_op_reg._next = state_in().csr_op;
-            commit_seen_sys_op_reg._next = state_in().sys_op;
-            commit_seen_trap_op_reg._next = state_in().trap_op;
-            commit_seen_imm_reg._next = state_in().imm;
-            if (state_in().csr_op != Csr::CNONE) {
-                csr_read_data_reg._next = csr_read(state_in().csr_addr);
-            }
-        }
-        else if (!state_in().valid) {
-            commit_seen_valid_reg._next = false;
+        // Apply the previously decoded command, and consume it exactly once.
+        // Direct one-hot enables keep the address decoder off architectural
+        // CSR register inputs.
+        csr_write_select_reg._next = 0;
+        csr_write_value_reg._next = csr_write_value_reg;
+        if (csr_write_select_reg != 0) {
+            csr_write_selected(csr_write_select_reg, csr_write_value_reg);
         }
 
         if (csr_writes()) {
@@ -597,15 +685,19 @@ public:
                  state_in().csr_addr == 0x141 || state_in().csr_addr == 0x180)) {
 #ifndef SYNTHESIS
                 std::print(trace_csr_out, "trace-csr-write inst={} cycle={} pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
-                    __inst_name, _system_clock, state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
-                    csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
+                    __inst_name, _system_clock, state_in().pc, (uint32_t)state_in().csr_addr, commit_read_data_comb_func(),
+                    csr_write_value(commit_read_data_comb_func()), (uint32_t)priv_reg);
 #else
                 std::print("trace-csr-write pc={:08x} addr={:03x} old={:08x} new={:08x} priv={}\n",
-                    state_in().pc, (uint32_t)state_in().csr_addr, read_data_comb_func(),
-                    csr_write_value(read_data_comb_func()), (uint32_t)priv_reg);
+                    state_in().pc, (uint32_t)state_in().csr_addr, commit_read_data_comb_func(),
+                    csr_write_value(commit_read_data_comb_func()), (uint32_t)priv_reg);
 #endif
             }
-            csr_write(state_in().csr_addr, csr_write_value(read_data_comb_func()));
+            csr_write_select_reg._next = csr_write_select(state_in().csr_addr);
+            csr_write_value_reg._next = csr_write_value(commit_read_data_comb_func());
+        }
+        if (commit_new_comb_func() && state_in().csr_op != Csr::CNONE) {
+            csr_read_data_reg._next = commit_read_data_comb_func();
         }
 
 #ifdef ENABLE_TRAPS
@@ -738,13 +830,8 @@ public:
             dscratch1_reg.clr();
             cycle_reg.clr();
             instret_reg.clr();
-            commit_seen_valid_reg.clr();
-            commit_seen_pc_reg.clr();
-            commit_seen_csr_addr_reg.clr();
-            commit_seen_csr_op_reg.clr();
-            commit_seen_sys_op_reg.clr();
-            commit_seen_trap_op_reg.clr();
-            commit_seen_imm_reg.clr();
+            csr_write_select_reg.clr();
+            csr_write_value_reg.clr();
             csr_read_data_reg.clr();
 #ifdef ENABLE_TRAPS
             priv_reg._next = reset_priv_in();
@@ -786,13 +873,8 @@ public:
         dscratch1_reg.strobe(checkpoint_fd);
         cycle_reg.strobe(checkpoint_fd);
         instret_reg.strobe(checkpoint_fd);
-        commit_seen_valid_reg.strobe(checkpoint_fd);
-        commit_seen_pc_reg.strobe(checkpoint_fd);
-        commit_seen_csr_addr_reg.strobe(checkpoint_fd);
-        commit_seen_csr_op_reg.strobe(checkpoint_fd);
-        commit_seen_sys_op_reg.strobe(checkpoint_fd);
-        commit_seen_trap_op_reg.strobe(checkpoint_fd);
-        commit_seen_imm_reg.strobe(checkpoint_fd);
+        csr_write_select_reg.strobe(checkpoint_fd);
+        csr_write_value_reg.strobe(checkpoint_fd);
         csr_read_data_reg.strobe(checkpoint_fd);
 #ifdef ENABLE_TRAPS
         priv_reg.strobe(checkpoint_fd);

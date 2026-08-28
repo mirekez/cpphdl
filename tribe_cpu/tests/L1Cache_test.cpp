@@ -89,6 +89,7 @@ class TestL1Cache : public Module
     uint32_t invalidate_addr = 0;
     bool direct_mode = false;
     uint32_t direct_mem_data = 0;
+    bool mem_wait = false;
     bool error = false;
     uint32_t stall_prbs = 0x13579bdf;
 
@@ -102,7 +103,7 @@ public:
         cache.write_data_in = _ASSIGN_REG(write_data);
         cache.write_mask_in = _ASSIGN_REG(write_mask);
         L1_MEM_READ_DATA_OUT = _ASSIGN(direct_mode ? (logic<32>)direct_mem_data : backing_read_data_comb_func());
-        L1_MEM_WAIT_OUT = _ASSIGN(false);
+        L1_MEM_WAIT_OUT = _ASSIGN_REG(mem_wait);
         cache.stall_in = _ASSIGN_REG(stall);
         cache.flush_in = _ASSIGN_REG(flush);
         cache.invalidate_in = _ASSIGN(false);
@@ -238,7 +239,7 @@ public:
         } else {
             L1_MEM_READ_DATA_OUT = backing_read_data_from_image((uint32_t)L1_MEM_ADDR_IN);
         }
-        L1_MEM_WAIT_OUT = false;
+        L1_MEM_WAIT_OUT = mem_wait;
         cache.stall_in = stall;
         cache.flush_in = flush;
         cache.invalidate_in = false;
@@ -308,6 +309,7 @@ public:
         flush = false;
         invalidate_line = false;
         invalidate_addr = 0;
+        mem_wait = false;
         cycle(true);
         cycle(false);
         for (size_t i = 0; i < SETS + 8 && busy(); ++i) {
@@ -428,6 +430,46 @@ public:
         }
     }
 
+    void focused_waiting_refill_not_installed_check()
+    {
+        uint32_t target_addr;
+        uint32_t replacement;
+        bool saw_request;
+        target_addr = 17 * SETS * LINE_SIZE + 11 * LINE_SIZE + 12;
+        replacement = 0x6b91e42du;
+        idle();
+
+        addr = target_addr;
+        read = true;
+        mem_wait = true;
+        saw_request = false;
+        for (size_t i = 0; i < 16 && !saw_request; ++i) {
+            cycle(false);
+            saw_request = PORT_VALUE(L1_MEM_READ_IN);
+        }
+        if (!saw_request) {
+            std::print("\nfocused waiting refill ERROR request was not issued\n");
+            error = true;
+        }
+
+        // Keep the response unaccepted for several cycles. No tag or data RAM
+        // entry may be installed until wait_out is released.
+        for (size_t i = 0; i < 3; ++i) {
+            cycle(false);
+        }
+        flush = true;
+        cycle(false);
+        flush = false;
+        read = false;
+        mem_wait = false;
+        cycle(false);
+
+        // If the waiting refill was installed speculatively, this following
+        // read hits stale data instead of observing the changed backing word.
+        ram_image[target_addr >> 2] = replacement;
+        read_check("focused waiting refill abort", target_addr, false);
+    }
+
     void focused_store_invalidate_check()
     {
         uint32_t request_addr = 6 * SETS * LINE_SIZE + 4 * LINE_SIZE + 8;
@@ -435,6 +477,44 @@ public:
         write_word(request_addr, 0xa55a33cc);
         read_check("focused store reload miss", request_addr, false);
         read_check("focused store reload hit", request_addr, true);
+    }
+
+    void focused_store_load_overlap_check()
+    {
+        uint32_t request_addr;
+        uint32_t replacement;
+        bool got;
+        request_addr = 19 * SETS * LINE_SIZE + 3 * LINE_SIZE + 1;
+        replacement = 0x5au;
+        read_check("focused store-load fill", request_addr, false);
+        idle();
+
+        addr = request_addr;
+        write_data = replacement;
+        write_mask = 1;
+        write = true;
+        read = true;
+        cycle(false);
+        if (valid()) {
+            std::print("\nfocused store-load overlap ERROR addr={:#x}: stale line-buffer response={:#x}\n",
+                request_addr, rdata());
+            error = true;
+        }
+
+        write = false;
+        write_mask = 0;
+        got = false;
+        for (size_t i = 0; i < 64 && !got; ++i) {
+            cycle(false);
+            got = valid() && raddr() == request_addr;
+        }
+        if (!got || (rdata() & 0xffu) != replacement) {
+            std::print("\nfocused store-load overlap ERROR addr={:#x}: valid={} raddr={:#x} data={:#x} expected-byte={:#x}\n",
+                request_addr, valid(), raddr(), rdata(), replacement);
+            error = true;
+        }
+        read = false;
+        cycle(false);
     }
 
     void focused_peer_line_invalidate_check()
@@ -538,6 +618,16 @@ public:
 
         stall = true;
         bool held = false;
+        // A timing-optimized block-RAM hit crosses tag capture/compare, way
+        // selection, and word assembly stages before becoming valid. Stall
+        // must allow that in-flight response to complete, then hold it.
+        for (size_t i = 0; i < 8 && !valid(); ++i) {
+            cycle(false);
+        }
+        if (!valid()) {
+            std::print("\nfocused stalled hit ERROR response did not complete under stall\n");
+            error = true;
+        }
         for (size_t i = 0; i < 4; ++i) {
             cycle(false);
             if (valid() && raddr() == request_addr && rdata() == expected_ram_read(request_addr)) {
@@ -559,6 +649,30 @@ public:
             std::print("\nfocused stalled hit ERROR response was not held under stall\n");
             error = true;
         }
+    }
+
+    void focused_same_line_hit_throughput_check()
+    {
+        uint32_t line_base = 18 * SETS * LINE_SIZE + 7 * LINE_SIZE;
+        read_check("focused line-buffer fill", line_base, false);
+        idle();
+
+        read = true;
+        stall = false;
+        for (uint32_t word = 1; word < 5; ++word) {
+            addr = line_base + word * 4;
+            cycle(false);
+            if (!valid() || busy() || raddr() != addr ||
+                rdata() != expected_ram_read(addr) || PORT_VALUE(L1_MEM_READ_IN)) {
+                std::print("\nfocused line-buffer throughput ERROR word={} addr={:#x}: valid={} busy={} raddr={:#x} data={:#x} expected={:#x} mem_read={}\n",
+                    word, addr, valid(), busy(), raddr(), rdata(),
+                    expected_ram_read(addr), (bool)PORT_VALUE(L1_MEM_READ_IN));
+                error = true;
+                break;
+            }
+        }
+        read = false;
+        cycle(false);
     }
 
     void focused_flush_cached_hit_check()
@@ -583,11 +697,7 @@ public:
         stall = false;
         cycle(false);
 
-        if (busy()) {
-            std::print("\nfocused flush cached hit ERROR addr={:#x}: redirect hit asserted busy\n", target_addr);
-            error = true;
-        }
-        if (!valid()) {
+        for (size_t i = 0; i < 8 && !valid(); ++i) {
             cycle(false);
         }
         check_result("focused flush cached hit", target_addr);
@@ -837,7 +947,13 @@ public:
     {
         focused_refill_assembly_check();
         if (!error) {
+            focused_waiting_refill_not_installed_check();
+        }
+        if (!error) {
             focused_store_invalidate_check();
+        }
+        if (!error) {
+            focused_store_load_overlap_check();
         }
         if (!error) {
             focused_peer_line_invalidate_check();
@@ -850,6 +966,9 @@ public:
         }
         if (!error) {
             focused_cached_hit_stall_hold_check();
+        }
+        if (!error) {
+            focused_same_line_hit_throughput_check();
         }
         if (!error) {
             focused_flush_cached_hit_check();

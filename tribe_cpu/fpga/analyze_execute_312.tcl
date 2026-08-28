@@ -1,12 +1,21 @@
 # Register-to-register physical timing analysis for the combinational Execute.
 
+proc env_or_default {name fallback} {
+    if {[info exists ::env($name)] && $::env($name) ne ""} {
+        return $::env($name)
+    }
+    return $fallback
+}
+
 set script_dir [file dirname [file normalize [info script]]]
-set rtl_dir [file join $script_dir cpphdl_tribe256_multicore generated]
-set run_dir [file join $script_dir vivado_execute_312]
+set rtl_dir [file normalize [env_or_default TRIBE_RTL_DIR \
+    [file join $script_dir cpphdl_tribe256_multicore generated]]]
+set run_dir [file normalize [env_or_default TRIBE_RUN_DIR \
+    [file join $script_dir vivado_execute_312]]]
 set report_dir [file join $run_dir reports]
 set checkpoint_dir [file join $run_dir checkpoints]
-set part xc7k325tffg676-3
-set cpu_period [expr {1000.0 / 312.0}]
+set part [env_or_default TRIBE_PART xc7k325tffg676-3]
+set cpu_period [env_or_default TRIBE_CPU_PERIOD_NS [expr {1000.0 / 312.0}]]
 file mkdir $report_dir
 file mkdir $checkpoint_dir
 
@@ -41,5 +50,8 @@ report_timing_summary -delay_type min_max -max_paths 100 -report_unconstrained \
 report_timing -delay_type max -max_paths 20 -nworst 5 -unique_pins \
     -from [get_clocks cpu_clk] -to [get_clocks cpu_clk] \
     -file [file join $report_dir timing_cpu_to_cpu.rpt]
+report_methodology -file [file join $report_dir methodology_post_route.rpt]
+check_timing -verbose -loop_limit 1000 \
+    -file [file join $report_dir check_timing_post_route.rpt]
 
 puts [format "TRIBE_EXECUTE_DONE period=%.6fns" $cpu_period]

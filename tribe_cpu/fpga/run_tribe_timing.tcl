@@ -6,6 +6,7 @@
 #   TRIBE_CDC_MODE       "timed" for phase-related clocks, "async" for
 #                        independent clock inputs (default timed)
 #   TRIBE_SYNTH_ONLY     1 to stop after synthesis/DRC (default 0)
+#   TRIBE_RESUME_SYNTH   post-synthesis checkpoint to place and route
 #   TRIBE_RUN_DIR        output directory
 #                        (default tribe_cpu/fpga/vivado_tribe_timing)
 
@@ -18,7 +19,8 @@ proc env_or_default {name fallback} {
 
 set script_dir [file dirname [file normalize [info script]]]
 set repo_dir [file dirname [file dirname $script_dir]]
-set rtl_dir [file join $script_dir cpphdl_tribe256_multicore generated]
+set rtl_dir [file normalize [env_or_default TRIBE_RTL_DIR \
+    [file join $script_dir cpphdl_tribe256_multicore generated]]]
 set run_dir [file normalize [env_or_default TRIBE_RUN_DIR \
     [file join $script_dir vivado_tribe_timing]]]
 set report_dir [file join $run_dir reports]
@@ -42,6 +44,10 @@ if {$cdc_mode ni {timed async}} {
 file mkdir $report_dir
 file mkdir $checkpoint_dir
 
+set resume_synth [env_or_default TRIBE_RESUME_SYNTH ""]
+if {$resume_synth ne ""} {
+    open_checkpoint [file normalize $resume_synth]
+} else {
 # Package order matters because a few generated packed types import other
 # generated packages.  All remaining leaf packages can then be read together.
 set prerequisite_packages [list \
@@ -137,6 +143,7 @@ report_drc \
 if {$synth_only} {
     puts "TRIBE_SYNTH_DONE part=$part cpu_period=$cpu_period l2_period=$l2_period cdc_mode=$cdc_mode"
     exit 0
+}
 }
 
 opt_design
