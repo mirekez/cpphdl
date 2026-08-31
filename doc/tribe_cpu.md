@@ -6,6 +6,8 @@ Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model ru
 
 The base implementation targets 32-bit integer software. Build-time configuration in `tribe_cpu/Config.h` selects optional blocks such as `ENABLE_ZICSR`, `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB`. The L2 memory data width is selected with `L2_AXI_WIDTH`; common test targets use 64, 128, and 256 bits. Main memory starts at `memory_base_in`, has runtime size `memory_size_in`, and is split into four L2 memory/device regions. The last region is used as uncached IO/MMIO space.
 
+![Tribe CPU architecture](tribe_cpu.png)
+
 ## Structure
 
 The single-core CPU is the `Tribe` module in `tribe_cpu/Tribe.h`. It instantiates these blocks in the primary `clk` domain:
