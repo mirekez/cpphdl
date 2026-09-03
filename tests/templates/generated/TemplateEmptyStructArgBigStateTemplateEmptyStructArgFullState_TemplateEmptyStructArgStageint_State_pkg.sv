@@ -1,0 +1,8 @@
+package TemplateEmptyStructArgBigStateTemplateEmptyStructArgFullState_TemplateEmptyStructArgStageint_State_pkg;
+
+typedef struct packed {
+    logic[15:0] value;
+} TemplateEmptyStructArgBigStateTemplateEmptyStructArgFullState_TemplateEmptyStructArgStageint_State;
+
+
+endpackage

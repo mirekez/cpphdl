@@ -328,8 +328,15 @@ std::string Expr::str(std::string prefix, std::string suffix)
         }
     }
 
+    unsigned childFlags = flags;
+    if (type == EXPR_TEMPLATE && value.rfind("cpphdl_", 0) != 0) {
+        // A user-defined template specialization is one SV data type.  Port
+        // net qualifiers belong to that completed type, not to the template
+        // arguments used to form its generated specialization name.
+        childFlags &= ~FLAG_WIRE;
+    }
     for (auto& e : sub) {
-        e.flags |= flags;
+        e.flags |= childFlags;
     }
 
     switch (type)
@@ -1050,6 +1057,26 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     ret += indent_str + "disable " + method_name;
                     return ret;
                 }
+                auto unwrapAssignment = [](Expr* expression) {
+                    while ((expression->type == EXPR_CAST || expression->type == EXPR_PAREN) &&
+                           expression->sub.size() == 1) {
+                        expression = &expression->sub[0];
+                    }
+                    return expression;
+                };
+                Expr* assignment = unwrapAssignment(&sub[0]);
+                if ((assignment->type == EXPR_OPERATORCALL || assignment->type == EXPR_BINARY) &&
+                    assignment->value.length() &&
+                    assignment->value.back() == '=' && assignment->value[0] != '!' &&
+                    (assignment->value[0] != '=' || assignment->value.length() == 1)) {
+                    ASSERT(assignment->sub.size() >= 2);
+                    std::string assignmentStatement = assignment->str();
+                    Expr returnValue = sub[0];
+                    Expr* returnAssignment = unwrapAssignment(&returnValue);
+                    *returnAssignment = returnAssignment->sub[0];
+                    return indent_str + assignmentStatement + ";\n" + indent_str +
+                        "return " + returnValue.str();
+                }
                 return indent_str + "return " + sub[0].str();
             }
             else {
@@ -1296,6 +1323,11 @@ std::string Expr::typeToSV(std::string type, std::string size)
         // an explicit net kind on module ports and child-port connections when
         // generated under `default_nettype none`; Vivado otherwise rejects an
         // ANSI declaration such as `input MyStruct value_in`.
+
+        // A user-defined SystemVerilog type still needs an explicit net kind
+        // when it is used for a module port.  In particular, omitting `wire`
+        // makes these declarations invalid with `default_nettype none` in some
+        // synthesis tools.  Built-in types acquire the net kind above.
         if (flags & FLAG_WIRE) {
             str = "wire " + str;
         }

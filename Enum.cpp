@@ -15,7 +15,11 @@ bool Enum::print(std::ofstream& out)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "typedef enum {\n";
+    out << "typedef enum logic";
+    if (isSigned) {
+        out << " signed";
+    }
+    out << "[" << bitWidth << "-1:0] {\n";
 
     ++indent;
     for (size_t i=0; i < fields.size(); ++i) {

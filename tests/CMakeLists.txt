@@ -96,6 +96,19 @@ foreach(src ${TEST_SOURCES})
     set_tests_properties(${target_name} PROPERTIES
         TIMEOUT 600
     )
+    # Several converter regressions deliberately launch Verilator from the
+    # generated C++ test executable.  CMake finds LLVM and Verilator in the
+    # repository-local Conda prefix, but CTest does not implicitly activate
+    # that environment.  Give subprocesses the same tools used by the build so
+    # a plain `ctest` is reproducible without requiring the caller to modify
+    # PATH or run `conda activate` first.
+    if(CPPHDL_LOCAL_CONDA_PREFIX AND
+       EXISTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin/verilator")
+        set_tests_properties(${target_name} PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}"
+        )
+    endif()
 
 endforeach()
 

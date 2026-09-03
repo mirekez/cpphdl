@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
+
 cpphdl="$1"
 include_dir="$2"
 stdcxxexp_library="${3:-}"
@@ -113,7 +115,7 @@ printf '%s\n' \
 # A generic-lambda wrapper keeps template-dependent constexpr branches valid,
 # but ordinary port reads inside it must still use optimized graph state.
 # Otherwise calc_all falls back to function_ref/std::function in hot work code.
-if rg -q 'value = n[0-9]+\.input\(\);' \
+if search_q 'value = n[0-9]+\.input\(\);' \
     "$build_dir"/TemplateWorkSplitRoot_optimized_combs_work_*.cpp; then
     printf 'templated work retained a runtime port getter\n' >&2
     exit 1

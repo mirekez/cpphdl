@@ -1,6 +1,6 @@
 package Alu_pkg;
 
-enum {
+typedef enum logic[32-1:0] {
     ANONE,
     ADD,
     SUB,

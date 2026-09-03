@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
+
 cpphdl="$1"
 include_dir="$2"
 source_dir="$3"
@@ -18,7 +20,7 @@ trap 'rm -rf "$build_dir"' EXIT
 # Structural non-type arguments must be deduced from the concrete module type.
 # Clang's printed aggregate value is not guaranteed to be valid source, so it
 # must not be copied into an extracted comb expression or template argument.
-if rg -q 'StructuralNttpConfig\{' \
+if search_q 'StructuralNttpConfig\{' \
     "$build_dir"/StructuralNttpRoot_optimized_combs*.cpp; then
     printf 'structural template aggregate leaked into optimized output\n' >&2
     exit 1

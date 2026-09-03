@@ -34,7 +34,7 @@ module Axi4Ram #(
 ,   output wire[ID_WIDTH-1:0] axi_in__rid_out
 ,   input wire debugen_in
 );
-    parameter  FULL_MASK = ((DATA_WIDTH/'h8>='h40)) ? (~'h0) : (((('h1 <<< ((DATA_WIDTH/'h8)))) - 'h1));
+    localparam  FULL_MASK = ((DATA_WIDTH/'h8>='h40)) ? (~'h0) : (((('h1 <<< ((DATA_WIDTH/'h8)))) - 'h1));
 
 
     // regs and combs

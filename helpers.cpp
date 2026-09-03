@@ -827,6 +827,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 DEBUG_AST1(" EnumName: " << ED->getQualifiedNameAsString());
 
                 auto en = cpphdl::Enum{genTypeName(ED->getQualifiedNameAsString()), ED->getQualifiedNameAsString()};
+                QualType integerType = ED->getIntegerType();
+                if (!integerType.isNull()) {
+                    en.bitWidth = ED->getASTContext().getTypeSize(integerType);
+                    en.isSigned = integerType->isSignedIntegerType();
+                }
 
                 for (const EnumConstantDecl *ECD : ED->enumerators()) {
                     if (ECD->getInitExpr()) {

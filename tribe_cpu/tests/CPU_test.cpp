@@ -345,6 +345,52 @@ static bool build_cpu_time_csr_elf()
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool build_cpu_csr_order_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_csr_order.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " " + shell_quote(code_dir / "cpu_csr_order.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU CSR ordering bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
+static bool build_cpu_fence_i_order_elf()
+{
+    const auto code_dir = tribe_code_dir();
+    const auto gcc = riscv_home_dir() / "bin" / "riscv32-unknown-elf-gcc";
+    const auto elf = std::filesystem::current_path() / "cpu_fence_i_order.elf";
+
+    if (!std::filesystem::exists(gcc)) {
+        std::print("missing RISC-V compiler: {}\n", gcc.string());
+        return false;
+    }
+
+    std::string cmd;
+    cmd += shell_quote(gcc);
+    cmd += " -march=rv32im_zicsr_zifencei -mabi=ilp32";
+    cmd += " -O2 -g -ffreestanding -fno-builtin -msmall-data-limit=0 -mno-relax";
+    cmd += " -nostdlib -nostartfiles";
+    cmd += " -T " + shell_quote(code_dir / "cpp_link.ld");
+    cmd += " " + shell_quote(code_dir / "cpu_fence_i_order.S");
+    cmd += " -o " + shell_quote(elf);
+    std::print("Building CPU FENCE.I ordering bare-metal ELF...\n");
+    return std::system(cmd.c_str()) == 0;
+}
+
 static bool run_cpu_fence_cpp(bool debug)
 {
     return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence.elf").string(),
@@ -470,6 +516,30 @@ static bool run_cpu_time_csr_cpp(bool debug)
         0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "", "CPU time CSR");
 }
 
+static bool run_cpu_csr_order_cpp(bool debug)
+{
+    const auto expected = std::filesystem::current_path() / "cpu_csr_order.expected";
+    if (!write_file(expected, "CSR_ORDER\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_csr_order.elf").string(),
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU CSR ordering");
+}
+
+static bool run_cpu_fence_i_order_cpp(bool debug)
+{
+    const auto expected = std::filesystem::current_path() / "cpu_fence_i_order.expected";
+    if (!write_file(expected, "FENCE_I_ORDER\n")) {
+        return false;
+    }
+    return TestTribe(debug).run((std::filesystem::current_path() / "cpu_fence_i_order.elf").string(),
+        0, expected.string(), 200000, 0, 0, DEFAULT_RAM_SIZE, false,
+        0, 0, 3, false, 0, "", false, "", 0, "", "", 0, false, "", false, "",
+        "CPU FENCE.I ordering");
+}
+
 static bool run_cpu_bytecopy_checkpoint_cpp(bool debug)
 {
     const auto elf = std::filesystem::current_path() / "cpu_bytecopy.elf";
@@ -549,6 +619,387 @@ static bool check_system_decode_has_no_decode_branch()
     return true;
 }
 
+static bool check_csr_redirect_state_is_feed_forward()
+{
+    CSR csr;
+    State commit_state{};
+    State redirect_state{};
+    State trap_check_state{};
+    bool interrupt_valid = false;
+    uint32_t interrupt_cause = 0;
+    bool interrupt_to_supervisor = false;
+    uint32_t irq_pending = 0;
+    bool software_irq_set = false;
+    uint32_t time_lo = 0;
+    uint32_t time_hi = 0;
+
+    csr.state_in = _ASSIGN(commit_state);
+    csr.commit_in = _ASSIGN(true);
+    csr.read_state_in = _ASSIGN(commit_state);
+    csr.trap_check_state_in = _ASSIGN(trap_check_state);
+    csr.redirect_state_in = _ASSIGN(redirect_state);
+    csr.interrupt_valid_in = _ASSIGN(interrupt_valid);
+    csr.interrupt_cause_in = _ASSIGN(interrupt_cause);
+    csr.interrupt_to_supervisor_in = _ASSIGN(interrupt_to_supervisor);
+    csr.redirect_interrupt_valid_in = _ASSIGN(interrupt_valid);
+    csr.redirect_interrupt_cause_in = _ASSIGN(interrupt_cause);
+    csr.redirect_interrupt_to_supervisor_in = _ASSIGN(interrupt_to_supervisor);
+    csr.irq_pending_bits_in = _ASSIGN(irq_pending);
+    csr.software_irq_set_in = _ASSIGN(software_irq_set);
+    csr.time_lo_in = _ASSIGN(time_lo);
+    csr.time_hi_in = _ASSIGN(time_hi);
+    csr._assign();
+
+    csr._work(true);
+    csr._strobe();
+    ++_system_clock;
+
+    auto write_csr = [&](uint32_t addr, uint32_t value) {
+        commit_state = State{};
+        commit_state.valid = true;
+        commit_state.csr_op = Csr::CSRRW;
+        commit_state.csr_addr = addr;
+        commit_state.rs1 = 1;
+        commit_state.rs1_val = value;
+        redirect_state = commit_state;
+        csr._work(false);
+        csr._strobe();
+        ++_system_clock;
+        // CSR writes cross the decoded one-hot command boundary before they
+        // update architectural state.
+        commit_state = State{};
+        redirect_state = State{};
+        csr._work(false);
+        csr._strobe();
+        ++_system_clock;
+    };
+
+    write_csr(0x341, 0x1000); // mepc
+    write_csr(0x141, 0x2000); // sepc
+    commit_state = State{};
+    commit_state.valid = true;
+    commit_state.sys_op = Sys::MRET;
+    redirect_state = State{};
+    redirect_state.valid = true;
+    redirect_state.sys_op = Sys::SRET;
+    ++_system_clock;
+    if (csr.epc_out() != 0x2000) {
+        std::print("CSR redirect EPC used commit state: got={:08x}\n", (uint32_t)csr.epc_out());
+        return false;
+    }
+
+    write_csr(0x305, 0x100);        // mtvec
+    write_csr(0x105, 0x200);        // stvec
+    write_csr(0x302, 1u << 13);     // delegate load page faults only
+    write_csr(0x300, 1u << 11);     // MPP=S
+    commit_state = State{};
+    commit_state.valid = true;
+    commit_state.sys_op = Sys::MRET;
+    redirect_state = commit_state;
+    csr._work(false);
+    csr._strobe();
+    ++_system_clock;
+
+    commit_state = State{};
+    commit_state.valid = true;
+    commit_state.sys_op = Sys::TRAP;
+    commit_state.trap_op = Trap::STORE_PAGE_FAULT;
+    redirect_state = commit_state;
+    redirect_state.trap_op = Trap::LOAD_PAGE_FAULT;
+    ++_system_clock;
+    if (csr.trap_vector_out() != 0x200) {
+        std::print("CSR redirect trap state did not select stvec: got={:08x}\n",
+            (uint32_t)csr.trap_vector_out());
+        return false;
+    }
+
+    redirect_state.trap_op = Trap::STORE_PAGE_FAULT;
+    ++_system_clock;
+    if (csr.trap_vector_out() != 0x100) {
+        std::print("CSR redirect trap state did not select mtvec: got={:08x}\n",
+            (uint32_t)csr.trap_vector_out());
+        return false;
+    }
+    return true;
+}
+
+static bool check_iterative_divider()
+{
+    struct DivCase {
+        uint32_t op;
+        uint32_t a;
+        uint32_t b;
+        uint32_t expected;
+        const char* name;
+    };
+    const DivCase cases[] = {
+        {Alu::DIV, 100u, 7u, 14u, "div-positive"},
+        {Alu::DIV, (uint32_t)-100, 7u, (uint32_t)-14, "div-negative-a"},
+        {Alu::DIV, 100u, (uint32_t)-7, (uint32_t)-14, "div-negative-b"},
+        {Alu::DIV, 0x80000000u, 0xffffffffu, 0x80000000u, "div-overflow"},
+        {Alu::DIVU, 0xfffffff0u, 16u, 0x0fffffffu, "divu"},
+        {Alu::REM, (uint32_t)-100, 7u, (uint32_t)-2, "rem-negative"},
+        {Alu::REM, 100u, (uint32_t)-7, 2u, "rem-negative-divisor"},
+        {Alu::REMU, 0xfffffff1u, 16u, 1u, "remu"},
+        {Alu::DIV, 0x12345678u, 0u, 0xffffffffu, "div-zero"},
+        {Alu::REM, 0x87654321u, 0u, 0x87654321u, "rem-zero"},
+    };
+
+    Execute exe;
+    State state{};
+    exe.state_in = _ASSIGN(state);
+    exe.multicycle_state_in = _ASSIGN(state);
+    exe._assign();
+    exe._work(true);
+    exe._strobe();
+    ++_system_clock;
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        state = State{};
+        state.valid = true;
+        state.pc = 0x1000u + (uint32_t)i * 4u;
+        state.alu_op = cases[i].op;
+        state.rs1_val = cases[i].a;
+        state.rs2_val = cases[i].b;
+
+        size_t cycles = 0;
+        while (exe.multicycle_wait_out() && cycles < 40) {
+            exe._work(false);
+            exe._strobe();
+            ++_system_clock;
+            ++cycles;
+        }
+        if (exe.multicycle_wait_out() || exe.alu_result_out() != cases[i].expected) {
+            std::print("iterative divider {} failed: wait={} cycles={} got={:08x} expected={:08x}\n",
+                cases[i].name, (bool)exe.multicycle_wait_out(), cycles,
+                (uint32_t)exe.alu_result_out(), cases[i].expected);
+            return false;
+        }
+
+        state = State{};
+        exe._work(false);
+        exe._strobe();
+        ++_system_clock;
+    }
+    return true;
+}
+
+static bool check_iterative_multiplier()
+{
+    struct MulCase {
+        uint32_t op;
+        uint32_t a;
+        uint32_t b;
+        uint32_t expected;
+        const char* name;
+    };
+    const MulCase cases[] = {
+        {Alu::MUL, 7u, 9u, 63u, "mul-positive"},
+        {Alu::MUL, (uint32_t)-3, 7u, (uint32_t)-21, "mul-negative-low"},
+        {Alu::MULH, (uint32_t)-2, 3u, 0xffffffffu, "mulh-negative"},
+        {Alu::MULH, 0x80000000u, 0x80000000u, 0x40000000u, "mulh-minimum"},
+        {Alu::MULHSU, (uint32_t)-2, 0xffffffffu, 0xfffffffeu, "mulhsu"},
+        {Alu::MULHU, 0xffffffffu, 0xffffffffu, 0xfffffffeu, "mulhu-maximum"},
+        {Alu::MULHU, 0x12345678u, 16u, 1u, "mulhu-carry"},
+        {Alu::MUL, 0u, 0xffffffffu, 0u, "mul-zero"},
+    };
+
+    Execute exe;
+    State state{};
+    exe.state_in = _ASSIGN(state);
+    exe.multicycle_state_in = _ASSIGN(state);
+    exe._assign();
+    exe._work(true);
+    exe._strobe();
+    ++_system_clock;
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        state = State{};
+        state.valid = true;
+        state.pc = 0x2000u + (uint32_t)i * 4u;
+        state.alu_op = cases[i].op;
+        state.rs1_val = cases[i].a;
+        state.rs2_val = cases[i].b;
+
+        size_t cycles = 0;
+        while (exe.multicycle_wait_out() && cycles < 40) {
+            exe._work(false);
+            exe._strobe();
+            ++_system_clock;
+            ++cycles;
+        }
+        if (exe.multicycle_wait_out() || exe.alu_result_out() != cases[i].expected) {
+            std::print("iterative multiplier {} failed: wait={} cycles={} got={:08x} expected={:08x}\n",
+                cases[i].name, (bool)exe.multicycle_wait_out(), cycles,
+                (uint32_t)exe.alu_result_out(), cases[i].expected);
+            return false;
+        }
+
+        state = State{};
+        exe._work(false);
+        exe._strobe();
+        ++_system_clock;
+    }
+    return true;
+}
+
+static bool check_l1mem_cdc_payload_capture()
+{
+    L1MemFastToSlowCdc<256> cdc;
+    bool fast_read = false;
+    bool fast_write = false;
+    uint32_t fast_addr = 0;
+    uint32_t fast_write_data = 0;
+    uint8_t fast_write_mask = 0;
+    bool fast_cache_disable = false;
+    logic<256> slow_read_data = 0;
+    bool slow_wait = true;
+
+    cdc.fast_in.read_in = _ASSIGN(fast_read);
+    cdc.fast_in.write_in = _ASSIGN(fast_write);
+    cdc.fast_in.addr_in = _ASSIGN(fast_addr);
+    cdc.fast_in.write_data_in = _ASSIGN(fast_write_data);
+    cdc.fast_in.write_mask_in = _ASSIGN(fast_write_mask);
+    cdc.fast_in.cache_disable_in = _ASSIGN(fast_cache_disable);
+    cdc.slow_out.read_data_out = _ASSIGN(slow_read_data);
+    cdc.slow_out.wait_out = _ASSIGN(slow_wait);
+    cdc._assign();
+
+    auto fast_tick = [&](bool reset) {
+        cdc._work_clk(reset);
+        cdc._strobe_clk();
+        ++_system_clock;
+    };
+    auto slow_tick = [&](bool reset) {
+        cdc._work_l2_clock(reset);
+        cdc._strobe_l2_clock();
+    };
+
+    fast_tick(true);
+    slow_tick(true);
+    fast_tick(false);
+    slow_tick(false);
+
+    fast_addr = 0x12345678u;
+    fast_read = true;
+    bool request_seen = false;
+    for (size_t cycle = 0; cycle < 6 && !request_seen; ++cycle) {
+        fast_tick(false);
+        fast_tick(false);
+        slow_tick(false);
+        request_seen = cdc.slow_out.read_in();
+    }
+    if (!request_seen || cdc.slow_out.addr_in() != fast_addr) {
+        std::print("L1 CDC request capture failed: seen={} addr={:08x}\n",
+            request_seen, (uint32_t)cdc.slow_out.addr_in());
+        return false;
+    }
+
+    slow_read_data = 0xcafef00du;
+    slow_wait = false;
+    slow_tick(false);
+    slow_read_data = 0x11223344u;
+    fast_tick(false);
+    fast_tick(false);
+    if (cdc.fast_in.wait_out() ||
+        (uint32_t)cdc.fast_in.read_data_out() != 0xcafef00du) {
+        std::print("L1 CDC response capture failed: wait={} data={:08x}\n",
+            (bool)cdc.fast_in.wait_out(),
+            (uint32_t)cdc.fast_in.read_data_out());
+        return false;
+    }
+    return true;
+}
+
+static bool check_l1mem_cdc_orphaned_response()
+{
+    L1MemFastToSlowCdc<256> cdc;
+    bool fast_read = false;
+    uint32_t fast_addr = 0;
+    logic<256> slow_read_data = 0;
+    bool slow_wait = true;
+
+    cdc.fast_in.read_in = _ASSIGN(fast_read);
+    cdc.fast_in.write_in = _ASSIGN(false);
+    cdc.fast_in.addr_in = _ASSIGN(fast_addr);
+    cdc.fast_in.write_data_in = _ASSIGN((uint32_t)0);
+    cdc.fast_in.write_mask_in = _ASSIGN((uint8_t)0);
+    cdc.fast_in.cache_disable_in = _ASSIGN(false);
+    cdc.slow_out.read_data_out = _ASSIGN(slow_read_data);
+    cdc.slow_out.wait_out = _ASSIGN(slow_wait);
+    cdc._assign();
+
+    auto fast_tick = [&](bool reset) {
+        cdc._work_clk(reset);
+        cdc._strobe_clk();
+        ++_system_clock;
+    };
+    auto slow_tick = [&](bool reset) {
+        cdc._work_l2_clock(reset);
+        cdc._strobe_l2_clock();
+    };
+
+    fast_tick(true);
+    slow_tick(true);
+    fast_tick(false);
+    slow_tick(false);
+
+    // Launch request A and wait until the slow side owns it.
+    fast_addr = 0x1000u;
+    fast_read = true;
+    for (size_t cycle = 0; cycle < 6 && !cdc.slow_out.read_in(); ++cycle) {
+        fast_tick(false);
+        fast_tick(false);
+        slow_tick(false);
+    }
+    if (!cdc.slow_out.read_in()) {
+        std::print("L1 CDC orphan test failed to launch request A\n");
+        return false;
+    }
+
+    // Withdraw A for one fast edge, then present request B before A's response
+    // has crossed back.  B must remain waiting while A is discarded.
+    fast_read = false;
+    fast_tick(false);
+    fast_addr = 0x2000u;
+    fast_read = true;
+    slow_read_data = 0xaaaaaaaau;
+    slow_wait = false;
+    slow_tick(false);
+    fast_tick(false);
+    fast_tick(false);
+    if (!cdc.fast_in.wait_out()) {
+        std::print("L1 CDC orphan response was accepted by request B\n");
+        return false;
+    }
+
+    // After the orphan is acknowledged, B is captured as a new transaction.
+    slow_wait = true;
+    for (size_t cycle = 0; cycle < 8 &&
+        !(cdc.slow_out.read_in() && cdc.slow_out.addr_in() == 0x2000u); ++cycle) {
+        fast_tick(false);
+        fast_tick(false);
+        slow_tick(false);
+    }
+    if (!cdc.slow_out.read_in() || cdc.slow_out.addr_in() != 0x2000u) {
+        std::print("L1 CDC failed to relaunch request B after orphan discard\n");
+        return false;
+    }
+    slow_read_data = 0xbbbbbbbbu;
+    slow_wait = false;
+    slow_tick(false);
+    fast_tick(false);
+    fast_tick(false);
+    if (cdc.fast_in.wait_out() ||
+        (uint32_t)cdc.fast_in.read_data_out() != 0xbbbbbbbbu) {
+        std::print("L1 CDC request B completion failed: wait={} data={:08x}\n",
+            (bool)cdc.fast_in.wait_out(),
+            (uint32_t)cdc.fast_in.read_data_out());
+        return false;
+    }
+    return true;
+}
+
 static bool check_writeback_mem_address_tags()
 {
     WritebackMem wb;
@@ -585,25 +1036,44 @@ static bool check_writeback_mem_address_tags()
     wb.dcache_write_data_in = _ASSIGN(dcache_write_data);
     wb.dcache_write_mask_in = _ASSIGN(dcache_write_mask);
     wb.store_forward_enable_in = _ASSIGN(true);
-    wb.hold_in = _ASSIGN(hold);
+    wb.retire_in = _ASSIGN(!hold);
     wb._assign();
+
+    auto tick = [&]() {
+        wb._work(false);
+        wb._strobe();
+        ++_system_clock;
+    };
+
+    wb._work(true);
+    wb._strobe();
+    ++_system_clock;
 
     // Scenario: a stale/previous D-cache response must not complete the current
     // writeback load. Linux can otherwise restore a trap frame with a wrong EPC.
     dcache_read_valid = true;
     dcache_read_addr = 0x2000;
     dcache_read_data = 0xdeadbeef;
-    ++_system_clock;
+    hold = true;
+    tick();
     if (wb.load_ready_out() || wb.wb_mem_data_out() != 0) {
         std::print("WritebackMem accepted wrong-address load response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.wb_mem_data_out());
         return false;
     }
 
-    // A matching response should still complete normally.
+    // A matching response crosses the L1-data and assembled-result boundaries
+    // on successive held cycles.  Neither live cache data nor store-forwarding
+    // logic is allowed to reach CPU writeback combinationally.
     dcache_read_addr = alu_addr;
     dcache_read_data = 0x12345678;
-    ++_system_clock;
+    tick();
+    if (wb.load_ready_out()) {
+        std::print("WritebackMem bypassed its assembled-result boundary\n");
+        return false;
+    }
+    dcache_read_valid = false;
+    tick();
     if (!wb.load_ready_out() || wb.load_result_out() != 0x12345678) {
         std::print("WritebackMem rejected matching load response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());
@@ -613,17 +1083,18 @@ static bool check_writeback_mem_address_tags()
     // A response retired without a hold belongs only to this dynamic load.
     // A polling loop can execute the same PC/RD/address again after memory has
     // changed, and the fresh response must not be hidden by the prior value.
-    wb._work(false);
-    wb._strobe();
-    dcache_read_valid = false;
-    ++_system_clock;
+    hold = false;
+    tick();
     if (wb.load_ready_out()) {
         std::print("WritebackMem retained an immediately retired load response\n");
         return false;
     }
+    hold = true;
     dcache_read_valid = true;
     dcache_read_data = 0x87654321;
-    ++_system_clock;
+    tick();
+    dcache_read_valid = false;
+    tick();
     if (!wb.load_ready_out() || wb.load_result_out() != 0x87654321) {
         std::print("WritebackMem reused stale same-instruction response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());
@@ -633,22 +1104,31 @@ static bool check_writeback_mem_address_tags()
     // A live write may forward its bytes, but the entry must expire when the
     // write retires. Otherwise an earlier AMO/store can hide a peer CPU update
     // from a later polling load at the same address.
+    hold = false;
+    tick();
+    hold = true;
+    dcache_read_valid = true;
     dcache_write_valid = true;
     dcache_write_addr = alu_addr;
     dcache_write_data = 3;
     dcache_write_mask = 0xf;
-    wb._work(false);
-    wb._strobe();
-    ++_system_clock;
+    tick();
+    dcache_read_valid = false;
+    dcache_write_valid = false;
+    tick();
     if (wb.load_result_out() != 3) {
         std::print("WritebackMem did not forward live store data: data={:08x}\n",
             (uint32_t)wb.load_result_out());
         return false;
     }
-    dcache_write_valid = false;
-    wb._work(false);
-    wb._strobe();
-    ++_system_clock;
+    hold = false;
+    tick();
+    hold = true;
+    dcache_read_valid = true;
+    dcache_read_data = 0x87654321;
+    tick();
+    dcache_read_valid = false;
+    tick();
     if (wb.load_result_out() != 0x87654321) {
         std::print("WritebackMem retained completed store data: data={:08x}\n",
             (uint32_t)wb.load_result_out());
@@ -656,16 +1136,17 @@ static bool check_writeback_mem_address_tags()
     }
 
     // While held, only a matching response may be latched for later writeback.
+    hold = false;
+    tick();
     hold = true;
+    dcache_read_valid = true;
     dcache_read_addr = 0x2000;
     dcache_read_data = 0xa5a5a5a5;
-    ++_system_clock;
-    wb._work(false);
-    wb._strobe();
+    tick();
 
     hold = false;
     dcache_read_valid = false;
-    ++_system_clock;
+    tick();
     if (wb.load_ready_out()) {
         std::print("WritebackMem latched wrong-address held response\n");
         return false;
@@ -675,13 +1156,10 @@ static bool check_writeback_mem_address_tags()
     dcache_read_valid = true;
     dcache_read_addr = alu_addr;
     dcache_read_data = 0xcafef00d;
-    ++_system_clock;
-    wb._work(false);
-    wb._strobe();
+    tick();
 
-    hold = false;
     dcache_read_valid = false;
-    ++_system_clock;
+    tick();
     if (!wb.load_ready_out() || wb.load_result_out() != 0xcafef00d) {
         std::print("WritebackMem failed held matching response: ready={} data={:08x}\n",
             (bool)wb.load_ready_out(), (uint32_t)wb.load_result_out());
@@ -709,15 +1187,34 @@ int main(int argc, char** argv)
     };
 
     bool ok = check_system_decode_has_no_decode_branch();
+    ok = ok && check_csr_redirect_state_is_feed_forward();
+    ok = ok && check_iterative_divider();
+    ok = ok && check_iterative_multiplier();
+    ok = ok && check_l1mem_cdc_payload_capture();
+    ok = ok && check_l1mem_cdc_orphaned_response();
     if (run_selected("writeback_mem_addr")) {
         ok = ok && check_writeback_mem_address_tags();
     }
     // Scenario: RISC-V time/timeh CSRs must expose the platform timer used by
     // CLINT/SBI, not the raw CPU cycle counter. Linux uses rdtime as its
     // clocksource and SBI set_timer deadlines are in the same timebase.
+#ifdef ENABLE_ISR
     if (run_selected("csr_time")) {
         ok = ok && build_cpu_time_csr_elf();
         ok = ok && run_cpu_time_csr_cpp(debug);
+    }
+#endif
+    // Scenario: consecutive CSR read/modify/write instructions targeting the
+    // same CSR must return the value from before their own deferred write.
+    if (run_selected("csr_order")) {
+        ok = ok && build_cpu_csr_order_elf();
+        ok = ok && run_cpu_csr_order_cpp(debug);
+    }
+    // Scenario: a store that modifies executable memory must become visible
+    // before FENCE.I invalidates and refills the instruction cache.
+    if (run_selected("fence_i_order")) {
+        ok = ok && build_cpu_fence_i_order_elf();
+        ok = ok && run_cpu_fence_i_order_cpp(debug);
     }
     // Scenario: repeated MMIO polling uses fence iorw,iorw after each device
     // access. The fence must drain/serialize memory traffic without wedging the
@@ -729,10 +1226,12 @@ int main(int argc, char** argv)
     // Scenario: SFENCE.VMA invalidates translations but must not clear the
     // instruction cache. The final FENCE.I proves that cache invalidation still
     // occurs for the instruction that architecturally requires it.
+#ifdef ENABLE_MMU_TLB
     if (run_selected("sfence")) {
         ok = ok && build_cpu_sfence_elf();
         ok = ok && run_cpu_sfence_cpp(debug);
     }
+#endif
     // Scenario: byte loads and stores around unaligned offsets must observe
     // dirty cached data instead of bypassing to stale RAM contents.
     if (run_selected("bytecopy")) {
@@ -771,17 +1270,21 @@ int main(int argc, char** argv)
     // Scenario: a UART/PLIC external interrupt can arrive while the main code
     // is continuously creating load-use dependencies. Trap-vector fetch must
     // not be held by a stale load hazard when no fetched instruction is valid.
+#ifdef ENABLE_ISR
     if (run_selected("irq_load_hazard")) {
         ok = ok && build_cpu_irq_load_hazard_elf();
         ok = ok && run_cpu_irq_load_hazard_cpp(debug);
     }
+#endif
     // Scenario: an interrupt must not enter while LR/SC is holding the memory
     // pipeline busy. Otherwise the trap flush can leave atomic_busy asserted
     // with no valid instruction left, wedging trap-vector fetch at stvec.
+#if defined(ENABLE_ISR) && defined(ENABLE_RV32IA)
     if (run_selected("irq_atomic_hazard")) {
         ok = ok && build_cpu_irq_atomic_hazard_elf();
         ok = ok && run_cpu_irq_atomic_hazard_cpp(debug);
     }
+#endif
 
 #ifndef VERILATOR
     if (ok && !noveril) {

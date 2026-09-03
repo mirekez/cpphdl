@@ -13,25 +13,24 @@ Request-facing actions that directly answer or retire a CPU request:
    latching addr_in() and request attributes into req_* registers.
    1.1. L1CacheRequest::input_decode_comb_func() derives the live set and
         cacheability from one address snapshot.
-   1.2. The controller accepts reads in L1_ST_IDLE, after a completed response,
-        or while chaining a different address after a hit.
+   1.2. The controller accepts reads in L1_ST_IDLE or after a completed response;
+        one request remains registered through the complete lookup pipeline.
    1.3. even_ram[], odd_ram[], and tag_ram[] read the accepted set so their
         synchronous outputs belong to req_reg.addr in L1_ST_LOOKUP.
 
-2. Answer a cached read hit without an L2 transaction, achieved by
-   L1CacheLookup::lookup_comb_func() selecting one valid current-epoch way and
-   assembling its split even/odd line banks.
-   2.1. Valid, epoch, and tag are compared together so stale entries cannot
-        select data.
-   2.2. L1CacheRefill::assemble_line_word() joins both 16-bit banks and handles
-        supported unaligned words.
-   2.3. L1CacheResponse::cpu_response_comb_func() presents the live lookup data
-        immediately when downstream is ready.
-   2.4. A stalled hit is copied to response_reg address/data/valid fields before
-        entering L1_ST_DONE.
+2. Answer a cached read hit without an L2 transaction through explicit timing
+   stages rather than a tag-RAM-to-response combinational chain.
+   2.1. L1_ST_LOOKUP captures every synchronous tag RAM output in
+        tag_entries_reg.
+   2.2. L1_ST_COMPARE compares valid, epoch, and tag and captures hit/way in
+        lookup_reg, so stale entries cannot select data.
+   2.3. L1_ST_SELECT selects both split block-RAM banks for the registered way
+        and captures the full line halves in selected_line_reg.
+   2.4. L1_ST_ASSEMBLE joins both 16-bit banks, handles supported unaligned
+        words, and writes address/data/valid together into response_reg.
 
 3. Complete a held response after downstream removes backpressure, achieved by
-   replaying last_* registers through L1CpuResponseComb until stall_in() clears.
+   replaying response_reg through L1CpuResponseComb until stall_in() clears.
    3.1. The response address, data, and valid flag come from the same grouped
         comb result and therefore cannot describe different requests.
    3.2. A following read can be accepted directly from L1_ST_DONE; otherwise
@@ -62,15 +61,15 @@ Background and delayed activities:
         L1_ST_IDLE.
    1.3. invalidate_in() clears pending response state and enters L1_ST_INIT so
         repeated full invalidations cannot resurrect entries through epoch wrap.
-   1.4. A targeted set-generation wrap uses the same physical clear walk.
+   1.4. A targeted set-generation wrap toggles the global epoch immediately,
+        then a registered pending flag starts the same physical clear walk.
 
-2. Flush discards stale in-flight response state and redirects lookup, achieved
-   by clearing last/refill valid registers and reloading req_* from live inputs.
-   2.1. An active read enters L1_ST_LOOKUP for the redirected address.
-   2.2. A flush without read_in() leaves no request and returns to L1_ST_IDLE.
+2. Flush discards stale in-flight response state and returns to IDLE. The new
+   registered redirect address is accepted on the following cycle, avoiding a
+   lookup whose synchronous RAM output belongs to the old PC.
 
 3. A lookup miss starts line refill so a complete 32-byte line can be installed,
-   achieved by clearing refill accumulators and entering L1_ST_REFILL.
+   achieved by resetting refill progress and entering L1_ST_REFILL.
    3.1. L1MemDriver emits each line-aligned address plus refill_reg.beat.
    3.2. mem_out.wait_out() prevents beat counters and line images from advancing
         until returned data is accepted.

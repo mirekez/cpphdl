@@ -24,7 +24,6 @@ module VRDriver #(
     logic done_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
     logic[32-1:0] state_reg_tmp;
@@ -35,7 +34,6 @@ module VRDriver #(
 
     always_comb begin : done_comb_func  // done_comb_func
         done_comb=sent_reg>='h100;
-        disable done_comb_func;
     end
 
     generate  // _assign
@@ -46,24 +44,24 @@ module VRDriver #(
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            state_reg_tmp = unsigned'(32'('h13579BDF));
+            state_reg_tmp = unsigned'(32'(unsigned'(32'h13579BDF)));
             sent_reg_tmp = '0;
             valid_reg_tmp = '0;
             data_reg_tmp = '0;
             data_reg_tmp = 'h0;
-            data_reg_tmp['h0 +:32] = unsigned'(32'('h13579BDF));
-            data_reg_tmp['h20 +:16] = unsigned'(16'('h0));
-            data_reg_tmp['h30 +:16] = unsigned'(16'('h9BDF));
+            data_reg_tmp['h0 +:32] = unsigned'(32'(unsigned'(32'h13579BDF)));
+            data_reg_tmp['h20 +:16] = unsigned'(16'(unsigned'(16'h0)));
+            data_reg_tmp['h30 +:16] = unsigned'(16'(unsigned'(16'h9BDF)));
             disable _work;
         end
         state_reg_tmp = state_reg;
         sent_reg_tmp = sent_reg;
-        valid_reg_tmp = sent_reg < 'h100;
+        valid_reg_tmp = unsigned'(1'(sent_reg < 'h100));
         data_reg_tmp = data_reg;
         if (valid_reg && source_out__ready_in) begin
-            sent_reg_tmp = sent_reg + unsigned'(16'('h1));
-            state_reg_tmp = (state_reg*unsigned'(32'('h19660D))) + unsigned'(32'('h3C6EF35F));
-            valid_reg_tmp = sent_reg_tmp < 'h100;
+            sent_reg_tmp = sent_reg + unsigned'(16'(unsigned'(16'h1)));
+            state_reg_tmp = (state_reg*unsigned'(32'(unsigned'(32'h19660D)))) + unsigned'(32'(unsigned'(32'h3C6EF35F)));
+            valid_reg_tmp = unsigned'(1'(sent_reg_tmp < 'h100));
         end
         if (!valid_reg || source_out__ready_in) begin
             data_reg_tmp = 'h0;

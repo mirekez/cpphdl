@@ -139,12 +139,12 @@ static bool check_generated_sv()
     require(leaf.find("parameter WIDTH_") != std::string::npos
             && leaf.find("parameter ADD_") != std::string::npos,
         "numeric template parameters were not preserved as SV parameters");
-    require(leaf.find("parameter  WIDTH = WIDTH_") != std::string::npos,
+    require(leaf.find("localparam  WIDTH = WIDTH_") != std::string::npos,
         "constexpr WIDTH re-export did not reference WIDTH_");
-    require(leaf.find("parameter  ADD = ADD_") != std::string::npos,
+    require(leaf.find("localparam  ADD = ADD_") != std::string::npos,
         "constexpr ADD re-export did not reference ADD_");
-    require(leaf.find("parameter  WIDTH = WIDTH;") == std::string::npos
-            && leaf.find("parameter  ADD = ADD;") == std::string::npos,
+    require(leaf.find("localparam  WIDTH = WIDTH;") == std::string::npos
+            && leaf.find("localparam  ADD = ADD;") == std::string::npos,
         "constexpr re-export was emitted as a circular self-reference");
     require(top.find("TemplateDefaultLeaf") != std::string::npos,
         "parent did not instantiate TemplateDefaultLeaf");
@@ -154,6 +154,42 @@ static bool check_generated_sv()
     require(leaf.find("unknown") == std::string::npos
             && top.find("unknown") == std::string::npos,
         "generated SV contains unresolved expression");
+
+    const std::filesystem::path specialization_path = dir / "TemplateParameterSpecialization.tmp.sv";
+    {
+        std::ofstream out(specialization_path);
+        out << "module Helper;\nendmodule\n"
+               "module ExpressionDefault #(\n"
+               "    parameter WIDTH = 512\n"
+               ",   parameter BITS = $clog2(WIDTH/'h8)\n"
+               " )\n"
+               " (input wire clk);\nendmodule\n";
+    }
+    require(SpecializeVerilogModuleParameters(specialization_path,
+                "ExpressionDefault", {"256", "5"}),
+        "failed to specialize a module parameter with an expression default");
+    const std::string specialized = read_file(specialization_path);
+    std::filesystem::remove(specialization_path);
+    require(specialized.find("parameter WIDTH = 256\n") != std::string::npos
+            && specialized.find("parameter BITS = 5\n") != std::string::npos,
+        "module parameter specialization retained text from the expression default");
+    require(specialized.find("parameter BITS = 5)") == std::string::npos,
+        "module parameter specialization retained a closing parenthesis from the old default");
+
+    const std::filesystem::path localparam_path = dir / "TemplateLocalparamSpecialization.tmp.sv";
+    {
+        std::ofstream out(localparam_path);
+        out << "module LocalparamOnly (input wire clk);\n"
+               "    localparam WIDTH = 16;\n"
+               "endmodule\n";
+    }
+    require(SpecializeVerilogModuleParameters(localparam_path,
+                "LocalparamOnly", {"1"}),
+        "legacy specialization value was rejected for a module with no parameters");
+    const std::string localparam_only = read_file(localparam_path);
+    std::filesystem::remove(localparam_path);
+    require(localparam_only.find("localparam WIDTH = 16;") != std::string::npos,
+        "legacy specialization value changed a module localparam");
     return ok;
 }
 

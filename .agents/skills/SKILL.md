@@ -17,6 +17,17 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 ## Hard Rules
 
 - Put `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()`.
+- Assign a CppHDL interface once with `assignIf(...)`; do not assign its individual ports separately. Make the connection in the immediate common parent's `_assign()`:
+
+```cpp
+void _assign()
+{
+    assignIf(driver, responder, driver.source_out, responder.sink_in);
+}
+```
+
+  Do not replace this with one assignment per `valid`, `ready`, `data`, or other interface member. `assignIf` resolves both interface directions and expands the flattened SystemVerilog connections consistently.
+- CppHDL forbids assignments across hierarchy levels, matching synthesizable SystemVerilog module encapsulation. A module may connect its own ports and the exposed ports/interfaces of its immediate child modules, but it must not reach through a child into a grandchild or assign a child module's internal state. Expose an intermediate port or interface and connect the hierarchy one level at a time.
 - Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
 - `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle. Never run any `_assign()` after `_work()` cycles begin
 - In Verilator mode, write all Verilated input ports before `eval()`.

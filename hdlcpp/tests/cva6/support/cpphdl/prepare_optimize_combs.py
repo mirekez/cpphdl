@@ -58,6 +58,17 @@ def main() -> int:
     used_modules = {root_module.group(1)}
 
     umbrella_lines = umbrella.read_text().splitlines()
+    # hdlcpp may keep the concrete root and root-only interface headers as
+    # direct includes in cpphdl_optimized_externs.h rather than adding them to
+    # all_generated.h.  Treat those includes as part of the umbrella while
+    # computing the reachable module closure, otherwise a CPU-root conversion
+    # is reduced to packages only.
+    for line in extern_text.splitlines():
+        match = INCLUDE_RE.match(line)
+        if match is None or match.group(1) == "all_generated.h":
+            continue
+        if line not in umbrella_lines:
+            umbrella_lines.append(line)
     header_text: dict[str, str] = {}
     header_modules: dict[str, set[str]] = {}
     module_header: dict[str, str] = {}

@@ -17,19 +17,17 @@ module BlockingOptimize (
     logic[32-1:0] value_comb;
 
     // members
-    genvar gi, gj, gk;
 
     // tmp variables
 
 
     always_comb begin : value_comb_func  // value_comb_func
         value_comb = once_accessed_reg;
-        disable value_comb_func;
     end
 
     task update_once_accessed (input logic reset);
     begin: update_once_accessed
-        once_accessed_reg <= (reset) ? (unsigned'(32'('h0))) : (unsigned'(32'(data_in + ((enable_in) ? ('h1234) : ('h10)))));
+        once_accessed_reg <= (reset) ? (unsigned'(32'(unsigned'(32'h0)))) : (unsigned'(32'(unsigned'(32'(data_in + ((enable_in) ? ('h1234) : ('h10)))))));
     end
     endtask
 

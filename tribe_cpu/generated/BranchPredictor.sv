@@ -23,9 +23,9 @@ module BranchPredictor #(
 ,   input wire update_taken_in
 ,   input wire[31:0] update_target_in
 );
-    parameter  INDEX_BITS = (ENTRIES<='h1) ? ('h1) : ($clog2(ENTRIES));
-    parameter  COUNTER_MAX = (('h1 <<< COUNTER_BITS)) - 'h1;
-    parameter  COUNTER_INIT = COUNTER_MAX >>> 'h1;
+    localparam  INDEX_BITS = (ENTRIES<='h1) ? ('h1) : ($clog2(ENTRIES));
+    localparam  COUNTER_MAX = (('h1 <<< COUNTER_BITS)) - 'h1;
+    localparam  COUNTER_INIT = COUNTER_MAX >>> 'h1;
 
 
     // regs and combs

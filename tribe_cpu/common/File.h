@@ -1,5 +1,6 @@
 #pragma once
 #include "cpphdl.h"
+#include "FileStorage.h"
 
 extern long _system_clock;
 
@@ -7,7 +8,7 @@ using namespace cpphdl;
 
 // CppHDL MODEL /////////////////////////////////////////////////////////
 
-template<size_t MEM_WIDTH, size_t MEM_DEPTH>
+template<size_t MEM_WIDTH, size_t MEM_DEPTH, bool PRIMARY_WRITE_FIRST = true>
 class File : public Module
 {
     using DTYPE = std::conditional_t<(MEM_WIDTH <= 32),uint32_t,uint64_t>;
@@ -37,94 +38,98 @@ public:
 
 private:
 
-    memory<u32,MEM_WIDTH/32,MEM_DEPTH> buffer;
+    FileStorage<MEM_WIDTH, MEM_DEPTH> storage;
 
     _LAZY_COMB(data0_out_comb, DTYPE)
         // Register files are normally write-first for same-cycle WB/decode.
         // Without this bypass a dependent instruction decoded while WB commits
         // can see the previous architectural value and lose high address bits.
-        if (write_in() && write_addr_in() == read_addr0_in()) {
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == read_addr0_in()) {
             data0_out_comb = write_data_in();
         }
         else if (write2_in() && write2_addr_in() == read_addr0_in()) {
             data0_out_comb = write2_data_in();
         }
         else {
-            data0_out_comb = (DTYPE) buffer[read_addr0_in()];
+            data0_out_comb = storage.read_data0_out();
         }
         return data0_out_comb;
     }
 
     _LAZY_COMB(data1_out_comb, DTYPE)
-        if (write_in() && write_addr_in() == read_addr1_in()) {
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == read_addr1_in()) {
             data1_out_comb = write_data_in();
         }
         else if (write2_in() && write2_addr_in() == read_addr1_in()) {
             data1_out_comb = write2_data_in();
         }
         else {
-            data1_out_comb = (DTYPE) buffer[read_addr1_in()];
+            data1_out_comb = storage.read_data1_out();
         }
         return data1_out_comb;
     }
 
     _LAZY_COMB(x1_comb, DTYPE)
-        return x1_comb = (DTYPE)buffer[1];
+        return x1_comb = storage.x1_out();
     }
 
     _LAZY_COMB(x10_comb, DTYPE)
-        if (write_in() && write_addr_in() == 10) {
-            return x10_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 10) {
+            x10_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 10) {
-            return x10_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 10) {
+            x10_comb = write2_data_in();
         }
-        return x10_comb = (DTYPE)buffer[10];
+        else {
+            x10_comb = storage.x10_out();
+        }
+        return x10_comb;
     }
 
     _LAZY_COMB(x11_comb, DTYPE)
-        if (write_in() && write_addr_in() == 11) {
-            return x11_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 11) {
+            x11_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 11) {
-            return x11_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 11) {
+            x11_comb = write2_data_in();
         }
-        return x11_comb = (DTYPE)buffer[11];
+        else {
+            x11_comb = storage.x11_out();
+        }
+        return x11_comb;
     }
 
     _LAZY_COMB(x16_comb, DTYPE)
-        if (write_in() && write_addr_in() == 16) {
-            return x16_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 16) {
+            x16_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 16) {
-            return x16_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 16) {
+            x16_comb = write2_data_in();
         }
-        return x16_comb = (DTYPE)buffer[16];
+        else {
+            x16_comb = storage.x16_out();
+        }
+        return x16_comb;
     }
 
     _LAZY_COMB(x17_comb, DTYPE)
-        if (write_in() && write_addr_in() == 17) {
-            return x17_comb = write_data_in();
+        if (PRIMARY_WRITE_FIRST && write_in() && write_addr_in() == 17) {
+            x17_comb = write_data_in();
         }
-        if (write2_in() && write2_addr_in() == 17) {
-            return x17_comb = write2_data_in();
+        else if (write2_in() && write2_addr_in() == 17) {
+            x17_comb = write2_data_in();
         }
-        return x17_comb = (DTYPE)buffer[17];
+        else {
+            x17_comb = storage.x17_out();
+        }
+        return x17_comb;
     }
 
 public:
 
     void _work(bool reset)
     {
-        byte i;
-
-        if (reset) {
-            for (i=0; i < MEM_DEPTH; ++i) {
-                buffer[i] = 0;
-            }
-            buffer[10] = reset_x10_in();
-            buffer[11] = reset_x11_in();
-        }
+        storage._work(reset);
 
         if (debugen_in) {
             std::print("{:s}: port0: @{}({}){:08x}, port1: @{}({}){:08x} @{}({}){:08x}\n", __inst_name,
@@ -139,18 +144,28 @@ public:
                 std::print("trace-regfile-ra cycle={} value={:08x}\n", _system_clock, (uint32_t)write_data_in());
             }
 #endif
-            buffer[write_addr_in()] = write_data_in();
-        }
-        if (write2_in()) {
-            buffer[write2_addr_in()] = write2_data_in();
         }
     }
 
     void _strobe(FILE* checkpoint_fd = nullptr)
     {
-        buffer.apply(checkpoint_fd);
+        storage._strobe(checkpoint_fd);
     }
 
-    void _assign() {}
+    void _assign()
+    {
+        storage.write_addr_in = write_addr_in;
+        storage.write_in = write_in;
+        storage.write_data_in = write_data_in;
+        storage.write2_addr_in = write2_addr_in;
+        storage.write2_in = write2_in;
+        storage.write2_data_in = write2_data_in;
+        storage.read_addr0_in = read_addr0_in;
+        storage.read_addr1_in = read_addr1_in;
+        storage.reset_x10_in = reset_x10_in;
+        storage.reset_x11_in = reset_x11_in;
+        storage.__inst_name = __inst_name + "/storage";
+        storage._assign();
+    }
 };
 /////////////////////////////////////////////////////////////////////////

@@ -18,10 +18,10 @@ module StructAlignment (
     input wire clk
 ,   input wire reset
 ,   input wire[8-1:0] seed_in
-,   output OuterBits sample_out
-,   output UnionContainingStructContainingUnion union_struct_out
-,   output StructContainingUnionContainingStruct struct_union_out
-,   output StructWithEnum enum_struct_out
+,   output wire OuterBits sample_out
+,   output wire UnionContainingStructContainingUnion union_struct_out
+,   output wire StructContainingUnionContainingStruct struct_union_out
+,   output wire StructWithEnum enum_struct_out
 );
 
 
@@ -37,8 +37,9 @@ module StructAlignment (
 
 
     always_comb begin : sample_comb_func  // sample_comb_func
-        logic[31:0] seed; seed = seed_in;
-        sample_comb = {00};
+        logic[31:0] seed;
+        seed = seed_in;
+        sample_comb = 0;
         sample_comb.head=seed & 'h7;
         sample_comb.tiny.a=((seed >>> 'h1)) & 'h1;
         sample_comb.tiny.b=((seed >>> 'h2)) & 'h3;
@@ -53,8 +54,9 @@ module StructAlignment (
     end
 
     always_comb begin : union_struct_comb_func  // union_struct_comb_func
-        logic[31:0] seed; seed = seed_in;
-        union_struct_comb = {{0}};
+        logic[31:0] seed;
+        seed = seed_in;
+        union_struct_comb = 0;
         union_struct_comb.wrapped.ua=seed & 'h1;
         union_struct_comb.wrapped.nested.prefix=((seed >>> 'h1)) & 'h7;
         union_struct_comb.wrapped.nested.inner.s.ia=((seed + 'h1)) & 'h3;
@@ -64,8 +66,9 @@ module StructAlignment (
     end
 
     always_comb begin : struct_union_comb_func  // struct_union_comb_func
-        logic[31:0] seed; seed = seed_in;
-        struct_union_comb = {{0}};
+        logic[31:0] seed;
+        seed = seed_in;
+        struct_union_comb = 0;
         struct_union_comb.head=((seed >>> 'h2)) & 'h3;
         struct_union_comb.u.branch.us0=seed & 'h3;
         struct_union_comb.u.branch.nested.sa=((seed + 'h7)) & 'hF;
@@ -76,8 +79,9 @@ module StructAlignment (
     end
 
     always_comb begin : enum_struct_comb_func  // enum_struct_comb_func
-        logic[31:0] seed; seed = seed_in;
-        enum_struct_comb = {0};
+        logic[31:0] seed;
+        seed = seed_in;
+        enum_struct_comb = 0;
         enum_struct_comb.prefix=seed & 'h3;
         enum_struct_comb.mode=((seed & 'h1)) ? (AlignMode_MODES_pkg::MODE_THREE) : (AlignMode_MODES_pkg::MODE_ONE);
         enum_struct_comb.tiny.a=((seed >>> 'h1)) & 'h1;

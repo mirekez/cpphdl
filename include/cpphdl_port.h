@@ -31,6 +31,18 @@ public:
 
     function_ref() = default;
 
+    function_ref(const function_ref& other) noexcept : fn_(other.fn_) {}
+
+    function_ref& operator=(const function_ref& other) noexcept
+    {
+        if (other.fn_) {
+            fn_ = other.fn_;
+            prev_call__system_clock = -1;
+            cache = nullptr;
+        }
+        return *this;
+    }
+
     function_ref(fn_t&& fn) noexcept : fn_(fn) {}
 
     template <typename F, typename = std::enable_if_t<std::is_invocable_r_v<R*, F>>>
@@ -43,7 +55,7 @@ public:
         return *this;
     }
 
-    long prev_call__system_clock;
+    long prev_call__system_clock = -1;
     R* cache = nullptr;
     R& operator()()
     {
@@ -78,6 +90,23 @@ public:
     bool assigned = false;
 
     function_ref() = default;
+
+    function_ref(const function_ref& other)
+    {
+        *this = other;
+    }
+
+    function_ref& operator=(const function_ref& other)
+    {
+        if (other.assigned) {
+            func1_ = other.func1_;
+            func2_ = other.func2_;
+            assigned = true;
+            prev_call__system_clock = -1;
+            cache = nullptr;
+        }
+        return *this;
+    }
 
 //    function_ref(func1_type&& f) : func1_(std::move(f)) {}
 

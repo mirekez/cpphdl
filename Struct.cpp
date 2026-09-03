@@ -273,7 +273,7 @@ size_t cpphdl::getStructSize(std::string name, Struct* st)
     }
     for (auto& e : currProject->enums) {
         if (e.name == name) {
-            return 32;
+            return e.bitWidth;
         }
     }
     if (currModule) {

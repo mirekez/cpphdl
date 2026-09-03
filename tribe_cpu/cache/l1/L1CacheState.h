@@ -12,7 +12,10 @@ enum L1CacheFsmState : uint64_t
     L1_ST_LOOKUP = 1,
     L1_ST_DONE = 2,
     L1_ST_REFILL = 3,
-    L1_ST_INIT = 4
+    L1_ST_INIT = 4,
+    L1_ST_SELECT = 5,
+    L1_ST_ASSEMBLE = 6,
+    L1_ST_COMPARE = 7
 };
 
 struct L1CachePerf
@@ -68,6 +71,23 @@ struct L1LookupComb
     u1 hit;                      // At least one current-epoch tag matches.
     u8 way;                      // Matching way used to select both data banks.
     u32 data;                    // Aligned or unaligned word assembled from that way.
+};
+
+// Registers the narrow tag-lookup result before the wide data-bank selection.
+// This is the explicit timing boundary between block-RAM tag and data paths.
+struct L1LookupState
+{
+    u1 hit;                      // Registered tag comparison result.
+    u8 way;                      // Registered way used by the following data-select phase.
+};
+
+// Holds the chosen way's two block-RAM line halves before word extraction.
+struct L1SelectedLineState
+{
+    logic<128> even;             // Registered low 16-bit halves of the selected way.
+    logic<128> odd;              // Registered high 16-bit halves of the selected way.
+    u32 addr;                    // Line-aligned address represented by the data.
+    u1 valid;                    // Cleared by writes and coherence invalidation.
 };
 
 // Carries the complete CPU-facing response and busy decision from one state snapshot.
@@ -177,9 +197,13 @@ protected:
     reg<u<3>> state_reg;
     reg<L1RequestState> req_reg;
     reg<u1> tag_epoch_reg;
+    reg<u1> epoch_wrap_pending_reg;
     reg<array<SETS, u8>> tag_set_epoch_reg;
     reg<L1RefillState> refill_reg;
     reg<u<WAY_BITS>> victim_reg;
     reg<u<SET_BITS>> init_set_reg;
     reg<L1HeldResponse> response_reg;
+    reg<L1LookupState> lookup_reg;
+    reg<L1SelectedLineState> selected_line_reg;
+    reg<array<WAYS, logic<TAG_BITS + 10>>> tag_entries_reg;
 };

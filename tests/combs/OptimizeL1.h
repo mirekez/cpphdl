@@ -4,6 +4,10 @@
 
 extern long _system_clock;
 
+class OptimizeL1;
+inline OptimizeL1 *_optimized_root_instance = nullptr;
+cpphdl::logic<16> optimize_l1_root_input();
+
 class OptimizeL1Leaf : public cpphdl::Module {
 public:
   _PORT(cpphdl::logic<16>) value_in;
@@ -78,8 +82,11 @@ public:
     combined_clock = _system_clock;
     return combined_cache =
                leaf->equal_a() + leaf->equal_b() +
-               optimize_l1_leaf_value(leaf) + optimize_l1_leaf_value(leaf);
+               optimize_l1_leaf_value(leaf) + optimize_l1_leaf_value(leaf) +
+               optimize_l1_root_input();
   }
+
+  cpphdl::logic<16> _optimized_root_input_in_binding() { return input; }
 
   cpphdl::reg<cpphdl::logic<16>> result{};
 
@@ -100,3 +107,7 @@ public:
     result.strobe();
   }
 };
+
+inline cpphdl::logic<16> optimize_l1_root_input() {
+  return _optimized_root_instance->_optimized_root_input_in_binding();
+}

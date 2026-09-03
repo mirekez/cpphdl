@@ -3,6 +3,7 @@
 #include "cpphdl.h"
 #include "Axi4.h"
 #include "../L1MemIf.h"
+#include "L2CacheRamBank.h"
 
 using namespace cpphdl;
 
@@ -30,7 +31,21 @@ enum L2CacheFsmState : uint64_t
     ST_IO_B = 17,
     ST_IO_AR = 18,
     ST_IO_R = 19,
-    ST_READ = 20
+    ST_READ = 20,
+    ST_LOOKUP_CAPTURE = 21,
+    ST_CROSS_WRITE_READ = 22,
+    ST_CROSS_WRITE_CAPTURE = 23,
+    ST_LOOKUP_RESULT = 24,
+    ST_CROSS_WRITE_RESULT = 25,
+    // Capture a selected backing-memory read beat before merging it into the
+    // cache banks.  Without this boundary the registered request address
+    // traverses region routing, the MEM_PORTS rdata mux, store merging, and a
+    // BRAM data input in one L2 period.
+    ST_AXI_R_WRITE = 26,
+    // Uncached read responses use the same registered beat boundary as cache
+    // refills.  This prevents state/region routing and the MEM_PORTS rdata mux
+    // from driving a wide response register directly.
+    ST_IO_R_RESULT = 27
 };
 
 // Captured L2 request payload after arbitration. Widths use the cache-supported
@@ -59,7 +74,7 @@ struct CacheRequest
 struct L2ActiveRequestComb
 {
     CacheRequest request;         // Complete request payload selected from AXI, D, or I input.
-    u32 set;                      // Cache set derived from the selected live request address.
+    u32 cache_set;                // Cache set derived from the selected live request address.
     u1 valid;                     // At least one read or write operation was selected.
     u1 cross_line_read;           // Selected instruction read crosses the cache-line boundary.
 };
@@ -71,6 +86,18 @@ struct L2AxiRequestNoveltyComb
     logic<8> aw;                  // AW payload differs from the last accepted AW, or AWVALID previously dropped.
     logic<8> ar;                  // AR payload differs from the last accepted AR, or ARVALID previously dropped.
 };
+
+// Fixed maxima keep the generated package concrete while the controller uses
+// only DATA_BANKS and WAYS entries for its selected cache configuration.
+struct L2RamControlsComb
+{
+    u32 addr;
+    u1 read;
+    logic<32> data_write;
+    array<32, u32> data;
+    logic<4> tag_write;
+    u32 tag_data;
+} __PACKED;
 
 // One registered completion record type serves every L2 input endpoint. AXI read
 // and write channels are independent so one endpoint can retain both replies
@@ -169,6 +196,7 @@ protected:
     static_assert(PORT_BITWIDTH >= 32 && PORT_BITWIDTH % 32 == 0, "L2Cache port must be a whole number of 32-bit words");
     static_assert((CACHE_LINE_SIZE * 8) % PORT_BITWIDTH == 0, "L2Cache port must divide a cache line");
     static_assert(WAYS > 0, "L2Cache needs at least one way");
+    static_assert(WAYS <= 4, "L2Cache RAM control bundle supports at most four ways");
     static_assert(CACHE_SIZE % (CACHE_LINE_SIZE * WAYS) == 0, "L2Cache geometry must divide evenly");
     static_assert(MEM_PORTS >= 1, "L2Cache must have at least one memory port");
     static_assert((MEM_PORTS & (MEM_PORTS - 1)) == 0, "L2Cache memory port count must be a power of two");
@@ -189,6 +217,7 @@ protected:
     static constexpr size_t TAG_BITS = ADDR_BITS - SET_BITS - LINE_BITS;
     static constexpr size_t TAG_RAM_BITS = ((TAG_BITS + 2 + 7) / 8) * 8;
     static constexpr size_t DATA_BANKS = WAYS * LINE_WORDS;
+    static_assert(DATA_BANKS <= 32, "L2Cache RAM control bundle supports at most 32 data banks");
     static constexpr size_t MEM_PORT_BITS = clog2(MEM_PORTS);
     // Slots 0..7 are AXI endpoints and slots 8..15 independently acknowledge CPU port pairs.
     static constexpr uint32_t CPU_RESPONSE_BASE = 8;
@@ -225,18 +254,36 @@ public:
     bool debugen_in;
 
 protected:
-    // One cpphdl::memory primitive per word bank gives each bank one independent
-    // synchronous access port and maps naturally onto FPGA block RAM.
-    // (* ram_style = "block" *)
-    memory<u8, 4, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[DATA_BANKS];
-    // (* ram_style = "block" *)
-    memory<u8, (((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8)),
-        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[WAYS]; // {valid, dirty, tag}
-    reg<array<DATA_BANKS, logic<32>, true>> data_q_reg;
-    reg<array<DATA_BANKS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> tag_q_reg;
+    // Only these storage leaves are FPGA-specific; all addressing, write
+    // enables, replacement policy and cache control remain generated CppHDL.
+    // Fixed maxima allow _assign() to bind every leaf with literal indices.
+    // Inactive leaves are tied off by the zeroed control bundle and are pruned
+    // for one- and two-way configurations.
+    L2CacheRamBank<32, (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> data_ram[32];
+    L2CacheRamBank<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8,
+        (CACHE_SIZE / CACHE_LINE_SIZE / WAYS)> tag_ram[4];
+    // Snapshot synchronous RAM outputs before associative compare and response
+    // selection. This prevents BRAM clock-to-out plus the complete hit mux
+    // from occupying one L2 period.
+    reg<array<DATA_BANKS, logic<32>, true>> lookup_data_reg;
+    reg<array<WAYS, logic<((ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE) + 2 + 7) / 8) * 8>, true>> lookup_tag_reg;
+    // A second boundary separates the associative compare/wide line select
+    // from response and miss-control fanout.
+    reg<L2HitLookupComb> lookup_hit_reg;
+    reg<L2EvictCandidateComb> lookup_evict_reg;
+    // Store-merge result captured with the associative lookup.  Hit writes
+    // consume this value in ST_*_RESULT so req_reg address decoding and byte
+    // shifting never feed a block-RAM data input in the same cycle.
+    reg<L2WordPairComb> lookup_write_pair_reg;
 
     reg<u<5>> state_reg;
     reg<CacheRequest> req_reg;
+    // Registered arbitration boundary.  The live L1/AXI fan-in is captured
+    // while L2 is idle, then the FSM consumes only this registered bundle on
+    // the following cycle. The synchronous RAM read is issued on that consume
+    // edge, preserving the pre-pipeline normal-request controller cycle count.
+    reg<L2ActiveRequestComb> request_pipe_reg;
+    reg<u1> request_pipe_valid_reg;
     // Round-robin start pair prevents a continuously requesting low index from starving another CPU.
     reg<u<3>> cpu_rr_reg;
     reg<u<(WAYS <= 1 ? 1 : clog2(WAYS))>> victim_reg;
@@ -246,16 +293,24 @@ protected:
     reg<array<16, CacheResponse>> response_reg;
     reg<logic<PORT_BITWIDTH>> cross_low_reg;
     reg<logic<PORT_BITWIDTH>> cross_high_reg;
+    reg<logic<PORT_BITWIDTH>> refill_data_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> fill_beat_reg;
     reg<u<((CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)) <= 1 ? 1 : clog2(CACHE_LINE_SIZE / (PORT_BITWIDTH / 8)))>> evict_beat_reg;
     reg<u<ADDR_BITS - clog2(CACHE_SIZE / CACHE_LINE_SIZE / WAYS) - clog2(CACHE_LINE_SIZE)>> evict_tag_reg;
     reg<logic<CACHE_LINE_SIZE * 8>> evict_line_reg;
     static_assert(MEM_PORTS <= 8, "L2Cache AXI slave bookkeeping storage supports up to 8 ports");
     // Keep split AW state as one AXI address payload so delayed W handshakes retain address and ID together.
-    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_reg;
+    reg<array<8, Axi4WriteAddress<32, 4>>> slave_aw_reg;
     // Remember the last accepted AW payload until AWVALID drops or changes, preventing a sticky master from replaying it at B retirement.
-    reg<array<8, Axi4WriteAddress<ADDR_BITS, 4>>> slave_aw_seen_reg;
+    reg<array<8, Axi4WriteAddress<32, 4>>> slave_aw_seen_reg;
     // Remember the last accepted AR payload until ARVALID drops or changes, while allowing a changed next AR to turn over with R.
-    reg<array<8, Axi4ReadAddress<ADDR_BITS, 4>>> slave_ar_seen_reg;
+    reg<array<8, Axi4ReadAddress<32, 4>>> slave_ar_seen_reg;
+    // Pipeline the wide sticky-payload comparisons.  Arbitration consumes
+    // these one-bit decisions on the next L2 cycle instead of putting an
+    // address compare, priority selection, payload mux, and req_reg CE in one
+    // 156 MHz path.  AXI requires payload stability until READY, so delaying
+    // READY by one cycle is protocol-safe.
+    reg<logic<8>> slave_aw_novelty_reg;
+    reg<logic<8>> slave_ar_novelty_reg;
 
 };

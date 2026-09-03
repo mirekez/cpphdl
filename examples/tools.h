@@ -1,9 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <set>
+#include <vector>
 #include <string_view>
 
 inline std::string HostOptCflags()
@@ -16,6 +18,21 @@ inline std::string VerilatorExtraCflags()
 {
     const char* extra = std::getenv("CPPHDL_VERILATOR_CFLAGS");
     return extra ? std::string(" ") + extra : std::string();
+}
+
+inline std::string VerilatorConfigCflags()
+{
+    std::string flags;
+#ifdef TRIBE_CFG_RV32IA
+    flags += " -DTRIBE_CFG_RV32IA=" + std::to_string(TRIBE_CFG_RV32IA);
+#endif
+#ifdef TRIBE_CFG_ISR
+    flags += " -DTRIBE_CFG_ISR=" + std::to_string(TRIBE_CFG_ISR);
+#endif
+#ifdef TRIBE_CFG_MMU_TLB
+    flags += " -DTRIBE_CFG_MMU_TLB=" + std::to_string(TRIBE_CFG_MMU_TLB);
+#endif
+    return flags;
 }
 
 inline int SystemEcho(const char* cmd)
@@ -183,6 +200,75 @@ inline void NormalizeCopiedL2CacheSv(const std::filesystem::path& path)
     out << text;
 }
 
+inline bool SpecializeVerilogModuleParameters(const std::filesystem::path& path,
+    const std::string& module_name, const std::vector<std::string>& values)
+{
+    std::ifstream in(path);
+    if (!in) {
+        return false;
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+    bool in_module = false;
+    size_t value_index = 0;
+    size_t parameter_count = 0;
+    while (std::getline(in, line)) {
+        size_t begin = line.find_first_not_of(" \t");
+        if (!in_module && begin != std::string::npos && line.compare(begin, 7, "module ") == 0) {
+            size_t name_begin = line.find_first_not_of(" \t", begin + 7);
+            size_t name_end = line.find_first_of(" \t#(", name_begin);
+            std::string found_name = line.substr(name_begin, name_end - name_begin);
+            in_module = found_name == module_name;
+        }
+
+        if (in_module) {
+            size_t token = line.find_first_not_of(" \t,");
+            constexpr std::string_view parameter = "parameter";
+            if (token != std::string::npos
+                && line.compare(token, parameter.size(), parameter) == 0
+                && token + parameter.size() < line.size()
+                && std::isspace(static_cast<unsigned char>(line[token + parameter.size()]))) {
+                ++parameter_count;
+                if (value_index < values.size()) {
+                    size_t name_begin = line.find_first_not_of(" \t", token + parameter.size());
+                    size_t name_end = line.find_first_of(" \t=", name_begin);
+                    if (name_begin == std::string::npos) {
+                        return false;
+                    }
+                    if (name_end == std::string::npos) {
+                        name_end = line.size();
+                    }
+                    line.erase(name_end);
+                    line += " = " + values[value_index++];
+                }
+            }
+
+            if (token != std::string::npos && line[token] == ')') {
+                in_module = false;
+            }
+        }
+        lines.push_back(std::move(line));
+    }
+
+    // Historic callers may still pass a concrete C++ template value after the
+    // generated module constant became a localparam. The previous shell rewrite
+    // ignored that value because no overridable parameter existed. Preserve
+    // that behavior, while rejecting a partial match in a real parameter list.
+    if (parameter_count != 0 && value_index != values.size()) {
+        return false;
+    }
+
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) {
+        return false;
+    }
+    for (const auto& output_line : lines) {
+        out << output_line << '\n';
+    }
+    return true;
+}
+
 inline void VerilatorCopyModuleWithImports(const std::filesystem::path& generated_dir,
     const std::string& folder_name,
     const std::string& module,
@@ -347,6 +433,15 @@ inline bool RegenerateTribeSvForVerilator(const std::filesystem::path& source_ro
     command += " -DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
     command += " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES);
     command += " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+#ifdef TRIBE_CFG_RV32IA
+    command += " -DTRIBE_CFG_RV32IA=" + std::to_string(TRIBE_CFG_RV32IA);
+#endif
+#ifdef TRIBE_CFG_ISR
+    command += " -DTRIBE_CFG_ISR=" + std::to_string(TRIBE_CFG_ISR);
+#endif
+#ifdef TRIBE_CFG_MMU_TLB
+    command += " -DTRIBE_CFG_MMU_TLB=" + std::to_string(TRIBE_CFG_MMU_TLB);
+#endif
     if (cpu_cores > 1) {
         command += " -DMULTICORE";
     }
@@ -416,21 +511,25 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
     for (const auto& include : includes) {
         includes_list += " -I" + include;
     }
-    size_t n = 0;
-    // SV parameter substitution. Replacement files may contain helper modules
-    // before the requested top (for example L2CacheRamBank before L2Cache), so
-    // count only parameters in the requested module's declaration.
-    ((std::ignore = std::system((std::string("gawk -i inplace '{ if ($1 == \"module\" && $2 == \"") + top_name +
-        "\") in_top = 1; if (in_top && $0 ~ /parameter/) count++; if (in_top && count == " +
-        std::to_string(++n) + " ) $0 = gensub(/(parameter +[^ =]+)([ \\t]*=[^,)]*)?/, \"\\\\1 = " +
-        std::to_string(args) + "\", 1); print }' " + folder_name + "/" + top_name + ".sv").c_str())), ...);
+    std::vector<std::string> parameter_values;
+    auto append_parameter = [&](const auto& value) {
+        std::ostringstream text;
+        text << value;
+        parameter_values.push_back(text.str());
+    };
+    (append_parameter(args), ...);
+    if (!SpecializeVerilogModuleParameters(
+            std::filesystem::path(folder_name) / (top_name + ".sv"), top_name, parameter_values)) {
+        std::cerr << "failed to specialize parameters for " << top_name << "\n";
+        return false;
+    }
     // running Verilator
     const std::string verilator = ToolShellQuoteString(VerilatorTool());
     const std::string verilator_cxx_raw = VerilatorCxx();
     const std::string compiler_params = VerilatorCompilerParams(verilator_cxx_raw);
     if (SystemEcho((std::string("cd ") + folder_name +
             "; " + verilator + " -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
-            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorExtraCflags() + "\"").c_str()) != 0) {
+            " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorConfigCflags() + VerilatorExtraCflags() + "\"").c_str()) != 0) {
         return false;
     }
     const std::string verilator_cxx = ToolShellQuoteString(verilator_cxx_raw);
@@ -456,12 +555,14 @@ inline bool VerilatorCompileTribeInFolder(std::string cpp_name, std::string fold
         return false;
     }
 #endif
-    std::vector<std::string> modules = {"File",
+    std::vector<std::string> modules = {"FileStorage",
+              "File",
               "RAM",
               "L1Cache",
               "Axi4SlowToFastCdc",
               "Axi4FastToSlowCdc",
               "L1MemFastToSlowCdc",
+              "L2CacheRamBank",
               "L2Cache",
               "Tribe",
               "BranchPredictor",

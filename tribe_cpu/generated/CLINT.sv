@@ -37,12 +37,12 @@ module CLINT #(
 ,   output wire msip_out
 ,   output wire mtip_out
 );
-    parameter  REG_MSIP = 'h0;
-    parameter  REG_MTIMECMP_LO = 'h4000;
-    parameter  REG_MTIMECMP_HI = 'h4004;
-    parameter  REG_MTIME_LO = 'hBFF8;
-    parameter  REG_MTIME_HI = 'hBFFC;
-    parameter  DATA_BYTES = DATA_WIDTH/'h8;
+    localparam  REG_MSIP = 'h0;
+    localparam  REG_MTIMECMP_LO = 'h4000;
+    localparam  REG_MTIMECMP_HI = 'h4004;
+    localparam  REG_MTIME_LO = 'hBFF8;
+    localparam  REG_MTIME_HI = 'hBFFC;
+    localparam  DATA_BYTES = DATA_WIDTH/'h8;
 
 
     // regs and combs

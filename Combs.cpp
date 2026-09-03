@@ -1332,10 +1332,6 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     // Preserve compact source aliases for concrete specializations. Clang's
     // canonical spelling can recursively expand structural template values.
     discoverTypeAliases();
-    // Bounded collection translation units can precede the final root TU.
-    // Restrict AST walking to explicitly reached classes so declarations
-    // imported from a PCH remain lazy instead of recreating one giant AST.
-    reachableOnly = true;
     const auto *root = findRoot(context.getTranslationUnitDecl());
     bool sawCollectionMarker = false;
     bool sawRootMarker = false;
@@ -1385,6 +1381,13 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         collectClass(record, false);
       }
     }
+
+    // Bounded collection translation units carry explicit markers and may
+    // import a large PCH. Restrict those walks to marker-reached classes.
+    // Marker-free multi-file optimization must instead collect each source
+    // translation unit: a parent header can only forward-declare a child whose
+    // complete definition lives in another input file.
+    reachableOnly = sawCollectionMarker;
     if (!root) {
       return;
     }
@@ -1678,6 +1681,13 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         }
         const auto *child = childType->getAsCXXRecordDecl();
         const std::string childName = typeName(child);
+        // Generated module headers commonly forward-declare pointer children.
+        // Retain the candidate type even when its definition has not appeared
+        // in this translation unit yet; emit() resolves it after every input
+        // file (or collection shard) has been merged.
+        if (item.childPointer && child && !childName.empty()) {
+          item.childClass = childName;
+        }
         const auto knownChild = classes.find(childName);
         const bool childIsOpaque =
             knownChild != classes.end() && knownChild->second.opaque;
@@ -1712,6 +1722,14 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           }
           const auto *element = elementType->getAsCXXRecordDecl();
           const std::string elementName = typeName(element);
+          if (!dimensions.empty() && element && !elementName.empty()) {
+            item.childClass = elementName;
+            item.childDimensions = dimensions;
+            item.childCount = 1;
+            for (size_t dimension : item.childDimensions) {
+              item.childCount *= dimension;
+            }
+          }
           const auto knownElement = classes.find(elementName);
           if (!dimensions.empty() && element &&
               ((knownElement != classes.end() &&
@@ -1869,10 +1887,16 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         break;
       }
     }
-    if (!parameter) {
+    if (parameter) {
+      helper.receiverParameter = receiver;
+    } else if (declaration->param_empty() &&
+               receiver == "_optimized_root_instance") {
+      // Hdlcpp emits zero-argument cross-module forwarding helpers through
+      // this root pointer. An absent receiver parameter denotes hierarchy root.
+      helper.receiverParameter.reset();
+    } else {
       return true;
     }
-    helper.receiverParameter = receiver;
     helper.method = match[2].str();
     freeHelpers[declaration->getNameAsString()] = std::move(helper);
     return true;
@@ -3061,6 +3085,19 @@ struct CombsOptimizer::Impl {
     releaseTemporaryAllocatorPages();
   }
 
+  void resolveDeferredChildFields() {
+    for (auto &[unusedClass, info] : classes) {
+      for (auto &[unusedField, field] : info.fields) {
+        if (field.kind != FieldKind::Other || field.childClass.empty() ||
+            !classes.contains(field.childClass)) {
+          continue;
+        }
+        field.kind = field.childDimensions.empty() ? FieldKind::Child
+                                                    : FieldKind::ChildArray;
+      }
+    }
+  }
+
   size_t getNode(Instance &instance, NodeKind kind, const std::string &name) {
     const std::string key = nodeKey(instance.id, kind, name);
     const auto existing = nodeIds.find(key);
@@ -3374,12 +3411,18 @@ struct CombsOptimizer::Impl {
           const std::string argument = trim(input.substr(
               afterIdentifier + 1, *closing - afterIdentifier - 1));
           Instance *receiver = nullptr;
-          if (argument == "this") {
-            receiver = &context;
+          if (!helper->second.receiverParameter) {
+            if (argument.empty() && !instances.empty()) {
+              receiver = instances.front();
+            }
           } else {
-            const auto receiverChild = context.children.find(argument);
-            if (receiverChild != context.children.end()) {
-              receiver = receiverChild->second;
+            if (argument == "this") {
+              receiver = &context;
+            } else {
+              const auto receiverChild = context.children.find(argument);
+              if (receiverChild != context.children.end()) {
+                receiver = receiverChild->second;
+              }
             }
           }
           if (receiver) {
@@ -5809,14 +5852,21 @@ struct CombsOptimizer::Impl {
               }
             }
           }
-          if (!replaced && l1Scheduling &&
-              *storage == methodName + "_cache" &&
+          if (!replaced && *storage == methodName + "_cache" &&
               info.fields.contains(methodName + "_clock")) {
-            if (auto expression =
-                    cacheAssignmentExpression(sourceBody, *storage)) {
-              info.combExpressions[methodName] =
-                  makeBody("{ return (" + *expression + "); }");
+            if (l1Scheduling) {
+              if (auto expression =
+                      cacheAssignmentExpression(sourceBody, *storage)) {
+                info.combExpressions[methodName] =
+                    makeBody("{ return (" + *expression + "); }");
+              } else {
+                info.combExpressions[methodName] =
+                    makeBody(l1CombBody(sourceBody, methodName, *storage));
+              }
             } else {
+              // The flattened graph evaluates this body once at its scheduled
+              // position. Its original timestamp guard is redundant and can
+              // return stale storage when the body is moved into a chunk.
               info.combExpressions[methodName] =
                   makeBody(l1CombBody(sourceBody, methodName, *storage));
             }
@@ -5880,6 +5930,7 @@ struct CombsOptimizer::Impl {
     mathBitReversals = 0;
     mathReplications = 0;
     mathSignExtensions = 0;
+    resolveDeferredChildFields();
     const auto rootType = classes.find(rootName);
     if (rootType == classes.end()) {
       error = "root module class not found: " + rootName;
@@ -6727,6 +6778,9 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
                 "std::numeric_limits<long>::min();\n";
     std::unordered_set<size_t> stateNodes(schedule.begin(), schedule.end());
     stateNodes.insert(dynamicStateSchedule.begin(), dynamicStateSchedule.end());
+    for (const RootOutputPort &port : rootOutputPorts) {
+      stateNodes.insert(port.value);
+    }
     for (size_t id = 0; id < nodes.size(); ++id) {
       if (!stateNodes.contains(id)) {
         continue;
@@ -7423,7 +7477,7 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
       for (const RootOutputPort &port : rootOutputPorts) {
         usedInstances.insert(nodes[port.value].instance->id);
       }
-      emitAliases(source, usedInstances);
+      emitAliases(source, referencedInstances({}, usedInstances));
       for (const RootOutputPort &port : rootOutputPorts) {
         // calc_all materializes every externally visible root output. Rebind
         // its function_ref to that stable lvalue so a host read cannot re-enter

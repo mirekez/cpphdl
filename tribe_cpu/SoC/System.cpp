@@ -48,7 +48,7 @@ static logic<WORDS * 32> verilator_wide_to_logic(const VlWide<WORDS>& bits)
 }
 
 template<size_t WORDS>
-static logic<WORDS * 32> verilator_wide_to_logic(const WData (&bits)[WORDS])
+static logic<WORDS * 32> verilator_wide_to_logic(const EData (&bits)[WORDS])
 {
     logic<WORDS * 32> out = 0;
     memcpy(out.bytes, bits, sizeof(out.bytes));
@@ -68,7 +68,7 @@ static void verilator_logic_to_wide(VlWide<WORDS>& out, const logic<WIDTH>& bits
 }
 
 template<size_t WIDTH, size_t WORDS>
-static void verilator_logic_to_wide(WData (&out)[WORDS], const logic<WIDTH>& bits)
+static void verilator_logic_to_wide(EData (&out)[WORDS], const logic<WIDTH>& bits)
 {
     static_assert(WIDTH == WORDS * 32);
     memcpy(out, bits.bytes, sizeof(bits.bytes));
@@ -951,9 +951,9 @@ int main(int argc, char** argv)
             ok &= VerilatorCompile(__FILE__, "System", {"Predef_pkg",
                 "Amo_pkg", "Trap_pkg", "State_pkg", "Rv32i_pkg", "Rv32ic_pkg", "Rv32im_pkg", "Rv32ia_pkg", "Zicsr_pkg",
                 "Alu_pkg", "Br_pkg", "Sys_pkg", "Csr_pkg", "Mem_pkg", "Wb_pkg", "L1CachePerf_pkg", "TribePerf_pkg",
-                "File", "RAM", "Memory", "Axi4Ram", "L1Cache",
+                "FileStorage", "File", "RAM", "Memory", "Axi4Ram", "L1Cache",
                 "Axi4SlowToFastCdc", "Axi4FastToSlowCdc", "L1MemFastToSlowCdc",
-                "L2Cache", "BranchPredictor", "InterruptController",
+                "L2CacheRamBank", "L2Cache", "BranchPredictor", "InterruptController",
                 "Decode", "Execute", "ExecuteMem", "CSR", "MMU_TLB", "Writeback", "WritebackMem",
                 "Tribe", "TribeTest", "Axi4RegionMux", "NS16550A", "CLINT", "PLIC", "Accelerator", "SDController"}, {
                     (source_root / "include").string(),

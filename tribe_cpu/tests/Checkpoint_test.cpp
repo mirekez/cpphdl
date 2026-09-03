@@ -11,9 +11,10 @@
 #include <vector>
 
 static constexpr size_t CHECKPOINT_ISR_INPUT_LEN = 512;
-// The divided L2 clock makes each interrupt-driven byte transfer take longer
-// than the former single-clock design. Both simulators complete near 309k.
-static constexpr uint64_t CHECKPOINT_ISR_MAX_CYCLES = 320000;
+// The staged CPU/L1 pipeline completes the Verilator interrupt-driven stream
+// in 331828 clocks. Keep only a small margin so this remains a performance
+// regression bound as well as a finite hang diagnostic.
+static constexpr uint64_t CHECKPOINT_ISR_MAX_CYCLES = 350000;
 
 static std::filesystem::path source_root_dir()
 {

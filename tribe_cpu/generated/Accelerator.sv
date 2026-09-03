@@ -53,24 +53,24 @@ module Accelerator #(
 ,   input wire dma_out__rlast_in
 ,   input wire[ID_WIDTH-1:0] dma_out__rid_in
 );
-    parameter  REG_SRC_ADDR = 'h0;
-    parameter  REG_DST_ADDR = 'h4;
-    parameter  REG_LEN_WORDS = 'h8;
-    parameter  REG_CONTROL = 'hC;
-    parameter  REG_STATUS = 'h10;
-    parameter  REG_PRBS_SEED = 'h14;
-    parameter  REG_MEM_BASE = 'h1000;
-    parameter  CTRL_START = 'h1 <<< 'h0;
-    parameter  CTRL_DIR_A2M = 'h1 <<< 'h1;
-    parameter  CTRL_PRBS = 'h1 <<< 'h2;
-    parameter  DATA_BYTES = DATA_WIDTH/'h8;
-    parameter  ST_IDLE = 'h0;
-    parameter  ST_DMA_AR = 'h1;
-    parameter  ST_DMA_R = 'h2;
-    parameter  ST_DMA_AW = 'h3;
-    parameter  ST_DMA_W = 'h4;
-    parameter  ST_DMA_B = 'h5;
-    parameter  ST_DONE = 'h6;
+    localparam  REG_SRC_ADDR = 'h0;
+    localparam  REG_DST_ADDR = 'h4;
+    localparam  REG_LEN_WORDS = 'h8;
+    localparam  REG_CONTROL = 'hC;
+    localparam  REG_STATUS = 'h10;
+    localparam  REG_PRBS_SEED = 'h14;
+    localparam  REG_MEM_BASE = 'h1000;
+    localparam  CTRL_START = 'h1 <<< 'h0;
+    localparam  CTRL_DIR_A2M = 'h1 <<< 'h1;
+    localparam  CTRL_PRBS = 'h1 <<< 'h2;
+    localparam  DATA_BYTES = DATA_WIDTH/'h8;
+    localparam  ST_IDLE = 'h0;
+    localparam  ST_DMA_AR = 'h1;
+    localparam  ST_DMA_R = 'h2;
+    localparam  ST_DMA_AW = 'h3;
+    localparam  ST_DMA_W = 'h4;
+    localparam  ST_DMA_B = 'h5;
+    localparam  ST_DONE = 'h6;
 
 
     // regs and combs
