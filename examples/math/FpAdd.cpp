@@ -26,16 +26,14 @@ class FpAdd : public Module
 public:
     _PORT(logic<W>) a_in;
     _PORT(logic<W>) b_in;
-    _PORT(bool) valid_in;
-    _PORT(logic<W>) data_out = _ASSIGN_COMB(result_comb_func());
-    _PORT(bool) valid_out = _ASSIGN_REG(valid_reg);
+    _PORT(bool) en_in;
+    _PORT(logic<W>) c_out = _ASSIGN_COMB(result_comb_func());
 
 private:
     reg<logic<SUM_WIDTH>> sum_reg;
     reg<u<EW>> exponent_reg;
     reg<logic<W>> special_result_reg;
     reg<u1> special_reg;
-    reg<u1> valid_reg;
 
     logic<SUM_WIDTH> add_lhs_comb;
     logic<SUM_WIDTH> add_rhs_comb;
@@ -269,10 +267,7 @@ private:
         sticky = false;
         result_comb = 0;
 
-        if (!valid_reg) {
-            result_raw = 0;
-        }
-        else if (special_reg) {
+        if (special_reg) {
             result_raw = (uint64_t)special_result_reg;
         }
         else {
@@ -333,18 +328,18 @@ private:
 public:
     void _work(bool reset)
     {
-        sum_reg._next = add_lhs_comb_func() + add_rhs_comb_func();
-        exponent_reg._next = exponent_comb_func();
-        special_result_reg._next = special_result_comb_func();
-        special_reg._next = special_comb_func();
-        valid_reg._next = valid_in();
+        if (en_in()) {
+            sum_reg._next = add_lhs_comb_func() + add_rhs_comb_func();
+            exponent_reg._next = exponent_comb_func();
+            special_result_reg._next = special_result_comb_func();
+            special_reg._next = special_comb_func();
+        }
 
         if (reset) {
             sum_reg.clr();
             exponent_reg.clr();
             special_result_reg.clr();
             special_reg.clr();
-            valid_reg.clr();
         }
     }
 
@@ -354,7 +349,6 @@ public:
         exponent_reg.strobe();
         special_result_reg.strobe();
         special_reg.strobe();
-        valid_reg.strobe();
     }
 
     void _assign() {}
@@ -394,10 +388,12 @@ static bool generated_sv_has_registered_sum()
     }
     text.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     return text.find("input wire sum_clock") != std::string::npos
+        && text.find("input wire en_in") != std::string::npos
         && text.find("always @(posedge sum_clock)") != std::string::npos
         && text.find("always_comb begin : add_lhs_comb_func") != std::string::npos
         && text.find("always_comb begin : add_rhs_comb_func") != std::string::npos
         && text.find("prepare_comb_func") == std::string::npos
+        && text.find("if (en_in) begin") != std::string::npos
         && text.find("add_lhs_comb + add_rhs_comb") != std::string::npos;
 }
 
@@ -412,11 +408,10 @@ class TestFpAdd
     FpAdd<W, EW> dut;
     logic<W> a_data = 0;
     logic<W> b_data = 0;
-    bool input_valid = false;
+    bool input_enable = true;
 #endif
     bool debug;
     bool error = false;
-    bool expected_valid = false;
     uint64_t expected_data = 0;
 
     static double operand_value(uint64_t raw)
@@ -432,35 +427,26 @@ class TestFpAdd
         return Format::from_double(operand_value(a) + operand_value(b));
     }
 
-    void set_inputs(uint64_t a, uint64_t b, bool valid, bool reset)
+    void set_inputs(uint64_t a, uint64_t b, bool enable, bool reset)
     {
 #ifdef VERILATOR
         dut.a_in = a;
         dut.b_in = b;
-        dut.valid_in = valid;
+        dut.en_in = enable;
         dut.reset = reset;
 #else
         a_data = (logic<W>)a;
         b_data = (logic<W>)b;
-        input_valid = valid;
-#endif
-    }
-
-    bool output_valid()
-    {
-#ifdef VERILATOR
-        return dut.valid_out;
-#else
-        return dut.valid_out();
+        input_enable = enable;
 #endif
     }
 
     uint64_t output_data()
     {
 #ifdef VERILATOR
-        return (uint64_t)dut.data_out & Format::RAW_MASK;
+        return (uint64_t)dut.c_out & Format::RAW_MASK;
 #else
-        return (uint64_t)dut.data_out() & Format::RAW_MASK;
+        return (uint64_t)dut.c_out() & Format::RAW_MASK;
 #endif
     }
 
@@ -469,24 +455,22 @@ class TestFpAdd
         uint64_t actual;
 
         actual = output_data();
-        if (output_valid() != expected_valid
-            || (expected_valid && actual != expected_data)) {
-            std::printf("FpAdd<%zu,%zu> ERROR %s a=%08llx b=%08llx valid=%u/%u output=%08llx expected=%08llx\n",
+        if (actual != expected_data) {
+            std::printf("FpAdd<%zu,%zu> ERROR %s a=%08llx b=%08llx output=%08llx expected=%08llx\n",
                 W, EW, phase, (unsigned long long)a, (unsigned long long)b,
-                (unsigned)output_valid(), (unsigned)expected_valid,
                 (unsigned long long)actual, (unsigned long long)expected_data);
             error = true;
         }
-        else if (debug && expected_valid) {
+        else if (debug) {
             std::printf("FpAdd<%zu,%zu> a=%08llx b=%08llx output=%08llx\n",
                 W, EW, (unsigned long long)a, (unsigned long long)b,
                 (unsigned long long)actual);
         }
     }
 
-    void cycle(uint64_t a, uint64_t b, bool valid, bool reset = false)
+    void cycle(uint64_t a, uint64_t b, bool reset = false, bool enable = true)
     {
-        set_inputs(a, b, valid, reset);
+        set_inputs(a, b, enable, reset);
 #ifdef VERILATOR
         dut.sum_clock = 0;
         dut.eval();
@@ -501,8 +485,12 @@ class TestFpAdd
         dut._strobe();
 #endif
         ++_system_clock;
-        expected_valid = !reset && valid;
-        expected_data = expected_valid ? reference(a, b) : 0;
+        if (reset) {
+            expected_data = 0;
+        }
+        else if (enable) {
+            expected_data = reference(a, b);
+        }
         check_output("after edge", a, b);
 
 #ifdef VERILATOR
@@ -513,18 +501,19 @@ class TestFpAdd
 
     void directed_tests()
     {
-        cycle(Format::zero(false), Format::zero(false), true);
-        cycle(Format::zero(true), Format::zero(true), true);
-        cycle(Format::one(false), Format::one(false), true);
-        cycle(Format::one(false), Format::one(true), true);
-        cycle(Format::infinity(false), Format::one(false), true);
-        cycle(Format::infinity(true), Format::one(false), true);
-        cycle(Format::infinity(false), Format::infinity(true), true);
-        cycle(Format::nan(), Format::one(false), true);
-        cycle(Format::from_double(1.5), Format::from_double(2.25), true);
-        cycle(Format::from_double(65504.0), Format::from_double(65504.0), true);
-        cycle(Format::from_double(1.0), Format::from_double(0.0009765625), true);
-        cycle(0, 0, false);
+        cycle(Format::zero(false), Format::zero(false));
+        cycle(Format::zero(true), Format::zero(true));
+        cycle(Format::one(false), Format::one(false));
+        cycle(Format::one(false), Format::one(true));
+        cycle(Format::infinity(false), Format::one(false));
+        cycle(Format::infinity(true), Format::one(false));
+        cycle(Format::infinity(false), Format::infinity(true));
+        cycle(Format::nan(), Format::one(false));
+        cycle(Format::from_double(1.5), Format::from_double(2.25));
+        cycle(Format::one(false), Format::one(false), false, false);
+        cycle(Format::from_double(65504.0), Format::from_double(65504.0));
+        cycle(Format::from_double(1.0), Format::from_double(0.0009765625));
+        cycle(0, 0);
     }
 
 public:
@@ -533,7 +522,7 @@ public:
 #ifndef VERILATOR
         dut.a_in = _ASSIGN(a_data);
         dut.b_in = _ASSIGN(b_data);
-        dut.valid_in = _ASSIGN(input_valid);
+        dut.en_in = _ASSIGN(input_enable);
         dut._assign();
 #else
         dut.sum_clock = 0;
@@ -554,8 +543,8 @@ public:
 #else
         std::printf("CppHDL FpAdd<%zu,%zu>...", W, EW);
 #endif
-        cycle(0, 0, false, true);
-        cycle(0, 0, false, true);
+        cycle(0, 0, true);
+        cycle(0, 0, true);
         directed_tests();
 
         state = 0x2d99787926d46932ULL;
@@ -563,9 +552,9 @@ public:
         for (i = 0; i < iterations && !error; ++i) {
             a = W <= 16 ? i : fp_math_random_step(state);
             b = fp_math_random_step(state);
-            cycle(a & Format::RAW_MASK, b & Format::RAW_MASK, true);
+            cycle(a & Format::RAW_MASK, b & Format::RAW_MASK);
         }
-        cycle(0, 0, false);
+        cycle(0, 0);
 
         std::printf(" %s (%lld microseconds)\n", error ? "FAILED" : "PASSED",
             (long long)std::chrono::duration_cast<std::chrono::microseconds>(

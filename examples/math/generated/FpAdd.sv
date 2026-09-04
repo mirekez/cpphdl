@@ -12,9 +12,8 @@ module FpAdd #(
 ,   input wire reset
 ,   input wire[W-1:0] a_in
 ,   input wire[W-1:0] b_in
-,   input wire valid_in
+,   input wire en_in
 ,   output wire[W-1:0] data_out
-,   output wire valid_out
 );
     localparam  MANT_WIDTH = (W - EW) - 'h1;
     localparam  SUM_WIDTH = (((((MANT_WIDTH + 'h6) + 'h7))/'h8))*'h8;
@@ -29,7 +28,6 @@ module FpAdd #(
     reg[EW-1:0] exponent_reg;
     reg[W-1:0] special_result_reg;
     reg special_reg;
-    reg valid_reg;
     logic[SUM_WIDTH-1:0] add_lhs_comb;
     logic[SUM_WIDTH-1:0] add_rhs_comb;
     logic[EW-1:0] exponent_comb;
@@ -44,7 +42,6 @@ module FpAdd #(
     logic[EW-1:0] exponent_reg_tmp;
     logic[W-1:0] special_result_reg_tmp;
     logic special_reg_tmp;
-    logic valid_reg_tmp;
 
 
     always_comb begin : add_lhs_comb_func  // add_lhs_comb_func
@@ -259,58 +256,53 @@ module FpAdd #(
         round=0;
         sticky=0;
         result_comb = 'h0;
-        if (!valid_reg) begin
-            result_raw = 'h0;
+        if (special_reg) begin
+            result_raw = unsigned'(64'(special_result_reg));
         end
         else begin
-            if (special_reg) begin
-                result_raw = unsigned'(64'(special_result_reg));
+            magnitude=(negative) ? ((((unsigned'(64'('h0)) - sum)) & SUM_MASK)) : (sum);
+            if (magnitude == 'h0) begin
+                result_raw = 'h0;
             end
             else begin
-                magnitude=(negative) ? ((((unsigned'(64'('h0)) - sum)) & SUM_MASK)) : (sum);
-                if (magnitude == 'h0) begin
-                    result_raw = 'h0;
+                if (((magnitude & ((unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h4)))))) != 'h0) begin
+                    discarded=magnitude & 'h1;
+                    magnitude>>='h1;
+                    if (discarded != 'h0) begin
+                        magnitude|='h1;
+                    end
+                    exponent=exponent+1;
+                end
+                for (i='h0;i < 'h20;i=i+1) begin
+                    if (((((magnitude & ((unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h3)))))) == 'h0) && (magnitude != 'h0)) && (exponent > 'h0)) begin
+                        magnitude<<='h1;
+                        --exponent;
+                    end
+                end
+                if (exponent<='h0) begin
+                    result_raw = (negative) ? (SIGN_MASK) : ('h0);
                 end
                 else begin
-                    if (((magnitude & ((unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h4)))))) != 'h0) begin
-                        discarded=magnitude & 'h1;
-                        magnitude>>='h1;
-                        if (discarded != 'h0) begin
-                            magnitude|='h1;
-                        end
-                        exponent=exponent+1;
-                    end
-                    for (i='h0;i < 'h20;i=i+1) begin
-                        if (((((magnitude & ((unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h3)))))) == 'h0) && (magnitude != 'h0)) && (exponent > 'h0)) begin
-                            magnitude<<='h1;
-                            --exponent;
-                        end
-                    end
-                    if (exponent<='h0) begin
-                        result_raw = (negative) ? (SIGN_MASK) : ('h0);
+                    if (exponent>=signed'(32'(EXP_MAX))) begin
+                        result_raw = ((negative) ? (SIGN_MASK) : ('h0)) | ((EXP_MAX <<< MANT_WIDTH));
                     end
                     else begin
+                        retained=magnitude >>> 'h3;
+                        guard=((((magnitude >>> 'h2)) & 'h1)) != 'h0;
+                        round=((((magnitude >>> 'h1)) & 'h1)) != 'h0;
+                        sticky=((magnitude & 'h1)) != 'h0;
+                        if (guard && (((round || sticky) || (((retained & 'h1)) != 'h0)))) begin
+                            retained=retained+1;
+                        end
+                        if (retained>=(unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h1)))) begin
+                            retained>>='h1;
+                            exponent=exponent+1;
+                        end
                         if (exponent>=signed'(32'(EXP_MAX))) begin
                             result_raw = ((negative) ? (SIGN_MASK) : ('h0)) | ((EXP_MAX <<< MANT_WIDTH));
                         end
                         else begin
-                            retained=magnitude >>> 'h3;
-                            guard=((((magnitude >>> 'h2)) & 'h1)) != 'h0;
-                            round=((((magnitude >>> 'h1)) & 'h1)) != 'h0;
-                            sticky=((magnitude & 'h1)) != 'h0;
-                            if (guard && (((round || sticky) || (((retained & 'h1)) != 'h0)))) begin
-                                retained=retained+1;
-                            end
-                            if (retained>=(unsigned'(64'('h1)) <<< ((MANT_WIDTH + 'h1)))) begin
-                                retained>>='h1;
-                                exponent=exponent+1;
-                            end
-                            if (exponent>=signed'(32'(EXP_MAX))) begin
-                                result_raw = ((negative) ? (SIGN_MASK) : ('h0)) | ((EXP_MAX <<< MANT_WIDTH));
-                            end
-                            else begin
-                                result_raw = (((negative) ? (SIGN_MASK) : ('h0)) | ((unsigned'(64'(exponent)) <<< MANT_WIDTH))) | ((retained & MANT_MASK));
-                            end
+                            result_raw = (((negative) ? (SIGN_MASK) : ('h0)) | ((unsigned'(64'(exponent)) <<< MANT_WIDTH))) | ((retained & MANT_MASK));
                         end
                     end
                 end
@@ -321,17 +313,17 @@ module FpAdd #(
 
     task _work (input logic reset);
     begin: _work
-        sum_reg_tmp = add_lhs_comb + add_rhs_comb;
-        exponent_reg_tmp = exponent_comb;
-        special_result_reg_tmp = special_result_comb;
-        special_reg_tmp = unsigned'(1'(special_comb));
-        valid_reg_tmp = unsigned'(1'(valid_in));
+        if (en_in) begin
+            sum_reg_tmp = add_lhs_comb + add_rhs_comb;
+            exponent_reg_tmp = exponent_comb;
+            special_result_reg_tmp = special_result_comb;
+            special_reg_tmp = unsigned'(1'(special_comb));
+        end
         if (reset) begin
             sum_reg_tmp = '0;
             exponent_reg_tmp = '0;
             special_result_reg_tmp = '0;
             special_reg_tmp = '0;
-            valid_reg_tmp = '0;
         end
     end
     endtask
@@ -344,7 +336,6 @@ module FpAdd #(
         exponent_reg_tmp = exponent_reg;
         special_result_reg_tmp = special_result_reg;
         special_reg_tmp = special_reg;
-        valid_reg_tmp = valid_reg;
 
         _work(reset);
 
@@ -352,12 +343,9 @@ module FpAdd #(
         exponent_reg <= exponent_reg_tmp;
         special_result_reg <= special_result_reg_tmp;
         special_reg <= special_reg_tmp;
-        valid_reg <= valid_reg_tmp;
     end
 
     assign data_out = result_comb;
-
-    assign valid_out = valid_reg;
 
 
 endmodule
