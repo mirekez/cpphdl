@@ -1,0 +1,372 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1080" viewBox="0 0 1800 1080">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#17324d" flood-opacity="0.16"/>
+    </filter>
+    <marker id="arrow-blue" markerWidth="1" markerHeight="1" refX="0.9" refY="0.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L1,0.5 L0,1 z" fill="#1687e5"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="1" markerHeight="1" refX="0.9" refY="0.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L1,0.5 L0,1 z" fill="#f36c0a"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="1" markerHeight="1" refX="0.9" refY="0.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L1,0.5 L0,1 z" fill="#009c84"/>
+    </marker>
+    <style>
+      text { font-family: "DejaVu Sans", Arial, sans-serif; fill: #17324d; }
+      .title { font-size: 34px; font-weight: 800; letter-spacing: 1px; }
+      .subtitle { font-size: 16px; fill: #597083; }
+      .column-title { font-size: 16px; font-weight: 800; fill: #ffffff; letter-spacing: .5px; }
+      .section-title { font-size: 15px; font-weight: 800; }
+      .block-title { font-size: 14px; font-weight: 800; }
+      .block-sub { font-size: 12px; fill: #526b7d; }
+      .tiny { font-size: 11px; fill: #607789; }
+      .label-blue { font-size: 12px; font-weight: 700; fill: #0872c9; }
+      .label-orange { font-size: 12px; font-weight: 700; fill: #d65d00; }
+      .label-green { font-size: 12px; font-weight: 700; fill: #007b69; }
+      .flow-blue { fill: none; stroke: #1687e5; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-blue); }
+      .flow-orange { fill: none; stroke: #f36c0a; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-orange); }
+      .flow-green { fill: none; stroke: #009c84; stroke-width: 4; stroke-dasharray: 9 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-green); }
+      .thin-blue { fill: none; stroke: #1687e5; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-blue); }
+      .thin-purple { fill: none; stroke: #7255c7; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-blue); }
+      .card { fill: #ffffff; stroke-width: 2; rx: 7; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1080" fill="#f8fbfd"/>
+
+  <!-- Title -->
+  <g transform="translate(42 34)">
+    <rect x="0" y="6" width="46" height="38" rx="7" fill="#7255c7"/>
+    <rect x="10" y="14" width="26" height="22" rx="3" fill="#ffffff" opacity=".94"/>
+    <path d="M5 15h-8 M5 25h-8 M5 35h-8 M41 15h8 M41 25h8 M41 35h8 M14 11V3 M23 11V3 M32 11V3 M14 39v8 M23 39v8 M32 39v8"
+          stroke="#7255c7" stroke-width="3" stroke-linecap="round"/>
+    <text x="64" y="31" class="title">TRIBE CPU</text>
+    <text x="64" y="54" class="subtitle">RV32 multicore system architecture - CppHDL native simulation and generated SystemVerilog</text>
+  </g>
+
+  <!-- Top control and interrupt paths -->
+  <path d="M1500 102 H180 V146" class="flow-green"/>
+  <text x="1070" y="92" text-anchor="middle" class="label-green">CLINT timer/software IRQ + PLIC external IRQ</text>
+  <rect x="55" y="92" width="210" height="28" rx="14" fill="#efeaff" stroke="#7255c7"/>
+  <text x="160" y="111" text-anchor="middle" class="tiny" style="font-weight:700;fill:#5e46ac">reset / boot PC / hart ID / DTB</text>
+
+  <!-- Main domain columns -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="130" width="680" height="830" rx="9" fill="#f4efff" stroke="#7255c7" stroke-width="2"/>
+    <path d="M49 130 H711 Q720 130 720 139 V176 H40 V139 Q40 130 49 130" fill="#303c78"/>
+    <text x="60" y="160" class="column-title">CPU COMPLEX</text>
+    <text x="700" y="160" text-anchor="end" class="column-title" opacity=".9">clk - 100 MHz</text>
+
+    <rect x="740" y="130" width="120" height="830" rx="9" fill="#eef3f6" stroke="#607889" stroke-width="2"/>
+    <path d="M749 130 H851 Q860 130 860 139 V176 H740 V139 Q740 130 749 130" fill="#526b7d"/>
+    <text x="800" y="160" text-anchor="middle" class="column-title">L1 CDC</text>
+
+    <rect x="880" y="130" width="320" height="830" rx="9" fill="#eaf6ff" stroke="#147ca8" stroke-width="2"/>
+    <path d="M889 130 H1191 Q1200 130 1200 139 V176 H880 V139 Q880 130 889 130" fill="#0b668d"/>
+    <text x="900" y="160" class="column-title">SHARED L2 CACHE</text>
+    <text x="1180" y="160" text-anchor="end" class="column-title" opacity=".9">50 MHz</text>
+
+    <rect x="1220" y="130" width="120" height="830" rx="9" fill="#eef3f6" stroke="#607889" stroke-width="2"/>
+    <path d="M1229 130 H1331 Q1340 130 1340 139 V176 H1220 V139 Q1220 130 1229 130" fill="#526b7d"/>
+    <text x="1280" y="160" text-anchor="middle" class="column-title">AXI CDC</text>
+
+    <rect x="1360" y="130" width="280" height="830" rx="9" fill="#eaf9f6" stroke="#008089" stroke-width="2"/>
+    <path d="M1369 130 H1631 Q1640 130 1640 139 V176 H1360 V139 Q1360 130 1369 130" fill="#006e76"/>
+    <text x="1380" y="160" class="column-title">SYSTEM / MMIO</text>
+    <text x="1620" y="160" text-anchor="end" class="column-title" opacity=".9">clk</text>
+  </g>
+
+  <!-- CPU core container -->
+  <g>
+    <rect x="62" y="196" width="636" height="640" rx="8" fill="#ffffff" stroke="#8c72d3" stroke-width="2"/>
+    <rect x="78" y="212" width="604" height="38" rx="6" fill="#8b63d2"/>
+    <text x="96" y="237" class="column-title">TRIBE CORE</text>
+    <rect x="537" y="219" width="129" height="24" rx="12" fill="#ffffff" opacity=".95"/>
+    <text x="601" y="236" text-anchor="middle" class="tiny" style="font-weight:800;fill:#6745b0">x CPU_CORES (1..4)</text>
+
+    <!-- Frontend -->
+    <rect x="82" y="270" width="238" height="230" rx="7" fill="#edf7ff" stroke="#2584c5" stroke-width="2"/>
+    <text x="98" y="294" class="section-title" fill="#176a9f">FETCH / FRONTEND</text>
+    <rect x="98" y="310" width="206" height="52" rx="6" fill="#ffffff" stroke="#2584c5" stroke-width="2"/>
+    <text x="201" y="333" text-anchor="middle" class="block-title">BRANCH PREDICTOR</text>
+    <text x="201" y="350" text-anchor="middle" class="tiny">16-entry target + direction table</text>
+    <rect x="98" y="388" width="88" height="74" rx="6" fill="#ffffff" stroke="#2584c5" stroke-width="2"/>
+    <text x="142" y="417" text-anchor="middle" class="block-title">IMMU</text>
+    <text x="142" y="436" text-anchor="middle" class="tiny">Sv32 TLB</text>
+    <rect x="210" y="388" width="94" height="74" rx="6" fill="#dff1ff" stroke="#1687e5" stroke-width="2"/>
+    <text x="257" y="417" text-anchor="middle" class="block-title">I-L1</text>
+    <text x="257" y="436" text-anchor="middle" class="tiny">2 KiB / 2-way</text>
+    <path d="M186 425 H210" class="thin-blue"/>
+    <path d="M257 362 V388" class="thin-blue"/>
+
+    <!-- Pipeline -->
+    <rect x="340" y="270" width="342" height="230" rx="7" fill="#f5efff" stroke="#7255c7" stroke-width="2"/>
+    <text x="356" y="294" class="section-title" fill="#6047a9">3-STAGE IN-ORDER PIPELINE</text>
+    <g>
+      <rect x="356" y="318" width="72" height="74" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+      <text x="392" y="350" text-anchor="middle" class="block-title">DECODE</text>
+      <text x="392" y="369" text-anchor="middle" class="tiny">RV32 I/M/A/C</text>
+      <rect x="444" y="318" width="72" height="74" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+      <text x="480" y="350" text-anchor="middle" class="block-title">EXECUTE</text>
+      <text x="480" y="369" text-anchor="middle" class="tiny">ALU / branch</text>
+      <rect x="532" y="318" width="72" height="74" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+      <text x="568" y="346" text-anchor="middle" class="block-title">MEM</text>
+      <text x="568" y="365" text-anchor="middle" class="tiny">load/store</text>
+      <rect x="620" y="318" width="46" height="74" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+      <text x="643" y="350" text-anchor="middle" class="block-title">WB</text>
+      <text x="643" y="369" text-anchor="middle" class="tiny">retire</text>
+      <path d="M428 355 H444 M516 355 H532 M604 355 H620" class="thin-blue"/>
+    </g>
+    <rect x="356" y="420" width="142" height="54" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+    <text x="427" y="443" text-anchor="middle" class="block-title">REGISTER FILE</text>
+    <text x="427" y="461" text-anchor="middle" class="tiny">32 x 32-bit + forwarding</text>
+    <rect x="516" y="420" width="150" height="54" rx="6" fill="#ffffff" stroke="#7255c7" stroke-width="2"/>
+    <text x="591" y="443" text-anchor="middle" class="block-title">WRITEBACK MEM</text>
+    <text x="591" y="461" text-anchor="middle" class="tiny">load assembly / forwarding</text>
+
+    <!-- Control and data side -->
+    <rect x="82" y="520" width="286" height="176" rx="7" fill="#fff7e8" stroke="#e39a23" stroke-width="2"/>
+    <text x="98" y="544" class="section-title" fill="#a96700">CONTROL / PRIVILEGE</text>
+    <rect x="98" y="564" width="116" height="96" rx="6" fill="#ffffff" stroke="#e39a23" stroke-width="2"/>
+    <text x="156" y="594" text-anchor="middle" class="block-title">CSR / TRAPS</text>
+    <text x="156" y="614" text-anchor="middle" class="tiny">M/S/U privilege</text>
+    <text x="156" y="632" text-anchor="middle" class="tiny">Zicsr + SBI</text>
+    <rect x="230" y="564" width="122" height="96" rx="6" fill="#ffffff" stroke="#e39a23" stroke-width="2"/>
+    <text x="291" y="592" text-anchor="middle" class="block-title">INTERRUPT</text>
+    <text x="291" y="610" text-anchor="middle" class="block-title">CONTROLLER</text>
+    <text x="291" y="632" text-anchor="middle" class="tiny">CLINT / PLIC routing</text>
+
+    <rect x="388" y="520" width="294" height="176" rx="7" fill="#edf7ff" stroke="#2584c5" stroke-width="2"/>
+    <text x="404" y="544" class="section-title" fill="#176a9f">DATA / MEMORY</text>
+    <rect x="404" y="564" width="116" height="96" rx="6" fill="#ffffff" stroke="#2584c5" stroke-width="2"/>
+    <text x="462" y="594" text-anchor="middle" class="block-title">DMMU</text>
+    <text x="462" y="614" text-anchor="middle" class="tiny">Sv32 TLB + PTW</text>
+    <text x="462" y="632" text-anchor="middle" class="tiny">permissions</text>
+    <rect x="544" y="564" width="122" height="96" rx="6" fill="#dff1ff" stroke="#1687e5" stroke-width="2"/>
+    <text x="605" y="594" text-anchor="middle" class="block-title">D-L1</text>
+    <text x="605" y="614" text-anchor="middle" class="tiny">1 KiB / 2-way</text>
+    <text x="605" y="632" text-anchor="middle" class="tiny">LR/SC + AMO</text>
+    <path d="M520 612 H544" class="thin-blue"/>
+
+    <!-- Internal semantic links -->
+    <path d="M320 425 H340" class="thin-blue"/>
+    <path d="M568 392 V500 H462 V564" class="thin-blue"/>
+    <path d="M427 420 V402 H392 V392" class="thin-purple"/>
+    <path d="M591 420 V402 H643 V392" class="thin-purple"/>
+    <path d="M214 612 H230" class="thin-purple"/>
+    <path d="M291 564 V500 H480 V392" class="thin-purple"/>
+
+    <!-- Multicore coordination -->
+    <rect x="82" y="720" width="600" height="82" rx="7" fill="#f5f7fa" stroke="#93a4b1" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="98" y="746" class="section-title">MULTICORE COORDINATION</text>
+    <text x="98" y="772" class="block-sub">Peer L1 invalidation</text>
+    <text x="285" y="772" class="block-sub">SBI IPI / remote fence</text>
+    <text x="505" y="772" class="block-sub">Shared AMO arbitration</text>
+  </g>
+
+  <!-- L1 CDC -->
+  <g>
+    <line x1="800" y1="188" x2="800" y2="932" stroke="#91a4b1" stroke-width="2" stroke-dasharray="8 8"/>
+    <text x="782" y="205" text-anchor="end" class="tiny">CPU clk</text>
+    <text x="818" y="205" class="tiny">L2 clk</text>
+    <rect x="754" y="302" width="92" height="112" rx="7" fill="#ffffff" stroke="#607889" stroke-width="2"/>
+    <text x="800" y="329" text-anchor="middle" class="block-title">I-L1</text>
+    <text x="800" y="348" text-anchor="middle" class="block-title">MAILBOX</text>
+    <text x="800" y="373" text-anchor="middle" class="tiny">request</text>
+    <text x="800" y="389" text-anchor="middle" class="tiny">+ response</text>
+    <rect x="754" y="522" width="92" height="112" rx="7" fill="#ffffff" stroke="#607889" stroke-width="2"/>
+    <text x="800" y="549" text-anchor="middle" class="block-title">D-L1</text>
+    <text x="800" y="568" text-anchor="middle" class="block-title">MAILBOX</text>
+    <text x="800" y="593" text-anchor="middle" class="tiny">request</text>
+    <text x="800" y="609" text-anchor="middle" class="tiny">+ response</text>
+    <rect x="758" y="704" width="84" height="116" rx="7" fill="#e3e9ed" stroke="#607889" stroke-width="2"/>
+    <text x="800" y="733" text-anchor="middle" class="block-title">2-FLOP</text>
+    <text x="800" y="752" text-anchor="middle" class="block-title">TOGGLE</text>
+    <text x="800" y="777" text-anchor="middle" class="tiny">ASYNC_REG</text>
+    <text x="800" y="794" text-anchor="middle" class="tiny">stable payload</text>
+  </g>
+
+  <!-- CPU to L2 request paths -->
+  <path d="M304 425 H326 V508 H710 V358 H754" class="flow-blue"/>
+  <path d="M846 358 H900" class="flow-blue"/>
+  <path d="M666 612 H730 V578 H754" class="flow-blue"/>
+  <path d="M846 578 H900" class="flow-blue"/>
+  <rect x="590" y="486" width="116" height="22" rx="11" fill="#ffffff" stroke="#91c9f2"/>
+  <text x="648" y="501" text-anchor="middle" class="label-blue">I miss / refill</text>
+  <rect x="582" y="548" width="142" height="22" rx="11" fill="#ffffff" stroke="#91c9f2"/>
+  <text x="653" y="563" text-anchor="middle" class="label-blue">D load / store / PTW</text>
+
+  <!-- Shared L2 -->
+  <g>
+    <rect x="900" y="210" width="280" height="430" rx="8" fill="#ffffff" stroke="#1687e5" stroke-width="2"/>
+    <rect x="916" y="228" width="248" height="62" rx="6" fill="#1481b3"/>
+    <text x="1040" y="254" text-anchor="middle" class="column-title">COHERENT L2 CACHE</text>
+    <text x="1040" y="276" text-anchor="middle" class="tiny" style="fill:#eaf8ff">64 KiB - 4-way - 32 B line</text>
+
+    <rect x="916" y="310" width="116" height="96" rx="6" fill="#e6f4ff" stroke="#1687e5" stroke-width="2"/>
+    <text x="974" y="340" text-anchor="middle" class="block-title">REQUEST</text>
+    <text x="974" y="359" text-anchor="middle" class="block-title">ARBITER</text>
+    <text x="974" y="382" text-anchor="middle" class="tiny">I / D / DMA</text>
+    <rect x="1048" y="310" width="116" height="96" rx="6" fill="#e6f4ff" stroke="#1687e5" stroke-width="2"/>
+    <text x="1106" y="340" text-anchor="middle" class="block-title">TAG + DATA</text>
+    <text x="1106" y="359" text-anchor="middle" class="block-title">RAM BANKS</text>
+    <g fill="#1687e5">
+      <rect x="1067" y="374" width="16" height="15" rx="2"/>
+      <rect x="1087" y="374" width="16" height="15" rx="2"/>
+      <rect x="1107" y="374" width="16" height="15" rx="2"/>
+      <rect x="1127" y="374" width="16" height="15" rx="2"/>
+    </g>
+    <rect x="916" y="426" width="248" height="86" rx="6" fill="#ffffff" stroke="#1687e5" stroke-width="2"/>
+    <text x="1040" y="452" text-anchor="middle" class="block-title">REFILL / EVICTION / UNCACHED IO</text>
+    <text x="1040" y="477" text-anchor="middle" class="block-sub">masked writes - cross-line reads - dirty writeback</text>
+    <text x="1040" y="497" text-anchor="middle" class="block-sub">registered owner and response pipeline</text>
+    <rect x="916" y="532" width="248" height="88" rx="6" fill="#f5f9fc" stroke="#78a8c1" stroke-width="2"/>
+    <text x="1040" y="560" text-anchor="middle" class="block-title">COHERENCE POINT</text>
+    <text x="1040" y="584" text-anchor="middle" class="block-sub">peer L1 invalidation + DMA line invalidation</text>
+    <text x="1040" y="603" text-anchor="middle" class="block-sub">one shared AMO owner</text>
+
+    <rect x="900" y="680" width="280" height="188" rx="8" fill="#ffffff" stroke="#1687e5" stroke-width="2"/>
+    <text x="920" y="709" class="section-title" fill="#176a9f">L2 MEMORY ROUTER</text>
+    <text x="920" y="732" class="block-sub">4 contiguous AXI regions</text>
+    <g>
+      <rect x="918" y="754" width="54" height="72" rx="5" fill="#e6f4ff" stroke="#1687e5"/>
+      <text x="945" y="780" text-anchor="middle" class="block-title">0</text>
+      <text x="945" y="801" text-anchor="middle" class="tiny">RAM</text>
+      <rect x="980" y="754" width="54" height="72" rx="5" fill="#e6f4ff" stroke="#1687e5"/>
+      <text x="1007" y="780" text-anchor="middle" class="block-title">1</text>
+      <text x="1007" y="801" text-anchor="middle" class="tiny">RAM</text>
+      <rect x="1042" y="754" width="54" height="72" rx="5" fill="#e6f4ff" stroke="#1687e5"/>
+      <text x="1069" y="780" text-anchor="middle" class="block-title">2</text>
+      <text x="1069" y="801" text-anchor="middle" class="tiny">RAM</text>
+      <rect x="1104" y="754" width="58" height="72" rx="5" fill="#fff0e5" stroke="#f36c0a"/>
+      <text x="1133" y="780" text-anchor="middle" class="block-title">3</text>
+      <text x="1133" y="801" text-anchor="middle" class="tiny">MMIO</text>
+    </g>
+    <text x="1040" y="850" text-anchor="middle" class="tiny">64 / 128 / 256-bit configurable data path</text>
+  </g>
+
+  <!-- AXI CDC -->
+  <g>
+    <line x1="1280" y1="188" x2="1280" y2="932" stroke="#91a4b1" stroke-width="2" stroke-dasharray="8 8"/>
+    <text x="1262" y="205" text-anchor="end" class="tiny">L2 clk</text>
+    <text x="1298" y="205" class="tiny">CPU clk</text>
+    <rect x="1234" y="274" width="92" height="142" rx="7" fill="#ffffff" stroke="#607889" stroke-width="2"/>
+    <text x="1280" y="303" text-anchor="middle" class="block-title">AXI OUT</text>
+    <text x="1280" y="322" text-anchor="middle" class="block-title">x4</text>
+    <text x="1280" y="348" text-anchor="middle" class="tiny">L2 slow</text>
+    <text x="1280" y="365" text-anchor="middle" class="tiny">to system fast</text>
+    <text x="1280" y="391" text-anchor="middle" class="tiny">5 channels</text>
+    <rect x="1234" y="640" width="92" height="142" rx="7" fill="#ffffff" stroke="#f36c0a" stroke-width="2"/>
+    <text x="1280" y="669" text-anchor="middle" class="block-title">DMA IN</text>
+    <text x="1280" y="688" text-anchor="middle" class="block-title">x4</text>
+    <text x="1280" y="714" text-anchor="middle" class="tiny">system fast</text>
+    <text x="1280" y="731" text-anchor="middle" class="tiny">to L2 slow</text>
+    <text x="1280" y="757" text-anchor="middle" class="tiny">coherent</text>
+  </g>
+
+  <!-- L2 / system AXI paths -->
+  <path d="M1180 345 H1234" class="flow-blue"/>
+  <path d="M1326 345 H1380" class="flow-blue"/>
+  <path d="M1380 711 H1326" class="flow-orange"/>
+  <path d="M1234 711 H1180" class="flow-orange"/>
+
+  <!-- System / MMIO -->
+  <g>
+    <rect x="1380" y="200" width="240" height="196" rx="8" fill="#ffffff" stroke="#00919a" stroke-width="2"/>
+    <text x="1400" y="227" class="section-title" fill="#00727a">BACKING MEMORY</text>
+    <rect x="1400" y="246" width="200" height="40" rx="5" fill="#e7f7f5" stroke="#00919a"/>
+    <text x="1500" y="271" text-anchor="middle" class="block-title">RAM REGION 0</text>
+    <rect x="1400" y="296" width="200" height="40" rx="5" fill="#e7f7f5" stroke="#00919a"/>
+    <text x="1500" y="321" text-anchor="middle" class="block-title">RAM REGION 1</text>
+    <rect x="1400" y="346" width="200" height="34" rx="5" fill="#e7f7f5" stroke="#00919a"/>
+    <text x="1500" y="368" text-anchor="middle" class="block-title">RAM REGION 2</text>
+
+    <rect x="1380" y="426" width="240" height="82" rx="8" fill="#ffffff" stroke="#00919a" stroke-width="2"/>
+    <text x="1500" y="456" text-anchor="middle" class="block-title">UNCACHED AXI REGION MUX</text>
+    <text x="1500" y="480" text-anchor="middle" class="block-sub">address decode + response routing</text>
+
+    <rect x="1380" y="536" width="110" height="74" rx="7" fill="#ffffff" stroke="#00919a" stroke-width="2"/>
+    <text x="1435" y="566" text-anchor="middle" class="block-title">UART</text>
+    <text x="1435" y="587" text-anchor="middle" class="tiny">NS16550A</text>
+    <rect x="1510" y="536" width="110" height="74" rx="7" fill="#ffffff" stroke="#00919a" stroke-width="2"/>
+    <text x="1565" y="566" text-anchor="middle" class="block-title">CLINT</text>
+    <text x="1565" y="587" text-anchor="middle" class="tiny">timer + IPI</text>
+    <rect x="1380" y="624" width="110" height="74" rx="7" fill="#ffffff" stroke="#00919a" stroke-width="2"/>
+    <text x="1435" y="654" text-anchor="middle" class="block-title">PLIC</text>
+    <text x="1435" y="675" text-anchor="middle" class="tiny">external IRQ</text>
+    <rect x="1510" y="624" width="110" height="74" rx="7" fill="#fff2e8" stroke="#f36c0a" stroke-width="2"/>
+    <text x="1565" y="654" text-anchor="middle" class="block-title">ACCELERATOR</text>
+    <text x="1565" y="675" text-anchor="middle" class="tiny">AXI DMA</text>
+    <rect x="1380" y="712" width="110" height="74" rx="7" fill="#fff2e8" stroke="#f36c0a" stroke-width="2"/>
+    <text x="1435" y="742" text-anchor="middle" class="block-title">SD CTRL</text>
+    <text x="1435" y="763" text-anchor="middle" class="tiny">FIFO + DMA</text>
+    <rect x="1510" y="712" width="110" height="74" rx="7" fill="#fff2e8" stroke="#f36c0a" stroke-width="2"/>
+    <text x="1565" y="742" text-anchor="middle" class="block-title">ETH GIG</text>
+    <text x="1565" y="763" text-anchor="middle" class="tiny">DMA / MAC / PCS</text>
+    <rect x="1380" y="814" width="240" height="86" rx="8" fill="#e8f7f4" stroke="#00919a" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="1500" y="844" text-anchor="middle" class="block-title">PLATFORM CONTROL</text>
+    <text x="1500" y="868" text-anchor="middle" class="block-sub">boot configuration - debug - performance</text>
+    <text x="1500" y="887" text-anchor="middle" class="block-sub">checkpoint / trace in native simulation</text>
+  </g>
+
+  <!-- External interfaces -->
+  <g filter="url(#shadow)">
+    <rect x="1665" y="222" width="110" height="150" rx="8" fill="#ffffff" stroke="#4f687a" stroke-width="2"/>
+    <text x="1720" y="248" text-anchor="middle" class="section-title">DRAM</text>
+    <g fill="#1687e5">
+      <rect x="1685" y="272" width="70" height="18" rx="3"/>
+      <rect x="1685" y="299" width="70" height="18" rx="3" opacity=".82"/>
+      <rect x="1685" y="326" width="70" height="18" rx="3" opacity=".64"/>
+    </g>
+    <text x="1720" y="360" text-anchor="middle" class="tiny">AXI RAM ports</text>
+
+    <rect x="1665" y="458" width="110" height="108" rx="8" fill="#ffffff" stroke="#4f687a" stroke-width="2"/>
+    <text x="1720" y="484" text-anchor="middle" class="section-title">CONSOLE</text>
+    <rect x="1685" y="501" width="70" height="36" rx="4" fill="#17324d"/>
+    <path d="M1698 512 l10 7 -10 7 M1715 527 h24" fill="none" stroke="#55d8cf" stroke-width="3"/>
+    <text x="1720" y="554" text-anchor="middle" class="tiny">UART RX / TX</text>
+
+    <rect x="1665" y="620" width="110" height="108" rx="8" fill="#ffffff" stroke="#4f687a" stroke-width="2"/>
+    <text x="1720" y="646" text-anchor="middle" class="section-title">SD CARD</text>
+    <path d="M1692 665 h56 l10 10 v30 h-66 z" fill="#f36c0a" opacity=".88"/>
+    <path d="M1703 665 v14 h34 v-14" fill="#ffffff" opacity=".85"/>
+    <text x="1720" y="718" text-anchor="middle" class="tiny">command / data</text>
+
+    <rect x="1665" y="780" width="110" height="108" rx="8" fill="#ffffff" stroke="#4f687a" stroke-width="2"/>
+    <text x="1720" y="806" text-anchor="middle" class="section-title">ETHERNET</text>
+    <rect x="1688" y="826" width="64" height="34" rx="5" fill="#17324d"/>
+    <g fill="#35b8ff">
+      <rect x="1697" y="835" width="5" height="15"/>
+      <rect x="1706" y="835" width="5" height="15"/>
+      <rect x="1715" y="835" width="5" height="15"/>
+      <rect x="1724" y="835" width="5" height="15"/>
+      <rect x="1733" y="835" width="5" height="15"/>
+    </g>
+    <text x="1720" y="878" text-anchor="middle" class="tiny">RGMII / TAP</text>
+  </g>
+
+  <!-- System to external links -->
+  <path d="M1620 297 H1665" class="thin-blue"/>
+  <path d="M1620 573 H1648 V512 H1665" class="thin-blue"/>
+  <path d="M1490 749 H1648 V674 H1665" class="thin-blue"/>
+  <path d="M1620 749 H1648 V834 H1665" class="thin-blue"/>
+
+  <!-- DMA source collection -->
+  <path d="M1565 698 V711 H1380" class="flow-orange"/>
+  <path d="M1435 786 V806 H1360 V711 H1380" class="flow-orange"/>
+  <path d="M1565 786 V806 H1360" class="flow-orange"/>
+
+  <!-- Legend and notes -->
+  <g>
+    <rect x="40" y="986" width="1735" height="66" rx="8" fill="#ffffff" stroke="#d3dde5"/>
+    <line x1="75" y1="1018" x2="135" y2="1018" class="flow-blue"/>
+    <text x="150" y="1023" class="block-sub">CPU and memory traffic</text>
+    <line x1="365" y1="1018" x2="425" y2="1018" class="flow-orange"/>
+    <text x="440" y="1023" class="block-sub">coherent DMA traffic</text>
+    <line x1="665" y1="1018" x2="725" y2="1018" class="flow-green"/>
+    <text x="740" y="1023" class="block-sub">interrupt / control</text>
+    <text x="990" y="1010" class="tiny">Default configuration: RV32IMAC + Zicsr, Sv32 MMU/TLB, private I/D L1, shared 64 KiB L2.</text>
+    <text x="990" y="1032" class="tiny">CPU_CLK_MULTIPLIER=2; CDC payloads use acknowledged toggle mailboxes and two-flop synchronizers.</text>
+  </g>
+</svg>

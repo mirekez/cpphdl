@@ -1319,6 +1319,11 @@ std::string Expr::typeToSV(std::string type, std::string size)
         declSize = 32;
     }
     else {
+        // Packed structs/unions are user-defined data types.  They still need
+        // an explicit net kind on module ports and child-port connections when
+        // generated under `default_nettype none`; Vivado otherwise rejects an
+        // ANSI declaration such as `input MyStruct value_in`.
+
         // A user-defined SystemVerilog type still needs an explicit net kind
         // when it is used for a module port.  In particular, omitting `wire`
         // makes these declarations invalid with `default_nettype none` in some

@@ -60,7 +60,6 @@ if [[ -z "$CPPHDL_CVA6_ONLY" && "$CPPHDL_CVA6_FINALIZE_ONLY" != "1" && "$CPPHDL_
     touch "$OUT/cva6_assign_suffix_code.tsv"
     python3 - "$OUT" <<'PY'
 from pathlib import Path
-import re
 import sys
 
 out = Path(sys.argv[1]).resolve()
@@ -189,6 +188,82 @@ PY
 
 rename_cpp_global_collisions
 
+# The TLB stores normal and guest PTEs as nested members of content_q_t.  The
+# aggregate leaf optimizer currently shortens four output-only paths to
+# content_q[].ppn/u, which is neither valid C++ nor equivalent to the RTL.  Keep
+# this CVA6-version-specific repair next to the fixture metadata until hdlcpp's
+# general nested-projection pass can retain the selected pte/gpte parent.
+python3 - "$OUT/generated/core/cva6_mmu/cva6_tlb.h" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+def projected_method_span(name: str) -> tuple[int, int]:
+    start = text.index(f"& {name}_func()")
+    candidates = [
+        text.find("\n    std::remove_cvref_t<decltype(", start + 1),
+        text.find("\n    _LAZY_COMB(", start + 1),
+    ]
+    candidates = [end for end in candidates if end >= 0]
+    return start, min(candidates) if candidates else len(text)
+
+def lazy_method_span(name: str) -> tuple[int, int]:
+    start = text.index(f"    _LAZY_COMB({name},")
+    end = text.find("\n    _LAZY_COMB(", start + 1)
+    return start, len(text) if end < 0 else end
+
+def repair_method(name: str, leaf: str, parent: str) -> None:
+    global text
+    start, end = projected_method_span(name)
+    body = text[start:end]
+    token = f"content_q_{leaf}_comb_func()"
+    replacement_count = 0
+    cursor = 0
+    while True:
+        call = body.find(token, cursor)
+        if call < 0:
+            break
+        bracket = body.find("[", call + len(token))
+        if bracket < 0:
+            raise SystemExit(f"missing array subscript after {token} in {name}")
+        depth = 0
+        close = bracket
+        while close < len(body):
+            if body[close] == "[":
+                depth += 1
+            elif body[close] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            close += 1
+        if close == len(body):
+            raise SystemExit(f"unbalanced array subscript after {token} in {name}")
+        indices = body[bracket:close + 1]
+        replacement = f"(content_q_{parent}_comb_func(){indices}).{leaf}"
+        body = body[:call] + replacement + body[close + 1:]
+        cursor = call + len(replacement)
+        replacement_count += 1
+    if replacement_count == 0:
+        raise SystemExit(f"expected stale {token} read in {name}")
+    text = text[:start] + body + text[end:]
+
+repair_method("lu_content_o_ppn_comb", "ppn", "pte")
+repair_method("lu_content_o_u_comb", "u", "pte")
+repair_method("lu_g_content_o_ppn_comb", "ppn", "gpte")
+repair_method("lu_g_content_o_u_comb", "u", "gpte")
+
+for stale in ("content_q_u_comb", "content_q_ppn_comb"):
+    start, end = lazy_method_span(stale)
+    text = text[:start] + text[end:]
+
+for token in ("content_q_u_comb_func()", "content_q_ppn_comb_func()"):
+    if token in text:
+        raise SystemExit(f"unrepaired CVA6 TLB projection: {token}")
+path.write_text(text)
+PY
+
 # Trait convergence and generated-header debugging do not need concrete template
 # specialization or comb collection. Keep this CVA6-only control in the fixture so
 # the generic hdlcpp converter remains free of test-design workflow policy.
@@ -207,6 +282,93 @@ fi
     HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE="$HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE" \
     HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE="$HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE" \
         "$HDLCPP" --optimize "$RUNNER"
+    python3 - <<'PY'
+from pathlib import Path
+import re
+
+# Keep hierarchy lifecycle and the top AXI comb getter out of the host runner's
+# optimizer unit.  hdlcpp already emits the first four root wrappers; add the
+# narrow request accessor beside the O0 root-binding unit.  Direct calls here
+# otherwise make Clang instantiate and optimize the complete hierarchy in main.
+main = Path("cpphdl_optimized_main.cpp")
+text = main.read_text()
+root_decl = "ariane<config, RvfiInstr, RvfiCsr, RvfiProbes> dut;"
+if root_decl not in text:
+    raise SystemExit("optimized CVA6 runner root declaration changed")
+text = text.replace(
+    root_decl,
+    "auto* dut_pointer = cpphdl_optimized_root_create();\n"
+    "    auto& dut = *dut_pointer;",
+    1,
+)
+text = text.replace("dut._assign();", "cpphdl_optimized_root_assign_abi(&dut);", 1)
+text = text.replace("dut._strobe();", "cpphdl_optimized_root_strobe(dut);", 1)
+text = text.replace("dut._work(!bool(reset_n));", "cpphdl_optimized_root_work(dut, !bool(reset_n));", 1)
+text = text.replace("dut.noc_req_o_out();", "cpphdl_optimized_root_noc_req(dut);", 1)
+main.write_text(text)
+
+externs = Path("cpphdl_optimized_externs.h")
+text = externs.read_text()
+declaration = "const ariane_axi::req_t& cpphdl_optimized_root_noc_req(cpphdl_opt_t0&);\n"
+if declaration not in text:
+    text += declaration
+externs.write_text(text)
+
+binding = Path("cpphdl_optimized_inst_3.cpp")
+text = binding.read_text()
+definition = (
+    "\n__attribute__((noinline)) const ariane_axi::req_t& "
+    "cpphdl_optimized_root_noc_req(cpphdl_opt_t0& obj) "
+    "{ return obj.noc_req_o_out(); }\n"
+)
+if definition not in text:
+    text += definition
+binding.write_text(text)
+
+makefile = Path("Makefile.optimize")
+text = makefile.read_text()
+constructor_objects = re.findall(
+    r"^(build/opt/[^:]+\.o): override CXXFLAGS \+= \$\(CONSTRUCTOR_CXXFLAGS\)$",
+    text,
+    re.MULTILINE,
+)
+if not constructor_objects:
+    raise SystemExit("optimized CVA6 Makefile has no constructor object rules")
+continuation = " \\\n        ".join(constructor_objects)
+pch_variables = (
+    "\nPCH_O2 := build/opt/cpphdl_optimized_externs_o2.pch\n"
+    "PCH_O0 := build/opt/cpphdl_optimized_externs_o0.pch\n"
+    "PCH_USE_O2 := -DCPPHDL_USE_GENERATED_PCH -include-pch $(PCH_O2)\n"
+    "PCH_USE_O0 := -DCPPHDL_USE_GENERATED_PCH -include-pch $(PCH_O0)\n"
+    f"CONSTRUCTOR_OBJS := {continuation}\n"
+    "PCH_OBJS := $(filter-out $(CONSTRUCTOR_OBJS),$(OBJS))\n"
+)
+text = text.replace("\nDEPS := $(OBJS:.o=.d)", "\nDEPS := $(OBJS:.o=.d)" + pch_variables, 1)
+pattern = "build/opt/%.o: %.cpp all_generated.h cpphdl_optimized_externs.h\n"
+recipe = "\t$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@"
+if pattern not in text or recipe not in text:
+    raise SystemExit("optimized CVA6 Makefile compile rule changed")
+pch_rule = (
+    "$(PCH_O2): cpphdl_optimized_externs.h all_generated.h\n"
+    "\t@mkdir -p $(dir $@)\n"
+    "\t$(CXX) $(CXXFLAGS) -x c++-header cpphdl_optimized_externs.h -o $@\n\n"
+    "$(PCH_O0): cpphdl_optimized_externs.h all_generated.h\n"
+    "\t@mkdir -p $(dir $@)\n"
+    "\t$(CXX) $(CXXFLAGS) $(CONSTRUCTOR_CXXFLAGS) -x c++-header "
+    "cpphdl_optimized_externs.h -o $@\n\n"
+    "$(PCH_OBJS): $(PCH_O2)\n"
+    "$(CONSTRUCTOR_OBJS): $(PCH_O0)\n\n"
+)
+text = text.replace(pattern, pch_rule + pattern, 1)
+text = text.replace(
+    recipe,
+    "\t$(CXX) $(CXXFLAGS) $(if $(filter $@,$(CONSTRUCTOR_OBJS)),"
+    "$(PCH_USE_O0),$(PCH_USE_O2)) "
+    "$(DEPFLAGS) -c $< -o $@",
+    1,
+)
+makefile.write_text(text)
+PY
     if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
         mv "$RUNNER.runtime" "$RUNNER"
         trap - EXIT

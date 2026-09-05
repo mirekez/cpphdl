@@ -45,6 +45,8 @@ foreach(src ${EXAMPLE_SOURCES})
     if(rel_path STREQUAL "cdc/Fifo2clk.cpp")
         set(cpphdl_clock_args
             "--primary_clock write_clk 100000000 --secondary_clock read_clk 50000000")
+    elseif(rel_path STREQUAL "math/FpAdd.cpp")
+        set(cpphdl_clock_args "--primary_clock sum_clock 100000000")
     endif()
 
     # verilator tests
