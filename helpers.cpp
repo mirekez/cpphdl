@@ -902,6 +902,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         for (unsigned i = 0; i < OCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(OCE->getArg(i)));
         }
+        if (OCE->getOperator() == OO_Equal && OCE->getNumArgs() >= 2) {
+            QualType targetType = OCE->getArg(0)->getType().getNonReferenceType();
+            if (skipStdFunctionType(targetType) && targetType->isBooleanType()) {
+                cpphdl::coerceReturnToBool(call.sub[1]);
+            }
+        }
         return call;
     }
     if (auto* MCE = dyn_cast<CXXMemberCallExpr>(E)) {
@@ -1485,6 +1491,11 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* FCE = dyn_cast<ImplicitCastExpr>(E)) {
         DEBUG_AST1(" ImplicitCastExpr");
+        if (FCE->getType()->isBooleanType()
+            && !FCE->getSubExpr()->getType()->isBooleanType()) {
+            return cpphdl::Expr{"bool", cpphdl::Expr::EXPR_CAST,
+                {exprToExpr(FCE->getSubExpr())}};
+        }
         return /*cpphdl::Expr{"implicit_cast", cpphdl::Expr::EXPR_CAST, {*/exprToExpr(FCE->getSubExpr())/*}}*/;
     }
     if (auto* FCE = dyn_cast<CXXFunctionalCastExpr>(E)) {
