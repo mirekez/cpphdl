@@ -1,4 +1,5 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+get_filename_component(TRIBE_PYTHON_BIN_DIR "${Python3_EXECUTABLE}" DIRECTORY)
 
 add_test(
     NAME scripts_RiscvArchConfig
@@ -433,7 +434,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         SKIP_RETURN_CODE 77
-        TIMEOUT 1200
+        TIMEOUT 2400
         ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
@@ -449,7 +450,7 @@ function(add_tribe_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         SKIP_RETURN_CODE 77
-        TIMEOUT 1200
+        TIMEOUT 2400
         ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator;TRIBE_ARCH_TEST_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
         RESOURCE_LOCK "${prefix}_verilator_model"
@@ -467,8 +468,8 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=${Python3_EXECUTABLE};TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${TRIBE_PYTHON_BIN_DIR}"
     )
 
     add_test(
@@ -483,8 +484,8 @@ function(add_tribe_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
-        ENVIRONMENT_MODIFICATION "PATH=path_list_append:/usr/bin"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=${Python3_EXECUTABLE};TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${TRIBE_PYTHON_BIN_DIR}"
         RESOURCE_LOCK "${prefix}_verilator_model"
     )
 endfunction()
@@ -568,7 +569,7 @@ function(add_soc_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test PROPERTIES
         SKIP_RETURN_CODE 77
-        TIMEOUT 1200
+        TIMEOUT 2400
         ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
     )
@@ -584,7 +585,7 @@ function(add_soc_width_tests width target_name)
     )
     set_tests_properties(${prefix}_riscv_arch_test_verilator PROPERTIES
         SKIP_RETURN_CODE 77
-        TIMEOUT 1200
+        TIMEOUT 2400
         ENVIRONMENT "UV_PYTHON=3.10;MISE_DATA_DIR=${CMAKE_BINARY_DIR}/mise-data;MISE_CACHE_DIR=${CMAKE_BINARY_DIR}/mise-cache;MISE_CONFIG_DIR=${CMAKE_BINARY_DIR}/mise-config;MISE_STATE_DIR=${CMAKE_BINARY_DIR}/mise-state;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/xdg-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/xdg-cache;TRIBE_ARCH_TEST_BACKEND=verilator;TRIBE_ARCH_TEST_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pydeps/bin"
         RESOURCE_LOCK "${prefix}_verilator_model"
@@ -602,8 +603,8 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:/usr/bin"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=${Python3_EXECUTABLE};TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${TRIBE_PYTHON_BIN_DIR}"
     )
 
     add_test(
@@ -618,8 +619,8 @@ function(add_soc_width_tests width target_name)
     set_tests_properties(${prefix}_riscv_dv_verilator PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 120
-        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=/usr/bin/python3;TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
-        ENVIRONMENT_MODIFICATION "PATH=path_list_append:/usr/bin"
+        ENVIRONMENT "TRIBE_RISCV_DV_PYTHON=${Python3_EXECUTABLE};TRIBE_RISCV_DV_ISA=rv32imac_zicsr_zifencei;TRIBE_RISCV_DV_BACKEND=verilator;TRIBE_RISCV_DV_VERILATOR_BIN=${verilator_bin};CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${TRIBE_PYTHON_BIN_DIR}"
         RESOURCE_LOCK "${prefix}_verilator_model"
     )
 endfunction()

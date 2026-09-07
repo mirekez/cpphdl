@@ -15,7 +15,12 @@ RISCV_TESTS_REPO_URL="${RISCV_TESTS_REPO_URL:-https://github.com/riscv-software-
 RISCV_DV_DIR="${RISCV_DV_DIR:-${SCRIPT_DIR}/riscv-dv}"
 RISCV_DV_REPO_URL="${RISCV_DV_REPO_URL:-https://github.com/google/riscv-dv.git}"
 PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
-PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+  DEFAULT_PYTHON_BIN="${CONDA_PREFIX}/bin/python"
+else
+  DEFAULT_PYTHON_BIN="python3"
+fi
+PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
 
 RISCV_DV_PYTHON_DEPS=(
   wheel
@@ -32,6 +37,22 @@ RISCV_DV_PYTHON_DEPS=(
   tabulate
   toposort
 )
+
+SPIKE_CONFIGURE_ARGS=("--prefix=${PREFIX}")
+if [[ -n "${CONDA_PREFIX:-}" ]]; then
+  if [[ ! -d "${CONDA_PREFIX}/include/boost" || ! -e "${CONDA_PREFIX}/lib/libboost_regex.so" ]]; then
+    echo "error: Boost development files are missing from the active Conda environment" >&2
+    echo "hint: conda env update --prefix \"${CONDA_PREFIX}\" --file \"${ROOT_DIR}/requirements.yaml\"" >&2
+    exit 1
+  fi
+
+  # Spike's bundled Autoconf macros can find Conda's Boost headers through
+  # compiler flags while still failing to infer the matching library path.
+  SPIKE_CONFIGURE_ARGS+=(
+    "--with-boost=${CONDA_PREFIX}"
+    "--with-boost-libdir=${CONDA_PREFIX}/lib"
+  )
+fi
 
 clone_or_update() {
   local url="$1"
@@ -59,11 +80,20 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1; then
+import sys
+assert (3, 10) <= sys.version_info[:2] < (3, 14)
+PY
+  echo "error: Python 3.10 through 3.13 is required for riscv-dv/PyBoolector" >&2
+  echo "hint: update the Conda environment from ${ROOT_DIR}/requirements.yaml" >&2
+  exit 1
+fi
+
 if ! command -v dtc >/dev/null 2>&1 && [[ ! -x "${PREFIX}/bin/dtc" ]]; then
   clone_or_update "${DTC_REPO_URL}" "${DTC_DIR}"
 
-  make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 PREFIX="${PREFIX}" -j"$(nproc)"
-  make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 PREFIX="${PREFIX}" install
+  make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 NO_YAML=1 PREFIX="${PREFIX}" -j"$(nproc)"
+  make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 NO_YAML=1 PREFIX="${PREFIX}" install
 fi
 
 export PATH="${PREFIX}/bin:${PATH}"
@@ -77,7 +107,7 @@ mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
 
 if [[ ! -f Makefile ]]; then
-  ../configure --prefix="${PREFIX}"
+  ../configure "${SPIKE_CONFIGURE_ARGS[@]}"
 fi
 
 make -j"$(nproc)"
@@ -97,6 +127,7 @@ git -C "${RISCV_DV_DIR}" submodule update --init --recursive
 mkdir -p "${PYDEPS_DIR}"
 if ! PYTHONPATH="${PYDEPS_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1; then
 import requests
+import pyboolector
 import vsc
 import yaml
 

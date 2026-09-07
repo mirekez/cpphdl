@@ -257,6 +257,19 @@ add_test(
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
 
+# Converter-projected output ports are views of an aggregate comb result.
+# Ensure optimized scheduling evaluates that aggregate once instead of
+# retaining one duplicate procedural evaluator for every requested field.
+add_test(
+    NAME optimizer_projected_comb
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedCombTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_projected_comb PROPERTIES TIMEOUT 120)
+
 # A helper called from _work may mutate module storage by non-const reference.
 # Readers of that storage must remain lazy until their original demand point
 # instead of being evaluated before the side-effecting work call.
@@ -307,6 +320,19 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_opaque_subtree PROPERTIES TIMEOUT 120)
+
+# A hierarchy can be entirely combinational while generated lifecycle methods
+# still recurse through children. An empty flattened _work body is valid when
+# all concrete child bodies were collected and are themselves empty.
+add_test(
+    NAME optimizer_pure_comb_root
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/PureCombTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_pure_comb_root PROPERTIES TIMEOUT 120)
 
 # Concrete specialization aliases are the stable public names emitted by the
 # hdlcpp optimizer. Accept one as the comb root while collecting behavior from
