@@ -11,7 +11,8 @@
             "} return __cpphdl_slice_out; }())";
     }
 
-    std::string emitSvBitsValue(const std::string& base, const ElementSelectSyntax& select)
+    std::string emitSvBitsValue(const std::string& base, const ElementSelectSyntax& select,
+                                const std::string& sourceWidth = "")
     {
         if (!select.selector || !RangeSelectSyntax::isKind(select.selector->kind)) {
             return base;
@@ -35,6 +36,24 @@
             if (isIdentifierUsed(width, var)) {
                 dynamicWidth = true;
                 break;
+            }
+        }
+        if (!dynamicWidth) {
+            std::string first;
+            if (rangeOp == "+:" || rangeOp == "+") {
+                first = emitIndexExpr(*r.left);
+            }
+            else if (rangeOp == "-:" || rangeOp == "-") {
+                auto left = emitIndexExpr(*r.left);
+                auto count = emitIndexExpr(*r.right);
+                first = "(" + left + ")-(" + count + ")+1";
+            }
+            else {
+                first = emitIndexExpr(*r.right);
+            }
+            if (auto shifted = emitNarrowPackedSliceExpr(base, width, first, sourceWidth);
+                !shifted.empty()) {
+                return shifted;
             }
         }
         if (rangeOp == "+:" || rangeOp == "+") {
@@ -272,7 +291,19 @@
                     indexExpr.kind == SyntaxKind::IdentifierSelectName ||
                     indexExpr.kind == SyntaxKind::ScopedName;
                 auto index = selectedIndex ? "(uint64_t)(" + emitExpr(indexExpr) + ")" : emitIndexExpr(indexExpr);
-                s += "[(unsigned)(" + translatedIndex(arrayLevel, std::move(index)) + ")]";
+                index = translatedIndex(arrayLevel, std::move(index));
+                if (!lvalue) {
+                    if (auto shifted = emitNarrowPackedSliceExpr(
+                            s, "1", index, resolvedTypeWidth(currentType)); !shifted.empty()) {
+                        s = std::move(shifted);
+                    }
+                    else {
+                        s += "[(unsigned)(" + index + ")]";
+                    }
+                }
+                else {
+                    s += "[(unsigned)(" + index + ")]";
+                }
                 ++arrayLevel;
                 currentType.clear();
                 memorySelect = false;
@@ -285,7 +316,14 @@
                 auto bounds = indexedRangeBounds(range);
                 auto left = subtractIndexLower(bounds.first, fieldLowerBounds[arrayLevel]);
                 auto right = subtractIndexLower(bounds.second, fieldLowerBounds[arrayLevel]);
-                s = emitBitsCall(s, left, right);
+                if (!lvalue) {
+                    auto shifted = emitNarrowPackedSliceExpr(
+                        s, selectTemplateWidth(*sel), right, resolvedTypeWidth(currentType));
+                    s = shifted.empty() ? emitBitsCall(s, left, right) : std::move(shifted);
+                }
+                else {
+                    s = emitBitsCall(s, left, right);
+                }
                 ++arrayLevel;
                 currentType.clear();
                 memorySelect = false;
@@ -300,7 +338,7 @@
                 continue;
             }
             if (!lvalue && integralSelectType(currentType) && RangeSelectSyntax::isKind(sel->selector->kind)) {
-                s = emitSvBitsValue(s, *sel);
+                s = emitSvBitsValue(s, *sel, resolvedTypeWidth(currentType));
                 currentType.clear();
                 memorySelect = false;
                 memoryScalar = false;
@@ -312,7 +350,8 @@
                 memoryScalar = false;
                 continue;
             }
-            s = emitSelectOn(s, *sel, lvalue, memorySelect, memoryScalar);
+            s = emitSelectOn(s, *sel, lvalue, memorySelect, memoryScalar,
+                             resolvedTypeWidth(currentType));
             if (sel->selector->kind == SyntaxKind::BitSelect && !selectArrayArgs(currentType).empty()) {
                 auto args = selectArrayArgs(currentType);
                 currentType = args.size() >= 2 ? resolveSelectType(args[0]) : std::string();
@@ -755,7 +794,8 @@
                 auto ctype = constantType(baseName);
                 auto width = foldWidth(typeWidth(ctype));
                 if (!width.empty() && ctype.rfind("logic<", 0) == 0) {
-                    return emitSelectOn("logic<" + width + ">(" + baseName + ")", *e.select, false);
+                    return emitSelectOn("logic<" + width + ">(" + baseName + ")", *e.select,
+                                        false, false, false, width);
                 }
                 if (e.select->selector && RangeSelectSyntax::isKind(e.select->selector->kind) &&
                     (ctype == "bool" || ctype == "unsigned" || ctype == "u32" || ctype == "uint32_t" ||
@@ -870,14 +910,17 @@
                 }
                 auto width = typeWidth(type);
                 if (!width.empty() && type.rfind("logic<", 0) != 0 && type.rfind("reg<logic<", 0) != 0) {
-                    return emitSelectOn("logic<" + width + ">(" + emitExpr(*e.left) + ")", *e.select, false);
+                    return emitSelectOn("logic<" + width + ">(" + emitExpr(*e.left) + ")",
+                                        *e.select, false, false, false, width);
                 }
             }
             if (e.select->selector && e.select->selector->kind == SyntaxKind::BitSelect) {
-                return emitSelectOn(emitExpr(*e.left), *e.select, false);
+                return emitSelectOn(emitExpr(*e.left), *e.select, false, false, false,
+                                    resolvedTypeWidth(baseType));
             }
             if (e.select->selector && RangeSelectSyntax::isKind(e.select->selector->kind)) {
-                return emitSelectOn(emitExpr(*e.left), *e.select, false);
+                return emitSelectOn(emitExpr(*e.left), *e.select, false, false, false,
+                                    resolvedTypeWidth(baseType));
             }
             return emitSelectOn(emitExpr(*e.left), *e.select, false);
         }
@@ -1640,7 +1683,9 @@
         return lvalue ? "[(unsigned)(uint64_t)(" + index + ")]" : ".get((unsigned)(uint64_t)(" + index + "))";
     }
 
-    std::string emitSelectOn(const std::string& base, const ElementSelectSyntax& select, bool lvalue, bool memory = false, bool memoryScalar = false)
+    std::string emitSelectOn(const std::string& base, const ElementSelectSyntax& select,
+                             bool lvalue, bool memory = false, bool memoryScalar = false,
+                             const std::string& sourceWidth = "")
     {
         if (!select.selector) {
             return base + "[]";
@@ -1650,6 +1695,12 @@
                 return base + "[(unsigned)(" + emitIndexExpr(*select.selector->as<BitSelectSyntax>().expr) + ")]";
             }
             auto index = emitIndexExpr(*select.selector->as<BitSelectSyntax>().expr);
+            if (!lvalue) {
+                if (auto shifted = emitNarrowPackedSliceExpr(base, "1", index, sourceWidth);
+                    !shifted.empty()) {
+                    return shifted;
+                }
+            }
             auto bits = base + "[" + bitIndexArg(index) + "]";
             return lvalue ? bits : "logic<1>(" + bits + ")";
         }
@@ -1665,7 +1716,7 @@
             else {
                 bits = emitBitsCall(base, emitIndexExpr(*r.left), emitIndexExpr(*r.right));
             }
-            return lvalue ? bits : emitSvBitsValue(base, select);
+            return lvalue ? bits : emitSvBitsValue(base, select, sourceWidth);
         }
         if (ExpressionSyntax::isKind(select.selector->kind)) {
             auto index = emitIndexExpr(select.selector->as<ExpressionSyntax>());
@@ -4690,21 +4741,31 @@
 	                                }
 	                            }
 	                            auto aggregateType = unwrapRegType(sourceAggregateType);
-	                            if (!aggregateType.empty() && projectedInputMemberGetter) {
+		                            if (!aggregateType.empty() && projectedInputMemberGetter) {
 	                                // This getter is already one member of an input aggregate. The SV whole
 	                                // assignment converts that member's packed value to the target aggregate;
 	                                // selecting another synthetic input member would compose unrelated paths.
-	                                return "(cpphdl::unpack_value<" + aggregateType +
+		                                if (auto packed = emitPackedFieldRead(expr, aggregateType,
+		                                                                      field, type);
+		                                    !packed.empty()) {
+		                                    return packed;
+		                                }
+		                                return "(cpphdl::unpack_value<" + aggregateType +
 	                                       ">(cpphdl::pack_value<cpphdl::type_width<" + aggregateType +
 	                                       ">()>(" + expr + ")))." + field;
 	                            }
-	                            if (!aggregateType.empty() && !expressionType.empty() &&
-	                                expressionType != aggregateType &&
-	                                knownAggregateRejectsFieldPath(m, expressionType, field)) {
+		                            if (!aggregateType.empty() && !expressionType.empty() &&
+		                                expressionType != aggregateType &&
+		                                knownAggregateRejectsFieldPath(m, expressionType, field)) {
 	                                // A packed scalar can carry an aggregate through an equal-width SV
 	                                // assignment. Reconstruct the assignment target before publishing a
 	                                // projected input demand, which would invent a member on the scalar.
-	                                return "(cpphdl::unpack_value<" + aggregateType +
+		                                if (auto packed = emitPackedFieldRead(expr, aggregateType,
+		                                                                      field, type);
+		                                    !packed.empty()) {
+		                                    return packed;
+		                                }
+		                                return "(cpphdl::unpack_value<" + aggregateType +
 	                                       ">(cpphdl::pack_value<cpphdl::type_width<" + aggregateType +
 	                                       ">()>(" + expr + ")))." + field;
 	                            }
@@ -4850,10 +4911,15 @@
 			                            if (sourceArrayArgs.size() >= 2) {
 			                                return projectWholeArrayFieldExpr(expr);
 			                            }
-	                            if (!aggregateType.empty() && expressionType != aggregateType) {
+		                            if (!aggregateType.empty() && expressionType != aggregateType) {
 			                                if (!expr.empty() && expr.front() == '{') {
 			                                    return "([&]() { " + aggregateType + " __cpphdl_projected = " +
 			                                           expr + "; return __cpphdl_projected." + field + "; }())";
+			                                }
+			                                if (auto packed = emitPackedFieldRead(expr, aggregateType,
+			                                                                      field, type);
+			                                    !packed.empty()) {
+			                                    return packed;
 			                                }
 			                                return "(cpphdl::unpack_value<" + aggregateType +
 			                                       ">(cpphdl::pack_value<cpphdl::type_width<" + aggregateType +
@@ -14822,6 +14888,11 @@ int main(int argc, char** argv)
                                  << qualifyPackageMetadataExpression(module, target) << "\n";
                 }
             }
+            for (const auto& type : module.packedUnionTypes) {
+                if (type.find("::") == std::string::npos) {
+                    moduleTraits << module.name << "\ttype_union." << type << "=1\n";
+                }
+            }
             for (const auto& [type, order] : module.typeFieldOrder) {
                 if (type.find("::") != std::string::npos) {
                     continue;
@@ -14830,7 +14901,10 @@ int main(int argc, char** argv)
                 if (fields == module.typeFields.end()) {
                     continue;
                 }
-                for (const auto& field : order) {
+                for (size_t fieldIndex = 0; fieldIndex < order.size(); ++fieldIndex) {
+                    const auto& field = order[fieldIndex];
+                    moduleTraits << module.name << "\ttype_field_order." << type << "."
+                                 << fieldIndex << "=" << field << "\n";
                     auto fieldType = fields->second.find(field);
                     if (fieldType != fields->second.end()) {
                         moduleTraits << module.name << "\ttype_field." << type << "."

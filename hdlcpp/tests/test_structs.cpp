@@ -153,6 +153,116 @@ endmodule
     expectContains(consumerHeader, "- (uint64_t)((8))");
 }
 
+static void testPackedUnionMetadataAndDirectFieldProjection(const char* argv0)
+{
+    auto dir = makeTempDir("hdlcpp_structs_union_projection");
+    auto packageInput = dir / "packed_instruction_pkg.sv";
+    auto moduleInput = dir / "packed_instruction_decode.sv";
+    auto traits = dir / "module_traits.tsv";
+    auto widths = dir / "type_widths.tsv";
+    writeFile(packageInput, R"sv(
+package packed_instruction_pkg;
+  typedef struct packed {
+    logic [24:0] payload;
+    logic [6:0]  opcode;
+  } instruction_fields_t;
+  typedef union packed {
+    logic [31:0]        raw;
+    instruction_fields_t fields;
+  } instruction_t;
+endpackage
+)sv");
+    writeFile(moduleInput, R"sv(
+module packed_instruction_decode(
+    input  logic [31:0] raw_i,
+    output logic [6:0]  opcode_o
+);
+  packed_instruction_pkg::instruction_t instruction;
+  assign instruction = packed_instruction_pkg::instruction_t'(raw_i);
+  assign opcode_o = instruction.fields.opcode;
+endmodule
+)sv");
+
+    auto hdlcpp = hdlcppPath(argv0);
+    auto command = "cd " + shellQuote(dir) + " && " +
+                   "HDLCPP_WRITE_MODULE_TRAITS=" + shellQuote(traits) + " " +
+                   "HDLCPP_WRITE_TYPE_WIDTHS=" + shellQuote(widths) + " " +
+                   "HDLCPP_METADATA_ONLY=1 " + shellQuote(hdlcpp) + " " +
+                   shellQuote(packageInput);
+    auto rc = std::system(command.c_str());
+    assert(rc == 0);
+    auto metadata = readFile(traits);
+    expectContains(metadata,
+                   "packed_instruction_pkg\ttype_union.instruction_t=1\n");
+    expectContains(metadata,
+                   "packed_instruction_pkg\ttype_field_order.instruction_fields_t.1=opcode\n");
+
+    command = "LC_ALL=C sort -u " + shellQuote(traits) + " -o " + shellQuote(traits);
+    rc = std::system(command.c_str());
+    assert(rc == 0);
+
+    command = "cd " + shellQuote(dir) + " && " +
+              "HDLCPP_MODULE_TRAITS=" + shellQuote(traits) + " " +
+              "HDLCPP_TYPE_WIDTHS=" + shellQuote(widths) + " " +
+              shellQuote(hdlcpp) + " " + shellQuote(moduleInput);
+    rc = std::system(command.c_str());
+    assert(rc == 0);
+    auto header = readFile(dir / "generated" / "packed_instruction_decode.h");
+    expectContains(header, ">> (unsigned)(0)");
+    expectContains(header, "& ((1ull << 7) - 1ull)");
+    expectNotContains(header,
+                      "unpack_value<packed_instruction_pkg::instruction_t>");
+}
+
+static void testNarrowPackedHelpersUsePrimitiveBitOperations(const char* argv0)
+{
+    const std::string sv = R"sv(
+module narrow_packed_helpers(
+    input logic [31:0] raw_i,
+    output logic [6:0] opcode_o
+);
+  typedef struct packed {
+    logic [24:0] payload;
+    logic [6:0] opcode;
+  } fields_t;
+  fields_t fields;
+  assign fields = raw_i;
+  assign opcode_o = fields.opcode;
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "narrow_packed_helpers", sv);
+    expectContains(h, ">> (unsigned)(0)");
+    expectContains(h, "& ((1ull << 7) - 1ull)");
+    expectContains(h, "(uint64_t)(packed) |");
+    expectContains(h, "<< (unsigned)(0)");
+    expectNotContains(h, "logic<7>(packed.bits(");
+    expectNotContains(h, "logic<25>(packed.bits(");
+}
+
+static void testNonzeroBoundPackedFieldReadUsesShift(const char* argv0)
+{
+    const std::string sv = R"sv(
+module nonzero_bound_packed_field_read(
+    input  logic [31:0] raw_i,
+    output logic [1:0]  pair_o
+);
+  typedef struct packed {
+    logic [31:16] upper;
+    logic [15:0]  lower;
+  } word_t;
+  word_t word;
+  assign word = raw_i;
+  assign pair_o = word.upper[21:20];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "nonzero_bound_packed_field_read", sv);
+    expectContains(h, ">> (unsigned)(");
+    expectContains(h, "& ((1ull << 2) - 1ull)");
+    expectNotContains(h, "word_upper_comb_func().bits(");
+}
+
 static void testPackedTypedefStructEmitsCppStruct(const char* argv0)
 {
     const std::string sv = R"sv(
@@ -1028,6 +1138,9 @@ int main(int argc, char** argv)
 {
     assert(argc >= 1);
     testStructFieldsAreExportedAsCrossFileMetadata(argv[0]);
+    testPackedUnionMetadataAndDirectFieldProjection(argv[0]);
+    testNarrowPackedHelpersUsePrimitiveBitOperations(argv[0]);
+    testNonzeroBoundPackedFieldReadUsesShift(argv[0]);
     testPackedStructWidthDoesNotTreatIdentifierPrefixAsRuntimeIndex(argv[0]);
     testWideTypeParameterizedStructMemberConcatKeepsUpperBits(argv[0]);
     testConstexprAggregatePackedArrayReplicationAssignsElements(argv[0]);

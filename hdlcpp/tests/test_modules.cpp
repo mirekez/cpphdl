@@ -4641,7 +4641,8 @@ endmodule
 
     auto h = convertModule(argv0, "packed_child_output_field_projection", sv, "");
     expectContains(h, "meta_tag_comb_func()");
-    expectContains(h, "cpphdl::unpack_value<meta_t>(cpphdl::pack_value<cpphdl::type_width<meta_t>()>(child_i.data_o_out()))).tag");
+    expectContains(h, "(uint64_t)(child_i.data_o_out())) >> (unsigned)(1)");
+    expectContains(h, "& ((1ull << 3) - 1ull)");
     expectNotContains(h, "(child_i.data_o_out()).tag");
 }
 
@@ -7418,7 +7419,7 @@ endmodule
     auto h = convertModule(argv0, "nested_field_update_projection", sv, "");
     expectContains(h, "st1_req_req_comb_func()");
     expectContains(h, "st1_req_req_comb = (");
-    expectContains(h, ").req;");
+    expectContains(h, "st1_req_q_req_comb_func()");
     expectContains(h, "st1_req_req_comb.tag = core_tag_i_in();");
     expectContains(h, "st1_req_req_comb_func().tag");
     expectContains(h, "st1_req_req_comb_func().off");
@@ -7605,7 +7606,8 @@ endmodule
     expectContains(h, "req_tag_comb_func()");
     expectContains(h, "req_tag_comb = logic<8>(0x00);");
     expectContains(h, "tag_i_in()");
-    expectContains(h, "cpphdl::pack_value<cpphdl::type_width<req_t>()>(__comb_local_store_req))).tag");
+    expectContains(h, "(uint64_t)(__comb_local_store_req)) >> (unsigned)(0)");
+    expectContains(h, "& ((1ull << 8) - 1ull)");
     expectNotContains(h, "req_tag_comb = std::remove_cvref_t<decltype(std::declval<req_t>().tag)>{};\n        if (mode_i_in())");
 }
 

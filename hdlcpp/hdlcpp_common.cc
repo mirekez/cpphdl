@@ -126,6 +126,7 @@ struct ModuleGen {
     std::map<std::string, std::string> valueWidths;
     std::map<std::string, std::map<std::string, std::string>> typeFields;
     std::map<std::string, std::vector<std::string>> typeFieldOrder;
+    std::set<std::string> packedUnionTypes;
     // C++ logic and array indices are zero based, while packed SV struct fields can
     // retain arbitrary declared bounds. Keep those bounds with the field metadata so
     // every later read or write can translate the source index to storage coordinates.
@@ -813,9 +814,11 @@ static bool configuredModuleTrait(const std::string& type, const std::string& tr
 
 struct ConfiguredTypeFields {
     std::map<std::pair<std::string, std::string>, std::vector<std::string>> order;
+    std::map<std::pair<std::string, std::string>, std::map<size_t, std::string>> explicitOrder;
     std::map<std::tuple<std::string, std::string, std::string>, std::string> types;
     std::map<std::tuple<std::string, std::string, std::string>, std::map<size_t, std::string>> lowerBounds;
     std::map<std::pair<std::string, std::string>, std::string> aliases;
+    std::set<std::pair<std::string, std::string>> packedUnions;
 };
 
 static const ConfiguredTypeFields& configuredTypeFields()
@@ -829,8 +832,10 @@ static const ConfiguredTypeFields& configuredTypeFields()
         std::ifstream in(path);
         std::string line;
         constexpr std::string_view fieldPrefix = "type_field.";
+        constexpr std::string_view orderPrefix = "type_field_order.";
         constexpr std::string_view lowerPrefix = "type_field_lower.";
         constexpr std::string_view aliasPrefix = "type_alias.";
+        constexpr std::string_view unionPrefix = "type_union.";
         while (std::getline(in, line)) {
             line = trim(line);
             if (line.empty() || line[0] == '#') {
@@ -854,6 +859,33 @@ static const ConfiguredTypeFields& configuredTypeFields()
                 auto target = trim(item.substr(equals + 1));
                 if (!type.empty() && !target.empty()) {
                     result.aliases[{scope, type}] = target;
+                }
+                continue;
+            }
+            if (item.rfind(unionPrefix, 0) == 0) {
+                auto equals = item.find('=', unionPrefix.size());
+                auto type = trim(item.substr(unionPrefix.size(),
+                    equals == std::string::npos ? std::string::npos : equals - unionPrefix.size()));
+                auto value = equals == std::string::npos ? "1" : trim(item.substr(equals + 1));
+                if (!type.empty() && (value == "1" || value == "true")) {
+                    result.packedUnions.insert({scope, type});
+                }
+                continue;
+            }
+            if (item.rfind(orderPrefix, 0) == 0) {
+                auto equals = item.find('=', orderPrefix.size());
+                auto indexSep = item.rfind('.', equals == std::string::npos ? item.size() : equals);
+                if (equals == std::string::npos || indexSep == std::string::npos ||
+                    indexSep < orderPrefix.size()) {
+                    continue;
+                }
+                auto type = trim(item.substr(orderPrefix.size(), indexSep - orderPrefix.size()));
+                auto indexText = trim(item.substr(indexSep + 1, equals - indexSep - 1));
+                auto field = trim(item.substr(equals + 1));
+                uint64_t index = 0;
+                if (!type.empty() && !field.empty() &&
+                    parseCppIntegralLiteral(indexText, index)) {
+                    result.explicitOrder[{scope, type}][static_cast<size_t>(index)] = field;
                 }
                 continue;
             }
@@ -900,6 +932,20 @@ static const ConfiguredTypeFields& configuredTypeFields()
             }
             result.types[{scope, type, field}] = fieldType;
         }
+        for (const auto& [key, indexed] : result.explicitOrder) {
+            if (indexed.empty()) {
+                continue;
+            }
+            std::vector<std::string> order(indexed.rbegin()->first + 1);
+            for (const auto& [index, field] : indexed) {
+                order[index] = field;
+            }
+            if (std::none_of(order.begin(), order.end(), [](const std::string& field) {
+                    return field.empty();
+                })) {
+                result.order[key] = std::move(order);
+            }
+        }
         return result;
     }();
     return fields;
@@ -943,6 +989,11 @@ static std::string configuredTypeAlias(const std::string& scope, const std::stri
     const auto& fields = configuredTypeFields();
     auto found = fields.aliases.find({scope, type});
     return found == fields.aliases.end() ? std::string{} : found->second;
+}
+
+static bool configuredPackedUnion(const std::string& scope, const std::string& type)
+{
+    return configuredTypeFields().packedUnions.count({scope, type}) != 0;
 }
 
 static std::map<std::string, std::string> configuredModportDirections(
@@ -5640,6 +5691,75 @@ static std::string addWidthExpr(const std::string& offset, const std::string& wi
     return offset + " + " + width;
 }
 
+static bool parseAdditiveWidth(const std::string& expression, uint64_t& value)
+{
+    value = 0;
+    std::string term;
+    auto addTerm = [&]() {
+        if (term.empty()) {
+            return false;
+        }
+        uint64_t parsed = 0;
+        if (!parseCppIntegralLiteral(term, parsed) || UINT64_MAX - value < parsed) {
+            return false;
+        }
+        value += parsed;
+        term.clear();
+        return true;
+    };
+    for (char ch : expression) {
+        if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '_' ||
+            ch == 'u' || ch == 'U' || ch == 'l' || ch == 'L') {
+            term += ch;
+        }
+        else if (ch == '+') {
+            if (!addTerm()) {
+                return false;
+            }
+        }
+        else if (!std::isspace(static_cast<unsigned char>(ch)) && ch != '(' && ch != ')') {
+            return false;
+        }
+    }
+    return addTerm();
+}
+
+static std::string emitNarrowPackedSliceExpr(const std::string& source,
+                                             const std::string& width,
+                                             const std::string& offset,
+                                             const std::string& sourceWidth)
+{
+    uint64_t selectedBits = 0;
+    uint64_t sourceBits = 0;
+    if (!parseAdditiveWidth(width, selectedBits) ||
+        !parseAdditiveWidth(sourceWidth, sourceBits) || selectedBits == 0 ||
+        selectedBits > 64 || sourceBits > 64) {
+        return {};
+    }
+    auto value = "(((uint64_t)(" + source + ")) >> (unsigned)(" +
+        offset + "))";
+    if (selectedBits < 64) {
+        value = "(" + value + " & ((1ull << " + std::to_string(selectedBits) + ") - 1ull))";
+    }
+    return "logic<" + width + ">(" + value + ")";
+}
+
+static std::string emitNarrowPackedSlice(const std::string& source,
+                                         const std::string& width,
+                                         uint64_t offset,
+                                         const std::string& sourceWidth)
+{
+    uint64_t selectedBits = 0;
+    uint64_t sourceBits = 0;
+    if (!parseAdditiveWidth(width, selectedBits) ||
+        !parseAdditiveWidth(sourceWidth, sourceBits) ||
+        sourceBits > 64 || selectedBits == 0 || selectedBits > sourceBits ||
+        offset > sourceBits - selectedBits) {
+        return {};
+    }
+    return emitNarrowPackedSliceExpr(source, width, std::to_string(offset), sourceWidth);
+}
+
 static std::string packedAggregateHelpers(const std::string& name, std::string width = "", const std::vector<PackedFieldInfo>& fields = {}, bool isUnion = false)
 {
     if (width.empty() || fields.empty()) {
@@ -5650,13 +5770,24 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         line += "    static constexpr std::size_t _size_bits() { return " + width + "; }\n";
         line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
+        uint64_t numericOffset = 0;
         for (auto& field : fields) {
             auto next = isUnion ? field.width : addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
-            line += "            this->" + field.name + " = cpphdl::unpack_value<std::remove_reference_t<decltype(this->" + field.name + ")>, " + field.width + ">(logic<" + field.width + ">(packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + "))));\n";
+            auto slice = emitNarrowPackedSlice("packed", field.width,
+                                               isUnion ? 0 : numericOffset, width);
+            if (slice.empty()) {
+                slice = "logic<" + field.width + ">(packed.bits((uint64_t)(" + next +
+                    " - 1),(uint64_t)(" + offset + ")))";
+            }
+            line += "            this->" + field.name + " = cpphdl::unpack_value<std::remove_reference_t<decltype(this->" + field.name + ")>, " + field.width + ">(" + slice + ");\n";
             line += "        }\n";
             if (!isUnion) {
                 offset = next;
+                uint64_t fieldBits = 0;
+                if (parseAdditiveWidth(field.width, fieldBits)) {
+                    numericOffset += fieldBits;
+                }
             }
         }
         line += "        return *this; }\n";
@@ -5664,22 +5795,52 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
         line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return this->template operator=<" + width + ">(logic<" + width + ">(v)); }\n";
         line += "    logic<" + width + "> pack() const { logic<" + width + "> packed = 0;\n";
         offset = "0";
+        numericOffset = 0;
         for (size_t i = 0; i < fields.size(); ++i) {
             auto& field = fields[i];
             auto next = isUnion ? field.width : addWidthExpr(offset, field.width);
             line += "        if constexpr ((uint64_t)(" + field.width + ") != 0) {\n";
             if (isUnion) {
                 line += "            if constexpr ((uint64_t)(" + field.width + ") <= (uint64_t)(" + width + ")) {\n";
-                line += "                packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(0)) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                uint64_t fieldBits = 0;
+                uint64_t totalBits = 0;
+                if (parseAdditiveWidth(field.width, fieldBits) &&
+                    parseAdditiveWidth(width, totalBits) && totalBits <= 64 && fieldBits <= 64) {
+                    auto mask = fieldBits < 64
+                        ? " & ((1ull << " + std::to_string(fieldBits) + ") - 1ull)"
+                        : std::string{};
+                    line += "                packed = logic<" + width + ">(((uint64_t)(cpphdl::pack_value<" +
+                        field.width + ">(this->" + field.name + ")))" + mask + ");\n";
+                }
+                else {
+                    line += "                packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(0)) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                }
                 line += "            }\n";
                 line += "            return packed;\n";
             }
             else {
-                line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                uint64_t fieldBits = 0;
+                uint64_t totalBits = 0;
+                if (parseAdditiveWidth(field.width, fieldBits) &&
+                    parseAdditiveWidth(width, totalBits) && totalBits <= 64 && fieldBits <= 64) {
+                    auto mask = fieldBits < 64
+                        ? " & ((1ull << " + std::to_string(fieldBits) + ") - 1ull)"
+                        : std::string{};
+                    line += "            packed = logic<" + width + ">((uint64_t)(packed) | ((((uint64_t)(cpphdl::pack_value<" +
+                        field.width + ">(this->" + field.name + ")))" + mask + ") << (unsigned)(" +
+                        std::to_string(numericOffset) + ")));\n";
+                }
+                else {
+                    line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                }
             }
             line += "        }\n";
             if (!isUnion) {
                 offset = next;
+                uint64_t fieldBits = 0;
+                if (parseAdditiveWidth(field.width, fieldBits)) {
+                    numericOffset += fieldBits;
+                }
             }
         }
         line += "        return packed; }\n";

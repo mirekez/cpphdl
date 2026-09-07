@@ -806,6 +806,17 @@
         }
     }
 
+    void registerPackedUnionType(const std::string& typeName)
+    {
+        if (!mod || typeName.empty()) {
+            return;
+        }
+        mod->packedUnionTypes.insert(typeName);
+        if (mod->isPackage) {
+            mod->packedUnionTypes.insert(mod->name + "::" + typeName);
+        }
+    }
+
     std::vector<std::string> fieldDeclarationLowerBounds(const DataTypeSyntax& type,
                                                          const DeclaratorSyntax& decl)
     {
@@ -1149,6 +1160,114 @@
         return {};
     }
 
+    bool isPackedUnionType(std::string type)
+    {
+        type = unwrappedValueType(std::move(type));
+        auto findInModule = [&](ModuleGen& candidate, const std::string& name) {
+            if (candidate.packedUnionTypes.count(name)) {
+                return true;
+            }
+            auto alias = candidate.types.find(name);
+            return alias != candidate.types.end() && alias->second != name &&
+                   candidate.packedUnionTypes.count(alias->second);
+        };
+        auto separator = type.rfind("::");
+        if (separator != std::string::npos) {
+            auto scope = type.substr(0, separator);
+            auto localType = type.substr(separator + 2);
+            if (auto* package = findModule(scope)) {
+                if (findInModule(*package, type) || findInModule(*package, localType)) {
+                    return true;
+                }
+            }
+            if (configuredPackedUnion(scope, localType)) {
+                return true;
+            }
+        }
+        if (mod) {
+            if (findInModule(*mod, type) || configuredPackedUnion(mod->name, type)) {
+                return true;
+            }
+            for (const auto& imported : mod->imports) {
+                if (auto* package = findModule(imported)) {
+                    if (findInModule(*package, type) ||
+                        findInModule(*package, imported + "::" + type)) {
+                        return true;
+                    }
+                }
+                if (configuredPackedUnion(imported, type)) {
+                    return true;
+                }
+            }
+        }
+        for (auto& candidate : modules) {
+            if (findInModule(candidate, type)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string emitPackedFieldRead(const std::string& source,
+                                    std::string aggregateType,
+                                    const std::string& fieldPath,
+                                    const std::string& resultType)
+    {
+        aggregateType = unwrappedValueType(std::move(aggregateType));
+        uint64_t aggregateBits = 0;
+        if (source.empty() || aggregateType.empty() || fieldPath.empty() ||
+            !parseAdditiveWidth(resolvedTypeWidth(aggregateType), aggregateBits) ||
+            aggregateBits == 0 || aggregateBits > 64) {
+            return {};
+        }
+
+        uint64_t offset = 0;
+        std::string currentType = aggregateType;
+        std::string leafType;
+        std::stringstream path(fieldPath);
+        std::string field;
+        while (std::getline(path, field, '.')) {
+            field = trim(std::move(field));
+            auto order = fieldOrderFor(currentType);
+            auto selected = std::find(order.begin(), order.end(), field);
+            if (field.empty() || selected == order.end()) {
+                return {};
+            }
+            if (!isPackedUnionType(currentType)) {
+                for (auto it = std::next(selected); it != order.end(); ++it) {
+                    auto siblingType = fieldTypeFor(currentType, *it);
+                    uint64_t siblingBits = 0;
+                    if (siblingType.empty() ||
+                        !parseAdditiveWidth(resolvedTypeWidth(siblingType), siblingBits)) {
+                        return {};
+                    }
+                    offset += siblingBits;
+                }
+            }
+            leafType = fieldTypeFor(currentType, field);
+            if (leafType.empty()) {
+                return {};
+            }
+            currentType = leafType;
+        }
+
+        uint64_t leafBits = 0;
+        auto leafWidth = resolvedTypeWidth(leafType);
+        if (!parseAdditiveWidth(leafWidth, leafBits) || leafBits == 0 ||
+            offset + leafBits > aggregateBits) {
+            return {};
+        }
+        auto slice = emitNarrowPackedSlice(source, leafWidth, offset,
+                                           std::to_string(aggregateBits));
+        if (slice.empty()) {
+            return {};
+        }
+        if (!resultType.empty() && trim(resultType) != trim(leafType)) {
+            return "cpphdl::sv_cast<" + resultType + ">(" + slice + ")";
+        }
+        return slice;
+    }
+
     std::string namedAggregateToPositional(const std::string& type, const std::string& init)
     {
         std::vector<std::pair<std::string, std::string>> entries;
@@ -1411,7 +1530,8 @@
 	                }
 	            }
 		        }
-		                                auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	                                auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	                                if (isPackedUnion(st)) registerPackedUnionType(name);
 	                                for (auto& fieldLine : fieldLines) {
 	                                    line += fieldLine;
 	                                }
@@ -1488,6 +1608,7 @@
                                 }
                             }
                             auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+                            if (isPackedUnion(st)) registerPackedUnionType(defaultName);
                             for (auto& fieldLine : fieldLines) {
                                 line += fieldLine;
                             }
@@ -1860,7 +1981,8 @@
 		                    }
 		                }
 		            }
-		            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	            if (isPackedUnion(st)) registerPackedUnionType(anonymousStructType);
 	            for (auto& fieldLine : fieldLines) {
 	                line += fieldLine;
 	            }
@@ -2107,7 +2229,8 @@
 	                    fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
 	                }
 	            }
-		            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+	            if (isPackedUnion(st)) registerPackedUnionType(name);
 	            for (auto& fieldLine : fieldLines) {
 	                line += fieldLine;
 	            }
@@ -2190,6 +2313,7 @@
 		                        }
 		                    }
 			                    auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
+			                    if (isPackedUnion(st)) registerPackedUnionType(name);
 		                    for (auto& fieldLine : fieldLines) {
 		                        line += fieldLine;
 		                    }
