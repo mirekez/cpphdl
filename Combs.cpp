@@ -596,6 +596,44 @@ struct FieldInfo {
   FieldKind kind = FieldKind::Other;
 };
 
+std::optional<std::string>
+projectedMemberPath(const FieldInfo &field, std::string_view suffix) {
+  // hdlcpp's dependent projected types retain the exact nested member chain
+  // in their requires expression. Recover it here so aggregate comb storage
+  // can serve a projected port without evaluating a second procedural comb.
+  constexpr std::string_view valueName = "__cpphdl_projected_value";
+  for (size_t search = 0;;) {
+    const size_t found = field.type.find(valueName, search);
+    if (found == std::string::npos) {
+      break;
+    }
+    size_t cursor = skipSpace(field.type, found + valueName.size());
+    std::string path;
+    while (cursor < field.type.size() && field.type[cursor] == '.') {
+      const size_t member = skipSpace(field.type, cursor + 1);
+      if (member >= field.type.size() || !identifierStart(field.type[member])) {
+        break;
+      }
+      size_t end = member + 1;
+      while (end < field.type.size() && identifierPart(field.type[end])) {
+        ++end;
+      }
+      path += "." + field.type.substr(member, end - member);
+      cursor = skipSpace(field.type, end);
+    }
+    if (!path.empty()) {
+      return path;
+    }
+    search = found + valueName.size();
+  }
+
+  // A one-level projection has no ambiguity even when the member contains
+  // underscores. Nested projections use the dependent type path above.
+  return suffix.empty() ? std::nullopt
+                        : std::optional<std::string>("." +
+                                                     std::string(suffix));
+}
+
 struct FreeHelper {
   std::optional<std::string> receiverParameter;
   std::string method;
@@ -2636,6 +2674,7 @@ struct Node {
   bool referenced = false;
   bool conditionallyEvaluated = false;
   bool directCombExpression = false;
+  bool memoizableProcedural = false;
   int visitState = 0;
 };
 
@@ -3155,6 +3194,73 @@ struct CombsOptimizer::Impl {
     return guarded || (!rootInput && !addressableBinding);
   }
 
+  bool memoizableProceduralComb(const Node &node) const {
+    if (node.kind != NodeKind::Comb || node.directCombExpression ||
+        hasUnresolvedInstanceCall(node.expression)) {
+      return false;
+    }
+    const auto storage = node.instance->type->combStorage.find(node.name);
+    if (storage == node.instance->type->combStorage.end()) {
+      return false;
+    }
+
+    // A deterministic procedural comb initializes its complete result before
+    // reading or updating subfields. Stateful ordinary combs instead begin
+    // with a partial write or consume their previous result on the RHS.
+    const std::string code = maskUnevaluatedOperands(node.expression);
+    const std::string target = node.instance->alias + "." + storage->second;
+    size_t first = 0;
+    for (;;) {
+      first = code.find(target, first);
+      if (first == std::string::npos) {
+        return false;
+      }
+      const bool before = first == 0 || !identifierPart(code[first - 1]);
+      const size_t afterTarget = first + target.size();
+      const bool after = afterTarget == code.size() ||
+                         !identifierPart(code[afterTarget]);
+      if (before && after) {
+        break;
+      }
+      first = afterTarget;
+    }
+    const size_t equals = skipSpace(code, first + target.size());
+    if (equals >= code.size() || code[equals] != '=' ||
+        (equals + 1 < code.size() && code[equals + 1] == '=')) {
+      return false;
+    }
+    const size_t semicolon = code.find(';', equals + 1);
+    if (semicolon == std::string::npos ||
+        code.find(target, equals + 1) < semicolon) {
+      return false;
+    }
+
+    // Writes to the result or its subfields remain local comb computation.
+    // Any other module-field mutation is externally observable and preserves
+    // the source method's repeat-on-call behavior.
+    static const std::regex assignment(
+        R"(\bn([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*)(?:(?:\.bits\([^;\n]*?\))|(?:\.[A-Za-z_][A-Za-z0-9_]*)|(?:\[[^;\n]*?\]))*\s*(?:[+\-*/%&|^]?=(?!=)|\+\+|--))");
+    for (auto iterator = std::sregex_iterator(code.begin(), code.end(),
+                                              assignment);
+         iterator != std::sregex_iterator(); ++iterator) {
+      if (std::stoull((*iterator)[1].str()) != node.instance->id ||
+          (*iterator)[2].str() != storage->second) {
+        return false;
+      }
+    }
+    static const std::regex prefixMutation(
+        R"((?:\+\+|--)\s*n([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*))");
+    for (auto iterator = std::sregex_iterator(code.begin(), code.end(),
+                                              prefixMutation);
+         iterator != std::sregex_iterator(); ++iterator) {
+      if (std::stoull((*iterator)[1].str()) != node.instance->id ||
+          (*iterator)[2].str() != storage->second) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   std::string nodeAssignment(size_t id, const std::string &expression) const {
     const Node &node = nodes[id];
     if (node.kind == NodeKind::Port) {
@@ -3174,16 +3280,17 @@ struct CombsOptimizer::Impl {
   }
 
   bool cachesForSystemClock(const Node &node) const {
-    // function_ref ports cache their returned address, and _LAZY_COMB owns an
-    // equivalent clock field beside its storage. Ordinary comb methods do not:
-    // repeated calls in one clock are observable and must remain repeatable.
+    // Ports and _LAZY_COMB cache by definition. The optimized graph can also
+    // memoize procedural combs proven to initialize only their own result;
+    // stateful ordinary combs remain repeatable exactly as in the source API.
     if (node.kind == NodeKind::Port) {
       return true;
     }
     const auto storage = node.instance->type->combStorage.find(node.name);
-    return storage != node.instance->type->combStorage.end() &&
-           node.instance->type->fields.contains("__prev__system_clock_" +
-                                                storage->second);
+    return (storage != node.instance->type->combStorage.end() &&
+            node.instance->type->fields.contains("__prev__system_clock_" +
+                                                 storage->second)) ||
+           node.memoizableProcedural;
   }
 
   // Graph expressions use concrete n<ID>.field aliases after elaboration.
@@ -4144,6 +4251,10 @@ struct CombsOptimizer::Impl {
     nodes[id].allDependencies = std::move(dependencies);
     nodes[id].directCombExpression = directCombExpression;
     nodes[id].expressionReady = true;
+    // Fusion later embeds dependency assignments into consumers. Classify
+    // purity now from the original rewritten method so every later optimizer
+    // phase makes the same per-clock memoization decision for this node.
+    nodes[id].memoizableProcedural = memoizableProceduralComb(nodes[id]);
     ++preparedNodeCount;
 #if defined(__GLIBC__)
     // Rewriting large generated methods creates short-lived regex and string
@@ -5879,6 +5990,64 @@ struct CombsOptimizer::Impl {
     }
   }
 
+  void redirectProjectedPortBindings() {
+    static constexpr std::string_view marker = "__field_";
+    static const std::regex zeroArgumentCall(
+        R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*$)");
+
+    for (Instance *instance : instances) {
+      for (const auto &[projectedName, projectedField] :
+           instance->type->fields) {
+        const size_t markerPosition = projectedName.find(marker);
+        if (projectedField.kind != FieldKind::Port ||
+            markerPosition == std::string::npos) {
+          continue;
+        }
+        const std::string aggregateName =
+            projectedName.substr(0, markerPosition);
+        const auto aggregateField = instance->type->fields.find(aggregateName);
+        if (aggregateField == instance->type->fields.end() ||
+            aggregateField->second.kind != FieldKind::Port) {
+          continue;
+        }
+
+        const std::string projectedKey =
+            nodeKey(instance->id, NodeKind::Port, projectedName);
+        const std::string aggregateKey =
+            nodeKey(instance->id, NodeKind::Port, aggregateName);
+        auto projectedBinding = bindings.find(projectedKey);
+        const auto aggregateBinding = bindings.find(aggregateKey);
+        if (projectedBinding == bindings.end() ||
+            aggregateBinding == bindings.end() ||
+            projectedBinding->second.first != instance ||
+            aggregateBinding->second.first != instance) {
+          continue;
+        }
+
+        // Only replace converter-style comb initializers. An explicitly
+        // rebound hand-written port with the same spelling remains untouched.
+        std::smatch projectedCall;
+        std::smatch aggregateCall;
+        if (!std::regex_match(projectedBinding->second.second, projectedCall,
+                              zeroArgumentCall) ||
+            !std::regex_match(aggregateBinding->second.second, aggregateCall,
+                              zeroArgumentCall) ||
+            !instance->type->combStorage.contains(projectedCall[1].str()) ||
+            !instance->type->combStorage.contains(aggregateCall[1].str())) {
+          continue;
+        }
+        const auto path = projectedMemberPath(
+            projectedField,
+            std::string_view(projectedName).substr(markerPosition +
+                                                   marker.size()));
+        if (!path) {
+          continue;
+        }
+        projectedBinding->second.second = aggregateName + "()" + *path;
+      }
+    }
+  }
+
   std::string proceduralCombBody(const std::string &methodName,
                                  const std::string &body) const {
     std::vector<std::string> lines;
@@ -5993,6 +6162,7 @@ struct CombsOptimizer::Impl {
       return false;
     }
     findCombExpressions();
+    redirectProjectedPortBindings();
     tracePhase("comb discovery");
 
     // The roots are state updates in _work and externally visible root
@@ -6021,18 +6191,26 @@ struct CombsOptimizer::Impl {
     if (!error.empty()) {
       return false;
     }
+    // Recursive lifecycle calls can legally disappear when every concrete
+    // child body is empty. Diagnose an empty result only when collection
+    // actually failed to provide at least one body.
     if (instances.size() > 1 && trim(work).empty() &&
         bodyText(root->type->workBody).find("_work(") != std::string::npos) {
-      error = "flattened root work is empty; concrete child method bodies "
-              "were not collected; missing:";
-      size_t reported = 0;
+      std::vector<std::string> missing;
       for (const Instance *instance : instances) {
-        if (!instance->type->workBody && reported < 8) {
-          error += " " + instance->type->name;
-          ++reported;
+        if (!instance->type->workBody) {
+          missing.push_back(instance->type->name);
         }
       }
-      return false;
+      if (!missing.empty()) {
+        error = "flattened root work is empty; concrete child method bodies "
+                "were not collected; missing:";
+        for (size_t index = 0; index < std::min<size_t>(missing.size(), 8);
+             ++index) {
+          error += " " + missing[index];
+        }
+        return false;
+      }
     }
     std::unordered_set<const ClassInfo *> externalTypes;
     for (const Instance *instance : instances) {
@@ -6054,12 +6232,27 @@ struct CombsOptimizer::Impl {
     }
     releaseTemporaryAllocatorPages();
     tracePhase("strobe flattening");
+    // Empty child strobes flatten to no statements just like empty child work.
+    // Preserve that valid combinational hierarchy while still diagnosing a
+    // genuinely absent concrete strobe body.
     if (instances.size() > 1 && trim(strobe).empty() &&
         bodyText(root->type->strobeBody).find("_strobe(") !=
             std::string::npos) {
-      error = "flattened root strobe is empty; concrete child method bodies "
-              "were not collected";
-      return false;
+      std::vector<std::string> missing;
+      for (const Instance *instance : instances) {
+        if (!instance->type->strobeBody) {
+          missing.push_back(instance->type->name);
+        }
+      }
+      if (!missing.empty()) {
+        error = "flattened root strobe is empty; concrete child method bodies "
+                "were not collected; missing:";
+        for (size_t index = 0; index < std::min<size_t>(missing.size(), 8);
+             ++index) {
+          error += " " + missing[index];
+        }
+        return false;
+      }
     }
     releaseBodies(strobeBodies);
 
@@ -6802,11 +6995,12 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
         internal << "  " << type << "* p" << id << "_pointer{};\n";
       }
     }
-    // Ports and _LAZY_COMB are the source-language recursion boundaries. Their
-    // timestamps expose retained storage at a recursive edge. Ordinary comb
-    // methods remain repeatable and need no optimizer-owned state.
-    for (const size_t id : dynamicStateSchedule) {
-      if (cachesForSystemClock(nodes[id])) {
+    // A memoized dynamic evaluator can be fused into its only consumer and
+    // disappear from dynamicStateSchedule while its timestamp guard remains
+    // in that consumer. Declare state for every prepared dynamic cache node.
+    for (size_t id = 0; id < nodes.size(); ++id) {
+      if (nodes[id].expressionReady && dynamicNodes.contains(id) &&
+          cachesForSystemClock(nodes[id])) {
         internal << "  long evaluated" << id
                  << " = std::numeric_limits<long>::min();\n";
       }
