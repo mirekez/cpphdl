@@ -3546,11 +3546,28 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "replication_in_concat", sv, "");
-    expectContains(h, "cat{([&]() { logic<");
-    expectContains(h, "() { logic<");
-    expectContains(h, "std::size_t __cpphdl_i");
+    expectContains(h, "cpphdl::repeat<(std::size_t)(");
+    expectNotContains(h, "__cpphdl_rep.bits");
+    expectNotContains(h, "std::size_t __cpphdl_i");
     expectNotContains(h, "logic<64> __cpphdl_rep");
     expectNotContains(h, "}())))), logic<");
+}
+
+static void testNarrowLogicRangeReadUsesShiftAndMask(const char* argv0)
+{
+    const std::string sv = R"sv(
+module narrow_logic_range_read (
+    input  logic [31:0] data_i,
+    output logic [7:0]  byte_o
+);
+  assign byte_o = data_i[23:16];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "narrow_logic_range_read", sv, "");
+    expectContains(h, ">> (unsigned)");
+    expectContains(h, "& ((1ull << 8) - 1ull)");
+    expectNotContains(h, "data_i_in().bits(");
 }
 
 static void testBracedReplicationCountIsNumeric(const char* argv0)
@@ -3746,8 +3763,12 @@ endmodule
 
     auto h = convertModule(argv0, "concat_case_decode", sv, "");
     expectContains(h, "cat{logic<7>");
-    expectContains(h, "logic<7>(instruction_i_in().bits");
-    expectContains(h, "logic<3>(instruction_i_in().bits");
+    expectContains(h, ">> (unsigned)");
+    if (countContains(h, ">> (unsigned)") < 2) {
+        std::cerr << "expected both concatenated instruction slices to use shifts\n";
+        assert(false);
+    }
+    expectNotContains(h, "instruction_i_in().bits(");
     expectNotContains(h, "cat{logic<64>");
     expectNotContains(h, "<< (unsigned)(64)");
 }
@@ -4641,7 +4662,8 @@ endmodule
 
     auto h = convertModule(argv0, "packed_child_output_field_projection", sv, "");
     expectContains(h, "meta_tag_comb_func()");
-    expectContains(h, "cpphdl::unpack_value<meta_t>(cpphdl::pack_value<cpphdl::type_width<meta_t>()>(child_i.data_o_out()))).tag");
+    expectContains(h, "(uint64_t)(child_i.data_o_out())) >> (unsigned)(1)");
+    expectContains(h, "& ((1ull << 3) - 1ull)");
     expectNotContains(h, "(child_i.data_o_out()).tag");
 }
 
@@ -7418,7 +7440,7 @@ endmodule
     auto h = convertModule(argv0, "nested_field_update_projection", sv, "");
     expectContains(h, "st1_req_req_comb_func()");
     expectContains(h, "st1_req_req_comb = (");
-    expectContains(h, ").req;");
+    expectContains(h, "st1_req_q_req_comb_func()");
     expectContains(h, "st1_req_req_comb.tag = core_tag_i_in();");
     expectContains(h, "st1_req_req_comb_func().tag");
     expectContains(h, "st1_req_req_comb_func().off");
@@ -7605,7 +7627,8 @@ endmodule
     expectContains(h, "req_tag_comb_func()");
     expectContains(h, "req_tag_comb = logic<8>(0x00);");
     expectContains(h, "tag_i_in()");
-    expectContains(h, "cpphdl::pack_value<cpphdl::type_width<req_t>()>(__comb_local_store_req))).tag");
+    expectContains(h, "(uint64_t)(__comb_local_store_req)) >> (unsigned)(0)");
+    expectContains(h, "& ((1ull << 8) - 1ull)");
     expectNotContains(h, "req_tag_comb = std::remove_cvref_t<decltype(std::declval<req_t>().tag)>{};\n        if (mode_i_in())");
 }
 
@@ -8966,8 +8989,8 @@ endmodule
 
     auto h = convertModule(argv0, "current_comb_block_read", sv, "");
     expectContains(h, "__comb_local_words_o");
-    expectContains(h, "saved_o_comb = cpphdl::sv_bits<16>(__comb_local_words_o");
-    expectNotContains(h, "saved_o_comb = cpphdl::sv_bits<16>(words_o_comb_func()");
+    expectContains(h, "saved_o_comb = logic<16>(((((uint64_t)(__comb_local_words_o");
+    expectNotContains(h, "saved_o_comb = logic<16>(((((uint64_t)(words_o_comb_func()");
 }
 
 static void testPackedStructArraySliceAssignmentCopiesElements(const char* argv0)
@@ -10929,6 +10952,7 @@ int main(int argc, char** argv)
     testPowerOperatorPrecedenceInRanges(argv[0]);
     testCombMethodDependenciesEmitBeforeUsers(argv[0]);
     testParameterizedReplicationInConcatIsValidCatItem(argv[0]);
+    testNarrowLogicRangeReadUsesShiftAndMask(argv[0]);
     testBracedReplicationCountIsNumeric(argv[0]);
     testNumericReplicationConstantUsesIntegerMask(argv[0]);
     testPackageArrayReplicationConstantUsesCppLambda(argv[0]);

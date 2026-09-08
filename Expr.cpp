@@ -317,6 +317,38 @@ std::string moduleArrayMemberRef(const Expr& expr, const std::string& suffix, bo
     return text;
 }
 
+bool isAddressExpression(const Expr& expr)
+{
+    return expr.type == Expr::EXPR_UNARY && expr.value == "&";
+}
+
+bool isBooleanCast(const Expr& expr)
+{
+    if (expr.type == Expr::EXPR_CAST
+        && (expr.value == "bool" || expr.value == "_Bool")) {
+        return true;
+    }
+    return expr.type == Expr::EXPR_PAREN && expr.sub.size() == 1
+        && isBooleanCast(expr.sub[0]);
+}
+
+}
+
+void cpphdl::coerceReturnToBool(Expr& expression)
+{
+    expression.traverseIf([](Expr& expr) {
+        if (expr.type != Expr::EXPR_RETURN || expr.sub.empty()
+            || isAddressExpression(expr.sub[0])) {
+            return false;
+        }
+        if (isBooleanCast(expr.sub[0])) {
+            return true;
+        }
+
+        Expr operand = std::move(expr.sub[0]);
+        expr.sub[0] = Expr{"bool", Expr::EXPR_CAST, {std::move(operand)}};
+        return true;
+    });
 }
 
 std::string Expr::str(std::string prefix, std::string suffix)
@@ -912,6 +944,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return width + "'(" + operand + ")";
             };
+            if (value == "bool" || value == "_Bool") {
+                declSize = 1;
+                if (sub[0].type == EXPR_CAST
+                    && (sub[0].value == "bool" || sub[0].value == "_Bool")) {
+                    return indent_str + sub[0].str(prefix, suffix);
+                }
+                return indent_str + "((" + sub[0].str(prefix, suffix) + ") != '0)";
+            }
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);

@@ -110,9 +110,17 @@ ensure_riscv_dv_testlist() {
 YAML
 }
 
-export PATH="/usr/bin:${RISCV_HOME}/bin:${PATH}"
+export PATH="${RISCV_HOME}/bin:${PATH}"
 export RISCV="${RISCV:-${RISCV_HOME}}"
-export TRIBE_RISCV_DV_PYTHON="${TRIBE_RISCV_DV_PYTHON:-/usr/bin/python3}"
+if [[ -z "${TRIBE_RISCV_DV_PYTHON:-}" ]]; then
+    if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+        TRIBE_RISCV_DV_PYTHON="${CONDA_PREFIX}/bin/python"
+    else
+        TRIBE_RISCV_DV_PYTHON="$(command -v python3)"
+    fi
+fi
+export TRIBE_RISCV_DV_PYTHON
+export PATH="$(dirname "${TRIBE_RISCV_DV_PYTHON}"):${PATH}"
 export TRIBE_RISCV_DV_ISA="${TRIBE_RISCV_DV_ISA:-rv32imac_zicsr_zifencei}"
 export TRIBE_RISCV_DV_TESTLIST="${TRIBE_RISCV_DV_TESTLIST:-${TESTLIST}}"
 export PYTHONPATH="${BUILD_DIR}/pydeps:${PYTHONPATH:-}"

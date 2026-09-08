@@ -253,15 +253,22 @@ def main(argv: list[str]) -> int:
     subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "run.py"], check=True)
     patch_riscv_dv_pygen(checkout)
 
-    python = os.environ.get("TRIBE_RISCV_DV_PYTHON", "/usr/bin/python3")
-    if shutil.which(python) is None:
+    python = os.environ.get("TRIBE_RISCV_DV_PYTHON", sys.executable)
+    resolved_python = shutil.which(python)
+    if resolved_python is None:
         print("SKIP: python3 is not available")
         return SKIP
 
     env = os.environ.copy()
     riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
     env["RISCV_HOME"] = riscv_home
-    env["PATH"] = "/usr/bin:" + str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")
+    env["PATH"] = os.pathsep.join(
+        (
+            str(pathlib.Path(resolved_python).resolve().parent),
+            str(pathlib.Path(riscv_home) / "bin"),
+            env.get("PATH", ""),
+        )
+    )
     env.setdefault("RISCV", riscv_home)
     pydeps = repo_root / "build" / "pydeps"
     pydeps.mkdir(parents=True, exist_ok=True)

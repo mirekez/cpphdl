@@ -60,9 +60,10 @@ CppHDL with both Tribe and CTest enabled:
 export RISCV_HOME="$HOME/riscv"
 export PATH="$RISCV_HOME/bin:$PATH"
 
-./tribe_cpu/tests/.load_spike.sh
-./tribe_cpu/tests/.load_sail_riscv_sim.sh
-
+cd ./tribe_cpu/tests
+./.load_spike.sh
+./.load_sail_riscv_sim.sh
+cd ../..
 cmake -S . -B build -G "Unix Makefiles" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCPPHDL_BUILD_TRIBE=ON \

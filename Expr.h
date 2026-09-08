@@ -154,6 +154,7 @@ struct Expr
     }
 };
 
+void coerceReturnToBool(Expr& expression);
 
 }
 
