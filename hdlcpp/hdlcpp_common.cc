@@ -4428,15 +4428,10 @@ static std::string replaceTextReplications(std::string s)
     };
     auto replicationReplacement = [&](const std::string& count, const std::string& expr) {
         auto width = replicatedWidth(expr);
-        bool needsCapture = replicationNeedsCaptureText(count) || replicationNeedsCaptureText(expr);
-        if (!needsCapture) {
-            return "cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" + width + ")>(logic<" + width + ">(" + expr + "))";
-        }
-        std::string capture = "[&]";
-        return std::string("(") + capture + "() { logic<((uint64_t)(" + count + ") * (uint64_t)(" + width + "))> __cpphdl_rep{}; "
-            "for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" + count + "); ++__cpphdl_i) { "
-            "__cpphdl_rep.bits((__cpphdl_i + 1) * (std::size_t)(" + width + ") - 1, __cpphdl_i * (std::size_t)(" + width + ")) = logic<" + width + ">(" + expr + "); "
-            "} return __cpphdl_rep; }())";
+        // SystemVerilog requires a replication multiplier to be constant at
+        // elaboration. Only the value can depend on runtime state, and it can be
+        // evaluated normally as the fixed-width helper's function argument.
+        return "cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" + width + ")>(logic<" + width + ">(" + expr + "))";
     };
     auto topLevelBalancedClose = [](const std::string& text, size_t open) -> size_t {
         if (open >= text.size() || text[open] != '{') {
@@ -5731,8 +5726,10 @@ static std::string emitNarrowPackedSliceExpr(const std::string& source,
 {
     uint64_t selectedBits = 0;
     uint64_t sourceBits = 0;
-    if (!parseAdditiveWidth(width, selectedBits) ||
-        !parseAdditiveWidth(sourceWidth, sourceBits) || selectedBits == 0 ||
+    auto foldedWidth = foldWidth(width);
+    auto foldedSourceWidth = foldWidth(sourceWidth);
+    if (!parseAdditiveWidth(foldedWidth, selectedBits) ||
+        !parseAdditiveWidth(foldedSourceWidth, sourceBits) || selectedBits == 0 ||
         selectedBits > 64 || sourceBits > 64) {
         return {};
     }
@@ -5768,7 +5765,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
     std::string line;
     if (!fields.empty()) {
         line += "    static constexpr std::size_t _size_bits() { return " + width + "; }\n";
-        line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { auto packed = logic<" + width + ">(v);\n";
+        line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { const auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
         uint64_t numericOffset = 0;
         for (auto& field : fields) {
@@ -5777,8 +5774,11 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
             auto slice = emitNarrowPackedSlice("packed", field.width,
                                                isUnion ? 0 : numericOffset, width);
             if (slice.empty()) {
-                slice = "logic<" + field.width + ">(packed.bits((uint64_t)(" + next +
-                    " - 1),(uint64_t)(" + offset + ")))";
+                // Packed struct bounds are elaboration-time constants. A compile-time
+                // slice returns the exact field width without constructing a
+                // full-width mutable logic_bits proxy for every field extraction.
+                slice = "packed.template slice<(uint64_t)(" + next +
+                    " - 1),(uint64_t)(" + offset + ")>()";
             }
             line += "            this->" + field.name + " = cpphdl::unpack_value<std::remove_reference_t<decltype(this->" + field.name + ")>, " + field.width + ">(" + slice + ");\n";
             line += "        }\n";

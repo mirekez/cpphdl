@@ -19,7 +19,25 @@
         }
         auto& r = select.selector->as<RangeSelectSyntax>();
         auto rangeOp = tok(r.range);
-        auto width = selectTemplateWidth(select);
+        auto effectiveSourceWidth = sourceWidth;
+        if (effectiveSourceWidth.empty() && mod) {
+            auto sourceType = expressionStorageType(*mod, base);
+            effectiveSourceWidth = foldWidth(resolvedTypeWidth(sourceType));
+            if (effectiveSourceWidth.empty()) {
+                auto getter = trim(base);
+                if (getter.size() > 2 && getter.compare(getter.size() - 2, 2, "()") == 0) {
+                    getter.resize(getter.size() - 2);
+                    if (auto it = mod->types.find(getter); it != mod->types.end()) {
+                        effectiveSourceWidth = foldWidth(resolvedTypeWidth(it->second));
+                    }
+                }
+            }
+        }
+        auto rawWidth = selectTemplateWidth(select);
+        auto width = foldWidth(rawWidth);
+        if (width.empty()) {
+            width = std::move(rawWidth);
+        }
         auto dynamicWidth = textMentionsRuntimeIndex(width) || textMentionsRuntimeIndex(select.toString());
         for (auto& var : loopVars) {
             if (isIdentifierUsed(width, var)) {
@@ -51,7 +69,7 @@
             else {
                 first = emitIndexExpr(*r.right);
             }
-            if (auto shifted = emitNarrowPackedSliceExpr(base, width, first, sourceWidth);
+            if (auto shifted = emitNarrowPackedSliceExpr(base, width, first, effectiveSourceWidth);
                 !shifted.empty()) {
                 return shifted;
             }
@@ -915,12 +933,14 @@
                 }
             }
             if (e.select->selector && e.select->selector->kind == SyntaxKind::BitSelect) {
+                auto sourceWidth = expressionPackedWidth(*e.left);
                 return emitSelectOn(emitExpr(*e.left), *e.select, false, false, false,
-                                    resolvedTypeWidth(baseType));
+                                    sourceWidth);
             }
             if (e.select->selector && RangeSelectSyntax::isKind(e.select->selector->kind)) {
+                auto sourceWidth = expressionPackedWidth(*e.left);
                 return emitSelectOn(emitExpr(*e.left), *e.select, false, false, false,
-                                    resolvedTypeWidth(baseType));
+                                    sourceWidth);
             }
             return emitSelectOn(emitExpr(*e.left), *e.select, false);
         }
@@ -1463,17 +1483,10 @@
                 if (innerWidth.empty()) {
                     innerWidth = "64";
                 }
-                auto totalWidth = "((uint64_t)(" + count + ") * (uint64_t)(" + innerWidth + "))";
-                bool needsCapture = replicationNeedsCaptureText(count) || replicationNeedsCaptureText(innerExpr);
-                if (!needsCapture) {
-                    return "cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" + innerWidth + ")>(logic<" + innerWidth + ">(" + innerExpr + "))";
-                }
-                std::string capture = "[&]";
-                return "(" + capture + "() { logic<" + totalWidth + "> __cpphdl_rep{}; "
-                       "for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" + count + "); ++__cpphdl_i) { "
-                       "__cpphdl_rep.bits((__cpphdl_i + 1) * (std::size_t)(" + innerWidth + ") - 1, "
-                       "__cpphdl_i * (std::size_t)(" + innerWidth + ")) = logic<" + innerWidth + ">(" + innerExpr + "); "
-                       "} return __cpphdl_rep; }())";
+                // The multiplier is an SV constant expression. The replicated
+                // value may reference local runtime state, but remains an ordinary
+                // argument to the fixed-width repeat helper.
+                return "cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" + innerWidth + ")>(logic<" + innerWidth + ">(" + innerExpr + "))";
             }
             size_t total = 0;
             bool numeric = true;

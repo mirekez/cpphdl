@@ -1059,6 +1059,9 @@ endmodule
     auto h = convertModule(argv0, "packed_struct_identifier_width", sv);
     expectContains(h, "struct trace_t");
     expectContains(h, "iwidth");
+    expectContains(h, "packed.template slice<");
+    expectNotContains(h, "logic<iwidth>(packed.bits(");
+    expectNotContains(h, "logic<128>(packed.bits(");
     expectNotContains(h, "logic<64> pack() const");
     expectNotContains(h, "auto packed = logic<64>(v);");
 }
@@ -1103,8 +1106,7 @@ endpackage
 )sv";
 
     auto h = convertModule(argv0, "constexpr_aggregate_replication", sv);
-    expectContains(h, "v.lanes = cpphdl::repeat");
-    expectContains(h, "cpphdl::repeat<(std::size_t)(4), __cpphdl_repeated_width>");
+    expectContains(h, "cpphdl::repeat<(std::size_t)(4), (std::size_t)(8)>");
     expectNotContains(h, "__cpphdl_repeated_dst");
     expectNotContains(h, "__cpphdl_rep.bits");
 }

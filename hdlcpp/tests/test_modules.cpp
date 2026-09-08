@@ -3546,11 +3546,28 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "replication_in_concat", sv, "");
-    expectContains(h, "cat{([&]() { logic<");
-    expectContains(h, "() { logic<");
-    expectContains(h, "std::size_t __cpphdl_i");
+    expectContains(h, "cpphdl::repeat<(std::size_t)(");
+    expectNotContains(h, "__cpphdl_rep.bits");
+    expectNotContains(h, "std::size_t __cpphdl_i");
     expectNotContains(h, "logic<64> __cpphdl_rep");
     expectNotContains(h, "}())))), logic<");
+}
+
+static void testNarrowLogicRangeReadUsesShiftAndMask(const char* argv0)
+{
+    const std::string sv = R"sv(
+module narrow_logic_range_read (
+    input  logic [31:0] data_i,
+    output logic [7:0]  byte_o
+);
+  assign byte_o = data_i[23:16];
+endmodule
+)sv";
+
+    auto h = convertModule(argv0, "narrow_logic_range_read", sv, "");
+    expectContains(h, ">> (unsigned)");
+    expectContains(h, "& ((1ull << 8) - 1ull)");
+    expectNotContains(h, "data_i_in().bits(");
 }
 
 static void testBracedReplicationCountIsNumeric(const char* argv0)
@@ -3746,8 +3763,12 @@ endmodule
 
     auto h = convertModule(argv0, "concat_case_decode", sv, "");
     expectContains(h, "cat{logic<7>");
-    expectContains(h, "logic<7>(instruction_i_in().bits");
-    expectContains(h, "logic<3>(instruction_i_in().bits");
+    expectContains(h, ">> (unsigned)");
+    if (countContains(h, ">> (unsigned)") < 2) {
+        std::cerr << "expected both concatenated instruction slices to use shifts\n";
+        assert(false);
+    }
+    expectNotContains(h, "instruction_i_in().bits(");
     expectNotContains(h, "cat{logic<64>");
     expectNotContains(h, "<< (unsigned)(64)");
 }
@@ -8968,8 +8989,8 @@ endmodule
 
     auto h = convertModule(argv0, "current_comb_block_read", sv, "");
     expectContains(h, "__comb_local_words_o");
-    expectContains(h, "saved_o_comb = cpphdl::sv_bits<16>(__comb_local_words_o");
-    expectNotContains(h, "saved_o_comb = cpphdl::sv_bits<16>(words_o_comb_func()");
+    expectContains(h, "saved_o_comb = logic<16>(((((uint64_t)(__comb_local_words_o");
+    expectNotContains(h, "saved_o_comb = logic<16>(((((uint64_t)(words_o_comb_func()");
 }
 
 static void testPackedStructArraySliceAssignmentCopiesElements(const char* argv0)
@@ -10931,6 +10952,7 @@ int main(int argc, char** argv)
     testPowerOperatorPrecedenceInRanges(argv[0]);
     testCombMethodDependenciesEmitBeforeUsers(argv[0]);
     testParameterizedReplicationInConcatIsValidCatItem(argv[0]);
+    testNarrowLogicRangeReadUsesShiftAndMask(argv[0]);
     testBracedReplicationCountIsNumeric(argv[0]);
     testNumericReplicationConstantUsesIntegerMask(argv[0]);
     testPackageArrayReplicationConstantUsesCppLambda(argv[0]);

@@ -29,11 +29,22 @@ fi
 
 # A cast-wrapped constexpr index is one concrete graph edge. It must not emit
 # a selector against every elaborated child and falsely couple their graphs.
-if [[ "$(search_o ' == [01]\) return' \
-        "$build_dir"/ModuleArrayCallRoot_optimized_combs*.cpp | wc -l)" -ne 2 ]]; then
-    printf 'constant module-array index emitted a runtime dispatcher\n' >&2
-    exit 1
-fi
+# Inspect the constant output bindings themselves: a memoized dynamic comb may
+# legitimately be emitted both as an evaluator and fused into _work, so a
+# global dispatcher count does not distinguish that duplication from a
+# constant-index regression.
+bindings="$build_dir/ModuleArrayCallRoot_optimized_combs.cpp"
+for output in constant_output port_constant_output; do
+    if ! search_q "obj\\.${output}[[:space:]]*=" "$bindings"; then
+        printf 'missing optimized binding for %s\n' "$output" >&2
+        exit 1
+    fi
+    if search_q "obj\\.${output}[[:space:]]*=.*if[[:space:]]*\\(" "$bindings"; then
+        printf 'constant module-array index emitted a runtime dispatcher for %s\n' \
+            "$output" >&2
+        exit 1
+    fi
+done
 
 objects=()
 for source in "$build_dir"/*.cpp; do

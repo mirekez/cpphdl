@@ -252,6 +252,34 @@
         return "";
     }
 
+    std::string expressionPackedWidth(const ExpressionSyntax& expr)
+    {
+        auto resolved = foldWidth(resolvedTypeWidth(exprType(expr)));
+        if (!resolved.empty()) {
+            return resolved;
+        }
+        auto base = assignedBase(expr);
+        if (mod && !base.empty()) {
+            if (auto it = mod->types.find(base); it != mod->types.end()) {
+                resolved = foldWidth(resolvedTypeWidth(it->second));
+                if (!resolved.empty()) {
+                    return resolved;
+                }
+            }
+            auto cppIt = mod->portCppNames.find(base);
+            for (const auto& port : mod->ports) {
+                if (port.name == base ||
+                    (cppIt != mod->portCppNames.end() && port.name == cppIt->second)) {
+                    resolved = foldWidth(resolvedTypeWidth(port.type));
+                    if (!resolved.empty()) {
+                        return resolved;
+                    }
+                }
+            }
+        }
+        return foldWidth(exprWidth(expr));
+    }
+
     std::string resolveAliasValueType(std::string type)
     {
         type = unwrapRegType(trim(std::move(type)));
@@ -3421,11 +3449,11 @@
                         auto value = emitExpr(*replication.concatenation->expressions[0]);
                         auto targetWidth = "cpphdl::type_width<" + packedArrayWrite->leafType + ">()";
                         auto elementWidth = "(" + targetWidth + " / (" + packedArgs[1] + "))";
-                        rhs = "([&]() { logic<" + targetWidth + "> __cpphdl_rep{}; "
-                            "for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" +
-                            packedArgs[1] + "); ++__cpphdl_i) { __cpphdl_rep.bits((__cpphdl_i + 1) * " +
-                            elementWidth + " - 1, __cpphdl_i * " + elementWidth + ") = "
-                            "cpphdl::pack_value<" + elementWidth + ">(" + value + "); } return __cpphdl_rep; }())";
+                        // Materialize the element once and replicate its complete
+                        // packed representation. Per-element proxy writes are not
+                        // needed for a constant-width SV replication.
+                        rhs = "cpphdl::repeat<(std::size_t)(" + packedArgs[1] + "), " +
+                            elementWidth + ">(cpphdl::pack_value<" + elementWidth + ">(" + value + "))";
                     }
                 }
             }
@@ -4739,11 +4767,18 @@
                 }
                 return value;
             }
+            // A read from a value that fits in uint64_t does not need an
+            // addressable bits proxy. Preserve proxies for lvalues and wide
+            // values, but lower narrow rvalue slices to a shift and mask.
+            auto width = selectTemplateWidth(*last);
+            if (auto shifted = emitNarrowPackedSliceExpr(
+                    s, width, bounds.second, resolvedTypeWidth(currentType)); !shifted.empty()) {
+                return "(uint64_t)(" + shifted + ")";
+            }
             auto runtimeWidth = runtimeRangeSelectWidth(*last);
             if (!runtimeWidth.empty()) {
                 return "(uint64_t)(cpphdl::sv_bits_runtime(" + s + "," + bounds.first + "," + bounds.second + "))";
             }
-            auto width = selectTemplateWidth(*last);
             if (currentType.find("decltype(") != std::string::npos) {
                 return "(uint64_t)(logic<" + width + ">(logic<cpphdl::type_width<" + currentType + ">()>(" +
                        s + ").bits(" + bounds.first + "," + bounds.second + ")))";
@@ -4819,11 +4854,16 @@
             }
             return value;
         }
+        auto width = selectTemplateWidth(*e.select);
+        auto sourceWidth = expressionPackedWidth(*e.left);
+        if (auto shifted = emitNarrowPackedSliceExpr(
+                emitExpr(*e.left), width, bounds.second, sourceWidth); !shifted.empty()) {
+            return "(uint64_t)(" + shifted + ")";
+        }
         if (!runtimeRangeSelectWidth(*e.select).empty()) {
             return "(uint64_t)(cpphdl::sv_bits_runtime(" + emitExpr(*e.left) + "," +
                    bounds.first + "," + bounds.second + "))";
         }
-        auto width = selectTemplateWidth(*e.select);
         return "(uint64_t)(logic<" + width + ">(" + emitExpr(*e.left) + ".bits(" + bounds.first + "," + bounds.second + ")))";
     }
 
