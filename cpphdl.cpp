@@ -1408,6 +1408,9 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
                 DEBUG_AST1(", <initializer ");
                 field->initializer = hlp.exprToExpr(initializer);
                 applyTemplateTypeSubstitutions(field->initializer, typeSubstitutions);
+                if (QT->isBooleanType()) {
+                    cpphdl::coerceReturnToBool(field->initializer);
+                }
                 DEBUG_EXPR(debugIndent, " Expr: " << field->initializer.debug(debugIndent));
                 DEBUG_AST1(">");
             }
