@@ -5,6 +5,8 @@ subtitle: "From a Sample Register to a Two-Clock Data Path"
 
 ![C++HDL: Think in C++. Design in RTL.](cpphdl-cover.png)
 
+\clearpage
+
 ![One C++ RTL model, native execution and SystemVerilog output.](cpphdl_book_images/chapter-01-introduction.png)
 
 # 1. Introduction
@@ -230,6 +232,8 @@ Increment `_system_clock` at the end of each simulation step.
 
 Chapter 5 uses clock-specific method names and shows which additional calls
 are needed for asynchronous reset.
+
+\clearpage
 
 ![Capture a measurement and its alarm flag, then hold them while the consumer is blocked.](cpphdl_book_images/chapter-02-sample-capture.png)
 
@@ -613,6 +617,8 @@ variables instead of dumping the whole `reg<T>` object?
 The next chapter adds a queue so the input can accept several more samples
 while the consumer is paused.
 
+\clearpage
+
 ![A parent module connects a sample stage to an eight-word memory queue.](cpphdl_book_images/chapter-03-memory-hierarchy.png)
 
 # 3. Absorb Bursts with Memory and Child Modules
@@ -992,6 +998,8 @@ The hardware structure is now reusable. The connections are still expressed as
 individual scalar ports. The next chapter groups those ports into interfaces
 so developers can connect and extend modules without handling every wire separately.
 
+\clearpage
+
 ![One interface carries data and valid forward and ready backward; a derived endpoint adds counting.](cpphdl_book_images/chapter-04-interfaces.png)
 
 # 4. Connect Reusable Interface Endpoints
@@ -1337,6 +1345,8 @@ work and base strobe methods? Which generated instance corresponds to the
 inherited queue member?
 
 Next, we add CppHDL's named clock methods and testbench scheduling for CDC.
+
+\clearpage
 
 ![The FIFO stores words in memory and synchronizes each pointer before the other clock domain uses it.](cpphdl_book_images/chapter-05-clock-domain-crossing.png)
 
@@ -1991,6 +2001,8 @@ the usual physical-design checks.
 **Check your CppHDL understanding:** Which methods must run when two clocks
 rise together? Which additional testbench calls would asynchronous reset need?
 Why does passing the native test not validate the converter output?
+
+\clearpage
 
 ![Reuse the C++ modules, test both models, and check the synthesized hardware separately.](cpphdl_book_images/chapter-06-conclusion.png)
 
