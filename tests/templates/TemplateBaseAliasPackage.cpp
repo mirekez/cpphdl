@@ -55,8 +55,6 @@ public:
     void _assign() {}
 };
 
-template class TemplateBaseAliasPackage<9>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

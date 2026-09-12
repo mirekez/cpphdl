@@ -31,8 +31,6 @@ public:
     void _assign() {}
 };
 
-template class TemplateSymbolicWidthCast<3>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

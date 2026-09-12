@@ -96,8 +96,6 @@ public:
     }
 };
 
-template class EncoderMini<Conv16>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

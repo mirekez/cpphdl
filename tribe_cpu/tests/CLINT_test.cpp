@@ -234,8 +234,6 @@ public:
     }
 };
 
-template class CLINTTest<16, 4, 32>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestCLINT : public Module

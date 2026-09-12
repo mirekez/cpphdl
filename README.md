@@ -6,6 +6,8 @@ Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
 Spec: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl.pdf
 
+![](doc/cpphdl-cover.png)
+
 ## build
 
 Win64 requires the following to be done:

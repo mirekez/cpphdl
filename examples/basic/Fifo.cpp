@@ -250,11 +250,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Fifo<64,65536,1,0>;
-template class Fifo<64,65536,0,0>;
-template class Fifo<64,65536,1,1>;
-template class Fifo<64,65536,0,1>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

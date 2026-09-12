@@ -53,8 +53,6 @@ public:
     }
 };
 
-template class PrefixCoreCluster<1>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <filesystem>

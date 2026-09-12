@@ -180,9 +180,6 @@ public:
     void _assign() {}
 };
 
-template class FpTanh<16, 5>;
-template class FpTanh<32, 8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include "FpMathTest.h"

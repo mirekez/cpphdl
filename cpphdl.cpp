@@ -7,6 +7,7 @@
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "llvm/Support/CommandLine.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Sema/Sema.h"
 
 #include "helpers.h"
 
@@ -2132,10 +2133,82 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     std::vector<const CXXRecordDecl*> abstractDefs;
 };
 
+struct ModuleSpecializationCollector
+    : public RecursiveASTVisitor<ModuleSpecializationCollector>
+{
+    explicit ModuleSpecializationCollector(ASTContext& context)
+        : context(context)
+    {
+        Helpers hlp(&context);
+        moduleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+    }
+
+    void consider(CXXRecordDecl* record)
+    {
+        auto* specialization = dyn_cast_or_null<ClassTemplateSpecializationDecl>(record);
+        if (!specialization || !moduleClass) {
+            return;
+        }
+        CXXRecordDecl* definition = specialization->getDefinition();
+        if (!definition || !definition->isDerivedFrom(moduleClass)) {
+            return;
+        }
+        if (seen.insert(specialization->getCanonicalDecl()).second) {
+            specializations.push_back(specialization);
+        }
+    }
+
+    bool VisitFieldDecl(FieldDecl* field)
+    {
+        QualType type = field->getType().getNonReferenceType();
+        while (const ArrayType* array = context.getAsArrayType(type)) {
+            type = array->getElementType().getNonReferenceType();
+        }
+        consider(type->getAsCXXRecordDecl());
+        return true;
+    }
+
+    bool shouldVisitTemplateInstantiations() const { return true; }
+
+    ASTContext& context;
+    CXXRecordDecl* moduleClass = nullptr;
+    std::unordered_set<const CXXRecordDecl*> seen;
+    std::vector<ClassTemplateSpecializationDecl*> specializations;
+};
+
 struct MethodConsumer : public ASTConsumer
 {
-    explicit MethodConsumer(ASTContext* context, cpphdl::CombsOptimizer* combsOptimizer)
-        : Visitor(context), combsOptimizer(combsOptimizer) {}
+    explicit MethodConsumer(ASTContext* context, CompilerInstance* compiler,
+                            cpphdl::CombsOptimizer* combsOptimizer)
+        : Visitor(context), compiler(compiler), combsOptimizer(combsOptimizer) {}
+
+    bool HandleTopLevelDecl(DeclGroupRef declarations) override
+    {
+        if (combsOptimizer) {
+            return true;
+        }
+
+        ModuleSpecializationCollector collector(compiler->getASTContext());
+        for (Decl* declaration : declarations) {
+            collector.TraverseDecl(declaration);
+        }
+
+        Sema& sema = compiler->getSema();
+        for (ClassTemplateSpecializationDecl* specialization : collector.specializations) {
+            if (!instantiatedSpecializations.insert(specialization->getCanonicalDecl()).second) {
+                continue;
+            }
+            SourceLocation location = specialization->getPointOfInstantiation();
+            if (location.isInvalid()) {
+                location = specialization->getLocation();
+            }
+            DEBUG_AST(debugIndent, "# instantiate implicit Module specialization: "
+                << specialization->getQualifiedNameAsString());
+            sema.InstantiateClassTemplateSpecializationMembers(
+                location, specialization, TSK_ImplicitInstantiation);
+        }
+        return true;
+    }
 
     void HandleTranslationUnit(ASTContext &context) override
     {
@@ -2147,7 +2220,9 @@ struct MethodConsumer : public ASTConsumer
     }
 
     MethodVisitor Visitor;
+    CompilerInstance* compiler;
     cpphdl::CombsOptimizer* combsOptimizer;
+    std::unordered_set<const CXXRecordDecl*> instantiatedSpecializations;
 };
 
 static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
@@ -2237,7 +2312,7 @@ struct MyFrontendAction : public ASTFrontendAction
 
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override
     {
-        return std::make_unique<MethodConsumer>(&CI.getASTContext(), combsOptimizer);
+        return std::make_unique<MethodConsumer>(&CI.getASTContext(), &CI, combsOptimizer);
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;

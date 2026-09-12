@@ -64,8 +64,6 @@ public:
     }
 };
 
-template class TemplateInterfaceLeaf<64>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

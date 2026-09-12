@@ -75,8 +75,6 @@ public:
     void _assign() {}
 };
 
-template class CastTypes<8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

@@ -170,8 +170,6 @@ public:
     void _assign() {}
 };
 
-template class AnnotateReplacementTemplate<109, AnnotateReplacementTemplateTag>;
-
 class AnnotateReplacementNested : public Module
 {
 public:

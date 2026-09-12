@@ -128,9 +128,6 @@ public:
     }
 };
 
-template class EthGigDMATop<32, 4, 64, 256>;
-template class EthGigDMATop<32, 4, 256, 256>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 template<size_t TEST_DATA_WIDTH>

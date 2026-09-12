@@ -51,8 +51,6 @@ public:
     void _assign() {}
 };
 
-template class AnnotationInCode<13>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #ifdef VERILATOR
