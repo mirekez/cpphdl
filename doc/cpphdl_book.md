@@ -91,6 +91,10 @@ of C++; the generated SystemVerilog still needs verification and synthesis check
 
 ## 1.3 The six-chapter plan
 
+We will build and test a sample stage, add a memory queue, connect the modules
+through interfaces, and finally implement a two-clock FIFO. Each chapter
+introduces the CppHDL constructs needed for the next step.
+
 | Chapter | Example | CppHDL focus | Check |
 | --- | --- | --- | --- |
 | 1. Introduction | The development workflow | Native execution and conversion | Build prerequisites |
@@ -189,7 +193,7 @@ bindings represent fixed RTL wiring. Change the values supplying the inputs
 instead. Objects referenced by bindings MUST remain alive while those bindings
 are used.
 
-### Rule 2: Assign next values in work; update registers in strobe
+### Rule 2: Assign next register's values in work
 
 For a member `reg<T> r`, **assign `r._next` in `_work(reset)` or a helper it
 calls**. Reading `r` still returns the current value. `r.strobe()` copies
@@ -209,7 +213,7 @@ work/strobe pair. Put synchronous reset assignments to `_next` in work's reset
 branch. Asynchronous reset uses the separate handlers in section 5.7.
 C++ construction does not automatically zero registers or memory.
 
-### Rule 3: Call work methods before strobe methods
+### Rule 3: Call work and strobe methods through all hierarchy to make a clock tick
 
 **To simulate a clock edge in C++, your test MUST call the top module's
 `_work(reset)`, then `_strobe()`.** The parent's `_work()` calls its children's
@@ -303,7 +307,11 @@ Here is a reading key for the remaining syntax in the listing:
 | Construct | Purpose |
 | --- | --- |
 | `port = _ASSIGN(...)` | Install a connection that supplies a value when the port is read |
-| `_ASSIGN_REG(...)`, `_ASSIGN_COMB(...)` | Bind persistent storage or a comb result by reference |
+| `_ASSIGN_REG(...)`, `_ASSIGN_COMB(...)` | Faster alternatives for assigning a register's value or a comb's result |
+
+You can use simple `_ASSIGN()` for any of these port connections if you are
+unsure. `_ASSIGN_REG(...)` and `_ASSIGN_COMB(...)` just make native simulation
+faster for register values and comb results, respectively.
 
 The execution methods follow section 1.5. Here `_assign()` is empty because
 the stage's output bindings are at their declarations and its inputs are
@@ -405,7 +413,7 @@ meet [Rule 1's lifetime requirement](#rule-1-connect-ports-during-setup).
 The reset branch assigns zero to `sample_reg._next` and `valid_reg._next`.
 When the stage is full and the consumer is not ready, neither non-reset
 assignment runs. Both registers keep their values according to
-[Rule 2](#rule-2-assign-next-values-in-work-update-registers-in-strobe).
+[Rule 2](#rule-2-assign-next-registers-values-in-work).
 
 The conditions produce these results:
 
@@ -570,7 +578,11 @@ int main()
 }
 ```
 
-## 2.7 Build, inspect, and decide what to add
+## 2.7 Build and test the sample stage
+
+Compile and run `sample_test.cpp` to check capture, hold, drain, and enable
+behavior and produce a VCD file. Then convert `SampleStage.h` to SystemVerilog
+and use Verilator to check the generated RTL without running it.
 
 ```sh
 g++ -std=c++17 -O2 -I"$CPPHDL_SRC/include" \
@@ -626,7 +638,8 @@ The example uses show-ahead reads;
 
 ## 3.2 Use `memory<>` and width-dependent C++ types
 
-The storage declaration is:
+We need to store each measurement and its alarm byte together. Declare a
+memory with two bytes per row and use `DEPTH` to select the number of rows:
 
 ```cpp
 memory<u8, 2, DEPTH> storage;
@@ -643,7 +656,7 @@ specialization discussed in the introduction.
 With `memory<>`, assigning a row adds it to a list of pending writes.
 `storage.apply()` copies those writes into the stored rows and clears the list.
 A normal read still returns the stored row, not the pending write, as required
-by [Rule 2](#rule-2-assign-next-values-in-work-update-registers-in-strobe).
+by [Rule 2](#rule-2-assign-next-registers-values-in-work).
 
 The usual pointer and count widths become C++ type expressions:
 `u<clog2(DEPTH)>` and `u<clog2(DEPTH) + 1>`. `static_assert` restricts this
@@ -749,13 +762,7 @@ The parent sets the threshold, converts the measurement and alarm flag into a
 16-bit word, and connects the stage to the queue. We can still test either child
 module separately.
 
-```text
-              threshold_reg
-                    |
-sensor ---> [SampleStage] ---> [word comb] ---> [MemoryQueue<8>] ---> consumer
-                    ^                                |
-                    +------------- ready ------------+
-```
+![SampleStage receives the threshold and sends encoded samples to MemoryQueue; ready returns from the queue to the stage.](cpphdl_book_images/schema-telemetry-buffer.png)
 
 The parent uses three kinds of connections:
 
@@ -946,7 +953,12 @@ int main()
 }
 ```
 
-## 3.7 Build and compare the structure
+## 3.7 Test the buffer and inspect its generated RTL
+
+Run `buffer_test.cpp` to check that the stage and queue deliver samples in
+order while the consumer pauses. Then convert `TelemetryBuffer.h` and lint
+the generated modules. Inspect the RTL to confirm that the stage, queue, and
+memory writes appear as intended.
 
 ```sh
 g++ -std=c++17 -O2 -I"$CPPHDL_SRC/include" \
@@ -992,12 +1004,7 @@ C++ inheritance to extend a synthesizable endpoint. The native test stays the sa
 Derive `StreamIf<WIDTH>` from `Interface` and declare its signals with `_PORT`.
 It carries the same streaming protocol as before:
 
-```text
-producer                         consumer
-        -------- data -------->
-        -------- valid ------->
-        <------- ready --------
-```
+![Data and valid travel from producer to consumer; ready travels back to the producer.](cpphdl_book_images/schema-valid-ready.png)
 
 CppHDL determines interface directions from the member name's `_in` or `_out`
 suffix instead of a SystemVerilog modport. Both endpoints use the same C++ type.
@@ -1285,7 +1292,13 @@ a producer's output interface to a consumer's input interface in sibling modules
 See [AssignIfHierarchyProxy.cpp](../tests/interface/AssignIfHierarchyProxy.cpp)
 for a complete example.
 
-## 4.6 Select another RTL class in the same C++ test
+## 4.6 Test the interface-based buffer with the existing testbench
+
+We changed the connections and added a counter; sample delivery should still
+behave as in chapter 3. Reuse `buffer_test.cpp` to check this without rewriting
+its stimulus or scoreboard. Compile it with `-DUSE_INTERFACES` so `Design`
+refers to `InterfaceTelemetry` instead of `TelemetryBuffer`. Then convert
+the new design and lint its generated SystemVerilog.
 
 ```sh
 g++ -std=c++17 -O2 -DUSE_INTERFACES -I"$CPPHDL_SRC/include" \
@@ -1308,8 +1321,6 @@ verilator --lint-only --top-module InterfaceTelemetry \
     "$BOOK/sv_interfaces/InterfaceTelemetry.sv"
 ```
 
-`-DUSE_INTERFACES` makes `Design` an alias for `InterfaceTelemetry` instead of
-`TelemetryBuffer`. The same stimulus and scoreboard then test the new class.
 This build also checks the added counter's final value,
 `sent_out == 128`, before printing `PASS: 128 ordered samples under backpressure`.
 The Verilator command is still lint-only; chapter 5 adds RTL execution.
@@ -1354,15 +1365,7 @@ a CDC architecture for you or simulate analog metastability.
 For 16 rows, use four address bits and five-bit binary/Gray pointers.
 The diagram shows which clock updates each pointer and synchronizer:
 
-```text
-WRITE DOMAIN                     | READ DOMAIN
-                                 |
-write_gray --------------------->| write_sync1 -> write_sync2 -> empty check
-                                 |
-full check <- read_sync2 <- read_sync1 <------------------------ read_gray
-                                 |
-write_bin -> memory write address | read_bin -> memory read address
-```
+![Gray pointers cross into the opposite clock domain through two synchronizer stages; binary pointers address local memory ports.](cpphdl_book_images/schema-cdc-pointers.png)
 
 Each side uses its own clock to update the synchronizers shown next to its check.
 In the code, `read_sync1/2` are **write-clocked** registers sampling the read
@@ -1381,7 +1384,8 @@ Use this table to review both the C++ methods and generated edge blocks:
 
 ## 5.4 Map the pointer equations to the listing
 
-The listing uses the standard encoding:
+Each clock domain sends a Gray-coded pointer to the other domain. Calculate
+that pointer from the local binary pointer with:
 
 ```text
 gray = binary XOR (binary >> 1)
@@ -1416,7 +1420,10 @@ clock restarts. Section 5.7 shows handlers for asynchronous reset instead.
 
 ## 5.6 Implement the two-clock FIFO
 
-The test samples these expressions on the corresponding edges:
+We can now combine the pointer checks, memory access, and reset logic into
+`AsyncSamples`. Its write method accepts words on write-clock edges; its read
+method removes words on read-clock edges. The test uses these handshake
+conditions to decide which transfers to check:
 
 | Local edge | Acceptance expression outside reset |
 | --- | --- |
@@ -1588,7 +1595,9 @@ public:
 
 ## 5.7 Relate the methods to generated RTL
 
-Declare the clocks to the converter:
+Generate SystemVerilog with separate write-clock and read-clock processes.
+Pass both clock names and frequencies to the converter so it can match them
+to the methods in `AsyncSamples`:
 
 ```sh
 "$CPPHDL" "$BOOK/AsyncSamples.h" \
@@ -1638,7 +1647,9 @@ FIFO between domains. It connects signals but adds no synchronizers.
 
 ### When true asynchronous assertion is required
 
-CppHDL supports a no-argument handler such as:
+The current FIFO resets only on clock edges. To reset it even when a clock
+is stopped, add an asynchronous reset handler for each domain. The write-side
+handler assigns the reset values without waiting for a write-clock edge:
 
 ```cpp
 void _reset_pos_write_clk()
@@ -1702,7 +1713,7 @@ clock levels assigned to the Verilated model. The loop increments `t` by one
 nanosecond per iteration. It lowers the Verilator clock inputs between rising
 edges; the native model has no falling-edge methods in this example.
 
-`TestModel` implements [Rule 3](#rule-3-call-work-methods-before-strobe-methods)
+`TestModel` implements [Rule 3](#rule-3-call-work-and-strobe-methods-through-all-hierarchy-to-make-a-clock-tick)
 for both models:
 
 | Step | Native CppHDL | Verilated RTL |
@@ -1951,6 +1962,10 @@ one register, fix the design. The warnings about these generated temporary
 variables are not a reason to ignore other multiple-driver warnings.
 
 ## 5.10 What this test checks, and what to add next
+
+Before reusing this FIFO, distinguish what the supplied test checks from what
+still needs testing. The table links each covered behavior to its stimulus or
+assertion; the suggestions below cover additional cases.
 
 | What we check | How the test checks it |
 | --- | --- |
