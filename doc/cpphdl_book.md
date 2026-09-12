@@ -3,11 +3,11 @@ title: "Designing RTL with C++HDL"
 subtitle: "From a Sample Register to a Two-Clock Data Path"
 ---
 
-![C++HDL: Think in C++. Design in RTL.](cpphdl-cover.png)
+![](cpphdl-cover.png)
 
 \clearpage
 
-![One C++ RTL model, native execution and SystemVerilog output.](cpphdl_book_images/chapter-01-introduction.png)
+![](cpphdl_book_images/chapter-01-introduction.png)
 
 # 1. Introduction
 
@@ -58,7 +58,7 @@ happen between clock edges.
 2. **Generate RTL from C++ type parameters.** `Block<TYPE>` can use the selected
    type's fields, constants, and supported methods; CppHDL generates the corresponding RTL.
    The benefit is using C++ templates and specialization in the executable
-   design, not merely parameterizing a width. SystemVerilog also has type parameters.
+   design, not merely parameterizing a width.
 
 3. **Use the C++ ecosystem for verification and analysis.** Link the model into
    existing C++ test systems. Use C++ containers in the testbench to store and
@@ -70,7 +70,7 @@ happen between clock edges.
    C++ RTL and run focused native tests without first generating SystemVerilog.
    This can shorten iteration; it does not remove the need for independent review.
 
-5. **Share the implementation with software tests.** Firmware and system-model
+5. **Share the implementation with software firmware.** Firmware and system-model
    teams can embed the C++ RTL directly instead of maintaining another
    handwritten peripheral model that may behave differently.
 
@@ -89,7 +89,9 @@ happen between clock edges.
 
 These are benefits of the C++ workflow, not claims that structs, interfaces,
 parameterization, or verification are new to RTL. Conversion supports a subset
-of C++; the generated SystemVerilog still needs verification and synthesis checks.
+of C++. At the end of development, the generated SystemVerilog still needs
+acceptance verification in a timing/event-driven simulator and synthesis
+testing with the target synthesis tools.
 
 ## 1.3 The six-chapter plan
 
@@ -235,7 +237,7 @@ are needed for asynchronous reset.
 
 \clearpage
 
-![Capture a measurement and its alarm flag, then hold them while the consumer is blocked.](cpphdl_book_images/chapter-02-sample-capture.png)
+![](cpphdl_book_images/chapter-02-sample-capture.png)
 
 # 2. Capture a Sample
 
@@ -623,7 +625,7 @@ while the consumer is paused.
 
 \clearpage
 
-![A parent module connects a sample stage to an eight-word memory queue.](cpphdl_book_images/chapter-03-memory-hierarchy.png)
+![](cpphdl_book_images/chapter-03-memory-hierarchy.png)
 
 # 3. Absorb Bursts with Memory and Child Modules
 
@@ -1004,7 +1006,7 @@ so developers can connect and extend modules without handling every wire separat
 
 \clearpage
 
-![One interface carries data and valid forward and ready backward; a derived endpoint adds counting.](cpphdl_book_images/chapter-04-interfaces.png)
+![](cpphdl_book_images/chapter-04-interfaces.png)
 
 # 4. Connect Reusable Interface Endpoints
 
@@ -1357,7 +1359,7 @@ Next, we add CppHDL's named clock methods and testbench scheduling for CDC.
 
 \clearpage
 
-![The FIFO stores words in memory and synchronizes each pointer before the other clock domain uses it.](cpphdl_book_images/chapter-05-clock-domain-crossing.png)
+![](cpphdl_book_images/chapter-05-clock-domain-crossing.png)
 
 # 5. Cross Clock Domains and Test Both Flows
 
@@ -2014,7 +2016,7 @@ Why does passing the native test not validate the converter output?
 
 \clearpage
 
-![Reuse the C++ modules, test both models, and check the synthesized hardware separately.](cpphdl_book_images/chapter-06-conclusion.png)
+![](cpphdl_book_images/chapter-06-conclusion.png)
 
 # 6. Conclusion
 
