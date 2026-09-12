@@ -7,6 +7,11 @@ date: "2026"
 
 ![](cpphdl-cover.png)
 
+\vfill
+\begin{center}
+(Not HLS, but a C++ reflection of the SystemVerilog model)
+\end{center}
+
 \clearpage
 
 ![](cpphdl_book_images/chapter-01-introduction.png)
