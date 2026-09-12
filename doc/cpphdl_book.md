@@ -135,9 +135,37 @@ Unlabeled fragments illustrate an expression or a method and are not additional
 standalone files. The chapter images are conceptual views, not complete port
 lists or substitutes for the code.
 
-To run the examples, install Bash, `g++` with C++17 support, Verilator, and Make.
-Build the `cpphdl` converter using the [README instructions](../README.md).
-A VCD viewer is optional. Then set the working paths:
+### Get and build CppHDL
+
+Get the source from [github.com/mirekez/cpphdl](https://github.com/mirekez/cpphdl).
+On Linux, with Git and Conda installed, create the supplied dependency
+environment and build the converter:
+
+```sh
+git clone https://github.com/mirekez/cpphdl.git
+cd cpphdl
+conda env create --prefix ./.conda --file requirements.yaml
+conda activate ./.conda
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
+cmake --build build --target cpphdl --parallel 4
+./build/cpphdl --help
+```
+
+The result is `build/cpphdl`, the C++-to-SystemVerilog converter. To simulate
+natively, include `cpphdl.h` in the model and compile it with your C++
+testbench, adding `include/` to the compiler's include path. Run that executable
+directly. To generate RTL, pass the model source to `cpphdl`, choose an output
+directory with `--generated-dir`, and put compiler options such as `-I` and
+`-D` after `--`. The following chapters show both flows with complete commands.
+
+The book's native commands use `g++` with C++17 support. The supplied Conda
+environment provides Verilator and Make; a VCD viewer is optional. See the
+[README](../README.md) for platform-specific setup details.
+
+### Prepare the book examples
+
+Keep the example files together so later chapters can include earlier headers.
+From the repository root, set the working paths:
 
 ```sh
 # Run this setup from the CppHDL repository root.
