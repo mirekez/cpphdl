@@ -1,6 +1,8 @@
 ---
 title: "Designing RTL with C++HDL"
 subtitle: "From a Sample Register to a Two-Clock Data Path"
+author: "Mike Reznikov"
+date: "2026"
 ---
 
 ![](cpphdl-cover.png)
