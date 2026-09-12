@@ -122,9 +122,9 @@ void _strobe()
 1. Building a full cycle of digital RTL development and testing using the C++ language
 2. Executing cycle-accurate RTL directly as native C++, with explicit next-state computation and register commits
 
-&nbsp;&nbsp;&nbsp;&nbsp;In all operations CppHDL works as a reflection of the SystemVerilog model,
-which means that, at every stage, a 100% register-to-register copy of any CppHDL
-code exists in the SystemVerilog domain.
+&nbsp;&nbsp;&nbsp;&nbsp;Synthesizable CppHDL describes register-to-register logic
+that maps to SystemVerilog. Earlier behavioral C++ sketches need not be
+synthesizable; they must be refined into supported RTL constructs before conversion.
 This live CppHDL to SystemVerilog conversion makes it possible to
 
 * Connect CppHDL teams to classical verification and testing teams
@@ -140,6 +140,17 @@ The following properties of the C++ language provide a strong foundation for the
 * CppHDL makes many of C++ developers accessible for chipmaking industry
 * C++ is extremely fast in compilation and execution
 * It is free and does not require paying for instances
+* **Build large, complex multithreaded or cluster-based RTL simulations.** Use
+  C++ threading and communication libraries to distribute model instances or
+  independent test runs across CPU cores and machines. For connected models,
+  the simulation framework must coordinate data exchange and simulation time.
+* **Prototype behavior first, then refine it into RTL.** Start with a
+  non-synthesizable C++ sketch: use function calls as connections and pass
+  objects, complete transactions, or memory buffers, as in transaction-level
+  modeling (TLM). Simulate behavior before defining individual wires and
+  registers, then replace behavioral operations step by step with clocked,
+  register-to-register logic. Keep the sketch as a reference for tests. This
+  refinement is a design task, not automatic RTL conversion.
 
 &nbsp;&nbsp;&nbsp;&nbsp;RTL modeling using CppHDL includes verification and testing, providing the power and speed of
 the C++ language for modeling digital signaling and digital system interaction.
