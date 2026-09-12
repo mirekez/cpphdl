@@ -8,6 +8,8 @@ Spec: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl.pdf
 
 Best practice: https://github.com/mirekez/cpphdl/blob/main/doc/best_practice.pdf
 
+The book: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl_book.pdf
+
 ![](doc/cpphdl-cover.png)
 
 ## build
