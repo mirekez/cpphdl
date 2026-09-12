@@ -402,17 +402,21 @@ The two combs answer separate questions:
 `_work` uses `sample_comb_func()` when capturing a sample; the ready output
 uses `ready_comb_func()` through its binding.
 
-The port bindings illustrate three cases:
+**You can use `_ASSIGN()` for all these port connections. If you are unsure
+whether an expression refers to register storage or a persistent comb result,
+use `_ASSIGN()`.** `_ASSIGN_REG()` and `_ASSIGN_COMB()` are optional alternatives
+that make native simulation faster for register values and comb results.
 
 | Binding | Appropriate use |
 | --- | --- |
-| `_ASSIGN(expression)` | Compute a value, including a cast or Boolean expression |
-| `_ASSIGN_REG(object)` | Refer to persistent register or input storage |
-| `_ASSIGN_COMB(function())` | Refer to a comb result returned by reference |
+| `_ASSIGN(expression)` | General choice, including register values, comb results, casts, and Boolean expressions |
+| `_ASSIGN_REG(object)` | Faster binding to persistent register or input storage |
+| `_ASSIGN_COMB(function())` | Faster binding to a comb result returned by reference |
 
 The last two bind an **lvalue**, an existing object rather than a copied value.
 A temporary such as `u<8>(128)` or a function result returned by value does not
-meet [Rule 1's lifetime requirement](#rule-1-connect-ports-during-setup).
+meet their [lifetime requirement](#rule-1-connect-ports-during-setup); use
+`_ASSIGN()` for those expressions.
 
 The reset branch assigns zero to `sample_reg._next` and `valid_reg._next`.
 When the stage is full and the consumer is not ready, neither non-reset
@@ -1022,14 +1026,17 @@ suffix instead of a SystemVerilog modport. Both endpoints use the same C++ type.
 Declare `valid_in`, `data_in`, and `ready_out` in the interface type.
 
 A member named `sink_in` keeps each field's declared direction. A member named
-`source_out` reverses every field's direction:
+`source_out` reverses every field's direction. In the table, direction is
+relative to the module containing the interface:
 
-| C++ access | Direction at the containing module's port | Who drives it? |
+| C++ access | Direction | Driven by |
 | --- | --- | --- |
-| `sink_in.valid_in`, `sink_in.data_in` | Inputs | Upstream producer |
-| `sink_in.ready_out` | Output | This sink |
-| `source_out.valid_in`, `source_out.data_in` | Outputs | This source |
-| `source_out.ready_out` | Input | Downstream consumer |
+| `sink_in.valid_in` | Input | Producer |
+| `sink_in.data_in` | Input | Producer |
+| `sink_in.ready_out` | Output | This module |
+| `source_out.valid_in` | Output | This module |
+| `source_out.data_in` | Output | This module |
+| `source_out.ready_out` | Input | Consumer |
 
 The C++ field names do not change. To determine the direction of a generated
 SystemVerilog port, read both the containing interface member's name and the
@@ -1263,11 +1270,13 @@ public:
 };
 ```
 
-## 4.5 Read the parent as a wiring diagram
+## 4.5 How the parent connects its three child modules
 
-The two `assignIf` calls connect:
-- The sample source's outgoing stream to the buffer's incoming stream.
-- The buffer's outgoing stream to the monitor's incoming stream.
+`InterfaceTelemetry` contains three child modules: `producer`, `buffer`, and
+`monitor`. Its `_assign()` connects them with two `assignIf` calls:
+
+- `producer.source_out` to `buffer.sink_in`.
+- `buffer.source_out` to `monitor.sink_in`.
 
 In this listing, endpoint `_assign()` methods define their driven outputs;
 the parent's two `assignIf` calls connect the interfaces. The direct binding
@@ -1707,6 +1716,7 @@ does not establish that conversion preserved widths, direction, reset, or
 scheduling.
 
 The `TestModel` class below provides the same methods for either implementation:
+
 - For the native model, it changes the C++ variables bound to input ports and reads outputs through port getters.
 - For the Verilated model, inputs and outputs are generated class members; `eval()` evaluates the RTL after inputs change.
 - The stimulus, expected-data queue, and assertions are shared.
