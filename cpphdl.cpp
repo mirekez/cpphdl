@@ -2230,6 +2230,85 @@ static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 namespace
 {
 
+void printCpphdlHelp()
+{
+    llvm::outs() << R"help(CppHDL - convert C++ RTL to SystemVerilog or optimized native C++ simulation
+
+Usage:
+  cpphdl [CppHDL options] source.cpp [source.h ...] -- [Clang arguments]
+  cpphdl --help
+
+Before --: CppHDL options and source files (.cpp, .cc, .h, .hpp).
+After  --: compiler arguments used to parse those sources, not CppHDL options.
+The legacy form without -- is also supported: put all sources before compiler
+arguments. Prefer an explicit -- to make the boundary unambiguous.
+
+Conversion options:
+  -h, --help                     Show this help and exit; no source required.
+  --generated-dir <directory>    Output directory (default: generated).
+                                Also accepts --generated-dir=<directory>.
+  --json-output <file>           Also write the extracted design as JSON.
+                                Appends .json when the extension is omitted.
+  --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
+                                source normally hidden by synthesis guards.
+  --debug                        Print converter/AST diagnostics.
+
+Clocks:
+  --primary_clock <name> <freq>  Declare the primary clock (positive integer
+                                frequency, normally Hz).
+  --secondary_clock <name> <freq>
+                                Add a clock; repeat for more clock domains.
+                                Requires --primary_clock. Clock names must be
+                                unique; no secondary may be faster than primary.
+  Without clock options: clk, _work(reset), _strobe(). A single named primary
+  changes the clock port name, not the methods. With multiple clocks, modules
+  need _work_<name>(bool reset) and _strobe_<name>() for every declared clock.
+  Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
+  Frequencies validate the design; the testbench must schedule clock edges.
+
+Native simulation optimizer (generates C++, not SystemVerilog):
+  --optimize-combs <root>        Generate a dependency-scheduled model for the
+                                named root module class.
+  --optimize-combs-l1 <root>     Also schedule cached procedural comb methods.
+  --optimize-math                Simplify recognized arithmetic networks to
+                                equivalent native scalar expressions.
+  --optimize-threads <count>     Worker lanes (positive integer; default: 1).
+  --optimize-combs-collect <file>
+                                Save an intermediate optimizer collection and
+                                exit without generating the model.
+  --optimize-combs-load <file>   Load a saved collection; may be repeated.
+  Math, threads, collect and load require one of the two root options above.
+  Both root options disable the implicit SYNTHESIS definition.
+  All single-value long options accept either --option value or --option=value;
+  clock options take two separate arguments: <name> <frequency>.
+
+Compiler arguments after -- (common examples, not an exhaustive Clang list):
+  -I<directory>                 Add a project include directory.
+  -isystem <directory>          Add a system include directory.
+  -DNAME[=value]                Define a preprocessor macro.
+  -UNAME                        Undefine a preprocessor macro.
+  -include <file>               Include a header before parsing the source.
+  -W<warning>, -Wno-<warning>   Control Clang diagnostics.
+  --sysroot=<directory>         Select the compiler's system-header root.
+  CppHDL adds C++ language mode (-std=c++26), detected include paths, and
+  -DSYNTHESIS unless disabled above. These defaults are appended to compiler
+  arguments, so an earlier -std= does not override the converter's language mode.
+  This tool parses C++; it does not build/link a simulation executable. Use your
+  C++ compiler/CMake for that, and Verilator to test generated SystemVerilog.
+  For the compiler's full option list, use clang++ --help.
+
+Examples (from the repository root):
+  cpphdl --generated-dir=rtl examples/basic/Buffer.cpp -- -Iinclude
+  cpphdl --json-output=design.json top.cpp -- -Iinclude -DMY_WIDTH=32
+  cpphdl --primary_clock write_clk 100000000 \
+         --secondary_clock read_clk 40000000 examples/cdc/Fifo2clk.cpp -- -Iinclude
+  cpphdl --optimize-combs-l1 MyTop --optimize-threads=4 \
+         --generated-dir=sim top.cpp -- -Iinclude
+
+See doc/spec.md and doc/best_practice.md for RTL conventions and simulation.
+)help";
+}
+
 bool validClockName(std::string_view name)
 {
     if (name.empty() || name == "reset" || is_systemverilog_keyword(std::string(name))) {
@@ -2385,6 +2464,12 @@ int main(int argc, const char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
+
+        if (!saw_double_dash &&
+            (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0)) {
+            printCpphdlHelp();
+            return 0;
+        }
 
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;

@@ -112,6 +112,17 @@ foreach(src ${TEST_SOURCES})
 
 endforeach()
 
+foreach(cli_case help forwarding)
+    add_test(NAME cli_${cli_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${cli_case}
+            -DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cli
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_cli
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/CommandLine.cmake)
+    set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
 foreach(cdc_failure_case secondary_without_primary secondary_above_primary missing_methods invalid_reset_signature)
     if(cdc_failure_case STREQUAL "invalid_reset_signature")
         set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/InvalidResetSignature.h)
