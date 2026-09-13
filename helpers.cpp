@@ -1049,7 +1049,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
-        return cpphdl::Expr{CDSME->getMemberNameInfo().getAsString(), cpphdl::Expr::EXPR_MEMBER, {expr}};
+        return cpphdl::Expr{CDSME->getMemberNameInfo().getAsString(), cpphdl::Expr::EXPR_MEMBER, {expr}, 0,
+            resolveInterfaceRecordDecl(CDSME->getBase()->getType()) != nullptr};
     }
     if (auto* LE = dyn_cast<LambdaExpr>(E)) {
         DEBUG_AST1(" LambdaExpr");
@@ -1290,6 +1291,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         if (const auto* DSME = llvm::dyn_cast<clang::CXXDependentScopeMemberExpr>(callee)) {  // we do this only to get pack inside std::apply
+            if (CE->getNumArgs() == 0) {
+                if (auto* interface = resolveInterfaceRecordDecl(DSME->getBase()->getType())) {
+                    for (const auto* field : interface->fields()) {
+                        if (field->getName() == DSME->getMemberNameInfo().getAsString()) {
+                            QualType type = field->getType();
+                            if (skipStdFunctionType(type)) {
+                                return exprToExpr(DSME);
+                            }
+                        }
+                    }
+                }
+            }
             DEBUG_AST1(" DSME(" << DSME->getMemberNameInfo().getAsString() << ")");
             call.value = DSME->getMemberNameInfo().getAsString();
             call.type = cpphdl::Expr::EXPR_MEMBERCALL;
@@ -1396,6 +1409,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         }
 
         return call;
+    }
+    if (auto* CE = dyn_cast<CXXUnresolvedConstructExpr>(E)) {
+        const std::string type = castTypeName(CE->getType());
+        if (CE->getNumArgs() == 1 && (type.find("cpphdl_u") == 0
+            || type.find("cpphdl_i") == 0 || type.find("cpphdl_logic") == 0)) {
+            return cpphdl::Expr{type, cpphdl::Expr::EXPR_CAST, {exprToExpr(CE->getArg(0))}};
+        }
     }
     if (auto* CE = dyn_cast<CXXConstructExpr>(E)) {
         const CXXConstructorDecl* CtorDecl = CE->getConstructor();
@@ -2047,6 +2067,22 @@ CXXRecordDecl* Helpers::resolveCXXRecordDecl(QualType QT)
         }
     }
     return CRD;
+}
+
+CXXRecordDecl* Helpers::resolveInterfaceRecordDecl(QualType QT)
+{
+    QT = QT.getNonReferenceType().getDesugaredType(*ctx);
+    auto* record = resolveCXXRecordDecl(QT);
+    if (!record) {
+        if (const auto* type = QT->getAs<TemplateSpecializationType>()) {
+            if (const auto* templ = dyn_cast_or_null<ClassTemplateDecl>(type->getTemplateName().getAsTemplateDecl())) {
+                record = templ->getTemplatedDecl();
+            }
+        }
+    }
+    auto* interface = lookupQualifiedRecord("cpphdl::Interface");
+    return record && record->getDefinition() && interface && record->isDerivedFrom(interface)
+        ? record->getDefinition() : nullptr;
 }
 
 NamedDecl* Helpers::lookupInContext(DeclContext *DC, IdentifierInfo *Id)
