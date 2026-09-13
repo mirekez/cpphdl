@@ -359,6 +359,17 @@ Also, `_strobe()` should be called for each nested instance of the class.
 Forgotten registers will be reported by *cpphdl* tool.
 In a multi-clock design, each register or memory must be committed by exactly one clock-and-edge-specific strobe method.
 
+During conversion, CppHDL checks for missing register `.strobe()`, memory
+`.apply()`, child `_work()`, and child `_strobe()` calls. Each missing call
+produces a four-line `MISSED CALL FOUND` warning with the module, member, and
+source location. Conversion continues so that you can inspect all warnings.
+The check follows inherited methods and local helper calls from the appropriate
+work or strobe method, including declared clock and negative-edge variants.
+A call in an unused helper or in the wrong phase does not satisfy the check.
+This is a structural check, not a proof that every runtime branch or array index
+is exercised. Simulation tests must still check the clock schedule and conditional
+execution of those calls.
+
 ## Comb methods
 
 &nbsp;&nbsp;&nbsp;&nbsp;Combinational methods represent Verilog combinational logic functions. All combinational methods should comply with the following requirements:

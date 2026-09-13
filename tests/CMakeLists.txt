@@ -123,6 +123,18 @@ foreach(cli_case help forwarding)
     set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
 endforeach()
 
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named)
+    add_test(NAME lint_lifecycle_${lifecycle_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${lifecycle_case}
+            -DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/lint
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_lifecycle
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/lint/CheckMissedCalls.cmake)
+    set_tests_properties(lint_lifecycle_${lifecycle_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
 foreach(cdc_failure_case secondary_without_primary secondary_above_primary missing_methods invalid_reset_signature)
     if(cdc_failure_case STREQUAL "invalid_reset_signature")
         set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/InvalidResetSignature.h)

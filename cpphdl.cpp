@@ -21,6 +21,7 @@
 #include "Enum.h"
 #include "json_output.h"
 #include "Combs.h"
+#include "LifecycleChecks.h"
 
 #include <algorithm>
 #include <array>
@@ -2216,6 +2217,7 @@ struct MethodConsumer : public ASTConsumer
             combsOptimizer->collect(context);
         } else {
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
+            checkModuleLifecycleCalls(context, compiler->getSema());
         }
     }
 

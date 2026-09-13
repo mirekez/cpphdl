@@ -1,12 +1,14 @@
 # Tribe RISC-V CPU
 
+![](tribe_cpu.png)
+
 ## About
 
 Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model runs both as a native C++ simulation and as generated SystemVerilog through Verilator. One `Tribe` core contains a small in-order pipeline, private instruction and data L1 caches, CSR/trap support, interrupt routing, and optional Sv32 MMU/TLBs. `TribeTest<CPU_CORES>` composes one or more cores around a shared coherent L2 cache, clock-domain crossings, and AXI4-style memory ports; the simulation and SoC wrappers add memories and devices around that cluster.
 
-The base implementation targets 32-bit integer software. Build-time configuration in `tribe_cpu/Config.h` selects optional blocks such as `ENABLE_ZICSR`, `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB`. The L2 memory data width is selected with `L2_AXI_WIDTH`; common test targets use 64, 128, and 256 bits. Main memory starts at `memory_base_in`, has runtime size `memory_size_in`, and is split into four L2 memory/device regions. The last region is used as uncached IO/MMIO space.
+The base implementation targets RV32IMC integer software. `tribe_cpu/Config.h` enables atomics, interrupt routing, and Sv32 translation through `TRIBE_CFG_RV32IA`, `TRIBE_CFG_ISR`, and `TRIBE_CFG_MMU_TLB`; each defaults to `1` and is also a CMake setting. These select `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB` in the sources. Zicsr and traps are enabled unconditionally by the current configuration. The L2 memory data width is selected with `L2_AXI_WIDTH`; the build provides 64-, 128-, and 256-bit targets. The address map starts at `memory_base_in` and contains four contiguous memory/device regions; the last is uncached IO/MMIO.
 
-![Tribe CPU architecture](tribe_cpu.png)
+Current cache defaults are a 2 KiB instruction L1, a 1 KiB data L1, and a shared 64 KiB L2, all with 32-byte lines. L1 caches are two-way and L2 is four-way. `CPUS_PER_L2_CACHE` defaults to four, but ordinary Tribe and SoC targets remain single-core. Only `MULTICORE` targets and the configured multi-port L2 test use that core count.
 
 ## Structure
 
@@ -22,7 +24,7 @@ The single-core CPU is the `Tribe` module in `tribe_cpu/Tribe.h`. It instantiate
 | `CSR` | `tribe_cpu/CSR.h` | CSR, privilege, trap, and return-from-trap state. |
 | `MMU_TLB` | `tribe_cpu/MMU_TLB.h` | Optional Sv32 instruction/data address translation and page-table walking. |
 | `InterruptController` | `tribe_cpu/InterruptController.h` | Optional CLINT and PLIC/external interrupt routing into CSR trap input. |
-| `File<32,32>` | `File.h` | Integer register file. |
+| `File<32,32,false>` | `tribe_cpu/common/File.h` | Integer register file with a separate `FileStorage` child; primary bypass is handled by the core. |
 | `L1Cache` | `tribe_cpu/cache/L1Cache.h` | Separate instruction and data L1 caches. |
 | `BranchPredictor` | `tribe_cpu/BranchPredictor.h` | Small direct-mapped branch predictor. |
 
@@ -33,29 +35,39 @@ The executable simulation wrapper is `TestTribe` in `tribe_cpu/TribeTest.h`, dri
 ## CPU Pipeline
 
 ```text
-                                      branch prediction
-                               +---------------------------+
-                               |                           v
-  PC / fetch address -> IMMU -> I-L1 -> Decode -> state_reg[0]
-        ^                                      |          |
-        |                                      |          +-> CSR / traps / IRQ
-        |                                      v
-        +---- redirect / actual target <- Execute + ExecuteMem
-                                                   |
-                                                   +-> DMMU -> D-L1 -> L1/L2 CDC
-                                                   |
-                                                   v
-                                             state_reg[1]
-                                                   |
-                                      +------------+------------+
-                                      v                         v
-                                WritebackMem                Writeback
-                                      +------------+------------+
-                                                   v
-                                          File<32,32> registers
+  PC -> IMMU -> [translation registers] -> I-L1
+   ^                                        |
+   |                              [fetch instruction + PC]
+   |                                        |
+   |                                      Decode
+   |                                        |
+   |                                [decode_state_reg]
+   |                                        |
+   |                       File reads + operand forwarding
+   |                                        |
+   |                                  [state_reg[0]]
+   |                                        |
+   +-- branch/trap redirect <----------- Execute
+   |                              ALU / iterative MUL,DIV
+   |                                        |
+   |                           ExecuteMem / [state_reg[1]]
+   |                                        |
+   |                 DMMU -> [translation registers] -> D-L1
+   |                                                    |
+   |                                              L1/L2 CDC
+   |                                                    |
+   |                          WritebackMem <--- load response
+   |                               |
+   |                 [load result / retirement readiness]
+   |                               |
+   |                      Writeback -> File writes
+   |
+   +-- CSR <- [CSR commit record / interrupt metadata]
 ```
 
-Fetch is not stored in `state_reg`; the I-cache response feeds `Decode` directly. `state_reg[0]` is the execute-stage instruction and `state_reg[1]` is the writeback-stage instruction. `ExecuteMem` owns issued load/store, split-access, and atomic sequencing, while `WritebackMem` owns delayed load completion and forwarding. Hazards, cache/MMU waits, traps, and branch redirects can hold or flush both registered stages.
+Brackets mark register boundaries, not separate modules. `fetch_instr_reg`, `fetch_pc_reg`, and `fetch_buffer_valid_reg` hold the I-cache response. `Decode` produces control and register indexes into `decode_state_reg`; register-file reads and forwarding then supply operands for `state_reg[0]`. `state_reg[1]` owns the memory/writeback instruction. ALU-only instructions bypass the data-memory path.
+
+Instruction and data translations are captured in separate `immu_*_reg` and `dmmu_*_reg` records before driving the caches. `ExecuteMem` owns issued load/store, split-access, and atomic sequencing. `WritebackMem` holds returned load data; the core distinguishes result availability from retirement readiness so an AMO cannot retire before its write completes. CSR updates and interrupt metadata have their own registered commit boundary. These stages shorten combinational paths; they do not imply one instruction completes on every clock. Hazards, iterative arithmetic, memory waits, and redirects still stall or flush the appropriate stages.
 
 ## Principal connection of modules
 
@@ -64,7 +76,7 @@ Fetch is not stored in `state_reg`; the I-cache response feeds `Decode` directly
   +--------------------------------------------------------------------------+
   |  Tribe core 0: pipeline + I-L1 + D-L1                                    |
   |  Tribe core N: pipeline + I-L1 + D-L1                                    |
-  |       | I miss/PTW       | D miss/store/PTW                              |
+  |       | I refill        | D refill/store + both MMU walkers              |
   |       v                  v                                                |
   |  L1MemFastToSlowCdc  L1MemFastToSlowCdc                                  |
   |       |                  |                                                |
@@ -83,7 +95,7 @@ Fetch is not stored in `state_reg`; the I-cache response feeds `Decode` directly
                                                        +-> Accelerator / SD / Ethernet
 ```
 
-The shared L2 is the coherence point. CPU private L1s use a level-held `L1MemIf`; coherent DMA masters enter L2 through `axi_in`; L2 reaches backing RAM and uncached MMIO through `axi_out`. The cluster uses explicit mailbox CDC modules at every fast/slow boundary. `System` instantiates a five-device IO mux and omits Ethernet; native `TestTribe` uses a six-device mux and includes the Ethernet chain.
+The shared L2 is the coherence point. CPU private L1s use a level-held `L1MemIf`; coherent DMA masters enter L2 through `axi_in`; L2 reaches backing RAM and uncached MMIO through `axi_out`. The cluster uses explicit mailbox CDC modules on these bus boundaries. Its optional `dma_line_*` allocation sideband is already in the L2 domain, not a fast-clock AXI input. `System` instantiates a five-device IO mux and omits Ethernet; native `TestTribe` uses a six-device mux and includes the Ethernet chain.
 
 ## Clocks
 
@@ -107,9 +119,11 @@ CppHDL conversion receives the clocks explicitly:
 
 Reset is applied to both domains. Test harnesses keep reset active long enough for at least one `l2_clock` edge; otherwise fast-domain state could leave reset before L2 and the slow sides of the CDCs have sampled reset.
 
+The clocks are supplied by the enclosing design or testbench; `CPU_CLK_MULTIPLIER` does not instantiate a hardware clock divider. The FPGA scripts use a separate 312/156 MHz target pair with the same 2:1 ratio. Those are timing-analysis targets, not the default CMake simulation frequencies or a claim that every configuration meets timing.
+
 ## Module Inventory
 
-The following tables cover the production `Module` classes, composition wrappers, and verification frontends under `tribe_cpu`. Small packed payload structs and enums are described with their owning module rather than listed as separate hardware modules.
+The following tables cover production modules, C++ implementation layers, composition wrappers, and verification frontends under `tribe_cpu`. A cache layer inherited into its controller is not a separate RTL instance; RAM banks and other member modules are. Small payload structs and enums are described with their owner. Paths in these tables are relative to `tribe_cpu/`.
 
 ### Composition Modules
 
@@ -130,7 +144,8 @@ The following tables cover the production `Module` classes, composition wrappers
 | `ExecuteMem` | `ExecuteMem.h` | Issues loads/stores, handles split accesses, and sequences LR/SC/AMO operations. |
 | `WritebackMem` | `WritebackMem.h` | Matches cache responses, assembles split loads, and performs store-to-load forwarding. |
 | `Writeback` | `Writeback.h` | Selects and formats the value written to the integer register file. |
-| `File` | `common/File.h` | Two-read/two-write integer register file with same-cycle write forwarding and boot values for `a0`/`a1`. |
+| `File` | `common/File.h` | Integer register-file control and same-cycle write forwarding. |
+| `FileStorage` | `common/FileStorage.h` | Register-file memory, boot values, and additional SBI/debug register reads. |
 | `CSR` | `CSR.h` | Machine/supervisor CSR state, privilege transitions, exception entry, and trap return. |
 | `InterruptController` | `InterruptController.h` | Combines CLINT, PLIC, CSR enable, delegation, and privilege state into one interrupt request. |
 | `MMU_TLB` | `MMU_TLB.h` | Sv32 TLB, permission checks, direct physical window, and hardware page-table walker. |
@@ -159,6 +174,7 @@ Instruction semantics are supplied by `spec/Rv32i.h`, `Rv32ic.h`, `Rv32im.h`, `R
 | `L2CacheTimeoutOps` | `cache/l2/L2CacheTimeoutOps.h` | Operation-age and timeout predicates used by diagnostics/tests. |
 | `L2CachePortOps` | `cache/l2/L2CachePortOps.h` | Request-source priority and CPU wait helper policy. |
 | `L2CacheState` | `cache/l2/L2CacheState.h` | L2 interfaces, physical RAMs, FSM, request/response records, and replacement state. |
+| `L2CacheRamBank` | `cache/l2/L2CacheRamBank.h` | Synchronous single-port tag/data bank clocked by `l2_clock`. |
 | `L2CacheRequest` | `cache/l2/L2CacheRequest.h` | Arbitrates AXI, D, and I requests and captures a stable `CacheRequest`. |
 | `L2CacheMemory` | `cache/l2/L2CacheMemory.h` | Routes refill, eviction, and uncached transactions to AXI memory/device ports. |
 | `L2CacheTagData` | `cache/l2/L2CacheTagData.h` | Hit lookup, write merge, refill merge, eviction line, and read-beat datapaths. |
@@ -173,7 +189,7 @@ Instruction semantics are supplied by `spec/Rv32i.h`, `Rv32ic.h`, `Rv32im.h`, `R
 | --- | --- | --- |
 | `Axi4Ram` | `common/Axi4Ram.h` | AXI responder backed by simulation/checkpointable memory. |
 | `Axi4RegionMux` | `common/Axi4RegionMux.h` | Routes one uncached AXI region to multiple MMIO responders. |
-| `RAM` | `common/RAM.h` | Single-port synchronous-read RAM used by cache tag/data storage. |
+| `RAM` | `common/RAM.h` | Single-port synchronous-read RAM used by L1 tag/data storage on `clk`. |
 | `Memory` | `common/Memory.h` | Dual-port masked memory primitive with show-ahead or registered reads. |
 | `IOUART` | `devices/IOUART.h` | Minimal write-only UART-style output device for bare-metal tests. |
 | `NS16550A` | `devices/NS16550A.h` | 16550-compatible UART subset with RX buffering and PLIC interrupt. |
@@ -188,7 +204,7 @@ Instruction semantics are supplied by `spec/Rv32i.h`, `Rv32ic.h`, `Rv32im.h`, `R
 | `EthGigPCS` | `devices/net/ethgig/ethgig_pcs.h` | Bidirectional buffering between MAC and PHY byte streams. |
 | `EthGigPHY` | `devices/net/ethgig/ethgig_phy.h` | RGMII nibble conversion and fixed-link MDIO register behavior. |
 
-`common/Axi4.h` defines the grouped `Axi4Driver`, `Axi4Responder`, and `Axi4If` channel types used by every AXI module.
+`common/Axi4.h` defines `Axi4If` and the grouped `Axi4Driver`/`Axi4Responder` payloads. These implement the project's AXI-style subset, not every AXI4 signal: address/ID, valid/ready, write byte strobes, and read/write last are present; burst length/size/type and response error codes are not.
 
 ### Verification Modules
 
@@ -202,7 +218,7 @@ Instruction semantics are supplied by `spec/Rv32i.h`, `Rv32ic.h`, `Rv32im.h`, `R
 
 ## Main (Core)
 
-`Tribe` is a small in-order CPU with a fetch/decode path followed by execute and writeback pipeline state. The state array tracks Decode-to-Execute and Execute-to-Writeback state; instruction fetch is driven directly from `pc`, I-cache output, branch prediction, and MMU translation. The `State` structure carries decoded instruction control fields through the core.
+`Tribe` is a small in-order CPU with registered fetch, decoded control, execute, and memory/writeback state. The `State` structure carries instruction controls and operands; separate registers retain translation results, load completion, and CSR commit events.
 
 Top-level `Tribe` ports:
 
@@ -225,12 +241,16 @@ Top-level `Tribe` ports:
 | `time_hi_in` | `uint32_t` | High 32 bits of platform time for CSR/time reads, normally driven by CLINT. |
 | `external_irq_in` | `bool` | External interrupt input, normally driven by PLIC when interrupts are enabled. |
 | `sbi_*_out`, `sbi_*_in` | scalar ports | Local timer requests and multicore IPI/FENCE.I/SFENCE.VMA routing. |
+| `remote_fence_i_in`, `remote_sfence_vma_in` | `bool` | Multicore remote cache/translation fence requests. |
+| `atomic_request_out`, `atomic_data_request_out`, `atomic_complete_out`, `atomic_grant_in` | `bool` | Cluster AMO ownership handshake in builds with both `MULTICORE` and atomics enabled. |
 | `debug_core_out` through `debug_decode_out` | grouped debug structs | Coherent snapshots of core, MMU, cache, writeback, CSR, IRQ, register, branch, and decode state. |
 | `debug_sbi_out` | `TribeSbiDebug` | Grouped SBI request/handling snapshot. |
 | `perf_out` | `TribePerf` | Per-cycle performance/stall/cache debug snapshot. |
-| `debugen_in` | `bool` | C++ simulation debug print enable flag. |
+| `debugen_in` | plain `bool` member | C++ simulation debug print enable, not a generated RTL port. |
 
-The main combinational control in `Tribe` handles pipeline hazards, branch redirects, global memory wait, MMU page-table-walk arbitration, trap redirection, SBI timer emulation, I-cache/TLB invalidation, and late load forwarding. The DMMU and IMMU page-table walkers share the L2 data-side port with normal data-cache traffic; DMMU requests have priority over IMMU requests after normal data-cache reads/writes. The data MMU has a direct physical window for the IO region so MMIO is not translated by Sv32.
+The core handles hazards, redirects, memory waits, page-table-walk arbitration, SBI requests, invalidation, and load forwarding. Both walkers share `d_mem_out` with D-cache traffic. A walker acquires the registered `l2_ptw_owner_reg` only when D-cache has no outgoing request; DMMU wins over IMMU at acquisition. The owner retains the port until it withdraws its read, so a later request cannot steal an in-flight response. The data MMU has a direct physical window for IO.
+
+Most grouped debug ports are compiled under `ENABLE_MMU_TLB`; `debug_sbi_out` and `perf_out` are separate outputs. Their record definitions are in `TribeDebug.h` and `Tribe.h`. The cluster forwards core 0's snapshots, not a sum over all cores.
 
 `Tribe` itself does not contain L2, DRAM, or memory-mapped devices. It exposes two `L1MemIf` channels plus interrupt, timer, SBI, and invalidation ports. `TribeTest<CPU_CORES>` connects those channels to the shared L2 through CDCs and provides the external AXI boundary used by the simulation and SoC wrappers.
 
@@ -249,7 +269,7 @@ Ports:
 | `rs2_out` | `u<5>` | Decoded source register 2 index for register-file read. |
 | `state_out` | `State` | Decoded `State` carrying operands and control fields into execute. |
 
-`Decode` selects the active decoder specification from `Rv32im`, `Rv32ia`, and `Zicsr` according to build flags. It fills the pipeline `State`, attaches the current PC, marks validity from `instr_valid_in`, fetches register values, and handles the AUIPC PC operand special case. It is combinational and has no internal register state.
+`Decode` selects the active decoder specification from `Rv32im`, `Rv32ia`, and `Zicsr` according to build flags. It fills `State`, attaches the PC, marks validity, and handles the AUIPC PC operand. The module itself is combinational. In the current `Tribe` composition its register-value inputs are tied to zero: decoded controls cross `decode_state_reg` first, and the core attaches the register values afterward. Standalone users can still supply the two operand ports directly.
 
 ### Execute
 
@@ -258,13 +278,16 @@ Ports:
 | Port | Type | Description |
 | --- | --- | --- |
 | `state_in` | `State` | Execute-stage `State` after forwarding and trap redirection. |
-| `alu_result_out` | `uint32_t` | ALU result. For comparisons, upper result bits carry equality information used by branches. |
+| `multicycle_state_in` | `State` | Unmodified execute-stage instruction and operands identifying an iterative multiply/divide operation. |
+| `alu_result_out` | `uint32_t` | Integer ALU or completed multiply/divide result. |
+| `mem_addr_out` | `uint32_t` | Dedicated `rs1_val + imm` load/store address, independent of the ALU result mux. |
+| `multicycle_wait_out` | `bool` | Multiply/divide result is not yet available for the current instruction. |
 | `debug_alu_a_out` | `uint32_t` | Debug ALU operand A. |
 | `debug_alu_b_out` | `uint32_t` | Debug ALU operand B. |
 | `branch_taken_out` | `bool` | Branch/jump taken result. |
 | `branch_target_out` | `uint32_t` | Resolved branch or jump target. |
 
-`Execute` contains the ALU and branch decision logic. It supports integer arithmetic, shifts, comparisons, multiply/divide operations, address calculation for memory operations, and branch target calculation. Trap and return redirection are represented as branch-like state before this stage enters `Execute`.
+`Execute` separates ALU results, memory-address generation, and branch comparisons. Branches compare operands directly; they do not depend on upper bits of the ALU output. Multiply uses an iterative shift/add datapath, and divide/remainder uses iterative division. Result registers retain the instruction PC, opcode, and operands so a completed result cannot satisfy a different instruction. `multicycle_state_in` is kept separate from trap-rewritten `state_in` to avoid a wait/redirect feedback path.
 
 ### ExecuteMem
 
@@ -273,13 +296,15 @@ Ports:
 | Port | Type | Description |
 | --- | --- | --- |
 | `state_in` | `State` | Execute-stage `State` after forwarding/trap-return adjustments. |
-| `alu_result_in` | `uint32_t` | Effective address or ALU result from `Execute`. |
+| `alu_result_in` | `uint32_t` | Effective address, connected to `Execute.mem_addr_out` in Tribe. |
 | `dcache_read_valid_in` | `bool` | Atomic read response valid, when atomics are enabled. |
 | `dcache_read_addr_in` | `uint32_t` | Address tag returned with D-cache read data. |
 | `dcache_read_expected_addr_in` | `uint32_t` | Expected physical address for atomic read completion. |
 | `dcache_read_data_in` | `uint32_t` | D-cache read data used by AMO operations. |
 | `mem_stall_in` | `bool` | Holds issued memory request while D-cache/L2 cannot accept it. |
 | `hold_in` | `bool` | Holds request metadata while the pipeline waits for writeback. |
+| `transaction_owner_valid_in` | `bool` | Memory-stage owner remains valid; prevents reissuing a held request after retirement. |
+| `reservation_invalidate_in`, `reservation_invalidate_addr_in` | `bool`, `uint32_t` | Peer-store notification for LR/SC reservation invalidation, when atomics are enabled. |
 | `mem_write_out` | `bool` | Registered store request to D-cache. |
 | `mem_write_addr_out` | `uint32_t` | Store address to D-cache. |
 | `mem_write_data_out` | `uint32_t` | Store data to D-cache. |
@@ -332,14 +357,46 @@ Ports:
 | `dcache_write_addr_in` | `uint32_t` | Store address for forwarding history. |
 | `dcache_write_data_in` | `uint32_t` | Store data for forwarding history. |
 | `dcache_write_mask_in` | `uint8_t` | Store byte mask for forwarding history. |
-| `hold_in` | `bool` | Keeps pending load information while pipeline is stalled. |
+| `store_forward_enable_in` | `bool` | Enables forwarding for RAM accesses; the core disables it for IO addresses. |
+| `retire_in` | `bool` | Consumes the completed load owned by the current writeback instruction. |
 | `load_ready_out` | `bool` | Load result is available for register writeback and forwarding. |
 | `load_raw_out` | `uint32_t` | Raw load data before architectural sign/zero extension. |
 | `load_result_out` | `uint32_t` | Architecturally extended load value for late forwarding. |
 | `wb_mem_data_out` | `uint32_t` | Load data passed to `Writeback`. |
 | `wb_mem_data_hi_out` | `uint32_t` | High split-load word passed to `Writeback`. |
 
-`WritebackMem` is the one-cycle memory/writeback boundary. It captures D-cache responses, waits until both halves of a split load are available, assembles unaligned words, and performs short store-to-load forwarding. Forwarding is disabled for atomics so AMO semantics are not hidden by local store history.
+`WritebackMem` captures D-cache responses, waits for both halves of a split load, assembles unaligned words, and retains completed results until `retire_in`. This is not a fixed one-cycle load latency. The core registers result availability and transport completion separately before asserting retirement. Forwarding uses byte masks and a short store history; it is disabled for atomics and for addresses outside the RAM regions. `debug_load_*`, `debug_split_*`, and `debug_held_load_valid_out` expose response ownership to the grouped core debug output.
+
+### CSR
+
+`CSR` owns machine/supervisor status, trap vectors, exception PCs and causes, delegation, interrupt masks, and `satp`. Its inputs separate architectural updates from read, legality, and redirect calculations:
+
+| Ports | Purpose |
+| --- | --- |
+| `state_in`, `commit_in` | Registered retirement record and one-time commit event. |
+| `read_state_in` | Execute-stage instruction whose CSR value is read. |
+| `trap_check_state_in` | Instruction checked for a synchronous illegal-CSR trap. |
+| `legality_state_in`, `legality_out` | Decode-time legality check captured with decoded control. |
+| `redirect_state_in` | Instruction used to calculate the trap or xRET target independently of commit. |
+| `interrupt_valid_in`, `interrupt_cause_in`, `interrupt_to_supervisor_in` | Interrupt metadata accompanying the commit record. |
+| `redirect_interrupt_*_in` | Separate interrupt metadata for target selection. |
+| `reset_priv_in`, `hartid_in` | Initial privilege and architectural hart ID. |
+| `irq_pending_bits_in`, `software_irq_set_in` | Hardware pending bits and SBI software-interrupt request. |
+| `time_lo_in`, `time_hi_in` | Platform time supplied by CLINT. |
+| `read_data_out`, `write_pending_out` | CSR read result and outstanding serialized CSR write. |
+| `trap_vector_out`, `epc_out`, `illegal_trap_out` | Trap/xRET target selection and illegal-access indication. |
+| `mstatus_out`, `mie_out`, `mideleg_out`, `medeleg_out`, `mip_sw_out`, `priv_out`, `satp_out` | Current architectural state used by interrupts and translation. |
+| `mepc_out`, `mtvec_out`, `mcause_out`, `mtval_out`, `sepc_out`, `stvec_out`, `scause_out`, `stval_out` | Machine/supervisor trap state and debug visibility. |
+
+The core supplies `csr_commit_state_reg` with a separate `csr_commit_fire_reg` pulse. Holding a record during a stall therefore does not repeat its architectural side effects. CSR/system instructions wait for serialized updates before subsequent execution observes the new state.
+
+### File And FileStorage
+
+`common/File.h` implements two register reads, two writes, and write-to-read bypassing. `read_addr0_in`/`read_addr1_in` select source registers; each write has address, data, and enable inputs. Reset supplies `reset_x10_in` and `reset_x11_in` for the boot hart ID and DTB pointer. Additional outputs expose x1, x10, x11, x16, and x17 for debug and SBI handling. The core protects x0 through its read/write control.
+
+`FileStorage` is the child that owns the memory. Native C++ uses `memory<>`; the annotated `FileStoragePrimitive.sv` replacement uses distributed RAM with a validity bitmap and separate x10/x11 registers, avoiding a reset on the RAM array. Its second write is specifically wired to x11, as required by Tribe's SBI return path. This physical replacement is not a general arbitrary-address two-write-port RAM.
+
+Tribe instantiates `File<32,32,false>`: the primary write-first bypass is disabled because the core supplies its own operand forwarding. The independent second-write SBI bypass remains active.
 
 ## Peripheral
 
@@ -369,6 +426,10 @@ Ports:
 
 `L1Cache` is a small set-associative cache with 32-byte lines. It is instantiated twice: `icache` with ID 0 and `dcache` with ID 1. The line is stored in even/odd 16-bit RAM halves, then assembled into 32-bit words on reads and refills. The data L1 is write-through; it sends 32-bit stores directly to L2 and does not own dirty state.
 
+A read not served by the retained line follows `IDLE -> LOOKUP -> COMPARE -> SELECT -> ASSEMBLE -> DONE` on a hit. The controller captures synchronous tag RAM outputs in `tag_entries_reg`, records the hit and way in `L1LookupState`, captures the selected line halves in `L1SelectedLineState`, then forms `L1HeldResponse`. A miss enters `REFILL` after `SELECT`. Reads within a retained line can use `selected_line_hit_comb_func()` without repeating the RAM lookup.
+
+`L1RequestState` groups the request address and cacheability; `L1RefillState` groups the beat index, line halves, and requested-word data. Stores invalidate the local cached set instead of maintaining dirty L1 lines. Peer invalidation increments an eight-bit per-set generation without taking the tag RAM port away from unrelated traffic. A generation wrap triggers a physical tag-clear walk; a conflicting in-flight line request is discarded. Full invalidation also walks tags, while a branch flush discards the fetch request without clearing every tag.
+
 The implementation is split into geometry, state, request, refill, lookup, response, and controller layers, each with a focused native unit test. The L1 refill port width equals the selected L2 AXI width and may be smaller than the cache line. A miss refills a line over one or more `PORT_BITWIDTH` beats. For data reads that would cross the final word of a cache line, the CPU split logic handles the access before L2 sees a cacheable fill. MMIO/direct reads bypass L1 caching. Cached RAM direct reads stay aligned to the containing L2 beat so dirty data already present in L2 is used instead of stale backing RAM.
 
 ### L2Cache
@@ -387,11 +448,39 @@ Ports:
 | `axi_out` | `Axi4If<MEM_ADDR_BITS, 4, PORT_BITWIDTH>[MEM_PORTS]` | Master ports to RAM/device regions. |
 | `dma_line_*_in`, `dma_line_ready_out` | full-line sideband | Optional coherent cache-line allocation path with byte keep mask. |
 
-`L2Cache` is a configurable set-associative shared cache with 32-byte lines and a configurable memory beat width; the default Tribe configuration is four-way and 64 KiB. It arbitrates coherent external AXI slave requests, each core's data request, and each core's instruction request onto one L2 tag/data RAM. External AXI masters can read cached data written by a CPU, and CPUs can read data written through an external AXI slave port.
+`L2Cache` is a configurable set-associative shared cache with 32-byte lines and a configurable memory beat width; the default Tribe configuration is four-way and 64 KiB. One controller arbitrates requests onto banked tag/data storage. External AXI writes take priority over external AXI reads, followed by CPU requests. CPU pairs are selected round-robin, with D before I within a pair. External AXI masters can read cached CPU data, and CPUs can read data written through an external AXI slave port. CPU round-robin does not override continuous external AXI traffic.
 
-The request, memory, tag/data, wait, and controller layers operate only on `l2_clock`. A selected request is captured in `CacheRequest`; completion is captured in a per-endpoint `CacheResponse`. CPU wait is released only when the registered response matches the original port, address, and operation, so an L1 request can safely remain asserted across multiple faster `clk` edges. Round-robin CPU selection prevents a continuously active low-index core from starving another core.
+The request, memory, tag/data, wait, and controller layers operate only on `l2_clock`. `request_pipe_reg` captures `L2ActiveRequestComb`, including the complete `CacheRequest`; the following consume edge installs `req_reg` and issues the synchronous RAM read. `ST_LOOKUP_CAPTURE` snapshots RAM outputs, `ST_LOOKUP` registers hit/victim/write-merge results, and `ST_LOOKUP_RESULT` completes a hit or starts eviction/refill. DMA allocation can delay the RAM read through `ST_READ`.
+
+`CacheResponse` holds completion identity and data in a fixed table with eight AXI slots and eight CPU-pair slots. CPU wait is released only for a matching I/D selection, address, and operation; AXI B/R responses retain their IDs and honor ready. This is a staged, shared controller, not a one-request-per-cycle pipeline. CDC synchronization, misses, dirty eviction, and MMIO add further latency.
+
+Refill data is first captured in `refill_data_reg`; `ST_AXI_R_WRITE` merges and writes it on the next L2 cycle. Uncached reads use the corresponding `ST_IO_R_RESULT` response stage. Grouped records also cover request geometry, selected hit/victim, write-word pairs, MMIO write payloads, AXI routing, and `L2RamControlsComb`, so related decisions use the same request state.
 
 L2 memory ports are split into contiguous regions. Address selection subtracts `memory_base_in`, chooses a region by cumulative region size, and then forwards a local byte address to the selected AXI master port. Cached regions allocate and evict dirty cache lines through AXI. Uncached regions bypass the tag/data RAM and issue single-beat MMIO reads and writes, so device regions do not infer cache storage.
+
+The optional `dma_line_*` port allocates a whole line with a byte keep mask on an L2 edge. It is intended for reserved packet storage: the caller owns the backing-store policy for any dirty line replaced by this path. It is not interchangeable with ordinary coherent AXI DMA. Both `TestTribe` and `System` currently tie it inactive. In multicore use, `TribeTest` transfers accepted allocation addresses back to the CPU domain through an acknowledged invalidation mailbox and blocks another allocation until that mailbox is available.
+
+### L2CacheRamBank
+
+`L2CacheRamBank<WIDTH, DEPTH>` provides `addr_in`, `read_in`, `write_in`, `write_data_in`, and registered `read_data_out`. Both native storage and `L2CacheRamBankPrimitive.sv` implement one synchronous read/write address on `l2_clock`; a simultaneous read/write returns the old word. Reset clears the output register, not the memory array. The L2 controller initializes tags separately.
+
+The controller declares 32 data-bank leaves and four tag-bank leaves, with inactive leaves tied off for synthesis to remove. Active data banks are 32 bits wide, one per word per way; tag widths are rounded to bytes. Current bounds include at most four ways, 32 active data banks, 256-bit AXI data, eight memory ports, and eight CPU pairs. The memory-port count must be a power of two. Bank depth is the number of sets, `CACHE_SIZE / CACHE_LINE_SIZE / WAYS`.
+
+### L1 And AXI Clock Bridges
+
+`L1MemIf<PORT_BITWIDTH>` contains request fields `read_in`, `write_in`, `addr_in`, `write_data_in`, `write_mask_in`, and `cache_disable_in`; the response is `read_data_out` plus `wait_out`. Stores carry a 32-bit value and byte mask even when the refill bus is wider. The requester holds its operation and payload until wait goes low on its clock edge. This is a completion protocol, not separate request-ready and response-valid channels.
+
+`L1MemFastToSlowCdc` exposes `fast_in` and `slow_out`. It captures one request, synchronizes a request toggle, holds the slow request until completion, and returns registered data with a synchronized response toggle. A flush may withdraw a request; `request_orphaned_fast_reg` ensures its eventual response is discarded rather than consumed by a new request. The next request is sampled after the previous response has been consumed.
+
+`Axi4FastToSlowCdc` exposes `fast_in`/`slow_out`; `Axi4SlowToFastCdc` exposes `slow_in`/`fast_out`. AW, W, AR, B, and R use separate held payloads and toggle acknowledgements. The fast-to-slow bridge also tracks outstanding reads/writes and suppresses replay of an unchanged, continuously asserted address request. These bridges buffer transactions; they do not turn the L2 into a multi-outstanding burst engine.
+
+### Cluster Coherence And SBI
+
+`TribeTest<CPU_CORES>` supports one to eight core instances. With `MULTICORE`, per-core CLINT/PLIC lines replace the hart-0 scalar inputs, and per-core SBI timer outputs reach CLINT. Boot hart IDs are `boot_hartid_in + core_index`. SBI hart masks route IPIs, remote FENCE.I, and remote SFENCE.VMA to selected cores.
+
+`L1PeerStoreState` delays each completed CPU store into a snoop event. `L1PeerInvalidateComb` chooses an address for each peer or requests full invalidation if notifications collide. The multicore atomic arbiter grants one owner for the complete AMO transaction and releases ownership only when the memory-stage operation can retire. Ordinary data requests already in flight must drain before a new atomic owner blocks other data traffic.
+
+Ordinary SD/Ethernet AXI DMA uses the wrappers' registered external-invalidation requests; the optional full-line allocation path has the separate mailbox described above. These are distinct mechanisms, not an automatic private-L1 snoop for every possible external AXI write.
 
 ### BranchPredictor
 
@@ -446,6 +535,8 @@ Ports:
 | `execute_in` | `bool` | Instruction-fetch translation request. |
 | `satp_in` | `uint32_t` | Current `satp`; Sv32 is active when MODE is 1. |
 | `priv_in` | `u<2>` | Current privilege mode. |
+| `sum_in` | `bool` | Allows supervisor data access to user pages; does not permit supervisor instruction fetch from them. |
+| `mxr_in` | `bool` | Allows loads from executable pages even when their read bit is clear. |
 | `direct_base_in` | `uint32_t` | Base of direct physical bypass window. |
 | `direct_size_in` | `uint32_t` | Size of direct physical bypass window. |
 | `fill_in` | `bool` | External/manual TLB fill request. |
@@ -467,9 +558,15 @@ Ports:
 | `debug_last_pte_out` | `uint32_t` | Last PTE captured by the walker. |
 | `debug_last_addr_out` | `uint32_t` | Last PTE address captured by the walker. |
 
-`MMU_TLB` implements a small Sv32 TLB with a hardware page-table walker. There are separate instances for instruction fetch and data access. Translation is enabled only when `satp.MODE == 1` and current privilege is not M-mode. A direct mapping window can bypass translation; Tribe uses it for DMMU access to MMIO so device addresses remain physical under an OS.
+`MMU_TLB` implements a small Sv32 TLB with a hardware page-table walker. There are separate instances for instruction fetch and data access. Entries include a `satp` tag so an address-space switch cannot match a translation from another root. Translation is enabled only when `satp.MODE == 1` and current privilege is not M-mode. A direct mapping window can bypass translation; Tribe uses it for DMMU access to MMIO so device addresses remain physical under an OS.
 
-The walker reads the level-1 PTE from the `satp` root page and, when needed, reads the level-0 PTE. It supports level-1 superpages and level-0 pages, checks valid/write/read combinations, checks A/D/R/W/X/U permissions, and reports instruction/load/store page faults through the main CSR/trap path. `SFENCE.VMA` clears cached translations.
+The walker reads the level-1 PTE from the `satp` root page and, when needed, reads the level-0 PTE. It supports level-1 superpages and level-0 pages, checks valid/write/read combinations and A/D/R/W/X/U permissions, and applies SUM/MXR. It reports faults rather than writing missing A/D bits back to memory. `SFENCE.VMA` clears cached translations. Tribe instantiates eight entries per MMU and registers translation results before driving L1 or trap handling.
+
+### RAM And Memory
+
+`common/RAM.h` is the L1 single-port storage leaf. `addr_in` selects a row; `wr_in` writes `data_in`, and `rd_in` captures `q_out` on `clk`. Reset clears the output register without clearing the array. Its annotated `RAMPrimitive.sv` replacement requests block RAM; the separate `RAMReplacement.sv` alternative chooses distributed storage for narrow rows. `id_in` is a diagnostic member and is unused by the physical RAM implementation.
+
+`common/Memory.h` is a reusable dual-port byte-masked memory, not the current L2 bank implementation. Each port has `addr0_in`/`addr1_in`, `write*_in`, `write*_data_in`, `write*_mask_in`, and `read*_data_out`. `SHOWAHEAD=true` returns the addressed word combinationally; otherwise outputs are registered. Although `read0_in` and `read1_in` exist, the current implementation does not gate reads with them. Both ports use `clk`, and `_strobe()` applies pending memory writes.
 
 ### Axi4RegionMux
 
@@ -492,7 +589,7 @@ Ports:
 | --- | --- | --- |
 | `axi_in` | `Axi4If<ADDR_WIDTH, ID_WIDTH, DATA_WIDTH>` | AXI access to RAM storage. |
 
-`Axi4Ram` is the common testbench and SoC RAM responder. It accepts single-beat AXI reads and writes, stores data at the configured beat width, and supports checkpoint serialization through its `_strobe(FILE*)` path in native C++ tests. The default Tribe executable wrapper uses three RAM instances; the SoC wrapper keeps two DRAMs in `SystemTest` and places the third memory region inside `System`.
+`Axi4Ram` is the common testbench and SoC RAM responder. It owns a `Memory<DATA_WIDTH / 8, DEPTH, true>` child, accepts single-beat AXI reads and writes, and applies `wstrb_in` as a byte mask. Read address/ID and write address/ID are registered; W is accepted after AW, and B/R valid remain asserted until ready. Native `_strobe(FILE*)` serializes storage and protocol state. The default Tribe executable wrapper uses three RAM instances; the SoC wrapper keeps two DRAMs in `SystemTest` and places the third memory region inside `System`.
 
 ## SoC
 
@@ -534,6 +631,8 @@ Ports:
 
 The SoC memory map mirrors the default Tribe executable wrapper for CPU-visible RAM: two external DRAM regions, one internal RAM region, and one uncached IO region. Inside `System` IO, `Axi4RegionMux` maps UART at offset `0x0`, CLINT at offset `0x100`, Accelerator at offset `0xC100`, SD controller at offset `0xD100`, and PLIC at offset `0x10000`. PLIC source 1 is driven by the NS16550A UART IRQ and source 2 is driven by the SD controller IRQ. The native `TestTribe` wrapper uses a six-device IO mux and adds ethgig at offset `0xE000`; its PLIC also carries Ethernet interrupt sources.
 
+In `TestTribe`, coherent AXI input 0 belongs to Accelerator, input 1 to SD, and input 2 to Ethernet DMA; input 3 is idle. Ethernet TX/RX IRQs are ORed onto PLIC source 3. `System` uses only coherent inputs 0 and 1. Device offsets above are relative to the IO region, not absolute physical addresses; for a Linux map with IO at `0x82000000`, UART is at `0x82000000` and PLIC at `0x82010000`.
+
 ## Devices
 
 Device modules live in `tribe_cpu/devices`. They are memory-mapped AXI responders; devices with DMA (`Accelerator`, `SDController`, and `EthGigDMA`) also own AXI master ports that connect to L2 coherent slave ports. In the default Tribe simulation wrapper and in `System`, devices are placed behind an IO-space region mux connected to the uncached L2 IO region.
@@ -561,10 +660,10 @@ Ports:
 | `uart_data_out` | `uint8_t` | Transmitted byte. |
 | `uart_rx_valid_in` | `bool` | External RX byte valid. |
 | `uart_rx_data_in` | `uint8_t` | External RX byte. |
-| `uart_rx_ready_out` | `bool` | Single-byte RX buffer is empty and can accept a byte. |
+| `uart_rx_ready_out` | `bool` | RX queue has room for another byte. |
 | `irq_out` | `bool` | UART interrupt request, used as PLIC source 1 in the wrappers. |
 
-`NS16550A` models enough of a 16550-compatible UART for firmware and Linux console probing. It implements the usual register offsets for RBR/THR/DLL, IER/DLM, IIR/FCR, LCR, MCR, LSR, MSR, and SCR. Transmit is modeled as always empty and ready by setting `LSR.THRE` and `LSR.TEMT`; THR-empty interrupts are intentionally not generated, so Linux can use polling for TX without interrupt storms. Receive uses a one-byte buffer, sets `LSR.DR`, returns `IIR=0x04` when RX interrupt enable is set, clears RBR on read, and asserts `irq_out` when MCR.OUT2 and IER.RDI are enabled. DLAB selects divisor latch registers at offsets 0 and 1.
+`NS16550A` models enough of a 16550-compatible UART for firmware and Linux console probing. It implements the usual register offsets for RBR/THR/DLL, IER/DLM, IIR/FCR, LCR, MCR, LSR, MSR, and SCR. Transmit is modeled as always empty and ready by setting `LSR.THRE` and `LSR.TEMT`; THR-empty interrupts are intentionally not generated. RX holds the current RBR byte plus a 15-byte queue. Reading RBR advances to the next queued byte; `uart_rx_ready_out` deasserts when that queue is full. Available RX data sets `LSR.DR`, selects `IIR=0x04` with RX interrupts enabled, and asserts `irq_out` when MCR.OUT2 and IER.RDI are set. DLAB selects divisor latch registers at offsets 0 and 1.
 
 ### CLINT
 
@@ -578,7 +677,7 @@ Ports:
 | `set_mtimecmp_hi_in` | `uint32_t` | High 32 bits for direct `mtimecmp` update. |
 | `msip_out` | `bool` | Machine software interrupt pending. |
 | `mtip_out` | `bool` | Machine timer interrupt pending. |
-| `set_mtimecmp_per_hart_in` | arrays | Multicore SBI timer updates, one compare value per hart. |
+| `set_mtimecmp_per_hart_in`, `set_mtimecmp_lo_per_hart_in`, `set_mtimecmp_hi_per_hart_in` | arrays | Multicore SBI timer-update enable and low/high compare value per hart. |
 | `msip_per_hart_out`, `mtip_per_hart_out` | `bool[HART_COUNT]` | Multicore software/timer interrupt lines. |
 | `debug_mtime_lo_out` | `uint32_t` | Low 32 bits of current `mtime`, also forwarded to `Tribe.time_lo_in`. |
 | `debug_mtime_hi_out` | `uint32_t` | High 32 bits of current `mtime`, also forwarded to `Tribe.time_hi_in`. |
@@ -599,6 +698,8 @@ Ports:
 | `external_irq_per_hart_out` | `bool[HART_COUNT]` | Multicore external interrupt line for each PLIC context. |
 
 `PLIC` is a compact platform interrupt controller with one context per configured hart. It implements source priority registers, a shared pending register, per-context enable and threshold registers, and claim/complete registers at standard PLIC-style offsets. Device source levels are latched by gateway state so a request remains claimable until a CPU reads the claim register. Writing the claimed source ID to the complete register releases the gateway, allowing a still-asserted device level to pend again later. In the current wrappers, source 1 is connected to `NS16550A.irq_out`, source 2 is connected to `SDController.irq_out`, and native `TestTribe` also connects Ethernet IRQ sources. `external_irq_out` is the hart-0 compatibility output; multicore wrappers use `external_irq_per_hart_out`.
+
+The current claim selection chooses the lowest enabled pending source ID whose priority exceeds the context threshold. It does not sort eligible sources by their relative priority values.
 
 ### Accelerator
 
@@ -628,7 +729,7 @@ Ports:
 | `sd_rsp_last_in` | `bool` | Last byte of the response/data frame. |
 | `sd_rsp_ready_out` | `bool` | Controller can accept another response byte. |
 | `irq_out` | `bool` | Done interrupt when enabled and pending. |
-| `dma_write_complete_out` | `bool` | Pulse/debug indication that a DMA write-to-card path completed. |
+| `dma_write_complete_out` | `bool` | Pulse after a card-to-memory DMA write response, used for cache invalidation. |
 | `debug_status_out` | `uint32_t` | Current synthesized SD status register. |
 | `debug_state_out` | `uint32_t` | Current SD controller state. |
 | `debug_count_out` | `uint32_t` | Current byte counter. |
@@ -640,7 +741,7 @@ PIO mode moves payload bytes through `TXDATA` and `RXDATA`. DMA mode uses `dma_o
 
 ### SDPhysical, SDFifo, and SDCardVerif
 
-`SDPhysical` and `SDFifo` are small SD-layer helpers under `tribe_cpu/devices/sd`. `SDPhysical` handles the byte-level command/response stream between controller logic and card-facing ports, while `SDFifo` provides small byte FIFOs used by SD tests and layering. `SDTypes.h` is the shared register, status, control, IRQ, and command constant header.
+`SDPhysical` and `SDFifo` are standalone helpers under `tribe_cpu/devices/sd`, not child modules instantiated by the current `SDController`. `SDPhysical` buffers one outgoing and one incoming byte with valid/ready/last handshakes between `tx_*`/`rx_*` and `sd_cmd_*`/`sd_rsp_*`. It does not implement a physical SD pin controller. `SDFifo<DEPTH>` has `clear_in`, `push_in`, `push_data_in`, and `pop_in`, with `full_out`, `empty_out`, `valid_out`, `data_out`, and `count_out`. `SDTypes.h` defines shared register, status, control, IRQ, and command constants; `sd_io.h` supplies software MMIO helpers.
 
 `tribe_cpu/verif/SDCardVerif.h` provides a C++ SD card verification model plus `SDCardVerifFrontend`, an RTL-facing wrapper that connects to `SDController` physical ports. The verification model stores a byte vector, can load/save an SD image file, supports checkpointing, and responds to the controller's `CMD17`/`CMD24` frames. The native Linux wrapper uses this model for `TRIBE_LINUX_SD_IMAGE` and can override or restore SD image state across checkpoints.
 
@@ -701,7 +802,7 @@ Ports:
 | `tx_bytes_out` | `uint32_t` | Transmitted payload byte counter. |
 | `rx_bytes_out` | `uint32_t` | Received payload byte counter. |
 
-`EthGigMAC` builds and checks Ethernet framing around DMA payload streams. TX inserts seven preamble bytes, SFD, payload, minimum-frame padding to 60 payload bytes, CRC/FCS, and inter-packet gap. RX seeks preamble/SFD, collects a frame, checks the Ethernet CRC residue, filters by broadcast/local MAC/promiscuous mode and optional IPv4 subnet, strips FCS, and emits only payload bytes to DMA.
+`EthGigMAC` builds and checks Ethernet framing around DMA byte streams. The DMA supplies the Ethernet frame including its MAC header. TX adds seven preamble bytes, SFD, padding to a minimum of 60 frame bytes before FCS, CRC/FCS, and inter-packet gap. RX seeks preamble/SFD, checks the Ethernet CRC residue, filters by broadcast/local MAC/promiscuous mode and optional IPv4 subnet, strips FCS, and emits the frame bytes to DMA.
 
 ### EthGigPCS
 
@@ -756,15 +857,29 @@ Ports:
 
 `EthGigPHY` converts bytes into low/high RGMII nibbles and reconstructs RX bytes from nibbles. It also implements a small MDIO register file and management state machine sufficient for driver probing and fixed 1G link behavior in simulation.
 
+This model advances nibbles on the primary simulation clock and carries an explicit `rgmii_*_last` marker. These are verification-oriented media signals, not a board-level DDR RGMII clock/pin implementation. `EthGigMAC`, PCS, PHY, and DMA all use the primary clock in the current platform.
+
 ### RGMIIVerif and ethgig_tap
 
 `tribe_cpu/verif/RGMIIVerif.h` contains a C++ packet-level RGMII verification model and `RGMIIVerifFrontend`, an RTL-facing module with RGMII nibble ports. Tests can push RX packets into the model and pop packets transmitted by the DUT. The native Linux wrapper can also connect the RGMII verification link to a host TAP process through `TRIBE_LINUX_ETH_TAP_SOCKET`.
 
 `tribe_cpu/linux/net/ethgig_tap.cpp` is the host-side bridge. It creates or uses a TAP interface, exchanges packet frames over a Unix-domain socket, and lets Linux running inside Tribe communicate with the host network namespace as `eth0`. The helper script under `tribe_cpu/linux/net` configures the TAP side; the simulator side connects by passing `TRIBE_LINUX_ETH_TAP_SOCKET=/tmp/tribe-ethgig.sock` to `run_linux_probe.sh`.
 
+## FPGA RTL And Timing
+
+`tribe_cpu/fpga/generate_tribe_rtl.sh` generates a 256-bit multicore cluster for the 312/156 MHz clock pair. Its `full` profile enables atomics, interrupts, and MMU/TLBs; `fmax-base` disables those three features while retaining the base CPU. The script records source revision, converter hash, feature values, and conversion command in `rtl_manifest.txt`. A timing result for `fmax-base` is not a result for the full Linux-capable configuration.
+
+The handwritten storage replacements are `common/FileStoragePrimitive.sv`, `common/RAMPrimitive.sv`, and `cache/l2/L2CacheRamBankPrimitive.sv`. Their C++ classes select them through `CPPHDL_REPLACEMENT_FILE`. Cache policy, arbitration, and CPU control remain C++-generated logic; these files specify physical storage shapes. `common/RAMReplacement.sv` is an additional RAM alternative in the tree, not the file named by `RAM.h`.
+
+`ExecuteTimingTop` in `fpga/execute_timing_top.sv` is an analysis-only RTL wrapper that registers Execute inputs and outputs. It is not instantiated in Tribe. `analyze_execute_312.tcl`, `analyze_cpu_312.tcl`, `analyze_l1_312.tcl`, and `analyze_l2_156.tcl` provide block-level timing runs; `run_tribe_timing.tcl` and `implement_tribe_312_156.tcl` cover the cluster. Constraint and loop checks are in `check_tribe_constraints.tcl` and `check_tribe_loops.tcl`; report scripts inspect implementation checkpoints. These Vivado scripts are separate from CTest.
+
+`tribe_312_156_constraints.xdc` declares phase-aligned clocks for out-of-context analysis, marks first-stage synchronizer inputs as false paths, and bounds mailbox payload delays between domains. It deliberately does not declare the entire clock pair asynchronous. A board-level design must supply the actual PLL/MMCM clock relationship and board-specific constraints. See [the timing analysis notes](../tribe_cpu/fpga/TRIBE_TIMING_ANALYSIS.md) for recorded experiments; regenerate RTL and rerun implementation when evaluating current timing.
+
 ## Tests
 
-All tests are registered when CMake is configured with `BUILD_TESTING=ON` (the default when the top-level project includes CTest). CTest names are stable; their numeric IDs are not. Tests that need a RISC-V compiler return CTest skip code 77 when `riscv32-unknown-elf-gcc` and `g++` are unavailable. Set `RISCV_HOME` to the toolchain root or place the tools in `PATH`; the bare-metal build helper additionally probes `RISCV` and `$HOME/riscv`.
+Tribe tests are registered with **both** `CPPHDL_BUILD_TRIBE=ON` and `BUILD_TESTING=ON`. `CPPHDL_BUILD_TRIBE` defaults to `OFF`; `CPPHDL_BUILD_TESTS` controls the separate top-level converter/library regressions. CTest names are stable; numeric IDs change as tests are added.
+
+The platform and ISA tests run through `run_if_riscv_toolchain.sh`, which returns skip code 77 when the RISC-V GCC/G++ tools are unavailable. It searches `RISCV_HOME`, `PATH`, `RISCV`, and `$HOME/riscv`. Layer tests and `scripts_RiscvArchConfig` do not use that wrapper. ISA runners also need their reference tools, upstream checkouts, and Python dependencies; inspect `ctest -V` for the actual skip or failure reason.
 
 ### Decode And Cache Layer Tests
 
@@ -775,10 +890,9 @@ All tests are registered when CMake is configured with `BUILD_TESTING=ON` (the d
 | `cache_l1_L1CacheState_test` | L1 state records, defaults, and storage ownership. |
 | `cache_l1_L1CacheRequest_test` | Input capture and grouped memory-driver construction. |
 | `cache_l1_L1CacheRefill_test` | Multi-beat refill accumulation and word assembly. |
-| `cache_l1_L1CacheLookup_test` | Associative tag lookup and selected-way data. |
-| `cache_l1_L1CacheResponse_test` | Held responses, busy, and performance output grouping. |
-| `cache_l1_L1CacheCoherence_test` | Full and targeted peer invalidation behavior. |
-| `cache_l1_L1Cache_test` | Integrated layered L1 controller behavior. |
+| `cache_l1_L1CacheLookup_test` | Tag validity and global/per-set generation matching. |
+| `cache_l1_L1CacheResponse_test` | Held responses and busy-state classification. |
+| `cache_l1_L1Cache_test` | Controller reset and tag-initialization completion. |
 | `cache_l2_L2CacheGeometry_test` | L2 address decomposition and crossing predicates. |
 | `cache_l2_L2CacheByteOps_test` | Masked/unaligned store and read helpers. |
 | `cache_l2_L2CacheRegionRouter_test` | Contiguous memory-region routing and uncached flags. |
@@ -787,9 +901,10 @@ All tests are registered when CMake is configured with `BUILD_TESTING=ON` (the d
 | `cache_l2_L2CacheTimeoutOps_test` | Progress-age and timeout predicates. |
 | `cache_l2_L2CachePortOps_test` | Request priority and CPU wait policy. |
 | `cache_l2_L2CachePipeline_test` | Registered request/response pipeline records. |
-| `cache_l2_L2Cache_test` | Integrated layered L2 controller behavior. |
+| `cache_l2_L2Cache_test` | Geometry exports, inherited helpers, and cross-layer consistency. |
+| `scripts_RiscvArchConfig` | Generated architecture-test configuration and ISA/extension selection. |
 
-These focused layer tests are native C++ unit tests. End-to-end `L1Cache_test` and `L2Cache_test` below additionally exercise generated RTL and Verilator.
+The cache-layer tests are native C++ unit tests; the configuration regression is Python. End-to-end `L1Cache_test` and `L2Cache_test` below additionally exercise generated RTL and Verilator. Peer-invalidation regressions are included in the end-to-end L1 suite. `L2CacheTestRuntime.cpp` is linked into the L2 layer tests to supply shared simulation runtime state, including `_system_clock`.
 
 ### Module And Platform Tests
 
@@ -810,11 +925,11 @@ These focused layer tests are native C++ unit tests. End-to-end `L1Cache_test` a
 | `L2Cache_test` | One CPU I/D pair, divided clock, AXI coherence, refill, eviction, MMIO, and crossings. | C++ and `_verilator` |
 | `L2CacheMulti_test` | Same L2 suite with `CPUS_PER_L2_CACHE` I/D pairs and arbitration. | C++ and `_verilator` |
 | `Linux_test` | Linux image/DTB/initramfs preparation and simulator build smoke. | C++ prepare path and Verilator build-only smoke |
-| `MMU_TLB_Test` | Direct Sv32 translation/walk/fault tests and CPU software integration. | C++ and `_verilator` |
+| `MMU_TLB_Test` | Native direct Sv32 tests and CPU integration; the CTest Verilator variant uses `--direct-verilator-only`. | C++ and `_verilator` |
 | `Multicore_test` | Four-core boot, peer invalidation, barriers, SBI routing, and AMO ownership. | C++ and `_verilator` |
 | `NS16550A_test` | UART register semantics, RX/TX, interrupt behavior, and CPU integration. | C++ and `_verilator` |
 | `PLIC_test` | Priority, pending, enable, threshold, gateway, and claim/complete behavior. | C++ and `_verilator` |
-| `Perf_test` | Linux-like workload correctness plus performance-regression limits. | C++ and `_verilator`, serial |
+| `Perf_test` | Actual early Linux boot to a UART milestone, cycle/stall/progress and host-time checks. | C++ and `_verilator`, serial |
 | `SD_test` | SD command/data stream, PIO, DMA, descriptors, IRQ, and card model. | C++ and `_verilator` |
 
 ### ISA And Width Matrices
@@ -832,11 +947,18 @@ The same software suites run against `tribe64`, `tribe128`, and `tribe256`, and 
 | `SoC{64,128,256}_riscv_arch_test[_verilator]` | Architectural tests through the `System` wrapper. |
 | `SoC{64,128,256}_riscv_dv[_verilator]` | Generated instruction tests through the `System` wrapper. |
 
-The converter/build targets are `tribe64`, `tribe128`, `tribe256`, their `*_multicore` variants, and `SoC64`, `SoC128`, `SoC256`. Every generated Tribe/System model is converted with both declared clocks and the correct L2 bus width.
+The converter/build targets are `tribe64`, `tribe128`, `tribe256`, their `*_multicore` variants, and `SoC64`, `SoC128`, `SoC256`. Every generated Tribe/System model is converted with both declared clocks and the correct L2 bus width. These ISA matrices remain single-core; `Multicore_test` is separate. The default `riscv-tests` patterns select RV32UI/UA/UM and compressed `rv32uc-p-rvc`, excluding `rv32ui-p-ma_data`; registration of a suite does not mean every upstream test is selected.
+
+`Perf_test` requires `tribe_cpu/linux/vmlinux`, `config32.initramfs.dtb`, and `initramfs.cpio`; it skips with code 77 if any is missing. It runs a 64-bit-bus, single-core Linux slice until `SBI RFENCE extension detected`, with a seven-million-cycle limit. This is neither a full Linux boot test nor a synthesis timing check. Its baseline and tolerances live in `tests/Perf_test.cpp`.
 
 ### Running Tests
 
 ```bash
+# From the repository root; use the compiler/toolchain setup in README.md.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCPPHDL_BUILD_TRIBE=ON -DBUILD_TESTING=ON -DCPPHDL_BUILD_TESTS=ON
+cmake --build build -j 8
+
 # List exactly what the current build registered.
 ctest --test-dir build -N
 
