@@ -20,12 +20,12 @@ for mode in --optimize-combs --optimize-combs-l1; do
         "$source_dir/ProjectedCombSeed.cc" -- \
         -w -I"$source_dir" -I"$include_dir"
 
-    if search_q 'n1\.decoded_(op|result)_comb\s*=' "$build_dir"/*.cpp; then
-        printf '%s retained a duplicate projected comb evaluator\n' "$mode" >&2
+    if search_q 'n1\.decoded_comb\s*=' "$build_dir"/*.cpp; then
+        printf '%s widened a projected read to the whole aggregate\n' "$mode" >&2
         exit 1
     fi
-    search_q 'n1\.decoded_comb\s*=' "$build_dir"/*.cpp || {
-        printf '%s did not schedule the aggregate comb evaluator\n' "$mode" >&2
+    search_q 'n1\.decoded_op_comb\s*=' "$build_dir"/*.cpp || {
+        printf '%s did not retain the field comb evaluator\n' "$mode" >&2
         exit 1
     }
     # A repeated pure comb is one graph value. Once root inputs are recognized

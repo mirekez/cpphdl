@@ -17,6 +17,7 @@ public:
     _PORT(bool) tx_valid_in;
     _PORT(u<8>) tx_data_in;
     _PORT(bool) tx_last_in;
+    _PORT(bool) tx_idle_out = _ASSIGN(tx_state_reg == TX_IDLE && tx_count_reg == 0 && !pcs_tx_valid_reg);
     _PORT(bool) tx_ready_out = _ASSIGN(tx_count_reg != FIFO_DEPTH);
 
     _PORT(bool) rx_valid_out = _ASSIGN(rx_count_reg != 0);
@@ -32,7 +33,7 @@ public:
     _PORT(bool) pcs_rx_valid_in;
     _PORT(u<8>) pcs_rx_data_in;
     _PORT(bool) pcs_rx_last_in;
-    _PORT(bool) pcs_rx_ready_out = _ASSIGN(rx_state_reg != RX_COPY && rx_frame_count_reg != FIFO_DEPTH);
+    _PORT(bool) pcs_rx_ready_out = _ASSIGN(rx_state_reg != RX_COPY);
 
     _PORT(uint32_t) tx_frames_out = _ASSIGN_REG(tx_frames_reg);
     _PORT(uint32_t) rx_frames_out = _ASSIGN_REG(rx_frames_reg);
@@ -86,6 +87,7 @@ private:
     static constexpr uint32_t TX_FCS = 4;
     static constexpr uint32_t TX_IPG = 5;
 
+    static constexpr uint32_t RX_DROP = 3;
     static constexpr uint32_t RX_SEEK = 0;
     static constexpr uint32_t RX_PAYLOAD = 1;
     static constexpr uint32_t RX_COPY = 2;
@@ -341,6 +343,13 @@ public:
                     rx_preamble_count_reg._next = 0;
                 }
             }
+            else if (rx_state_reg == RX_DROP) {
+                if (pcs_rx_last_in()) {
+                    rx_state_reg._next = RX_SEEK;
+                    rx_frame_count_reg._next = 0;
+                    rx_preamble_count_reg._next = 0;
+                }
+            }
             else if (rx_state_reg == RX_PAYLOAD) {
                 next_count = (uint32_t)rx_frame_count_reg + 1u;
                 next_crc = crc32_next(rx_crc_reg, rx_byte);
@@ -348,6 +357,12 @@ public:
                 rx_frame_count_reg._next = next_count;
                 rx_crc_reg._next = next_crc;
                 rx_frame_done = pcs_rx_last_in();
+                if (next_count == FIFO_DEPTH && !rx_frame_done) {
+                    // Keep draining an oversized or unterminated frame. Holding
+                    // ready low here prevents its end marker from ever arriving.
+                    rx_state_reg._next = RX_DROP;
+                    rx_frame_count_reg._next = 0;
+                }
                 if (rx_frame_done) {
                     if (next_count >= 64u && next_crc == ETHERNET_CRC_RESIDUE && rx_frame_accept()) {
                         rx_payload_count_reg._next = next_count - 4u;

@@ -504,6 +504,21 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
     if constexpr (std::is_convertible_v<const src_t*, const array_t*>) {
         dst = static_cast<const array_t&>(value);
     }
+    else if constexpr (std::is_convertible_v<const src_t*, const array<N, T, !PACKED>*>) {
+        // Projected interface fields may use different packed/unpacked storage.
+        // Preserve element indices: broadcasting the complete vector loses every
+        // request except bit zero. Registers also expose this current-value base.
+        const auto& source = static_cast<const array<N, T, !PACKED>&>(value);
+        for (size_t index = 0; index < N; ++index) {
+            if constexpr (PACKED) {
+                auto item = dst[index];
+                sv_assign_field(item, source[index]);
+            }
+            else {
+                sv_assign_field(dst[index], source[index]);
+            }
+        }
+    }
     else if constexpr (PACKED && (detail::has_pack_method<src_t>::value || is_logic_v<src_t> || std::is_integral_v<src_t> || std::is_enum_v<src_t>)) {
         dst = unpack_value<array<N, T, PACKED>>(pack_value<type_width<array<N, T, PACKED>>()>(value));
     }

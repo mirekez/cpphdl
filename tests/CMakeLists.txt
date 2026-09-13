@@ -161,7 +161,7 @@ foreach(cli_case help forwarding)
     set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template assign_ports constexpr_ports tuple_pipeline)
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template derived composed_base assign_ports constexpr_ports tuple_pipeline)
     add_test(NAME lint_lifecycle_${lifecycle_case}
         COMMAND ${CMAKE_COMMAND}
             -DCPPHDL=$<TARGET_FILE:cpphdl>
@@ -338,9 +338,7 @@ add_test(
 )
 set_tests_properties(optimizer_specialized_comb PROPERTIES TIMEOUT 120)
 
-# Converter-projected output ports are views of an aggregate comb result.
-# Ensure optimized scheduling evaluates that aggregate once instead of
-# retaining one duplicate procedural evaluator for every requested field.
+# Preserve converter field dependencies while sharing actual common producers.
 add_test(
     NAME optimizer_projected_comb
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedCombTest.sh"
@@ -350,6 +348,16 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_projected_comb PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_projected_handshake
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedHandshakeTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_projected_handshake PROPERTIES TIMEOUT 120)
 
 # A helper called from _work may mutate module storage by non-const reference.
 # Readers of that storage must remain lazy until their original demand point

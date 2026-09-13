@@ -620,7 +620,6 @@ enum class FieldKind { Other, Port, Reg, Child, ChildArray };
 struct FieldInfo {
   std::string name;
   std::string type;
-  std::string projectedPath;
   std::optional<unsigned> packedWidth;
   std::string childClass;
   std::string portModuleClass;
@@ -632,47 +631,6 @@ struct FieldInfo {
   bool indexedStorage = false;
   FieldKind kind = FieldKind::Other;
 };
-
-std::optional<std::string>
-projectedMemberPath(const FieldInfo &field, std::string_view suffix) {
-  if (!field.projectedPath.empty()) {
-    return field.projectedPath;
-  }
-  // hdlcpp's dependent projected types retain the exact nested member chain
-  // in their requires expression. Recover it here so aggregate comb storage
-  // can serve a projected port without evaluating a second procedural comb.
-  constexpr std::string_view valueName = "__cpphdl_projected_value";
-  for (size_t search = 0;;) {
-    const size_t found = field.type.find(valueName, search);
-    if (found == std::string::npos) {
-      break;
-    }
-    size_t cursor = skipSpace(field.type, found + valueName.size());
-    std::string path;
-    while (cursor < field.type.size() && field.type[cursor] == '.') {
-      const size_t member = skipSpace(field.type, cursor + 1);
-      if (member >= field.type.size() || !identifierStart(field.type[member])) {
-        break;
-      }
-      size_t end = member + 1;
-      while (end < field.type.size() && identifierPart(field.type[end])) {
-        ++end;
-      }
-      path += "." + field.type.substr(member, end - member);
-      cursor = skipSpace(field.type, end);
-    }
-    if (!path.empty()) {
-      return path;
-    }
-    search = found + valueName.size();
-  }
-
-  // A one-level projection has no ambiguity even when the member contains
-  // underscores. Nested projections use the dependent type path above.
-  return suffix.empty() ? std::nullopt
-                        : std::optional<std::string>("." +
-                                                     std::string(suffix));
-}
 
 struct FreeHelper {
   std::optional<std::string> receiverParameter;
@@ -1024,7 +982,8 @@ void writeClassInfo(CollectionWriter &writer, const ClassInfo &info,
     writer.text(name);
     writer.text(field.name);
     writer.text(field.type);
-    writer.text(field.projectedPath);
+    // Keep the retired projected-path slot compatible with v4 collections.
+    writer.text("");
     writer.number(field.packedWidth ? static_cast<uint64_t>(*field.packedWidth) + 1
                                     : 0);
     writer.text(field.childClass);
@@ -1081,7 +1040,7 @@ ClassInfo readClassInfo(CollectionReader &reader,
     FieldInfo field;
     field.name = reader.text();
     field.type = reader.text();
-    field.projectedPath = reader.text();
+    (void)reader.text();
     const uint64_t packedWidth = reader.number();
     if (packedWidth != 0) {
       field.packedWidth = static_cast<unsigned>(packedWidth - 1);
@@ -1825,21 +1784,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           }
         }
       }
-      if (item.kind == FieldKind::Port) {
-        static constexpr std::string_view marker = "__field_";
-        const auto markerPosition = item.name.find(marker);
-        if (markerPosition != std::string::npos) {
-          const auto path = projectedMemberPath(
-              item, std::string_view(item.name).substr(markerPosition +
-                                                       marker.size()));
-          if (path) {
-            item.projectedPath = *path;
-          }
-        }
-      }
       // Classification above is the only consumer of the canonical field
-      // spelling. Keep only the compact projected path needed by port
-      // redirection; retaining the type can expand structural NTTP values.
+      // spelling; retaining the type can expand structural NTTP values.
       item.type.clear();
       info.fields[item.name] = std::move(item);
     }
@@ -6328,65 +6274,6 @@ struct CombsOptimizer::Impl {
     }
   }
 
-  void redirectProjectedPortBindings() {
-    static constexpr std::string_view marker = "__field_";
-    static const std::regex zeroArgumentCall(
-        R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*$)");
-
-    for (Instance *instance : instances) {
-      for (const auto &[projectedName, projectedField] :
-           instance->type->fields) {
-        const size_t markerPosition = projectedName.find(marker);
-        if (projectedField.kind != FieldKind::Port ||
-            markerPosition == std::string::npos) {
-          continue;
-        }
-        const std::string aggregateName =
-            projectedName.substr(0, markerPosition);
-        const auto aggregateField = instance->type->fields.find(aggregateName);
-        if (aggregateField == instance->type->fields.end() ||
-            aggregateField->second.kind != FieldKind::Port ||
-            aggregateField->second.indexedStorage) {
-          continue;
-        }
-
-        const std::string projectedKey =
-            nodeKey(instance->id, NodeKind::Port, projectedName);
-        const std::string aggregateKey =
-            nodeKey(instance->id, NodeKind::Port, aggregateName);
-        auto projectedBinding = bindings.find(projectedKey);
-        const auto aggregateBinding = bindings.find(aggregateKey);
-        if (projectedBinding == bindings.end() ||
-            aggregateBinding == bindings.end() ||
-            projectedBinding->second.first != instance ||
-            aggregateBinding->second.first != instance) {
-          continue;
-        }
-
-        // Only replace converter-style comb initializers. An explicitly
-        // rebound hand-written port with the same spelling remains untouched.
-        std::smatch projectedCall;
-        std::smatch aggregateCall;
-        if (!std::regex_match(projectedBinding->second.second, projectedCall,
-                              zeroArgumentCall) ||
-            !std::regex_match(aggregateBinding->second.second, aggregateCall,
-                              zeroArgumentCall) ||
-            !instance->type->combStorage.contains(projectedCall[1].str()) ||
-            !instance->type->combStorage.contains(aggregateCall[1].str())) {
-          continue;
-        }
-        const auto path = projectedMemberPath(
-            projectedField,
-            std::string_view(projectedName).substr(markerPosition +
-                                                   marker.size()));
-        if (!path) {
-          continue;
-        }
-        projectedBinding->second.second = aggregateName + "()" + *path;
-      }
-    }
-  }
-
   std::string proceduralCombBody(const std::string &methodName,
                                  const std::string &body) const {
     std::vector<std::string> lines;
@@ -6501,7 +6388,10 @@ struct CombsOptimizer::Impl {
       return false;
     }
     findCombExpressions();
-    redirectProjectedPortBindings();
+    // Preserve field-level dependencies supplied by hdlcpp. Equal final field
+    // values do not justify reading the whole aggregate: unrelated ready/valid
+    // dependencies can create a false cycle and cache a partially written bus.
+    // Share actual common producers, not aggregates inferred from port names.
     tracePhase("comb discovery");
 
     // The roots are state updates in _work and externally visible root

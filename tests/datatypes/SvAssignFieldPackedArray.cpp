@@ -55,6 +55,28 @@ bool checkBitStores()
     return true;
 }
 
+template<size_t Width>
+bool checkLayoutCopies()
+{
+    array<3, logic<Width>, true> packed{};
+    array<3, logic<Width>> unpacked{};
+    for (size_t index = 0; index < 3; ++index) {
+        logic<Width> element = index + 1;
+        element.set(Width - 1, index & 1);
+        packed[index] = element;
+    }
+    sv_assign_field(unpacked, packed);
+    for (size_t index = 0; index < 3; ++index) {
+        if (unpacked[index] != logic<Width>(packed[index])) return false;
+    }
+    reg<array<3, logic<Width>>> registered;
+    registered._next = unpacked;
+    registered.strobe();
+    array<3, logic<Width>, true> roundTrip{};
+    sv_assign_field(roundTrip, registered);
+    return roundTrip.pack() == packed.pack();
+}
+
 // Packed-array field assignment previously repeated or narrowed scalar sources.
 // SystemVerilog instead assigns the scalar to the complete packed destination value.
 // Verify nonzero replication is rejected and zero assignment clears every element.
@@ -62,6 +84,32 @@ bool checkBitStores()
 // sv_cast of std::array verifies array overloads are declared before its dependent call.
 int main()
 {
+    // Field projections can change storage layout at an interface boundary.
+    // A packed request vector must remain an indexed vector, not a broadcast.
+    for (unsigned mask = 0; mask < 1024; ++mask) {
+        array<10, logic<1>, true> requests = mask;
+        array<10, logic<1>> wrapper{};
+        sv_assign_field(wrapper, requests);
+        for (size_t port = 0; port < 10; ++port) {
+            if (uint64_t(wrapper[port]) != ((mask >> port) & 1)) {
+                std::printf("packed/unpacked copy mask=%u port=%zu actual=%llu expected=%u\n",
+                            mask, port, (unsigned long long)uint64_t(wrapper[port]),
+                            (mask >> port) & 1);
+                return 12;
+            }
+        }
+        array<10, logic<1>, true> roundTrip{};
+        sv_assign_field(roundTrip, wrapper);
+        if (uint64_t(roundTrip.pack()) != mask) return 13;
+
+        reg<array<10, logic<1>, true>> registeredRequests;
+        registeredRequests._next = requests;
+        registeredRequests.strobe();
+        sv_assign_field(wrapper, registeredRequests);
+        for (size_t port = 0; port < 10; ++port) {
+            if (uint64_t(wrapper[port]) != ((mask >> port) & 1)) return 14;
+        }
+    }
     array<4, logic<4>, true> value;
 
     sv_assign_field(value, 3);
@@ -149,5 +197,7 @@ int main()
         !checkBitStores<17>() || !checkBitStores<31>() || !checkBitStores<32>() ||
         !checkBitStores<33>() || !checkBitStores<63>() || !checkBitStores<64>() ||
         !checkBitStores<65>() || !checkBitStores<129>()) return 11;
+    if (!checkLayoutCopies<1>() || !checkLayoutCopies<9>() ||
+        !checkLayoutCopies<65>()) return 15;
     return 0;
 }

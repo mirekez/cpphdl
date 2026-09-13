@@ -51,9 +51,9 @@ public:
     {
         decoded_op_comb = 0;
         if ((uint64_t)input() & 1)
-            decoded_op_comb = input() + cpphdl::logic<8>(3);
+            decoded_op_comb = view_comb_func() + cpphdl::logic<8>(3);
         else
-            decoded_op_comb = input() - cpphdl::logic<8>(2);
+            decoded_op_comb = view_comb_func() - cpphdl::logic<8>(2);
         return decoded_op_comb;
     }
 
@@ -61,9 +61,9 @@ public:
     {
         decoded_result_comb = 0;
         if ((uint64_t)input() & 1)
-            decoded_result_comb = input() ^ cpphdl::logic<8>(0x5a);
+            decoded_result_comb = view_comb_func() ^ cpphdl::logic<8>(0x5a);
         else
-            decoded_result_comb = input() | cpphdl::logic<8>(0x80);
+            decoded_result_comb = view_comb_func() | cpphdl::logic<8>(0x80);
         return decoded_result_comb;
     }
 

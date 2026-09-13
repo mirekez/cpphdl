@@ -146,6 +146,10 @@ class Tribe: public Module
 
 public:
 
+    // Functional coherency handshake: available even when debug/MMU ports
+    // are disabled. A held load response must survive until pipeline retirement.
+    _PORT(bool) external_cache_invalidate_ready_out = _ASSIGN(
+        !memory_wait_comb_func() && !dcache.mem_out.read_in() && !dcache.mem_out.write_in());
     _PORT(bool)      dmem_write_out;
     _PORT(uint32_t)  dmem_write_data_out;
     _PORT(uint8_t)   dmem_write_mask_out;
