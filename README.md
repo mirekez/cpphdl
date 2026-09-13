@@ -6,18 +6,27 @@ Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
 Spec: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl.pdf
 
+Best practice: https://github.com/mirekez/cpphdl/blob/main/doc/best_practice.pdf
+
+The book: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl_book.pdf
+
+![](doc/cpphdl-cover.png)
+
 ## build
 
 Win64 requires the following to be done:
+
  - Install msys2-x86_64-20240727.exe, Miniconda3-py39_24.7.1-0-Windows-x86_64.exe, run MSYS2 MSYS console
  - git clone https://github.com/mirekez/cpphdl; cd cpphdl
 
 And for Linux:
+
  - git clone ssh://github.com/mirekez/cpphdl; cd cpphdl
  - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; chmod a+x Miniconda3-latest-Linux-x86_64.sh; ./Miniconda3-latest-Linux-x86_64.sh
  - source ~/miniconda3/bin/activate; conda init
 
 Then for both Win&Lin:
+
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
  - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ..; make
 

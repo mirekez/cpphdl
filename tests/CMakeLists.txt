@@ -112,6 +112,67 @@ foreach(src ${TEST_SOURCES})
 
 endforeach()
 
+find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+foreach(replacement_case standalone concrete partial expressions named parent)
+    add_test(NAME format_replacement_defaults_${replacement_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${replacement_case}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_replacement_defaults
+            -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+            -DCXX=${CMAKE_CXX_COMPILER}
+            -DMAKE=${CPPHDL_REPLACEMENT_MAKE}
+            -DCONDA_PREFIX=${CPPHDL_LOCAL_CONDA_PREFIX}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/format/ReplacementDefaults.cmake)
+    set_tests_properties(format_replacement_defaults_${replacement_case} PROPERTIES TIMEOUT 120)
+endforeach()
+
+foreach(standalone_case numeric numeric_instantiated fp_sqrt)
+    set(fp_sqrt_test_arg)
+    if(standalone_case STREQUAL "fp_sqrt" AND TARGET math_FpSqrt AND CPPHDL_TEMPLATE_VERILATOR)
+        set(fp_sqrt_test_arg -DFP_SQRT_TEST=$<TARGET_FILE:math_FpSqrt>)
+    endif()
+    add_test(NAME templates_standalone_${standalone_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${standalone_case}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_standalone
+            -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+            ${fp_sqrt_test_arg}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/StandaloneNumeric.cmake)
+    set_tests_properties(templates_standalone_${standalone_case} PROPERTIES TIMEOUT 300)
+    if(CPPHDL_LOCAL_CONDA_PREFIX)
+        set_tests_properties(templates_standalone_${standalone_case} PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+    endif()
+endforeach()
+
+foreach(cli_case help forwarding)
+    add_test(NAME cli_${cli_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${cli_case}
+            -DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cli
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_cli
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/CommandLine.cmake)
+    set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template assign_ports constexpr_ports tuple_pipeline)
+    add_test(NAME lint_lifecycle_${lifecycle_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${lifecycle_case}
+            -DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/lint
+            -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_lifecycle
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/lint/CheckMissedCalls.cmake)
+    set_tests_properties(lint_lifecycle_${lifecycle_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
 foreach(cdc_failure_case secondary_without_primary secondary_above_primary missing_methods invalid_reset_signature)
     if(cdc_failure_case STREQUAL "invalid_reset_signature")
         set(cdc_failure_source ${CMAKE_CURRENT_SOURCE_DIR}/cdc/InvalidResetSignature.h)

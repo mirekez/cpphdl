@@ -10,47 +10,44 @@ CppHDL is a C++ RTL framework for writing synthesizable hardware models while ke
 
 ## Mapping of SystemVerilog Expressions to C++
 
-CppHDL code should be written as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections go into the `_assign()` section. This section runs only once, before the work cycle starts, and binds assignments that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in `_assign()`.
+CppHDL code should be written as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections belong in port member initializers or the `_assign()` section. This section runs only once, before the work cycle starts, and binds assignments that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros belong only in these static connection contexts, never in work, strobe, or combinational methods.
 
-SystemVerilog:
+SystemVerilog (inside the parent module):
 
 ```systemverilog
-assign out = a + b;
-child.valid_i = valid;
-child.data_i = data[i];
-child.result_i[i] = result[i] ^ mask;
+wire [31:0] child__data_in;
+assign child__data_in = data_reg;
+Child child (.clk(clk), .reset(reset), .data_in(child__data_in));
 ```
 
-CppHDL:
+CppHDL (matching parent members and binding):
 
 ```cpp
-_PORT(u<32>) out = _ASSIGN(a_in() + b_in());
+Child child;
+reg<logic<32>> data_reg;
 
 void _assign()
 {
-    child.valid_in = _ASSIGN(valid_reg);
-    for (int i = 0; i < LANES; i++) {
-        child.data_in[i] = _ASSIGN_I(data_reg[i]);
-        child.result_in[i] = _ASSIGN_I(result_reg[i] ^ mask_reg);
-    }
+    child.data_in = _ASSIGN_REG(data_reg);
+    child._assign();
 }
 ```
 
-Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
+Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Both reference-binding macros take the address of an lvalue: do not pass a temporary, cast result, or by-value function call. `_ASSIGN_COMB()` invokes the comb chain on the first port read in a new `_system_clock` epoch; later reads reuse the cached result reference. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
 
-All SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
+For the default positive-edge clock, sequential logic maps into `_work(bool reset)`. Negative-edge logic uses `_work_neg(bool reset)` with `_strobe_neg()`; multi-clock designs use named work/strobe pairs (see the CDC chapter in `spec.md`). `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog.
 
 SystemVerilog:
 
 ```systemverilog
 always_ff @(posedge clk) begin
-    if (reset) count <= '0;
-    else if (enable) count <= count + 1;
+    if (reset) count_reg <= '0;
+    else if (enable_in) count_reg <= count_reg + 1;
 end
 
 always_ff @(posedge clk) begin
-    if (reset) valid <= 1'b0;
-    else valid <= enable;
+    if (reset) valid_reg <= 1'b0;
+    else valid_reg <= enable_in;
 end
 ```
 
@@ -63,15 +60,15 @@ reg<u1> valid_reg;
 void _work(bool reset)
 {
     if (reset) {
-        count_reg.clr();
-        valid_reg.clr();
-        return;
+        count_reg._next = 0;
+        valid_reg._next = 0;
     }
-
-    if (enable_in()) {
-        count_reg._next = count_reg + u<8>(1);
+    else {
+        if (enable_in()) {
+            count_reg._next = count_reg + u<8>(1);
+        }
+        valid_reg._next = enable_in();
     }
-    valid_reg._next = enable_in();
 }
 ```
 
@@ -106,14 +103,14 @@ u<32>& read_data_comb_func()
 _PORT(u<32>) read_data_out = _ASSIGN_COMB(read_data_comb_func());
 ```
 
-CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in `_strobe()`, not in `_assign()`, `_work()`, or comb functions.
+CppHDL commits registers and memories in `_strobe()` (or the matching named/negative-edge strobe method). The testbench calls the top-level strobe after work evaluation; each parent explicitly calls its children's strobe methods. Register `.strobe()` calls and memory `.apply()` calls belong only in strobe methods, not in `_assign()`, work, or comb functions.
 
 ```cpp
 void _strobe()
 {
     count_reg.strobe();
     valid_reg.strobe();
-    memory.apply();
+    data_mem.apply();
 }
 ```
 
@@ -151,10 +148,9 @@ _PORT(bool) done_out = _ASSIGN(count == LIMIT);
 void _work(bool reset)
 {
     if (reset) {
-        count.clr();
-        return;
+        count._next = 0;
     }
-    if (enable_in()) {
+    else if (enable_in()) {
         count._next = count + u<8>(1);
     }
 }
@@ -204,8 +200,13 @@ _PORT(bool) fire_out = _ASSIGN(valid_in() && ready_in());
 `_ASSIGN_I(expr)` and `_ASSIGN_REG_I(expr)` are used in loops where the loop index must be captured for each generated connection:
 
 ```cpp
-for (i = 0; i < N; ++i) {
-    out[i].valid_in = _ASSIGN_I(sel == i ? input.valid_in() : 0);
+void _assign()
+{
+    uint32_t i;
+    for (i = 0; i < N; ++i) {
+        lanes[i].data_in = _ASSIGN_I(data_reg[i]);
+        lanes[i]._assign();
+    }
 }
 ```
 
@@ -230,7 +231,18 @@ logic<32>& result_comb_func()
 _PORT(logic<32>) result_out = _ASSIGN_COMB(result_comb_func());
 ```
 
-Keep combinational functions side-effect-free except for assigning their own cached result variable.
+Keep combinational functions side-effect-free except for assigning their own result variable. Call dependencies through their `*_comb_func()` methods; do not read another comb's result storage directly or rely on a separate preparation call.
+
+Ordinary comb methods execute on every direct call. Use `_LAZY_COMB` to cache a result per `_system_clock` epoch:
+
+```cpp
+_LAZY_COMB(sum_comb, logic<32>)
+    sum_comb = a_in() + b_in();
+    return sum_comb;
+}
+```
+
+This declares both `sum_comb` storage and `sum_comb_func()`. Assign the complete result on every evaluation path to avoid stale values and inferred latches.
 
 ## Sequential Logic
 
@@ -240,12 +252,13 @@ Write next-state logic in `_work(reset)` and commit it in `_strobe()`.
 void _work(bool reset)
 {
     if (reset) {
-        valid_reg.clr();
-        return;
+        valid_reg._next = 0;
+        data_reg._next = 0;
     }
-
-    valid_reg._next = next_valid;
-    data_reg._next = next_data;
+    else {
+        valid_reg._next = next_valid;
+        data_reg._next = next_data;
+    }
 }
 
 void _strobe()
@@ -261,7 +274,12 @@ Call nested module hooks explicitly:
 void _work(bool reset)
 {
     child._work(reset);
-    state._next = child.data_out();
+    if (reset) {
+        state._next = 0;
+    }
+    else {
+        state._next = child.data_out();
+    }
 }
 
 void _strobe()
@@ -299,10 +317,9 @@ _PORT(bool) ready_in;
 void _work(bool reset)
 {
     if (reset) {
-        valid_reg.clr();
-        return;
+        valid_reg._next = 0;
     }
-    if (!valid_reg || ready_in()) {
+    else if (!valid_reg || ready_in()) {
         valid_reg._next = have_data;
         data_reg._next = next_data;
     }
@@ -317,8 +334,12 @@ Prefer templates for structural parameters such as data width, address width, nu
 template<size_t DATA_WIDTH, size_t DEPTH>
 class Fifo : public Module
 {
+    static_assert(DEPTH > 0, "DEPTH must be positive");
+public:
     _PORT(logic<DATA_WIDTH>) write_data_in;
-    reg<u<clog2(DEPTH)>> write_ptr;
+private:
+    reg<u<(DEPTH <= 1 ? 1 : clog2(DEPTH))>> write_ptr;
+    // Work and strobe methods omitted from this declaration excerpt.
 };
 ```
 
@@ -350,7 +371,9 @@ void _assign()
 }
 ```
 
-`assignIf()` performs the bidirectional assignment order needed when one side drives `valid/data` and the other side drives `ready`.
+`assignIf()` performs the bidirectional binding order needed when one side drives `valid/data` and the other drives `ready`; it invokes the endpoint modules' `_assign()` methods during setup. Connect an interface as a bundle instead of manually copying its individual ports. Endpoint modules still bind the signals they themselves drive.
+
+Make connections in the immediate common parent. Do not reach through a child into a grandchild or assign another module's internal state. Forward an interface through a proxy with `assignIf(*this, child, proxy_in, child.sink_in)`; see `tests/interface/AssignIfHierarchyProxy.cpp`.
 
 ## Arrays, Logic, and Bit Ranges
 
@@ -364,7 +387,16 @@ word.bits(63, 32) = high_word;
 word[0] = parity_bit;
 ```
 
-Use `array<T,N>` for packed arrays and `memory<T,WIDTH,DEPTH>` for memories.
+Use `array<COUNT, TYPE, PACKED = false>` (count first). The default uses unpacked C++ element storage; `true` uses packed storage. Use `memory<TYPE, ROW_SIZE, DEPTH>` for deferred-write memories, where `ROW_SIZE` counts elements per row, not bits.
+
+```cpp
+array<16, u8> bytes;
+array<16, u8, true> packed_bytes;
+array2D<4, 8, u16> matrix;
+memory<u8, 4, 256> words; // 256 rows of four bytes.
+```
+
+See `spec.md` for the distinction between C++ storage and generated SV packing. Synthesizable indexes and loop variables should use `uint32_t` or a narrower type, not 64-bit `size_t`.
 
 ## Keep Synthesizable Code Simple
 
@@ -375,6 +407,8 @@ CppHDL can run any C++ in native simulation, but converted RTL should use a synt
 * Avoid STL containers in synthesizable state.
 * Prefer fixed-size CppHDL types: `u<>`, `logic<>`, `array<>`, `memory<>`, and structs.
 * Put file I/O, randomization, and reference models in inline tests, not in RTL modules.
+* Do not assume default-constructed signals are zero. Assign local values before reading them and explicitly reset required register state.
+* Prefer `if (reset) { ... } else { ... }` to early returns from work methods, and always propagate reset to child work methods.
 
 ## Inline Tests
 
@@ -387,56 +421,61 @@ An inline test normally does four things:
 * Runs the RTL cycle hooks: `_assign()`, `_work(reset)`, and `_strobe()`.
 * Checks outputs and internal behavior against expected values or a C++ reference model.
 
-Minimal shape:
+Complete single-clock native testbench shape (assuming `MyModule` has `enable_in` and `done_out` ports):
 
 ```cpp
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
+#if !defined(SYNTHESIS)
+#include <cassert>
 
-long sys_clock = -1;
+long _system_clock = -1; // Define once per native simulation executable.
 
-void tick(MyModule& dut, bool reset)
+class MyModuleTest : public Module
 {
-    dut._assign();
-    dut._work(reset);
-    ++sys_clock;
-    dut._strobe();
-}
-
-void TestMyModule()
-{
+public:
     MyModule dut;
+    bool enable = false;
 
-    tick(dut, true);
-    tick(dut, false);
+    void _assign()
+    {
+        dut.enable_in = _ASSIGN(enable);
+        dut._assign();
+    }
 
-    TEST_ASSERT(dut.done_out() == false);
+    void tick(bool reset)
+    {
+        ++_system_clock;
+        dut._work(reset);
+        dut._strobe();
+        ++_system_clock;
+    }
+};
+
+int main()
+{
+    MyModuleTest test;
+    test._assign(); // Once, outside the cycle loop.
+    test.tick(true);
+    assert(!test.dut.done_out());
+    test.enable = true;
+    test.tick(false);
 }
+#endif
 ```
 
-Keep randomization, file I/O, scoreboards, and reference models in the inline test, not in synthesizable RTL classes. This keeps the RTL clean while still allowing strong native C++ tests.
+Keep randomization, file I/O, scoreboards, and reference models in the inline test, not in synthesizable RTL classes. `SYNTHESIS` guards hide the testbench from conversion. Testbenches using `std::print` require a standard library with print support; C++17 consumers can use `printf` or streams instead. CppHDL does not provide a replacement `std::print`.
 
-## `sys_clock`
+## `_system_clock`
 
-Every CppHDL inline test must define:
+Native ports and lazy combs use the global `long _system_clock` declared by `cpphdl_port.h`. Define it once in the testbench, not once per module. The name is `_system_clock`, not `sys_clock`.
 
-```cpp
-long sys_clock = -1;
-```
+This is a cache-invalidation epoch, not a hardware clock or elapsed-time counter. Starting from `-1`, increment it before the first evaluation. Increment it after input changes and after committing state before reading outputs again. The tick above starts a fresh epoch before work and another after strobe; use a separate counter for simulated clock cycles.
 
-`sys_clock` is the global simulation clock used by CppHDL to cache and refresh combinational values. It must be incremented once per simulated clock edge before or around `_strobe()`, as shown in the examples:
-
-```cpp
-dut._assign();
-dut._work(reset);
-++sys_clock;
-dut._strobe();
-```
-
-Without `sys_clock`, inline tests either fail to link or do not update cached combinational expressions correctly. This is why all examples define it in the test section, even when the RTL model itself has no explicit clock port.
+For simultaneous clock edges, evaluate all active work methods against pre-edge state before calling any strobe methods. Do not rebind ports or call `_assign()` in the cycle loop. See the CDC and asynchronous-reset chapters in `spec.md` for named-clock scheduling.
 
 ## Build and Run Tests
 
-The `examples/` and `tests/` folders are built by CMake. Each `.cpp` file becomes one executable target, and the post-build command runs the `cpphdl` tool to generate SystemVerilog.
+The `examples/` and `tests/` folders are built by CMake. Most `.cpp` files become executable targets with post-build SystemVerilog generation; optimizer and other special regressions use dedicated CMake rules.
 
 Configure once:
 
@@ -453,17 +492,19 @@ cmake --build build --target interface_ValidReady
 Run the native CppHDL test:
 
 ```bash
-./build/tests/interface_ValidReady --noveril
+(cd build/tests && ./interface_ValidReady --noveril)
 ```
 
 Run the full test, including the Verilator part when the inline test supports it:
 
 ```bash
-./build/tests/interface_ValidReady
+(cd build/tests && ./interface_ValidReady)
 ```
+
+Run from `build/tests` because the inline harness locates `generated/` relative to its working directory. Alternatively, use `ctest --test-dir build -R '^interface_ValidReady$' --output-on-failure` for the registered test.
 
 For a new test, place it under `tests/<group>/<Name>.cpp`. The target name is derived from the relative path, so `tests/interface/ValidReady.cpp` becomes `interface_ValidReady`.
 
 ## Conclusion
 
-CppHDL runs RTL directly as native C++. No translator is used for native simulation, so compile/debug/test cycles are fast and use ordinary C++ tooling. For large projects, native CppHDL simulation can run about 10 times faster than Verilator and about 100 times faster than traditional SystemVerilog simulators, while the same RTL source can still be converted to SystemVerilog when needed.
+CppHDL runs RTL directly as native C++. No translator is used for native simulation, so compile/debug/test cycles are fast and use ordinary C++ tooling. Performance depends on the design, compiler, optimizer mode, and testbench; benchmark the actual workload. The same RTL source can still be converted to SystemVerilog for verification and implementation.

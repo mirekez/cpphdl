@@ -66,9 +66,6 @@ public:
     }
 };
 
-template class TemplateInheritedBaseArray<1>;
-template class TemplateInheritedBaseArray<2>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 #include <filesystem>
 #include <fstream>

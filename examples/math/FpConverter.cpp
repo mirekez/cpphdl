@@ -397,18 +397,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class FpConverter<FP32E8,FP16E5,16,1>;
-template class FpConverter<FP16E5,FP32E8,16,0>;
-template class FpConverter<FP32E8,BF16E8,16,1>;
-template class FpConverter<BF16E8,FP32E8,16,0>;
-template class FpConverter<FP16E5,BF16E8,16,1>;
-template class FpConverter<BF16E8,FP16E5,16,0>;
-template class FpConverter<FP32E8,TF19E8,16,1>;
-template class FpConverter<TF19E8,FP16E5,16,0>;
-template class FpConverter<FP16E5,FP8E4,16,1>;
-template class FpConverter<FP8E4,FP4E2,16,0>;
-template class FpConverter<FP4E2,FP16E5,16,1>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

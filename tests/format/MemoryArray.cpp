@@ -31,6 +31,7 @@ public:
     void _strobe()
     {
         for (size_t bank = 0; bank < 3; ++bank) banks[bank].apply();
+        words.apply();
     }
 
     void _assign() {}

@@ -10,7 +10,7 @@ using namespace cpphdl;
 // Combinational floating-point hyperbolic tangent. The core uses the bounded
 // rational approximation x*(27+x*x)/(27+9*x*x) for |x| < 3 and saturates to
 // one outside that range. All arithmetic is fixed-point and synthesizable.
-template<size_t W, size_t EW>
+template<size_t W=32, size_t EW=8>
 class FpTanh : public Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
@@ -179,9 +179,6 @@ private:
 public:
     void _assign() {}
 };
-
-template class FpTanh<16, 5>;
-template class FpTanh<32, 8>;
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 

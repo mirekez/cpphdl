@@ -17,19 +17,18 @@ Content may change significantly before final approval.
 
 &nbsp;&nbsp;&nbsp;&nbsp;CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are declared in port member initializers or written in the `_assign()` section. This connection setup runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in those static connection contexts.
 
-SystemVerilog:
+SystemVerilog (assignments inside a module with 32-bit `out` and one-bit `valid_out` ports):
 
 ```systemverilog
-    output wire out
-);
-assign out = a + b;
-assign valid_out = valid;
+assign out = a_in + b_in;
+assign valid_out = valid_reg;
 ```
 
 CppHDL:
 
 ```cpp
 _PORT(u<32>) out = _ASSIGN(a_in() + b_in());
+_PORT(bool) valid_out;
 
 void _assign()
 {
@@ -37,21 +36,21 @@ void _assign()
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Even though `_ASSIGN_COMB()` captures the returned object by reference, the `comb_func()` call itself is still executed on demand when the port value is read. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
+&nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Both reference-binding macros take the address of an lvalue; do not pass a temporary, cast result, or by-value function call. `_ASSIGN_COMB()` invokes the comb chain on the first port read in a new `_system_clock` epoch and reuses the cached reference on later reads. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
 
-&nbsp;&nbsp;&nbsp;&nbsp;In the default single-clock flow, all SystemVerilog `always_ff` blocks for one module map into one CppHDL `_work(bool reset)` method. `_work()` computes next register values. It may contain the logic that would be split across several `always_ff` blocks in SystemVerilog. Multi-clock designs use one named work method per clock and edge, as described in the Clock Domain Crossing chapter.
+&nbsp;&nbsp;&nbsp;&nbsp;In the default single-clock flow, positive-edge sequential logic maps into `_work(bool reset)` and `_strobe()`. Negative-edge logic uses `_work_neg(bool reset)` and `_strobe_neg()`. Work methods compute next register values and may contain logic that would be split across several SystemVerilog `always_ff` blocks on the same edge. Multi-clock designs use named work/strobe pairs per clock and edge, as described in the Clock Domain Crossing chapter.
 
 SystemVerilog:
 
 ```systemverilog
 always_ff @(posedge clk) begin
-    if (reset) count <= '0;
-    else if (enable) count <= count + 1;
+    if (reset) count_reg <= '0;
+    else if (enable_in) count_reg <= count_reg + 1;
 end
 
 always_ff @(posedge clk) begin
-    if (reset) valid <= 1'b0;
-    else valid <= enable_in;
+    if (reset) valid_reg <= 1'b0;
+    else valid_reg <= enable_in;
 end
 ```
 
@@ -64,15 +63,15 @@ reg<u1> valid_reg;
 void _work(bool reset)
 {
     if (reset) {
-        count_reg.clr();
-        valid_reg.clr();
-        return;
+        count_reg._next = 0;
+        valid_reg._next = 0;
     }
-
-    if (enable_in()) {
-        count_reg._next = count_reg + u<8>(1);
+    else {
+        if (enable_in()) {
+            count_reg._next = count_reg + u<8>(1);
+        }
+        valid_reg._next = enable_in();
     }
-    valid_reg._next = enable_in();
 }
 ```
 
@@ -90,18 +89,22 @@ end
 CppHDL:
 
 ```cpp
-bool hit_comb_func()
+bool hit_comb;
+bool& hit_comb_func()
 {
-    return valid_reg && tag_reg == req_tag_in();
+    hit_comb = valid_reg && tag_reg == req_tag_in();
+    return hit_comb;
 }
 
-u<32> read_data_comb_func()
+u<32> read_data_comb;
+u<32>& read_data_comb_func()
 {
-    return hit_comb_func() ? line_reg[word_in()] : u<32>(0);
+    read_data_comb = hit_comb_func() ? line_reg[word_in()] : u<32>(0);
+    return read_data_comb;
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. `_strobe()` is executed recursively for each module at the end of each clock evaluation. Register `.strobe()` calls and memory `.apply()` calls are only allowed in a strobe method, not in `_assign()`, a work method, or comb functions. Multi-clock designs use a separate named strobe method for each clock and edge.
+&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. The testbench calls the top-level `_strobe()` after work evaluation, and each parent explicitly calls its children's strobe methods. Register `.strobe()` calls and memory `.apply()` calls are only allowed in a strobe method, not in `_assign()`, a work method, or comb functions. Multi-clock designs use a separate named strobe method for each clock and edge.
 
 ```cpp
 void _strobe()
@@ -117,18 +120,18 @@ void _strobe()
 &nbsp;&nbsp;&nbsp;&nbsp;CppHDL is a C++ hardware definition language extension for digital integrated circuit development, designed for two purposes:
 
 1. Building a full cycle of digital RTL development and testing using the C++ language
-2. Allowing extremely fast simulation of RTL defined with blocking assignments
+2. Executing cycle-accurate RTL directly as native C++, with explicit next-state computation and register commits
 
-&nbsp;&nbsp;&nbsp;&nbsp;In all operations CppHDL works as a reflection of the SystemVerilog model,
-which means that, at every stage, a 100% register-to-register copy of any CppHDL
-code exists in the SystemVerilog domain.
+&nbsp;&nbsp;&nbsp;&nbsp;Synthesizable CppHDL describes register-to-register logic
+that maps to SystemVerilog. Earlier behavioral C++ sketches need not be
+synthesizable; they must be refined into supported RTL constructs before conversion.
 This live CppHDL to SystemVerilog conversion makes it possible to
 
 * Connect CppHDL teams to classical verification and testing teams
 * Deliver SV RTL to fabrication processes and tools or third-party companies
 
 &nbsp;&nbsp;&nbsp;&nbsp;The main benefits of using C++ for RTL development are replacing slow **simulation**
-with compilation and execution that can be up to 100 times faster, while using a modern language that is accessible to more developers.
+with native compilation and execution, while using a modern language that is accessible to more developers.
 The following properties of the C++ language provide a strong foundation for the RTL development process:
 
 * Ability to use many professional IDEs and tools for development and debugging, including support for large project management
@@ -137,6 +140,17 @@ The following properties of the C++ language provide a strong foundation for the
 * CppHDL makes many of C++ developers accessible for chipmaking industry
 * C++ is extremely fast in compilation and execution
 * It is free and does not require paying for instances
+* **Build large, complex multithreaded or cluster-based RTL simulations.** Use
+  C++ threading and communication libraries to distribute model instances or
+  independent test runs across CPU cores and machines. For connected models,
+  the simulation framework must coordinate data exchange and simulation time.
+* **Prototype behavior first, then refine it into RTL.** Start with a
+  non-synthesizable C++ sketch: use function calls as connections and pass
+  objects, complete transactions, or memory buffers, as in transaction-level
+  modeling (TLM). Simulate behavior before defining individual wires and
+  registers, then replace behavioral operations step by step with clocked,
+  register-to-register logic. Keep the sketch as a reference for tests. This
+  refinement is a design task, not automatic RTL conversion.
 
 &nbsp;&nbsp;&nbsp;&nbsp;RTL modeling using CppHDL includes verification and testing, providing the power and speed of
 the C++ language for modeling digital signaling and digital system interaction.
@@ -164,7 +178,7 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 ## Limitations
 
-* CppHDL supports only digital design components written using blocking assignments
+* CppHDL models digital RTL with ordinary C++ statements. Register writes use `._next` and are committed by `.strobe()`; memory writes are deferred until `.apply()`. Arbitrary event-driven SystemVerilog processes and delays are not C++ syntax.
 * Multi-clock RTL and common digital CDC structures are supported, but analog behavior, physical implementation, and timing constraints require external CDC and implementation tools
 * Timing- or power-critical sections should be isolated at the architectural level
 
@@ -203,7 +217,6 @@ SystemVerilog datatypes during the conversion process.
 #pragma once
 
 #include "cpphdl.h"
-#include "PrjConfig.h"
 
 using namespace cpphdl;
 
@@ -213,10 +226,10 @@ using namespace cpphdl;
 
 struct CmdConfig
 {
-    unsigned cmd_id;
-    unsigned units:6;
-    unsigned flags:2;
-    unsigned address;
+    uint8_t cmd_id;
+    uint8_t units:6;
+    uint8_t flags:2;
+    uint16_t address;
 }__PACKED;
 static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 ```
@@ -230,152 +243,67 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 3. Optional private zone for registers and variables
 4. Public zone with *\_work(reset)*, *\_strobe*(), *\_work_neg(reset)*, *\_strobe_neg*() and combinational functions bodies
 
-&nbsp;&nbsp;&nbsp;&nbsp;In the following block of code a simple FIFO model RTL shown as a basic CppHDL example:
-
-&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;This complete one-register pipeline stage illustrates the module hooks. The state is updated only when enabled and remains unchanged otherwise. Larger FIFO and memory examples are in `examples/basic/`.
 
 ```cpp
-
 #pragma once
-
-#include "cpphdl.h"
-#include "Memory.cpp"
-#include <print>
+#include <cpphdl.h>
 
 using namespace cpphdl;
 
-template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true>
-class Fifo : public Module
+template<size_t WIDTH>
+class PipelineStage : public Module
 {
-    Memory<FIFO_WIDTH_BYTES,FIFO_DEPTH,SHOWAHEAD> mem;
+    reg<logic<WIDTH>> data_reg;
 
 public:
-    _PORT(bool)                         write_in;
-    _PORT(logic<FIFO_WIDTH_BYTES*8>)    write_data_in;
+    _PORT(logic<WIDTH>) data_in;
+    _PORT(bool) enable_in;
+    _PORT(logic<WIDTH>) data_out = _ASSIGN_REG(data_reg);
 
-    _PORT(bool)                         read_in;
-    _PORT(logic<FIFO_WIDTH_BYTES*8>)    read_data_out  = mem.read_data_out;
-
-    _PORT(bool)                         empty_out      = _ASSIGN_COMB( empty_comb_func() );
-    _PORT(bool)                         full_out       = _ASSIGN_COMB( full_comb_func() );
-    _PORT(bool)                         clear_in       = _ASSIGN( false );
-    _PORT(bool)                         afull_out      = _ASSIGN_REG( afull_reg );
-
-    bool                         debugen_in;
-
-private:
-    reg<u<clog2(FIFO_DEPTH)>> wp_reg;
-    reg<u<clog2(FIFO_DEPTH)>> rp_reg;
-    reg<u1> full_reg;
-    reg<u1> afull_reg;
-
-public:
-
-    void _assign()
-    {
-        mem.write_data_in = write_data_in;
-        mem.write_in      = write_in;
-        mem.write_mask_in = _ASSIGN( 0xFFFFFFFFFFFFFFFFULL );
-        mem.write_addr_in = _ASSIGN_REG( wp_reg );
-        mem.read_in       = read_in;
-        mem.read_addr_in  = _ASSIGN_REG( rp_reg );
-        mem.__inst_name = __inst_name + "/mem";
-        mem.debugen_in  = debugen_in;
-        mem._assign();
-    }
-
-    bool full_comb;
-    bool& full_comb_func()
-    {
-        return full_comb = (wp_reg == rp_reg) && full_reg;
-    }
-
-    bool empty_comb;
-    bool& empty_comb_func()
-    {
-        return empty_comb = (wp_reg == rp_reg) && !full_reg;
-    }
+    void _assign() {}
 
     void _work(bool reset)
     {
-        mem._work(reset);
-
-        if (debugen_in) {
-            std::print("{:s}: input: ({}){}, output: ({}){}, wp_reg: {}, rp_reg: {}, full: {}, empty: {}, reset: {}\n", __inst_name,
-                (int)write_in(), write_data_in(), (int)read_in(), read_data_out(), wp_reg, rp_reg, (int)full_out(), (int)empty_out(), reset);
-        }
-
         if (reset) {
-            wp_reg.clr();
-            rp_reg.clr();
-            full_reg.clr();
-            afull_reg.clr();
-            return;
+            data_reg._next = 0;
         }
-
-        if (write_in()) {
-
-            if (full_comb_func() && !read_in()) {
-                std::print("{:s}: writing to a full fifo\n", __inst_name);
-                exit(1);
-            }
-            if (!full_comb_func() || read_in()) {
-                wp_reg._next = wp_reg + 1;
-            }
-            if (wp_reg._next == rp_reg) {
-                full_reg._next = 1;
-            }
+        else if (enable_in()) {
+            data_reg._next = data_in();
         }
-
-        if (read_in()) {
-
-            if (empty_comb_func()) {
-                std::print("{:s}: reading from an empty fifo\n", __inst_name);
-                exit(1);
-            }
-            if (!empty_comb_func()) {
-                rp_reg._next = rp_reg + 1;
-            }
-            if (!write_in()) {
-                full_reg._next = 0;
-            }
-        }
-
-        if (clear_in()) {
-            wp_reg._next = 0;
-            rp_reg._next = 0;
-            full_reg._next = 0;
-        }
-
-        afull_reg._next = full_reg || (wp_reg >= rp_reg ? wp_reg - rp_reg : FIFO_DEPTH - rp_reg + wp_reg) >= FIFO_DEPTH/2;
     }
 
     void _strobe()
     {
-        mem._strobe();
-        wp_reg.strobe();
-        rp_reg.strobe();
-        full_reg.strobe();
-        afull_reg.strobe();
+        data_reg.strobe();
     }
 };
 ```
 
 * A module class definition can use template parameters
 
+  A self-contained module template with only integral or enumeration parameters
+  can be converted without a C++ instance. Its parameters become SystemVerilog module
+  parameters; C++ defaults are preserved. A parameter without a default must be
+  supplied by the RTL instantiation or tool, for example `-GW=16 -GEW=5` in
+  Verilator for `FpSqrt`. Templates with type parameters still need a concrete
+  specialization so the converter can determine the RTL types. Dependent
+  user-class members and bases also still require a concrete specialization;
+  the standalone path does not instantiate those classes symbolically.
+
 * Built-in C++ types such as `bool`, `unsigned`, `unsigned long`, etc. are allowed in all places except `reg<>`
 
-* Each of the *\_assign*(), *\_work*(), and *\_strobe*() functions should call the corresponding functions of nested modules
+* Parents must propagate work and strobe calls to immediate children, including during reset. Call child `_assign()` methods during binding setup, or use `assignIf()` for interface connections; it invokes the required endpoint binding hooks.
 
 * Only the *reg_name.\_next* value can be changed outside reset. Both `reg` and *reg.\_next* values can be used on the right side of expressions
 
-* During reset, *.clr*() and *.set(val)* methods are used to set both current and next register values
+* Reset can assign `reg._next = value` and commit it with `.strobe()`, like any other register write. `.clr()` and `.set(value)` instead modify both current and next values immediately in native C++; restrict those methods to explicit initialization/reset handling.
 
-* CppHDL replaces *[f]printf*(), *std::print*, *\$write*(), and *exit*() functions with their SV equivalents, and parameters are converted appropriately
+* Supported `printf`/`fprintf`, `std::print`, and `exit` calls are mapped to SystemVerilog simulation tasks. These are diagnostics, not synthesized hardware. Use ordinary C++ calls in C++ source, not SystemVerilog `$write` syntax. `std::print` requires library support; C++17 users should use `printf` or streams in the testbench.
 
 ## Input/output ports
 
-&nbsp;&nbsp;&nbsp;&nbsp;All ports are `cpphdl::function_ref<data_type>` objects, declared through `_PORT(data_type)`. A port stores either a value-producing expression or a reference-producing binding and caches the resolved value for the current `_system_clock`. This allows an entire combinational function chain to be recalculated on demand without exposing heap-owning `std::function` as the port API.
+&nbsp;&nbsp;&nbsp;&nbsp;All ports are `cpphdl::function_ref<data_type>` objects, declared through `_PORT(data_type)`. A port stores either a value-producing expression or a reference-producing binding and caches the resolved value for the current `_system_clock`. The normal implementation uses `std::function` internally for these bindings. The public port API remains `function_ref`, and evaluations are cached per `_system_clock` epoch rather than performed on every read.
 
 * Macro *\_PORT( `data_type` )* allows simple port declaration.
 
@@ -400,7 +328,7 @@ use packed *structs* to achieve proper `<8`bit fields packing.
 
 ## Clock and reset
 
-&nbsp;&nbsp;&nbsp;&nbsp;The default flow uses one clock named *clk*. Multi-clock designs declare a primary clock and one or more secondary clocks on the `cpphdl` command line. Each declared clock becomes a module port and has its own work and strobe methods. Reset is the main *reset* parameter of each work function. Named multi-clock processes support synchronous reset and active-high asynchronous reset assertion. Asynchronous-reset method naming, ownership, and release requirements are described in the Clock Domain Crossing chapter.
+&nbsp;&nbsp;&nbsp;&nbsp;The default flow uses one clock named *clk*. Multi-clock designs declare a primary clock and one or more secondary clocks on the `cpphdl` command line. Each declared clock becomes a module port. With only one named primary clock, legacy `_work(bool reset)` and `_strobe()` names remain; two or more clocks require named work/strobe methods. Reset is the main *reset* parameter of each work function. Named multi-clock processes support synchronous reset and active-high asynchronous reset assertion. Asynchronous-reset method naming, ownership, and release requirements are described in the Clock Domain Crossing chapter.
 
 ## Variables list
 
@@ -413,7 +341,7 @@ use packed *structs* to achieve proper `<8`bit fields packing.
 &nbsp;&nbsp;&nbsp;&nbsp;Registers are of type **reg`<TYPE>`** and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.\_next* property is used.
 It is recommended to give register names with a *reg* suffix in case when register is used as output port or in parent modules.
 
-* Registers can carry structs, arrays, and single values.
+* Registers can carry class/struct types, including CppHDL scalars and arrays. Because `reg<T>` inherits from `T`, native scalars such as `uint32_t` are not valid register base types; use `u32` or `logic<32>`.
 
 * Combinational variable can be of any type.
 
@@ -426,7 +354,7 @@ It is recommended to give register names with a *reg* suffix in case when regist
 ## Work method
 
 &nbsp;&nbsp;&nbsp;&nbsp;The work method can make changes to registers and temporary variables.
-Only *._next* value of registers should be changed directly.
+Only *._next* values of registers should be changed during normal work. Prefer `if (reset) { ... } else { ... }` to early returns, and ensure child work methods also execute during reset.
 
 * Work method can call other methods to make code well-structured.
 * Methods with return values become SystemVerilog functions; methods with `void` return become Verilog tasks.
@@ -440,14 +368,30 @@ Also, `_strobe()` should be called for each nested instance of the class.
 Forgotten registers will be reported by *cpphdl* tool.
 In a multi-clock design, each register or memory must be committed by exactly one clock-and-edge-specific strobe method.
 
+During conversion, CppHDL checks for missing register `.strobe()`, memory
+`.apply()`, child `_work()`, and child `_strobe()` calls. Each missing call
+produces a four-line `MISSED CALL FOUND` warning with the module, member, and
+source location. Conversion continues so that you can inspect all warnings.
+The check follows inherited methods and local helper calls from the appropriate
+work or strobe method, including declared clock and negative-edge variants.
+A call in an unused helper or in the wrong phase does not satisfy the check.
+Empty child work/strobe methods, including helpers that only call empty methods,
+do not require a parent call. Omitting them cannot change the simulation state.
+This is a structural check, not a proof that every runtime branch or array index
+is exercised. Simulation tests must still check the clock schedule and conditional
+execution of those calls.
+
 ## Comb methods
 
 &nbsp;&nbsp;&nbsp;&nbsp;Combinational methods represent Verilog combinational logic functions. All combinational methods should comply with the following requirements:
 
-* The name of the function should contain *\_comb_func*() suffix
+* Use the `*_comb_func()` naming convention for combinational methods.
 * A corresponding variable should be defined in the module class: *var_name_comb*
 * The combinational function should calculate and assign a value to the *var_name_comb* variable, then return a reference to it
-* **NOTE!** The global variable `_system_clock` is used to invalidate cached port and lazy-combinational values after a simulation step. A native testbench must define it and increment it as shown in the examples.
+* Ordinary comb methods execute on each direct call. `_LAZY_COMB(name_comb, TYPE)` declares result storage and a `name_comb_func()` method cached per `_system_clock` epoch.
+* Compute dependencies by calling their comb methods, not by reading another comb's stored result or calling a separate preparation function.
+* Assign the complete result on every path. Default-constructed signals and local values are not implicitly zeroed.
+* **NOTE!** Define `long _system_clock = -1;` once in the native testbench. Increment it before the first evaluation, after input changes, and after committing state before observing outputs. It is a cache epoch, not a hardware clock count; keep a separate cycle counter. See `best_practice.md` for a complete tick example.
 
 &nbsp;&nbsp;&nbsp;&nbsp;It will be converted to a corresponding SystemVerilog variable and `always_comb` block during conversion.
 
@@ -588,7 +532,7 @@ The destination type must be wide enough for the concatenation result. Width mis
 ### reg`<TYPE>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;The reg`<>` template is intended to make a variable a register. It adds the *.\_next* property, which is changed in a *\_work*() function, as well as
-the ._strobe() method, which synchronizes the current value with the next value. It should not be used as a port definition, but it can provide data to a port.
+the `.strobe()` method, which synchronizes the current value with the next value. It should not be used as a port definition, but it can provide data to a port.
 Examples of reg`<>` usage are provided below:
 
 ```cpp
@@ -625,45 +569,42 @@ array2D<4, 8, u16> matrix;
 array3D<2, 3, 4, u8, true> packed_volume;
 ```
 
+The packed flag selects C++ storage behavior; it is not a blanket instruction to emit an unpacked SV declaration. In particular, array fields inside packed struct packages and `_PORT(array<N, TYPE>)` ports are emitted as packed SV dimensions. Native C arrays such as `TYPE values[COUNT]` and `_PORT(TYPE) values_in[COUNT]` express unpacked dimensions for module signals/ports. See `tests/templates/TemplateArrayPortMember.cpp` and `tests/datatypes/ArrayPacked.cpp` / `ArrayUnpacked.cpp` for the supported mappings.
+
 ### memory`<TYPE, ROW_SIZE, DEPTH>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;The *memory`<>`* type is developed for optimal access performance to registered memory, with the ability to change one word per clock cycle.
+&nbsp;&nbsp;&nbsp;&nbsp;The *memory`<>`* type stores `DEPTH` rows of `ROW_SIZE` elements of `TYPE`. Assigning a row queues a write; reads see committed storage until `apply()`. The required number of hardware read/write ports depends on the RTL access pattern and the synthesis flow.
 It cannot be used as a port. It uses the *apply*() method for strobing data. The following example shows how memory`<>`
 should be used to organize simple memory with one read and one write port.
 
 ```cpp
 #pragma once
-
-#include "cpphdl.h"
-#include <print>
+#include <cpphdl.h>
 
 using namespace cpphdl;
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
 class Memory : public Module
 {
-    reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
-    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
+    static_assert(MEM_WIDTH_BYTES > 0 && MEM_DEPTH > 0, "Invalid memory size");
+    static constexpr size_t ADDR_BITS = MEM_DEPTH <= 1 ? 1 : clog2(MEM_DEPTH);
+    reg<logic<MEM_WIDTH_BYTES * 8>> data_out_reg;
+    memory<u8, MEM_WIDTH_BYTES, MEM_DEPTH> buffer;
 
 public:
-    _PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
-    _PORT(bool)                      write_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
-    _PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
+    _PORT(u<ADDR_BITS>) write_addr_in;
+    _PORT(bool) write_in;
+    _PORT(logic<MEM_WIDTH_BYTES * 8>) write_data_in;
+    _PORT(u<ADDR_BITS>) read_addr_in;
+    _PORT(bool) read_in;
+    _PORT(logic<MEM_WIDTH_BYTES * 8>) read_data_out =
+        _ASSIGN_COMB(data_out_comb_func());
 
-    _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
-    _PORT(bool)                      read_in;
-    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_COMB( data_out_comb_func() );
-
-    bool                      debugen_in;
-
-    void _assign() {}
-
-    logic<MEM_WIDTH_BYTES*8> data_out_comb;
-    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
+    logic<MEM_WIDTH_BYTES * 8> data_out_comb;
+    logic<MEM_WIDTH_BYTES * 8>& data_out_comb_func()
     {
         if (SHOWAHEAD) {
-            data_out_comb = buffer[read_addr_in()];
+            data_out_comb = buffer[(uint32_t)read_addr_in()];
         }
         else {
             data_out_comb = data_out_reg;
@@ -671,27 +612,20 @@ public:
         return data_out_comb;
     }
 
+    void _assign() {}
+
     void _work(bool reset)
     {
-        uint32_t i;
-        logic<MEM_WIDTH_BYTES*8> mask;
-
-        if (write_in()) {
-            mask = 0;
-            for (i=0; i < MEM_WIDTH_BYTES; ++i) {
-                mask.bits((i+1)*8-1,i*8) = write_mask_in()[i] ? 0xFF : 0 ;
+        if (reset) {
+            data_out_reg._next = 0;
+        }
+        else {
+            if (write_in()) {
+                buffer[(uint32_t)write_addr_in()] = write_data_in();
             }
-            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
-        }
-
-        if (!SHOWAHEAD) {
-            data_out_reg._next = buffer[read_addr_in()];
-        }
-
-        if (debugen_in) {
-            std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
-                (int)write_in(), write_data_in(), write_addr_in(), write_mask_in(),
-                (int)read_in(), read_data_out(), read_addr_in());
+            if (!SHOWAHEAD && read_in()) {
+                data_out_reg._next = buffer[(uint32_t)read_addr_in()];
+            }
         }
     }
 
@@ -701,8 +635,9 @@ public:
         data_out_reg.strobe();
     }
 };
-
 ```
+
+This example resets the output register, not the memory contents. Initialize a row before reading it. The larger memory example in `examples/basic/Memory.cpp` also demonstrates write masks. In registered-read mode, a same-edge read/write observes the old row; in show-ahead mode, the output follows committed memory at the selected address.
 
 ## Interfaces
 
@@ -751,14 +686,14 @@ public:
     void _work(bool reset)
     {
         if (reset) {
-            valid_reg.clr();
-            data_reg.clr();
-            return;
+            valid_reg._next = 0;
+            data_reg._next = 0;
         }
-
-        valid_reg._next = 1;
-        if (!valid_reg || source_out.ready_out()) {
-            data_reg._next = data_reg + logic<DATAWIDTH>(1);
+        else {
+            valid_reg._next = 1;
+            if (!valid_reg || source_out.ready_out()) {
+                data_reg._next = data_reg + logic<DATAWIDTH>(1);
+            }
         }
     }
 
@@ -788,14 +723,14 @@ public:
     void _work(bool reset)
     {
         if (reset) {
-            ready_reg.clr();
-            last_data_reg.clr();
-            return;
+            ready_reg._next = 0;
+            last_data_reg._next = 0;
         }
-
-        ready_reg._next = 1;
-        if (sink_in.valid_in() && sink_in.ready_out()) {
-            last_data_reg._next = sink_in.data_in();
+        else {
+            ready_reg._next = 1;
+            if (sink_in.valid_in() && sink_in.ready_out()) {
+                last_data_reg._next = sink_in.data_in();
+            }
         }
     }
 
@@ -818,6 +753,18 @@ public:
         responder.__inst_name = __inst_name + "/responder";
         assignIf(driver, responder, driver.source_out, responder.sink_in);
     }
+
+    void _work(bool reset)
+    {
+        driver._work(reset);
+        responder._work(reset);
+    }
+
+    void _strobe()
+    {
+        driver._strobe();
+        responder._strobe();
+    }
 };
 
 ```
@@ -829,6 +776,8 @@ interfaces such as valid-ready, where one module drives `valid` and `data`, whil
 `examples/axi/Axi4MuxFromSlave.cpp`, `examples/axi/Axi4MuxToMaster.cpp`, and
 `tests/interface/ValidReady.cpp` for larger examples.
 
+Connect each interface bundle through `assignIf()` in the immediate common parent; do not copy its ports one at a time. The endpoint's own `_assign()` still binds the signals that endpoint drives, as above. Do not bypass hierarchy by reaching into grandchildren or another module's internal state. A forwarding module can use `assignIf(*this, child, proxy_in, child.sink_in)`; see `tests/interface/AssignIfHierarchyProxy.cpp`.
+
 \newpage
 
 # Clock Domain Crossing (CDC)
@@ -837,13 +786,13 @@ interfaces such as valid-ready, where one module drives `valid` and `data`, whil
 
 ## Declaring clock domains
 
-&nbsp;&nbsp;&nbsp;&nbsp;Declare clocks before the source file in the `cpphdl` command line:
+&nbsp;&nbsp;&nbsp;&nbsp;Declare clocks before the source file in the `cpphdl` command line (from the repository root):
 
 ```bash
 cpphdl \
     --primary_clock fast_clk 100000000 \
     --secondary_clock slow_clk 40000000 \
-    TwoClocksCdc.cpp -I../include
+    tests/cdc/TwoClocksCdc.cpp -- -Iinclude
 ```
 
 The clock options follow these rules:
@@ -899,7 +848,7 @@ public:
     {
         source_reg._next = source_in();
         if (reset) {
-            source_reg.clr();
+            source_reg._next = 0;
         }
     }
 
@@ -910,11 +859,13 @@ public:
 
     void _work_slow_clk(bool reset)
     {
-        sync1_reg._next = source_reg;
-        sync2_reg._next = sync1_reg;
         if (reset) {
-            sync1_reg.clr();
-            sync2_reg.clr();
+            sync1_reg._next = 0;
+            sync2_reg._next = 0;
+        }
+        else {
+            sync1_reg._next = source_reg;
+            sync2_reg._next = sync1_reg;
         }
     }
 
@@ -928,22 +879,36 @@ public:
 };
 ```
 
-The converter emits separate clock ports and sequential blocks equivalent to:
+The converter emits separate clock ports and sequential blocks. Their RTL behavior is equivalent to the following (the converter's intermediate tasks and next-state temporaries are omitted):
 
 ```systemverilog
 module LevelCdc (
     input wire fast_clk,
     input wire slow_clk,
-    input wire reset
-    // ports omitted
+    input wire reset,
+    input wire source_in,
+    output wire synchronized_out
 );
 
+logic source_reg;
+(* ASYNC_REG = "TRUE" *) logic sync1_reg;
+(* ASYNC_REG = "TRUE" *) logic sync2_reg;
+assign synchronized_out = sync2_reg;
+
 always_ff @(posedge fast_clk) begin
-    _work_fast_clk(reset);
+    if (reset) source_reg <= 1'b0;
+    else source_reg <= source_in;
 end
 
 always_ff @(posedge slow_clk) begin
-    _work_slow_clk(reset);
+    if (reset) begin
+        sync1_reg <= 1'b0;
+        sync2_reg <= 1'b0;
+    end
+    else begin
+        sync1_reg <= source_reg;
+        sync2_reg <= sync1_reg;
+    end
 end
 endmodule
 ```
@@ -961,9 +926,9 @@ Do not write the same storage from two domains. Cross a control value into the d
 
 ## Reset ownership and sequencing
 
-&nbsp;&nbsp;&nbsp;&nbsp;A generated multi-clock module has one shared `reset` input, driven by the parent module or testbench and connected to every nested module. Reset is a level, not a one-time event and not a transaction consumed by one clock. Each clock process samples that same level only on its own active edge and resets only the storage owned by that clock and edge. Consequently, a fast-clock edge does not reset slow-domain storage, and there is no second reset of fast-domain storage when the slow clock later samples reset.
+&nbsp;&nbsp;&nbsp;&nbsp;In the synchronous-reset flow, a generated multi-clock module has one shared `reset` input, driven by the parent module or testbench and connected to every nested module. Reset is a level, not a one-time event and not a transaction consumed by one clock. Each clock process samples that same level only on its own active edge and resets only the storage owned by that clock and edge. Consequently, a fast-clock edge does not reset slow-domain storage, and there is no second reset of fast-domain storage when the slow clock later samples reset.
 
-Reset is complete only after `reset` has remained asserted across at least one active edge of every clock-and-edge process that owns storage. If both positive- and negative-edge state exist, both edges must observe reset. Holding reset for additional edges repeats the reset assignments and must be harmless. A one-primary-clock-cycle reset pulse is unsafe because a slower or stopped clock can miss it entirely.
+For synchronous-reset processes, reset is complete only after `reset` has remained asserted across at least one active edge of every clock-and-edge process that owns storage. If both positive- and negative-edge state exist, both edges must observe reset. Holding reset for additional edges repeats the reset assignments and must be harmless. A one-primary-clock-cycle reset pulse is unsafe because a slower or stopped clock can miss it entirely.
 
 Use this sequence in native CppHDL and Verilator testbenches:
 
@@ -976,28 +941,43 @@ Use this sequence in native CppHDL and Verilator testbenches:
 
 &nbsp;&nbsp;&nbsp;&nbsp;CppHDL statically lints the structural part of this protocol. Every named work method must have the `void _work_<clk_name>(bool reset)` signature, where the C++ parameter may be unnamed, every strobe method must have a `void _strobe_<clk_name>()` signature, required method pairs must exist, and each register must have one clock/edge owner. The converter cannot prove that a testbench holds reset long enough, that every register is intentionally reset, that clocks continue running during reset, or that an external reset meets recovery/removal timing. Those properties require dynamic regression checks, generated-SystemVerilog assertions, and implementation CDC/reset-domain-crossing analysis.
 
+Asynchronous handlers can assert reset without a clock edge; their dispatch and clocked hold behavior are described in the Asynchronous Reset chapter.
+
 `test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native CppHDL and Verilator flows.
 
 ## Native and Verilator simulation
 
-&nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. On an active edge, call the work method before the matching strobe method:
+&nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. For all edges at one timestamp, first evaluate every active work method against the pre-edge state, then commit every active strobe. Do not interleave one domain's work/strobe with another domain's work at the same timestamp.
 
 ```cpp
+// Inputs and edge flags have been set for this timestamp.
+++_system_clock;
 if (fast_positive_edge) {
     dut._work_fast_clk(reset);
-    dut._strobe_fast_clk();
 }
 if (slow_positive_edge) {
     dut._work_slow_clk(reset);
-    dut._strobe_slow_clk();
 }
 if (fast_negative_edge) {
     dut._work_neg_fast_clk(reset);
+}
+
+if (fast_positive_edge) {
+    dut._strobe_fast_clk();
+}
+if (slow_positive_edge) {
+    dut._strobe_slow_clk();
+}
+if (fast_negative_edge) {
     dut._strobe_neg_fast_clk();
 }
+++_system_clock;
+// Observe outputs only after all active domains have committed.
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;A Verilator testbench drives the generated clock ports and calls `eval()` after every level change. Tests should use different periods and a nontrivial phase relationship so simultaneous edges are not assumed. Reset behavior must be exercised independently in every domain. Compare externally visible transactions rather than internal scheduling details when checking native and Verilator equivalence.
+This scheduling example uses synchronous reset. With asynchronous handlers, dispatch the matching reset handler instead of work while reset is asserted, as described below. The testbench supplies edge flags and calls `_assign()` only once during setup. `_system_clock` must be defined once as a global `long`; its value counts cache epochs, not physical clock cycles.
+
+&nbsp;&nbsp;&nbsp;&nbsp;A Verilator testbench drives input data and generated clock ports before calling `eval()`. For simultaneous edges, update all relevant clock levels before a single `eval()`; calling `eval()` between same-time clock changes imposes an artificial ordering. Exercise different periods, unrelated phases, simultaneous edges, and reset independently in every domain. Compare externally visible transactions rather than internal scheduling details when checking native and Verilator equivalence.
 
 ## CDC implementation patterns
 
@@ -1008,7 +988,7 @@ Use a CDC structure that matches the transferred information:
 * Narrow pulses: encode the event as a toggling bit, synchronize it, and detect a toggle in the destination domain.
 * Coherent multi-bit payloads: hold data stable while a request/acknowledge handshake crosses the domains.
 * Streams: use a dual-clock asynchronous FIFO with domain-local binary pointers and synchronized Gray pointers.
-* Reset release: assert reset through clocked logic and release it through a per-domain synchronizer.
+* Reset release: use clocked assertion or an asynchronous reset handler as required, and release through a per-domain synchronizer.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Synchronizer registers can carry synthesis attributes through an adjacent CppHDL annotation comment:
 
@@ -1040,7 +1020,7 @@ Each item has dedicated regression coverage in `tests/cdc/TwoClocksCdc.cpp` or
 * Positive/negative-edge processes
 * `ASYNC_REG` synthesis attributes
 
-The expanded regression passes in both native CppHDL and Verilator flows. Existing CLI failure tests and the legacy `code_VarInit` test also pass. No additional converter defect was exposed by this coverage.
+These regressions exercise both native CppHDL and Verilator flows. The CTest suite also includes CLI failures for invalid clock declarations and process signatures; run the current suite to verify a particular toolchain.
 
 ## Current Limits
 
@@ -1052,7 +1032,7 @@ The following behavior cannot presently be validated or fully represented by Cpp
 * Automatic detection of unsafe raw buses, reconvergence, or lost pulses
 * Active-low reset polarity and independent per-domain reset ports; asynchronous handlers currently use the shared active-high `reset`
 * Dynamic clock gating or clock multiplexing
-* Jitter, drift, and precise phase relationships
+* Analog jitter and continuous-time clock effects; testbenches can schedule discrete edges and phase offsets explicitly
 * Module-local clock subsets or clock-name remapping; clocks are currently design-global
 * Power-domain isolation and level-shifter behavior
 
@@ -1089,7 +1069,7 @@ end
 
 Reset handlers must return `void`, take no arguments, and modify only registers owned and strobed by the matching clock edge. A negative-edge handler requires matching `_work_neg_<clk_name>(bool)` and `_strobe_neg_<clk_name>()` methods.
 
-In native simulation, call the reset handler followed by its matching strobe method when reset is asserted. In Verilator, change `reset` from `0` to `1` and call `eval()`; no clock edge is required. Reset release must still satisfy each clock domain's recovery/removal requirements, normally through synchronized release logic.
+In native simulation, on reset assertion call all affected reset handlers, then their matching strobe methods, even if no clock edge occurs. While reset remains asserted, call the matching reset handler instead of its work method on each active clock edge. Do not run normal work during held reset. Invalidate port/comb caches with `_system_clock` around each event, as in the CDC schedule. In Verilator, change `reset` from `0` to `1` and call `eval()`; no clock edge is required. Reset release must still satisfy each clock domain's recovery/removal requirements, normally through synchronized release logic.
 
 See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 
@@ -1119,7 +1099,7 @@ public:
     void _work(bool reset)
     {
         if (reset) {
-            count_reg.clr();
+            count_reg._next = 0;
         }
         else {
             count_reg._next = count_reg + 1;
@@ -1152,20 +1132,24 @@ dut._assign();
 dut.add_vcd_signals(vcd, "dut.");
 vcd.create("output.vcd");
 
+++_system_clock;
 dut._work(true);
+dut._strobe();
+++_system_clock;
 vcd.sample(0);
 
 for (unsigned cycle = 1; cycle <= 100; ++cycle) {
-    dut._strobe();
     ++_system_clock;
     dut._work(false);
+    dut._strobe();
+    ++_system_clock;
     vcd.sample(cycle);
 }
 ```
 
 `VcdFile::create()` currently emits a `1ns` timescale. The argument to `sample(time_ns)` is therefore the VCD timestamp in nanoseconds; it does not advance the model. For multiple clocks, sample after every clock transition or scheduled event and use timestamps that represent the testbench's actual edge schedule.
 
-The signal pointer must refer to contiguous raw storage such as a CppHDL scalar, `logic<>`, `reg<>`, or array whose layout is suitable for raw bit reading. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
+The signal pointer must refer to contiguous raw storage such as a CppHDL scalar, `logic<>`, or the current-value storage of `reg<>`. The width is the RTL value width, not `sizeof(reg<T>) * 8`, which would include next-state storage. For arrays or structs, check their actual byte/bit layout before using raw tracing. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
 
 This helper traces the native CppHDL model. To trace internal signals of generated RTL under Verilator, build the generated SystemVerilog with Verilator's `--trace` option. The testbench must enable tracing before time advances, register the model, and call `dump()` after every evaluated clock transition:
 
@@ -1224,7 +1208,7 @@ For example, pass `--trace` alongside the usual Verilator generation options bef
 * `cpphdl::array<N,T>` fields are emitted as packed SystemVerilog arrays inside the generated struct package
 * C++ enums are emitted with a four-state SystemVerilog `logic` base preserving the C++ underlying width and signedness
 
-Example from `tests/structs/ArrayInStruct.cpp`:
+Reduced example based on `tests/structs/ArrayInStruct.cpp`:
 
 ```cpp
 struct ArrayPayload
@@ -1336,6 +1320,7 @@ Generated SystemVerilog:
 
 ```systemverilog
 package UnionWithStruct_pkg;
+import UnionStruct_pkg::*;
 
 typedef union packed {
     struct packed {
@@ -1370,23 +1355,24 @@ endpackage
 
 ## Syntax
 
-&nbsp;&nbsp;&nbsp;&nbsp;By default, a `generated` folder is created after a `cpphdl` call and contains the emitted `.sv` files. Use `--generated-dir <path>` to select another output directory. Converter options precede the source files; Clang compilation arguments such as defines and include directories follow them.
+&nbsp;&nbsp;&nbsp;&nbsp;By default, a `generated` folder is created after a `cpphdl` call and contains the emitted `.sv` files. Use `--generated-dir <path>` to select another output directory. Place converter options and source files before `--`, then Clang parsing arguments such as `-I` and `-D` after it. The legacy syntax without `--` still accepts compiler arguments after all sources.
 
 ```bash
 cpphdl [--generated-dir <path>] \
     [--primary_clock <name> <frequency>] \
     [--secondary_clock <name> <frequency>] ... \
     <source.h> <source.cpp> ... \
-    [-DNAME=value] [-I<include-dir>] ...
+    -- [-DNAME=value] [-I<include-dir>] ...
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;The cpphdl tool is based on llvm clang and supports all usual C++ command line parameters.
+&nbsp;&nbsp;&nbsp;&nbsp;The converter uses LLVM/Clang to parse sources; it does not link a native executable. Run `cpphdl --help` (or `-h`) for conversion, JSON, clock, and native optimizer options. `--generated-dir=<path>` is also accepted. The converter currently appends `-std=c++26` and detected include paths; it defines `SYNTHESIS` unless `--no-synthesis-flag` or a comb-optimizer mode disables that default. This language mode is separate from the standard used to build a native testbench.
 
 # Annotations
 
 ## CPPHDL_REPLACEMENT
 
 * `[[clang::annotate("CPPHDL_REPLACEMENT=...;")]]` can be attached to a `cpphdl::Module` class.
+* In inline replacement text, `$(NAME)` substitutes a template argument. For a standalone numeric template without a concrete specialization, it uses the C++ parameter default instead. Explicit specialization arguments take precedence over defaults. `$$` emits a literal dollar sign; SystemVerilog names such as `$bits` are preserved.
 * `CPPHDL_REPLACEMENT_FILE=<path>;` reads the complete replacement from a file. Relative paths are resolved from the annotated class's source file when possible.
 * `CPPHDL_REPLACEMENT_SCRIPT=<script> [arguments...];` executes a script and uses its standard output as the replacement. A relative script path is resolved in the same way as a replacement file.
 * During conversion cpphdl resolves the inline text, file contents, or script output into `Module::replacement`; a trailing annotation metadata `;` is stripped from the annotation value.

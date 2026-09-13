@@ -1,3 +1,9 @@
+# 1.4
+
+ - improved Tribe CPU and L1/L2 cache timing, memory primitives, and FPGA timing-analysis support
+ - fixed implicit template instantiation, interface hierarchy connections, structured ports, localparams, and wide-bus-to-bool conversion
+ - expanded regressions and generated RTL examples; updated documentation, architecture diagrams, and CppHDL CLI help
+
 # 1.3
 
  - asynchronous resets initial code

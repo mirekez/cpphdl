@@ -7,6 +7,7 @@
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "llvm/Support/CommandLine.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Sema/Sema.h"
 
 #include "helpers.h"
 
@@ -20,6 +21,7 @@
 #include "Enum.h"
 #include "json_output.h"
 #include "Combs.h"
+#include "LifecycleChecks.h"
 
 #include <algorithm>
 #include <array>
@@ -189,6 +191,29 @@ AnnotationVars annotationTemplateVariables(const CXXRecordDecl* RD, const ASTCon
     AnnotationVars vars;
     const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
     if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        // Standalone numeric modules have no specialization arguments. Their
+        // replacement placeholders must use the primary template's defaults.
+        if (const auto* templ = RD->getDescribedClassTemplate()) {
+            for (const auto* param : *templ->getTemplateParameters()) {
+                const auto* value = dyn_cast<NonTypeTemplateParmDecl>(param);
+                if (!value || !value->hasDefaultArgument() || value->getName().empty()) {
+                    continue;
+                }
+                const auto& arg = value->getDefaultArgument().getArgument();
+                if (arg.getKind() == TemplateArgument::Expression) {
+                    const auto* expr = arg.getAsExpr();
+                    clang::Expr::EvalResult result;
+                    if (!expr->isValueDependent() && expr->EvaluateAsInt(result, ctx)) {
+                        llvm::SmallString<32> text;
+                        const auto& integer = result.Val.getInt();
+                        integer.toString(text, 10, integer.isSigned());
+                        vars.emplace(value->getNameAsString(), text.str().str());
+                        continue;
+                    }
+                }
+                vars.emplace(value->getNameAsString(), templateArgumentText(arg, ctx));
+            }
+        }
         return vars;
     }
 
@@ -1287,6 +1312,13 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     // so the type loop above cannot separate their dimensions from the element type.
     // Normalize them here to the same representation used by concrete specializations.
     while (expr.type == cpphdl::Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        if (const auto* type = QT->getAs<TemplateSpecializationType>()) {
+            const auto args = type->template_arguments();
+            if (args.size() >= 2 && args[1].getKind() == TemplateArgument::Type) {
+                QT = args[1].getAsType();
+                CRD = hlp.resolveCXXRecordDecl(QT);
+            }
+        }
         array_dim.emplace_back(std::move(expr.sub[0]));
         cpphdl::Expr element = std::move(expr.sub[1]);
         expr = std::move(element);
@@ -1308,11 +1340,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     }
     const auto inlineAnnotations = fieldInlineAnnotations(sourceField, *hlp.ctx);
 
-    const bool isInterfaceField = CRD && CRD->isDerivedFrom(InterfaceClass);
+    auto* interfaceRecord = hlp.resolveInterfaceRecordDecl(QT);
+    const bool isInterfaceField = interfaceRecord != nullptr;
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out") || isInterfaceField) {
         DEBUG_AST1(" {port " << fieldName << "} ");
 
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
+        if (!CRD && interfaceRecord) {
+            CRD = interfaceRecord;
+        }
 
         cpphdl::Field* field = 0;
         auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName; } );
@@ -1421,7 +1457,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             // Non-template interfaces have no specialization node; flatten their
             // concrete declaration directly instead of dereferencing a null cast.
             auto* interfaceSpecialization = dyn_cast<ClassTemplateSpecializationDecl>(CRD);
-            ClassTemplateDecl *CTD = interfaceSpecialization ? interfaceSpecialization->getSpecializedTemplate() : nullptr;
+            ClassTemplateDecl *CTD = interfaceSpecialization ? interfaceSpecialization->getSpecializedTemplate() : CRD->getDescribedClassTemplate();
             const clang::TemplateParameterList *interfaceParams = CTD ? CTD->getTemplateParameters() : nullptr;
             if (CTD) {
                 CRD = CTD->getTemplatedDecl();
@@ -2050,11 +2086,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
     }
 
-    void putModule(const CXXRecordDecl* RD)
+    void putModule(const CXXRecordDecl* RD, bool numericPrimary = false)
     {
-        if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
+        if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // save primary declarations for symbolic expressions
             DEBUG_AST(debugIndent++, "# it's abstract, saving " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
-            abstractDefs.push_back(RD);
+            if (!numericPrimary) {
+                abstractDefs.push_back(RD);
+            }
 
 //            for (const auto &Base : RD->bases()) {
 //                CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
@@ -2064,7 +2102,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 ////                    }
 //                }
 //            }
-            if (RD->getDescribedClassTemplate()) {  // it's template, dont use abstract in putClass
+            if (RD->getDescribedClassTemplate() && !numericPrimary) {
                 return;
             }
         }
@@ -2086,6 +2124,21 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         std::vector<cpphdl::Field> params;
         hlp.followSpecialization(RD, mod->name, &params, true);
         std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
+        if (numericPrimary) {
+            for (const auto* parameter : *RD->getDescribedClassTemplate()->getTemplateParameters()) {
+                const auto* value = cast<NonTypeTemplateParmDecl>(parameter);
+                cpphdl::Field field{value->getNameAsString(),
+                    cpphdl::Expr{value->getNameAsString(), cpphdl::Expr::EXPR_PARAM}};
+                if (value->hasDefaultArgument()) {
+                    cpphdl::Expr init;
+                    hlp.ArgToExpr(value->getDefaultArgument().getArgument(), init, false);
+                    if (!init.sub.empty()) {
+                        field.initializer = std::move(init.sub.front());
+                    }
+                }
+                params.emplace_back(std::move(field));
+            }
+        }
         mod->parameters = std::move(params);
         mod->origName = RD->getQualifiedNameAsString();
         mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
@@ -2127,15 +2180,145 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 
     bool shouldVisitTemplateInstantiations() const { return true; }
 
+    void exportUninstantiatedNumericModules()
+    {
+        // Numeric template parameters have a direct SV parameter equivalent.
+        // Wait until concrete instances have been collected so their existing
+        // generation path (including fixed type arguments) remains unchanged.
+        const auto definitions = abstractDefs;
+        std::unordered_set<const CXXRecordDecl*> seen;
+        for (const auto* record : definitions) {
+            const auto* templ = record->getDescribedClassTemplate();
+            if (!templ || !seen.insert(record->getCanonicalDecl()).second) {
+                continue;
+            }
+            const auto* parameters = templ->getTemplateParameters();
+            const bool numeric = std::all_of(parameters->begin(), parameters->end(),
+                [](const NamedDecl* param) {
+                    const auto* value = dyn_cast<NonTypeTemplateParmDecl>(param);
+                    return value && !value->isParameterPack()
+                        && value->getType()->isIntegralOrEnumerationType();
+                });
+            const bool instantiated = std::any_of(currProject->modules.begin(), currProject->modules.end(),
+                [&](const cpphdl::Module& module) { return module.origName == record->getQualifiedNameAsString(); });
+            if (!numeric || instantiated) {
+                continue;
+            }
+            // Dependent user-class members and bases need C++ specialization
+            // to resolve their types and methods. Do not replace that path
+            // with an incomplete symbolic module.
+            Helpers hlp(context);
+            std::function<bool(QualType)> selfContained = [&](QualType type) {
+                type = type.getNonReferenceType().getDesugaredType(*context);
+                if (const auto* array = context->getAsArrayType(type)) {
+                    return selfContained(array->getElementType());
+                }
+                if (!type->isDependentType() || hlp.resolveInterfaceRecordDecl(type)) {
+                    return true;
+                }
+                const auto* spec = type->getAs<TemplateSpecializationType>();
+                const auto* decl = spec ? spec->getTemplateName().getAsTemplateDecl() : nullptr;
+                if (!decl || decl->getQualifiedNameAsString().rfind("cpphdl::", 0) != 0) {
+                    return false;
+                }
+                for (const auto& arg : spec->template_arguments()) {
+                    if (arg.getKind() == TemplateArgument::Type && !selfContained(arg.getAsType())) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const bool dependentBase = std::any_of(record->bases_begin(), record->bases_end(),
+                [](const CXXBaseSpecifier& base) { return base.getType()->isDependentType(); });
+            const bool dependentMember = std::any_of(record->field_begin(), record->field_end(),
+                [&](const FieldDecl* field) { return !selfContained(field->getType()); });
+            if (!dependentBase && !dependentMember) {
+                putModule(record, true);
+            }
+        }
+    }
+
     ASTContext* context;
 //    const SourceManager &SM;
     std::vector<const CXXRecordDecl*> abstractDefs;
 };
 
+struct ModuleSpecializationCollector
+    : public RecursiveASTVisitor<ModuleSpecializationCollector>
+{
+    explicit ModuleSpecializationCollector(ASTContext& context)
+        : context(context)
+    {
+        Helpers hlp(&context);
+        moduleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+    }
+
+    void consider(CXXRecordDecl* record)
+    {
+        auto* specialization = dyn_cast_or_null<ClassTemplateSpecializationDecl>(record);
+        if (!specialization || !moduleClass) {
+            return;
+        }
+        CXXRecordDecl* definition = specialization->getDefinition();
+        if (!definition || !definition->isDerivedFrom(moduleClass)) {
+            return;
+        }
+        if (seen.insert(specialization->getCanonicalDecl()).second) {
+            specializations.push_back(specialization);
+        }
+    }
+
+    bool VisitFieldDecl(FieldDecl* field)
+    {
+        QualType type = field->getType().getNonReferenceType();
+        while (const ArrayType* array = context.getAsArrayType(type)) {
+            type = array->getElementType().getNonReferenceType();
+        }
+        consider(type->getAsCXXRecordDecl());
+        return true;
+    }
+
+    bool shouldVisitTemplateInstantiations() const { return true; }
+
+    ASTContext& context;
+    CXXRecordDecl* moduleClass = nullptr;
+    std::unordered_set<const CXXRecordDecl*> seen;
+    std::vector<ClassTemplateSpecializationDecl*> specializations;
+};
+
 struct MethodConsumer : public ASTConsumer
 {
-    explicit MethodConsumer(ASTContext* context, cpphdl::CombsOptimizer* combsOptimizer)
-        : Visitor(context), combsOptimizer(combsOptimizer) {}
+    explicit MethodConsumer(ASTContext* context, CompilerInstance* compiler,
+                            cpphdl::CombsOptimizer* combsOptimizer)
+        : Visitor(context), compiler(compiler), combsOptimizer(combsOptimizer) {}
+
+    bool HandleTopLevelDecl(DeclGroupRef declarations) override
+    {
+        if (combsOptimizer) {
+            return true;
+        }
+
+        ModuleSpecializationCollector collector(compiler->getASTContext());
+        for (Decl* declaration : declarations) {
+            collector.TraverseDecl(declaration);
+        }
+
+        Sema& sema = compiler->getSema();
+        for (ClassTemplateSpecializationDecl* specialization : collector.specializations) {
+            if (!instantiatedSpecializations.insert(specialization->getCanonicalDecl()).second) {
+                continue;
+            }
+            SourceLocation location = specialization->getPointOfInstantiation();
+            if (location.isInvalid()) {
+                location = specialization->getLocation();
+            }
+            DEBUG_AST(debugIndent, "# instantiate implicit Module specialization: "
+                << specialization->getQualifiedNameAsString());
+            sema.InstantiateClassTemplateSpecializationMembers(
+                location, specialization, TSK_ImplicitInstantiation);
+        }
+        return true;
+    }
 
     void HandleTranslationUnit(ASTContext &context) override
     {
@@ -2143,17 +2326,100 @@ struct MethodConsumer : public ASTConsumer
             combsOptimizer->collect(context);
         } else {
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
+            Visitor.exportUninstantiatedNumericModules();
+            checkModuleLifecycleCalls(context);
         }
     }
 
     MethodVisitor Visitor;
+    CompilerInstance* compiler;
     cpphdl::CombsOptimizer* combsOptimizer;
+    std::unordered_set<const CXXRecordDecl*> instantiatedSpecializations;
 };
 
 static llvm::cl::OptionCategory MyToolCategory("cpphdl options");
 
 namespace
 {
+
+void printCpphdlHelp()
+{
+    llvm::outs() << R"help(CppHDL - convert C++ RTL to SystemVerilog or optimized native C++ simulation
+
+Usage:
+  cpphdl [CppHDL options] source.cpp [source.h ...] -- [Clang arguments]
+  cpphdl --help
+
+Before --: CppHDL options and source files (.cpp, .cc, .h, .hpp).
+After  --: compiler arguments used to parse those sources, not CppHDL options.
+The legacy form without -- is also supported: put all sources before compiler
+arguments. Prefer an explicit -- to make the boundary unambiguous.
+
+Conversion options:
+  -h, --help                     Show this help and exit; no source required.
+  --generated-dir <directory>    Output directory (default: generated).
+                                Also accepts --generated-dir=<directory>.
+  --json-output <file>           Also write the extracted design as JSON.
+                                Appends .json when the extension is omitted.
+  --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
+                                source normally hidden by synthesis guards.
+  --debug                        Print converter/AST diagnostics.
+
+Clocks:
+  --primary_clock <name> <freq>  Declare the primary clock (positive integer
+                                frequency, normally Hz).
+  --secondary_clock <name> <freq>
+                                Add a clock; repeat for more clock domains.
+                                Requires --primary_clock. Clock names must be
+                                unique; no secondary may be faster than primary.
+  Without clock options: clk, _work(reset), _strobe(). A single named primary
+  changes the clock port name, not the methods. With multiple clocks, modules
+  need _work_<name>(bool reset) and _strobe_<name>() for every declared clock.
+  Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
+  Frequencies validate the design; the testbench must schedule clock edges.
+
+Native simulation optimizer (generates C++, not SystemVerilog):
+  --optimize-combs <root>        Generate a dependency-scheduled model for the
+                                named root module class.
+  --optimize-combs-l1 <root>     Also schedule cached procedural comb methods.
+  --optimize-math                Simplify recognized arithmetic networks to
+                                equivalent native scalar expressions.
+  --optimize-threads <count>     Worker lanes (positive integer; default: 1).
+  --optimize-combs-collect <file>
+                                Save an intermediate optimizer collection and
+                                exit without generating the model.
+  --optimize-combs-load <file>   Load a saved collection; may be repeated.
+  Math, threads, collect and load require one of the two root options above.
+  Both root options disable the implicit SYNTHESIS definition.
+  All single-value long options accept either --option value or --option=value;
+  clock options take two separate arguments: <name> <frequency>.
+
+Compiler arguments after -- (common examples, not an exhaustive Clang list):
+  -I<directory>                 Add a project include directory.
+  -isystem <directory>          Add a system include directory.
+  -DNAME[=value]                Define a preprocessor macro.
+  -UNAME                        Undefine a preprocessor macro.
+  -include <file>               Include a header before parsing the source.
+  -W<warning>, -Wno-<warning>   Control Clang diagnostics.
+  --sysroot=<directory>         Select the compiler's system-header root.
+  CppHDL adds C++ language mode (-std=c++26), detected include paths, and
+  -DSYNTHESIS unless disabled above. These defaults are appended to compiler
+  arguments, so an earlier -std= does not override the converter's language mode.
+  This tool parses C++; it does not build/link a simulation executable. Use your
+  C++ compiler/CMake for that, and Verilator to test generated SystemVerilog.
+  For the compiler's full option list, use clang++ --help.
+
+Examples (from the repository root):
+  cpphdl --generated-dir=rtl examples/basic/Buffer.cpp -- -Iinclude
+  cpphdl --json-output=design.json top.cpp -- -Iinclude -DMY_WIDTH=32
+  cpphdl --primary_clock write_clk 100000000 \
+         --secondary_clock read_clk 40000000 examples/cdc/Fifo2clk.cpp -- -Iinclude
+  cpphdl --optimize-combs-l1 MyTop --optimize-threads=4 \
+         --generated-dir=sim top.cpp -- -Iinclude
+
+See doc/spec.md and doc/best_practice.md for RTL conventions and simulation.
+)help";
+}
 
 bool validClockName(std::string_view name)
 {
@@ -2237,7 +2503,7 @@ struct MyFrontendAction : public ASTFrontendAction
 
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override
     {
-        return std::make_unique<MethodConsumer>(&CI.getASTContext(), combsOptimizer);
+        return std::make_unique<MethodConsumer>(&CI.getASTContext(), &CI, combsOptimizer);
     }
 
     cpphdl::CombsOptimizer* combsOptimizer;
@@ -2310,6 +2576,12 @@ int main(int argc, const char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
+
+        if (!saw_double_dash &&
+            (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0)) {
+            printCpphdlHelp();
+            return 0;
+        }
 
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;

@@ -696,8 +696,3 @@ public:
     }
 #endif
 };
-
-template class TribeTest<1>;
-#ifdef MULTICORE
-template class TribeTest<CPUS_PER_L2_CACHE>;
-#endif
