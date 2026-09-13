@@ -8,12 +8,15 @@ _start:
     la t0, trap_handler
     csrw mtvec, t0
     li s0, 0
+    li s4, 0
     li s1, 11
     la s2, machine_ecall
 machine_ecall:
     ecall
     li t0, 1
     bne s0, t0, fail
+    li t0, 0x12345678
+    bne s4, t0, fail
     li t0, 0x1800
     csrc mstatus, t0
     la t0, user_start
@@ -45,6 +48,11 @@ trap_handler:
     addi s0, s0, 1
     addi t0, t0, 4
     csrw mepc, t0
+    // Trap epilogues restore CSRs and registers before returning. The last
+    // load must retire before MRET redirects and changes privilege.
+    csrrw t2, mscratch, t2
+    la t3, restore_value
+    lw s4, 0(t3)
     mret
 fail:
     la a0, failure
@@ -59,5 +67,7 @@ print:
 stop:
     j stop
 .section .rodata
+.balign 4
+restore_value: .word 0x12345678
 success: .asciz "NO_MMU_TRAPS_PASS\n"
 failure: .asciz "NO_MMU_TRAPS_FAIL\n"

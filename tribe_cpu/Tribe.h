@@ -1015,6 +1015,31 @@ private:
     }
 #endif
 
+#ifdef ENABLE_ZICSR
+    _LAZY_COMB(xret_redirect_comb, bool)
+        return xret_redirect_comb = state_reg[0].valid &&
+            (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET) &&
+            !interrupt_retire_wait_comb_func() && !csr_commit_wait_comb_func();
+    }
+
+    _LAZY_COMB(sync_trap_redirect_comb, bool)
+        return sync_trap_redirect_comb = state_reg[0].valid &&
+            !csr_commit_wait_comb_func() &&
+            (!interrupt_retire_wait_comb_func()
+#ifdef ENABLE_ISR
+             || interrupt_accept_comb_func()
+#endif
+            ) && !sbi_decode_wait_comb_func() && !sbi_decode_handled_comb_func() &&
+            (
+#ifdef ENABLE_ISR
+             interrupt_accept_comb_func() ||
+#endif
+             state_reg[0].sys_op == Sys::ECALL || state_reg[0].sys_op == Sys::EBREAK ||
+             state_reg[0].sys_op == Sys::TRAP || state_reg[0].trap_op != Trap::TNONE ||
+             csr.illegal_trap_out());
+    }
+#endif
+
     // FENCE.I must not invalidate the instruction cache on the same edge that
     // an older data-side store is accepted. Keep the fence in execute for one
     // more cycle so the completed store can leave the memory-stage register.
@@ -2075,7 +2100,20 @@ public:
         csr_commit_interrupt_cause_reg._next = csr_commit_interrupt_cause_reg;
         csr_commit_interrupt_to_supervisor_reg._next = csr_commit_interrupt_to_supervisor_reg;
 #endif
-        if (csr_commit_wait_comb_func()) {
+        if (xret_redirect_comb_func() || sync_trap_redirect_comb_func()) {
+            // A redirect flushes execute on this edge. Capture its CSR event
+            // even when releasing a previously serialized CSR record, or the
+            // PC changes without the matching privilege/trap-state update.
+            csr_commit_state_reg._next = csr_state_comb_func();
+            csr_commit_fire_reg._next = csr_state_comb_func().valid;
+            csr_commit_serialized_reg._next = false;
+#ifdef ENABLE_ISR
+            csr_commit_interrupt_valid_reg._next = interrupt_accept_comb_func();
+            csr_commit_interrupt_cause_reg._next = interrupt_cause_reg;
+            csr_commit_interrupt_to_supervisor_reg._next = interrupt_to_supervisor_reg;
+#endif
+        }
+        else if (csr_commit_wait_comb_func()) {
             // CSR consumes the registered record on this edge.  Keep the
             // record stable for one more cycle while commit_fire is cleared,
             // so the pipeline can prepare to advance without a duplicate.
@@ -2209,7 +2247,7 @@ public:
         output_write_active_reg._next = dmem_addr_out() == 0x11223344 && dmem_write_out();
 
 #ifdef ENABLE_ZICSR
-        if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
+        if (!reset && xret_redirect_comb_func()) {
             uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
             pc._next = epc;
 #ifndef SYNTHESIS
@@ -2230,23 +2268,7 @@ public:
             interrupt_entry_guard_reg._next = false;
         }
         else
-        if (!reset && state_reg[0].valid &&
-            (!interrupt_retire_wait_comb_func()
-#ifdef ENABLE_ISR
-             || interrupt_accept_comb_func()
-#endif
-            ) &&
-            !sbi_decode_wait_comb_func() &&
-            !sbi_decode_handled_comb_func() &&
-            (
-#ifdef ENABLE_ISR
-             interrupt_accept_comb_func() ||
-#endif
-             state_reg[0].sys_op == Sys::ECALL ||
-             state_reg[0].sys_op == Sys::EBREAK ||
-             state_reg[0].sys_op == Sys::TRAP ||
-             state_reg[0].trap_op != Trap::TNONE ||
-             csr.illegal_trap_out())) {
+        if (!reset && sync_trap_redirect_comb_func()) {
             pc._next = csr.trap_vector_out();
 #ifndef SYNTHESIS
             trace_pc_write("trap-exec", (uint32_t)csr.trap_vector_out());

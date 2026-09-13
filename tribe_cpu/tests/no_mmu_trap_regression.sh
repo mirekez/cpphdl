@@ -23,4 +23,4 @@ fi
 (cd "$work" && "$simulator" --noveril --program "$work/traps.elf" --elf \
   --boot-priv m --cycles 100000 --ram-size "$((ram_bytes / 4))" \
   --expected-output-contains NO_MMU_TRAPS_PASS --mirror-uart)
-echo 'PASS: synchronous traps and returns without MMU or interrupt routing'
+echo 'PASS: synchronous trap/return regression'
