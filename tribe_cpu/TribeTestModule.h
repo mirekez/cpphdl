@@ -708,3 +708,11 @@ public:
     }
 #endif
 };
+
+// This header is the complete synthesizable design seen by CppHDL. The native
+// TestTribe harness is excluded by SYNTHESIS, so keep the required concrete
+// specializations explicit for HDL generation.
+template class TribeTest<1>;
+#ifdef MULTICORE
+template class TribeTest<CPUS_PER_L2_CACHE>;
+#endif

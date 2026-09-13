@@ -16,6 +16,7 @@
 
 namespace {
 using namespace clang;
+using Methods = std::map<std::string, const CXXMethodDecl*>;
 
 bool isProcess(const std::string& name, const std::string& phase)
 {
@@ -28,6 +29,21 @@ bool isProcess(const std::string& name, const std::string& phase)
         }
     }
     return false;
+}
+
+bool hasNamedClockVariant(const Methods& methods, const std::string& name,
+    const std::string& phase)
+{
+    const bool falling = name == phase + "_neg";
+    if (name != phase && !falling) {
+        return false;
+    }
+    if (currProject->clocks.empty()) {
+        return false;
+    }
+    const std::string variant = phase + (falling ? "_neg_" : "_")
+        + currProject->clocks.front().name;
+    return methods.count(variant) != 0;
 }
 
 bool isModule(const CXXRecordDecl* record)
@@ -45,8 +61,6 @@ bool isModule(const CXXRecordDecl* record)
     }
     return false;
 }
-
-using Methods = std::map<std::string, const CXXMethodDecl*>;
 
 void collectMembers(const CXXRecordDecl* record, Methods& methods,
     std::vector<const FieldDecl*>& fields, std::set<const CXXRecordDecl*>& visited)
@@ -364,6 +378,14 @@ void check(const CXXRecordDecl* record, ASTContext& context)
             for (const auto& [childName, decl] : childMethods) {
                 if ((!isProcess(childName, "_work") && !isProcess(childName, "_strobe"))
                     || !requiresLifecycleCall(decl, context)) {
+                    continue;
+                }
+                // A generic lifecycle method commonly remains as the native
+                // simulation compatibility alias for a clock-specific HDL
+                // process. Requiring both calls reports the alias as lost even
+                // when the parent delegates the real named clock process.
+                if (hasNamedClockVariant(childMethods, childName, "_work")
+                    || hasNamedClockVariant(childMethods, childName, "_strobe")) {
                     continue;
                 }
                 if (isProcess(childName, "_work") && !work.calls[field].count(childName)) {
