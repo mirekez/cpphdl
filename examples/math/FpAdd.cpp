@@ -10,7 +10,7 @@ using namespace cpphdl;
 // One-stage floating-point adder. Alignment is combinational before sum_clock,
 // the signed significand addition is registered, and normalization/rounding is
 // combinational after the register. Exponent-zero values are flushed to zero.
-template<size_t W, size_t EW>
+template<size_t W=32, size_t EW=8>
 class FpAdd : public Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;

@@ -9,7 +9,7 @@ using namespace cpphdl;
 
 // Combinational floating-point square root. Exponent-zero inputs are flushed
 // to signed zero, matching the floating-point policy used by FpConverter.
-template<size_t W, size_t EW>
+template<size_t W=32, size_t EW=8>
 class FpSqrt : public Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
