@@ -96,13 +96,17 @@ foreach(src ${TEST_SOURCES})
     cpphdl_add_converter_dependency(${target_name})
 
     if(rel_path IN_LIST template_hierarchy_tests)
+        set(template_top ${name})
+        if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
+            set(template_top TypeTemplateModuleParent)
+        endif()
         add_test(NAME ${target_name}
             COMMAND ${CMAKE_COMMAND}
                 -DCPPHDL=$<TARGET_FILE:cpphdl>
                 -DSOURCE=${src}
                 -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
                 -DTEST_EXE=$<TARGET_FILE:${target_name}>
-                -DTOP=${name}
+                -DTOP=${template_top}
                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/template_hierarchy/${target_name}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateHierarchy.cmake)
     else()
