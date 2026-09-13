@@ -197,8 +197,13 @@ private:
     }
 
     _LAZY_COMB(load_raw_comb, uint32_t)
-        load_raw_comb = held_load_result_valid_comb_func() ?
-            (uint32_t)load_raw_result_reg : (uint32_t)0;
+        // Retirement consumes the response-valid token before the memory-stage
+        // owner necessarily advances (for example, while a younger MUL/DIV
+        // holds execute). Tribe can still write back or forward that owner's
+        // result, so retain its data after consuming the token. Readiness gates
+        // architectural use; the next load replaces this register only when
+        // its own response has been assembled.
+        load_raw_comb = load_raw_result_reg;
         return load_raw_comb;
     }
 

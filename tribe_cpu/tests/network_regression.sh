@@ -20,3 +20,4 @@ done
 (cd "$work" && ./EthGigPollingCPU --noveril --polling)
 CXX="$compiler" bash "$root/tribe_cpu/tests/no_mmu_compile_check.sh"
 CXX="$compiler" bash "$root/tribe_cpu/tests/no_mmu_trap_regression.sh"
+CXX="$compiler" bash "$root/tribe_cpu/tests/load_retire_regression.sh"

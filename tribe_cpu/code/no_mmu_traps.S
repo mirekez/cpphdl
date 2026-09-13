@@ -5,6 +5,8 @@
 .section .text
 .global _start
 _start:
+    // Run one copy when reusing a multicore simulator; keep UART markers intact.
+    bnez a0, stop
     la t0, trap_handler
     csrw mtvec, t0
     li s0, 0
