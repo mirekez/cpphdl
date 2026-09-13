@@ -1,5 +1,9 @@
 # Why the request-tree improvement did not fix full CVA6
 
+Follow-up: `cva6-matmul-regenerated-2026-09-13.md` records the completed fresh
+build with both fixes. Boot-ROM retirement now progresses, but matmul still
+times out at the Verilator reference's clock count.
+
 ## Findings
 
 The isolated request-tree speedup was real, but it did not establish that the
