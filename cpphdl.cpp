@@ -191,6 +191,29 @@ AnnotationVars annotationTemplateVariables(const CXXRecordDecl* RD, const ASTCon
     AnnotationVars vars;
     const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
     if (!CTSD || !CTSD->getSpecializedTemplate()) {
+        // Standalone numeric modules have no specialization arguments. Their
+        // replacement placeholders must use the primary template's defaults.
+        if (const auto* templ = RD->getDescribedClassTemplate()) {
+            for (const auto* param : *templ->getTemplateParameters()) {
+                const auto* value = dyn_cast<NonTypeTemplateParmDecl>(param);
+                if (!value || !value->hasDefaultArgument() || value->getName().empty()) {
+                    continue;
+                }
+                const auto& arg = value->getDefaultArgument().getArgument();
+                if (arg.getKind() == TemplateArgument::Expression) {
+                    const auto* expr = arg.getAsExpr();
+                    clang::Expr::EvalResult result;
+                    if (!expr->isValueDependent() && expr->EvaluateAsInt(result, ctx)) {
+                        llvm::SmallString<32> text;
+                        const auto& integer = result.Val.getInt();
+                        integer.toString(text, 10, integer.isSigned());
+                        vars.emplace(value->getNameAsString(), text.str().str());
+                        continue;
+                    }
+                }
+                vars.emplace(value->getNameAsString(), templateArgumentText(arg, ctx));
+            }
+        }
         return vars;
     }
 

@@ -113,6 +113,22 @@ foreach(src ${TEST_SOURCES})
 endforeach()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+foreach(replacement_case standalone concrete partial expressions named parent)
+    add_test(NAME format_replacement_defaults_${replacement_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${replacement_case}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_replacement_defaults
+            -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+            -DCXX=${CMAKE_CXX_COMPILER}
+            -DMAKE=${CPPHDL_REPLACEMENT_MAKE}
+            -DCONDA_PREFIX=${CPPHDL_LOCAL_CONDA_PREFIX}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/format/ReplacementDefaults.cmake)
+    set_tests_properties(format_replacement_defaults_${replacement_case} PROPERTIES TIMEOUT 120)
+endforeach()
+
 foreach(standalone_case numeric numeric_instantiated fp_sqrt)
     set(fp_sqrt_test_arg)
     if(standalone_case STREQUAL "fp_sqrt" AND TARGET math_FpSqrt AND CPPHDL_TEMPLATE_VERILATOR)

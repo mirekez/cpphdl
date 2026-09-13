@@ -1372,6 +1372,7 @@ cpphdl [--generated-dir <path>] \
 ## CPPHDL_REPLACEMENT
 
 * `[[clang::annotate("CPPHDL_REPLACEMENT=...;")]]` can be attached to a `cpphdl::Module` class.
+* In inline replacement text, `$(NAME)` substitutes a template argument. For a standalone numeric template without a concrete specialization, it uses the C++ parameter default instead. Explicit specialization arguments take precedence over defaults. `$$` emits a literal dollar sign; SystemVerilog names such as `$bits` are preserved.
 * `CPPHDL_REPLACEMENT_FILE=<path>;` reads the complete replacement from a file. Relative paths are resolved from the annotated class's source file when possible.
 * `CPPHDL_REPLACEMENT_SCRIPT=<script> [arguments...];` executes a script and uses its standard output as the replacement. A relative script path is resolved in the same way as a replacement file.
 * During conversion cpphdl resolves the inline text, file contents, or script output into `Module::replacement`; a trailing annotation metadata `;` is stripped from the annotation value.
