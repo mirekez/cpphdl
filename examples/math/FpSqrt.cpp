@@ -122,9 +122,6 @@ public:
     void _assign() {}
 };
 
-template class FpSqrt<16, 5>;
-template class FpSqrt<32, 8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include "FpMathTest.h"

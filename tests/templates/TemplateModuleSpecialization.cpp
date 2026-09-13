@@ -85,10 +85,6 @@ public:
     }
 };
 
-template class TemplateModuleLeaf<3, TemplateModuleSpecWide, TemplateModuleSpecRx>;
-template class TemplateModuleLeaf<7, TemplateModuleSpecWide, TemplateModuleSpecRx>;
-template class TemplateModuleLeaf<5, TemplateModuleSpecNarrow, TemplateModuleSpecTx>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

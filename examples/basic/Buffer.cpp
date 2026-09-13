@@ -127,11 +127,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Buffer<32, 1>;
-template class Buffer<32, 2>;
-template class Buffer<32, 4>;
-template class Buffer<64, 8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

@@ -354,9 +354,6 @@ public:
     void _assign() {}
 };
 
-template class FpAdd<16, 5>;
-template class FpAdd<32, 8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include "FpMathTest.h"

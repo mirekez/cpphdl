@@ -158,8 +158,6 @@ public:
     }
 };
 
-template class EthGigMacChain<128>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestEthGigMac : public Module

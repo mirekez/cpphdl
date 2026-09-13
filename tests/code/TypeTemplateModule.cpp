@@ -121,8 +121,6 @@ public:
     }
 };
 
-template class TypeTemplateModuleParent<2>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

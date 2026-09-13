@@ -90,9 +90,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Memory<64,65536,1>;
-template class Memory<64,65536,0>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

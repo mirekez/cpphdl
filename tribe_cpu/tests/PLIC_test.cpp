@@ -109,8 +109,6 @@ public:
     }
 };
 
-template class PLICTest<24, 4, 32>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestPLIC : public Module

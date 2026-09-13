@@ -188,9 +188,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class VRDriver<64>;
-template class VRResponder<64>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

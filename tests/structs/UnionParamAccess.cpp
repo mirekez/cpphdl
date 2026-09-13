@@ -77,8 +77,6 @@ public:
     void _assign() {}
 };
 
-template class UnionParamAccess<UnionParamBF16E8>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

@@ -55,8 +55,6 @@ class TemplateArrayDimension : public TemplateArrayDimensionBase<DWIDTH_BYTES>
 {
 };
 
-template class TemplateArrayDimension<64>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

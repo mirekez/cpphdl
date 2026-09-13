@@ -88,8 +88,6 @@ public:
     }
 };
 
-template class TemplateModuleName_Arithmetic<0, 0>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

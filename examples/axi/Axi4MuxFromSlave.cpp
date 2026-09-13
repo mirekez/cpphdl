@@ -139,9 +139,6 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-template class Axi4MuxFromSlave<4,32,8,128>;
-template class Axi4MuxFromSlave<8,64,16,512>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>

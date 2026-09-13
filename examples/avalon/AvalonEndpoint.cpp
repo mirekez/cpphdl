@@ -256,10 +256,6 @@ public:
     }
 };
 
-template class AvalonEndpoint<512, 512, 6>;
-template class AvalonEndpoint<256, 512, 6>;
-template class AvalonEndpoint<256, 1024, 7>;
-
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)

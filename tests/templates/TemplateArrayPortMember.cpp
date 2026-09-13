@@ -70,8 +70,6 @@ public:
     }
 };
 
-template class TemplateArrayPortLeaf<4>;
-
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 #include <chrono>
