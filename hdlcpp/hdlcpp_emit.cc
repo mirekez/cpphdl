@@ -2399,7 +2399,8 @@
             auto concreteTargetType = concreteChildInputType(
                 childElementType, sourcePortName, targetPort);
             std::set<std::string> fields = configuredInputPortFields(childBaseType, sourcePortName);
-            if (auto* child = findModule(childBaseType)) {
+            auto* child = findModule(childBaseType);
+            if (child) {
                 for (const auto& item : child->inputFieldProjections) {
                     const auto& projection = item.second;
                     if (!projection.projectedType.empty() &&
@@ -2525,6 +2526,7 @@
                 }
                 auto sourceField = sourceMember.empty() ? field : sourceMember + "." + field;
                 std::string projectedSource;
+                std::string projectedSourceType;
                 auto sourcePort = std::find_if(module.ports.begin(), module.ports.end(), [&](const PortGen& port) {
                     return port.direction == "input" && port.name == sourceBase;
                 });
@@ -2541,6 +2543,7 @@
                         continue;
                     }
                     projectedSource = projection.projectedCppPort + "()" + sourceIndices;
+                    projectedSourceType = projection.projectedType;
                 }
                 else if (module.combMethodByBase.count(sourceBase) ||
                          module.pendingCombByBase.count(sourceBase)) {
@@ -2552,6 +2555,10 @@
                     module.requestedCombFields.insert({sourceBase, sourceField});
                     projectedSource = sourceBase + "_" + hdlcpp::projectedFieldIdentifier(sourceField) +
                         "_comb_func()" + sourceIndices;
+                    projectedSourceType = projectedFieldType(
+                        sourceType->second, sourceField,
+                        fieldPathDependsOnTypeParameter(module, sourceType->second, sourceField),
+                        &module);
                 }
                 bool addressableLocalProjection = false;
                 if (projectedSource.empty() && module.varNames.count(sourceBase)) {
@@ -2569,11 +2576,34 @@
                 if (projectedSource.empty()) {
                     continue;
                 }
+                auto projectedTarget = projectedInputPortName(targetPort, field);
                 auto wrapper = indexedCombWrapper(projectedSource, targetInstance);
+                auto projectedTargetType = projectedFieldType(
+                    concreteTargetType, field, true, child);
+                auto selectedSourceType = trim(projectedSourceType);
+                for (size_t pos = 0; (pos = sourceIndices.find('[', pos)) != std::string::npos; ++pos) {
+                    const bool standardArray = selectedSourceType.rfind("std::array<", 0) == 0;
+                    auto arrayArgs = templateArgsFor(
+                        selectedSourceType, standardArray ? "std::array" : "array");
+                    if (arrayArgs.size() < 2) {
+                        break;
+                    }
+                    selectedSourceType = trim(arrayArgs[standardArray ? 0 : 1]);
+                }
+                const bool targetIsArray = projectedTargetType.rfind("array<", 0) == 0 ||
+                    projectedTargetType.rfind("std::array<", 0) == 0;
+                const bool sourceSliceIsArray = selectedSourceType.rfind("array<", 0) == 0 ||
+                    selectedSourceType.rfind("std::array<", 0) == 0;
+                if (targetIsArray || sourceSliceIsArray) {
+                    auto projectedPortType = "std::remove_cvref_t<decltype(" +
+                        targetInstance + "." + projectedTarget + "())>";
+                    projectedSource = projectedPortType + "(" + projectedSource + ")";
+                    replaceAll(wrapper, "_ASSIGN_COMB", "_ASSIGN");
+                }
                 if (addressableLocalProjection) {
                     replaceAll(wrapper, "_ASSIGN_COMB", "_ASSIGN_REG");
                 }
-                auto projectedLine = targetInstance + "." + projectedInputPortName(targetPort, field) +
+                auto projectedLine = targetInstance + "." + projectedTarget +
                     " = " + wrapper + (wrapper.back() == ',' ? "" : "(") + projectedSource + ");";
                 if (existing.insert(projectedLine).second) {
                     module.assignLines.push_back(projectedLine);
@@ -8320,6 +8350,12 @@
                     rhs = materializePackedToArrayPortBinding(conn.instance, portName, actualPortType, rhs);
                     wrapper = "_ASSIGN_COMB";
                 }
+                else if (portTypeKnown && rhsIndexesCpphdlGetter &&
+                         (resolvedTarget.rfind("array<", 0) == 0 ||
+                          resolvedTarget.rfind("std::array<", 0) == 0)) {
+                    rhs = actualPortType + "(" + rhs + ")";
+                    wrapper = "_ASSIGN_COMB";
+                }
                 else if (portTypeKnown && target == "bool" && wrapper == "_ASSIGN_COMB") {
                     const bool dynamicBoolSource = rhsIsParentPortAccessRef || rhsIsCombAccessRef ||
                         rhsReferencesDynamicGetter || isSimpleCombRef(rhs) || exprReferencesModuleState(m, rhs);
@@ -8734,8 +8770,18 @@
 	                    if (projectedSource.empty()) {
 	                        continue;
 	                    }
+	                    auto projectedTargetType = projectedFieldType(
+	                        projectionTargetType, field, true, child);
+	                    const bool targetIsArray = projectedTargetType.rfind("array<", 0) == 0 ||
+	                        projectedTargetType.rfind("std::array<", 0) == 0;
+	                    if (targetIsArray) {
+	                        auto exactTargetType = "std::remove_cvref_t<decltype(" +
+	                            conn.instance + "." + targetProjection + "())>";
+	                        projectedSource = exactTargetType + "(" + projectedSource + ")";
+	                    }
 	                    auto projectedAssign = conn.instance + "." + targetProjection +
-	                        " = _ASSIGN_COMB(" + projectedSource + ");";
+	                        (targetIsArray ? " = _ASSIGN(" : " = _ASSIGN_COMB(") +
+	                        projectedSource + ");";
 	                    m.assignLines.push_back(projectedAssign);
 	                    if (!conn.guards.empty()) {
 	                        m.structuralAssignGuards[projectedAssign] = conn.guards;
@@ -11622,6 +11668,9 @@
             return line;
         }
         auto expr = trim(line.substr(exprBegin, exprEnd - exprBegin));
+        if (expr.rfind("std::remove_cvref_t<decltype(", 0) == 0) {
+            return line;
+        }
         if (isChildInputPortBinding(line) && expr.rfind("__port_bind_", 0) == 0 &&
             isSimpleCombRef(expr)) {
             return line;
@@ -11689,6 +11738,10 @@
             return line;
         }
         auto expr = trim(line.substr(exprBegin, exprEnd - exprBegin));
+        if (expr.rfind("std::remove_cvref_t<decltype(", 0) == 0) {
+            line.replace(assignPos, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
+            return line;
+        }
         if (referencesDynamicCpphdlGetter(expr) || isCombAddressableExpr(expr) ||
             isCpphdlGetterAddressableExpr(expr) || isSimpleCombRef(expr)) {
             return line;
@@ -13099,13 +13152,12 @@
                             packedArrayAssignExpr(targetType, rhs) + (hasSemicolon ? ";" : "");
                     }
                     else {
-                        emittedLine = emittedLine.substr(0, eq + 1) + " ([&]() -> " + targetType +
-                            " { if constexpr (std::is_assignable_v<" + targetType +
-                            "&, std::remove_cvref_t<decltype((" + rhs + "))>>) { " + targetType +
-                            " __cpphdl_direct{}; __cpphdl_direct = " + rhs + "; return __cpphdl_direct; " +
-                            "; } else { return cpphdl::unpack_value<" + targetType +
-                            ">(cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" + rhs +
-                            ")); } })()" + (hasSemicolon ? ";" : "");
+                        // Write aggregate conversions into their final storage. The
+                        // CppHDL helper selects native assignment or the equivalent
+                        // packed fallback without constructing a returned temporary.
+                        const auto indent = emittedLine.substr(0, emittedLine.find_first_not_of(" \t"));
+                        emittedLine = indent + "cpphdl::sv_assign_field(" + lhs + ", " + rhs + ")" +
+                            (hasSemicolon ? ";" : "");
                     }
                 };
                 auto rewritePackedScalarAggregateAssignment = [&]() {
@@ -13560,8 +13612,29 @@ static bool identChar(char c)
 static size_t findMatchingAngle(const std::string& text, size_t open)
 {
     int depth = 0;
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    int braceDepth = 0;
     for (size_t i = open; i < text.size(); ++i) {
-        if (text[i] == '<' && i + 1 < text.size() &&
+        if (text[i] == '(') {
+            ++parenDepth;
+        }
+        else if (text[i] == ')' && parenDepth > 0) {
+            --parenDepth;
+        }
+        else if (text[i] == '[') {
+            ++bracketDepth;
+        }
+        else if (text[i] == ']' && bracketDepth > 0) {
+            --bracketDepth;
+        }
+        else if (text[i] == '{') {
+            ++braceDepth;
+        }
+        else if (text[i] == '}' && braceDepth > 0) {
+            --braceDepth;
+        }
+        else if (text[i] == '<' && i + 1 < text.size() &&
             (text[i + 1] == '<' || text[i + 1] == '=')) {
             ++i;
         }
@@ -13569,6 +13642,10 @@ static size_t findMatchingAngle(const std::string& text, size_t open)
             ++depth;
         }
         else if (text[i] == '>' && i + 1 < text.size() && text[i + 1] == '=') {
+            ++i;
+        }
+        else if (text[i] == '>' && i + 1 < text.size() && text[i + 1] == '>' &&
+                 (parenDepth > 0 || bracketDepth > 0 || braceDepth > 0)) {
             ++i;
         }
         else if (text[i] == '>') {

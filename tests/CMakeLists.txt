@@ -257,6 +257,26 @@ add_test(
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
 
+add_test(
+    NAME optimizer_native_bit_store
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NativeBitStoreTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_native_bit_store PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_specialized_comb
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/SpecializedCombTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_specialized_comb PROPERTIES TIMEOUT 120)
+
 # Converter-projected output ports are views of an aggregate comb result.
 # Ensure optimized scheduling evaluates that aggregate once instead of
 # retaining one duplicate procedural evaluator for every requested field.

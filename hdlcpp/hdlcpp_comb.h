@@ -525,6 +525,7 @@ inline bool startsControlBlock(const std::string& text)
            text.rfind("else", 0) == 0 ||
            text.rfind("for ", 0) == 0 || text.rfind("for(", 0) == 0 ||
            text.rfind("switch ", 0) == 0 || text.rfind("switch(", 0) == 0 ||
+           text.rfind("case ", 0) == 0 || text.rfind("default:", 0) == 0 ||
            text == "{";
 }
 
@@ -783,7 +784,7 @@ inline std::vector<std::string> pruneTargetCombLinesRange(const std::vector<std:
     std::vector<std::string> out;
     for (size_t i = begin; i < end;) {
         auto text = trimCombText(lines[i]);
-        if (inForLoop && isLoopMaintenanceLine(text)) {
+        if (text == "break;" || (inForLoop && isLoopMaintenanceLine(text))) {
             out.push_back(lines[i]);
             ++i;
             continue;
@@ -1122,7 +1123,7 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
     std::vector<std::string> out;
     for (size_t i = begin; i < end;) {
         auto text = trimCombText(lines[i]);
-        if (inForLoop && isLoopMaintenanceLine(text)) {
+        if (text == "break;" || (inForLoop && isLoopMaintenanceLine(text))) {
             out.push_back(lines[i]);
             ++i;
             continue;
@@ -1474,7 +1475,7 @@ inline std::vector<std::string> extractProjectedArrayFieldCombLinesRange(
     };
     for (size_t i = begin; i < end;) {
         auto text = trimCombText(lines[i]);
-        if (inForLoop && isLoopMaintenanceLine(text)) {
+        if (text == "break;" || (inForLoop && isLoopMaintenanceLine(text))) {
             out.push_back(lines[i++]);
             continue;
         }

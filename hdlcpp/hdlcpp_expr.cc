@@ -2165,6 +2165,58 @@
         return emitNumericExpr(expr);
     }
 
+    bool isNativeCaseLabelExpr(const ExpressionSyntax& expr)
+    {
+        if (expr.kind == SyntaxKind::IntegerLiteralExpression ||
+            expr.kind == SyntaxKind::IntegerVectorExpression ||
+            expr.kind == SyntaxKind::UnbasedUnsizedLiteralExpression) {
+            return true;
+        }
+        uint64_t literal = 0;
+        if (parseCppIntegralLiteral(exprText(expr.toString()), literal)) {
+            return true;
+        }
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            return isNativeCaseLabelExpr(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        }
+        if (expr.kind == SyntaxKind::IdentifierName) {
+            auto name = tok(expr.as<IdentifierNameSyntax>().identifier);
+            if (mod && (mod->valueNames.count(name) || !constantType(name).empty())) {
+                return true;
+            }
+            if (isValueTemplateParamName(name)) {
+                return true;
+            }
+            return qualifyImportedValueName(name) != name;
+        }
+        if (expr.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expr.as<ScopedNameSyntax>();
+            return tok(scoped.separator) == "::" && !pathType(expr.toString()).empty();
+        }
+        if (expr.kind == SyntaxKind::ConcatenationExpression) {
+            for (auto item : expr.as<ConcatenationExpressionSyntax>().expressions) {
+                if (!isNativeCaseLabelExpr(*item)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (expr.kind == SyntaxKind::MultipleConcatenationExpression) {
+            auto& repeated = expr.as<MultipleConcatenationExpressionSyntax>();
+            return isNativeCaseLabelExpr(*repeated.expression) &&
+                   isNativeCaseLabelExpr(*repeated.concatenation);
+        }
+        if (BinaryExpressionSyntax::isKind(expr.kind)) {
+            auto& binary = expr.as<BinaryExpressionSyntax>();
+            return isNativeCaseLabelExpr(*binary.left) &&
+                   isNativeCaseLabelExpr(*binary.right);
+        }
+        if (PrefixUnaryExpressionSyntax::isKind(expr.kind)) {
+            return isNativeCaseLabelExpr(*expr.as<PrefixUnaryExpressionSyntax>().operand);
+        }
+        return false;
+    }
+
     bool statementCallsWork(const StatementSyntax& st)
     {
         if (st.kind == SyntaxKind::TimingControlStatement) {
@@ -2384,6 +2436,37 @@
             }
             auto switchExpr = emitExpr(*c.expr);
             auto switchWidth = foldWidth(exprWidth(*c.expr));
+            bool nativeSwitch = tok(c.caseKeyword) == "case" &&
+                                isNumber(switchWidth) &&
+                                std::stoul(switchWidth) > 0 &&
+                                std::stoul(switchWidth) <= 64;
+            std::unordered_set<std::string> nativeLabels;
+            if (nativeSwitch) {
+                for (auto item : c.items) {
+                    if (item->kind != SyntaxKind::StandardCaseItem) {
+                        continue;
+                    }
+                    for (auto expr : item->as<StandardCaseItemSyntax>().expressions) {
+                        auto source = exprText(expr->toString());
+                        std::transform(source.begin(), source.end(), source.begin(),
+                                       [](unsigned char ch) {
+                                           return static_cast<char>(std::tolower(ch));
+                                       });
+                        const auto label = emitCaseLabelExpr(*expr);
+                        if (source.find("'x") != std::string::npos ||
+                            source.find("'z") != std::string::npos ||
+                            source.find('?') != std::string::npos ||
+                            !isNativeCaseLabelExpr(*expr) ||
+                            !nativeLabels.insert(label).second) {
+                            nativeSwitch = false;
+                            break;
+                        }
+                    }
+                    if (!nativeSwitch) {
+                        break;
+                    }
+                }
+            }
             if (isNumber(switchWidth)) {
                 auto width = std::stoul(switchWidth);
                 if (width > 0 && width < 64) {
@@ -2398,6 +2481,35 @@
             }
             bool emittedCase = false;
             const DefaultCaseItemSyntax* defaultCase = nullptr;
+            if (nativeSwitch) {
+                // Plain two-state cases map directly to C++ integral dispatch.
+                // This evaluates the selector once and lets the compiler choose
+                // a jump table or decision tree instead of a forced linear chain.
+                out.push_back(pre + "switch (" + switchExpr + ") {");
+                for (auto item : c.items) {
+                    if (item->kind == SyntaxKind::StandardCaseItem) {
+                        auto& sci = item->as<StandardCaseItemSyntax>();
+                        std::string labels = pre;
+                        for (auto expr : sci.expressions) {
+                            labels += "case static_cast<uint64_t>(" +
+                                      emitCaseLabelExpr(*expr) + "): ";
+                        }
+                        out.push_back(labels + "{");
+                        emitCaseClause(*sci.clause, out, comb, indent + 1);
+                        out.push_back(pre + "    break;");
+                        out.push_back(pre + "}");
+                    }
+                    else if (item->kind == SyntaxKind::DefaultCaseItem) {
+                        auto& dci = item->as<DefaultCaseItemSyntax>();
+                        out.push_back(pre + "default: {");
+                        emitCaseClause(*dci.clause, out, comb, indent + 1);
+                        out.push_back(pre + "    break;");
+                        out.push_back(pre + "}");
+                    }
+                }
+                out.push_back(pre + "}");
+                return;
+            }
             for (auto item : c.items) {
                 if (item->kind == SyntaxKind::StandardCaseItem) {
                     auto& sci = item->as<StandardCaseItemSyntax>();

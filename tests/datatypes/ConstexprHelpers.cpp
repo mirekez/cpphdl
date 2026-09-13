@@ -27,6 +27,8 @@ struct ConstexprWidePacked
 
 constexpr logic<8> constexpr_input(0x0f);
 constexpr logic<8> constexpr_inverse = ~constexpr_input;
+constexpr logic<13> constexpr_odd_inverse = ~logic<13>(0x0f0f);
+constexpr logic<72> constexpr_wide_inverse = ~logic<72>(0);
 constexpr logic<8> constexpr_and = constexpr_input & logic<8>(0x33);
 constexpr logic<8> constexpr_or = constexpr_input | logic<8>(0x30);
 constexpr logic<8> constexpr_xor = constexpr_input ^ logic<8>(0x3c);
@@ -34,9 +36,18 @@ constexpr auto constexpr_cat = cat(logic<4>(0xa), logic<4>(0x5));
 constexpr logic<8> constexpr_cat_logic = constexpr_cat;
 constexpr auto constexpr_bit_cat = cat(logic<1>(1), logic<1>(0), logic<1>(1));
 constexpr auto constexpr_byte_cat = cat(logic<8>(0x12), logic<16>(0x3456));
+constexpr auto constexpr_one_repeat = repeat<13, 1>(logic<1>(1));
+constexpr auto constexpr_byte_repeat = repeat<3, 8>(logic<8>(0xa5));
 
 static_assert(SUM<>() == 0, "empty concatenation width must be zero");
 static_assert((uint64_t)constexpr_inverse == 0xf0, "logic complement must retain width");
+// Complement must operate on every storage byte without exposing padding bits.
+// Exercise a non-byte width and a value wider than the host scalar conversion.
+// These assertions cover both width masking and bytes above bit 63 at compile time.
+static_assert((uint64_t)constexpr_odd_inverse == 0x10f0,
+    "odd-width logic complement must clear padding bits");
+static_assert(constexpr_wide_inverse.bytes[8] == 0xff,
+    "wide logic complement must invert storage above bit 63");
 static_assert((uint64_t)constexpr_and == 0x03, "logic conjunction must be constexpr");
 static_assert((uint64_t)constexpr_or == 0x3f, "logic disjunction must be constexpr");
 static_assert((uint64_t)constexpr_xor == 0x33, "logic exclusive-or must be constexpr");
@@ -44,6 +55,13 @@ static_assert((uint64_t)constexpr_cat == 0xa5, "concatenation must be constexpr"
 static_assert((uint64_t)constexpr_cat_logic == 0xa5, "cat-to-logic conversion must be constexpr");
 static_assert((uint64_t)constexpr_bit_cat == 0x5, "one-bit concatenation order must be preserved");
 static_assert((uint64_t)constexpr_byte_cat == 0x123456, "byte-aligned concatenation order must be preserved");
+// Optimized repeat paths must retain the same low-to-high repetition layout.
+// The one-bit case also verifies that unused final-byte padding remains zero.
+// The byte case verifies direct field copies across multiple storage bytes.
+static_assert((uint64_t)constexpr_one_repeat == 0x1fff,
+    "one-bit repeat must fill only the declared width");
+static_assert((uint64_t)constexpr_byte_repeat == 0xa5a5a5,
+    "byte-aligned repeat must preserve pattern order");
 static_assert((uint64_t)(constexpr_cat + 1) == 0xa6, "cat arithmetic must be unambiguous");
 
 constexpr array<4, logic<4>, true> constexpr_repeated_array = [] {

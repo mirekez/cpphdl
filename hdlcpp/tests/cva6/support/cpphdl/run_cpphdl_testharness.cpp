@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -299,6 +300,19 @@ int main(int argc, char** argv)
     cpphdl_model_configure(maxCycles, elf.tohost);
     std::fprintf(stderr, "cpphdl testharness loaded entry=0x%08x tohost=0x%08x\n",
                  elf.entry, elf.tohost);
+    const auto simulationStart = std::chrono::steady_clock::now();
+    const uint64_t resetCycles = mainTime;
+    uint64_t simulatedCycles = 0;
+    const auto reportSimulation = [&] {
+        if (std::getenv("CVA6_BENCH_STATS") != nullptr) {
+            const double seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - simulationStart).count();
+            std::fprintf(stderr, "CVA6_BENCH reset_cycles=%llu work_cycles=%llu total_cycles=%llu work_seconds=%.9f\n",
+                         static_cast<unsigned long long>(resetCycles),
+                         static_cast<unsigned long long>(simulatedCycles),
+                         static_cast<unsigned long long>(resetCycles + simulatedCycles), seconds);
+        }
+    };
     cpphdl_model_work(false);
 
     uint64_t committedInstructions = 0;
@@ -324,6 +338,7 @@ int main(int argc, char** argv)
 #endif
     for (; mainTime < maxCycles; ++mainTime) {
         cpphdl_model_strobe();
+        ++simulatedCycles;
         if (traceRvfiRd) {
             cpphdl_model_trace_rvfi_rd(mainTime);
         }
@@ -701,13 +716,16 @@ int main(int argc, char** argv)
         const uint32_t exit = cpphdl_model_exit();
         if (exit & 1u) {
             const uint32_t code = exit >> 1;
+            reportSimulation();
+            // mainTime labels the edge just executed; it is not the edge count.
+            const uint64_t completedCycles = resetCycles + simulatedCycles;
             if (code == 0) {
                 std::fprintf(stderr, "%s *** SUCCESS *** (tohost = 0) after %llu cycles\n",
-                             argv[1], static_cast<unsigned long long>(mainTime));
+                             argv[1], static_cast<unsigned long long>(completedCycles));
                 return 0;
             }
             std::fprintf(stderr, "%s *** FAILED *** (tohost = %u) after %llu cycles\n",
-                         argv[1], code, static_cast<unsigned long long>(mainTime));
+                         argv[1], code, static_cast<unsigned long long>(completedCycles));
             return static_cast<int>(code);
         }
 
@@ -717,6 +735,7 @@ int main(int argc, char** argv)
         }
     }
 
+    reportSimulation();
     if (traceMemory) {
         for (uint64_t address = 0x00024fc0; address < 0x00025020; address += 8) {
             const uint64_t word = cpphdl_model_read_word(address);

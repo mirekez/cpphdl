@@ -685,7 +685,7 @@ static std::vector<std::string> configuredModuleParams(const std::string& type)
     return it == params.end() ? std::vector<std::string>{} : it->second;
 }
 
-static std::map<std::string, std::string> configuredTextMap(const char* envName);
+static const std::map<std::string, std::string>& configuredTextMap(const char* envName);
 
 static std::string configuredPortType(const std::string& module,
                                       const std::string& port,
@@ -1508,7 +1508,7 @@ static bool configuredNameEquals(const char* envName, const std::string& value)
     return names.count(value) != 0;
 }
 
-static std::map<std::string, std::string> configuredTextMap(const char* envName)
+static const std::map<std::string, std::string>& configuredTextMap(const char* envName)
 {
     static std::map<std::string, std::map<std::string, std::string>> cache;
     auto pathValue = std::getenv(envName) ? std::string(std::getenv(envName)) : std::string();
@@ -1533,13 +1533,12 @@ static std::map<std::string, std::string> configuredTextMap(const char* envName)
             out[trim(line.substr(0, sep))] = decodeConfiguredText(line.substr(sep + 1));
         }
     }
-    cache[key] = out;
-    return out;
+    return cache.emplace(std::move(key), std::move(out)).first->second;
 }
 
 static std::vector<std::string> configuredModulePortOrder(const std::string& module)
 {
-    auto metadata = configuredTextMap("HDLCPP_PORT_TYPES");
+    const auto& metadata = configuredTextMap("HDLCPP_PORT_TYPES");
     std::vector<std::string> ports;
     for (size_t index = 0;; ++index) {
         auto key = module + ".$port." + std::to_string(index);
@@ -2341,7 +2340,7 @@ static bool isCppKeyword(const std::string& s)
 static std::string knownFunctionReturnWidth(const std::string& callee)
 {
     auto name = callee;
-    auto widths = configuredTextMap("HDLCPP_FUNCTION_WIDTHS");
+    const auto& widths = configuredTextMap("HDLCPP_FUNCTION_WIDTHS");
     if (auto it = widths.find(name); it != widths.end()) {
         return it->second;
     }
@@ -2363,7 +2362,7 @@ static bool wantsNumericFunctionArgs(const std::string& callee)
 
 static bool wantsNumericFunctionArg(const std::string& callee, size_t index, bool numericArgs)
 {
-    auto indices = configuredTextMap("HDLCPP_NUMERIC_ARG_INDICES");
+    const auto& indices = configuredTextMap("HDLCPP_NUMERIC_ARG_INDICES");
     auto wantsConfiguredIndex = [&](const std::string& name) {
         auto it = indices.find(name);
         if (it == indices.end()) {

@@ -28,20 +28,14 @@ for mode in --optimize-combs --optimize-combs-l1; do
         printf '%s did not schedule the aggregate comb evaluator\n' "$mode" >&2
         exit 1
     }
-    view_eval=$(awk '
-        /^void .*_optimized_comb_eval_[0-9]+\(/ {
-            id=$0
-            sub(/^.*_optimized_comb_eval_/, "", id)
-            sub(/[^0-9].*$/, "", id)
-        }
-        /n1\.view_comb\s*=/ { print id; exit }
-    ' "$build_dir"/*_optimized_combs_dynamic_*.cpp)
-    [[ -n "$view_eval" ]] || {
-        printf '%s did not emit the repeated pure comb evaluator\n' "$mode" >&2
-        exit 1
-    }
-    search_q "evaluated${view_eval} = _system_clock" "$build_dir"/*.cpp || {
-        printf '%s did not memoize the repeated pure comb evaluator\n' "$mode" >&2
+    # A repeated pure comb is one graph value. Once root inputs are recognized
+    # as external leaves, emit that value once in the eager schedule instead of
+    # retaining a clock-guarded dynamic evaluator for it.
+    view_assignments=$(grep -Eh '^[[:space:]]+n1\.view_comb = 0;' \
+        "$build_dir"/*.cpp | wc -l)
+    [[ "$view_assignments" -eq 1 ]] || {
+        printf '%s emitted the repeated pure comb %s times\n' \
+            "$mode" "$view_assignments" >&2
         exit 1
     }
 

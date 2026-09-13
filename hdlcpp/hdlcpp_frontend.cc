@@ -5912,7 +5912,7 @@
                 return it->second;
             }
         }
-        auto configuredWidths = configuredTextMap("HDLCPP_TYPE_WIDTHS");
+        const auto& configuredWidths = configuredTextMap("HDLCPP_TYPE_WIDTHS");
         auto configuredWidthFor = [&](const std::string& name) -> std::string {
             if (name.empty()) {
                 return "";
@@ -7531,6 +7531,11 @@
             setAssignComb();
             return true;
         };
+	        if (portName.find("__field_") != std::string::npos &&
+	            arg.rfind("std::remove_cvref_t<decltype(" + instance + "." + portName + "())>", 0) == 0) {
+	            setAssignValue();
+	            return line;
+	        }
 	        if (portType == "bool") {
 	            if (isSimpleCombRef(arg) && sourceType == "bool") {
 	                setAssignComb();

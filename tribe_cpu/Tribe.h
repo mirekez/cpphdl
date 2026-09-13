@@ -1801,12 +1801,16 @@ private:
 
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
     _LAZY_COMB(sfence_vma_comb, bool)
+#ifdef ENABLE_MMU_TLB
         return sfence_vma_comb =
 #if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
             remote_sfence_vma_in() ||
 #endif
             (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA &&
              !interrupt_retire_wait_comb_func() && !sfence_vma_issued_reg);
+#else
+        return sfence_vma_comb = false;
+#endif
     }
 
     void forward()

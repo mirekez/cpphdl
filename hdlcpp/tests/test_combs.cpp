@@ -576,6 +576,38 @@ static void testPackedTreeCombAliasesPreserveLoopDependency()
     });
 }
 
+static void testSwitchLabelsSurviveTargetExtraction()
+{
+    std::vector<std::string> lines = {
+        "switch (selector) {",
+        "case 1: case 2: {",
+        "    target = a;",
+        "    unrelated = x;",
+        "    break;",
+        "}",
+        "default: {",
+        "    target = b;",
+        "    break;",
+        "}",
+        "}",
+    };
+
+    auto extracted = hdlcpp::extractTargetCombLines(
+        lines, {"target", "unrelated"}, "target");
+    expectVector(extracted, {
+        "switch (selector) {",
+        "case 1: case 2: {",
+        "    target = a;",
+        "    break;",
+        "}",
+        "default: {",
+        "    target = b;",
+        "    break;",
+        "}",
+        "}",
+    });
+}
+
 int main()
 {
     testStandaloneIndependent();
@@ -602,5 +634,6 @@ int main()
     testWholeArrayElementProjectionSelectsFromCompleteExpression();
     testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration();
     testPackedTreeCombAliasesPreserveLoopDependency();
+    testSwitchLabelsSurviveTargetExtraction();
     return 0;
 }
