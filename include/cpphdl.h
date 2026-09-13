@@ -347,9 +347,31 @@ template<size_t COUNT, size_t WIDTH>
 constexpr logic<COUNT * WIDTH> repeat(const logic<WIDTH>& value)
 {
     logic<COUNT * WIDTH> out = 0;
-    for (size_t rep = 0; rep < COUNT; ++rep) {
-        for (size_t bit = 0; bit < WIDTH; ++bit) {
-            out.set(rep * WIDTH + bit, value.get(bit));
+    // Sign extension and masks commonly repeat one bit dozens of times.
+    // Fill storage bytes directly for one-bit and byte-aligned patterns.
+    // Retain the generic bit path only for genuinely unaligned repeated fields.
+    if constexpr (WIDTH == 1) {
+        const uint8_t fill = value.get(0) ? 0xffu : 0u;
+        for (size_t byte = 0; byte < out.SIZE; ++byte) {
+            out.bytes[byte] = fill;
+        }
+        if constexpr (((COUNT * WIDTH) % 8) != 0) {
+            out.bytes[out.SIZE - 1] &=
+                static_cast<uint8_t>((1u << ((COUNT * WIDTH) % 8)) - 1u);
+        }
+    }
+    else if constexpr ((WIDTH % 8) == 0) {
+        for (size_t rep = 0; rep < COUNT; ++rep) {
+            for (size_t byte = 0; byte < value.SIZE; ++byte) {
+                out.bytes[rep * value.SIZE + byte] = value.bytes[byte];
+            }
+        }
+    }
+    else {
+        for (size_t rep = 0; rep < COUNT; ++rep) {
+            for (size_t bit = 0; bit < WIDTH; ++bit) {
+                out.set(rep * WIDTH + bit, value.get(bit));
+            }
         }
     }
     return out;
@@ -386,11 +408,29 @@ constexpr logic<1> reduce_and(const array<N, T, PACKED>& value)
 template<typename T, typename V>
 constexpr void sv_assign_field(T& dst, const V& value)
 {
+    // Generated aggregate assignments should write their final destination in place.
+    // Prefer its native assignment operator, and retain the packed conversion used by
+    // hdlcpp's former return-by-value lambda when the source type is not assignable.
     if constexpr (std::is_arithmetic_v<T> && !std::is_arithmetic_v<std::remove_cv_t<std::remove_reference_t<V>>>) {
         dst = static_cast<T>(value);
     }
-    else {
+    else if constexpr (!std::is_arithmetic_v<T> && std::is_arithmetic_v<V> &&
+                       std::is_aggregate_v<T>) {
+        // A packed aggregate assigned scalar zero is exactly its value-initialized form.
+        // Avoid constructing and unpacking an all-zero packed vector field by field;
+        // retain the generated packed assignment operator for every nonzero value.
+        if (value == 0) {
+            dst = T{};
+        }
+        else {
+            dst = value;
+        }
+    }
+    else if constexpr (std::is_assignable_v<T&, const V&>) {
         dst = value;
+    }
+    else {
+        dst = unpack_value<T>(pack_value<type_width<T>()>(value));
     }
 }
 
@@ -419,6 +459,37 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
     }
 }
 
+// Generated standalone bit assignments do not need a writable slice object.
+// Keep narrow values in native words and touch only one byte of wide values.
+// Type dispatch happens in C++, not by guessing a template's printed name in
+// the scheduler; wrappers and array elements retain their assignment semantics.
+template<typename Target, typename Value>
+constexpr void sv_assign_bit(Target& target, size_t index, Value&& value)
+{
+    if constexpr (is_logic_v<Target> && !std::is_const_v<Target>) {
+        cpphdl_assert(index < Target::_size_bits(), "wrong bitnum");
+        const uint64_t bit = uint64_t(logic<1>(value));
+        if constexpr (Target::_size_bits() <= 64) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            if (!detail::is_constant_evaluated_compat()) {
+                // Copy the actual store, including untouched padding. Going
+                // through logic::operator= splits the store to mask padding,
+                // defeating native load/store forwarding on the next read.
+                uint64_t word = 0;
+                std::memcpy(&word, target.bytes, Target::SIZE);
+                word = (word & ~(uint64_t{1} << index)) | (bit << index);
+                std::memcpy(target.bytes, &word, Target::SIZE);
+                return;
+            }
+#endif
+        }
+        target.set(index, bit);
+    }
+    else {
+        target[index] = std::forward<Value>(value);
+    }
+}
+
 template<typename T, size_t N, bool PACKED, typename V>
 constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 {
@@ -426,8 +497,27 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
     // Element-by-element conversion repeated the scalar and changed packed semantics.
     // Repack compatible scalar sources once and unpack them into the destination shape.
     using src_t = std::remove_cv_t<std::remove_reference_t<V>>;
-    if constexpr (std::is_same_v<src_t, array<N, T, PACKED>>) {
-        dst = value;
+    // Registers publicly derive from their current-value type. Copy that
+    // array subobject once; broadcasting it repacks the whole source for each
+    // element and, more importantly, gives every element the wrong value.
+    using array_t = array<N, T, PACKED>;
+    if constexpr (std::is_convertible_v<const src_t*, const array_t*>) {
+        dst = static_cast<const array_t&>(value);
+    }
+    else if constexpr (std::is_convertible_v<const src_t*, const array<N, T, !PACKED>*>) {
+        // Projected interface fields may use different packed/unpacked storage.
+        // Preserve element indices: broadcasting the complete vector loses every
+        // request except bit zero. Registers also expose this current-value base.
+        const auto& source = static_cast<const array<N, T, !PACKED>&>(value);
+        for (size_t index = 0; index < N; ++index) {
+            if constexpr (PACKED) {
+                auto item = dst[index];
+                sv_assign_field(item, source[index]);
+            }
+            else {
+                sv_assign_field(dst[index], source[index]);
+            }
+        }
     }
     else if constexpr (PACKED && (detail::has_pack_method<src_t>::value || is_logic_v<src_t> || std::is_integral_v<src_t> || std::is_enum_v<src_t>)) {
         dst = unpack_value<array<N, T, PACKED>>(pack_value<type_width<array<N, T, PACKED>>()>(value));

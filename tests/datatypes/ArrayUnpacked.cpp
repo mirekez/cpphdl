@@ -227,6 +227,30 @@ static bool check_direct_arrays()
 {
     bool ok = true;
 
+    logic<64> storage = 0xfedcba9876543210ull;
+    array<3, logic<9>> decoded = storage;
+    for (size_t index = 0; index < 3; ++index) {
+        ok &= check(static_cast<uint64_t>(decoded[index]) ==
+                        ((static_cast<uint64_t>(storage) >> (16 * index)) & 0x1ff),
+                    "unpacked assignment keeps byte strides and masks element padding");
+    }
+    decoded = logic<17>(0x1abcd);
+    ok &= check(static_cast<uint64_t>(decoded[0]) == 0x1cd &&
+                    static_cast<uint64_t>(decoded[1]) == 1 &&
+                    static_cast<uint64_t>(decoded[2]) == 0,
+                "unpacked assignment zero extends short input");
+    logic<320> wideStorage = 0;
+    for (size_t bit = 0; bit < 320; ++bit) {
+        wideStorage.set(bit, (bit * 17 + bit / 11) % 5 < 2);
+    }
+    array<3, logic<73>> wideDecoded = wideStorage;
+    for (size_t index = 0; index < 3; ++index) {
+        for (size_t bit = 0; bit < 73; ++bit) {
+            ok &= check(wideDecoded[index].get(bit) == wideStorage.get(index * 80 + bit),
+                        "unpacked assignment preserves wide element bits");
+        }
+    }
+
     static_assert(std::is_same_v<array2D<2, 3, u8>, array<2, array<3, u8, false>, false>>);
     static_assert(std::is_same_v<array3D<2, 3, 4, u8>, array<2, array2D<3, 4, u8, false>, false>>);
     static_assert(std::is_same_v<array4D<2, 3, 4, 5, u8>, array<2, array3D<3, 4, 5, u8, false>, false>>);

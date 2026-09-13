@@ -234,6 +234,10 @@ public:
     }
 };
 
+// The native TestCLINT harness is excluded during conversion, so make the
+// concrete wrapper required by the direct Verilator regression explicit.
+template class CLINTTest<16, 4, 32>;
+
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestCLINT : public Module

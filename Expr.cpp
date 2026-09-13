@@ -597,7 +597,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool fprint = sub.size()>1 && (func == "fprintf" || sub[0].value == "stdout" || sub[0].value == "stderr");
             if (sub.size() && (func == "printf" || func == "print" || func == "format" || func == "fprintf")) {
-                sub[(int)fprint].value = replacePrintFormat(sub, fprint);
+                sub[(int)fprint].value = replacePrintFormat(
+                    sub, fprint, func == "print" || func == "format");
             }
             if (fprint) {
                 if (sub[0].value == "stdout") {
@@ -1486,10 +1487,11 @@ Expr Expr::simplify()  // open brackets for *(+-)
     return expr;
 }
 
-std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint)
+std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint,
+    bool stdFormat)
 {
     std::string str = params[(int)fprint].value;
-    bool stdPrint = false;
+    bool stdPrint = stdFormat;
     if (str.find("std::basic_format_string") == 0 && params[(int)fprint].sub.size()) {
         params[(int)fprint] = params[(int)fprint].sub[0];
         str = params[(int)fprint].value;

@@ -96,6 +96,9 @@ public:
 
     _PORT(bool) tx_irq_out = _ASSIGN((bool)((tx_sr_reg & XAXIDMA_IRQ_IOC_MASK) && (tx_cr_reg & XAXIDMA_IRQ_IOC_MASK)));
     _PORT(bool) rx_irq_out = _ASSIGN((bool)((rx_sr_reg & XAXIDMA_IRQ_IOC_MASK) && (rx_cr_reg & XAXIDMA_IRQ_IOC_MASK)));
+    // A completion event, independent of interrupt enable and sticky IRQ status.
+    _PORT(bool) rx_write_complete_out = _ASSIGN(
+        state_reg == ST_RX_STATUS_B && write_resp_wait_reg && dma_out.bvalid_out());
     _PORT(uint32_t) debug_state_out = _ASSIGN((uint32_t)state_reg);
     _PORT(uint32_t) debug_tx_sr_out = _ASSIGN((uint32_t)tx_sr_reg);
     _PORT(uint32_t) debug_rx_sr_out = _ASSIGN((uint32_t)rx_sr_reg);
@@ -485,7 +488,9 @@ public:
         static uint32_t last_rx_block_code = 0xffffffffu;
         static bool last_rx_valid = false;
         static bool last_rx_ready = false;
-        trace_eth = std::getenv("TRIBE_TRACE_ETH_DMA") != nullptr;
+        static const bool trace_eth_enabled =
+            std::getenv("TRIBE_TRACE_ETH_DMA") != nullptr;
+        trace_eth = trace_eth_enabled;
         if (!trace_eth_file_checked) {
             trace_eth_file_checked = true;
             if (const char* path = std::getenv("TRIBE_TRACE_ETH_DMA_FILE")) {

@@ -146,6 +146,10 @@ class Tribe: public Module
 
 public:
 
+    // Functional coherency handshake: available even when debug/MMU ports
+    // are disabled. A held load response must survive until pipeline retirement.
+    _PORT(bool) external_cache_invalidate_ready_out = _ASSIGN(
+        !memory_wait_comb_func() && !dcache.mem_out.read_in() && !dcache.mem_out.write_in());
     _PORT(bool)      dmem_write_out;
     _PORT(uint32_t)  dmem_write_data_out;
     _PORT(uint8_t)   dmem_write_mask_out;
@@ -1801,12 +1805,16 @@ private:
 
     // SFENCE.VMA invalidates cached translations once the instruction can retire.
     _LAZY_COMB(sfence_vma_comb, bool)
+#ifdef ENABLE_MMU_TLB
         return sfence_vma_comb =
 #if defined(MULTICORE) && defined(ENABLE_MMU_TLB)
             remote_sfence_vma_in() ||
 #endif
             (state_reg[0].valid && state_reg[0].sys_op == Sys::SFENCE_VMA &&
              !interrupt_retire_wait_comb_func() && !sfence_vma_issued_reg);
+#else
+        return sfence_vma_comb = false;
+#endif
     }
 
     void forward()

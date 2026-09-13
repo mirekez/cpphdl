@@ -98,6 +98,16 @@ inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const s
     const fs::path rel_source_dir = fs::relative(source_dir, source_root);
     const fs::path build_root = CpphdlBuildRootFrom(source_root);
 
+    // Tribe tests generate into their target-specific CTest workspace so
+    // different specializations cannot overwrite one another. Retain that
+    // location as a fallback for running a test executable by hand from the
+    // build tree rather than through CTest.
+    const fs::path target_generated = build_root / rel_source_dir / "ctest"
+        / (source.stem().string() + "_verilator") / "generated";
+    if (fs::exists(target_generated / (top_name + ".sv"))) {
+        return target_generated;
+    }
+
     const fs::path build_generated = build_root / rel_source_dir / "generated";
     if (fs::exists(build_generated / (top_name + ".sv"))) {
         return build_generated;

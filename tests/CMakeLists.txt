@@ -96,13 +96,17 @@ foreach(src ${TEST_SOURCES})
     cpphdl_add_converter_dependency(${target_name})
 
     if(rel_path IN_LIST template_hierarchy_tests)
+        set(template_top ${name})
+        if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
+            set(template_top TypeTemplateModuleParent)
+        endif()
         add_test(NAME ${target_name}
             COMMAND ${CMAKE_COMMAND}
                 -DCPPHDL=$<TARGET_FILE:cpphdl>
                 -DSOURCE=${src}
                 -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
                 -DTEST_EXE=$<TARGET_FILE:${target_name}>
-                -DTOP=${name}
+                -DTOP=${template_top}
                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/template_hierarchy/${target_name}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateHierarchy.cmake)
     else()
@@ -180,7 +184,7 @@ foreach(cli_case help forwarding)
     set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template assign_ports constexpr_ports tuple_pipeline)
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named missing_legacy empty missing_effectful deferred_template deferred_struct empty_delegated missing_effectful_delegated derived composed_base assign_ports constexpr_ports tuple_pipeline)
     add_test(NAME lint_lifecycle_${lifecycle_case}
         COMMAND ${CMAKE_COMMAND}
             -DCPPHDL=$<TARGET_FILE:cpphdl>
@@ -337,9 +341,27 @@ add_test(
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
 
-# Converter-projected output ports are views of an aggregate comb result.
-# Ensure optimized scheduling evaluates that aggregate once instead of
-# retaining one duplicate procedural evaluator for every requested field.
+add_test(
+    NAME optimizer_native_bit_store
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NativeBitStoreTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_native_bit_store PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_specialized_comb
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/SpecializedCombTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_specialized_comb PROPERTIES TIMEOUT 120)
+
+# Preserve converter field dependencies while sharing actual common producers.
 add_test(
     NAME optimizer_projected_comb
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedCombTest.sh"
@@ -349,6 +371,16 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_projected_comb PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_projected_handshake
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedHandshakeTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_projected_handshake PROPERTIES TIMEOUT 120)
 
 # A helper called from _work may mutate module storage by non-const reference.
 # Readers of that storage must remain lazy until their original demand point

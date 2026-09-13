@@ -16,6 +16,7 @@
 
 namespace {
 using namespace clang;
+using Methods = std::map<std::string, const CXXMethodDecl*>;
 
 bool isProcess(const std::string& name, const std::string& phase)
 {
@@ -28,6 +29,21 @@ bool isProcess(const std::string& name, const std::string& phase)
         }
     }
     return false;
+}
+
+bool hasNamedClockVariant(const Methods& methods, const std::string& name,
+    const std::string& phase)
+{
+    const bool falling = name == phase + "_neg";
+    if (name != phase && !falling) {
+        return false;
+    }
+    if (currProject->clocks.empty()) {
+        return false;
+    }
+    const std::string variant = phase + (falling ? "_neg_" : "_")
+        + currProject->clocks.front().name;
+    return methods.count(variant) != 0;
 }
 
 bool isModule(const CXXRecordDecl* record)
@@ -45,8 +61,6 @@ bool isModule(const CXXRecordDecl* record)
     }
     return false;
 }
-
-using Methods = std::map<std::string, const CXXMethodDecl*>;
 
 void collectMembers(const CXXRecordDecl* record, Methods& methods,
     std::vector<const FieldDecl*>& fields, std::set<const CXXRecordDecl*>& visited)
@@ -366,6 +380,14 @@ void check(const CXXRecordDecl* record, ASTContext& context)
                     || !requiresLifecycleCall(decl, context)) {
                     continue;
                 }
+                // A generic lifecycle method commonly remains as the native
+                // simulation compatibility alias for a clock-specific HDL
+                // process. Requiring both calls reports the alias as lost even
+                // when the parent delegates the real named clock process.
+                if (hasNamedClockVariant(childMethods, childName, "_work")
+                    || hasNamedClockVariant(childMethods, childName, "_strobe")) {
+                    continue;
+                }
                 if (isProcess(childName, "_work") && !work.calls[field].count(childName)) {
                     report(record, field, "child work", childName, "_work()", context);
                 }
@@ -386,18 +408,58 @@ public:
     {
         if (record->isThisDeclarationADefinition() && !record->isDependentContext()
             && isModule(record) && visited.insert(record->getCanonicalDecl()).second) {
-            check(record, context);
+            records.push_back(record);
+            for (const auto& base : record->bases()) {
+                if (const auto* baseRecord = base.getType()->getAsCXXRecordDecl()) {
+                    if (const auto* definition = baseRecord->getDefinition()) {
+                        moduleBases.insert(definition->getCanonicalDecl());
+                    }
+                }
+            }
         }
         return true;
+    }
+
+    bool VisitFieldDecl(FieldDecl* field)
+    {
+        if (const auto* record = elementRecord(field->getType(), context)) {
+            if (isModule(record)) {
+                if (const auto* definition = record->getDefinition()) {
+                    composedModules.insert(definition->getCanonicalDecl());
+                }
+            }
+        }
+        return true;
+    }
+
+    void checkLeafModules()
+    {
+        // A module base can deliberately leave its lifecycle to a derived
+        // implementation layer.  Checking every intermediate record reports
+        // those inherited fields repeatedly even though the generated leaf
+        // module contains the required calls.  Any omission still appears on
+        // the most-derived module, where all inherited fields are collected.
+        // A base that is also used as a child remains independently checked.
+        for (const auto* record : records) {
+            const auto* canonical = record->getCanonicalDecl();
+            if (!moduleBases.count(canonical) || composedModules.count(canonical)) {
+                check(record, context);
+            }
+        }
     }
 
 private:
     ASTContext& context;
     std::unordered_set<const CXXRecordDecl*> visited;
+    std::unordered_set<const CXXRecordDecl*> moduleBases;
+    std::unordered_set<const CXXRecordDecl*> composedModules;
+    std::vector<const CXXRecordDecl*> records;
 };
 } // namespace
 
 void checkModuleLifecycleCalls(clang::ASTContext& context)
 {
-    ModuleChecks(context).TraverseDecl(context.getTranslationUnitDecl());
+    ModuleChecks checks(context);
+    checks.TraverseDecl(context.getTranslationUnitDecl());
+    checks.checkLeafModules();
 }

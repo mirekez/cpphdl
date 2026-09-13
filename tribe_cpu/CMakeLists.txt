@@ -235,6 +235,9 @@ foreach(flag -std=c++26 -std=c++2c)
 endforeach()
 
 if(BUILD_TESTING)
+    add_test(NAME tribe_no_mmu_compile
+        COMMAND ${CMAKE_COMMAND} -E env "CXX=${CMAKE_CXX_COMPILER}"
+            bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/no_mmu_compile_check.sh")
     add_subdirectory(cache/l1/tests)
     add_subdirectory(cache/l2/tests)
     add_subdirectory(tests)

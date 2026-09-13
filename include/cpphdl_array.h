@@ -374,9 +374,7 @@ struct array<COUNT, TYPE, false> : public bitops<array<COUNT, TYPE, false>>
         logic<SIZE_BITS> packed = value;
         for (size_t i = 0; i < COUNT; ++i) {
             logic<ELEMENT_BITS> elem = 0;
-            for (size_t bit = 0; bit < ELEMENT_BITS; ++bit) {
-                elem.set(bit, packed.get(i * ELEMENT_BITS + bit));
-            }
+            std::memcpy(elem.bytes, packed.bytes + i * sizeof(TYPE), sizeof(TYPE));
             data[i] = detail::array_unpack_value<TYPE>(elem);
         }
         return *this;

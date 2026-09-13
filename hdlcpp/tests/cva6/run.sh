@@ -3,14 +3,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CPPHDL_CVA6_NATIVE_HARNESS="${CPPHDL_CVA6_NATIVE_HARNESS:-0}"
+CPPHDL_CVA6_COMB_MODE="${CPPHDL_CVA6_COMB_MODE:-none}"
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
     OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl_testharness}"
     RUNNER="run_cpphdl_testharness_opt"
     MAX_CYCLES="${MAX_CYCLES:-500000}"
 else
     OUT="${CPPHDL_OUT:-$SCRIPT_DIR/cpphdl}"
-    RUNNER="run_cpphdl_matrix_opt"
     MAX_CYCLES="${MAX_CYCLES:-20000}"
+    case "$CPPHDL_CVA6_COMB_MODE" in
+        none) RUNNER="run_cpphdl_matrix_opt" ;;
+        optimize-combs) RUNNER="run_cpphdl_matrix_optimize_combs" ;;
+        optimize-combs-l1) RUNNER="run_cpphdl_matrix_optimize_combs_l1" ;;
+        *) echo "invalid CPPHDL_CVA6_COMB_MODE: $CPPHDL_CVA6_COMB_MODE" >&2; exit 2 ;;
+    esac
 fi
 SRC="${MATRIX_SRC:-$SCRIPT_DIR/matrix_multiply.cpp}"
 ELF="${ELF:-$SCRIPT_DIR/matrix_multiply.riscv}"
@@ -47,7 +53,8 @@ if [[ ! -f "$ELF" || "$SRC" -nt "$ELF" || "$SCRIPT_DIR/matrix_runtime.c" -nt "$E
 fi
 
 if [[ ! -x "$OUT/$RUNNER" || "$OUT/cpphdl_optimized_main.cpp" -nt "$OUT/$RUNNER" ]]; then
-    CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" "$SCRIPT_DIR/build.sh"
+    CPPHDL_CVA6_NATIVE_HARNESS="$CPPHDL_CVA6_NATIVE_HARNESS" \
+        RISCV="$RISCV" "$SCRIPT_DIR/build.sh"
 fi
 
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then

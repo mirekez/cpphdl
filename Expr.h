@@ -96,7 +96,8 @@ struct Expr
         return false;
     }
 
-    std::string replacePrintFormat(std::vector<Expr>& params, bool fprintf = false);
+    std::string replacePrintFormat(std::vector<Expr>& params, bool fprintf = false,
+        bool stdFormat = false);
 
     std::string debug(int debug_indent = 0)
     {
