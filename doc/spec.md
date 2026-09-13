@@ -282,6 +282,15 @@ public:
 
 * A module class definition can use template parameters
 
+  A self-contained module template with only integral or enumeration parameters
+  can be converted without a C++ instance. Its parameters become SystemVerilog module
+  parameters; C++ defaults are preserved. A parameter without a default must be
+  supplied by the RTL instantiation or tool, for example `-GW=16 -GEW=5` in
+  Verilator for `FpSqrt`. Templates with type parameters still need a concrete
+  specialization so the converter can determine the RTL types. Dependent
+  user-class members and bases also still require a concrete specialization;
+  the standalone path does not instantiate those classes symbolically.
+
 * Built-in C++ types such as `bool`, `unsigned`, `unsigned long`, etc. are allowed in all places except `reg<>`
 
 * Parents must propagate work and strobe calls to immediate children, including during reset. Call child `_assign()` methods during binding setup, or use `assignIf()` for interface connections; it invokes the required endpoint binding hooks.

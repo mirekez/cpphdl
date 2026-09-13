@@ -112,6 +112,28 @@ foreach(src ${TEST_SOURCES})
 
 endforeach()
 
+find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+foreach(standalone_case numeric numeric_instantiated fp_sqrt)
+    set(fp_sqrt_test_arg)
+    if(standalone_case STREQUAL "fp_sqrt" AND TARGET math_FpSqrt AND CPPHDL_TEMPLATE_VERILATOR)
+        set(fp_sqrt_test_arg -DFP_SQRT_TEST=$<TARGET_FILE:math_FpSqrt>)
+    endif()
+    add_test(NAME templates_standalone_${standalone_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCASE=${standalone_case}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated_standalone
+            -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+            ${fp_sqrt_test_arg}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/StandaloneNumeric.cmake)
+    set_tests_properties(templates_standalone_${standalone_case} PROPERTIES TIMEOUT 300)
+    if(CPPHDL_LOCAL_CONDA_PREFIX)
+        set_tests_properties(templates_standalone_${standalone_case} PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+    endif()
+endforeach()
+
 foreach(cli_case help forwarding)
     add_test(NAME cli_${cli_case}
         COMMAND ${CMAKE_COMMAND}

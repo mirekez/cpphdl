@@ -1289,6 +1289,13 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     // so the type loop above cannot separate their dimensions from the element type.
     // Normalize them here to the same representation used by concrete specializations.
     while (expr.type == cpphdl::Expr::EXPR_TEMPLATE && expr.value == "cpphdl_array" && expr.sub.size() >= 2) {
+        if (const auto* type = QT->getAs<TemplateSpecializationType>()) {
+            const auto args = type->template_arguments();
+            if (args.size() >= 2 && args[1].getKind() == TemplateArgument::Type) {
+                QT = args[1].getAsType();
+                CRD = hlp.resolveCXXRecordDecl(QT);
+            }
+        }
         array_dim.emplace_back(std::move(expr.sub[0]));
         cpphdl::Expr element = std::move(expr.sub[1]);
         expr = std::move(element);
@@ -1310,11 +1317,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     }
     const auto inlineAnnotations = fieldInlineAnnotations(sourceField, *hlp.ctx);
 
-    const bool isInterfaceField = CRD && CRD->isDerivedFrom(InterfaceClass);
+    auto* interfaceRecord = hlp.resolveInterfaceRecordDecl(QT);
+    const bool isInterfaceField = interfaceRecord != nullptr;
     if (str_ending(fieldName, "_in") || str_ending(fieldName, "_out") || isInterfaceField) {
         DEBUG_AST1(" {port " << fieldName << "} ");
 
         auto* CRD = hlp.resolveCXXRecordDecl(QT);
+        if (!CRD && interfaceRecord) {
+            CRD = interfaceRecord;
+        }
 
         cpphdl::Field* field = 0;
         auto it = std::find_if(hlp.mod->ports.begin(), hlp.mod->ports.end(), [&](auto& p){ return p.name == fieldName; } );
@@ -1423,7 +1434,7 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
             // Non-template interfaces have no specialization node; flatten their
             // concrete declaration directly instead of dereferencing a null cast.
             auto* interfaceSpecialization = dyn_cast<ClassTemplateSpecializationDecl>(CRD);
-            ClassTemplateDecl *CTD = interfaceSpecialization ? interfaceSpecialization->getSpecializedTemplate() : nullptr;
+            ClassTemplateDecl *CTD = interfaceSpecialization ? interfaceSpecialization->getSpecializedTemplate() : CRD->getDescribedClassTemplate();
             const clang::TemplateParameterList *interfaceParams = CTD ? CTD->getTemplateParameters() : nullptr;
             if (CTD) {
                 CRD = CTD->getTemplatedDecl();
@@ -2052,11 +2063,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
     }
 
-    void putModule(const CXXRecordDecl* RD)
+    void putModule(const CXXRecordDecl* RD, bool numericPrimary = false)
     {
-        if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // we dont create modules for abstract classes
+        if (/*RD->getDescribedClassTemplate() &&*/ !dyn_cast<ClassTemplateSpecializationDecl>(RD)) {  // save primary declarations for symbolic expressions
             DEBUG_AST(debugIndent++, "# it's abstract, saving " << RD->getQualifiedNameAsString()); on_return ret_debug([](){ --debugIndent; });
-            abstractDefs.push_back(RD);
+            if (!numericPrimary) {
+                abstractDefs.push_back(RD);
+            }
 
 //            for (const auto &Base : RD->bases()) {
 //                CXXRecordDecl *BaseRD = Base.getType()->getAsCXXRecordDecl();
@@ -2066,7 +2079,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
 ////                    }
 //                }
 //            }
-            if (RD->getDescribedClassTemplate()) {  // it's template, dont use abstract in putClass
+            if (RD->getDescribedClassTemplate() && !numericPrimary) {
                 return;
             }
         }
@@ -2088,6 +2101,21 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         std::vector<cpphdl::Field> params;
         hlp.followSpecialization(RD, mod->name, &params, true);
         std::erase_if(params, [](cpphdl::Field& field) { return field.expr.type != cpphdl::Expr::EXPR_NUM; });  // dont use numeric parameters in modules names
+        if (numericPrimary) {
+            for (const auto* parameter : *RD->getDescribedClassTemplate()->getTemplateParameters()) {
+                const auto* value = cast<NonTypeTemplateParmDecl>(parameter);
+                cpphdl::Field field{value->getNameAsString(),
+                    cpphdl::Expr{value->getNameAsString(), cpphdl::Expr::EXPR_PARAM}};
+                if (value->hasDefaultArgument()) {
+                    cpphdl::Expr init;
+                    hlp.ArgToExpr(value->getDefaultArgument().getArgument(), init, false);
+                    if (!init.sub.empty()) {
+                        field.initializer = std::move(init.sub.front());
+                    }
+                }
+                params.emplace_back(std::move(field));
+            }
+        }
         mod->parameters = std::move(params);
         mod->origName = RD->getQualifiedNameAsString();
         mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
@@ -2128,6 +2156,64 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
     }
 
     bool shouldVisitTemplateInstantiations() const { return true; }
+
+    void exportUninstantiatedNumericModules()
+    {
+        // Numeric template parameters have a direct SV parameter equivalent.
+        // Wait until concrete instances have been collected so their existing
+        // generation path (including fixed type arguments) remains unchanged.
+        const auto definitions = abstractDefs;
+        std::unordered_set<const CXXRecordDecl*> seen;
+        for (const auto* record : definitions) {
+            const auto* templ = record->getDescribedClassTemplate();
+            if (!templ || !seen.insert(record->getCanonicalDecl()).second) {
+                continue;
+            }
+            const auto* parameters = templ->getTemplateParameters();
+            const bool numeric = std::all_of(parameters->begin(), parameters->end(),
+                [](const NamedDecl* param) {
+                    const auto* value = dyn_cast<NonTypeTemplateParmDecl>(param);
+                    return value && !value->isParameterPack()
+                        && value->getType()->isIntegralOrEnumerationType();
+                });
+            const bool instantiated = std::any_of(currProject->modules.begin(), currProject->modules.end(),
+                [&](const cpphdl::Module& module) { return module.origName == record->getQualifiedNameAsString(); });
+            if (!numeric || instantiated) {
+                continue;
+            }
+            // Dependent user-class members and bases need C++ specialization
+            // to resolve their types and methods. Do not replace that path
+            // with an incomplete symbolic module.
+            Helpers hlp(context);
+            std::function<bool(QualType)> selfContained = [&](QualType type) {
+                type = type.getNonReferenceType().getDesugaredType(*context);
+                if (const auto* array = context->getAsArrayType(type)) {
+                    return selfContained(array->getElementType());
+                }
+                if (!type->isDependentType() || hlp.resolveInterfaceRecordDecl(type)) {
+                    return true;
+                }
+                const auto* spec = type->getAs<TemplateSpecializationType>();
+                const auto* decl = spec ? spec->getTemplateName().getAsTemplateDecl() : nullptr;
+                if (!decl || decl->getQualifiedNameAsString().rfind("cpphdl::", 0) != 0) {
+                    return false;
+                }
+                for (const auto& arg : spec->template_arguments()) {
+                    if (arg.getKind() == TemplateArgument::Type && !selfContained(arg.getAsType())) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const bool dependentBase = std::any_of(record->bases_begin(), record->bases_end(),
+                [](const CXXBaseSpecifier& base) { return base.getType()->isDependentType(); });
+            const bool dependentMember = std::any_of(record->field_begin(), record->field_end(),
+                [&](const FieldDecl* field) { return !selfContained(field->getType()); });
+            if (!dependentBase && !dependentMember) {
+                putModule(record, true);
+            }
+        }
+    }
 
     ASTContext* context;
 //    const SourceManager &SM;
@@ -2217,6 +2303,7 @@ struct MethodConsumer : public ASTConsumer
             combsOptimizer->collect(context);
         } else {
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
+            Visitor.exportUninstantiatedNumericModules();
             checkModuleLifecycleCalls(context);
         }
     }
