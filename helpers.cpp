@@ -1065,7 +1065,26 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     if (auto* CE = dyn_cast<CallExpr>(E)) {
         cpphdl::Expr call = cpphdl::Expr{"unknown", cpphdl::Expr::EXPR_CALL};
         const clang::Expr* callee = CE->getCallee()->IgnoreParenImpCasts();
-        DEBUG_AST1(" CallExpr(" << callee->getStmtClassName() << ")");
+        DEBUG_AST1(" CallExpr(" << callee->getStmtClassName() << ", "
+                   << callee->getType().getAsString(ctx->getPrintingPolicy())
+                   << ")");
+
+        // Ports are represented by zero-argument function/function_ref
+        // objects.  Their invocation is just a read of the generated signal.
+        // Handle arbitrary callee expressions here (notably dynamically
+        // indexed unpacked port arrays such as port[i]()) rather than falling
+        // through to an invalid unknown() call.
+        QualType calleeType = callee->getType().getNonReferenceType();
+        if (const auto* arrayElement = dyn_cast<ArraySubscriptExpr>(callee)) {
+            QualType arrayType =
+                arrayElement->getBase()->IgnoreParenImpCasts()->getType();
+            if (const auto* type = ctx->getAsArrayType(arrayType)) {
+                calleeType = type->getElementType().getNonReferenceType();
+            }
+        }
+        if (CE->getNumArgs() == 0 && skipStdFunctionType(calleeType)) {
+            return exprToExpr(callee);
+        }
 
         //////////// this code is for std::tuple and should be refactored to separated source file //
 

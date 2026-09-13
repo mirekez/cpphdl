@@ -120,6 +120,10 @@ static bool check_generated_sv()
         "child cpphdl::array port is not packed");
     require(leaf.find("input wire[8-1:0] add_in[SIZE]") != std::string::npos,
         "child C-style array port is not unpacked");
+    require(leaf.find("mul_a_in[index] + add_in[index]") != std::string::npos,
+        "dynamic array-port read was not emitted as an indexed signal");
+    require(leaf.find("unknown()") == std::string::npos,
+        "dynamic array-port read was emitted as unknown()");
     require(top.find("wire[4-1:0][8-1:0] arithm__mul_a_in;") != std::string::npos,
         "child instance connection wire is not packed like the child port");
     require(top.find("wire[8-1:0] arithm__mul_a_in[4]") == std::string::npos,

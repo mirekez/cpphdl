@@ -4370,10 +4370,8 @@ struct CombsOptimizer::Impl {
           instance->type->methodTemplateParameters.find(name);
       if (parameters != instance->type->methodTemplateParameters.end()) {
         dependentTemplateParameters = parameters->second;
-        if (!directCombExpression) {
-          locals.insert(dependentTemplateParameters.begin(),
-                        dependentTemplateParameters.end());
-        }
+        locals.insert(dependentTemplateParameters.begin(),
+                      dependentTemplateParameters.end());
       }
     } else {
       const std::string key = nodeKey(instance->id, NodeKind::Port, name);
@@ -4444,7 +4442,8 @@ struct CombsOptimizer::Impl {
     if (!error.empty()) {
       return false;
     }
-    if (kind == NodeKind::Comb && !directCombExpression) {
+    if (kind == NodeKind::Comb &&
+        (!directCombExpression || !dependentTemplateParameters.empty())) {
       std::string lambdaTemplate;
       std::string lambdaModuleType;
       const bool deduceTemplateParameters =
@@ -4481,22 +4480,29 @@ struct CombsOptimizer::Impl {
                 "comb " + instance->path + "." + name;
         return false;
       }
+      const bool deduced = !dependentTemplateParameters.empty();
       const std::string invocation =
-          dependentTemplateParameters.empty()
-              ? "()"
-              : "(" + instance->alias + ")";
-      // The rewritten body assigns its own storage and has no value to return.
-      // A void lambda retains template deduction and local scope without the
-      // redundant packed-structure return and self-assignment used previously.
-      expressionText = "([&]" +
-                       (dependentTemplateParameters.empty()
-                            ? std::string{}
-                            : "<" + lambdaTemplate + ">") +
-                       (dependentTemplateParameters.empty()
-                            ? "()"
-                            : "(" + lambdaModuleType + "& " +
-                                  instance->alias + ")") +
-                       " " + expressionText + ")" + invocation;
+          deduced ? "(" + instance->alias + ")" : "()";
+      const std::string parameters =
+          deduced ? "(" + lambdaModuleType + "& " + instance->alias + ")"
+                  : "()";
+      if (directCombExpression) {
+        // Even a single-expression comb can still depend on a structural
+        // NTTP. Deduce it from the concrete module type instead of serializing
+        // Clang's semantic aggregate spelling into generated C++.
+        expressionText = "([&]<" + lambdaTemplate + ">" + parameters +
+                         " { return (" + expressionText + "); })" +
+                         invocation;
+      } else {
+        // The rewritten body assigns its own storage and has no value to
+        // return. A void lambda retains template deduction and local scope
+        // without a redundant packed-structure return and self-assignment.
+        expressionText = "([&]" +
+                         (deduced ? "<" + lambdaTemplate + ">"
+                                  : std::string{}) +
+                         parameters + " " + expressionText + ")" +
+                         invocation;
+      }
     }
     nodes[id].expression = std::move(expressionText);
     nodes[id].expressionContext = expressionContext;

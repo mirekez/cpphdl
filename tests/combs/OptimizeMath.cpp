@@ -52,8 +52,12 @@ int checkStructure() {
     std::cerr << "missing optimize-math generated source\n";
     return 1;
   }
-  if (baseline.find("reverse_cache[0]") == std::string::npos ||
-      baseline.find("sign_extend_cache[31]") == std::string::npos) {
+  if (baseline.find("cpphdl::sv_assign_bit(n0.reverse_cache") ==
+          std::string::npos ||
+      baseline.find("cpphdl::sv_assign_bit(n0.sign_extend_cache") ==
+          std::string::npos ||
+      baseline.find("cpphdl_optimized_math::bit_reverse32") !=
+          std::string::npos) {
     std::cerr << "baseline unexpectedly collapsed math network\n";
     return 2;
   }
@@ -71,8 +75,10 @@ int checkStructure() {
   // The concrete hierarchy optimizer schedules unreplaced procedural combs
   // directly in both modes. Keep the partial bit writes, rather than requiring
   // the legacy non-L1 path to retain an out-of-line partial() call.
-  if (combs.find("partial_cache[0]") == std::string::npos ||
-      l1.find("partial_cache[0]") == std::string::npos) {
+  if (combs.find("cpphdl::sv_assign_bit(n0.partial_cache") ==
+          std::string::npos ||
+      l1.find("cpphdl::sv_assign_bit(n0.partial_cache") ==
+          std::string::npos) {
     std::cerr << "partial comb was incorrectly replaced\n";
     return 3;
   }
