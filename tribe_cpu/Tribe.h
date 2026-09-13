@@ -2208,12 +2208,12 @@ public:
         }
         output_write_active_reg._next = dmem_addr_out() == 0x11223344 && dmem_write_out();
 
-#if defined(ENABLE_ZICSR) && defined(ENABLE_MMU_TLB)
+#ifdef ENABLE_ZICSR
         if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
             uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
             pc._next = epc;
 #ifndef SYNTHESIS
-            trace_pc_write("xret-mmu", epc);
+            trace_pc_write("xret", epc);
 #endif
             valid._next = false;
             state_reg._next[0] = State{};
@@ -2249,7 +2249,7 @@ public:
              csr.illegal_trap_out())) {
             pc._next = csr.trap_vector_out();
 #ifndef SYNTHESIS
-            trace_pc_write("trap-exec-mmu", (uint32_t)csr.trap_vector_out());
+            trace_pc_write("trap-exec", (uint32_t)csr.trap_vector_out());
 #endif
             valid._next = false;
             state_reg._next[0] = State{};
@@ -2272,6 +2272,8 @@ public:
             ;
         }
         else
+#endif
+#if defined(ENABLE_ZICSR) && defined(ENABLE_MMU_TLB)
         if (!reset && immu_active_fault_comb_func() && (state_reg[0].valid || state_reg[1].valid) &&
             !dmmu_active_fault_comb_func() && !memory_wait_comb_func()) {
             // Fetch faults are younger than both pipeline stages. Drain one
@@ -2327,29 +2329,6 @@ public:
             predicted_taken_reg.clr();
             debug_branch_target_reg._next = dmmu_active_fault_comb_func() ?
                 data_page_fault_vector_comb_func() : inst_page_fault_vector_comb_func();
-            debug_branch_taken_reg._next = true;
-            interrupt_entry_guard_reg._next = false;
-        }
-        else
-#endif
-#ifdef ENABLE_ZICSR
-        if (!reset && state_reg[0].valid && (state_reg[0].sys_op == Sys::MRET || state_reg[0].sys_op == Sys::SRET)) {
-            uint32_t epc = state_reg[0].sys_op == Sys::SRET ? (uint32_t)csr.sepc_out() : (uint32_t)csr.mepc_out();
-            pc._next = epc;
-#ifndef SYNTHESIS
-            trace_pc_write("xret", epc);
-#endif
-            valid._next = false;
-            state_reg._next[0] = State{};
-            state_reg._next[0].valid = false;
-            state_reg._next[1] = State{};
-            state_reg._next[1].valid = false;
-            decode_state_reg._next.valid = false;
-            predicted_next_reg.clr();
-            fallthrough_reg.clr();
-            predicted_taken_reg.clr();
-            alu_result_reg._next = alu_result_reg;
-            debug_branch_target_reg._next = epc;
             debug_branch_taken_reg._next = true;
             interrupt_entry_guard_reg._next = false;
         }

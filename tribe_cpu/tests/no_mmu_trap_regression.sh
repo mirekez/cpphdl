@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Exercise M/U ECALL, EBREAK, illegal instructions, and trap return without an MMU.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+compiler="${CXX:-$root/.conda/bin/clang++}"
+riscv="${RISCV_HOME:-$HOME/riscv}/bin/riscv32-unknown-elf-gcc"
+work="$(mktemp -d "${TMPDIR:-/tmp}/tribe-trap-tests.XXXXXX")"
+trap 'rm -r "$work"' EXIT
+ram_bytes="${TRIBE_TEST_RAM_BYTES:-458752}"
+simulator="${TRIBE_TEST_SIMULATOR:-$work/tribe}"
+if [[ -z "${TRIBE_TEST_SIMULATOR:-}" ]]; then
+  "$compiler" -std=c++2c -O2 -fno-strict-aliasing \
+    -DTRIBE_CFG_RV32IA=0 -DTRIBE_CFG_ISR=0 -DTRIBE_CFG_MMU_TLB=0 \
+    -DTRIBE_RAM_BYTES_CONFIG="$ram_bytes" \
+    -I"$root/include" -I"$root/tribe_cpu/common" \
+    -I"$root/tribe_cpu/spec" -I"$root/tribe_cpu/cache" \
+    -I"$root/tribe_cpu/devices" -I"$root/examples/axi" \
+    "$root/tribe_cpu/main.cpp" -o "$simulator"
+fi
+"$riscv" -march=rv32im_zicsr -mabi=ilp32 -nostdlib -static \
+  -DTEST_UART_BASE="$ram_bytes" -Wl,-Ttext=0 \
+  "$root/tribe_cpu/code/no_mmu_traps.S" -o "$work/traps.elf"
+(cd "$work" && "$simulator" --noveril --program "$work/traps.elf" --elf \
+  --boot-priv m --cycles 100000 --ram-size "$((ram_bytes / 4))" \
+  --expected-output-contains NO_MMU_TRAPS_PASS --mirror-uart)
+echo 'PASS: synchronous traps and returns without MMU or interrupt routing'

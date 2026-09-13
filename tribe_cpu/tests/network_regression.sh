@@ -19,3 +19,4 @@ done
   "$root/tribe_cpu/tests/EthGigCPU_test.cpp" -o "$work/EthGigPollingCPU"
 (cd "$work" && ./EthGigPollingCPU --noveril --polling)
 CXX="$compiler" bash "$root/tribe_cpu/tests/no_mmu_compile_check.sh"
+CXX="$compiler" bash "$root/tribe_cpu/tests/no_mmu_trap_regression.sh"
