@@ -156,9 +156,11 @@ public:
 #ifdef VERILATOR
         dut.value_in = 0x155;
         dut.eval();
+        error |= dut.value_out != 0x155 + 9 + 3;
 #else
         value = logic<9>(0x155);
         dut._work(false);
+        error |= (uint16_t)dut.value_out() != 0x155 + 9 + 3;
 #endif
         ++_system_clock;
 
@@ -171,6 +173,12 @@ public:
 
 int main()
 {
+#ifndef VERILATOR
+    if (!VerilatorCompile(__FILE__, "TemplateBaseAliasPackage", {"Predef_pkg"}, {"../../../../include"})
+        || std::system("TemplateBaseAliasPackage/obj_dir/VTemplateBaseAliasPackage") != 0) {
+        return 1;
+    }
+#endif
     TestTemplateBaseAliasPackage test;
     return test.run() ? 1 : 0;
 }

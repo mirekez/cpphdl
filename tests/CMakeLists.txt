@@ -8,6 +8,14 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
 
+# These tests select concrete template types/widths in their native testbench.
+# Parse that testbench too, so conversion sees the same implicit instances.
+set(template_hierarchy_tests
+    code/TypeTemplateModule.cpp
+    templates/TemplateArrayDimension.cpp
+    templates/TemplateBaseAliasPackage.cpp
+    templates/TemplateInheritedBaseArray.cpp)
+
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
@@ -41,6 +49,7 @@ foreach(src ${TEST_SOURCES})
     # regressions normally compile in the newest supported language mode.
     if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp" OR
        rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
+       rel_path STREQUAL "datatypes/PointerPorts.cpp" OR
        rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
         target_compile_options(${target_name} PRIVATE "-std=c++17")
     endif()
@@ -69,10 +78,8 @@ foreach(src ${TEST_SOURCES})
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
-    # This regression defines its module only outside SYNTHESIS guards.
-    # It must exercise cpphdl's new opt-out rather than the default preprocessing mode.
-    # Append the frontend option only for that targeted JSON extraction test.
-    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp")
+    # Include guarded definitions/instances in tests that require them.
+    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp" OR rel_path IN_LIST template_hierarchy_tests)
         string(APPEND cpphdl_json_args " --no-synthesis-flag")
     endif()
 
@@ -88,11 +95,23 @@ foreach(src ${TEST_SOURCES})
 
     cpphdl_add_converter_dependency(${target_name})
 
-    add_test(
-        NAME ${target_name}
-        COMMAND "$<TARGET_FILE:${target_name}>"
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
-    )
+    if(rel_path IN_LIST template_hierarchy_tests)
+        add_test(NAME ${target_name}
+            COMMAND ${CMAKE_COMMAND}
+                -DCPPHDL=$<TARGET_FILE:cpphdl>
+                -DSOURCE=${src}
+                -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+                -DTEST_EXE=$<TARGET_FILE:${target_name}>
+                -DTOP=${name}
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/template_hierarchy/${target_name}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateHierarchy.cmake)
+    else()
+        add_test(
+            NAME ${target_name}
+            COMMAND "$<TARGET_FILE:${target_name}>"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
+        )
+    endif()
     set_tests_properties(${target_name} PROPERTIES
         TIMEOUT 600
     )
