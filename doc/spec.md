@@ -366,6 +366,8 @@ source location. Conversion continues so that you can inspect all warnings.
 The check follows inherited methods and local helper calls from the appropriate
 work or strobe method, including declared clock and negative-edge variants.
 A call in an unused helper or in the wrong phase does not satisfy the check.
+Empty child work/strobe methods, including helpers that only call empty methods,
+do not require a parent call. Omitting them cannot change the simulation state.
 This is a structural check, not a proof that every runtime branch or array index
 is exercised. Simulation tests must still check the clock schedule and conditional
 execution of those calls.

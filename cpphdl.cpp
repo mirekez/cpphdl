@@ -2217,7 +2217,7 @@ struct MethodConsumer : public ASTConsumer
             combsOptimizer->collect(context);
         } else {
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
-            checkModuleLifecycleCalls(context, compiler->getSema());
+            checkModuleLifecycleCalls(context);
         }
     }
 

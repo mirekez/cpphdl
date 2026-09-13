@@ -32,7 +32,7 @@ public:
     {
         response_value = dut.response_out();
     }
-    void _strobe() {}
+    void _strobe() { request_reg.strobe(); }
     void _assign()
     {
         dut.request_in = _ASSIGN_REG(request_reg);

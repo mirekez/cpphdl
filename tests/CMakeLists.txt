@@ -123,7 +123,7 @@ foreach(cli_case help forwarding)
     set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named)
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template assign_ports constexpr_ports tuple_pipeline)
     add_test(NAME lint_lifecycle_${lifecycle_case}
         COMMAND ${CMAKE_COMMAND}
             -DCPPHDL=$<TARGET_FILE:cpphdl>

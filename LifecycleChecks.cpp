@@ -5,7 +5,6 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Sema/Sema.h"
 
 #include <algorithm>
 #include <iostream>
@@ -113,26 +112,92 @@ const FieldDecl* receiverField(const Expr* expr)
 
 using Calls = std::map<const FieldDecl*, std::set<std::string>>;
 
+const Stmt* methodBody(const CXXMethodDecl* decl)
+{
+    if (const auto* body = decl->getBody()) {
+        return body;
+    }
+    const auto* pattern = decl->getTemplateInstantiationPattern();
+    return pattern ? pattern->getBody() : nullptr;
+}
+
+const TagDecl* recordPattern(const RecordDecl* record)
+{
+    if (const auto* cxxRecord = dyn_cast<CXXRecordDecl>(record)) {
+        if (const auto* pattern = cxxRecord->getTemplateInstantiationPattern()) {
+            record = pattern;
+        }
+    }
+    return record->getCanonicalDecl();
+}
+
 class ProcessCalls {
 public:
-    ProcessCalls(ASTContext& context, Sema& sema) : context(context), sema(sema) {}
+    ProcessCalls(ASTContext& context, const Methods& methods,
+        const std::vector<const FieldDecl*>& fields)
+        : context(context), methods(methods), fields(fields) {}
 
     void method(const CXXMethodDecl* decl)
     {
         if (decl && visited.insert(decl->getCanonicalDecl()).second) {
-            // An unused method of a template base can have a definition only
-            // in the pattern. Inspect its concrete body, not an empty stub.
-            if (!decl->getBody() && decl->getTemplateInstantiationPattern()) {
-                sema.InstantiateFunctionDefinition(decl->getLocation(),
-                    const_cast<CXXMethodDecl*>(decl), true);
-            }
-            statement(decl->getBody());
+            // Never instantiate here: parsing is over and Sema's scopes may
+            // already be gone. Unused template methods still have a pattern.
+            statement(methodBody(decl));
         }
     }
 
     Calls calls;
 
 private:
+    const FieldDecl* concreteField(const FieldDecl* field) const
+    {
+        if (!field || !field->getParent()->isDependentContext()) {
+            return field;
+        }
+        for (const auto* candidate : fields) {
+            if (candidate->getName() == field->getName()
+                && recordPattern(candidate->getParent()) == recordPattern(field->getParent())) {
+                return candidate;
+            }
+        }
+        return field;
+    }
+
+    void memberCall(const Expr* object, const std::string& name,
+        const CXXMethodDecl* decl, NestedNameSpecifier* qualifier = nullptr)
+    {
+        if (const auto* field = receiverField(object)) {
+            calls[concreteField(field)].insert(name);
+        } else if (!object || isThis(object)) {
+            if (decl) {
+                method(decl);
+            } else if (qualifier && qualifier->getAsType()) {
+                // A qualified Base<T>::helper() in an uninstantiated body.
+                const auto* type = qualifier->getAsType();
+                const auto* record = type->getAsCXXRecordDecl();
+                if (!record) {
+                    if (const auto* specialization = type->getAs<TemplateSpecializationType>()) {
+                        if (const auto* templ = dyn_cast_or_null<ClassTemplateDecl>(
+                                specialization->getTemplateName().getAsTemplateDecl())) {
+                            record = templ->getTemplatedDecl();
+                        }
+                    }
+                }
+                if (record) {
+                    Methods baseMethods;
+                    std::vector<const FieldDecl*> baseFields;
+                    std::set<const CXXRecordDecl*> baseVisited;
+                    collectMembers(record, baseMethods, baseFields, baseVisited);
+                    if (auto it = baseMethods.find(name); it != baseMethods.end()) {
+                        method(it->second);
+                    }
+                }
+            } else if (auto it = methods.find(name); it != methods.end()) {
+                method(it->second);
+            }
+        }
+    }
+
     void statement(const Stmt* stmt)
     {
         if (!stmt || isa<LambdaExpr>(stmt)) {
@@ -153,12 +218,15 @@ private:
             const auto* decl = dyn_cast_or_null<CXXMethodDecl>(call->getDirectCallee());
             const auto* member = dyn_cast_or_null<MemberExpr>(strip(call->getCallee()));
             if (decl && member) {
-                const Expr* object = member->getBase();
-                if (const auto* field = receiverField(object)) {
-                    calls[field].insert(decl->getNameAsString());
-                } else if (isThis(object)) {
-                    method(decl);
-                }
+                memberCall(member->getBase(), decl->getNameAsString(), decl);
+            } else if (const auto* dependent = dyn_cast_or_null<CXXDependentScopeMemberExpr>(
+                    strip(call->getCallee()))) {
+                memberCall(dependent->isImplicitAccess() ? nullptr : dependent->getBase(),
+                    dependent->getMember().getAsString(), nullptr, dependent->getQualifier());
+            } else if (const auto* dependent = dyn_cast_or_null<DependentScopeDeclRefExpr>(
+                    strip(call->getCallee()))) {
+                memberCall(nullptr, dependent->getDeclName().getAsString(), nullptr,
+                    dependent->getQualifier());
             }
         }
         for (const auto* child : stmt->children()) {
@@ -167,9 +235,62 @@ private:
     }
 
     ASTContext& context;
-    Sema& sema;
+    const Methods& methods;
+    const std::vector<const FieldDecl*>& fields;
     std::set<const CXXMethodDecl*> visited;
 };
+
+bool hasLifecycleEffect(const Stmt* stmt, ASTContext& context,
+    std::set<const CXXMethodDecl*>& active)
+{
+    if (!stmt || isa<NullStmt>(stmt)) {
+        return false;
+    }
+    if (const auto* block = dyn_cast<CompoundStmt>(stmt)) {
+        for (const auto* child : block->body()) {
+            if (hasLifecycleEffect(child, context, active)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* ret = dyn_cast<ReturnStmt>(stmt)) {
+        return ret->getRetValue() != nullptr;
+    }
+    if (const auto* branch = dyn_cast<IfStmt>(stmt)) {
+        bool value;
+        if (!branch->getCond()->isValueDependent()
+            && branch->getCond()->EvaluateAsBooleanCondition(value, context)) {
+            return hasLifecycleEffect(branch->getInit(), context, active)
+                || hasLifecycleEffect(value ? branch->getThen() : branch->getElse(), context, active);
+        }
+    }
+    if (const auto* call = dyn_cast<CXXMemberCallExpr>(stmt)) {
+        const auto* decl = call->getMethodDecl();
+        if (decl && methodBody(decl) && active.insert(decl->getCanonicalDecl()).second) {
+            const bool effect = hasLifecycleEffect(methodBody(decl), context, active);
+            active.erase(decl->getCanonicalDecl());
+            if (effect || call->getImplicitObjectArgument()->HasSideEffects(context)) {
+                return true;
+            }
+            for (const auto* arg : call->arguments()) {
+                if (arg->HasSideEffects(context)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    // Only suppress provably empty processes, not unknown or external calls.
+    return true;
+}
+
+bool requiresLifecycleCall(const CXXMethodDecl* decl, ASTContext& context)
+{
+    const auto* body = methodBody(decl);
+    std::set<const CXXMethodDecl*> active{decl->getCanonicalDecl()};
+    return !body || hasLifecycleEffect(body, context, active);
+}
 
 const CXXRecordDecl* elementRecord(QualType type, ASTContext& context)
 {
@@ -208,13 +329,13 @@ void report(const CXXRecordDecl* record, const FieldDecl* field,
     std::cerr << "/" << std::string(width - 2, '*') << "/\n";
 }
 
-void check(const CXXRecordDecl* record, ASTContext& context, Sema& sema)
+void check(const CXXRecordDecl* record, ASTContext& context)
 {
     Methods methods;
     std::vector<const FieldDecl*> fields;
     std::set<const CXXRecordDecl*> visited;
     collectMembers(record, methods, fields, visited);
-    ProcessCalls work(context, sema), strobe(context, sema);
+    ProcessCalls work(context, methods, fields), strobe(context, methods, fields);
     for (const auto& [name, decl] : methods) {
         if (isProcess(name, "_work")) {
             work.method(decl);
@@ -241,6 +362,10 @@ void check(const CXXRecordDecl* record, ASTContext& context, Sema& sema)
             std::set<const CXXRecordDecl*> childVisited;
             collectMembers(type, childMethods, childFields, childVisited);
             for (const auto& [childName, decl] : childMethods) {
+                if ((!isProcess(childName, "_work") && !isProcess(childName, "_strobe"))
+                    || !requiresLifecycleCall(decl, context)) {
+                    continue;
+                }
                 if (isProcess(childName, "_work") && !work.calls[field].count(childName)) {
                     report(record, field, "child work", childName, "_work()", context);
                 }
@@ -254,26 +379,25 @@ void check(const CXXRecordDecl* record, ASTContext& context, Sema& sema)
 
 class ModuleChecks : public RecursiveASTVisitor<ModuleChecks> {
 public:
-    ModuleChecks(ASTContext& context, Sema& sema) : context(context), sema(sema) {}
+    explicit ModuleChecks(ASTContext& context) : context(context) {}
     bool shouldVisitTemplateInstantiations() const { return true; }
 
     bool VisitCXXRecordDecl(CXXRecordDecl* record)
     {
         if (record->isThisDeclarationADefinition() && !record->isDependentContext()
             && isModule(record) && visited.insert(record->getCanonicalDecl()).second) {
-            check(record, context, sema);
+            check(record, context);
         }
         return true;
     }
 
 private:
     ASTContext& context;
-    Sema& sema;
     std::unordered_set<const CXXRecordDecl*> visited;
 };
 } // namespace
 
-void checkModuleLifecycleCalls(clang::ASTContext& context, clang::Sema& sema)
+void checkModuleLifecycleCalls(clang::ASTContext& context)
 {
-    ModuleChecks(context, sema).TraverseDecl(context.getTranslationUnitDecl());
+    ModuleChecks(context).TraverseDecl(context.getTranslationUnitDecl());
 }
