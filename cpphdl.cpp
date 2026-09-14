@@ -22,6 +22,8 @@
 #include "json_output.h"
 #include "Combs.h"
 #include "LifecycleChecks.h"
+#include "hls/HLS.h"
+#include "hls/Kernel.h"
 
 #include <algorithm>
 #include <array>
@@ -1754,6 +1756,13 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         method.name += MD->getNameAsString();
     }
 
+    if (!cpphdl::hls::enterMethod(*hlp.mod, method.name, *MD)) {
+        hlp.flags = savedFlags;
+        return method.name;
+    }
+    const std::string collectingMethodName = method.name;
+    on_return leaveHlsMethod([&]() { cpphdl::hls::leaveMethod(*hlp.mod, collectingMethodName); });
+
     for (const ParmVarDecl* param : MD->parameters()) {
         QualType QT = param->getType().getNonReferenceType();
 
@@ -1782,7 +1791,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
     }
 
-    const auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
+    auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
+    if (MD->isStatic() && !MD->getParent()->isDerivedFrom(ModuleClass)) {
+        // Static helper specializations have no module parameter scope. Their
+        // own concrete arguments take precedence over the caller's parameters.
+        for (const auto& [name, value] : templateTypeSubstitutionsForRecord(MD->getParent(), hlp)) {
+            typeSubstitutions[name] = value;
+        }
+    }
     for (auto& ret : method.ret) {
         applyTemplateTypeSubstitutions(ret, typeSubstitutions);
     }
@@ -2325,6 +2341,7 @@ struct MethodConsumer : public ASTConsumer
         if (combsOptimizer) {
             combsOptimizer->collect(context);
         } else {
+            if (!cpphdl::hls::prepare(context, compiler->getSema())) return;
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
             Visitor.exportUninstantiatedNumericModules();
             checkModuleLifecycleCalls(context);
@@ -2364,6 +2381,11 @@ Conversion options:
   --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
                                 source normally hidden by synthesis guards.
   --debug                        Print converter/AST diagnostics.
+  --hls                          Enable experimental bounded recursion lowering.
+                                Analyze actual std::container methods; unsupported
+                                storage lowering is diagnosed. See hls/HLS.md.
+  --hls-kernel <entry>            Schedule a bounded transaction kernel (--hls).
+                                Emit register/SRAM RTL and auditable LLVM IR.
 
 Clocks:
   --primary_clock <name> <freq>  Declare the primary clock (positive integer
@@ -2554,6 +2576,8 @@ int main(int argc, const char **argv)
     std::string optimize_combs_collection_output;
     std::vector<std::string> optimize_combs_collection_inputs;
     bool optimize_math = false;
+    bool hls_mode = false;
+    std::string hls_kernel;
     size_t optimize_threads = 1;
     bool optimize_threads_specified = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
@@ -2585,6 +2609,23 @@ int main(int argc, const char **argv)
 
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;
+            continue;
+        }
+
+        if (!saw_double_dash && std::strcmp(arg, "--hls") == 0) {
+            hls_mode = true;
+            cpphdl::hls::enable();
+            continue;
+        }
+
+        if (!saw_double_dash && (std::strcmp(arg, "--hls-kernel") == 0 ||
+                                std::strncmp(arg, "--hls-kernel=", 13) == 0)) {
+            if (arg[12] == '=') hls_kernel = arg + 13;
+            else if (i + 1 < argc) hls_kernel = argv[++i];
+            if (hls_kernel.empty() || hls_kernel.front() == '-') {
+                llvm::errs() << "--hls-kernel requires an entry name\n";
+                return 1;
+            }
             continue;
         }
 
@@ -2876,9 +2917,25 @@ int main(int argc, const char **argv)
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
     Tool.appendArgumentsAdjuster(adjustCppInputKind);
 
+    if (!hls_kernel.empty()) {
+        if (!hls_mode || !optimize_combs_root.empty() || Options.getSourcePathList().size() != 1) {
+            llvm::errs() << "--hls-kernel requires --hls, one source, and no comb optimizer\n";
+            return 1;
+        }
+        if (!primary_clocks.empty() || !secondary_clocks.empty() || !json_output.empty()) {
+            llvm::errs() << "--hls-kernel does not yet support named clocks or JSON output\n";
+            return 1;
+        }
+        return cpphdl::hls::compileKernel(Tool, hls_kernel, generated_dir);
+    }
+
     // The comb optimizer can restrict method extraction to the concrete root.
     // Supplying it before Clang's AST walk avoids retaining unrelated module
     // implementations from the same generated umbrella header.
+    if (hls_mode && !optimize_combs_root.empty()) {
+        llvm::errs() << "--hls cannot currently be combined with native comb optimization\n";
+        return 1;
+    }
     cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
     combsOptimizer.setCollectionOnly(!optimize_combs_collection_output.empty());
@@ -2902,6 +2959,8 @@ int main(int argc, const char **argv)
     if (ret != 0) {
         return ret;
     }
+    if (!cpphdl::hls::writeAnalysis(generated_dir)) return 1;
+    if (!cpphdl::hls::lower(*currProject)) return 1;
     if (!optimize_combs_collection_output.empty()) {
         return combsOptimizer.saveCollection(optimize_combs_collection_output)
             ? 0 : 1;

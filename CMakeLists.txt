@@ -348,6 +348,7 @@ endif()
 find_package(ZLIB REQUIRED)
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp json_output.cpp Combs.cpp LifecycleChecks.cpp)
+target_sources(cpphdl PRIVATE hls/HLS.cpp hls/StdContainers.cpp hls/Kernel.cpp)
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c -std=c++23)
@@ -362,6 +363,7 @@ endforeach()
 target_link_libraries(cpphdl PRIVATE
   ZLIB::ZLIB
   clangTooling
+  clangCodeGen
   clangBasic
   clangASTMatchers
   clangFrontend
@@ -412,6 +414,7 @@ if(CPPHDL_BUILD_EXAMPLES)
 endif()
 if(CPPHDL_BUILD_TESTS)
   add_subdirectory(tests)
+  add_subdirectory(hls/tests)
 endif()
 if(CPPHDL_BUILD_TRIBE)
   add_subdirectory(tribe_cpu)

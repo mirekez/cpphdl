@@ -558,7 +558,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
-            return indent_str + prefix + "(" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + ")";
+            return indent_str + prefix + "((" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + "))";
         case EXPR_CALL:
         {
             if (cpphdl_is_comb_func_name(value)) {

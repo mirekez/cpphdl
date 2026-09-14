@@ -1,0 +1,13 @@
+function(reject expected)
+    execute_process(COMMAND "${CPPHDL}" ${ARGN}
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(NOT result EQUAL 1 OR NOT error MATCHES "${expected}")
+        message(FATAL_ERROR "Missing '${expected}' error: ${result}\n${output}\n${error}")
+    endif()
+endfunction()
+set(source "${ROOT}/hls/tests/BoundedVector.cpp")
+reject("requires an entry name" --hls-kernel)
+reject("requires an entry name" --hls-kernel=)
+reject("requires --hls" --hls-kernel=bounded_vector "${source}")
+reject("one source" --hls --hls-kernel bounded_vector "${source}" "${ROOT}/hls/tests/KernelMemory.cpp")
+reject("does not yet support named clocks" --hls --hls-kernel bounded_vector --primary_clock cpu 100 "${source}")
