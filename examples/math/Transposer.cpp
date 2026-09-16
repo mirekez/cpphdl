@@ -29,108 +29,103 @@ public:
     _PORT(bool) data_valid_out;
 
 private:
-    reg<array<SIZE, logic<WIDTH>>> mesh1[SIZE];
-    reg<array<SIZE, logic<WIDTH>>> mesh2[SIZE];
-    reg<u1> valid1[SIZE];
-    reg<u1> valid2[SIZE];
-    reg<u1> busy1;
-    reg<u1> busy2;
-    reg<u1> swap;
-    reg<u<clog2(SIZE + 1)>> rows_written;
-    reg<u<clog2(SIZE + 1)>> rows_to_read;
-    reg<u1> data_valid_in_delayed;
+    // An input vector writes one column: bank[input lane][write_column].
+    // Reading bank[read_row] returns a transposed vector. Neither bank shifts
+    // or copies its contents; only the selected column receives a write enable.
+    reg<array<SIZE, logic<WIDTH>>> bank0[SIZE];
+    reg<array<SIZE, logic<WIDTH>>> bank1[SIZE];
+    reg<u1> write_bank;
+    reg<u1> read_bank;
+    reg<u<clog2(SIZE)>> write_column;
+    reg<u<clog2(SIZE)>> read_row;
+    reg<u1> collecting;
+    reg<u1> reading;
+    reg<u1> pending;
+    reg<u1> output_valid;
     reg<logic<RESET_DELAY>> reset1;
-    bool data_valid_out_comb;
+    array<SIZE, logic<WIDTH>> data_out_comb;
 
-    bool& data_valid_out_comb_func()
+    array<SIZE, logic<WIDTH>>& data_out_comb_func()
     {
-        return data_valid_out_comb = data_valid_in_delayed && valid2[SIZE - 1];
+        data_out_comb = 0;
+        if (reading) {
+            if (read_bank) {
+                data_out_comb = bank1[read_row];
+            }
+            else {
+                data_out_comb = bank0[read_row];
+            }
+        }
+        return data_out_comb;
     }
 
 public:
     void _assign()
     {
-        data_out = _ASSIGN_REG(mesh2[SIZE - 1]);
-        data_valid_out = _ASSIGN_COMB(data_valid_out_comb_func());
+        data_out = _ASSIGN_COMB(data_out_comb_func());
+        data_valid_out = _ASSIGN_REG(output_valid);
     }
 
     void _work(bool reset)
     {
-        size_t i, j;
-        data_valid_in_delayed._next = data_valid_in();
-        if (data_valid_in()) {
-            valid1[0]._next = 0;
-            if (busy1) {
-                for (i = 0; i < SIZE; ++i) {
-                    mesh1[0]._next[i] = data_in()[i];
+        size_t i;
+        output_valid._next = 0;
+        if (data_valid_in() && !(reset1 & 1)) {
+            // Present row zero on the first enabled cycle after completion.
+            // The writer has already moved to the opposite bank. Stalls hold
+            // the read selector, including after the last valid output row.
+            if (pending) {
+                read_bank._next = !write_bank;
+                read_row._next = 0;
+                reading._next = 1;
+                output_valid._next = 1;
+                pending._next = 0;
+            }
+            else if (reading) {
+                if (read_row == SIZE - 1) {
+                    reading._next = 0;
                 }
-                valid1[0]._next = 1;
-                rows_written._next = rows_written + 1;
-                if (rows_written._next == SIZE) {
-                    busy1._next = 0;
-                    busy2._next = 1;
-                    rows_written._next = 0;
-                    rows_to_read._next = SIZE;
-                    swap._next = 1;
+                else {
+                    read_row._next = read_row + 1;
+                    output_valid._next = 1;
+                }
+            }
+            if (collecting) {
+                for (i = 0; i < SIZE; ++i) {
+                    if (write_bank) {
+                        bank1[i]._next[write_column] = data_in()[i];
+                    }
+                    else {
+                        bank0[i]._next[write_column] = data_in()[i];
+                    }
+                }
+                if (write_column == SIZE - 1) {
+                    collecting._next = 0;
+                    write_column._next = 0;
+                    write_bank._next = !write_bank;
+                    pending._next = 1;
+                }
+                else {
+                    write_column._next = write_column + 1;
                 }
             }
             if (start_in()) {
-                busy1._next = 1;
-                rows_written._next = 0;
-            }
-            valid2[0]._next = 0;
-            for (j = 0; j < SIZE - 1; ++j) {
-                for (i = 0; i < SIZE; ++i) {
-                    mesh1[j + 1]._next[i] = mesh1[j][i];
-                }
-                valid1[j + 1]._next = valid1[j];
-            }
-            for (i = 0; i < SIZE - 1; ++i) {
-                for (j = 0; j < SIZE; ++j) {
-                    mesh2[i + 1]._next[j] = mesh2[i][j];
-                }
-                valid2[i + 1]._next = valid2[i];
-            }
-            if (!valid2[SIZE - 2]) {
-                for (j = 0; j < SIZE; ++j) {
-                    mesh2[SIZE - 1]._next[j] = 0;
-                }
-            }
-            if (swap) {
-                for (i = 0; i < SIZE; ++i) {
-                    valid2[i]._next = 1;
-                }
-                swap._next = 0;
-            }
-            else if (busy2) {
-                rows_to_read._next = rows_to_read - 1;
-                if (rows_to_read._next == 0) {
-                    busy2._next = 0;
-                }
-            }
-        }
-        // The pending transpose may be copied during a stall; it is consumed
-        // only on the next enabled cycle, when valid2 is loaded above.
-        if (swap) {
-            for (i = 0; i < SIZE; ++i) {
-                for (j = 0; j < SIZE; ++j) {
-                    mesh2[SIZE - 1 - i]._next[SIZE - 1 - j] = mesh1[j][i];
-                }
+                collecting._next = 1;
+                write_column._next = 0;
             }
         }
         reset1._next = (reset1 >> 1) | (logic<RESET_DELAY>(reset) << (RESET_DELAY - 1));
         if (reset1 & 1) {
-            busy1._next = 0;
-            busy2._next = 0;
-            swap._next = 0;
-            rows_written._next = 0;
-            rows_to_read._next = 0;
-            data_valid_in_delayed._next = 0;
-            for (i = 0; i < SIZE; ++i) {
-                valid1[i]._next = 0;
-                valid2[i]._next = 0;
-                mesh2[i]._next = 0;
-            }
+            collecting._next = 0;
+            reading._next = 0;
+            pending._next = 0;
+            write_bank._next = 0;
+            read_bank._next = 0;
+            write_column._next = 0;
+            read_row._next = 0;
+            output_valid._next = 0;
+            // Unread data is masked by reading. A complete matrix overwrites
+            // every cell before publication, so data registers need no reset.
         }
     }
 
@@ -139,17 +134,17 @@ public:
         size_t i;
         reset1.strobe();
         for (i = 0; i < SIZE; ++i) {
-            valid1[i].strobe();
-            valid2[i].strobe();
-            mesh1[i].strobe();
-            mesh2[i].strobe();
+            bank0[i].strobe();
+            bank1[i].strobe();
         }
-        busy1.strobe();
-        busy2.strobe();
-        swap.strobe();
-        rows_written.strobe();
-        rows_to_read.strobe();
-        data_valid_in_delayed.strobe();
+        write_bank.strobe();
+        read_bank.strobe();
+        write_column.strobe();
+        read_row.strobe();
+        collecting.strobe();
+        reading.strobe();
+        pending.strobe();
+        output_valid.strobe();
     }
 };
 
@@ -204,6 +199,8 @@ static bool read_bit(const Port& port, size_t bit)
 template<size_t SIZE, size_t WIDTH, size_t DELAY>
 class TestTransposer : public Module
 {
+    static_assert(WIDTH > 0 && WIDTH <= 32);
+    static constexpr uint32_t lane_mask = UINT32_MAX >> (32 - WIDTH);
     using Row = std::array<uint32_t, SIZE>;
 #ifdef VERILATOR
     VERILATOR_MODEL dut;
@@ -237,7 +234,7 @@ class TestTransposer : public Module
     {
         Row row{};
         for (auto& lane : row) {
-            lane = next_random() & ((uint32_t(1) << WIDTH) - 1);
+            lane = next_random() & lane_mask;
         }
         return row;
     }
@@ -253,7 +250,6 @@ class TestTransposer : public Module
     void cycle(bool start_value, bool enabled, const Row& data, bool reset = false)
     {
         const bool resetting = resets.front();
-        const bool copying = !pending.empty();
         bool expected_valid = false;
         Row expected{};
         Row actual{};
@@ -340,6 +336,9 @@ class TestTransposer : public Module
             fail("valid expected " + std::to_string(expected_valid)
                 + " got " + std::to_string(actual_valid));
         }
+        if (resetting && actual != Row{}) {
+            fail("reset did not mask the stored matrix");
+        }
         if (expected_valid) {
             ++checked_columns;
             for (size_t lane = 0; lane < SIZE; ++lane) {
@@ -349,7 +348,7 @@ class TestTransposer : public Module
                 }
             }
         }
-        if (have_previous && !enabled && !copying && !resetting && actual != previous) {
+        if (have_previous && !enabled && !resetting && actual != previous) {
             fail("data_out changed during a stalled cycle");
         }
         previous = actual;
@@ -428,7 +427,7 @@ public:
         for (size_t row = 0; row < SIZE; ++row) {
             Row data{};
             for (size_t lane = 0; lane < SIZE; ++lane) {
-                data[lane] = (row * SIZE + lane + 1) & ((uint32_t(1) << WIDTH) - 1);
+                data[lane] = (row * SIZE + lane + 1) & lane_mask;
             }
             cycle(false, true, data);
         }
@@ -447,6 +446,21 @@ public:
         if (checked_columns != 49 * SIZE) {
             fail("wrong number of completed matrix columns");
         }
+        // Reuse both banks under simultaneous capture/drain, stalling at
+        // every selector position and at the bank handoff. Disabled starts
+        // must not disturb either selector or the published output vector.
+        tick(true);
+        for (size_t matrix_index = 0; matrix_index < 17; ++matrix_index) {
+            for (size_t row = 0; row < SIZE; ++row) {
+                tick(true, false);
+                tick(false, false);
+                tick(row == SIZE - 1 && matrix_index != 16);
+            }
+        }
+        drain(true);
+        if (checked_columns != 66 * SIZE) {
+            fail("wrong number of bank-handoff columns");
+        }
         // Restart discards a partial matrix after accepting the coincident row.
         tick(true);
         tick(true);
@@ -454,7 +468,20 @@ public:
             tick();
         }
         drain();
-        // Reset during capture, pending swap, and active output, then recover.
+        // Restart capture in the other bank while a completed matrix drains.
+        // Its data must remain intact while the partial write column wraps.
+        tick(true);
+        for (size_t row = 0; row < SIZE; ++row) {
+            tick(row == SIZE - 1);
+        }
+        tick(true);
+        for (size_t row = 0; row < SIZE; ++row) {
+            tick(true, false);
+            tick();
+        }
+        drain(true);
+        // Reset during capture, pending bank handoff, and active output, then
+        // recover. Neither stale nor partially overwritten banks may escape.
         tick(true);
         tick();
         reset_pipeline();
@@ -507,6 +534,8 @@ int main(int argc, char** argv)
             TestTransposer<4, 16, 1>().run();
         else if (positional == std::vector<std::string>{"8", "16", "3"})
             TestTransposer<8, 16, 3>().run();
+        else if (positional == std::vector<std::string>{"32", "32", "1"})
+            TestTransposer<32, 32, 1>().run();
         else throw std::runtime_error("unsupported Transposer test configuration");
 #else
         if (!positional.empty()) throw std::runtime_error("usage: math_Transposer [--noveril|--verilator-only]");
@@ -515,11 +544,12 @@ int main(int argc, char** argv)
             TestTransposer<3, 9, 3>().run();
             TestTransposer<4, 16, 1>().run();
             TestTransposer<8, 16, 3>().run();
+            TestTransposer<32, 32, 1>().run();
         }
         if (rtl) {
             const std::string include = (CpphdlSourceRootFrom(__FILE__) / "include").string();
             for (const auto& config : std::vector<std::array<size_t, 3>>{
-                    {2, 7, 1}, {3, 9, 3}, {4, 16, 1}, {8, 16, 3}}) {
+                    {2, 7, 1}, {3, 9, 3}, {4, 16, 1}, {8, 16, 3}, {32, 32, 1}}) {
                 if (!VerilatorCompile(__FILE__, "Transposer", {"Predef_pkg"}, {include},
                         config[0], config[1], config[2])) {
                     throw std::runtime_error("Transposer Verilator build failed");
