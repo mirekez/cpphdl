@@ -23,7 +23,7 @@
 #include "Combs.h"
 #include "LifecycleChecks.h"
 #include "hls/HLS.h"
-#include "hls/Kernel.h"
+#include "hls/AstClocked.h"
 
 #include <algorithm>
 #include <array>
@@ -309,7 +309,7 @@ std::string shellQuote(const std::string& text)
     return out;
 }
 
-void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
+void appendCompilerProbeIncludeDirs(std::vector<std::string>& args, const std::string& library = "")
 {
     std::string compiler;
 #ifdef CPPHDL_CMAKE_CXX_COMPILER
@@ -324,7 +324,8 @@ void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
         compiler = "clang++";
     }
 
-    const std::string command = "printf '' | " + shellQuote(compiler) + " -E -x c++ - -v 2>&1";
+    const std::string command = "printf '' | " + shellQuote(compiler) +
+        (library.empty() ? "" : " " + shellQuote(library)) + " -E -x c++ - -v 2>&1";
     FILE* pipe = ::popen(command.c_str(), "r");
     if (!pipe) {
         return;
@@ -717,6 +718,7 @@ static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& h
 std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CXXRecordDecl* RD, Helpers& hlp)
 {
     std::unordered_map<std::string, cpphdl::Expr> result;
+    if (cpphdl::hls::isClocked(RD)) return result;
     const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
     if (!CTSD || !CTSD->getSpecializedTemplate()) {
         return result;
@@ -1309,7 +1311,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     const std::string qtText = QT.getAsString(hlp.ctx->getPrintingPolicy());
     const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
 
-    cpphdl::Expr expr = hlp.digQT(QT);
+    cpphdl::Expr expr;
+    if (CRD && cpphdl::hls::isClocked(CRD)) {
+        std::string clockedName = CRD->getQualifiedNameAsString();
+        hlp.followSpecialization(CRD, clockedName, nullptr, true);
+        clockedName = cpphdl::hls::clockedName(CRD, clockedName);
+        expr = cpphdl::Expr{clockedName, cpphdl::Expr::EXPR_TYPE};
+    } else {
+        expr = hlp.digQT(QT);
+    }
     // Dependent cpphdl::array specializations are not ClassTemplateSpecializationDecls,
     // so the type loop above cannot separate their dimensions from the element type.
     // Normalize them here to the same representation used by concrete specializations.
@@ -2159,6 +2169,17 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         mod->origName = RD->getQualifiedNameAsString();
         mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
 
+        if (cpphdl::hls::isClocked(RD)) {
+            mod->name = cpphdl::hls::clockedName(RD, mod->name);
+            mod->parameters.clear();
+            for (const auto* field : RD->fields()) {
+                if (field->getAccess() == AS_public)
+                    putField(field->getType(), field->getNameAsString(), nullptr, hlp);
+            }
+            cpphdl::hls::exportClocked(RD, *mod);
+            return;
+        }
+
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod->name << ")"); on_return ret_debug([](){ --debugIndent; });
 
         hlp.forEachBase(RD, [&](const CXXRecordDecl* RD1){
@@ -2381,11 +2402,9 @@ Conversion options:
   --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
                                 source normally hidden by synthesis guards.
   --debug                        Print converter/AST diagnostics.
-  --hls                          Enable experimental bounded recursion lowering.
-                                Analyze actual std::container methods; unsupported
-                                storage lowering is diagnosed. See hls/HLS.md.
-  --hls-kernel <entry>            Schedule a bounded transaction kernel (--hls).
-                                Emit register/SRAM RTL and auditable LLVM IR.
+  --hls                          Enable experimental Clocked<T> AST scheduling
+                                and bounded RTL recursion. Container methods run
+                                until a loop boundary. See hls/HLS.md for limits.
 
 Clocks:
   --primary_clock <name> <freq>  Declare the primary clock (positive integer
@@ -2577,7 +2596,6 @@ int main(int argc, const char **argv)
     std::vector<std::string> optimize_combs_collection_inputs;
     bool optimize_math = false;
     bool hls_mode = false;
-    std::string hls_kernel;
     size_t optimize_threads = 1;
     bool optimize_threads_specified = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
@@ -2620,13 +2638,8 @@ int main(int argc, const char **argv)
 
         if (!saw_double_dash && (std::strcmp(arg, "--hls-kernel") == 0 ||
                                 std::strncmp(arg, "--hls-kernel=", 13) == 0)) {
-            if (arg[12] == '=') hls_kernel = arg + 13;
-            else if (i + 1 < argc) hls_kernel = argv[++i];
-            if (hls_kernel.empty() || hls_kernel.front() == '-') {
-                llvm::errs() << "--hls-kernel requires an entry name\n";
-                return 1;
-            }
-            continue;
+            llvm::errs() << "--hls-kernel was removed; use --hls with a cpphdl::hls::Clocked<T> module member\n";
+            return 1;
         }
 
         // This option belongs to cpphdl rather than the forwarded compiler args.
@@ -2859,10 +2872,19 @@ int main(int argc, const char **argv)
         cpphdl_include_args.push_back(cpphdl_source_include.string());
     }
 #endif
+    std::string selectedLibrary;
+    bool noStandardCppIncludes = false;
+    for (const std::string_view arg : replace) {
+        if (arg.rfind("-stdlib=", 0) == 0) selectedLibrary = arg;
+        if (arg == "-nostdinc++" || arg == "-nostdinc") noStandardCppIncludes = true;
+    }
+    // A selected library needs its own complete include order: libc++ wrappers
+    // must precede C headers, and must never include libstdc++ wrappers.
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
-    appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
+    if (selectedLibrary.empty() && !noStandardCppIncludes)
+        appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
 #endif
-    appendCompilerProbeIncludeDirs(cpphdl_include_args);
+    if (!noStandardCppIncludes) appendCompilerProbeIncludeDirs(cpphdl_include_args, selectedLibrary);
 
     // The old unconditional define made non-synthesis source invisible to JSON.
     // Preserve the established command-line behavior unless opted out above.
@@ -2916,18 +2938,6 @@ int main(int argc, const char **argv)
 
     tooling::ClangTool Tool(Options.getCompilations(), Options.getSourcePathList());
     Tool.appendArgumentsAdjuster(adjustCppInputKind);
-
-    if (!hls_kernel.empty()) {
-        if (!hls_mode || !optimize_combs_root.empty() || Options.getSourcePathList().size() != 1) {
-            llvm::errs() << "--hls-kernel requires --hls, one source, and no comb optimizer\n";
-            return 1;
-        }
-        if (!primary_clocks.empty() || !secondary_clocks.empty() || !json_output.empty()) {
-            llvm::errs() << "--hls-kernel does not yet support named clocks or JSON output\n";
-            return 1;
-        }
-        return cpphdl::hls::compileKernel(Tool, hls_kernel, generated_dir);
-    }
 
     // The comb optimizer can restrict method extraction to the concrete root.
     // Supplying it before Clang's AST walk avoids retaining unrelated module

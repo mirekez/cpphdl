@@ -1,5 +1,6 @@
 #include "HLS.h"
 #include "StdContainers.h"
+#include "AstClocked.h"
 #include "../Project.h"
 #include "../Module.h"
 #include "../Method.h"
@@ -64,6 +65,7 @@ void enable() { enabled = true; }
 bool prepare(clang::ASTContext& context, clang::Sema& sema)
 {
     if (!enabled) return true;
+    prepareClocked(context, sema);
     if (!inspectStdContainers(context, sema)) {
         failed = true;
         return false;
@@ -110,6 +112,7 @@ void leaveMethod(Module& module, const std::string& name)
 
 bool lower(Project& project)
 {
+    if (!clockedSucceeded()) return false;
     if (failed || !enabled) return !failed;
     for (auto& module : project.modules) {
         std::map<std::string, size_t> methods;

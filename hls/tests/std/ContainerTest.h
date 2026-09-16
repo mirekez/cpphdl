@@ -75,7 +75,7 @@ int run_container_test(const char* name, ApplyOperation apply_operation)
     bench.valid = true; bench.operation = 0; bench.key = 42; bench.value = 123;
     bench.tick(); bench.valid = false; bench.tick(true);
     bench.transaction(3, 0, 0, 0, 0, 0);
-    std::printf("PASS native std::%s %s: 400 commands and reset/backpressure\n",
-                name, HLS_HEAP ? "heap object" : "member object");
+    std::printf("PASS native std::%s member object: 400 commands and reset/backpressure\n",
+                name);
     return 0;
 }

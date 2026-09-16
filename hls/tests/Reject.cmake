@@ -1,10 +1,11 @@
+include("${TOOLCHAIN}")
 file(REMOVE_RECURSE "${WORK}")
 set(options --hls)
 if(CASE EQUAL 5)
     set(options)
 endif()
 execute_process(COMMAND "${CPPHDL}" ${options} --generated-dir "${WORK}"
-    "${ROOT}/hls/tests/RecursionReject.h" -- "-I${ROOT}/include" "-DHLS_BAD_CASE=${CASE}"
+    "${ROOT}/hls/tests/RecursionReject.h" -- "-I${ROOT}/include" "-DHLS_BAD_CASE=${CASE}" ${HLS_PARSE_FLAGS}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20)
 set(expected
     "requires a nonrecursive recurse_limit method"

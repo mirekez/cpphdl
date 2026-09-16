@@ -1,10 +1,10 @@
 #include "cpphdl.h"
-#include <unordered_map>
+#include <map>
 #include "TestConfig.h"
 
-using SoftwareContainer = std::unordered_map<uint32_t, uint32_t>;
+using SoftwareContainer = std::multimap<uint32_t, uint32_t>;
 
-class UnorderedMapTop : public cpphdl::Module
+class MultimapTop : public cpphdl::Module
 {
 public:
     _PORT(bool) command_valid_in;
@@ -19,21 +19,14 @@ public:
     _PORT(uint32_t) size_out;
 
 private:
-#if HLS_HEAP
-    HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer* values = new SoftwareContainer;
-#else
     HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer values;
-#endif
     cpphdl::reg<cpphdl::u1> pending_reg;
     cpphdl::reg<cpphdl::u32> status_reg, result_reg, count_reg;
 
 public:
-#if HLS_HEAP
-    ~UnorderedMapTop() { delete values; }
-#endif
-    UnorderedMapTop() = default;
-    UnorderedMapTop(const UnorderedMapTop&) = delete;
-    UnorderedMapTop& operator=(const UnorderedMapTop&) = delete;
+    MultimapTop() = default;
+    MultimapTop(const MultimapTop&) = delete;
+    MultimapTop& operator=(const MultimapTop&) = delete;
 
     void _assign()
     {
@@ -45,11 +38,7 @@ public:
     }
     void _work(bool reset)
     {
-#if HLS_HEAP
-        SoftwareContainer& data = *values;
-#else
         SoftwareContainer& data = values;
-#endif
         uint32_t operation, key, value, status, result;
         if (reset) {
             data.clear();
@@ -64,12 +53,11 @@ public:
             else {
                 auto it = data.find(key);
                 if (operation == 0) {
-                    if (it != data.end()) it->second = value;
-                    else if (data.size() == HLS_CAPACITY) status = 2;
+                    if (data.size() == HLS_CAPACITY) status = 2;
                     else data.emplace(key, value);
                 } else if (it == data.end()) status = 1;
                 else if (operation == 1) result = it->second;
-                else data.erase(it);
+                else data.erase(it); // Erase one duplicate, not every element with this key.
 
             }
             pending_reg._next = true;
@@ -87,22 +75,21 @@ public:
 #ifndef SYNTHESIS
 #include "ContainerTest.h"
 
-static void apply_unordered_map_operation(SoftwareContainer& values, uint32_t operation,
-                                          uint32_t key, uint32_t value,
-                                          uint32_t& status, uint32_t& result)
+static void apply_multimap_operation(SoftwareContainer& values, uint32_t operation,
+                                     uint32_t key, uint32_t value,
+                                     uint32_t& status, uint32_t& result)
 {
     auto it = values.find(key);
     if (operation == 0) {
-        if (it != values.end()) it->second = value;
-        else if (values.size() == HLS_CAPACITY) status = 2;
+        if (values.size() == HLS_CAPACITY) status = 2;
         else values.emplace(key, value);
     } else if (it == values.end()) status = 1;
     else if (operation == 1) result = it->second;
-    else values.erase(it);
+    else values.erase(it); // Erase one duplicate, not every element with this key.
 }
 
 int main()
 {
-    return run_container_test<UnorderedMapTop>("UnorderedMap", apply_unordered_map_operation);
+    return run_container_test<MultimapTop>("Multimap", apply_multimap_operation);
 }
 #endif

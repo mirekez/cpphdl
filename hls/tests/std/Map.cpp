@@ -1,10 +1,10 @@
 #include "cpphdl.h"
-#include <vector>
+#include <map>
 #include "TestConfig.h"
 
-using SoftwareContainer = std::vector<uint32_t>;
+using SoftwareContainer = std::map<uint32_t, uint32_t>;
 
-class VectorTop : public cpphdl::Module
+class MapTop : public cpphdl::Module
 {
 public:
     _PORT(bool) command_valid_in;
@@ -19,21 +19,14 @@ public:
     _PORT(uint32_t) size_out;
 
 private:
-#if HLS_HEAP
-    HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer* values = new SoftwareContainer;
-#else
     HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer values;
-#endif
     cpphdl::reg<cpphdl::u1> pending_reg;
     cpphdl::reg<cpphdl::u32> status_reg, result_reg, count_reg;
 
 public:
-#if HLS_HEAP
-    ~VectorTop() { delete values; }
-#endif
-    VectorTop() = default;
-    VectorTop(const VectorTop&) = delete;
-    VectorTop& operator=(const VectorTop&) = delete;
+    MapTop() = default;
+    MapTop(const MapTop&) = delete;
+    MapTop& operator=(const MapTop&) = delete;
 
     void _assign()
     {
@@ -45,11 +38,7 @@ public:
     }
     void _work(bool reset)
     {
-#if HLS_HEAP
-        SoftwareContainer& data = *values;
-#else
         SoftwareContainer& data = values;
-#endif
         uint32_t operation, key, value, status, result;
         if (reset) {
             data.clear();
@@ -62,12 +51,14 @@ public:
             if (operation == 3) result = data.size();
             else if (operation > 3) status = 3;
             else {
+                auto it = data.find(key);
                 if (operation == 0) {
-                    if (data.size() == HLS_CAPACITY) status = 2;
-                    else data.push_back(value);
-                } else if (key >= data.size()) status = 1;
-                else if (operation == 1) result = data[key];
-                else data.erase(data.begin() + key);
+                    if (it != data.end()) it->second = value;
+                    else if (data.size() == HLS_CAPACITY) status = 2;
+                    else data.emplace(key, value);
+                } else if (it == data.end()) status = 1;
+                else if (operation == 1) result = it->second;
+                else data.erase(it);
 
             }
             pending_reg._next = true;
@@ -85,20 +76,22 @@ public:
 #ifndef SYNTHESIS
 #include "ContainerTest.h"
 
-static void apply_vector_operation(SoftwareContainer& values, uint32_t operation,
-                                   uint32_t index, uint32_t value,
-                                   uint32_t& status, uint32_t& result)
+static void apply_map_operation(SoftwareContainer& values, uint32_t operation,
+                                uint32_t key, uint32_t value,
+                                uint32_t& status, uint32_t& result)
 {
+    auto it = values.find(key);
     if (operation == 0) {
-        if (values.size() == HLS_CAPACITY) status = 2;
-        else values.push_back(value);
-    } else if (index >= values.size()) status = 1;
-    else if (operation == 1) result = values[index];
-    else values.erase(values.begin() + index);
+        if (it != values.end()) it->second = value;
+        else if (values.size() == HLS_CAPACITY) status = 2;
+        else values.emplace(key, value);
+    } else if (it == values.end()) status = 1;
+    else if (operation == 1) result = it->second;
+    else values.erase(it);
 }
 
 int main()
 {
-    return run_container_test<VectorTop>("Vector", apply_vector_operation);
+    return run_container_test<MapTop>("Map", apply_map_operation);
 }
 #endif

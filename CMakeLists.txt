@@ -77,6 +77,7 @@ add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
 option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
 option(CPPHDL_BUILD_TESTS "Build CppHDL standalone tests" ON)
+option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and libc++)" ON)
 option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
 
 include(CTest)
@@ -348,7 +349,7 @@ endif()
 find_package(ZLIB REQUIRED)
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp json_output.cpp Combs.cpp LifecycleChecks.cpp)
-target_sources(cpphdl PRIVATE hls/HLS.cpp hls/StdContainers.cpp hls/Kernel.cpp)
+target_sources(cpphdl PRIVATE hls/HLS.cpp hls/StdContainers.cpp hls/AstClocked.cpp hls/SharedBlocks.cpp hls/Combinational.cpp)
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c -std=c++23)
@@ -363,7 +364,6 @@ endforeach()
 target_link_libraries(cpphdl PRIVATE
   ZLIB::ZLIB
   clangTooling
-  clangCodeGen
   clangBasic
   clangASTMatchers
   clangFrontend
@@ -414,7 +414,9 @@ if(CPPHDL_BUILD_EXAMPLES)
 endif()
 if(CPPHDL_BUILD_TESTS)
   add_subdirectory(tests)
-  add_subdirectory(hls/tests)
+  if(CPPHDL_BUILD_HLS_TESTS)
+    add_subdirectory(hls/tests)
+  endif()
 endif()
 if(CPPHDL_BUILD_TRIBE)
   add_subdirectory(tribe_cpu)

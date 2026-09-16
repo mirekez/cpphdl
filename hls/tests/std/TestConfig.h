@@ -3,9 +3,6 @@
 #ifndef HLS_CAPACITY
 #define HLS_CAPACITY 8
 #endif
-#ifndef HLS_HEAP
-#define HLS_HEAP 0
-#endif
 static_assert(HLS_CAPACITY > 0, "container test requires a capacity");
 
 #define HLS_STRING_IMPL(x) #x

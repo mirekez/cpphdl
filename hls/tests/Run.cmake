@@ -1,11 +1,14 @@
+include("${TOOLCHAIN}")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/generated")
 separate_arguments(definitions UNIX_COMMAND "${DEFINITIONS}")
-set(cflags "-std=c++17 -fno-strict-aliasing -I${ROOT}/include -DVERILATOR")
+list(JOIN HLS_CXX_FLAGS " " cflags)
+string(APPEND cflags " -I${ROOT}/include -DVERILATOR")
 set(parse_definitions)
 execute_process(COMMAND "${CXX}" -print-file-name=libatomic.so
     OUTPUT_VARIABLE atomic_library OUTPUT_STRIP_TRAILING_WHITESPACE)
-set(link_flags -LDFLAGS "-static-libstdc++ -static-libgcc")
+list(JOIN HLS_LINK_FLAGS " " hls_link_flags)
+set(link_flags -LDFLAGS "${hls_link_flags}")
 if(IS_ABSOLUTE "${atomic_library}" AND EXISTS "${atomic_library}")
     get_filename_component(atomic_directory "${atomic_library}" DIRECTORY)
     list(APPEND link_flags -LDFLAGS "-L${atomic_directory}")
@@ -19,7 +22,7 @@ if(TOP STREQUAL "StaticHelper")
     set(hls_options)
 endif()
 execute_process(COMMAND "${CPPHDL}" ${hls_options} --generated-dir "${WORK}/generated"
-    "${SOURCE}" -- "-I${ROOT}/include" ${parse_definitions}
+    "${SOURCE}" -- "-I${ROOT}/include" ${parse_definitions} ${HLS_PARSE_FLAGS}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 file(WRITE "${WORK}/conversion.log" "${output}\n${error}")
 if(NOT result EQUAL 0)

@@ -1,473 +1,364 @@
-# HLS Using Standard C++ Containers
+# HLS Above CppHDL
 
-## Non-Negotiable Boundary
+## Design Boundary
 
-**HLS must synthesize the methods of actual `std::` containers. Do not
-implement replacement containers in `hls/`.** A linear key/value table is
-not an implementation of the library's map methods, and a kind-number
-dispatch selecting such a table is not STL synthesis.
+HLS is an experimental superstructure over CppHDL, not a change to the RTL
+contract. Keep HLS-specific source, scheduling, allocation policy, and tests
+in `hls/`. Reuse the existing Clang AST and Sema specialization machinery so
+improvements to normal CppHDL parsing remain available to HLS.
 
-The previous `HlsContainer` and `HlsSelection` experiment has been removed.
-Its passing reference tests demonstrated a limited command protocol, not
-translation of STL algorithms. Those results are not evidence for this design.
+**Translate actual `std::` container methods. Do not implement substitute
+containers or select replacement algorithms by container name.** For example,
+synthesizing `std::map` must follow its tree operations, not replace them with
+a linear key/value table.
 
-All HLS-specific compiler code, allocation policies, scheduling, and tests
-belong in `hls/`. CppHDL remains the RTL layer: modules, ports, interfaces,
-registers, clock methods, strobes, and memory commit. HLS must reuse the
-existing Clang parser and Sema specialization machinery rather than fork the
-C++ parser or change normal CppHDL semantics. The experimental transaction
-backend uses Clang CodeGen and LLVM's control-flow IR, with its scheduler and
-SV emitter isolated in `hls/Kernel.cpp`.
+The LLVM transaction-kernel experiment has been removed. HLS no longer uses
+Clang CodeGen, `kernel-source.ll`, `kernel-lowered.ll`, or an external C++
+compiler to synthesize a method. Native test executables and Verilator's
+generated C++ still need a C++ compiler, as usual.
 
-## Current Implementation
+## Clocked Class Instantiation
 
-The five separate test modules now contain real standard containers:
-[Vector.cpp](tests/Vector.cpp), [List.cpp](tests/List.cpp),
-[Map.cpp](tests/Map.cpp), [Multimap.cpp](tests/Multimap.cpp), and
-[UnorderedMap.cpp](tests/UnorderedMap.cpp). Their `_work()` methods call
-`push_back`, `find`, `emplace`, `erase`, `clear`, and `size` on those
-objects. These calls are not confined to the software reference model.
-The same class also exposes the command/response ports and strobes its
-response registers.
-
-Each test builds with an ordinary member object and with a member pointer
-initialized using `new`. A capacity annotation records the intended bound:
+An ordinary class can be a clocked member of an RTL module:
 
 ```cpp
-class MapTop : public cpphdl::Module
-{
-    // Ports precede private state in the complete example.
-private:
-    [[clang::annotate("CPPHDL_HLS_CAPACITY=8")]]
-    std::map<uint32_t, uint32_t> values;
+#include "hls/Clocked.h"
+#include <vector>
+
+struct Samples {
+    std::vector<uint32_t> values;
+
+    uint64_t command(uint32_t operation, uint32_t index, uint32_t value) {
+        if (operation == 0) {
+            values.push_back(value);
+            return values.size();
+        }
+        uint64_t sum = 0;
+        for (uint32_t i = 0; i < values.size(); ++i) sum += values[i];
+        return sum;
+    }
+};
+
+class Top : public cpphdl::Module {
+public:
+    cpphdl::hls::Clocked<Samples> worker;
+    // Expose and connect worker's command/response ports in _assign().
+    void _work(bool reset) { worker._work(reset); }
+    void _strobe() { worker._strobe(); }
 };
 ```
 
-The test header guards the Clang annotation so native GCC C++17 builds remain
-possible. The attribute records a synthesis contract; it does not change
-the behavior or allocator of `std::map` in a native executable.
+`Clocked<T>` carries the `CPPHDL_HLS_CLOCKED` annotation. It is the explicit
+opt-in to AST scheduling; `T` itself does not need clock methods, registers,
+ports, or a Module base. See the fully connected parent modules in
+[ClockedArray.cpp](tests/std/ClockedArray.cpp),
+[ClockedVector.cpp](tests/std/ClockedVector.cpp), and
+[ClockedMap.cpp](tests/std/ClockedMap.cpp).
 
-`StdContainers.cpp` runs before ordinary RTL collection when `--hls` is
-enabled. It discovers direct standard-container members of concrete Module
-classes, records the object policy and capacity, follows called functions,
-and asks Sema for reachable template definitions where needed. It records
-actual instantiated method bodies, call edges, source locations, record
-fields, pointer fields, and base classes. It does not synthesize a replacement
-algorithm based on the container's name.
-
-For the installed libstdc++, map analysis exposes `_M_left`, `_M_right`,
-`_M_parent`, and `_M_color`, and follows insertion and erase into the
-RB-tree helpers. Some helpers, including `_Rb_tree_insert_and_rebalance`
-and `_Rb_tree_rebalance_for_erase`, are declared in headers but defined
-in the separately compiled standard library. Missing definitions are listed
-in the report with their declaration locations.
-
-**The generic container-discovery flow remains analysis-only.** Conversion exits with
-an error before emitting SV and writes `hls-analysis.json` in the selected
-generated directory. That file is an analysis report, not synthesizable IR.
-It includes `status: unsupported_rtl` and explicit blockers. No tree, list,
-hash table, or vector RTL is claimed by those analysis tests. The separate
-bounded-vector flow below now generates and tests actual vector RTL.
-
-## Working Bounded-Vector Backend
-
-[BoundedVector.cpp](tests/BoundedVector.cpp) contains a Module-derived class
-with an actual `std::vector<uint32_t, cpphdl::hls::Allocator<uint32_t, 512>>`.
-Its methods call the library's `push_back`, `erase`, `clear`, indexing, and
-`size`. [Allocator.h](Allocator.h) supplies only bounded allocation: a
-first-fit pool with 16-byte blocks, deallocation/reuse, alignment checks, and
-allocator rebinding which preserves arena identity. It does not implement
-any vector operations. There are no modifications to namespace `std`.
+The initial entry contract is deliberately small:
+`uint64_t command(uint32_t operation, uint32_t index, uint32_t value)`.
+The wrapper exposes these arguments, command valid/ready, result,
+response valid/ready, and a fault code. It accepts one outstanding command.
+Arguments are saved on acceptance. The result remains stable until consumed.
+Reset cancels the current operation and reconstructs the object before ready
+is asserted again.
 
 ```sh
-build/cpphdl --hls --hls-kernel bounded_vector \
-    --generated-dir build/hls-vector hls/tests/BoundedVector.cpp -- -Iinclude
+build/cpphdl --hls --generated-dir build/clocked-vector \
+    hls/tests/std/ClockedVector.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
+cmake --build build --target hls_tests
+ctest --test-dir build -R '^hls_clocked_' --output-on-failure
 ```
 
-The compiler uses the real instantiated method bodies, including vector's
-reallocation and element relocation. It inlines reachable definitions and
-expands compiler `memcpy`, `memmove`, and `memset` intrinsics into loops.
-The scheduler groups acyclic paths into one clock step in `ScheduledKernel.sv`.
-Dependent arithmetic, comparisons, branches, and inlined helper calls execute
-together. Loop back-edges save a continuation for the next clock; external
-SRAM accesses suspend until the memory protocol completes. Instructions do
-not each consume a clock.
-Only intermediate values needed after a loop boundary or SRAM wait are
-retained in registers; values used entirely within the step stay combinational.
-No container-kind dispatch, host callback, recursive SV function, or runtime
-instruction ROM implements the container algorithm. `kernel-source.ll` and
-`kernel-lowered.ll` retain the inputs to each stage for inspection.
+Standard-container examples and their analysis helpers live in `hls/tests/std/`.
+The Verilator tests generate RTL under
+`build/hls/tests/std/hls_clocked_<name>-rtl/generated/`, where `<name>` is
+`Array`, `Vector`, or `Map`. General clocked HLS tests (bindings, recursion,
+rejection, and code reuse), the shared clocked test harness, and storage-helper
+tests live in `hls/tests/`.
 
-The explicit entry ABI for this first backend is:
+## Source-Based Scheduling
 
-```cpp
-extern "C" const uint64_t cpphdl_hls_state_bytes = sizeof(MyState);
-extern "C" const uint64_t cpphdl_hls_state_align = alignof(MyState);
-extern "C" uint64_t entry(MyState* self, uint32_t operation,
-                          uint32_t index, uint32_t value);
-```
+`AstClocked.cpp` follows concrete methods reachable from `T::command()` and
+the object's initialization. Missing template bodies are instantiated with
+Sema. Calls, fields, offsets, casts, constructors, and control flow come from
+those declarations, including declarations in the installed standard library.
+There is no separate C++ compilation or LLVM instruction stream.
 
-Operation `UINT32_MAX` is reserved for placement construction of the state.
-Reset starts that construction and keeps command-ready low until it finishes.
-The controller latches all three arguments when accepting a command. It
-holds its 64-bit result and response-valid until response-ready is sampled.
-Only one transaction can execute at a time.
+Each statically elaborated call has source-named bindings, identified by its
+method, call site, and bounded recursion depth. Scalar parameters, locals, and
+results become directly assigned logic values. A backwards dataflow analysis
+adds registers only for values needed after a loop's clock boundary.
+Independent scalar values become individual typed signals, not slices of a
+single large packed bit vector. Only values live across clocks are grouped in
+the saved-state record.
+`this` binds to the selected source object; reference parameters and local
+references bind to their targets instead of storing another pointer copy.
+When evaluating later arguments could change a selected pointer, its value is
+captured before those arguments, preserving C++ evaluation order.
 
-The generated module has two storage choices using the **same compiled
-algorithm**:
+An actual address use, such as `&local` passed to a pointer-taking function,
+requires addressable storage. Aggregate objects and container allocations also
+retain their source layout and addresses. These are source data, not a CPU
+stack. There are no runtime call pushes, pops, return addresses, or stack
+pointer. The conversion-time scope records only map AST declarations to their
+statically elaborated values. The generated `phase_reg` selects the next loop
+phase; it does not execute instructions.
 
-- `SRAM=0`: the root object, pool, and fixed local allocations occupy a wide
-  register. Loads and stores execute with the surrounding calculation in the
-  same step. A load sees preceding stores in that step, including overlapping
-  byte ranges. Writes commit at the clock edge.
-- `SRAM=1`: the same byte-addressed layout uses the existing `HlsMemoryIf`
-  64-bit word transport. Loads assemble bytes; partial stores use
-  read-modify-write transactions. Unaligned and cross-word accesses are
-  supported, with one request outstanding and an acknowledgement for writes.
+The preprocessor builds a graph of source statements and emits named, reusable
+SV functions and an FSM continuation register:
 
-Pointers become offsets in a bounded local address space, never host addresses.
-Null is zero, the root starts at byte 16, and fixed locals follow the root.
-Stored pointers, aliases, pointer differences, and one-past-end values retain
-their meaning. Every dereference checks the complete access against the local
-memory bounds before narrowing the hardware index to 32 bits. State alignment
-must be a power of two no greater than 16 bytes. This is an
-arena-range check, **not** per-allocation use-after-free or lifetime analysis.
-Clang's current little-endian, 64-bit pointer layout is required. LLVM pointer
-values retain that representation; actual RAM indexes are 32-bit.
+- Straight-line operations, branches, and nested calls run in the same clock.
+- Entering a loop saves its continuation. Loop iterations are clock steps;
+  after-loop code can run with the final condition check.
+- A loop inside a called method suspends the caller too. Its locals and
+  references remain available when execution resumes.
+- Nested loops have separate continuations. `break` and `continue` route to
+  the appropriate exit or next iteration, including local cleanup.
+- A statically single-pass `do { ... } while (false)` is not a clock boundary.
+  This matters for standard-library assertion macros.
 
-Fault codes are 1 for allocation/length exhaustion, 2 for allocator validation,
-3 for a memory-range violation, and 4 for an invalid control condition.
-A fault holds the response and blocks further commands until reset. Completed
-stores are not rolled back. Reset must reach both controller and responder
-to cancel pending transactions; constructor writes reinitialize ownership,
-not every payload byte. Resetting one controller on a future shared memory
-bus will require draining or identifying its outstanding responses.
+The generated functions form an acyclic call sequence within each clock; they do
+not recursively call one another. Comments identify instantiated methods and
+their source locations. The normal converter still handles the containing
+RTL module, its child instance, and port connections.
 
-The external SRAM adapter remains serial and byte-oriented. Its waits cannot
-be merged into combinational arithmetic: subsequent calculations need the
-returned data or write acknowledgement. The register backend has no such
-waits. Neither backend adds clock boundaries for an ordinary `if` or function
-call. Grouping more computation reduces cycle count but can lengthen the
-combinational critical path; it does not establish a higher clock frequency.
+Generic Clang builtins need explicit lowering: reference casts such as
+`std::forward`, checked integer arithmetic, address-of, allocation, and byte
+copy/move/set operations. These are not implementations of container methods.
+Library assertions and allocation failures produce a fault response.
 
-Native tests execute the original STL methods; RTL tests compare
-transaction results against those native methods and another vector using
-the ordinary allocator. There is not yet a cycle-accurate scheduled native
-backend. Verilator passes both storage choices. When Yosys is available,
-the RTL tests also run process lowering and structural checks. No
-technology-mapped timing or area claim is made.
+### Real `std::map` Methods
 
-### Clocked Instances
+The map example stores `std::map<uint32_t, uint32_t>` directly. Its command
+method uses `operator[]`, `find`, iterators, `erase`, `clear`, and `size`.
+The generated hardware follows libc++'s red-black tree, including node
+allocation, parent/left/right links, color changes, and rotations. It does
+not substitute a table scan or another container implementation.
 
-The intended Module integration is an explicit **clocked instance** of a
-member class. The class supplies ordinary C++ methods; the instance owns the
-stored object, arguments, intermediate values, and continuation state needed
-to execute those methods across clocks. This distinction belongs to the
-instance so the same class can also be used as an ordinary C++ object.
+HLS examples use Clang with **libc++**, whose tree algorithm bodies are in
+headers. No bundled library implementation or `tree.cc` include is needed.
+Native reference tests and Verilator's C++ testbenches also use libc++.
+The converter itself and non-HLS targets keep their existing standard library.
+The current regression environment uses libc++ 21.1.3. Other library versions
+may introduce additional AST constructs and need their own validation.
 
-A method call starts on command acceptance. Straight-line code runs together;
-loop back-edges advance to another clock, and SRAM accesses wait for their
-responses. Other module logic must not read a partially completed operation
-as its final result. The instance publishes completion through its result
-handshake and accepts at most one outstanding call. Its clock and reset come
-from the owning RTL module.
-
-This describes the integration contract, **not an implemented C++ wrapper or
-attribute**. The current `--hls-kernel` ABI tests this execution model in a
-standalone generated module. Automatic lowering of a member's method calls
-and a cycle-accurate C++ work/strobe implementation remain to be added. Normal
-CppHDL members and `_work()` semantics are unchanged.
-
-### Shared SRAM Next
-
-Keep `HlsMemoryIf` as the transport boundary. A later multiplexer will allow
-several containers to use one SRAM arena. Address-space allocation, response
-ownership, reset cancellation, and atomic allocation/read-modify-write
-sequences must be specified before several controllers share allocator
-metadata. Merely multiplexing requests does not make those sequences atomic.
-Neither the interface multiplexer nor a shared allocator service is included
-in this first backend.
-
-### Explicit Limits
-
-This mode currently requires one source file, an explicit transaction entry,
-and an explicit bounded allocator. It does not automatically turn arbitrary `_work()` calls
-into a scheduled command interface or select storage from stack/heap ownership.
-The ordinary discovery flow still diagnoses those unsupported cases. The
-generated controller uses `clk` and synchronous `reset`; named-clock and
-JSON-output options are rejected in this mode.
-
-Scalar integer operations up to 64 bits, fixed locals, branches, parallel PHI
-copies, pointer arithmetic, and memory intrinsics are supported. Floating
-point, indirect calls, dynamic stack allocations, atomics, volatile accesses,
-unresolved external method definitions, and recursive call graphs are rejected.
-General global-object initialization is not supported. There is no loop
-watchdog or proof of termination; kernel authors must bound loops. The tested
-vector operations are bounded by the pool capacity.
-
-Map/list/hash-container RTL and STL recursive destruction are still future
-work. The existing scalar recursion pass below is not applied to this new
-scheduled LLVM path. Missing library implementations must be supplied from
-matching library sources, never replaced with a different algorithm.
-
-The discovery frontend currently inventories direct container members and direct
-calls in their owning module's methods. It is not a complete object-alias or
-reachability analysis. Calls hidden behind arbitrary user helpers, indirect
-calls, function pointers, ownership through smart pointers, and containers
-nested inside unrelated wrapper classes need further analysis. Reported
-indirect calls and the method-count limit must not be interpreted as a
-complete graph. None of those gaps are accepted for RTL emission.
-
-## Storage Contract
-
-The intended automatic storage policy distinguishes two questions:
-
-1. **Where is the container object stored?** An ordinary member defaults to
-   register-backed storage. An owned, dynamically allocated object defaults
-   to an SRAM/raw-port backend.
-2. **How does its allocator obtain storage?** Internal STL allocations inherit
-   that object's backend; they must not independently select SRAM merely
-   because a member `std::vector` allocates its buffer internally.
-
-The current analyzer recognizes ownership only for a direct pointer member
-with an in-class `new` initializer. Other pointer roots receive an
-`unproven_object_ownership` diagnostic. This is deliberately narrower than
-general C++ ownership inference.
-
-A usable lowering contract must specify:
-
-- Maximum live elements and total storage bytes, including nodes and metadata.
-- Object construction, destruction, allocation failure, and reset behavior.
-- Alignment, address units, data width, access width, and port count.
-- Request acceptance, response latency, backpressure, and write acknowledgement.
-- Whether multiple operations can access the same object concurrently.
-- Maximum recursion and loop bounds, and observable failure on exhaustion.
-
-A capacity of eight elements is not necessarily space for eight allocations:
-vector growth can temporarily retain old and new buffers, and unordered maps
-need buckets as well as nodes. Map nodes contain links and color metadata in
-addition to the key/value pair. Allocator rebinding must retain the original
-object's storage identity when the library requests a node type instead of
-the public value type.
-
-A custom bounded allocator is a possible attachment point because standard
-containers already support allocator template parameters. An allocator or
-a generic memory controller may live in `hls/`; container algorithms may
-not. Supporting a custom allocator must not become a requirement to rewrite
-insertion, search, balancing, hashing, or iteration.
-
-## Method and Object Lowering
-
-The broader implementation path is the following. Discovery/reporting exists
-for all five containers. The explicit vector entry implements a first bounded
-pointer, allocator, and scheduling path; automatic Module integration remains
-to be done.
-
-### 1. Collect the Actual Call Graph
-
-Start from calls made by the RTL module on a particular container object.
-Resolve its concrete element type, comparator, hasher, allocator, and method
-specializations using Clang, including free functions and iterator methods.
-Follow only reachable definitions rather than instantiating every member
-of every library template.
-
-Function identity must preserve overloads and specialization arguments.
-Object identity must remain separate: two instances of the same container
-may share a generated function body but must not share storage or allocator
-state accidentally.
-
-Library definitions absent from headers must be supplied from the matching
-standard-library sources, or through an explicitly verified primitive
-implementation. Linking a native `.so` does not provide synthesizable
-function bodies. HLS must diagnose a missing algorithm body rather than
-replace it with another algorithm. Definitions can already be supplied in the
-same translation unit through the existing compiler arguments:
+Install Clang, libc++ development headers, and libc++abi. CMake checks that
+the HLS compiler can compile, link, and run a vector/map program. Select another
+Clang installation with `-DHLS_CXX=/path/to/clang++`; a nonstandard library
+directory can be supplied with `-DHLS_LIBCXX_LIBRARY_DIR=/path/to/lib`.
+The tests pass that compiler's header search paths explicitly to CppHDL so
+the converter's build-time libstdc++ headers cannot enter the HLS source AST.
+Projects not building HLS examples can set `-DCPPHDL_BUILD_HLS_TESTS=OFF`
+without disabling the ordinary CppHDL tests.
 
 ```sh
-build/cpphdl --hls --generated-dir build/hls-map-analysis \
-    hls/tests/Map.cpp -- -Iinclude -include /path/to/matching/tree.cc
+build/cpphdl --hls --generated-dir build/clocked-map \
+    hls/tests/std/ClockedMap.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
+cmake --build build --target hls_clocked_Map
+ctest --test-dir build -R '^hls_clocked_Map_' --output-on-failure
 ```
 
-An experiment with GCC 15.2.0's unmodified libstdc++ `tree.cc` successfully
-collected both rotations, insertion rebalancing, and erase fixup. The source
-is not copied into `hls/`, and no alternative tree algorithm is provided.
-Its version and ABI must match the headers used to parse the design.
-Cross-translation-unit linking of implementation bodies remains future work.
+Look in `cpphdl_hls_ClockedMapMethods_R8.sv` for functions whose names retain
+`__tree_min`, `__tree_next_iter`, `__tree_balance_after_insert`,
+`__tree_remove`, `__tree_left_rotate`, and `__tree_right_rotate`.
+Node accesses retain `__left_`, `__right_`, `__parent_`, and `__is_black_`.
+Generated functions use `hls_<qualified_method>__shared_N`. A call without clock
+suspension becomes one reusable static function, including its branches and
+nested same-clock calls. A helper's branch and field read stay together;
+it does not have separate scheduler functions for copying its return value.
+These whole-method functions have no `active`, `phase`, or
+continuation arguments. Identity returns such as `return this` bind directly.
 
-### 2. Lower Objects and Pointers, Not Container Names
+The `Combinational.cpp` pass joins branch arms at their common continuation,
+propagates same-width scalar copies while their sources remain unchanged, and
+removes unused copies. It preserves saved values when their source changes,
+branches disagree, or a nested call can modify reference arguments. It also
+merges adjacent single-predecessor scheduler blocks without crossing a clock
+boundary. Methods containing loops still have scheduled continuations.
+Equivalent method bodies and scheduled blocks share code, with source object
+addresses and scalar values supplied as arguments. Only scheduled continuations
+also receive successor states. Call-site and recursion suffixes remain on the
+caller's storage, not on copies of the function body. Ordinary calls do not add
+a clock; loop boundaries do.
+Parameters and locals retain their source names in address constants and
+individual combinational signals. Unused temporary declarations are omitted;
+they are not collected into an artificial giant struct. Field accesses use
+named offset constants containing `__tree_node_base` and `__left_`, rather than unexplained
+numeric offsets. These names are used by executable RTL, not only comments.
+Storage remains a byte-addressed register array so references and pointers can
+alias correctly; the named address constants do not allocate extra registers.
+Loads and stores call shared width-specific functions, for example
+`hls_storage_write_64(storage, address, value, fault)`. Byte assembly, byte
+writes, and bounds checks are emitted once per width instead of at every
+access. Fixed byte-lane loops inside these functions execute combinationally;
+they do not introduce clocks. Write arguments snapshot the address and value
+before changing storage, including when source and destination overlap.
 
-Use the concrete C++ type layout to describe fields, base subobjects, nodes,
-and embedded sentinels. Convert pointers to bounded references identifying
-an allocation and an offset. Null, one-past-end pointers, iterator references,
-parent links, and links to a header embedded in the root object must remain
-distinct.
+The sharing pass only parameterizes symbols registered by the scheduler. It
+compares operations, literal values, argument widths, writable/input modes,
+symbol alias relationships, branch conditions, and clock boundaries. Different
+template specializations share code only when their lowered operations match.
+Fields and constants retain their layout-specific meanings. Each distinct
+temporary and writable state, including backing storage, are passed using
+`inout`; read-only arguments use `input`. Generated functions have static
+lifetime, with no `automatic` declarations or `ref` arguments. They contain
+no recursive SV calls and execute without suspension. Values that cross a
+clock boundary live in named module registers, not persistent function locals.
+Independent calls keep independent saved values, including calls that
+are suspended inside loops. This is emitted-code reuse, not a new clocked
+resource-sharing schedule or a guarantee of reduced synthesized area.
 
-Native host addresses must never be copied into SV. Pointer comparisons,
-casts, arithmetic, aliases, and object lifetimes need explicit lowering.
-A reference returned by an iterator must still refer to the same stored
-element when a later method writes through it.
+Header-defined container algorithms are the supported baseline. The tested
+`std::vector` operations need only the standard headers plus the scheduler's
+allocation and memory-operation lowering. The libc++ `std::map` example also
+uses only installed headers. Bounded aligned allocation and C++17 returned-object
+construction preserve the library's temporary node-owner semantics.
 
-Register-backed and SRAM-backed implementations use this same object graph.
-The backend chooses where generic loads and stores go; it does not replace
-the tree with a table or the hash buckets with a scan.
+Tree clearing recursively visits subtrees. `Clocked<MapMethods, 8>` explicitly
+permits up to eight simultaneously active calls of the same concrete function.
+The scheduler unfolds these calls into separately named depth-specific values and nonrecursive
+SV blocks. A call beyond the bound produces `fault_out == 5`, not a successful
+partial result. The fault persists until reset. The bound must include the
+terminal/base-case invocation. It is not a bound on the number of map elements.
+`Clocked<T>` defaults to rejecting recursion; explicit bounds may be 1 through
+16. Branching recursion can still produce excessively large generated code.
+Different bounds produce distinct module names, such as `_R2` and `_R4`, so
+both can appear in the same parent. The native transaction reference does not
+enforce this hardware bound.
 
-### 3. Attach Generic Allocation and Memory Primitives
+Clocked RTL tests use Verilator's `-fno-inline-funcs` option to retain shared
+function bodies during model compilation. The functions pass their state
+explicitly. This does not change
+the clock schedule or turn off correctness checks. A passing simulation still does not
+establish useful synthesis area or timing for this experimental backend.
 
-Recognize allocator operations, construction/destruction, and compiler
-memory intrinsics through explicit contracts. Lower bounded allocation,
-free, load, store, and copy into reusable primitives.
+## Memory Contract
 
-For register storage, writes become next-state updates. For external memory,
-operations use an interface derived from `cpphdl::Interface`, connected
-as a whole with `assignIf`. Preserve the existing eight-signal transport:
+Two choices must ultimately be explicit:
 
-| SV port at the requesting module | Direction | Meaning |
-| --- | --- | --- |
-| `memory_out__valid_out` | Output | Request valid |
-| `memory_out__write_out` | Output | Write request |
-| `memory_out__addr_out` | Output | Word address |
-| `memory_out__data_out` | Output | Write data |
-| `memory_out__ready_in` | Input | Request ready |
-| `memory_out__valid_in` | Input | Response valid |
-| `memory_out__data_in` | Input | Read/acknowledgement data |
-| `memory_out__ready_out` | Output | Response ready |
+1. Where container state lives: registers, `memory<>`, or external SRAM.
+2. The memory port's capacity, width, latency, number of ports, and protocol.
 
-[Memory.h](Memory.h) retains this interface and the generic `HlsSram`
-responder. It contains no container implementation. Its transport is
-currently one outstanding 64-bit word transaction with a 32-bit word index;
-every accepted write also receives a completion. Requests and responses
-remain stable under backpressure. The new transaction scheduler supplies
-byte assembly and read-modify-write adaptation for partial-width accesses;
-arbitrary STL layouts do not fit in one word.
+Dynamically allocated container objects, such as
+`std::vector<uint32_t>* values = new std::vector<uint32_t>;`, are not
+supported as an HLS usage contract. Container examples use direct members;
+their tests do not include dynamically allocated container-object variants.
+The working clocked Vector and Map tests do exercise allocation of elements
+and nodes inside those direct members.
 
-SRAM testing remains separate from container analysis. A passing memory
-primitive test does not mean that a container's loads and stores have been
-lowered to that primitive.
+The future intended default is **local/member-created objects use registers;
+dynamically allocated storage uses SRAM/ports**. A local `std::vector`
+still dynamically allocates its elements, so object placement alone cannot
+select the policy for all reachable storage. The container object and its
+allocated nodes/elements need separate policies.
 
-### 4. Schedule Calls Against the RTL Contract
+**The current AST prototype is register-backed only.** It maps both objects
+and virtual heap addresses into a byte-indexed register array, preserving the
+Clang object-layout offsets. This validates pointer
+and scheduling semantics, not SRAM implementation or achievable timing.
+Only addressable source objects occupy the byte array. Their addresses are
+fixed at conversion, without reusing storage on function return. Constant
+objects are limited to 4 KiB; unused constant capacity is not allocated in RTL.
+The prototype heap is 4096 bytes, with a minimum 16-byte alignment and support
+for explicit power-of-two alignment up to 4096 bytes. It is monotonic:
+delete is a no-op, storage is reclaimed on
+reset. Bounds failures are reported; allocation reuse is not yet implemented.
+Programs must bound total allocations between resets, not just live size.
 
-Memory-dependent functions cannot simply become combinational SV functions.
-The scheduler needs a control-flow graph, dependencies, saved local values,
-and continuation state while a request waits for its response.
+`Allocator.h` retains the earlier bounded allocator policy for future AST
+integration; the clocked vector example uses ordinary `std::allocator`.
+`Memory.h` and `Sram.cpp` retain the independently tested `HlsMemoryIf`
+protocol. Their tests do **not** prove that this AST scheduler supports SRAM.
+The next memory backend should suspend on a real memory wait and use this
+whole interface. A later arbiter can let several containers share an arena.
+Do not silently substitute per-access clocking for the register backend.
 
-Latch command arguments on acceptance. Publish results only when the
-scheduled operation completes and hold them while the consumer stalls.
-Register updates and memory commits must follow the CppHDL work/strobe
-contract across the generated hierarchy.
+## Tests And Limits
 
-The native source kernels currently execute an STL operation atomically in
-one work call; their private container state has one owner and only registered
-responses are observable. They are behavioral references, not cycle-accurate
-models of a future SRAM schedule. A scheduled native backend must use the
-same state transitions as generated RTL. Until then, compare accepted
-transactions and results, not an assumed identical latency.
+Each working container has its own C++ class and native/Verilator tests.
+The Verilator flow converts the source, checks for instantiated library
+methods and loop continuations, and builds the connected parent module.
+It also verifies that no LLVM `.ll` files were generated.
 
-Reset must cancel outstanding work and reset allocator ownership consistently.
-Calling `clear()` on a linked container can traverse and free nodes; a
-backend cannot replace that with a size-counter reset while retaining stale
-allocations or completions.
+- Array: indexing, fill, two loop-containing calls in an expression,
+  saved arguments/references, nested for/while/do loops, local destructors,
+  delegating constructors, nonzero-offset downcasts, constant objects (including
+  constructors that distinguish constant evaluation from runtime),
+  out-of-line definitions with renamed parameters, and void return expressions.
+- Vector: push/growth/relocation, indexing, fill, erase, clear, and reuse of
+  existing capacity.
+- Map: ordered traversal checksums, ascending/descending/shuffled insertion,
+  duplicate updates, missing lookups, size, leaf/two-child deletion, recursive
+  clear, reinsertion, and deterministic mixed operations.
+- Containers: changed input pins during execution, one-clock straight-line calls,
+  loop suspension, response backpressure, and reset cancellation/restart.
+- Bounded recursion: depth-specific values across loops, boundary-depth success,
+  overflow fault/backpressure, and reset recovery.
+- Reuse: repeated calls with different arguments, aliased references, saved
+  results across loop-containing calls, 8-bit/32-bit template instances,
+  16-bit/64-bit locals, and 128-bit aggregate copies.
+  Structural checks require one `mix` body and two width-specific `widen` bodies.
+- Bindings: explicit `this`, methods returning `*this`, two independent objects,
+  changing the receiver pointer while evaluating arguments, reference aliasing,
+  address-taken scalar updates, object methods that suspend in loops, inherited
+  methods at nonzero base offsets, aggregate base/member initialization, and
+  const receiver methods. Additional cases cover anonymous members and reference
+  initialization, C++17 returned-object elision, named and alternate return paths,
+  destructor timing, and aligned allocation followed by placement construction.
+- Library selection: native compile/link/run with libc++, and converter header
+  selection through both `-stdlib=libc++` and explicit `-nostdinc++` paths.
+  A compile-time guard rejects mixed libc++/libstdc++ headers.
+- Direct values: unaddressed scalar locals must not have byte-memory addresses;
+  only values live across clock boundaries have register assignments. Generated
+  code must not contain saved `this` slots or unresolved source access handles.
+- Storage helpers: generated read/write functions are tested directly for
+  8/16/32/64/128-bit accesses, little-endian byte order, unaligned addresses,
+  overlapping copies, address snapshotting, bounds, and fault preservation.
+  Invalid writes must leave every byte unchanged. Structural checks forbid
+  raw byte accesses in scheduled method bodies.
+- Shared-block unit tests: equivalence under symbol renaming, successor-state
+  parameters, and rejection of unsafe merges across differing widths, modes,
+  aliases, literals, branch conditions, and clock boundaries. Identifier
+  substrings, strings, and comments must not be rewritten as parameters.
+- Same-clock methods: the map-style `_S_left`/`return this` pattern, early returns,
+  nested calls, source mutation after a copy, and reference mutation. Structural
+  checks require whole methods without scheduler arguments and no standalone
+  identity-return function. Graph tests preserve branch joins and clock boundaries.
+- Rejection tests: unavailable function bodies, recursion without a bound, static locals,
+  volatile access, floating-point expressions, indirect calls, missing
+  `--hls`, and the removed kernel option.
 
-### 5. Eliminate Recursion With an Explicit Bound
+**The native wrapper is a transaction reference, not a cycle-accurate HLS
+simulator.** It invokes the original C++ command atomically. Tests compare
+transaction results against RTL and check RTL timing separately. Generating
+the same scheduled execution for native C++ is still needed for cycle-accurate
+integration with other modules.
 
-The existing opt-in recursion pass remains useful for scalar RTL helpers.
-It clones methods into numbered functions, preserves the public entry,
-and rejects missing or incompatible terminal handlers. Its default bound is
-ten, with an accepted range of one through 64.
+This is not general STL synthesis yet. Notable limits include SRAM scheduling,
+allocator reuse, arbitrary entry signatures, concurrent commands, named/CDC
+clocks, exceptions, virtual/indirect calls, nontrivial temporary cleanup,
+bit-field object layouts, and switch/range-for lowering.
+Global constant objects containing mutable fields are rejected. Non-null
+pointer/reference values in their initializers are also rejected until their
+address relocations can be represented correctly.
+Unsupported constructs must produce diagnostics, not placeholder RTL.
+Loops are not automatically proven terminating and have no hardware watchdog.
+Keeping a long acyclic call chain in one clock can create a long critical path.
+The flat register representation is also expensive for synthesis optimization.
+Passing simulation is not an area or timing result. Earlier byte-only lowering
+was expensive in Yosys; synthesis cost has not been established for the direct
+value lowering. Aggregate-field promotion, simpler straight-line functions,
+and further storage partitioning remain future improvements.
 
-For example:
+The earlier direct-container discovery tests for vector, list, map, multimap,
+and unordered_map remain **analysis-only, expected-rejection tests**.
+`StdContainers.cpp` records reachable methods and layouts in
+`hls-analysis.json`; it does not replace their algorithms. These tests also use
+libc++ headers, but their unwrapped container members do not opt into the
+`Clocked<T>` scheduler and are still rejected for RTL emission.
 
-```cpp
-[[clang::annotate("CPPHDL_HLS_MAX_RECURSION=4")]]
-uint64_t sum(uint32_t n, uint32_t budget);
-```
-
-The existing pass requires a matching nonrecursive `sum_limit` method.
-Native code must implement the same bound and exhaustion behavior. It does
-not automatically make unbounded C++ recursion safe.
-
-Unmodified standard-library methods do not supply these handlers. Their
-recursion therefore needs a different lowering policy: prove an applicable
-bound from the allocation contract, or generate a checked bounded call stack.
-Silent truncation would corrupt operations such as recursive destruction.
-A failed operation also needs defined handling for stores already performed.
-
-Combinational, bounded call graphs can use numbered nonrecursive functions.
-Calls which wait for memory must use scheduled continuation state and bounded
-frames. Neither approach requires recursive or `automatic` SV functions.
-This STL-specific recursion/scheduling integration remains unimplemented.
-
-## Tests and Commands
-
-```sh
-cmake -S . -B build -DCPPHDL_BUILD_TESTS=ON
-cmake --build build --target hls_tests -j4
-ctest --test-dir build -R '^hls_' --output-on-failure -j4
-```
-
-Test names distinguish what is actually validated:
-
-- `hls_bounded_vector_native` executes the bounded STL vector and checks it
-  against a vector using the ordinary allocator.
-- `hls_bounded_vector_rtl_0` and `_rtl_1` generate actual method-body RTL and
-  run Verilator with register and SRAM storage. They cover reallocation,
-  relocation, overlapping erase, reuse, invalid indexes, exhaustion, response
-  backpressure, delayed memory, reset recovery, and aborting work on reset.
-- `hls_kernel_memory_native` and its two RTL variants check unaligned fields,
-  overlapping moves in both directions, saved pointers, loop-carried PHIs,
-  signed values, allocator rebinding/reuse/double-free detection, and (in RTL)
-  invalid-address faults.
-- `hls_grouped_schedule_native` and its two RTL variants exercise dependent
-  arithmetic, branches and joins, overlapping stores, loop-carried values,
-  continue/break, nested loops, and reset during a suspended loop. RTL latency
-  assertions require one cycle for acyclic computation and one cycle per
-  iteration for the simple recurrence. Vector register tests also require
-  one-cycle reads, size queries, and clear operations.
-- Seven `hls_kernel_reject_*` tests reject unresolved calls, indirect calls,
-  recursion, floating point, dynamic stack allocation, atomic accesses, and
-  unsupported state alignment. `hls_kernel_cli` checks incompatible options.
-  They also check that a failed conversion removes stale generated RTL.
-- `hls_std_Map_object_native` and `hls_std_Map_heap_native` run real STL
-  objects in the C++ module and check the command/response behavior.
-- Corresponding `_unsupported_rtl` tests require a conversion error, inspect
-  the method/layout report, and reject any placeholder SV files. They are
-  expected-rejection tests, **not Verilator passes**.
-- `hls_std_missing_capacity` checks the capacity diagnostic.
-- `hls_sram` and `hls_sram_verilator` test the generic SRAM responder with
-  both native and RTL simulation, including backpressure and reset retention.
-- Recursion and static-helper tests retain their native and Verilator flows.
-  Six additional tests exercise recursion diagnostics.
-
-Set `CPPHDL_HLS_STDLIB_TREE_SOURCE` to a matching libstdc++ `tree.cc` when
-configuring to add optional Map and Multimap source-attachment regressions.
-They require real rotation and rebalance bodies in the report. These remain
-analysis checks, not working container RTL flows.
-
-To inspect the real map methods:
-
-```sh
-build/cpphdl --hls --generated-dir build/hls-map-analysis \
-    hls/tests/Map.cpp -- -Iinclude -DHLS_HEAP=1
-```
-
-This command currently returns failure and creates `hls-analysis.json`,
-not a map SV module. Inspect its `methods`, `records`, and `issues` arrays.
-The analysis uses structured JSON, preserving source references and method
-bodies so subsequent compiler work can be checked against the real library.
-
-`std::inplace_vector` is recognized by the discovery logic but has no local
-test because the installed standard library does not provide it. AXI4,
-multi-port scheduling, general alias analysis, and cycle-accurate scheduled
-native container implementations are not supported. No synthesis area or timing
-result is claimed.
-
-## Acceptance Criteria for Container RTL
-
-Do not declare a container supported until its actual method bodies reach
-generated RTL, every reachable algorithm dependency is resolved, and both
-native scheduled simulation and Verilator pass the same transaction tests.
-
-Tests must additionally exercise container-specific behavior: vector
-reallocation, list links and iterator stability, map rotations and deletion
-fixup, multimap duplicate ordering, and unordered-map collisions and rehashing.
-Check structural invariants and storage bounds, not just final lookup values.
-A command-level comparison alone cannot establish those properties.
+The separate scalar recursion pass in `HLS.cpp` remains available for ordinary
+CppHDL methods: bounded, numbered functions with an explicit terminal method.
+It is independent of the clocked-object scheduler's bounded source-call expansion;
+neither mechanism emits recursive SystemVerilog or an unbounded runtime stack.

@@ -1,10 +1,10 @@
 #include "cpphdl.h"
-#include <map>
+#include <vector>
 #include "TestConfig.h"
 
-using SoftwareContainer = std::multimap<uint32_t, uint32_t>;
+using SoftwareContainer = std::vector<uint32_t>;
 
-class MultimapTop : public cpphdl::Module
+class VectorTop : public cpphdl::Module
 {
 public:
     _PORT(bool) command_valid_in;
@@ -19,21 +19,14 @@ public:
     _PORT(uint32_t) size_out;
 
 private:
-#if HLS_HEAP
-    HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer* values = new SoftwareContainer;
-#else
     HLS_BOUNDED(HLS_CAPACITY) SoftwareContainer values;
-#endif
     cpphdl::reg<cpphdl::u1> pending_reg;
     cpphdl::reg<cpphdl::u32> status_reg, result_reg, count_reg;
 
 public:
-#if HLS_HEAP
-    ~MultimapTop() { delete values; }
-#endif
-    MultimapTop() = default;
-    MultimapTop(const MultimapTop&) = delete;
-    MultimapTop& operator=(const MultimapTop&) = delete;
+    VectorTop() = default;
+    VectorTop(const VectorTop&) = delete;
+    VectorTop& operator=(const VectorTop&) = delete;
 
     void _assign()
     {
@@ -45,11 +38,7 @@ public:
     }
     void _work(bool reset)
     {
-#if HLS_HEAP
-        SoftwareContainer& data = *values;
-#else
         SoftwareContainer& data = values;
-#endif
         uint32_t operation, key, value, status, result;
         if (reset) {
             data.clear();
@@ -62,13 +51,12 @@ public:
             if (operation == 3) result = data.size();
             else if (operation > 3) status = 3;
             else {
-                auto it = data.find(key);
                 if (operation == 0) {
                     if (data.size() == HLS_CAPACITY) status = 2;
-                    else data.emplace(key, value);
-                } else if (it == data.end()) status = 1;
-                else if (operation == 1) result = it->second;
-                else data.erase(it); // Erase one duplicate, not every element with this key.
+                    else data.push_back(value);
+                } else if (key >= data.size()) status = 1;
+                else if (operation == 1) result = data[key];
+                else data.erase(data.begin() + key);
 
             }
             pending_reg._next = true;
@@ -86,21 +74,20 @@ public:
 #ifndef SYNTHESIS
 #include "ContainerTest.h"
 
-static void apply_multimap_operation(SoftwareContainer& values, uint32_t operation,
-                                     uint32_t key, uint32_t value,
-                                     uint32_t& status, uint32_t& result)
+static void apply_vector_operation(SoftwareContainer& values, uint32_t operation,
+                                   uint32_t index, uint32_t value,
+                                   uint32_t& status, uint32_t& result)
 {
-    auto it = values.find(key);
     if (operation == 0) {
         if (values.size() == HLS_CAPACITY) status = 2;
-        else values.emplace(key, value);
-    } else if (it == values.end()) status = 1;
-    else if (operation == 1) result = it->second;
-    else values.erase(it); // Erase one duplicate, not every element with this key.
+        else values.push_back(value);
+    } else if (index >= values.size()) status = 1;
+    else if (operation == 1) result = values[index];
+    else values.erase(values.begin() + index);
 }
 
 int main()
 {
-    return run_container_test<MultimapTop>("Multimap", apply_multimap_operation);
+    return run_container_test<VectorTop>("Vector", apply_vector_operation);
 }
 #endif
