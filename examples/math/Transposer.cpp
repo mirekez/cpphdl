@@ -13,13 +13,13 @@ using namespace cpphdl;
 // column appears on the next enabled cycle after the final input row. Bubbles
 // suppress data_valid_out and hold the stream position. A start coincident
 // with the final row can arm the next matrix without interrupting that row.
-// Reset takes effect DELAYED_RESET cycles after it is sampled, even if stalled.
-template<size_t SIZE = 4, size_t WIDTH = 16, size_t DELAYED_RESET = 1>
+// Reset takes effect RESET_DELAY cycles after it is sampled, even if stalled.
+template<size_t SIZE = 4, size_t WIDTH = 16, size_t RESET_DELAY = 1>
 class Transposer : public Module
 {
     static_assert(SIZE > 1, "Transposer SIZE must be greater than 1");
     static_assert(WIDTH > 0, "Transposer WIDTH must be positive");
-    static_assert(DELAYED_RESET > 0, "Transposer reset delay must be positive");
+    static_assert(RESET_DELAY > 0, "Transposer reset delay must be positive");
 
 public:
     _PORT(bool) start_in;
@@ -39,7 +39,7 @@ private:
     reg<u<clog2(SIZE + 1)>> rows_written;
     reg<u<clog2(SIZE + 1)>> rows_to_read;
     reg<u1> data_valid_in_delayed;
-    reg<logic<DELAYED_RESET>> reset1;
+    reg<logic<RESET_DELAY>> reset1;
     bool data_valid_out_comb;
 
     bool& data_valid_out_comb_func()
@@ -118,7 +118,7 @@ public:
                 }
             }
         }
-        reset1._next = (reset1 >> 1) | (logic<DELAYED_RESET>(reset) << (DELAYED_RESET - 1));
+        reset1._next = (reset1 >> 1) | (logic<RESET_DELAY>(reset) << (RESET_DELAY - 1));
         if (reset1 & 1) {
             busy1._next = 0;
             busy2._next = 0;
