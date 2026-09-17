@@ -7,6 +7,69 @@
 
 using namespace cpphdl;
 
+// One asynchronous-read lane. Use a direct clocked write in RTL: wrapping the
+// memory write in the converter's task prevents Vivado from inferring RAM.
+// Only this storage primitive is replaced; C++ and RTL share the controller
+// and routing, and the same tests check both memory implementations.
+template<size_t SIZE, size_t WIDTH>
+class [[clang::annotate(R"(CPPHDL_REPLACEMENT=
+`default_nettype none
+module TransposerLane #(
+    parameter SIZE = 4,
+    parameter WIDTH = 16
+) (
+    input wire clk,
+    input wire reset,
+    input wire write_enable_in,
+    input wire [$clog2(2*SIZE)-1:0] write_address_in,
+    input wire [$clog2(2*SIZE)-1:0] read_address_in,
+    input wire [WIDTH-1:0] write_data_in,
+    output wire [WIDTH-1:0] read_data_out
+);
+    (* ram_style = "distributed" *) reg [WIDTH-1:0] storage [0:2*SIZE-1];
+    always @(posedge clk) begin
+        if (write_enable_in)
+            storage[write_address_in] <= write_data_in;
+    end
+    assign read_data_out = storage[read_address_in];
+endmodule
+;)")]] TransposerLane : public Module
+{
+public:
+    _PORT(bool) write_enable_in;
+    _PORT(u<clog2(2 * SIZE)>) write_address_in;
+    _PORT(u<clog2(2 * SIZE)>) read_address_in;
+    _PORT(logic<WIDTH>) write_data_in;
+    _PORT(logic<WIDTH>) read_data_out;
+
+private:
+    memory<logic<WIDTH>, 1, 2 * SIZE> storage;
+    logic<WIDTH> read_data_comb;
+
+    logic<WIDTH>& read_data_comb_func()
+    {
+        return read_data_comb = storage[read_address_in()];
+    }
+
+public:
+    void _assign()
+    {
+        read_data_out = _ASSIGN_COMB(read_data_comb_func());
+    }
+
+    void _work(bool reset)
+    {
+        if (write_enable_in()) {
+            storage[write_address_in()] = write_data_in();
+        }
+    }
+
+    void _strobe()
+    {
+        storage.apply();
+    }
+};
+
 // Transpose SIZE rows into SIZE columns, low lane first. A valid start beat
 // arms the next row; its own data is not part of the new matrix. data_valid_in
 // is a pipeline enable for BOTH directions (there is no ready port). The first
@@ -29,11 +92,11 @@ public:
     _PORT(bool) data_valid_out;
 
 private:
-    // An input vector writes one column: bank[input lane][write_column].
-    // Reading bank[read_row] returns a transposed vector. Neither bank shifts
-    // or copies its contents; only the selected column receives a write enable.
-    reg<array<SIZE, logic<WIDTH>>> bank0[SIZE];
-    reg<array<SIZE, logic<WIDTH>>> bank1[SIZE];
+    // Skew the matrix across SIZE single-write/single-read memory lanes.
+    // Cell (row, column) lives in lane (row + column) modulo SIZE, so each
+    // column and each row touches every lane exactly once. The address selects
+    // column and matrix bank, so stored data never shifts or copies at handoff.
+    TransposerLane<SIZE, WIDTH> storage[SIZE];
     reg<u1> write_bank;
     reg<u1> read_bank;
     reg<u<clog2(SIZE)>> write_column;
@@ -44,16 +107,65 @@ private:
     reg<u1> output_valid;
     reg<logic<RESET_DELAY>> reset1;
     array<SIZE, logic<WIDTH>> data_out_comb;
+    array<SIZE, logic<WIDTH>> write_data_comb;
+    logic<2 * SIZE * WIDTH> write_bus_comb;
+    logic<2 * SIZE * WIDTH> read_bus_comb;
+    array<SIZE, u<clog2(2 * SIZE)>> read_address_comb;
+    u<clog2(2 * SIZE)> write_address_comb;
+
+    u<clog2(2 * SIZE)>& write_address_comb_func()
+    {
+        size_t column;
+        column = write_column;
+        return write_address_comb = size_t(write_bank) * SIZE + column;
+    }
+
+    array<SIZE, logic<WIDTH>>& write_data_comb_func()
+    {
+        size_t i, column;
+        column = write_column;
+        // Pack explicitly: native array elements may have byte padding, but
+        // the routing bus must contain exactly WIDTH bits per lane.
+        write_bus_comb = 0;
+        for (i = 0; i < SIZE; ++i) {
+            write_bus_comb.bits((i + 1) * WIDTH - 1, i * WIDTH) = data_in()[i];
+        }
+        // Combinational rotation routes a vector to the memory lanes; no
+        // stored word moves. Duplicate wires and select one window, avoiding
+        // two opposing shifts and an OR for each barrel rotation.
+        write_bus_comb = (write_bus_comb << (SIZE * WIDTH)) | write_bus_comb;
+        write_bus_comb = (write_bus_comb << (column * WIDTH)) >> (SIZE * WIDTH);
+        for (i = 0; i < SIZE; ++i) {
+            write_data_comb[i] = write_bus_comb.bits((i + 1) * WIDTH - 1, i * WIDTH);
+        }
+        return write_data_comb;
+    }
+
+    array<SIZE, u<clog2(2 * SIZE)>>& read_address_comb_func()
+    {
+        size_t i, column, row;
+        row = read_row;
+        for (i = 0; i < SIZE; ++i) {
+            column = (i + SIZE - row) % SIZE;
+            read_address_comb[i] = size_t(read_bank) * SIZE + column;
+        }
+        return read_address_comb;
+    }
 
     array<SIZE, logic<WIDTH>>& data_out_comb_func()
     {
+        size_t i, row;
+        row = read_row;
+        read_bus_comb = 0;
+        for (i = 0; i < SIZE; ++i) {
+            read_bus_comb.bits((i + 1) * WIDTH - 1, i * WIDTH) = storage[i].read_data_out();
+        }
+        read_bus_comb = (read_bus_comb << (SIZE * WIDTH)) | read_bus_comb;
+        read_bus_comb = read_bus_comb >> (row * WIDTH);
         data_out_comb = 0;
         if (reading) {
-            if (read_bank) {
-                data_out_comb = bank1[read_row];
-            }
-            else {
-                data_out_comb = bank0[read_row];
+            for (i = 0; i < SIZE; ++i) {
+                data_out_comb[i] = read_bus_comb.bits((i + 1) * WIDTH - 1, i * WIDTH);
             }
         }
         return data_out_comb;
@@ -62,8 +174,16 @@ private:
 public:
     void _assign()
     {
+        size_t i;
         data_out = _ASSIGN_COMB(data_out_comb_func());
         data_valid_out = _ASSIGN_REG(output_valid);
+        for (i = 0; i < SIZE; ++i) {
+            storage[i].write_enable_in = _ASSIGN(data_valid_in() && collecting && !(reset1 & 1));
+            storage[i].write_address_in = _ASSIGN_COMB(write_address_comb_func());
+            storage[i].read_address_in = _ASSIGN_COMB_I(read_address_comb_func()[i]);
+            storage[i].write_data_in = _ASSIGN_COMB_I(write_data_comb_func()[i]);
+            storage[i]._assign();
+        }
     }
 
     void _work(bool reset)
@@ -91,14 +211,6 @@ public:
                 }
             }
             if (collecting) {
-                for (i = 0; i < SIZE; ++i) {
-                    if (write_bank) {
-                        bank1[i]._next[write_column] = data_in()[i];
-                    }
-                    else {
-                        bank0[i]._next[write_column] = data_in()[i];
-                    }
-                }
                 if (write_column == SIZE - 1) {
                     collecting._next = 0;
                     write_column._next = 0;
@@ -125,7 +237,10 @@ public:
             read_row._next = 0;
             output_valid._next = 0;
             // Unread data is masked by reading. A complete matrix overwrites
-            // every cell before publication, so data registers need no reset.
+            // every cell before publication, so the RAM contents need no reset.
+        }
+        for (i = 0; i < SIZE; ++i) {
+            storage[i]._work(reset);
         }
     }
 
@@ -134,8 +249,7 @@ public:
         size_t i;
         reset1.strobe();
         for (i = 0; i < SIZE; ++i) {
-            bank0[i].strobe();
-            bank1[i].strobe();
+            storage[i]._strobe();
         }
         write_bank.strobe();
         read_bank.strobe();
@@ -147,6 +261,12 @@ public:
         output_valid.strobe();
     }
 };
+
+#if defined(SYNTHESIS)
+// Elaborate dependent memory-lane ports; numeric parameters remain symbolic
+// in the generated Transposer and TransposerLane modules.
+template class Transposer<>;
+#endif
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 #include <array>
@@ -550,7 +670,7 @@ int main(int argc, char** argv)
             const std::string include = (CpphdlSourceRootFrom(__FILE__) / "include").string();
             for (const auto& config : std::vector<std::array<size_t, 3>>{
                     {2, 7, 1}, {3, 9, 3}, {4, 16, 1}, {8, 16, 3}, {32, 32, 1}}) {
-                if (!VerilatorCompile(__FILE__, "Transposer", {"Predef_pkg"}, {include},
+                if (!VerilatorCompile(__FILE__, "Transposer", {"Predef_pkg", "TransposerLane"}, {include},
                         config[0], config[1], config[2])) {
                     throw std::runtime_error("Transposer Verilator build failed");
                 }
