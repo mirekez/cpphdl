@@ -26,7 +26,14 @@ module TransposerLane #(
     input wire [WIDTH-1:0] write_data_in,
     output wire [WIDTH-1:0] read_data_out
 );
-    (* ram_style = "distributed" *) reg [WIDTH-1:0] storage [0:2*SIZE-1];
+    // Quartus and Vivado use different attribute names for LUT-based RAM.
+    // Keep read-during-write semantics: do not silently add no_rw_check.
+`ifdef ALTERA_RESERVED_QIS
+    (* ramstyle = "MLAB" *)
+`else
+    (* ram_style = "distributed" *)
+`endif
+    reg [WIDTH-1:0] storage [0:2*SIZE-1];
     always @(posedge clk) begin
         if (write_enable_in)
             storage[write_address_in] <= write_data_in;
