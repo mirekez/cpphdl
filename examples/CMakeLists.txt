@@ -69,6 +69,25 @@ foreach(src ${EXAMPLE_SOURCES})
             COMMAND $<TARGET_FILE:${target_name}> --noveril)
         add_test(NAME math_Transposer_verilator
             COMMAND $<TARGET_FILE:${target_name}> --verilator-only)
+        find_program(CPPHDL_TRANSPOSER_VERILATOR NAMES verilator
+            HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+        if(CPPHDL_TRANSPOSER_VERILATOR)
+            add_test(NAME math_Transposer_mlab_rdw
+                COMMAND ${CMAKE_COMMAND}
+                    -DCPPHDL=$<TARGET_FILE:cpphdl>
+                    -DTEST_EXE=$<TARGET_FILE:${target_name}>
+                    -DVERILATOR=${CPPHDL_TRANSPOSER_VERILATOR}
+                    -DCXX=${CMAKE_CXX_COMPILER}
+                    -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/transposer_mlab_rdw
+                    -P ${CMAKE_SOURCE_DIR}/tests/math/TransposerMlabRdw.cmake)
+            set_tests_properties(math_Transposer_mlab_rdw PROPERTIES TIMEOUT 300)
+            if(CPPHDL_LOCAL_CONDA_PREFIX)
+                set_tests_properties(math_Transposer_mlab_rdw PROPERTIES
+                    ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+            endif()
+        endif()
         set_tests_properties(math_Transposer_cpp math_Transposer_verilator PROPERTIES
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/examples"
             TIMEOUT 300)

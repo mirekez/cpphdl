@@ -27,9 +27,12 @@ module TransposerLane #(
     output wire [WIDTH-1:0] read_data_out
 );
     // Quartus and Vivado use different attribute names for LUT-based RAM.
-    // Keep read-during-write semantics: do not silently add no_rw_check.
+    // MLAB flow-through reads cannot promise the RTL's collision result.
+    // The bank controller never publishes a read of the address written at
+    // that edge; unused collision data may therefore be arbitrary. Keep this
+    // contract covered by the collision-poisoning Transposer regression.
 `ifdef ALTERA_RESERVED_QIS
-    (* ramstyle = "MLAB" *)
+    (* ramstyle = "MLAB, no_rw_check" *)
 `else
     (* ram_style = "distributed" *)
 `endif
