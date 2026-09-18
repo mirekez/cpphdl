@@ -8,12 +8,26 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
 
+# Unsupported closures must fail conversion, not emit malformed RTL.
+foreach(lambda_case reference value captureless immediate explicit reference_alias)
+    add_test(NAME code_unsupported_lambda_${lambda_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCXX=${CMAKE_CXX_COMPILER}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DCASE=${lambda_case}
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/unsupported_lambda
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/code/CheckUnsupportedLambda.cmake)
+    set_tests_properties(code_unsupported_lambda_${lambda_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
 # These tests select concrete template types/widths in their native testbench.
 # Parse that testbench too, so conversion sees the same implicit instances.
 set(template_hierarchy_tests
     code/TypeTemplateModule.cpp
     templates/TemplateArrayDimension.cpp
     templates/TemplateBaseAliasPackage.cpp
+    templates/TemplateTypeWidth.cpp
     templates/TemplateInheritedBaseArray.cpp)
 
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
@@ -137,6 +151,30 @@ endforeach()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+add_test(NAME code_NativeLambdaHarness
+    COMMAND ${CMAKE_COMMAND}
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DCXX=${CMAKE_CXX_COMPILER}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/native_lambda_harness
+        -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/code/NativeLambdaHarness.cmake)
+set_tests_properties(code_NativeLambdaHarness PROPERTIES TIMEOUT 60)
+
+add_test(NAME templates_DependentBitVectorAliases
+    COMMAND ${CMAKE_COMMAND}
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DCXX=${CMAKE_CXX_COMPILER}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/dependent_bit_vector_aliases
+        -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/DependentBitVectorAliases.cmake)
+set_tests_properties(templates_DependentBitVectorAliases PROPERTIES TIMEOUT 120)
+if(CPPHDL_LOCAL_CONDA_PREFIX)
+    set_tests_properties(templates_DependentBitVectorAliases PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+endif()
+
 foreach(replacement_case standalone concrete partial expressions named parent)
     add_test(NAME format_replacement_defaults_${replacement_case}
         COMMAND ${CMAKE_COMMAND}

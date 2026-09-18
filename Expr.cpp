@@ -351,6 +351,30 @@ void cpphdl::coerceReturnToBool(Expr& expression)
     });
 }
 
+std::string Expr::specializationName() const
+{
+    Expr canonical = *this;
+    canonical.traverseIf([](Expr& expr) {
+        expr.flags = FLAG_NONE;
+        expr.indent = 0;
+        if (expr.type == EXPR_NUM || expr.type == EXPR_PARAM) {
+            // updateExpr retains source expressions for parameterized RTL.
+            // Inside a fixed type argument, identity uses the evaluated value.
+            expr.sub.clear();
+            const size_t hexPos = expr.value.find("'h");
+            if (hexPos != std::string::npos) {
+                expr.value = std::to_string(std::stoull(expr.value.substr(hexPos + 2), nullptr, 16));
+            }
+        }
+        if (expr.type == EXPR_TYPE && expr.declSize == 0) {
+            // Naming must not depend on whether a struct was exported already.
+            expr.declSize = (size_t)-1;
+        }
+        return false;
+    });
+    return genTypeName(canonical.str());
+}
+
 std::string Expr::str(std::string prefix, std::string suffix)
 {
     std::string indent_str;
@@ -470,13 +494,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (!first) {
                         typeSpec += "_";
                     }
-                    const size_t hexPos = sub[i].value.find("'h");
-                    if (sub[i].type == EXPR_NUM && hexPos != std::string::npos) {
-                        typeSpec += std::to_string(std::stoul(sub[i].value.substr(hexPos + 2).c_str(), nullptr, 16));  // we store numbers in hex
-                    }
-                    else {
-                        typeSpec += sub[i].str();
-                    }
+                    typeSpec += sub[i].specializationName();
                     first = false;
                 }
             }

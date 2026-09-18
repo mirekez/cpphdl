@@ -64,4 +64,19 @@ foreach(src ${EXAMPLE_SOURCES})
 
     cpphdl_add_converter_dependency(${target_name})
 
+    if(rel_path STREQUAL "math/Transposer.cpp" AND BUILD_TESTING)
+        add_test(NAME math_Transposer_cpp
+            COMMAND $<TARGET_FILE:${target_name}> --noveril)
+        add_test(NAME math_Transposer_verilator
+            COMMAND $<TARGET_FILE:${target_name}> --verilator-only)
+        set_tests_properties(math_Transposer_cpp math_Transposer_verilator PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/examples"
+            TIMEOUT 300)
+        if(CPPHDL_LOCAL_CONDA_PREFIX)
+            set_tests_properties(math_Transposer_verilator PROPERTIES
+                ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+        endif()
+    endif()
+
 endforeach()

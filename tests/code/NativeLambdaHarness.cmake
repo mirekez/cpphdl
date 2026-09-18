@@ -1,0 +1,41 @@
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef run_id)
+set(work "${WORK}/${run_id}")
+file(MAKE_DIRECTORY "${work}")
+set(source "${SOURCE_ROOT}/tests/code/NativeLambdaHarness.h")
+execute_process(COMMAND "${CXX}" -std=c++23 "-I${SOURCE_ROOT}/include"
+    -x c++ "${source}" -o "${work}/native"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Native harness failed to compile:\n${output}${error}")
+endif()
+execute_process(COMMAND "${work}/native" RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Native harness result mismatch: ${result}")
+endif()
+execute_process(COMMAND "${CPPHDL}" "--generated-dir=${work}/generated" "${source}"
+    -- -std=c++23 "-I${SOURCE_ROOT}/include"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Native harness conversion failed:\n${output}${error}")
+endif()
+file(GLOB rtl "${work}/generated/*.sv")
+foreach(path IN LISTS rtl)
+    get_filename_component(name "${path}" NAME)
+    if(NOT name STREQUAL "Predef_pkg.sv" AND NOT name STREQUAL "NativeHarnessDut.sv")
+        message(FATAL_ERROR "Unexpected export from native harness: ${name}")
+    endif()
+endforeach()
+if(NOT EXISTS "${work}/generated/NativeHarnessDut.sv")
+    message(FATAL_ERROR "DUT inside the native harness was not discovered")
+endif()
+if(VERILATOR)
+    foreach(width 8 16)
+        execute_process(COMMAND "${VERILATOR}" --lint-only --top-module NativeHarnessDut
+            -GWIDTH=${width} "${work}/generated/Predef_pkg.sv"
+            "${work}/generated/NativeHarnessDut.sv"
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "Invalid DUT RTL for width ${width}:\n${output}${error}")
+        endif()
+    endforeach()
+endif()

@@ -256,7 +256,7 @@ public:
 #endif
     }
 
-    void eval(bool reset)
+    void _work(bool reset)
     {
 #ifdef VERILATOR
         drive_cache(reset, false);
@@ -268,7 +268,7 @@ public:
 #endif
     }
 
-    void strobe()
+    void _strobe()
     {
         update_ram_image();
 #ifndef VERILATOR
@@ -288,9 +288,11 @@ public:
 
     void cycle(bool reset = false)
     {
-        strobe();
+        // Commit the previous cycle before evaluating the next one, as in the
+        // original harness. Use lifecycle entry points so delegation is checked.
+        _strobe();
         ++_system_clock;
-        eval(reset);
+        _work(reset);
         neg(reset);
     }
 
@@ -1104,10 +1106,20 @@ public:
         return (lo >> shift) | (hi << (32 - shift));
     }
 
-    void cycle(bool reset = false)
+    void _work(bool reset)
     {
         cache._work(reset);
+    }
+
+    void _strobe()
+    {
         cache._strobe();
+    }
+
+    void cycle(bool reset = false)
+    {
+        _work(reset);
+        _strobe();
         ++_system_clock;
     }
 

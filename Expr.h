@@ -81,6 +81,8 @@ struct Expr
     void deparenth();
 
     std::string str(std::string prefix = "", std::string size = "");
+    // Canonical name component for a fixed template argument, not RTL syntax.
+    std::string specializationName() const;
     std::string typeToSV(std::string name, std::string size = "");
 
     template <typename Func/*, typename Param*/>
