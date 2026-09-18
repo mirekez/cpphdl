@@ -257,7 +257,7 @@ static bool cpphdlRecordIsOrDerivesFromModule(const CXXRecordDecl* RD, std::unor
 
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD)
 {
-    if (!RD || !RD->hasDefinition()) {
+    if (!RD || !RD->hasDefinition() || RD->isLambda()) {
         return false;
     }
     if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
@@ -477,6 +477,16 @@ std::string Helpers::castTypeName(QualType QT)
     return genTypeName(name);
 }
 
+static cpphdl::Expr unsupportedLambda(ASTContext& ctx, SourceLocation location)
+{
+    auto& diagnostics = ctx.getDiagnostics();
+    const unsigned id = diagnostics.getCustomDiagID(DiagnosticsEngine::Error,
+        "cpphdl: local lambda objects and lambda calls are not supported in RTL conversion; "
+        "use a named helper method or inline the operations");
+    diagnostics.Report(location, id);
+    return cpphdl::Expr{};
+}
+
 cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 {
     const SourceManager &SM = ctx->getSourceManager();
@@ -490,6 +500,18 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     CharSourceRange Range = CharSourceRange::getCharRange(StartLoc, EndLoc);
     DEBUG_AST(debugIndent++, " exprToExpr(" << std::string(Lexer::getSourceText(Range, SM, LangOpts)) << "): {"); on_return ret_debug([](){ --debugIndent; });
     on_return ret_debug1([](){ DEBUG_AST1("}"); });
+
+    // General lambda invocation is not a port read: its parameters and
+    // captures need proper call lowering. Catch both operator-call syntax and
+    // explicit .operator() calls before either loses its argument binding.
+    // Do not reject lambda conversion operators used by _ASSIGN bindings.
+    if (const auto* call = dyn_cast<CallExpr>(E)) {
+        const auto* method = dyn_cast_or_null<CXXMethodDecl>(call->getDirectCallee());
+        if (method && method->getParent()->isLambda() &&
+            (method->getOverloadedOperator() == OO_Call || method->isLambdaStaticInvoker())) {
+            return unsupportedLambda(*ctx, E->getBeginLoc());
+        }
+    }
 
     if (auto* FS = dyn_cast<ForStmt>(E)) {
         DEBUG_AST1(" ForStmt");
@@ -688,6 +710,16 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         auto body = cpphdl::Expr{"", cpphdl::Expr::EXPR_BODY};
         for (Decl* D : DS->decls()) {
             if (auto* VD = dyn_cast<VarDecl>(D)) {
+                // Closure fields can be unnamed references. They are not
+                // hardware state, and exporting them as structs is invalid.
+                // Check reference-bound closures too, before reference locals
+                // are discarded below. Port-binding lambdas never take this
+                // local-closure declaration path.
+                const auto* record = VD->getType().getNonReferenceType()->getAsCXXRecordDecl();
+                if (record && record->isLambda()) {
+                    unsupportedLambda(*ctx, VD->getLocation());
+                    continue;
+                }
                 if (VD->getType()->isReferenceType()) {  // any reference declaration
                     // ignore
                 }
@@ -1968,20 +2000,10 @@ const CXXRecordDecl* getParentClassOfExpr(const DeclRefExpr* DRE, ASTContext* ct
 bool Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes)
 {
     if (!onlyTypes || param.type != cpphdl::Expr::EXPR_NUM) {
-        cpphdl::Expr nameParam = param;
-        nameParam.traverseIf([](cpphdl::Expr& expr) {
-            if (expr.type == cpphdl::Expr::EXPR_TYPE && expr.declSize == 0) {
-                // Specialization identity needs the type spelling, not its RTL
-                // layout. The struct may not have been exported yet at this point.
-                expr.declSize = (size_t)-1;
-            }
-            return false;
-        });
-        std::string str = nameParam.str();
         if (!first) {
             name += "_";
         }
-        name += genTypeName(str);
+        name += param.specializationName();
     }
     str_replace(name, "::", "_");
     return !onlyTypes || param.type != cpphdl::Expr::EXPR_NUM;

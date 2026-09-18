@@ -6,6 +6,14 @@ add_test(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_arch_config.py"
 )
 
+add_test(NAME L1Cache_test_lifecycle
+    COMMAND "${CMAKE_COMMAND}"
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/ctest/L1Cache_test_lifecycle
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_l1_lifecycle.cmake)
+set_tests_properties(L1Cache_test_lifecycle PROPERTIES TIMEOUT 60)
+
 set(TRIBE_CTEST_ENVIRONMENT
     "CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS};TRIBE_KEEP_WORKDIR=1;CPPHDL_BUILD_DIR=${CMAKE_BINARY_DIR}"
 )

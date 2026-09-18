@@ -853,7 +853,7 @@ void appendTemplateTypeSpecializationName(std::string& name, const CXXRecordDecl
             name += "_";
         }
         cpphdl::Expr arg = it->second;
-        name += genTypeName(arg.str());
+        name += arg.specializationName();
         first = false;
     }
 }
@@ -964,7 +964,7 @@ bool structHasAnonymousAggregateWrapper(const std::string& typeName)
 
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp)
 {
-    if (!RD || !RD->hasDefinition()) {
+    if (!RD || !RD->hasDefinition() || RD->isLambda()) {
         return false;
     }
     if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
@@ -1654,7 +1654,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     if (MD->getQualifiedNameAsString().find("::" + hlp.parent->getNameAsString()) != (size_t)-1  // constructor
     || MD->getQualifiedNameAsString().find("::~" + hlp.parent->getNameAsString()) != (size_t)-1  // destructor
     || MD->getQualifiedNameAsString().find("::operator=") != (size_t)-1
-    || MD->getQualifiedNameAsString().find("cpphdl::") != (size_t)-1
+    // A user's template argument can be cpphdl::logic<N>; that does not make
+    // the enclosing module method a method of the cpphdl implementation.
+    || MD->getParent()->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0
     || MD->getQualifiedNameAsString().find("std::") == (size_t)0
     || MD->getQualifiedNameAsString().find("*(*)()") != (size_t)-1  // lambda
 //    || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod->name.find(MD->getParent()->getQualifiedNameAsString())) != 0  // module's class method but not current module
@@ -2009,8 +2011,22 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                             || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)));
                     if (!aliasIsClassOnly
                         && TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
-                        mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(),
-                            cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE}});
+                        // A dependent logic<W> has a TemplateSpecializationType
+                        // but no concrete record yet. Inspect its template
+                        // declaration instead of flattening its canonical
+                        // spelling into an invented identifier. digQT keeps
+                        // width expressions and their parameter bindings.
+                        bool cpphdlAlias = aliasRD
+                            && aliasRD->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                        if (const auto* specialization = aliasQT->getAs<TemplateSpecializationType>()) {
+                            const auto* templ = specialization->getTemplateName().getAsTemplateDecl();
+                            cpphdlAlias |= templ
+                                && templ->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                        }
+                        cpphdl::Expr aliasExpr = cpphdlAlias
+                            ? hlp.digQT(aliasQT)
+                            : cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE};
+                        mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(), std::move(aliasExpr)});
                     }
                 }
             }// else
