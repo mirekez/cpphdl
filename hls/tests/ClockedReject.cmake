@@ -1,6 +1,7 @@
 set(reasons "missing instantiated body" "recursive clocked call" "nonautomatic local declaration"
     "volatile/atomic" "floating-point" "indirect call" "requires --hls" "was removed" "default clk" "MAX_RECURSION must be in 0..16"
-    "mutable global constant object" "volatile/atomic")
+    "mutable global constant object" "volatile/atomic"
+    "do not fit ADDRESS_BITS" "ADDRESS_BITS must be in 8..64" "ADDRESS_BITS must be in 8..64")
 include("${TOOLCHAIN}")
 list(GET reasons ${CASE} reason)
 set(flags --hls)

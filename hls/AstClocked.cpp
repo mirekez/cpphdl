@@ -68,6 +68,7 @@ class Scheduler {
     std::vector<std::string> layouts;
     unsigned highWater = 4112, constantBytes = 16, tempCount = 0;
     unsigned recursionLimit = 0;
+    unsigned addressWidth = 64;
     unsigned callCount = 0, symbolCount = 0;
     std::string scope = "hls_object", method = "hls_object";
     std::map<std::string, BlockSymbol> blockSymbols;
@@ -103,9 +104,15 @@ class Scheduler {
                 name = identifier(named->getNameAsString()) + "__" + name;
         return name;
     }
+    std::string addressLiteral(unsigned address) const {
+        return std::to_string(addressWidth) + "'d" + std::to_string(address);
+    }
+    std::string addressCast(const std::string& value) const {
+        return std::to_string(addressWidth) + "'(" + value + ")";
+    }
     std::string addressSymbol(const std::string& name, unsigned address) {
         std::string symbol = name + "_" + std::to_string(symbolCount++);
-        symbols << "  localparam logic [63:0] " << symbol << " = 64'd" << address << ";\n";
+        symbols << "  localparam logic [" << addressWidth - 1 << ":0] " << symbol << " = " << addressLiteral(address) << ";\n";
         return symbol;
     }
 
@@ -120,7 +127,7 @@ class Scheduler {
         return ctx.getTypeSizeInChars(type).getQuantity();
     }
     unsigned bits(QualType type) {
-        if (type->isReferenceType()) return 64;
+        if (type->isReferenceType() || type->isPointerType()) return addressWidth;
         if (type->isBooleanType()) return 1;
         return bytes(type) * 8;
     }
@@ -175,8 +182,9 @@ class Scheduler {
                         std::to_string(width) + "'(" + castTo(item.type, data) + "), fault);";
                 } else {
                     storageReadWidths.insert(bytes(item.type));
-                    result += "hls_storage_" + std::string(item.checked ? "read_" : "load_") +
+                    std::string loaded = "hls_storage_" + std::string(item.checked ? "read_" : "load_") +
                         std::to_string(width) + "(storage, " + address + (item.checked ? ", fault)" : ")");
+                    result += item.type->isPointerType() ? addressCast(loaded) : loaded;
                 }
             }
             cursor = end + 1;
@@ -199,9 +207,9 @@ class Scheduler {
             if (object.memory) {
                 unsigned alignment = ctx.getTypeAlignInChars(object.type).getQuantity();
                 highWater = (highWater + alignment - 1) / alignment * alignment;
-                symbols << "  localparam logic [63:0] " << address << " = 64'd" << highWater << ";\n";
+                symbols << "  localparam logic [" << addressWidth - 1 << ":0] " << address << " = " << addressLiteral(highWater) << ";\n";
                 highWater += bytes(object.type);
-                blockSymbols[address] = {64, object.label + "_addr", false};
+                blockSymbols[address] = {addressWidth, object.label + "_addr", false};
             } else blockSymbols["values." + object.name] = {bits(object.type), object.label, true};
         }
         std::vector<std::set<std::string>> uses(blocks.size()), definitions(blocks.size()), liveIn(blocks.size());
@@ -288,10 +296,6 @@ class Scheduler {
         if (type->isBooleanType()) return "(" + text + " != 0)";
         return std::to_string(bits(type)) + "'(" + text + ")";
     }
-    std::string storageBytes(const std::string& address, unsigned count) {
-        if (count != 8) reject(nullptr, "source pointer width is not 64 bits");
-        return access({address, {}, ctx.VoidPtrTy, false, false});
-    }
     std::string read(Value value) {
         std::string text = value.text;
         if (value.location) {
@@ -302,7 +306,7 @@ class Scheduler {
     }
     std::string savedPointer(Value address) {
         // References used after a loop must read their selected target there.
-        return storageBytes(address.text, 8);
+        return access({address.text, {}, ctx.VoidPtrTy, false, false});
     }
     Value capture(Value value) {
         if (value.type->isVoidType()) return value;
@@ -325,22 +329,22 @@ class Scheduler {
         emit(access({target.text, data, target.type, true}));
     }
     void emitStorageHelpers(std::ostream& out) {
-        out << R"SV(  function static logic hls_storage_address_valid(input logic [63:0] address, input int unsigned count);
-    return count <= MEM_BYTES && address >= 64'd16 && address <= 64'(MEM_BYTES) - 64'(count);
+        out << R"SV(  function static logic hls_storage_address_valid(input logic [ADDR_BITS-1:0] address, input int unsigned count);
+    return count <= MEM_BYTES && address >= ADDR_BITS'(16) && address <= ADDR_BITS'(MEM_BYTES) - ADDR_BITS'(count);
   endfunction
 )SV";
         for (unsigned count : storageReadWidths) {
             unsigned width = count * 8;
             out << "  function static logic [" << width - 1 << ":0] hls_storage_load_" << width
-                << "(input storage_t storage, input logic [63:0] address);\n"
+                << "(input storage_t storage, input logic [ADDR_BITS-1:0] address);\n"
                 << "    return {";
             for (unsigned lane = count; lane-- > 0;) {
                 if (lane != count - 1) out << ", ";
-                out << "storage[INDEX_BITS'(address + 64'd" << lane << ")]";
+                out << "storage[INDEX_BITS'(address + " << addressLiteral(lane) << ")]";
             }
             out << "};\n  endfunction\n"
                 << "  function static logic [" << width - 1 << ":0] hls_storage_read_" << width
-                << "(input storage_t storage, input logic [63:0] address, inout logic [31:0] fault);\n"
+                << "(input storage_t storage, input logic [ADDR_BITS-1:0] address, inout logic [31:0] fault);\n"
                 << "    if (fault == 0) begin\n"
                 << "      if (hls_storage_address_valid(address, " << count << ")) return hls_storage_load_" << width << "(storage, address);\n"
                 << "      fault = 3;\n    end\n    return '0;\n  endfunction\n";
@@ -348,11 +352,11 @@ class Scheduler {
         for (unsigned count : storageWriteWidths) {
             unsigned width = count * 8;
             out << "  function static void hls_storage_write_" << width
-                << "(inout storage_t storage, input logic [63:0] address, input logic [" << width - 1 << ":0] value, inout logic [31:0] fault);\n"
+                << "(inout storage_t storage, input logic [ADDR_BITS-1:0] address, input logic [" << width - 1 << ":0] value, inout logic [31:0] fault);\n"
                 << "    if (fault == 0) begin\n"
                 << "      if (hls_storage_address_valid(address, " << count << ")) begin\n"
                 << "        for (int unsigned lane = 0; lane < " << count << "; ++lane)\n"
-                << "          storage[INDEX_BITS'(address + 64'(lane))] = value[lane * 8 +: 8];\n"
+                << "          storage[INDEX_BITS'(address + ADDR_BITS'(lane))] = value[lane * 8 +: 8];\n"
                 << "      end else fault = 3;\n    end\n  endfunction\n";
         }
     }
@@ -417,14 +421,16 @@ class Scheduler {
             heap = true;
             auto size = read(args.at(0));
             if (aligned) {
-                auto alignment = temporary(64, read(args[1]), scope + "__allocation_alignment");
+                auto alignment = read(args[1]);
                 emit("if (" + alignment + " == 0 || " + alignment + " > 4096 || (" + alignment + " & (" + alignment + " - 1)) != 0) fault = 1;");
-                emit("heap_next = (heap_next + " + alignment + " - 1) & ~(" + alignment + " - 1);");
+                auto alignedNext = temporary(std::max(14u, addressWidth + 1), "(" + std::to_string(std::max(14u, addressWidth + 1)) + "'(heap_next) + " + alignment + " - 1) & ~(" + alignment + " - 1)", scope + "__aligned_address");
+                emit("if (" + alignedNext + " > MEM_BYTES) fault = 1;");
+                emit("heap_next = " + addressCast(alignedNext) + ";");
             }
             Value result = slot(fn->getReturnType());
-            emit("if (" + size + " > 4096 || heap_next + 64'(" + size + ") > 64'(MEM_BYTES)) fault = 1;");
+            emit("if (" + size + " > 4096 || heap_next > MEM_BYTES || " + size + " > MEM_BYTES - heap_next) fault = 1;");
             store(result, {"heap_next", fn->getReturnType()});
-            emit("heap_next = (heap_next + 64'(" + size + ") + 15) & ~64'd15;");
+            emit("heap_next = (heap_next + " + addressCast(size) + " + " + addressLiteral(15) + ") & ~" + addressLiteral(15) + ";");
             return result;
         }
         if ((fn->isOverloadedOperator() && fn->getOverloadedOperator() == OO_Delete) || name == "__builtin_operator_delete") return {"0", ctx.VoidTy};
@@ -445,7 +451,7 @@ class Scheduler {
         if (name == "__builtin_assume_aligned") return {read(args.at(0)), fn->getReturnType()};
         if (name == "__builtin_addressof") return {reference(args.at(0)).text, fn->getReturnType()};
         if (name == "__builtin_memmove" || name == "__builtin_memcpy" || name == "__builtin_memset") {
-            Value dst = slot(ctx.VoidPtrTy), src = slot(ctx.UnsignedLongLongTy), count = slot(ctx.UnsignedLongLongTy);
+            Value dst = slot(ctx.VoidPtrTy), src = slot(name == "__builtin_memset" ? ctx.UnsignedLongLongTy : ctx.VoidPtrTy), count = slot(ctx.UnsignedLongLongTy);
             store(dst, args.at(0)); store(src, args.at(1)); store(count, args.at(2));
             Value i = slot(ctx.UnsignedLongLongTy); store(i, {"0", i.type});
             int test = block(), body = block(), after = block();
@@ -466,7 +472,7 @@ class Scheduler {
         if (depth && !recursionLimit) reject(fn->getBody(), "recursive clocked call needs a declared depth bound: " + name);
         if (depth >= recursionLimit && recursionLimit) {
             emit("fault = 5; /* declared recursion bound exceeded: " + name + " */");
-            if (fn->getReturnType()->isReferenceType()) return {"64'd0", fn->getReturnType()->getPointeeType(), true};
+            if (fn->getReturnType()->isReferenceType()) return {addressLiteral(0), fn->getReturnType()->getPointeeType(), true};
             return {"'0", fn->getReturnType()};
         }
         ++depth;
@@ -566,14 +572,14 @@ class Scheduler {
                         if (field->getType()->isReferenceType()) {
                             unsigned offset = ctx.getASTRecordLayout(field->getParent()).getFieldOffset(field->getFieldIndex()) / 8;
                             Value ref = reference(expression(init->getInit()));
-                            store({"(" + target.text + " + 64'd" + std::to_string(offset) + ")", ctx.VoidPtrTy, true}, {ref.text, ctx.VoidPtrTy});
+                            store({"(" + target.text + " + " + addressLiteral(offset) + ")", ctx.VoidPtrTy, true}, {ref.text, ctx.VoidPtrTy});
                             continue;
                         }
                         target = member(target, field);
                     } else if (init->isBaseInitializer()) {
                         auto* base = init->getBaseClass()->getAsCXXRecordDecl();
                         auto offset = ctx.getASTRecordLayout(ctor->getParent()).getBaseClassOffset(base).getQuantity();
-                        target = {"(" + self + " + 64'd" + std::to_string(offset) + ")", QualType(init->getBaseClass(), 0), true};
+                        target = {"(" + self + " + " + addressLiteral(offset) + ")", QualType(init->getBaseClass(), 0), true};
                     } else if (!init->isDelegatingInitializer()) reject(init->getInit(), "unsupported constructor initializer");
                     initialize(target, init->getInit());
                 }
@@ -592,7 +598,7 @@ class Scheduler {
                 --it;
                 if (it->isVirtual()) reject(nullptr, "virtual base destruction");
                 auto offset = ctx.getASTRecordLayout(dtor->getParent()).getBaseClassOffset(it->getType()->getAsCXXRecordDecl()).getQuantity();
-                destroy({"(" + object.text + " + 64'd" + std::to_string(offset) + ")", it->getType(), true});
+                destroy({"(" + object.text + " + " + addressLiteral(offset) + ")", it->getType(), true});
             }
         }
         jump(binding.continuation); current = binding.continuation;
@@ -637,7 +643,7 @@ class Scheduler {
             unsigned n = 0;
             if (const auto* array = ctx.getAsConstantArrayType(target.type)) {
                 for (auto* element : list->inits()) {
-                    Value to{"(" + target.text + " + 64'd" + std::to_string(n++ * bytes(array->getElementType())) + ")", array->getElementType(), true};
+                    Value to{"(" + target.text + " + " + addressLiteral(n++ * bytes(array->getElementType())) + ")", array->getElementType(), true};
                     initialize(to, element);
                 }
             } else if (const auto* record = target.type->getAsCXXRecordDecl()) {
@@ -646,14 +652,14 @@ class Scheduler {
                     if (n == list->getNumInits()) break;
                     if (base.isVirtual()) reject(init, "virtual aggregate base initialization");
                     auto offset = ctx.getASTRecordLayout(record).getBaseClassOffset(base.getType()->getAsCXXRecordDecl()).getQuantity();
-                    initialize({"(" + target.text + " + 64'd" + std::to_string(offset) + ")", base.getType(), true}, list->getInit(n++));
+                    initialize({"(" + target.text + " + " + addressLiteral(offset) + ")", base.getType(), true}, list->getInit(n++));
                 }
                 for (auto* field : record->fields()) {
                     if (n == list->getNumInits()) break;
                     if (field->getType()->isReferenceType()) {
                         Value ref = reference(expression(list->getInit(n++)));
                         unsigned offset = ctx.getASTRecordLayout(record).getFieldOffset(field->getFieldIndex()) / 8;
-                        store({"(" + target.text + " + 64'd" + std::to_string(offset) + ")", ctx.VoidPtrTy, true}, {ref.text, ctx.VoidPtrTy});
+                        store({"(" + target.text + " + " + addressLiteral(offset) + ")", ctx.VoidPtrTy, true}, {ref.text, ctx.VoidPtrTy});
                     } else initialize(member(target, field), list->getInit(n++));
                 }
             } else if (list->getNumInits() == 1) initialize(target, list->getInit(0));
@@ -675,7 +681,7 @@ class Scheduler {
             for (const auto& base : record->bases()) {
                 if (base.isVirtual()) reject(nullptr, "virtual constant base");
                 auto offset = ctx.getASTRecordLayout(record).getBaseClassOffset(base.getType()->getAsCXXRecordDecl()).getQuantity();
-                initializeConstant({"(" + target.text + " + 64'd" + std::to_string(offset) + ")", base.getType(), true}, value.getStructBase(i++));
+                initializeConstant({"(" + target.text + " + " + addressLiteral(offset) + ")", base.getType(), true}, value.getStructBase(i++));
             }
             i = 0;
             for (const auto* field : record->fields()) {
@@ -688,7 +694,7 @@ class Scheduler {
             auto element = ctx.getAsConstantArrayType(target.type)->getElementType();
             for (unsigned i = 0; i < value.getArraySize(); ++i) {
                 const auto& item = i < value.getArrayInitializedElts() ? value.getArrayInitializedElt(i) : value.getArrayFiller();
-                initializeConstant({"(" + target.text + " + 64'd" + std::to_string(i * bytes(element)) + ")", element, true}, item);
+                initializeConstant({"(" + target.text + " + " + addressLiteral(i * bytes(element)) + ")", element, true}, item);
             }
             return;
         }
@@ -728,7 +734,7 @@ class Scheduler {
             Value result = slot(type);
             store(result, {"'0", type});
             for (unsigned i = 0; i < key.size(); ++i)
-                store({"(" + result.text + " + 64'd" + std::to_string(i) + ")", ctx.CharTy, true},
+                store({"(" + result.text + " + " + addressLiteral(i) + ")", ctx.CharTy, true},
                     {std::to_string(static_cast<unsigned char>(key[i])), ctx.CharTy});
             return result;
         }
@@ -795,8 +801,8 @@ class Scheduler {
                 }
                 std::string addr = pointer ? read(sub) : sub.text;
                 if (!offset) return {addr, type, !pointer};
-                std::string adjusted = "(" + addr + (downcast ? " - 64'd" : " + 64'd") + std::to_string(offset) + ")";
-                if (pointer && offset) adjusted = "(" + addr + " == 0 ? 64'd0 : " + adjusted + ")";
+                std::string adjusted = "(" + addr + (downcast ? " - " : " + ") + addressLiteral(offset) + ")";
+                if (pointer && offset) adjusted = "(" + addr + " == 0 ? " + addressLiteral(0) + " : " + adjusted + ")";
                 return {adjusted, type, !pointer};
             }
             case CK_ToVoid: return {"0", ctx.VoidTy};
@@ -809,7 +815,7 @@ class Scheduler {
         }
         if (auto* index = dyn_cast<ArraySubscriptExpr>(expr)) {
             Value base = capture(expression(index->getBase())), i = expression(index->getIdx());
-            return {"(" + read(base) + " + 64'(" + read(i) + ") * 64'd" + std::to_string(bytes(type)) + ")", type, true};
+            return {addressCast("(" + read(base) + " + " + addressCast(read(i)) + " * " + addressLiteral(bytes(type)) + ")"), type, true};
         }
         if (auto* unary = dyn_cast<UnaryOperator>(expr)) {
             Value sub = expression(unary->getSubExpr());
@@ -817,7 +823,7 @@ class Scheduler {
             if (unary->getOpcode() == UO_Deref) return {read(sub), type, true};
             if (unary->isIncrementDecrementOp()) {
                 auto old = read(sub); unsigned step = type->isPointerType() ? bytes(type->getPointeeType()) : 1;
-                std::string value = "(" + old + (unary->isIncrementOp() ? " + " : " - ") + std::to_string(step) + ")";
+                std::string value = "(" + old + (unary->isIncrementOp() ? " + " : " - ") + (type->isPointerType() ? addressLiteral(step) : std::to_string(step)) + ")";
                 store(sub, {value, type});
                 return unary->isPostfix() ? Value{old, type} : sub;
             }
@@ -849,10 +855,17 @@ class Scheduler {
             if (binary->isCompoundAssignmentOp()) op.pop_back();
             bool pointer = lhs.type->isPointerType();
             if (pointer && !rhs.type->isPointerType() && (op == "+" || op == "-"))
-                b = "(64'(" + b + ") * 64'd" + std::to_string(bytes(lhs.type->getPointeeType())) + ")";
+                b = "(" + addressCast(b) + " * " + addressLiteral(bytes(lhs.type->getPointeeType())) + ")";
+            if (!pointer && rhs.type->isPointerType() && op == "+")
+                a = "(" + addressCast(a) + " * " + addressLiteral(bytes(rhs.type->getPointeeType())) + ")";
             if (op == ">>" && lhs.type->isSignedIntegerType()) op = ">>>";
             std::string result = "(" + a + " " + op + " " + b + ")";
-            if (pointer && rhs.type->isPointerType() && op == "-") result = "($signed(" + result + ") / 64'd" + std::to_string(bytes(lhs.type->getPointeeType())) + ")";
+            if (pointer && rhs.type->isPointerType() && op == "-") {
+                // Subtract zero-extended addresses as signed values, so a negative
+                // ptrdiff_t is preserved even when pointers are narrower than it.
+                auto width = std::to_string(std::max(bits(type), addressWidth) + 1);
+                result = "(($signed(" + width + "'({1'b0, " + a + "})) - $signed(" + width + "'({1'b0, " + b + "}))) / " + width + "'sd" + std::to_string(bytes(lhs.type->getPointeeType())) + ")";
+            }
             if (binary->isCompoundAssignmentOp()) { store(lhs, {result, type}); return lhs; }
             return {castTo(type, result), type};
         }
@@ -1007,6 +1020,8 @@ public:
             const auto& args = specialization->getTemplateArgs();
             if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
             if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");
+            if (args.size() > 2) addressWidth = args[2].getAsIntegral().getLimitedValue();
+            if (addressWidth < 8 || addressWidth > 64) reject(nullptr, "ADDRESS_BITS must be in 8..64");
         }
         const FieldDecl* object = nullptr;
         for (auto* field : wrapper->fields()) if (field->getName() == "object") object = field;
@@ -1072,6 +1087,8 @@ public:
         };
         unsigned heapBase = (highWater + 15) & ~15u;
         unsigned memoryBytes = heapBase + (heap ? 4096 : 0);
+        if (addressWidth < 64 && uint64_t(memoryBytes) >= (uint64_t(1) << addressWidth))
+            reject(nullptr, "clocked storage and its end address do not fit ADDRESS_BITS");
         std::ostringstream out;
         out << "// AST clocked instantiation. No compiler IR or external compiler invocation.\n";
         out << "// Shared schedule: " << blocks.size() << " blocks, " << shared.functions.size() << " function bodies\n";
@@ -1093,7 +1110,7 @@ public:
     output wire [31:0] fault_out
 );
 )SV";
-        out << symbols.str();
+        out << "  localparam int ADDR_BITS = " << addressWidth << ";\n" << symbols.str();
         out << "  localparam int MEM_BYTES = " << memoryBytes << ";\n"
             << "  localparam int INDEX_BITS = $clog2(MEM_BYTES);\n"
             << "  localparam int STATE_BITS = $clog2(" << std::max(size_t(2), blocks.size()) << ");\n"
@@ -1101,13 +1118,14 @@ public:
             << "  storage_t storage, storage_reg;\n"
             << "  logic [" << blocks.size() - 1 << ":0] active;\n"
             << "  logic [31:0] phase, phase_reg, fault, fault_reg;\n"
-            << "  logic [63:0] result, result_reg, heap_next, heap_next_reg;\n"
+            << "  logic [63:0] result, result_reg;\n"
+            << "  logic [ADDR_BITS-1:0] heap_next, heap_next_reg;\n"
             << "  logic pending, pending_reg, booting, booting_reg;\n";
         // These are independent combinational source values, not an aggregate
         // data object. Avoid huge unused struct comparison operators in host RTL.
         for (const auto& name : usedValues) if (name.find('.') != std::string::npos)
             out << "  logic [" << blockSymbols.at(name).width - 1 << ":0] " << signalName(name) << ";\n";
-        out << "  typedef struct {\n";
+        out << "  typedef struct packed {\n";
         for (const auto& [address, object] : objects) if (clockedValues.count("values." + object.name))
             out << "    logic [" << bits(object.type) - 1 << ":0] " << object.name << ";\n";
         out << "    logic unused_bit;\n  } clocked_values_t;\n  clocked_values_t values_reg;\n";
@@ -1119,12 +1137,13 @@ public:
                 << "  function static void " << body.name << "(\n";
             if (body.combinational) out << "    inout storage_t storage,\n"
                 << "    inout logic [31:0] fault,\n"
-                << "    inout logic [63:0] heap_next,\n"
+                << "    inout logic [ADDR_BITS-1:0] heap_next,\n"
                 << "    input logic [31:0] operation_in, index_in, value_in";
             else out << "    inout storage_t storage,\n"
                 << "    input logic [31:0] operation_in, index_in, value_in,\n"
                 << "    inout logic [31:0] phase, fault,\n"
-                << "    inout logic [63:0] result, heap_next,\n"
+                << "    inout logic [63:0] result,\n"
+                << "    inout logic [ADDR_BITS-1:0] heap_next,\n"
                 << "    inout logic pending, booting,\n"
                 << "    inout logic [" << blocks.size() - 1 << ":0] active,\n"
                 << "    input logic [31:0] next_block, else_block";
@@ -1199,14 +1218,19 @@ bool isClocked(const clang::CXXRecordDecl* record) {
     return false;
 }
 std::string clockedName(const clang::CXXRecordDecl* record, const std::string& base) {
+    std::string name = base;
     if (auto* specialization = dyn_cast<ClassTemplateSpecializationDecl>(record)) {
         const auto& args = specialization->getTemplateArgs();
         if (args.size() > 1 && args[1].getKind() == TemplateArgument::Integral) {
             auto bound = args[1].getAsIntegral().getLimitedValue();
-            if (bound) return base + "_R" + std::to_string(bound);
+            if (bound) name += "_R" + std::to_string(bound);
+        }
+        if (args.size() > 2 && args[2].getKind() == TemplateArgument::Integral) {
+            auto width = args[2].getAsIntegral().getLimitedValue();
+            if (width != 64) name += "_A" + std::to_string(width);
         }
     }
-    return base;
+    return name;
 }
 bool exportClocked(const clang::CXXRecordDecl* record, cpphdl::Module& module) {
     try {

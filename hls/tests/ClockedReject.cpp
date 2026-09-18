@@ -9,6 +9,9 @@ struct MutableConstant { mutable uint32_t value; };
 constexpr MutableConstant mutableConstant{7};
 #endif
 struct UnsupportedMethods {
+#if HLS_REJECT == 12
+    uint8_t too_large[300];
+#endif
 #if HLS_REJECT == 3
     volatile uint32_t device;
 #endif
@@ -41,6 +44,12 @@ class UnsupportedTop : public cpphdl::Module {
 public:
 #if HLS_REJECT == 9
     cpphdl::hls::Clocked<UnsupportedMethods, 17> worker;
+#elif HLS_REJECT == 12
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 8> worker;
+#elif HLS_REJECT == 13
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 0> worker;
+#elif HLS_REJECT == 14
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 65> worker;
 #else
     cpphdl::hls::Clocked<UnsupportedMethods> worker;
 #endif

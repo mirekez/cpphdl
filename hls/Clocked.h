@@ -6,12 +6,13 @@ namespace cpphdl::hls {
 
 // The native wrapper is a transaction reference; the AST pass schedules the
 // actual object methods for RTL. T is not itself required to be an RTL module.
-template<class T, unsigned MAX_RECURSION = 0>
+template<class T, unsigned MAX_RECURSION = 0, unsigned ADDRESS_BITS = 64>
 class
 #ifdef __clang__
 [[clang::annotate("CPPHDL_HLS_CLOCKED")]]
 #endif
 Clocked : public cpphdl::Module {
+    static_assert(ADDRESS_BITS >= 8 && ADDRESS_BITS <= 64, "ADDRESS_BITS must be in 8..64");
 public:
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;

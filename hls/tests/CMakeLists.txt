@@ -26,7 +26,8 @@ endfunction()
 add_clocked_test(Recursion)
 add_clocked_test(Reuse)
 add_clocked_test(Bindings)
-foreach(case RANGE 0 11)
+add_clocked_test(Address)
+foreach(case RANGE 0 14)
     add_test(NAME hls_clocked_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/clocked-reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"

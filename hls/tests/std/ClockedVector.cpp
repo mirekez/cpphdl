@@ -33,7 +33,7 @@ struct VectorMethods {
 
 class ClockedVectorTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<VectorMethods> worker;
+    cpphdl::hls::Clocked<VectorMethods, 0, 16> worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

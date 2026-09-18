@@ -68,7 +68,7 @@ struct MapMethods {
 
 class ClockedMapTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<MapMethods, 8> worker;
+    cpphdl::hls::Clocked<MapMethods, 8, 32> worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

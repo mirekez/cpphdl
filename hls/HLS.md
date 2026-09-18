@@ -215,7 +215,7 @@ allocation and memory-operation lowering. The libc++ `std::map` example also
 uses only installed headers. Bounded aligned allocation and C++17 returned-object
 construction preserve the library's temporary node-owner semantics.
 
-Tree clearing recursively visits subtrees. `Clocked<MapMethods, 8>` explicitly
+Tree clearing recursively visits subtrees. `Clocked<MapMethods, 8, 32>` explicitly
 permits up to eight simultaneously active calls of the same concrete function.
 The scheduler unfolds these calls into separately named depth-specific values and nonrecursive
 SV blocks. A call beyond the bound produces `fault_out == 5`, not a successful
@@ -226,6 +226,34 @@ terminal/base-case invocation. It is not a bound on the number of map elements.
 Different bounds produce distinct module names, such as `_R2` and `_R4`, so
 both can appear in the same parent. The native transaction reference does not
 enforce this hardware bound.
+
+### Select the hardware address width
+
+The third template argument selects the address width for a clocked object:
+
+```cpp
+cpphdl::hls::Clocked<VectorMethods, 0, 16> vector_worker;
+cpphdl::hls::Clocked<MapMethods, 8, 32> map_worker;
+```
+
+`Clocked<T, MAX_RECURSION, ADDRESS_BITS>` accepts address widths from 8 to 64;
+the default is 64. The Vector example uses 16 bits and the Map example uses
+32 bits. This controls pointer signals, address constants and arithmetic,
+storage-helper address arguments, and the allocation cursor. It does not
+narrow integer payloads: `uint64_t` values and command results remain 64 bits.
+Two instances with different widths generate distinct modules (`_A16`, `_A32`).
+
+Conversion rejects a width that cannot represent the complete storage layout
+and its end address, including the heap when allocation is used. This option
+does not resize that heap or select SRAM instead of register-backed storage.
+
+Clang's source object layout is preserved: field offsets, `sizeof`, and pointer
+slots in aggregates still follow the parsing target's ABI. Narrow pointers
+are zero-extended when stored in those slots and narrowed on read. `size_t`,
+`ptrdiff_t`, and ordinary integers retain their C++ widths. This avoids changing
+container layout or truncating payloads merely to reduce address wiring.
+The native C++ reference continues to use host pointers; the width applies to
+generated RTL, not the host ABI.
 
 Clocked RTL tests use Verilator's `-fno-inline-funcs` option to retain shared
 function bodies during model compilation. The functions pass their state
@@ -306,6 +334,11 @@ It also verifies that no LLVM `.ll` files were generated.
   const receiver methods. Additional cases cover anonymous members and reference
   initialization, C++17 returned-object elision, named and alternate return paths,
   destructor timing, and aligned allocation followed by placement construction.
+- Address widths: Vector and Bindings run with 16-bit addresses, Map with
+  32-bit addresses, and legacy examples retain the 64-bit default. The Address
+  test instantiates the same methods at 16 and 32 bits, checking pointer fields,
+  pointers retained across loop clocks, positive/negative pointer differences,
+  and 64-bit payloads. Conversion rejects invalid widths and oversized layouts.
 - Library selection: native compile/link/run with libc++, and converter header
   selection through both `-stdlib=libc++` and explicit `-nostdinc++` paths.
   A compile-time guard rejects mixed libc++/libstdc++ headers.
