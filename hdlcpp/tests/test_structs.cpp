@@ -1060,6 +1060,7 @@ endmodule
     expectContains(h, "struct trace_t");
     expectContains(h, "iwidth");
     expectContains(h, "packed.template slice<");
+    expectContains(h, "cpphdl::sv_insert_field<");
     expectNotContains(h, "logic<iwidth>(packed.bits(");
     expectNotContains(h, "logic<128>(packed.bits(");
     expectNotContains(h, "logic<64> pack() const");

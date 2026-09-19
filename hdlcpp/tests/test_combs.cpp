@@ -559,6 +559,33 @@ static void testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration()
     });
 }
 
+static void testScopedPackedFieldProjection()
+{
+    const std::vector<std::string> lines = {
+        "for (unsigned index = 0; index < Count; ++index) {",
+        "{",
+        "auto __cpphdl_elem = unpack(next[index]);",
+        "__cpphdl_elem.payload.addr = address_i[index];",
+        "next[index] = __cpphdl_elem;",
+        "}",
+        "if (ready_i[index]) {",
+        "{",
+        "auto __cpphdl_elem = unpack(next[index]);",
+        "__cpphdl_elem.valid = valid_i[index];",
+        "next[index] = __cpphdl_elem;",
+        "}",
+        "}",
+        "}"
+    };
+    const auto projection = hdlcpp::extractProjectedArrayFieldCombLines(
+        lines, "next", "payload.addr", "address");
+    expectVector(projection, {
+        "for (unsigned index = 0; index < Count; ++index) {",
+        "address[index] = address_i[index];",
+        "}"
+    });
+}
+
 static void testPackedTreeCombAliasesPreserveLoopDependency()
 {
     const std::vector<std::string> headers = {
@@ -608,8 +635,101 @@ static void testSwitchLabelsSurviveTargetExtraction()
     });
 }
 
+static void testSlicedSwitchDoesNotRetainHandshakeDependency()
+{
+    const std::vector<std::string> lines = {
+        "response.valid = 0;",
+        "switch (state) {",
+        "case READ: {",
+        "    response.valid = 1;",
+        "    if (ready()) {",
+        "        switch (burst) {",
+        "        case FIXED: case INCR: {",
+        "            count = count + 1;",
+        "            break;",
+        "        }",
+        "        default: {",
+        "            count = 0;",
+        "            break;",
+        "        }",
+        "        }",
+        "    }",
+        "    break;",
+        "}",
+        "default: {",
+        "    break;",
+        "}",
+        "}",
+    };
+    const auto projected = hdlcpp::extractTargetFieldCombLines(
+        lines, "response", "valid", "valid", "");
+    for (const auto& line : projected) {
+        assert(line.find("ready()") == std::string::npos);
+        assert(line.find("burst") == std::string::npos);
+    }
+    assert(std::find(projected.begin(), projected.end(), "switch (state) {") != projected.end());
+    assert(std::find(projected.begin(), projected.end(), "default: {") != projected.end());
+
+    auto scalar = lines;
+    for (auto& line : scalar) {
+        line = hdlcpp::replaceIdentifier(line, "response", "valid");
+        const auto field = line.find("valid.valid");
+        if (field != std::string::npos) line.replace(field, 11, "valid");
+    }
+    const auto sliced = hdlcpp::extractTargetCombLines(scalar, {"valid", "count"}, "valid");
+    for (const auto& line : sliced) {
+        assert(line.find("ready()") == std::string::npos);
+        assert(line.find("burst") == std::string::npos);
+    }
+    auto array = lines;
+    for (auto& line : array) {
+        const auto field = line.find("response.valid");
+        if (field != std::string::npos) line.replace(field, 14, "response[0].valid");
+    }
+    const auto arrayProjection = hdlcpp::extractProjectedArrayFieldCombLines(
+        array, "response", "valid", "valid");
+    assert(!arrayProjection.empty());
+    for (const auto& line : arrayProjection) {
+        assert(line.find("ready()") == std::string::npos);
+        assert(line.find("burst") == std::string::npos);
+    }
+    const std::vector<std::string> defaultAssignment = {
+        "switch (selector) {",
+        "case 1: {",
+        "    break;",
+        "}",
+        "default: {",
+        "    target = 1;",
+        "    break;",
+        "}",
+        "}",
+    };
+    expectVector(hdlcpp::extractTargetCombLines(defaultAssignment, {"target"}, "target"),
+                 defaultAssignment);
+    assert(hdlcpp::hasRetainedCombBody("switch (selector) {", {"case 1: target = 1;"}));
+    assert(hdlcpp::hasRetainedCombBody("switch (selector) {", {"continue;"}));
+}
+
+static void testProjectedArrayFieldReadsRemainLocal()
+{
+    assert(hdlcpp::localizeProjectedArrayFieldReads("projected[0] = next[1].valid;", "next", "valid", "projected") ==
+           "projected[0] = projected[1];");
+    assert(hdlcpp::localizeProjectedArrayFieldReads("if (!next[index].valid) {", "next", "data", "projected") ==
+           "if (!next[index].valid) {");
+    assert(hdlcpp::localizeProjectedArrayFieldReads("projected[0] = (next[1]).data;", "next", "data", "projected") ==
+           "projected[0] = projected[1];");
+    assert(hdlcpp::localizeProjectedArrayFieldReads("projected[0] = next[next[0].index].valid;", "next", "valid", "projected") ==
+           "projected[0] = projected[next[0].index];");
+    const auto fieldSlice = hdlcpp::extractProjectedArrayFieldCombLines({
+        "([&]() { auto __cpphdl_elem = unpack(next[index]); __cpphdl_elem.valid = input; next[index] = __cpphdl_elem; }());",
+        "next[0].data = next[1].data;"
+    }, "next", "valid", "projected");
+    expectVector(fieldSlice, {"projected[index] = input;"});
+}
+
 int main()
 {
+    testProjectedArrayFieldReadsRemainLocal();
     testStandaloneIndependent();
     testTangledComb();
     testLocalRewriteDoesNotTouchMemberField();
@@ -633,7 +753,9 @@ int main()
     testIndexedNestedMemberProjectionFromWholeAggregateAssignment();
     testWholeArrayElementProjectionSelectsFromCompleteExpression();
     testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration();
+    testScopedPackedFieldProjection();
     testPackedTreeCombAliasesPreserveLoopDependency();
     testSwitchLabelsSurviveTargetExtraction();
+    testSlicedSwitchDoesNotRetainHandshakeDependency();
     return 0;
 }

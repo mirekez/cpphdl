@@ -17,6 +17,10 @@ for mode in --optimize-combs --optimize-combs-l1; do
     # Demand real lowering, not a passing comparison of two untouched models.
     search_q 'sv_assign_bit\(n0.result_comb,' "$build_dir"/*.cpp
     search_q 'sv_assign_bit\(n0.wide_comb,' "$build_dir"/*.cpp
+    search_q '__cpphdl_bit_target = n0.decoder_comb\[' "$build_dir"/*.cpp
+    search_q '__cpphdl_bit_target = n0.packed_wide_comb\[' "$build_dir"/*.cpp
+    search_q '__cpphdl_bit_target = n0.nested_comb\[' "$build_dir"/*.cpp
+    search_q '__cpphdl_bit_target = n0.unpacked_comb\[' "$build_dir"/*.cpp
     search_q '"; n0.result_comb\[1\] = 1;"' "$build_dir"/*.cpp
     for optimization in -O0 -O2; do
         g++ -std=c++23 "$optimization" -g0 -w -I"$build_dir" -I"$source_dir" \

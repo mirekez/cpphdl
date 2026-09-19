@@ -819,13 +819,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (cpphdl_is_comb_func_name(value)) {
                 return indent_str + prefix + cpphdl_comb_func_signal_name(value) + suffix;
             }
-            if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
+            if (currModule && sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
                 return indent_str + prefix + escapeIdentifier(value) + suffix;
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
             if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
-                && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // Port struct
+                && (isMemberName(base) || interface)) {  // Port struct
 
                 if (isModuleClockLifecycleMethod(member)) {  // child clock blocks call their own lifecycle methods
                     return "";
@@ -893,7 +893,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
-            if (base != "_this" && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // we compare full string because Pack can add "tuple_N"
+            // Type expressions can be rendered before a module is selected.
+            // Only flatten an actual module member, not an ordinary struct field.
+            if (base != "_this" && (isMemberName(base) || interface)) {
                 delim = "__";
                 if (interface && str_ending(base, "_out")) {  // for Port structs
                     if (str_ending(member, "_out")) {

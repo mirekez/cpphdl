@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cpphdl_comb_proof.h"
+
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned uint32_t;
@@ -90,6 +92,9 @@ struct has_bits_method<T, std::void_t<decltype(std::declval<const T&>().bits(siz
 
 template<typename T, typename V>
 constexpr void sv_assign_field(T& dst, const V& value);
+
+template<typename Target, typename Source>
+constexpr Target convert_packed(const Source& source);
 
 // Aggregate assignment reaches these overloads before their later definitions.
 // Without declarations, dependent lookup misses packed and standard arrays.
@@ -252,6 +257,16 @@ constexpr T operator^(T lhs, const logic<WIDTH>& rhs)
     return static_cast<T>(static_cast<uint64_t>(lhs) ^ static_cast<uint64_t>(rhs));
 }
 
+namespace detail
+{
+template<typename T, typename = void>
+struct is_sv_unpacked_array : std::false_type {};
+
+template<typename T>
+struct is_sv_unpacked_array<T, std::void_t<typename T::value_type,
+    decltype(T::COUNT_VALUE), decltype(T::PACKED)>> : std::bool_constant<!T::PACKED> {};
+}
+
 template<typename T, typename = void>
 struct type_width_value
 {
@@ -261,7 +276,14 @@ struct type_width_value
 template<typename T>
 struct type_width_value<T, std::void_t<decltype(T::_size_bits())>>
 {
-    static constexpr size_t value = T::_size_bits();
+    static constexpr size_t value = [] {
+        if constexpr (detail::is_sv_unpacked_array<T>::value) {
+            return T::COUNT_VALUE * type_width_value<typename T::value_type>::value;
+        }
+        else {
+            return T::_size_bits();
+        }
+    }();
 };
 
 template<size_t WIDTH>
@@ -273,7 +295,8 @@ struct type_width_value<logic<WIDTH>, void>
 template<typename T, size_t N, bool PACKED>
 struct type_width_value<array<N, T, PACKED>, void>
 {
-    static constexpr size_t value = array<N, T, PACKED>::_size_bits();
+    static constexpr size_t value = PACKED ? array<N, T, PACKED>::_size_bits()
+                                          : N * type_width_value<T>::value;
 };
 
 template<typename T>
@@ -285,10 +308,23 @@ constexpr size_t type_width()
 template<size_t WIDTH, typename T>
 constexpr logic<WIDTH> pack_value(const T& value)
 {
+    // SV bit-vector conversions use logical element widths, not the byte stride
+    // of addressable C++ array storage (also inherited by array registers).
+    if constexpr (detail::is_sv_unpacked_array<T>::value) {
+        constexpr size_t elementWidth = type_width<typename T::value_type>();
+        logic<type_width<T>()> packed = 0;
+        if constexpr (elementWidth != 0) {
+            for (size_t index = 0; index < T::COUNT_VALUE; ++index) {
+                packed.bits((index + 1) * elementWidth - 1, index * elementWidth) =
+                    pack_value<elementWidth>(value[index]);
+            }
+        }
+        return logic<WIDTH>(packed);
+    }
     // Packed-array element proxies are addressable views, not scalar integers.
     // Falling through a uint64_t conversion truncated proxy values wider than 64 bits.
     // Convert logic directly and proxy views through their declared element width.
-    if constexpr (detail::has_pack_method<T>::value) {
+    else if constexpr (detail::has_pack_method<T>::value) {
         return logic<WIDTH>(value.pack());
     }
     else if constexpr (is_logic_v<T> || is_logic_bits_v<T>) {
@@ -306,11 +342,60 @@ constexpr logic<WIDTH> pack_value(const T& value)
     }
 }
 
+// Packed field bounds are known after elaboration. Write the source directly,
+// rather than constructing a parent-width slice, reading it, then writing back.
+template<size_t First, size_t Width, size_t Total>
+__attribute__((always_inline)) constexpr void sv_insert_field(
+    logic<Total>& destination, const logic<Width>& value)
+{
+    static_assert(First <= Total && Width <= Total - First);
+    if constexpr (Width == 0) return;
+    constexpr size_t shift = First % 8;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    if constexpr (Width != 0 && Width + shift <= 64) {
+        if (!detail::is_constant_evaluated_compat()) {
+            constexpr size_t bytes = (Width + shift + 7) / 8;
+            constexpr uint64_t mask = (~uint64_t{0} >> (64 - Width)) << shift;
+            uint64_t word = 0;
+            std::memcpy(&word, destination.bytes + First / 8, bytes);
+            word = (word & ~mask) | ((uint64_t(value) << shift) & mask);
+            std::memcpy(destination.bytes + First / 8, &word, bytes);
+            return;
+        }
+    }
+#endif
+    for (size_t byte = First / 8; byte < (First + Width + 7) / 8; ++byte) {
+        const size_t begin = byte * 8 < First ? First - byte * 8 : 0;
+        const size_t end = First + Width < byte * 8 + 8 ? First + Width - byte * 8 : 8;
+        const unsigned mask = ((1u << (end - begin)) - 1u) << begin;
+        const size_t source = byte * 8 + begin - First;
+        uint16_t pair = value.bytes[source / 8];
+        if (source / 8 + 1 < logic<Width>::SIZE) {
+            pair |= static_cast<uint16_t>(value.bytes[source / 8 + 1]) << 8;
+        }
+        destination.bytes[byte] = static_cast<uint8_t>((destination.bytes[byte] & ~mask) |
+            (((pair >> (source % 8)) << begin) & mask));
+    }
+}
+
 template<typename T, size_t WIDTH>
 constexpr T unpack_value(const logic<WIDTH>& value)
 {
     T out{};
-    if constexpr (std::is_assignable_v<T&, logic<WIDTH>>) {
+    // Invert pack_value rather than array's raw-storage assignment operator.
+    // In particular, an eleven-bit struct must advance eleven bits, not sizeof(T).
+    if constexpr (detail::is_sv_unpacked_array<T>::value) {
+        using element_type = typename T::value_type;
+        constexpr size_t elementWidth = type_width<element_type>();
+        const logic<type_width<T>()> packed = value;
+        if constexpr (elementWidth != 0) {
+            for (size_t index = 0; index < T::COUNT_VALUE; ++index) {
+                out[index] = unpack_value<element_type>(logic<elementWidth>(
+                    packed.bits((index + 1) * elementWidth - 1, index * elementWidth)));
+            }
+        }
+    }
+    else if constexpr (std::is_assignable_v<T&, logic<WIDTH>>) {
         out = value;
     }
     else if constexpr (std::is_constructible_v<T, logic<WIDTH>>) {
@@ -323,6 +408,33 @@ constexpr T unpack_value(const logic<WIDTH>& value)
         out = 0;
     }
     return out;
+}
+
+namespace detail {
+template<typename Target, typename Source, typename = void>
+struct compatible_generated_layout : std::false_type {};
+
+template<typename Target, typename Source>
+struct compatible_generated_layout<Target, Source,
+    std::void_t<decltype(Target::template __hdlcpp_layout_compatible<Source>())>>
+    : std::bool_constant<generated_layout<Target>::value && generated_layout<Source>::value &&
+                        Target::template __hdlcpp_layout_compatible<Source>()> {};
+}
+
+// Equal-width bit vectors are not enough: fields must match in name, offset
+// and width. All unproved layouts (including unions and custom packers) retain
+// the original pack/unpack semantics. Keep this fallback usable in C++17.
+template<typename Target, typename Source>
+constexpr Target convert_packed(const Source& source)
+{
+    if constexpr (detail::compatible_generated_layout<Target, Source>::value) {
+        if constexpr (std::is_same_v<Target, Source> && detail::native_packed_element<Target>::value)
+            return source;
+        Target result{};
+        result.__hdlcpp_assign_layout(source);
+        return result;
+    }
+    else return unpack_value<Target>(pack_value<type_width<Target>()>(source));
 }
 
 // Generated expressions shift packed structs as their SystemVerilog bit vectors.
@@ -463,8 +575,10 @@ constexpr void sv_assign_field(std::array<T, N>& dst, const V& value)
 // Keep narrow values in native words and touch only one byte of wide values.
 // Type dispatch happens in C++, not by guessing a template's printed name in
 // the scheduler; wrappers and array elements retain their assignment semantics.
+// Keep this small lowering primitive at the callsite so known proxy offsets and
+// bounds disappear, rather than making the parent escape into an opaque call.
 template<typename Target, typename Value>
-constexpr void sv_assign_bit(Target& target, size_t index, Value&& value)
+__attribute__((always_inline)) constexpr void sv_assign_bit(Target& target, size_t index, Value&& value)
 {
     if constexpr (is_logic_v<Target> && !std::is_const_v<Target>) {
         cpphdl_assert(index < Target::_size_bits(), "wrong bitnum");
@@ -484,6 +598,21 @@ constexpr void sv_assign_bit(Target& target, size_t index, Value&& value)
 #endif
         }
         target.set(index, bit);
+    }
+    else if constexpr (detail::is_array_packed_ref<std::remove_cv_t<Target>>::value &&
+                       !std::is_const_v<Target>) {
+        using element_type = typename detail::is_array_packed_ref<Target>::element_type;
+        if constexpr (is_logic_v<element_type>) {
+            // A packed element already identifies its parent and bit offset.
+            // Write that store directly, without constructing another slice or
+            // depending on the host compiler to inline generic writeback loops.
+            cpphdl_assert(index < element_type::_size_bits(), "wrong packed array element bit range");
+            sv_assign_bit(*target.ref.parent, target.ref.first + index,
+                          std::forward<Value>(value));
+        }
+        else {
+            target[index] = std::forward<Value>(value);
+        }
     }
     else {
         target[index] = std::forward<Value>(value);

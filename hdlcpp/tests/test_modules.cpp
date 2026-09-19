@@ -1037,7 +1037,7 @@ endmodule
     expectContains(h, "memory<logic<8>,1,2> mem_q;");
     expectContains(h, "mem_q.apply();");
     expectContains(h, "scalar_q._next = scalar_q;");
-    expectContains(h, "mem_q[(unsigned)((uint64_t)(((uint64_t)(1)");
+    expectContains(h, "mem_q[(unsigned)(1ull)]");
     expectNotContains(h, "mem_q._next");
     expectContains(h, "= d_i_in();");
     expectContains(h, "scalar_q._next = d_i_in();");
@@ -1426,7 +1426,8 @@ endmodule
 
     auto h = convertModule(argv0, "runtime_range_concat", sv, "");
     expectContains(h, "cpphdl::sv_bits_runtime");
-    expectContains(h, "__cpphdl_cat_append");
+    expectContains(h, "__cpphdl_cat_part_width");
+    expectNotContains(h, "__cpphdl_cat_append");
     expectNotContains(h, "cpphdl::sv_bits<((uint64_t)(Levels)");
     expectNotContains(h, "cpphdl::pack_value<((uint64_t)(Levels)");
 }
@@ -1485,8 +1486,10 @@ endmodule
         "packed_struct_array_field_conditional\toutput_field.entries_o.value\n";
     auto h = convertModule(argv0, "packed_struct_array_field_conditional", sv,
                            "", "", "", "", moduleParams, portTypes, "", moduleTraits);
-    expectContains(h, "auto __cpphdl_elem = cpphdl::unpack_value<entry_t>");
-    expectContains(h, "__cpphdl_elem.value = select_i_in() ? logic<32>(left_i_in()) : logic<32>(right_i_in())");
+    expectContains(h, "auto __cpphdl_elem = cpphdl::convert_packed<entry_t>");
+    expectContains(h, "__cpphdl_elem.value = select_i_in() ?");
+    expectContains(h, "logic<32>(left_i_in())");
+    expectContains(h, "logic<32>(right_i_in())");
     expectNotContains(h, "decltype(entries_o[i].value)");
     expectNotContains(h, "decltype(entries_o._next[i].value)");
 }
@@ -1717,7 +1720,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "indexed_reg_pattern_alias", sv, "");
-    expectContains(h, "entries_q._next[(unsigned)");
+    expectContains(h, "entries_q._next[1ull]");
     expectContains(h, "] = entry_t{ valid_i_in(), tag_i_in() };");
     expectNotContains(h, "] = entry_array_t{ .valid");
     expectNotContains(h, "] = array<2,entry_t>{ .valid");
@@ -1814,7 +1817,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "sized_cast_width_expr", sv, "");
-    expectContains(h, "logic<((uint64_t)(XLEN)");
+    expectContains(h, "logic<uint64_t(XLEN)>(FLAG)");
     expectNotContains(h, "XLEN'(");
     expectNotContains(h, "decltype(XLEN'");
     expectNotContains(h, ".XLEN'(");
@@ -1931,7 +1934,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "type_template_cast", sv, "");
-    expectContains(h, "using __cpphdl_cast_t = data_t;");
+    expectContains(h, "__hdlcpp_assignment_cast<");
     expectNotContains(h, "logic<(uint64_t)(data_t)>");
 }
 
@@ -2658,7 +2661,7 @@ endmodule
     auto h = convertModule(argv0, "array_logic_to_struct_child", sv, "");
     expectContains(h, "_LAZY_COMB(__port_bind_child_i_vals_i_in_unpacked_array_comb, std::remove_cvref_t<decltype(child_i.vals_i_in())>)");
     expectContains(h, "using __cpphdl_target_array_t = std::remove_cvref_t<decltype(child_i.vals_i_in())>;");
-    expectContains(h, "__port_bind_child_i_vals_i_in_unpacked_array_comb[__cpphdl_i] = cpphdl::unpack_value<__cpphdl_target_elem_t>");
+    expectContains(h, "__port_bind_child_i_vals_i_in_unpacked_array_comb[__cpphdl_i] = cpphdl::convert_packed<__cpphdl_target_elem_t>");
     expectContains(h, "auto __cpphdl_src = vals_i_in();");
     expectNotContains(h, "array<2,logic<64>> __port_bind_child_i_vals_i_in_unpacked_array_comb;");
     expectNotContains(h, "auto __cpphdl_src = std::remove_cvref_t<decltype(child_i.vals_i_in())>(vals_i_in());");
@@ -2788,7 +2791,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "array_output_scalar_parent", sv, "");
-    expectContains(h, "entry_comb = cpphdl::unpack_value<entry_t>(cpphdl::pack_value<cpphdl::type_width<entry_t>()>(child_i.data_o_out()));");
+    expectContains(h, "cpphdl::sv_assign_field(entry_comb, cpphdl::convert_packed<entry_t>(child_i.data_o_out()));");
     expectNotContains(h, "child_i.data_o_out()[0]");
     expectNotContains(h, "entry_comb = child_i.data_o_out();");
 }
@@ -3323,6 +3326,27 @@ endmodule
     auto h = convertModule(argv0, "configured_iface_parent", sv, "", "", "", "",
                            moduleParams, portTypes);
     expectContains(h, "::metadata_child<7,32,64,40,72> child_i;");
+}
+
+static void testConfiguredInterfacePortRetainsIndependentWidths(const char* argv0)
+{
+    const std::string sv = R"sv(
+interface WIDTH_BUS #(parameter int WIDTH = 4)();
+  logic [WIDTH-1:0] value;
+  modport Sink(input value);
+endinterface
+module configured_widths(WIDTH_BUS.Sink first[2], WIDTH_BUS.Sink second[10]);
+endmodule
+)sv";
+    const std::string params =
+        "WIDTH_BUS\tint WIDTH = 4\n"
+        "configured_widths\tint WIDTH = 4\tint second_WIDTH = 5\n";
+    const std::string ports =
+        "configured_widths.first\t:array<::WIDTH_BUS<WIDTH>,2>\n"
+        "configured_widths.second\t:array<::WIDTH_BUS<second_WIDTH>,10>\n";
+    auto header = convertModule(argv0, "configured_widths", sv, "", "", "", "", params, ports);
+    expectContains(header, "_PORT(array<2,::WIDTH_BUS<WIDTH>>) first;");
+    expectContains(header, "_PORT(array<10,::WIDTH_BUS<second_WIDTH>>) second;");
 }
 
 static void testReplicationOfPackedAggregateUsesPackValue(const char* argv0)
@@ -3919,8 +3943,8 @@ endmodule
     auto h = convertModule(argv0, "interface_concat_capture", sv, "");
     expectContains(h, ">().id())");
     expectContains(h, ">().addr())");
-    expectNotContains(h, ">().id)");
-    expectNotContains(h, ">().addr)");
+    expectNotContains(h, "std::declval<::CONCAT_BUS<ID_WIDTH>>().id)");
+    expectNotContains(h, "std::declval<::CONCAT_BUS<ID_WIDTH>>().addr)");
 }
 
 static void testConcatArrayElementBitSelectUsesOneBitWidth(const char* argv0)
@@ -5403,11 +5427,11 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_struct_array_to_child", sv, "");
-    expectContains(h, "auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>");
-    expectContains(h, "__cpphdl_target_array_t::PACKED == __cpphdl_src_t::PACKED");
+    expectContains(h, "__hdlcpp_port_array_cast<__cpphdl_target_array_t>");
+    expectContains(h, "Target::PACKED == Source::PACKED");
     expectContains(h, "requires { __cpphdl_src_t::COUNT_VALUE; __cpphdl_src_t::ELEMENT_BITS; __cpphdl_src[0]; }");
     expectContains(h, "std::is_assignable_v<__cpphdl_target_array_t&, __cpphdl_src_t>");
-    expectContains(h, "cpphdl::unpack_value<rule_t>(cpphdl::pack_value<cpphdl::type_width<rule_t>()>");
+    expectContains(h, "cpphdl::convert_packed<rule_t>(");
     expectNotContains(h, "({ { .idx");
 }
 
@@ -5476,8 +5500,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "projected_array_whole_assignment", sv, "");
-    expectContains(h, "__cpphdl_projected_source_0 = cpphdl::unpack_value<array<2,item_t>>");
-    expectContains(h, ">(items_q));");
+    expectContains(h, "__cpphdl_projected_source_0 = cpphdl::convert_packed<array<2,item_t>>");
+    expectContains(h, ">(items_q);");
     expectContains(h, "items_d_valid_comb[__cpphdl_i_0_0] = __cpphdl_projected_source_0[__cpphdl_i_0_0].valid;");
     expectNotContains(h, "(items_q).valid");
 }
@@ -5724,7 +5748,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_logic_array_to_struct_element", sv, "");
-    expectContains(h, "cpphdl::unpack_value<packed_output_pkg::entry_t>");
+    expectContains(h, "cpphdl::convert_packed<packed_output_pkg::entry_t>");
     expectNotContains(h, "data_o_out()[0]).valid");
     expectNotContains(h, "data_o_out()[0]).tag");
 }
@@ -5764,7 +5788,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generated_child_nested_output", sv, "");
-    expectContains(h, "cpphdl::unpack_value<array<2,nested_output_pkg::req_t>>");
+    expectContains(h, "cpphdl::convert_packed<array<2,nested_output_pkg::req_t>>");
     expectNotContains(h, "__cpphdl_projected_element_");
     expectContains(h, ".aw.id;");
     expectNotContains(h, "data_o_out()).aw");
@@ -5864,10 +5888,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_byte_array_from_unpacked_words", sv, "");
-    expectContains(h, "bytes_comb = ([&]() ->");
-    expectContains(h, "using __cpphdl_target_t = array<8,logic<8>,true>;");
-    expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
-    expectContains(h, "__cpphdl_out = cpphdl::unpack_value<__cpphdl_target_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val));");
+    expectContains(h, "bytes_comb = __hdlcpp_array_cast<");
+    expectContains(h, "__hdlcpp_array_cast<array<8,logic<8>,true>>(words_comb_func())");
+    expectContains(h, "cpphdl::unpack_value<Target>(cpphdl::pack_value<cpphdl::type_width<Target>()>(source))");
     expectNotContains(h, "bytes_comb = words_comb_func();");
 }
 
@@ -5893,10 +5916,9 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "continuous_packed_byte_array_from_unpacked_words", sv, "");
-    expectContains(h, "bytes_comb = ([&]() ->");
-    expectContains(h, "using __cpphdl_target_t = array<8,logic<8>,true>;");
-    expectContains(h, "auto&& __cpphdl_src = (words_comb_func());");
-    expectContains(h, "__cpphdl_out = cpphdl::unpack_value<__cpphdl_target_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val));");
+    expectContains(h, "bytes_comb = __hdlcpp_array_cast<");
+    expectContains(h, "__hdlcpp_array_cast<array<8,logic<8>,true>>(words_comb_func())");
+    expectContains(h, "cpphdl::unpack_value<Target>(cpphdl::pack_value<cpphdl::type_width<Target>()>(source))");
     expectNotContains(h, "bytes_comb = words_comb_func();");
 }
 
@@ -5914,11 +5936,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_array_from_unpacked_array", sv, "");
-    expectContains(h, "using __cpphdl_target_t = array<2,logic<5>,true>;");
-    expectContains(h, "if constexpr (requires { __cpphdl_src_t::PACKED; })");
-    expectContains(h, "return __cpphdl_target_t::PACKED == __cpphdl_src_t::PACKED;");
-    expectContains(h, "if constexpr (__cpphdl_same_array_packing && std::is_assignable_v<__cpphdl_target_t&, __cpphdl_src_t>)");
-    expectContains(h, "__cpphdl_out = cpphdl::unpack_value<__cpphdl_target_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val));");
+    expectContains(h, "__hdlcpp_array_cast<array<2,logic<5>,true>>");
+    expectContains(h, "if constexpr (requires { SourceType::PACKED; })");
+    expectContains(h, "Target::PACKED == SourceType::PACKED && std::is_assignable_v<Target&, SourceType>");
+    expectContains(h, "cpphdl::unpack_value<Target>(cpphdl::pack_value<cpphdl::type_width<Target>()>(source))");
     expectNotContains(h, "rd_o_out = rd_i_in();");
 }
 
@@ -5987,8 +6008,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "type_parameter_cast_from_packed_byte_array", sv, "");
-    expectContains(h, "using __cpphdl_cast_t = dtype;");
-    expectContains(h, "cpphdl::sv_cast<__cpphdl_cast_t>(bytes_comb_func())");
+    expectContains(h, "__hdlcpp_assignment_cast<");
+    expectContains(h, ", dtype>(bytes_comb_func())");
 }
 
 static void testPackedArrayToStructArrayCombAssignUsesElementUnpack(const char* argv0)
@@ -6017,7 +6038,7 @@ endmodule
     auto h = convertModule(argv0, "array_bit_to_struct_assign", sv, "");
     expectContains(h, "using __cpphdl_target_array_t = array<");
     expectContains(h, ",resp_t>;");
-    expectContains(h, "cpphdl::unpack_value<resp_t>(cpphdl::pack_value<cpphdl::type_width<resp_t>()>(__cpphdl_src[__cpphdl_i]))");
+    expectContains(h, "cpphdl::convert_packed<resp_t>(__cpphdl_src[__cpphdl_i])");
     expectNotContains(h, "resp_comb = raw_comb_func();");
 }
 
@@ -6204,7 +6225,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_struct_cast_to_vector", sv, "");
-    expectContains(h, "out_o_comb = cpphdl::pack_value<cpphdl::type_width<logic<4>>()>(in_i_in());");
+    expectContains(h, "out_o_comb = cpphdl::convert_packed<packed_struct_cast_pkg::dst_t>(in_i_in());");
     expectNotContains(h, "out_o_comb = cpphdl::sv_cast<packed_struct_cast_pkg::dst_t>");
 }
 
@@ -6246,8 +6267,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_struct_input_pack_binding", sv, "");
-    expectContains(h, "__port_bind_u_sink_data_i_in_comb = cpphdl::unpack_value<std::remove_cvref_t<decltype(u_sink.data_i_in())>>(cpphdl::pack_value<cpphdl::type_width<std::remove_cvref_t<decltype(u_sink.data_i_in())>>()");
-    expectContains(h, ">(resp_comb_func()));");
+    expectContains(h, "__port_bind_u_sink_data_i_in_comb = cpphdl::convert_packed<std::remove_cvref_t<decltype(u_sink.data_i_in())>>");
+    expectContains(h, ">(resp_comb_func());");
     expectContains(h, "u_sink.data_i_in = _ASSIGN(__port_bind_u_sink_data_i_in_comb_func());");
     expectNotContains(h, "__port_bind_u_sink_data_i_in_comb = std::remove_cvref_t<decltype(u_sink.data_i_in())>(resp);");
 }
@@ -6293,7 +6314,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "projected_distinct_struct_parent", sv, "");
-    expectContains(h, "__port_bind_child_i_b_i_in_comb = cpphdl::unpack_value<std::remove_cvref_t<decltype(child_i.b_i_in())>>(cpphdl::pack_value<cpphdl::type_width<std::remove_cvref_t<decltype(child_i.b_i_in())>>()>(response_i_in__field_b()));");
+    expectContains(h, "__port_bind_child_i_b_i_in_comb = cpphdl::convert_packed<std::remove_cvref_t<decltype(child_i.b_i_in())>>(response_i_in__field_b());");
     expectContains(h, "child_i.b_i_in = _ASSIGN(__port_bind_child_i_b_i_in_comb_func());");
     expectNotContains(h, "child_i.b_i_in = _ASSIGN(response_i_in__field_b());");
     expectNotContains(h, "child_i.b_i_in = _ASSIGN_COMB(response_i_in__field_b());");
@@ -6367,7 +6388,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "array_output_packed_field", sv, "");
-    expectContains(h, "req_comb.be = cpphdl::unpack_value<logic<8>>(cpphdl::pack_value<cpphdl::type_width<logic<8>>()>(u_src.data_o_out()));");
+    expectContains(h, "req_comb.be = cpphdl::convert_packed<logic<8>>(u_src.data_o_out());");
     expectNotContains(h, "req_comb.be = u_src.data_o_out()[0];");
 }
 
@@ -6978,7 +6999,7 @@ endmodule
 
     auto h = convertModule(argv0, "packed_struct_array_field_read", sv, "",
                            "external_pkg::cfg_t\t3\n");
-    expectContains(h, "cpphdl::unpack_value<external_pkg::cfg_t>");
+    expectContains(h, "cpphdl::convert_packed<external_pkg::cfg_t>");
     expectNotContains(h, "].locked");
     expectNotContains(h, "].mode");
 }
@@ -7028,12 +7049,12 @@ endmodule
         argv0, "generated_child_output_packed_array_field", sv,
         "", "", "", "", "", "", "", moduleTraits);
     expectContains(h,
-                   "auto __cpphdl_elem = cpphdl::unpack_value<packed_response_t>");
-    expectContains(h, "__cpphdl_elem.ready = child_i[");
+                   "__hdlcpp_update_ready(cpphdl::convert_packed<packed_response_t>");
+    expectContains(h, "element.ready = value;");
     expectContains(h, "responses_o_ready_comb[i] = child_i[");
     expectContains(h, "responses_o_valid_comb[i] = child_i[");
     expectContains(h, "responses_o_status_code_comb[i] = child_i[");
-    expectContains(h, "return __cpphdl_elem; })()");
+    expectContains(h, "return element;");
     expectNotContains(h, "responses_o_comb[i].ready =");
     expectNotContains(h, "responses_o_ready_comb[i] = (responses_o_comb_func()");
     expectNotContains(h, "responses_o_valid_comb[i] = (responses_o_comb_func()");
@@ -7070,7 +7091,7 @@ endmodule
         "projected_child_packed_array_element\toutput_field.responses_o.item.code\n";
     auto h = convertModule(argv0, "projected_child_packed_array_element", sv,
                            "", "", "", "", "", "", "", moduleTraits);
-    expectContains(h, "cpphdl::unpack_value<packed_child_item_t>");
+    expectContains(h, "cpphdl::convert_packed<packed_child_item_t>");
     expectContains(h, "items_o_out()[0]");
     expectNotContains(h, "items_o_out()[0]).code");
 }
@@ -7160,7 +7181,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_type_parameter_register_projection", sv, "");
-    expectContains(h, "data_o_instr_comb = (cpphdl::unpack_value<dtype>(cpphdl::pack_value<cpphdl::type_width<dtype>()>(mem_q[");
+    expectContains(h, "data_o_instr_comb = (cpphdl::convert_packed<dtype>(mem_q[");
     expectNotContains(h, "data_o_instr_comb = (mem_q[");
 }
 
@@ -7228,10 +7249,11 @@ endmodule
 
     auto h = convertModule(argv0, "generate_local_comb_signal", sv, "");
     expectContains(h, "if constexpr");
-    expectContains(h, "([&]() { logic<1> sel = {};");
+    expectContains(h, "logic<1> sel = {};");
+    expectNotContains(h, "([&]()");
     expectContains(h, "word =");
     expectContains(h, "word_i_in()");
-    expectContains(h, "return sel; }())");
+    expectContains(h, "return sel;");
     expectContains(h, "? logic<8>");
     expectNotContains(h, "_LAZY_COMB(sel_comb");
     expectNotContains(h, "sel_comb_func() ? logic<8>");
@@ -7305,9 +7327,11 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "nested_generate_local_comb", sv, "");
-    expectContains(h, "match_bits = {}; for (unsigned k =");
+    expectContains(h, "match_bits = {};");
+    expectContains(h, "for (unsigned k =");
     expectContains(h, "match_bits[(unsigned)(uint64_t)((uint64_t)((uint64_t)(k)))]");
-    expectContains(h, "} return match_bits; }())");
+    expectContains(h, "return match_bits;");
+    expectNotContains(h, "([&]()");
 }
 
 static void testNestedGenerateModuleArrayKeepsEveryDimension(const char* argv0)
@@ -10401,7 +10425,7 @@ endmodule
         "packed_comb_to_aggregate\toutput_field.data_o.valid\n";
     auto h = convertModule(argv0, "packed_comb_to_aggregate", sv,
                            "", "", "", "", "", "", "", traits);
-    expectContains(h, "cpphdl::unpack_value<DATA_T>");
+    expectContains(h, "cpphdl::convert_packed<DATA_T>");
     expectNotContains(h, "packed_value_id_comb_func");
     expectNotContains(h, "packed_value_valid_comb_func");
 }
@@ -10467,7 +10491,7 @@ endmodule
 )sv";
     auto h = convertModule(argv0, "packed_input_member_to_aggregate", sv,
                            "");
-    expectContains(h, "cpphdl::unpack_value<packed_member_control_t>");
+    expectContains(h, "cpphdl::convert_packed<packed_member_control_t>");
     expectContains(h, "request_i_in__field_data()");
     expectNotContains(h, "request_i_in__field_data_enabled");
     expectNotContains(h, ".data.enabled");
@@ -10546,7 +10570,7 @@ endmodule
         "projected_bypass\toutput_field.req_o.ar\n";
     auto h = convertModule(argv0, "projected_bypass", sv,
                            "", "", "", "", "", "", "", moduleTraits);
-    expectContains(h, "req_o_ar_comb = cpphdl::unpack_value<");
+    expectContains(h, "req_o_ar_comb = cpphdl::convert_packed<");
     expectContains(h, "req_i_in__field_ar()[");
 }
 
@@ -10942,8 +10966,52 @@ endmodule
     expectNotContains(h, "logic<8>(cat{");
 }
 
+static void testSlicedReadValidDoesNotDependOnReady(const char* argv0)
+{
+    const std::string sv = R"sv(
+module sliced_read_valid (
+    input logic [1:0] state_i,
+    input logic [1:0] burst_i,
+    input logic ready_i,
+    output logic valid_o,
+    output logic [7:0] count_o
+);
+    always_comb begin
+        valid_o = 0;
+        count_o = 0;
+        case (state_i)
+            1: begin
+                valid_o = 1;
+                if (ready_i) begin
+                    case (burst_i)
+                        0, 1: count_o = 1;
+                        default: count_o = 2;
+                    endcase
+                end
+            end
+            default: ;
+        endcase
+    end
+endmodule
+)sv";
+    const auto header = convertModule(argv0, "sliced_read_valid", sv, "");
+    const auto returned = header.find("return valid_o_comb;");
+    assert(returned != std::string::npos);
+    const auto lazy = header.rfind("_LAZY_COMB(valid_o_comb,", returned);
+    const auto method = lazy != std::string::npos
+        ? lazy : header.rfind("logic<1>& valid_o_comb_func()", returned);
+    assert(method != std::string::npos);
+    const auto body = header.substr(method, returned - method);
+    expectContains(body, "state_i_in()");
+    expectNotContains(body, "ready_i_in()");
+    expectNotContains(body, "burst_i_in()");
+    expectContains(header, "ready_i_in()");
+    expectContains(header, "burst_i_in()");
+}
+
 int main(int argc, char** argv)
 {
+    testSlicedReadValidDoesNotDependOnReady(argv[0]);
     testLoopBreakStatementIsPreserved(argv[0]);
     testContinuousStructFieldUsesFinalProceduralFieldValue(argv[0]);
     testModuleDependencyMetadataUsesParsedInstances(argv[0]);
@@ -11197,6 +11265,7 @@ int main(int argc, char** argv)
     testFieldDemandMethodCallRequiresIdentifierBoundary(argv[0]);
     testTypeParameterFieldDoesNotUseOtherModuleLocalType(argv[0]);
     testConfiguredInterfaceArrayInfersNestedTemplateArguments(argv[0]);
+    testConfiguredInterfacePortRetainsIndependentWidths(argv[0]);
     testPackedStructArrayFieldReadsMaterializeElement(argv[0]);
     testGeneratedChildOutputPackedArrayFieldMaterializesElement(argv[0]);
     testProjectedChildPackedArrayElementMaterializesBeforeMemberRead(argv[0]);

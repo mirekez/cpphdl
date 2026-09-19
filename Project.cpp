@@ -16,6 +16,20 @@ Project* currProject = &prj;
 namespace
 {
 
+std::string rtlFileName(const std::string& name, const std::string& suffix)
+{
+    if (name.size() + suffix.size() <= 200 && name.find_first_of("/\\") == std::string::npos) {
+        return name + suffix;
+    }
+    // Structural template arguments can exceed the filesystem component limit.
+    // Shorten only the file name; keep HDL identifiers and references unchanged.
+    uint64_t hash = 14695981039346656037ull;
+    for (unsigned char byte : name) {
+        hash = (hash ^ byte) * 1099511628211ull;
+    }
+    return "cpphdl_" + std::to_string(hash) + suffix;
+}
+
 const Struct* findStructByName(const std::string& name)
 {
     for (const auto& st : currProject->structs) {
@@ -94,7 +108,7 @@ bool Project::generate(const std::string& outDir)
         }
         modules_uniq.emplace(mod.name);
 
-        fs::path filePath = fs::path(outDir) / (mod.name + ".sv");
+        fs::path filePath = fs::path(outDir) / rtlFileName(mod.name, ".sv");
 
         std::ofstream out(filePath);
         if (!out) {
@@ -129,7 +143,7 @@ bool Project::generate(const std::string& outDir)
             continue;
         }
 
-        fs::path filePath = fs::path(outDir) / (packageName + "_pkg.sv");
+        fs::path filePath = fs::path(outDir) / rtlFileName(packageName, "_pkg.sv");
         std::ofstream out(filePath);
         if (!out) {
             std::cerr << "Failed to open '" << filePath << "' for writing\n";
@@ -161,7 +175,7 @@ bool Project::generate(const std::string& outDir)
         }
 
         std::string fname = str.name;
-        fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
+        fs::path filePath = fs::path(outDir) / rtlFileName(fname, "_pkg.sv");
 
         std::ofstream out(filePath);
         if (!out) {
@@ -194,7 +208,7 @@ bool Project::generate(const std::string& outDir)
         }
         enums_uniq.emplace(en.name);
         std::string fname = en.name;
-        fs::path filePath = fs::path(outDir) / (fname + "_pkg.sv");
+        fs::path filePath = fs::path(outDir) / rtlFileName(fname, "_pkg.sv");
 
         std::ofstream out(filePath);
         if (!out) {

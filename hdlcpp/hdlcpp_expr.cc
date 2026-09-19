@@ -1969,16 +1969,27 @@
             }
         }
         if (runtimeWidth) {
-            std::string out = "([&]() { uint64_t __cpphdl_cat_value = 0; "
-                "auto __cpphdl_cat_append = [&](uint64_t value, uint64_t width) { "
-                "if (width == 0) return; if (width >= 64) { __cpphdl_cat_value = value; } "
-                "else { __cpphdl_cat_value = (__cpphdl_cat_value << width) | "
-                "(value & ((1ull << width) - 1ull)); } }; ";
+            // Keep producer reads at the call site: hiding a partial self-read
+            // inside a member helper would bind it to its own comb getter.
+            // The initializer list also preserves operand evaluation order.
+            const auto name = "__hdlcpp_concat_" + std::to_string(parts.size());
+            std::string arguments;
             for (const auto& part : parts) {
-                out += "__cpphdl_cat_append((uint64_t)(" + part.second + "), (uint64_t)(" + part.first + ")); ";
+                if (!arguments.empty()) arguments += ", ";
+                arguments += "(uint64_t)(" + part.second + "), (uint64_t)(" + part.first + ")";
             }
-            out += "return logic<64>(__cpphdl_cat_value); }())";
-            return out;
+            mod->helperDefinitions[name] = "    static logic<64> " + name +
+                "(const std::array<uint64_t, " + std::to_string(parts.size() * 2) + ">& parts)\n    {\n"
+                "        uint64_t __cpphdl_cat_value = 0;\n"
+                "        for (unsigned part = 0; part < " + std::to_string(parts.size() * 2) + "; part += 2) {\n"
+                "            uint64_t __cpphdl_cat_part_value = parts[part];\n"
+                "            uint64_t __cpphdl_cat_part_width = parts[part + 1];\n"
+                "            if (__cpphdl_cat_part_width >= 64) {\n"
+                "                __cpphdl_cat_value = __cpphdl_cat_part_value;\n"
+                "            } else if (__cpphdl_cat_part_width != 0) {\n"
+                "                __cpphdl_cat_value = (__cpphdl_cat_value << __cpphdl_cat_part_width) | (__cpphdl_cat_part_value & ((1ull << __cpphdl_cat_part_width) - 1ull));\n"
+                "            }\n        }\n        return logic<64>(__cpphdl_cat_value);\n    }\n";
+            return name + "({" + arguments + "})";
         }
         std::string args;
         for (auto& p : parts) {
@@ -2542,7 +2553,17 @@
                 out.push_back(pre + "// " + exprText(e.expr->toString()) + ";");
             }
             else {
-                out.push_back(pre + emitStatementExpr(*e.expr, comb) + ";");
+                auto statement = emitStatementExpr(*e.expr, comb);
+                if (statement.rfind("{\n", 0) == 0) {
+                    std::istringstream lines(statement);
+                    std::string line;
+                    while (std::getline(lines, line)) {
+                        out.push_back(pre + line);
+                    }
+                }
+                else {
+                    out.push_back(pre + statement + ";");
+                }
             }
         }
         else if (st.kind == SyntaxKind::ReturnStatement) {
@@ -3851,11 +3872,11 @@
                 return packedArrayWrite->target + " = " + rhs;
             }
             if (packedArrayFieldWrite) {
-                return "([&]() { auto __cpphdl_elem = cpphdl::unpack_value<" +
+                return "{\nauto __cpphdl_elem = cpphdl::unpack_value<" +
                     packedArrayFieldWrite->elementType + ">(cpphdl::pack_value<cpphdl::type_width<" +
                     packedArrayFieldWrite->elementType + ">()>(" + packedArrayFieldWrite->target +
-                    ")); __cpphdl_elem." + packedArrayFieldWrite->field + " = " + rhs + "; " +
-                    packedArrayFieldWrite->target + " = __cpphdl_elem; }())";
+                    "));\n__cpphdl_elem." + packedArrayFieldWrite->field + " = " + rhs + ";\n" +
+                    packedArrayFieldWrite->target + " = __cpphdl_elem;\n}";
             }
             if (isNonblockingAssignmentKind(expr.kind) && scheduledMemoryType(sequentialStorageType) &&
                 !base.empty() && lhs == base) {
@@ -4036,8 +4057,11 @@
                 if (sourceType == mod->types.end() ||
                     !knownAggregateRejectsFieldPath(*mod, sourceType->second, field)) {
                     mod->requestedCombFields.insert({selectedBase, field});
-                    return selectedBase + "_" + hdlcpp::projectedFieldIdentifier(field) +
-                        "_comb_func()" + accesses.front().indices;
+                    // Keep the source read until the containing comb is known.
+                    // A blocking update may read this field between writes; an
+                    // eager projected getter would supply its final value instead.
+                    // Late binding can project external reads without replacing
+                    // reads of the comb's own partially updated aggregate.
                 }
             }
         }
@@ -4275,8 +4299,70 @@
         return replaceKeywordMemberAccess(replaceRawRangeSelects(exprText(expr.toString())));
     }
 
+    std::string unsignedConstantOperand(const ExpressionSyntax& expr, bool index = false)
+    {
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            auto value = unsignedConstantOperand(*expr.as<ParenthesizedExpressionSyntax>().expression, index);
+            return value.empty() ? value : "(" + value + ")";
+        }
+        if (expr.kind == SyntaxKind::IdentifierName && mod) {
+            const auto name = tok(expr.as<IdentifierNameSyntax>().identifier);
+            if (!lookupLocalType(name).empty() || lookupGenerateLocalExpr(name)) {
+                return {};
+            }
+            auto type = constexprType(constantType(name));
+            for (const auto& param : mod->params) {
+                if (templateParamName(param) == name) {
+                    type = templateParamValueType(param);
+                    break;
+                }
+            }
+            const unsigned nativeWidth = type == "unsigned" || type == "uint32_t" ? 32 :
+                                         type == "uint64_t" ? 64 : 0;
+            const auto width = foldWidth(exprWidth(expr));
+            if (nativeWidth && isNumber(width) && std::stoul(width) == nativeWidth) {
+                // A native unsigned constant is already bounded by its declared
+                // width. Keep widening when arithmetic needs uint64_t, but an
+                // index/template argument can use the named constant directly.
+                auto value = cppIdent(name);
+                return index || nativeWidth == 64 ? value : "uint64_t(" + value + ")";
+            }
+        }
+        auto literal = trim(expr.toString());
+        literal.erase(std::remove(literal.begin(), literal.end(), '_'), literal.end());
+        uint64_t value = 0;
+        if (isDecimalText(literal) && parseCppIntegralLiteral(literal, value)) {
+            const auto width = foldWidth(exprWidth(expr));
+            if (isNumber(width)) {
+                const auto bits = std::stoul(width);
+                if (bits == 64 || (bits > 0 && bits < 64 && value < (uint64_t(1) << bits))) {
+                    // Preserve the numeric emitter's unsigned 64-bit arithmetic
+                    // without casting and masking a literal that already fits.
+                    return std::to_string(value) + "ull";
+                }
+            }
+        }
+        if (BinaryExpressionSyntax::isKind(expr.kind)) {
+            const auto& binary = expr.as<BinaryExpressionSyntax>();
+            const auto op = tok(binary.operatorToken);
+            if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+                // The right operand is uint64_t, so the usual arithmetic
+                // conversions already widen a narrower left operand.
+                auto left = unsignedConstantOperand(*binary.left, true);
+                auto right = unsignedConstantOperand(*binary.right);
+                if (!left.empty() && !right.empty()) {
+                    return "(" + left + " " + op + " " + right + ")";
+                }
+            }
+        }
+        return {};
+    }
+
     std::string emitUntypedNumericExpr(const ExpressionSyntax& expr)
     {
+        if (auto value = unsignedConstantOperand(expr); !value.empty()) {
+            return value;
+        }
         if (expr.kind == SyntaxKind::ScopedName) {
             auto& scoped = expr.as<ScopedNameSyntax>();
             auto right = trim(exprText(scoped.right->toString()));
@@ -4400,6 +4486,9 @@
 
     std::string emitIndexExpr(const ExpressionSyntax& expr)
     {
+        if (auto value = unsignedConstantOperand(expr, true); !value.empty()) {
+            return value;
+        }
         return "(uint64_t)(" + emitUntypedNumericExpr(expr) + ")";
     }
 

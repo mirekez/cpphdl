@@ -57,6 +57,11 @@ public:
   // an optimize-combs mode.
   void setThreadCount(std::size_t count);
 
+  // Retain a full elaboration's demand constraints in a replay cut-out.
+  // Context never grants new caching rights or prescribes repeat counts.
+  void setReplayContext(std::string input, std::string sourcePrefix,
+                        std::string targetPrefix, std::string output);
+
   // Generate the optimized API, internal state, and bounded comb/work C++
   // translation units in outputDirectory.  Returns false after printing a
   // precise graph/source diagnostic.

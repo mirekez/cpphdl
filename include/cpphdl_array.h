@@ -40,6 +40,37 @@ struct is_packed_array<TYPE, std::void_t<typename TYPE::value_type,
 
 struct array_packed_offset_t {};
 
+// Layout metadata is valid only on the exact generated type. A derived class
+// may override pack(), so inherited metadata must not bypass that conversion.
+template<typename TYPE, typename = void>
+struct generated_layout : std::false_type {};
+
+template<typename TYPE>
+struct generated_layout<TYPE, std::void_t<typename TYPE::__hdlcpp_layout_owner>>
+    : std::is_same<TYPE, typename TYPE::__hdlcpp_layout_owner> {};
+
+template<typename TYPE, typename = void>
+struct native_field_safe : std::bool_constant<is_logic_v<TYPE> || std::is_integral_v<TYPE> || std::is_enum_v<TYPE>> {};
+
+template<typename TYPE>
+struct native_field_safe<TYPE, std::void_t<decltype(TYPE::__hdlcpp_native_fields)>>
+    : std::bool_constant<generated_layout<TYPE>::value && TYPE::__hdlcpp_native_fields> {};
+
+template<size_t COUNT, typename TYPE, bool PACKED>
+struct native_field_safe<array<COUNT, TYPE, PACKED>, void>
+    : std::bool_constant<PACKED && native_field_safe<TYPE>::value> {};
+
+template<typename TYPE, typename = void>
+struct native_packed_element : std::false_type {};
+
+template<typename TYPE>
+struct native_packed_element<TYPE, std::void_t<decltype(TYPE::__hdlcpp_native_fields)>>
+    : std::bool_constant<generated_layout<TYPE>::value && TYPE::__hdlcpp_native_fields> {};
+
+template<size_t COUNT, typename TYPE, bool PACKED>
+struct native_packed_element<array<COUNT, TYPE, PACKED>, void>
+    : std::bool_constant<PACKED && native_packed_element<TYPE>::value> {};
+
 template<typename TYPE, typename = void>
 struct array_packed_size_bits
 {
@@ -660,6 +691,159 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
         return data.to_hex();
     }
 };
+
+#if defined(CPPHDL_NATIVE_PACKED)
+#if __cplusplus < 202002L
+#error "CPPHDL_NATIVE_PACKED requires C++20 or later"
+#endif
+// The generated aggregate's logical bit layout is independent of its storage.
+// Keep elements addressable and serialize only at bit-vector boundaries, not
+// on every field access. Opt-in is an ABI choice and must match in every TU.
+template<size_t COUNT, typename TYPE>
+requires detail::native_packed_element<TYPE>::value
+struct array<COUNT, TYPE, true>
+{
+    using value_type = TYPE;
+    static constexpr size_t COUNT_VALUE = COUNT;
+    static constexpr size_t ELEMENT_BITS = detail::array_packed_size_bits<TYPE>::value;
+    static constexpr size_t SIZE_BITS = COUNT * ELEMENT_BITS;
+    static constexpr size_t SIZE = (SIZE_BITS + 7) / 8;
+    static constexpr bool PACKED = true;
+    TYPE elements[COUNT]{};
+    static constexpr size_t _size_bits() { return SIZE_BITS; }
+    array() = default;
+    array(const array&) = default;
+    array& operator=(const array&) = default;
+    template<class Value> array(const Value& value) { *this = value; }
+    array(std::initializer_list<TYPE> values) { *this = values; }
+    array& operator=(std::initializer_list<TYPE> values) {
+        size_t index = 0;
+        for (const auto& value : values) {
+            if (index == COUNT) break;
+            elements[index++] = value;
+        }
+        while (index < COUNT) elements[index++] = TYPE{};
+        return *this;
+    }
+    template<class Value> array& operator=(const Value& value) {
+        if constexpr (std::is_integral_v<Value>) {
+            if (value == 0) {
+                const TYPE zero = detail::array_unpack_value<TYPE>(logic<ELEMENT_BITS>{});
+                for (auto& element : elements) element = zero;
+                return *this;
+            }
+        }
+        const auto packed = detail::array_pack_value<SIZE_BITS>(value);
+        // bool(logic) observes only the low word; it is not an all-bits-zero test.
+        if (std::all_of(std::begin(packed.bytes), std::end(packed.bytes),
+                        [](uint8_t byte) { return byte == 0; })) {
+            const TYPE zero = detail::array_unpack_value<TYPE>(logic<ELEMENT_BITS>{});
+            for (auto& element : elements) element = zero;
+            return *this;
+        }
+        for (size_t index = 0; index < COUNT; ++index) {
+            if constexpr (ELEMENT_BITS != 0) {
+                logic<ELEMENT_BITS> element{};
+                const size_t first = index * ELEMENT_BITS;
+                const size_t shift = first % 8;
+                for (size_t byte = 0; byte < element.SIZE; ++byte) {
+                    const size_t offset = first / 8 + byte;
+                    uint16_t pair = packed.bytes[offset];
+                    if (shift && offset + 1 < packed.SIZE) pair |= uint16_t(packed.bytes[offset + 1]) << 8;
+                    element.bytes[byte] = uint8_t(pair >> shift);
+                }
+                if constexpr (ELEMENT_BITS % 8) element.bytes[element.SIZE - 1] &= uint8_t((1u << (ELEMENT_BITS % 8)) - 1);
+                elements[index] = detail::array_unpack_value<TYPE>(element);
+            }
+        }
+        return *this;
+    }
+    TYPE& operator[](size_t index) {
+        cpphdl_assert(index < COUNT, "wrong array index");
+        return elements[index];
+    }
+    const TYPE& operator[](size_t index) const {
+        cpphdl_assert(index < COUNT, "wrong array index");
+        return elements[index];
+    }
+    logic<SIZE_BITS> pack() const {
+        logic<SIZE_BITS> packed{};
+        for (size_t index = 0; index < COUNT; ++index) {
+            if constexpr (ELEMENT_BITS != 0) packed.bits((index + 1) * ELEMENT_BITS - 1, index * ELEMENT_BITS) = detail::array_pack_value<ELEMENT_BITS>(elements[index]);
+        }
+        return packed;
+    }
+    struct bits_ref {
+        array& owner;
+        size_t last;
+        size_t first;
+        static constexpr size_t _size_bits() { return array::SIZE_BITS; }
+        logic<SIZE_BITS> pack() const {
+            const auto packed = owner.pack();
+            return packed.bits(last, first);
+        }
+        bits_ref& operator=(const bits_ref& value) {
+            return *this = value.pack();
+        }
+        template<class Value> bits_ref& operator=(const Value& value) {
+            auto packed = owner.pack();
+            packed.bits(last, first) = detail::array_pack_value<SIZE_BITS>(value);
+            owner = packed;
+            return *this;
+        }
+        template<size_t Width> operator logic<Width>() const {
+            const auto packed = owner.pack();
+            return logic<Width>(packed.bits(last, first));
+        }
+    };
+    bits_ref bits(size_t last, size_t first) {
+        cpphdl_assert(first <= last && last < SIZE_BITS, "wrong native packed array bit range");
+        return {*this, last, first};
+    }
+    logic<SIZE_BITS> bits(size_t last, size_t first) const {
+        const auto packed = pack();
+        return packed.bits(last, first);
+    }
+    operator logic<SIZE_BITS>() const { return pack(); }
+    explicit operator uint64_t() const { return uint64_t(pack()); }
+    explicit operator uint32_t() const { return uint32_t(pack()); }
+    explicit operator uint16_t() const { return uint16_t(pack()); }
+    explicit operator uint8_t() const { return uint8_t(pack()); }
+    explicit operator bool() const { return bool(pack()); }
+    uint64_t to_ullong() const { return pack().to_ullong(); }
+    std::string to_hex() const { return pack().to_hex(); }
+    auto operator~() const { return ~pack(); }
+    auto operator<<(size_t shift) const { return pack() << shift; }
+    auto operator>>(size_t shift) const { return pack() >> shift; }
+    array& operator<<=(size_t shift) { return *this = *this << shift; }
+    array& operator>>=(size_t shift) { return *this = *this >> shift; }
+    template<class Value> auto operator&(const Value& value) const { return pack() & detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> auto operator|(const Value& value) const { return pack() | detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> auto operator^(const Value& value) const { return pack() ^ detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> auto operator+(const Value& value) const { return pack() + detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> auto operator-(const Value& value) const { return pack() - detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> bool operator==(const Value& value) const { return pack() == detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> bool operator!=(const Value& value) const { return !(*this == value); }
+    template<class Value> bool operator<(const Value& value) const { return pack() < detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> bool operator<=(const Value& value) const { return pack() <= detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> bool operator>(const Value& value) const { return pack() > detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> bool operator>=(const Value& value) const { return pack() >= detail::array_pack_value<SIZE_BITS>(value); }
+    template<class Value> array& operator&=(const Value& value) { return *this = *this & value; }
+    template<class Value> array& operator|=(const Value& value) { return *this = *this | value; }
+    template<class Value> array& operator^=(const Value& value) { return *this = *this ^ value; }
+    std::string to_string() const {
+        if constexpr (detail::has_to_string_method<TYPE>::value) {
+            std::string result;
+            for (size_t index = COUNT; index-- > 0;) {
+                result += elements[index].to_string();
+                if (index != 0) result += ' ';
+            }
+            return result;
+        }
+        else return to_hex();
+    }
+};
+#endif
 
 template<size_t COUNT, bool PACKED>
 struct array<COUNT, void, PACKED> {};

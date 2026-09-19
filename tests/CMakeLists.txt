@@ -1,6 +1,74 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_test(NAME optimizer_generated_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/GeneratedHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(optimizer_generated_helper PROPERTIES TIMEOUT 120)
+
+add_test(NAME optimizer_template_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/TemplateHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+add_test(NAME optimizer_indexed_proof COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/IndexedProofTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME native_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-graph")
+        set_tests_properties(native_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph")
+        set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
+    add_test(NAME netlist_driver COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/netlist/test_driver.py")
+    set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    find_program(CPPHDL_NETLIST_VERILATOR verilator)
+    if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME netlist_converter COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/netlist/ConverterChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --source-root "${CMAKE_SOURCE_DIR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/netlist-converter"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+    endif()
+    find_program(CPPHDL_NETLIST_YOSYS yosys)
+    find_program(CPPHDL_NETLIST_SV2V sv2v)
+    find_path(CPPHDL_CXXRTL_RUNTIME cxxrtl/cxxrtl.h
+        PATHS /usr/share/yosys/include/backends/cxxrtl/runtime
+              /usr/local/share/yosys/include/backends/cxxrtl/runtime)
+    if(CPPHDL_NETLIST_YOSYS AND CPPHDL_NETLIST_SV2V AND CPPHDL_CXXRTL_RUNTIME)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME word_pipeline COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/netlist/WordChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --sv2v "${CPPHDL_NETLIST_SV2V}" --yosys "${CPPHDL_NETLIST_YOSYS}"
+                --runtime "${CPPHDL_CXXRTL_RUNTIME}" --cxx "${CMAKE_CXX_COMPILER}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/word-pipeline")
+            set_tests_properties(word_pipeline PROPERTIES TIMEOUT 300
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        endif()
+        add_test(NAME netlist_word_graph COMMAND "${CMAKE_COMMAND}"
+            "-DPYTHON=${Python3_EXECUTABLE}" "-DCPPHDL=$<TARGET_FILE:cpphdl>"
+            "-DSV2V=${CPPHDL_NETLIST_SV2V}" "-DYOSYS=${CPPHDL_NETLIST_YOSYS}"
+            "-DCXXRTL_RUNTIME=${CPPHDL_CXXRTL_RUNTIME}" "-DCXX=${CMAKE_CXX_COMPILER}"
+            "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/netlist"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/netlist/Smoke.cmake")
+        set_tests_properties(netlist_word_graph PROPERTIES TIMEOUT 180)
+    endif()
+endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
@@ -62,6 +130,7 @@ foreach(src ${TEST_SOURCES})
     # Public header APIs must remain usable by C++17 projects even though converter
     # regressions normally compile in the newest supported language mode.
     if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp" OR
+       rel_path STREQUAL "datatypes/PackedWriteback.cpp" OR
        rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
        rel_path STREQUAL "datatypes/PointerPorts.cpp" OR
        rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
@@ -148,6 +217,16 @@ foreach(src ${TEST_SOURCES})
     endif()
 
 endforeach()
+
+# Exercise the byte-oriented fallback even on little-endian development hosts.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(datatypes_PackedWritebackPortable datatypes/PackedWriteback.cpp)
+    set_target_properties(datatypes_PackedWritebackPortable PROPERTIES CXX_STANDARD 17)
+    target_include_directories(datatypes_PackedWritebackPortable PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_compile_options(datatypes_PackedWritebackPortable PRIVATE -U__BYTE_ORDER__)
+    cpphdl_link_stdcxxexp_if_available(datatypes_PackedWritebackPortable)
+    add_test(NAME datatypes_PackedWritebackPortable COMMAND datatypes_PackedWritebackPortable)
+endif()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
@@ -378,6 +457,16 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_replay_context
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ReplayContextTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_replay_context PROPERTIES TIMEOUT 120)
 
 add_test(
     NAME optimizer_native_bit_store

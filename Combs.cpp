@@ -671,6 +671,8 @@ struct ClassInfo {
   // Derived from collected method bodies after deferred bodies are loaded.
   // It need not be serialized in collection shards.
   std::map<std::string, std::string> inlineMethods;
+  std::map<std::string, std::string> helperSignatures;
+  std::map<std::string, std::set<std::string>> helperLocals;
   // Semantic work-write metadata is kept beside the collected method body.
   // It records ordinary storage only; register next-state updates remain
   // invisible to current-clock comb evaluation until the strobe commits them.
@@ -1014,10 +1016,13 @@ void writeClassInfo(CollectionWriter &writer, const ClassInfo &info,
   writer.flag(info.supportsTemplateArgumentDeduction);
   writer.flag(info.typeAlias);
   writer.flag(info.opaque);
+  writeStringMap(writer, info.helperSignatures);
+  writeStringSetMap(writer, info.helperLocals);
 }
 
 ClassInfo readClassInfo(CollectionReader &reader,
-                        const std::vector<ClassInfo::Body> &bodies) {
+                        const std::vector<ClassInfo::Body> &bodies,
+                        bool hasHelperMetadata) {
   ClassInfo info;
   info.name = reader.text();
   info.templateBase = reader.text();
@@ -1081,6 +1086,10 @@ ClassInfo readClassInfo(CollectionReader &reader,
   info.supportsTemplateArgumentDeduction = reader.flag();
   info.typeAlias = reader.flag();
   info.opaque = reader.flag();
+  if (hasHelperMetadata) {
+    readStringMap(reader, info.helperSignatures);
+    readStringSetMap(reader, info.helperLocals);
+  }
   return info;
 }
 
@@ -1132,6 +1141,8 @@ void mergeClassInfo(ClassInfo &target, ClassInfo incoming) {
     }
   }
   mergeMap(incoming.methods, target.methods);
+  mergeMap(incoming.helperSignatures, target.helperSignatures);
+  mergeMap(incoming.helperLocals, target.helperLocals);
   mergeSet(incoming.concreteMethods, target.concreteMethods);
   mergeSet(incoming.workMutatedFields, target.workMutatedFields);
   if (!incoming.constructorBody)
@@ -1159,6 +1170,16 @@ struct FieldReferenceCollector
   FieldReferenceCollector(const ClassInfo &info,
                           std::set<std::string> &fields)
       : info(info), fields(fields) {}
+
+  bool TraverseMemberExpr(clang::MemberExpr *expression) {
+    // An array of registers is classified as ordinary aggregate storage, but
+    // writing element._next still cannot change an element's current value.
+    // Stop at the semantic reg boundary instead of marking the entire array.
+    const auto *record = expression->getBase()->getType()->getAsCXXRecordDecl();
+    if (expression->getMemberDecl()->getNameAsString() == "_next" && record &&
+        record->getQualifiedNameAsString() == "cpphdl::reg") return true;
+    return clang::RecursiveASTVisitor<FieldReferenceCollector>::TraverseMemberExpr(expression);
+  }
 
   bool VisitMemberExpr(clang::MemberExpr *expression) {
     // Only the outermost field rooted directly at this belongs to the class
@@ -1216,7 +1237,31 @@ struct WorkMutationCollector
     if (!callee) {
       return true;
     }
-    const size_t count = std::min<size_t>(expression->getNumArgs(),
+    const auto *operatorCall = clang::dyn_cast<clang::CXXOperatorCallExpr>(expression);
+    if (operatorCall) {
+      switch (operatorCall->getOperator()) {
+      case clang::OO_Equal:
+      case clang::OO_PlusEqual:
+      case clang::OO_MinusEqual:
+      case clang::OO_StarEqual:
+      case clang::OO_SlashEqual:
+      case clang::OO_PercentEqual:
+      case clang::OO_CaretEqual:
+      case clang::OO_AmpEqual:
+      case clang::OO_PipeEqual:
+      case clang::OO_LessLessEqual:
+      case clang::OO_GreaterGreaterEqual:
+      case clang::OO_PlusPlus:
+      case clang::OO_MinusMinus:
+        collect(operatorCall->getArg(0));
+        break;
+      default:
+        break;
+      }
+    }
+    const auto *method = clang::dyn_cast<clang::CXXMethodDecl>(callee);
+    const size_t argumentOffset = operatorCall && method && !method->isStatic() ? 1 : 0;
+    const size_t count = std::min<size_t>(expression->getNumArgs() - argumentOffset,
                                           callee->getNumParams());
     for (size_t index = 0; index < count; ++index) {
       clang::QualType type = callee->getParamDecl(index)->getType();
@@ -1228,7 +1273,7 @@ struct WorkMutationCollector
         continue;
       }
       if (!type.isConstQualified()) {
-        collect(expression->getArg(index));
+        collect(expression->getArg(index + argumentOffset));
       }
     }
     return true;
@@ -1606,6 +1651,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       item.type = field->getType().getAsString();
       item.packedWidth = packedLogicWidth(item.type);
       item.indexedStorage = indexedStorageType(field->getType(), context);
+      const auto *fieldRecord = field->getType()->getAsCXXRecordDecl();
       if (item.type.find("cpphdl::function_ref<") != std::string::npos) {
         item.kind = FieldKind::Port;
         if (field->hasInClassInitializer()) {
@@ -1682,7 +1728,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
             }
           }
         }
-      } else if (item.type.find("cpphdl::reg<") != std::string::npos) {
+      } else if ((fieldRecord && fieldRecord->getQualifiedNameAsString() == "cpphdl::reg") ||
+                 item.type.find("cpphdl::reg<") != std::string::npos) {
         item.kind = FieldKind::Reg;
         if (const auto *registerRecord =
                 field->getType()->getAsCXXRecordDecl()) {
@@ -2037,6 +2084,20 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     const auto methodBody =
         makeBody(std::move(body));
     info.methods[methodName] = methodBody;
+    // hdlcpp outlines generate-local expressions for the RTL frontend. Preserve
+    // their parameter scope so native scheduling still sees producer reads.
+    if (methodName.starts_with("__hdlcpp_expr_") &&
+        !declaration->isVariadic() && !declaration->getDescribedFunctionTemplate()) {
+      std::string signature = "[&](";
+      for (const auto *parameter : declaration->parameters()) {
+        if (parameter != *declaration->param_begin()) signature += ", ";
+        signature += sourceText(parameter->getSourceRange(), context);
+        info.helperLocals[methodName].insert(parameter->getNameAsString());
+      }
+      signature += ") -> " + sourceText(declaration->getReturnTypeSourceRange(), context);
+      info.helperSignatures[methodName] = std::move(signature);
+      info.helperLocals.try_emplace(methodName);
+    }
     info.concreteMethods.insert(methodName);
     if (methodName == "_assign") {
       info.assignBody = methodBody;
@@ -2117,6 +2178,10 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       if (info.methods.empty()) {
         info.methods = pattern->methods;
       }
+      for (const auto &[name, signature] : pattern->helperSignatures) {
+        info.helperSignatures.try_emplace(name, signature);
+        info.helperLocals.try_emplace(name, pattern->helperLocals.at(name));
+      }
       if (info.useTemplatePatternMethods) {
         for (const auto &[methodName, methodBody] : pattern->methods) {
           // Every collection shard performs full source-body reconciliation.
@@ -2169,6 +2234,13 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       if (info.workBody == pattern->workBody) {
         info.workMutatedFields = pattern->workMutatedFields;
       }
+      // Dependent reg<T> fields can look like ordinary fields in the primary
+      // template. Reconcile with concrete storage: reg assignment writes next
+      // state, not the current value consumed by this evaluation phase.
+      std::erase_if(info.workMutatedFields, [&](const std::string &fieldName) {
+        const auto field = info.fields.find(fieldName);
+        return field != info.fields.end() && field->second.kind == FieldKind::Reg;
+      });
       const auto strobe = info.methods.find("_strobe");
       info.strobeBody = strobe == info.methods.end() ? nullptr : strobe->second;
       for (auto &[fieldName, field] : info.fields) {
@@ -2784,6 +2856,7 @@ struct Node {
   bool projectedCombValue = false;
   bool inPlaceComb = false;
   bool memoizableProcedural = false;
+  bool indexedWriteProof = false;
   int visitState = 0;
 };
 
@@ -2821,7 +2894,7 @@ struct CombsOptimizer::Impl {
       bodies.add(info.workBody);
       bodies.add(info.strobeBody);
     }
-    writer.text("cpphdl-combs-collection-v4");
+    writer.text("cpphdl-combs-collection-v5");
     writer.number(bodies.bodies.size());
     for (const std::string *body : bodies.bodies) {
       writer.text(*body);
@@ -2843,7 +2916,9 @@ struct CombsOptimizer::Impl {
 
   bool loadCollection(const std::string &path) {
     CollectionReader reader(path);
-    if (reader.text() != "cpphdl-combs-collection-v4") {
+    const auto version = reader.text();
+    if (version != "cpphdl-combs-collection-v4" &&
+        version != "cpphdl-combs-collection-v5") {
       llvm::errs() << "cpphdl --optimize-combs: invalid collection " << path
                    << "\n";
       return false;
@@ -2871,7 +2946,8 @@ struct CombsOptimizer::Impl {
     std::string largestClass;
     for (uint64_t index = 0; index < classCount && reader; ++index) {
       auto name = reader.text();
-      auto info = readClassInfo(reader, bodies);
+      auto info = readClassInfo(reader, bodies,
+                                version == "cpphdl-combs-collection-v5");
       size_t classBytes = info.name.size() + info.templateBase.size() +
                           info.header.size();
       const auto addMapBytes = [&classBytes](const auto &values) {
@@ -2938,7 +3014,9 @@ struct CombsOptimizer::Impl {
     }
     for (const auto &[path, indexes] : needed) {
       CollectionReader reader(path);
-      if (reader.text() != "cpphdl-combs-collection-v4") {
+      const auto version = reader.text();
+      if (version != "cpphdl-combs-collection-v4" &&
+          version != "cpphdl-combs-collection-v5") {
         error = "invalid deferred collection " + path;
         return false;
       }
@@ -2981,6 +3059,7 @@ struct CombsOptimizer::Impl {
   // comb bodies. Retain the explicit L1 mode so the upstream CLI can select
   // and report that behavior without falling back to the legacy optimizer.
   bool l1Scheduling = false;
+  std::set<std::pair<size_t, std::string>> expandingHelpers;
   bool collectionOnly = false;
   std::map<std::string, ClassInfo> classes;
   std::map<std::string, FreeHelper> freeHelpers;
@@ -3010,6 +3089,85 @@ struct CombsOptimizer::Impl {
   size_t mathBitReversals = 0;
   size_t mathReplications = 0;
   size_t mathSignExtensions = 0;
+  std::string replayContextInput, replaySourcePrefix, replayTargetPrefix;
+  std::string replayContextOutput;
+  std::unordered_set<size_t> replayDemandNodes;
+
+  std::string relativeInstancePath(const Instance &instance) const {
+    const Instance *root = &instance;
+    while (root->parent) root = root->parent;
+    return instance.path == root->path ? std::string{} :
+        instance.path.substr(root->path.size() + 1);
+  }
+
+  bool loadReplayContext() {
+    replayDemandNodes.clear();
+    if (replayContextInput.empty()) return true;
+    std::ifstream input(replayContextInput);
+    std::string magic;
+    unsigned version = 0, mode = 0;
+    if (!(input >> magic >> version >> mode) ||
+        magic != "CPPHDL_REPLAY_CONTEXT" || version != 1 ||
+        mode != unsigned(l1Scheduling)) {
+      error = "invalid replay context or scheduling mode: " + replayContextInput;
+      return false;
+    }
+    size_t matched = 0;
+    std::set<std::pair<std::string, std::string>> seen;
+    std::string kind, path, type, name;
+    unsigned demand = 0;
+    while (input >> kind) {
+      if (!(input >> demand >> std::quoted(path) >> std::quoted(type) >>
+            std::quoted(name)) || (kind != "C" && kind != "P") || demand > 1 ||
+          !seen.emplace(kind, path + ":" + name).second) {
+        error = "malformed or duplicate replay context row";
+        return false;
+      }
+      if (path != replaySourcePrefix &&
+          !(replaySourcePrefix.empty() ||
+            path.starts_with(replaySourcePrefix + "."))) continue;
+      const std::string suffix = replaySourcePrefix.empty() ? path :
+          path.substr(replaySourcePrefix.size() + (path != replaySourcePrefix));
+      const std::string target = replayTargetPrefix +
+          (replayTargetPrefix.empty() || suffix.empty() ? "" : ".") + suffix;
+      for (const Node &node : nodes) {
+        if (relativeInstancePath(*node.instance) != target || node.name != name ||
+            (node.kind == NodeKind::Comb ? "C" : "P") != kind) continue;
+        const auto &actualType = node.instance->type->templateBase.empty() ?
+            node.instance->type->name : node.instance->type->templateBase;
+        if (type != actualType) {
+          error = "replay context module type mismatch at " + target;
+          return false;
+        }
+        ++matched;
+        if (demand) replayDemandNodes.insert(node.id);
+      }
+    }
+    if (!input.eof() || matched == 0) {
+      error = "replay context matched no graph nodes or could not be read";
+      return false;
+    }
+    llvm::errs() << "cpphdl replay context: matched=" << matched
+                 << " demand=" << replayDemandNodes.size() << "\n";
+    return true;
+  }
+
+  bool saveReplayContext() const {
+    if (replayContextOutput.empty()) return true;
+    std::ofstream output(replayContextOutput);
+    output << "CPPHDL_REPLAY_CONTEXT 1 " << unsigned(l1Scheduling) << "\n";
+    for (const size_t id : schedule) {
+      const Node &node = nodes[id];
+      const auto &type = node.instance->type->templateBase.empty() ?
+          node.instance->type->name : node.instance->type->templateBase;
+      output << (node.kind == NodeKind::Comb ? "C " : "P ")
+             << unsigned(dynamicNodes.contains(id)) << " "
+             << std::quoted(relativeInstancePath(*node.instance)) << " "
+             << std::quoted(type) << " " << std::quoted(node.name) << "\n";
+    }
+    output.close();
+    return bool(output);
+  }
 
   std::optional<IndexedAssignment>
   indexedAssignment(const std::string &statement,
@@ -3359,15 +3517,21 @@ struct CombsOptimizer::Impl {
       }
       first = afterTarget;
     }
+    const auto proof = node.instance->type->constantValues.find(
+        "__cpphdl_complete_" + storage->second);
+    const bool completeIndexedWrites = proof != node.instance->type->constantValues.end() &&
+                                       proof->second == 1;
     const size_t equals = skipSpace(code, first + target.size());
-    if (equals >= code.size() || code[equals] != '=' ||
-        (equals + 1 < code.size() && code[equals + 1] == '=')) {
-      return false;
-    }
-    const size_t semicolon = code.find(';', equals + 1);
-    if (semicolon == std::string::npos ||
-        code.find(target, equals + 1) < semicolon) {
-      return false;
+    if (!completeIndexedWrites) {
+      if (equals >= code.size() || code[equals] != '=' ||
+          (equals + 1 < code.size() && code[equals + 1] == '=')) {
+        return false;
+      }
+      const size_t semicolon = code.find(';', equals + 1);
+      if (semicolon == std::string::npos ||
+          code.find(target, equals + 1) < semicolon) {
+        return false;
+      }
     }
 
     // Writes to the result or its subfields remain local comb computation.
@@ -3434,12 +3598,20 @@ struct CombsOptimizer::Impl {
       // Collection intentionally discards expanded C++ type spellings, and
       // dependent logic widths are not necessarily printed as integer literals.
       // The typed helper resolves those widths without another elaborator.
-      if (field == fields.end() || field->second.indexedStorage ||
-          field->second.kind != FieldKind::Other)
+      if (field == fields.end() || field->second.kind != FieldKind::Other)
         continue;
-      const size_t opening = start + match.length() - 1;
-      const auto closing = matchingDelimiter(expression, opening, '[', ']');
+      size_t opening = start + match.length() - 1;
+      auto closing = matchingDelimiter(expression, opening, '[', ']');
       if (!closing) continue;
+      const size_t firstOpening = opening;
+      while (skipSpace(code, *closing + 1) < code.size() &&
+             code[skipSpace(code, *closing + 1)] == '[') {
+        opening = skipSpace(code, *closing + 1);
+        closing = matchingDelimiter(expression, opening, '[', ']');
+        if (!closing) break;
+      }
+      if (!closing) continue;
+      if (field->second.indexedStorage && opening == firstOpening) continue;
       const size_t equals = skipSpace(expression, *closing + 1);
       if (equals + 1 >= expression.size() || expression[equals] != '=' ||
           expression[equals + 1] == '=') continue;
@@ -3463,10 +3635,19 @@ struct CombsOptimizer::Impl {
       // order; retain RHS references until assignment rather than converting
       // early, because evaluating the index can itself mutate referenced data.
       // A call argument also keeps RHS temporaries alive through writeback.
-      output += "([&](auto&& __cpphdl_bit_value) { "
-                "const std::size_t __cpphdl_bit_index = (" +
+      output += "([&](auto&& __cpphdl_bit_value) { ";
+      std::string storeTarget = target;
+      if (opening != firstOpening) {
+        // Evaluate the subscript chain before its final index, as C++ does.
+        // Binding the proxy keeps RHS/index side effects and temporary lifetime
+        // intact; the typed helper uses its parent rather than copying its bits.
+        output += "auto&& __cpphdl_bit_target = " +
+                  expression.substr(start, opening - start) + "; ";
+        storeTarget = "__cpphdl_bit_target";
+      }
+      output += "const std::size_t __cpphdl_bit_index = (" +
                 expression.substr(opening + 1, *closing - opening - 1) +
-                "); cpphdl::sv_assign_bit(" + target +
+                "); cpphdl::sv_assign_bit(" + storeTarget +
                 ", __cpphdl_bit_index, std::forward<decltype(__cpphdl_bit_value)>"
                 "(__cpphdl_bit_value)); }(" +
                 expression.substr(equals + 1, end - equals - 1) + "));";
@@ -3540,6 +3721,10 @@ struct CombsOptimizer::Impl {
       if (instance < instances.size() && cursor != fieldStart &&
           instances[instance]->type->workMutatedFields.contains(
               expression.substr(fieldStart, cursor - fieldStart))) {
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: mutated field " << instances[instance]->path
+                       << "." << expression.substr(fieldStart, cursor - fieldStart)
+                       << "\n";
         return true;
       }
     }
@@ -3648,6 +3833,34 @@ struct CombsOptimizer::Impl {
           start >= 2 && (input.substr(start - 2, 2) == "::" ||
                          input.substr(start - 2, 2) == "->");
       const bool memberBefore = start > 0 && input[start - 1] == '.';
+      if (l1Scheduling && !qualifiedBefore && !memberBefore &&
+          !locals.contains(identifier) &&
+          context.type->helperSignatures.contains(identifier) &&
+          afterIdentifier < input.size() && input[afterIdentifier] == '(' &&
+          expandingHelpers.size() < 64 &&
+          !expandingHelpers.contains({context.id, identifier})) {
+        const auto closing = matchingDelimiter(input, afterIdentifier, '(', ')');
+        const auto found = context.type->methods.find(identifier);
+        if (closing && found != context.type->methods.end()) {
+          const auto &body = bodyText(found->second);
+          if (!body.empty()) {
+            auto helperLocals = localVariables(body);
+            const auto &parameters = context.type->helperLocals.at(identifier);
+            helperLocals.insert(parameters.begin(), parameters.end());
+            expandingHelpers.emplace(context.id, identifier);
+            const auto helper = rewrite(context.type->helperSignatures.at(identifier) + body,
+                                        context, dependencies, helperLocals, unavailableValue);
+            expandingHelpers.erase({context.id, identifier});
+            const auto arguments = rewrite(input.substr(afterIdentifier + 1,
+                *closing - afterIdentifier - 1), context, dependencies, locals, unavailableValue);
+            // Native-only lowering keeps references and call evaluation order;
+            // hdlcpp's RTL-facing source remains free of runtime closures.
+            output += "(" + helper + ")(" + arguments + ")";
+            index = *closing + 1;
+            continue;
+          }
+        }
+      }
       const bool forcedField =
           locals.contains(identifier) &&
           (input.find(identifier + "._next") != std::string::npos ||
@@ -4051,6 +4264,16 @@ struct CombsOptimizer::Impl {
         }
       }
 
+      if (!qualifiedBefore && !memberBefore &&
+          !locals.contains(identifier) &&
+          context.type->methods.contains(identifier) &&
+          afterIdentifier < input.size() && input[afterIdentifier] == '<') {
+        // Flattening leaves the class scope. Explicit-template helper calls
+        // need the same receiver as ordinary calls, plus dependent disambiguation.
+        output += context.alias + ".template " + identifier;
+        continue;
+      }
+
       const auto field = context.type->fields.find(identifier);
       if (!qualifiedBefore && !memberBefore &&
           (!locals.contains(identifier) || forcedField) &&
@@ -4311,11 +4534,13 @@ struct CombsOptimizer::Impl {
       if (!qualifiedBefore && !memberBefore &&
           !preservedIdentifiers.contains(identifier) &&
           context.type->methods.contains(identifier) &&
-          afterIdentifier < input.size() && input[afterIdentifier] == '(') {
+          afterIdentifier < input.size() &&
+          (input[afterIdentifier] == '(' || input[afterIdentifier] == '<')) {
         // Unevaluated operands stay as C++ calls instead of graph nodes, but
         // moving their enclosing expression out of class scope still requires
         // every member method, including helpers with arguments, to be bound.
-        output += context.alias + "." + identifier;
+        output += context.alias +
+                  (input[afterIdentifier] == '<' ? ".template " : ".") + identifier;
         continue;
       }
 
@@ -4514,6 +4739,28 @@ struct CombsOptimizer::Impl {
     // purity now from the original rewritten method so every later optimizer
     // phase makes the same per-clock memoization decision for this node.
     nodes[id].memoizableProcedural = memoizableProceduralComb(nodes[id]);
+    if (std::getenv("CPPHDL_TRACE_COMB_PROOF") &&
+        nodes[id].kind == NodeKind::Comb) {
+      const auto storage = nodes[id].instance->type->combStorage.find(nodes[id].name);
+      if (storage != nodes[id].instance->type->combStorage.end()) {
+        const auto proof = nodes[id].instance->type->constantValues.find(
+            "__cpphdl_complete_" + storage->second);
+        if (proof != nodes[id].instance->type->constantValues.end())
+          llvm::errs() << "comb proof: " << nodes[id].instance->path << "."
+                       << nodes[id].name << " complete=" << proof->second
+                       << " memoizable=" << nodes[id].memoizableProcedural
+                       << " unresolved=" << hasUnresolvedInstanceCall(nodes[id].expression) << "\n";
+      }
+    }
+    if (nodes[id].memoizableProcedural) {
+      const auto storage = nodes[id].instance->type->combStorage.find(nodes[id].name);
+      if (storage != nodes[id].instance->type->combStorage.end()) {
+        const auto proof = nodes[id].instance->type->constantValues.find(
+            "__cpphdl_complete_" + storage->second);
+        nodes[id].indexedWriteProof = proof != nodes[id].instance->type->constantValues.end() &&
+                                     proof->second == 1;
+      }
+    }
     ++preparedNodeCount;
 #if defined(__GLIBC__)
     // Rewriting large generated methods creates short-lived regex and string
@@ -4731,6 +4978,9 @@ struct CombsOptimizer::Impl {
       // remains at the source call site after the imperative write occurs.
       if (readsWorkMutatedField(nodes[id].expression)) {
         workMutationSeeds.push_back(id);
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: work seed " << node.instance->path
+                       << "." << node.name << "\n";
       }
     }
 
@@ -4764,6 +5014,26 @@ struct CombsOptimizer::Impl {
       }
     }
 
+    // Complete indexed writes prove local purity, not phase stability. Do not
+    // grant new caching rights through feedback, unresolved calls or imperative
+    // work writes; retain the existing settling and demand semantics there.
+    std::vector<size_t> unstable(workMutationSeeds.begin(), workMutationSeeds.end());
+    unstable.insert(unstable.end(), cyclicNodes.begin(), cyclicNodes.end());
+    unstable.insert(unstable.end(), unresolvedSeeds.begin(), unresolvedSeeds.end());
+    std::unordered_set<size_t> unstableSeen;
+    while (!unstable.empty()) {
+      const size_t id = unstable.back();
+      unstable.pop_back();
+      if (!unstableSeen.insert(id).second) continue;
+      if (nodes[id].indexedWriteProof) {
+        nodes[id].memoizableProcedural = false;
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: unstable " << nodes[id].instance->path
+                       << "." << nodes[id].name << "\n";
+      }
+      unstable.insert(unstable.end(), consumers[id].begin(), consumers[id].end());
+    }
+
     // Any eager consumer could otherwise trigger an on-demand dependency before
     // the call site which first reaches it in the source model. That changes
     // function_ref/_LAZY_COMB cache contents and SCC retained-value selection.
@@ -4780,6 +5050,12 @@ struct CombsOptimizer::Impl {
       if (dynamicNodes.insert(id).second) {
         pending.push_back(id);
       }
+    }
+    // A scalar trace input must not erase the source design's lazy consumer
+    // context. Original generated consumers still determine evaluation counts.
+    for (const size_t id : replayDemandNodes) {
+      if (activeNodes.contains(id) && dynamicNodes.insert(id).second)
+        pending.push_back(id);
     }
     while (!pending.empty()) {
       const size_t dependency = pending.back();
@@ -6530,7 +6806,12 @@ struct CombsOptimizer::Impl {
     // Classify lazy boundaries before alias simplification can erase ports.
     // Dynamic function_ref nodes carry observable per-clock cache semantics.
     // Recompute after simplification below to classify the final graph too.
+    if (!loadReplayContext()) return false;
     identifyDynamicNodes();
+    if (!saveReplayContext()) {
+      error = "cannot write replay context: " + replayContextOutput;
+      return false;
+    }
     optimizeGraph(work);
     // Alias and inline simplification removes thousands of transparent port
     // nodes. Rebuild the concrete graph from those simplified expressions so
@@ -8056,6 +8337,14 @@ void CombsOptimizer::collect(clang::ASTContext &context) {
 
 void CombsOptimizer::setL1Scheduling(bool enabled) {
   impl->l1Scheduling = enabled;
+}
+
+void CombsOptimizer::setReplayContext(std::string input, std::string sourcePrefix,
+                                     std::string targetPrefix, std::string output) {
+  impl->replayContextInput = std::move(input);
+  impl->replaySourcePrefix = std::move(sourcePrefix);
+  impl->replayTargetPrefix = std::move(targetPrefix);
+  impl->replayContextOutput = std::move(output);
 }
 
 void CombsOptimizer::setCollectionOnly(bool enabled) {

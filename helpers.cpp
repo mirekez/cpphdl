@@ -518,15 +518,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
 
-        if (FS->getInit()) {
-            expr.sub.push_back(exprToExpr(FS->getInit()));
-        }
-        if (FS->getCond()) {
-            expr.sub.push_back(exprToExpr(FS->getCond()));
-        }
-        if (FS->getInc()) {
-            expr.sub.push_back(exprToExpr(FS->getInc()));
-        }
+        // The RTL emitter addresses init/condition/increment/body by position.
+        // Omitting a C++ clause must not shift the remaining expressions.
+        expr.sub.push_back(FS->getInit() ? exprToExpr(FS->getInit()) : cpphdl::Expr{});
+        expr.sub.push_back(FS->getCond() ? exprToExpr(FS->getCond())
+                                       : cpphdl::Expr{"1", cpphdl::Expr::EXPR_NUM});
+        expr.sub.push_back(FS->getInc() ? exprToExpr(FS->getInc()) : cpphdl::Expr{});
 
         if (FS->getBody()) {
             cpphdl::Expr expr1 = cpphdl::Expr{"body", cpphdl::Expr::EXPR_BODY};
