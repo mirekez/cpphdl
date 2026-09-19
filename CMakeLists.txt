@@ -264,6 +264,12 @@ if(NOT CPPHDL_LOCAL_CONDA_PREFIX AND CPPHDL_USE_LOCAL_CONDA)
 endif()
 if(CPPHDL_LOCAL_CONDA_PREFIX)
   file(TO_CMAKE_PATH "${CPPHDL_LOCAL_CONDA_PREFIX}" CPPHDL_LOCAL_CONDA_PREFIX)
+  # Windows Conda packages place headers and libraries under Library.
+  # Accept either the environment root or that Library directory as a prefix.
+  if(NOT EXISTS "${CPPHDL_LOCAL_CONDA_PREFIX}/include/clang/Tooling/Tooling.h"
+      AND EXISTS "${CPPHDL_LOCAL_CONDA_PREFIX}/Library/include/clang/Tooling/Tooling.h")
+    string(APPEND CPPHDL_LOCAL_CONDA_PREFIX "/Library")
+  endif()
 endif()
 
 foreach(CPPHDL_LLVM_PREFIX
