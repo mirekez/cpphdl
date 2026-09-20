@@ -19,6 +19,7 @@
 #include <print>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include "../../examples/tools.h"
 
 using namespace cpphdl;
@@ -170,8 +171,11 @@ struct L2CpuTestInput
     uint8_t write_mask;
 };
 
+// Native simulation harness, not synthesizable hardware. Its DUT/RAM fields
+// still instantiate the Module specializations needed by the RTL converter.
+// Inheriting Module here would also export the host PRBS lambdas and drivers.
 template<size_t L2_SIZE, size_t PORT_BITS, size_t MEM_PORTS, size_t WAYS, size_t CPU_PORTS>
-class TestL2Cache : public Module
+class TestL2Cache
 {
     static constexpr size_t SETS = L2_SIZE / LINE_SIZE / WAYS;
     static constexpr uint64_t REGION_SIZE64 = 0x100000000ull / MEM_PORTS;
@@ -1879,6 +1883,10 @@ public:
 
     bool run()
     {
+        // Guard every instantiated native/Verilator harness without adding a
+        // new specialization that could change RTL discovery order.
+        static_assert(!std::is_base_of_v<Module, TestL2Cache>,
+                      "The L2 testbench must not be exported as a hardware Module");
 #ifdef VERILATOR
         std::print("VERILATOR Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
             L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);

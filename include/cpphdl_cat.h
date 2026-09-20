@@ -72,12 +72,7 @@ constexpr const logic<WIDTH>& cat_to_logic(const logic<WIDTH>& value)
 template<size_t WIDTH>
 constexpr logic<WIDTH> cat_to_logic(const u<WIDTH>& value)
 {
-    logic<WIDTH> result{};
-    uint64_t raw = value;
-    for (size_t i = 0; i < WIDTH; ++i) {
-        result.set(i, (raw >> i) & 1);
-    }
-    return result;
+    return logic<WIDTH>(static_cast<uint64_t>(value));
 }
 
 constexpr logic<8> cat_to_logic(const u1& value) { return cat_to_logic(u<8>((uint64_t)value)); }
@@ -102,6 +97,20 @@ template<size_t... N>
 struct cat : logic<SUM<N...>()>
 {
     static constexpr size_t WIDTH = SUM<N...>();
+
+    template<size_t ARG_WIDTH, typename Arg>
+    static __attribute__((always_inline)) constexpr void
+    appendScalar(uint64_t& packed, const Arg& arg)
+    {
+        const uint64_t raw = cat_to_logic(arg).to_uint64_constexpr();
+        if constexpr (ARG_WIDTH == 64) {
+            packed = raw;
+        }
+        else {
+            packed = (packed << ARG_WIDTH) |
+                     (raw & ((uint64_t{1} << ARG_WIDTH) - 1));
+        }
+    }
 
     // cat construction previously depended on memset, memcpy, and runtime conversion.
     // Those operations prevented valid SystemVerilog constant concatenations in C++.
@@ -151,11 +160,25 @@ struct cat : logic<SUM<N...>()>
     }
 
     template<typename... Args>
-    constexpr cat(const Args&... args) : logic<WIDTH>()
+    // Scalar concatenations are generated inside large decoder branches. Force
+    // this small wrapper into the branch so it does not survive as a call around
+    // appendScalar and logic's native-word assignment fast paths.
+    __attribute__((always_inline)) constexpr cat(const Args&... args) : logic<WIDTH>()
     {
         static_assert(sizeof...(Args) == sizeof...(N), "cat argument count mismatch");
         static_assert(((cat_width_v<Args> == N) && ...), "cat argument width mismatch");
         auto& result = *static_cast<logic<WIDTH>*>(this);
+        // Most generated concatenations fit in one host word. Build those with
+        // shifts and masks at runtime, avoiding byte-boundary merge loops while
+        // retaining the existing portable path for constant evaluation.
+        if constexpr (WIDTH <= 64) {
+            if (!detail::is_constant_evaluated_compat()) {
+                uint64_t packed = 0;
+                (appendScalar<N>(packed, args), ...);
+                result.assign_uint64(packed);
+                return;
+            }
+        }
         if constexpr (((N == 1) && ...)) {
             // FIRRTL commonly forms masks and lookup tables by concatenating
             // dozens or hundreds of individual bits.  A fold avoids the deep

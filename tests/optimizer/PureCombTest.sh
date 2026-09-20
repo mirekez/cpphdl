@@ -18,6 +18,14 @@ for mode in --optimize-combs --optimize-combs-l1; do
         "$source_dir/PureCombSeed.cc" -- \
         -w -I"$source_dir" -I"$include_dir"
 
+    # The root input accessor is the external source of this otherwise pure
+    # graph. It must be scheduled as a leaf, not treated as unresolved module
+    # dispatch that forces all consumers into dynamic evaluators.
+    if grep -Eq '_optimized_comb_eval_[0-9]+' "$build_dir"/*.cpp; then
+        printf '%s put a pure root-input graph on the dynamic schedule\n' "$mode" >&2
+        exit 1
+    fi
+
     objects=()
     for source in "$build_dir"/*.cpp; do
         object="${source%.cpp}.o"

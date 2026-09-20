@@ -245,8 +245,6 @@ def repair_method(name: str, leaf: str, parent: str) -> None:
         body = body[:call] + replacement + body[close + 1:]
         cursor = call + len(replacement)
         replacement_count += 1
-    if replacement_count == 0:
-        raise SystemExit(f"expected stale {token} read in {name}")
     text = text[:start] + body + text[end:]
 
 repair_method("lu_content_o_ppn_comb", "ppn", "pte")
@@ -255,8 +253,10 @@ repair_method("lu_g_content_o_ppn_comb", "ppn", "gpte")
 repair_method("lu_g_content_o_u_comb", "u", "gpte")
 
 for stale in ("content_q_u_comb", "content_q_ppn_comb"):
-    start, end = lazy_method_span(stale)
-    text = text[:start] + text[end:]
+    marker = f"    _LAZY_COMB({stale},"
+    if marker in text:
+        start, end = lazy_method_span(stale)
+        text = text[:start] + text[end:]
 
 for token in ("content_q_u_comb_func()", "content_q_ppn_comb_func()"):
     if token in text:
@@ -284,46 +284,48 @@ fi
         "$HDLCPP" --optimize "$RUNNER"
     python3 - <<'PY'
 from pathlib import Path
+import os
 import re
 
 # Keep hierarchy lifecycle and the top AXI comb getter out of the host runner's
 # optimizer unit.  hdlcpp already emits the first four root wrappers; add the
 # narrow request accessor beside the O0 root-binding unit.  Direct calls here
 # otherwise make Clang instantiate and optimize the complete hierarchy in main.
-main = Path("cpphdl_optimized_main.cpp")
-text = main.read_text()
-root_decl = "ariane<config, RvfiInstr, RvfiCsr, RvfiProbes> dut;"
-if root_decl not in text:
-    raise SystemExit("optimized CVA6 runner root declaration changed")
-text = text.replace(
-    root_decl,
-    "auto* dut_pointer = cpphdl_optimized_root_create();\n"
-    "    auto& dut = *dut_pointer;",
-    1,
-)
-text = text.replace("dut._assign();", "cpphdl_optimized_root_assign_abi(&dut);", 1)
-text = text.replace("dut._strobe();", "cpphdl_optimized_root_strobe(dut);", 1)
-text = text.replace("dut._work(!bool(reset_n));", "cpphdl_optimized_root_work(dut, !bool(reset_n));", 1)
-text = text.replace("dut.noc_req_o_out();", "cpphdl_optimized_root_noc_req(dut);", 1)
-main.write_text(text)
+if os.environ.get("CPPHDL_CVA6_NATIVE_HARNESS") != "1":
+    main = Path("cpphdl_optimized_main.cpp")
+    text = main.read_text()
+    root_decl = "ariane<config, RvfiInstr, RvfiCsr, RvfiProbes> dut;"
+    if root_decl not in text:
+        raise SystemExit("optimized CVA6 runner root declaration changed")
+    text = text.replace(
+        root_decl,
+        "auto* dut_pointer = cpphdl_optimized_root_create();\n"
+        "    auto& dut = *dut_pointer;",
+        1,
+    )
+    text = text.replace("dut._assign();", "cpphdl_optimized_root_assign_abi(&dut);", 1)
+    text = text.replace("dut._strobe();", "cpphdl_optimized_root_strobe(dut);", 1)
+    text = text.replace("dut._work(!bool(reset_n));", "cpphdl_optimized_root_work(dut, !bool(reset_n));", 1)
+    text = text.replace("dut.noc_req_o_out();", "cpphdl_optimized_root_noc_req(dut);", 1)
+    main.write_text(text)
 
-externs = Path("cpphdl_optimized_externs.h")
-text = externs.read_text()
-declaration = "const ariane_axi::req_t& cpphdl_optimized_root_noc_req(cpphdl_opt_t0&);\n"
-if declaration not in text:
-    text += declaration
-externs.write_text(text)
+    externs = Path("cpphdl_optimized_externs.h")
+    text = externs.read_text()
+    declaration = "const ariane_axi::req_t& cpphdl_optimized_root_noc_req(cpphdl_opt_t0&);\n"
+    if declaration not in text:
+        text += declaration
+    externs.write_text(text)
 
-binding = Path("cpphdl_optimized_inst_3.cpp")
-text = binding.read_text()
-definition = (
-    "\n__attribute__((noinline)) const ariane_axi::req_t& "
-    "cpphdl_optimized_root_noc_req(cpphdl_opt_t0& obj) "
-    "{ return obj.noc_req_o_out(); }\n"
-)
-if definition not in text:
-    text += definition
-binding.write_text(text)
+    binding = Path("cpphdl_optimized_inst_3.cpp")
+    text = binding.read_text()
+    definition = (
+        "\n__attribute__((noinline)) const ariane_axi::req_t& "
+        "cpphdl_optimized_root_noc_req(cpphdl_opt_t0& obj) "
+        "{ return obj.noc_req_o_out(); }\n"
+    )
+    if definition not in text:
+        text += definition
+    binding.write_text(text)
 
 makefile = Path("Makefile.optimize")
 text = makefile.read_text()
@@ -335,13 +337,26 @@ constructor_objects = re.findall(
 if not constructor_objects:
     raise SystemExit("optimized CVA6 Makefile has no constructor object rules")
 continuation = " \\\n        ".join(constructor_objects)
+no_pch_objects = ""
+internal_pch_objects = ""
+if os.environ.get("CPPHDL_CVA6_NATIVE_HARNESS") == "1":
+    no_pch_objects = (
+        "build/opt/cpphdl_optimized_main.o "
+        "build/opt/run_cpphdl_testharness_model_memory.o "
+        "build/opt/run_cpphdl_testharness_model_observe.o"
+    )
+    internal_pch_objects = "$(COMB_OBJS)"
 pch_variables = (
     "\nPCH_O2 := build/opt/cpphdl_optimized_externs_o2.pch\n"
     "PCH_O0 := build/opt/cpphdl_optimized_externs_o0.pch\n"
     "PCH_USE_O2 := -DCPPHDL_USE_GENERATED_PCH -include-pch $(PCH_O2)\n"
     "PCH_USE_O0 := -DCPPHDL_USE_GENERATED_PCH -include-pch $(PCH_O0)\n"
+    "PCH_INTERNAL := build/opt/cpphdl_opt_t0_optimized_combs_internal.pch\n"
+    "PCH_USE_INTERNAL := -DCPPHDL_USE_GENERATED_PCH -include-pch $(PCH_INTERNAL)\n"
     f"CONSTRUCTOR_OBJS := {continuation}\n"
-    "PCH_OBJS := $(filter-out $(CONSTRUCTOR_OBJS),$(OBJS))\n"
+    f"NO_PCH_OBJS := {no_pch_objects}\n"
+    f"INTERNAL_PCH_OBJS := {internal_pch_objects}\n"
+    "PCH_OBJS := $(filter-out $(CONSTRUCTOR_OBJS) $(NO_PCH_OBJS) $(INTERNAL_PCH_OBJS),$(OBJS))\n"
 )
 text = text.replace("\nDEPS := $(OBJS:.o=.d)", "\nDEPS := $(OBJS:.o=.d)" + pch_variables, 1)
 pattern = "build/opt/%.o: %.cpp all_generated.h cpphdl_optimized_externs.h\n"
@@ -356,14 +371,19 @@ pch_rule = (
     "\t@mkdir -p $(dir $@)\n"
     "\t$(CXX) $(CXXFLAGS) $(CONSTRUCTOR_CXXFLAGS) -x c++-header "
     "cpphdl_optimized_externs.h -o $@\n\n"
+    "$(PCH_INTERNAL): cpphdl_opt_t0_optimized_combs_internal.h\n"
+    "\t@mkdir -p $(dir $@)\n"
+    "\t$(CXX) $(CXXFLAGS) -x c++-header cpphdl_opt_t0_optimized_combs_internal.h -o $@\n\n"
     "$(PCH_OBJS): $(PCH_O2)\n"
     "$(CONSTRUCTOR_OBJS): $(PCH_O0)\n\n"
+    "$(INTERNAL_PCH_OBJS): $(PCH_INTERNAL)\n\n"
 )
 text = text.replace(pattern, pch_rule + pattern, 1)
 text = text.replace(
     recipe,
-    "\t$(CXX) $(CXXFLAGS) $(if $(filter $@,$(CONSTRUCTOR_OBJS)),"
-    "$(PCH_USE_O0),$(PCH_USE_O2)) "
+    "\t$(CXX) $(CXXFLAGS) $(if $(filter $@,$(NO_PCH_OBJS)),,"
+    "$(if $(filter $@,$(INTERNAL_PCH_OBJS)),$(PCH_USE_INTERNAL),"
+    "$(if $(filter $@,$(CONSTRUCTOR_OBJS)),$(PCH_USE_O0),$(PCH_USE_O2)))) "
     "$(DEPFLAGS) -c $< -o $@",
     1,
 )
@@ -497,6 +517,13 @@ elaboration_objects = repacked_objects
 # After lifecycle removal, mixed small-model units contain only constructors
 # and _assign bindings. Give them the same low-cost flags as isolated
 # elaboration units while preserving -O2 for every generated cycle partition.
+if elaboration_objects:
+    constructor_additions = " \\\n+        ".join(elaboration_objects)
+    text = text.replace(
+        "\nPCH_OBJS :=",
+        f"\nCONSTRUCTOR_OBJS += {constructor_additions}\nPCH_OBJS :=",
+        1,
+    )
 rules = "".join(
     f"{obj}: override CXXFLAGS += $(CONSTRUCTOR_CXXFLAGS)\n"
     for obj in elaboration_objects

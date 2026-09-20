@@ -351,6 +351,30 @@ void cpphdl::coerceReturnToBool(Expr& expression)
     });
 }
 
+std::string Expr::specializationName() const
+{
+    Expr canonical = *this;
+    canonical.traverseIf([](Expr& expr) {
+        expr.flags = FLAG_NONE;
+        expr.indent = 0;
+        if (expr.type == EXPR_NUM || expr.type == EXPR_PARAM) {
+            // updateExpr retains source expressions for parameterized RTL.
+            // Inside a fixed type argument, identity uses the evaluated value.
+            expr.sub.clear();
+            const size_t hexPos = expr.value.find("'h");
+            if (hexPos != std::string::npos) {
+                expr.value = std::to_string(std::stoull(expr.value.substr(hexPos + 2), nullptr, 16));
+            }
+        }
+        if (expr.type == EXPR_TYPE && expr.declSize == 0) {
+            // Naming must not depend on whether a struct was exported already.
+            expr.declSize = (size_t)-1;
+        }
+        return false;
+    });
+    return genTypeName(canonical.str());
+}
+
 std::string Expr::str(std::string prefix, std::string suffix)
 {
     std::string indent_str;
@@ -470,13 +494,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     if (!first) {
                         typeSpec += "_";
                     }
-                    const size_t hexPos = sub[i].value.find("'h");
-                    if (sub[i].type == EXPR_NUM && hexPos != std::string::npos) {
-                        typeSpec += std::to_string(std::stoul(sub[i].value.substr(hexPos + 2).c_str(), nullptr, 16));  // we store numbers in hex
-                    }
-                    else {
-                        typeSpec += sub[i].str();
-                    }
+                    typeSpec += sub[i].specializationName();
                     first = false;
                 }
             }
@@ -597,7 +615,8 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             bool fprint = sub.size()>1 && (func == "fprintf" || sub[0].value == "stdout" || sub[0].value == "stderr");
             if (sub.size() && (func == "printf" || func == "print" || func == "format" || func == "fprintf")) {
-                sub[(int)fprint].value = replacePrintFormat(sub, fprint);
+                sub[(int)fprint].value = replacePrintFormat(
+                    sub, fprint, func == "print" || func == "format");
             }
             if (fprint) {
                 if (sub[0].value == "stdout") {
@@ -800,13 +819,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (cpphdl_is_comb_func_name(value)) {
                 return indent_str + prefix + cpphdl_comb_func_signal_name(value) + suffix;
             }
-            if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
+            if (currModule && sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
                 return indent_str + prefix + escapeIdentifier(value) + suffix;
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
             if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
-                && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // Port struct
+                && (isMemberName(base) || interface)) {  // Port struct
 
                 if (isModuleClockLifecycleMethod(member)) {  // child clock blocks call their own lifecycle methods
                     return "";
@@ -874,7 +893,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
-            if (base != "_this" && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // we compare full string because Pack can add "tuple_N"
+            // Type expressions can be rendered before a module is selected.
+            // Only flatten an actual module member, not an ordinary struct field.
+            if (base != "_this" && (isMemberName(base) || interface)) {
                 delim = "__";
                 if (interface && str_ending(base, "_out")) {  // for Port structs
                     if (str_ending(member, "_out")) {
@@ -1486,10 +1507,11 @@ Expr Expr::simplify()  // open brackets for *(+-)
     return expr;
 }
 
-std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint)
+std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint,
+    bool stdFormat)
 {
     std::string str = params[(int)fprint].value;
-    bool stdPrint = false;
+    bool stdPrint = stdFormat;
     if (str.find("std::basic_format_string") == 0 && params[(int)fprint].sub.size()) {
         params[(int)fprint] = params[(int)fprint].sub[0];
         str = params[(int)fprint].value;

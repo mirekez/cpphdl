@@ -26,7 +26,7 @@ protected:
 
     u8& value_comb_func()
     {
-        value_comb = leaf[0].value_out();
+        value_comb = leaf[COUNT - 1].value_out();
         return value_comb;
     }
 public:
@@ -74,13 +74,17 @@ public:
 #include <string>
 #include "../../examples/tools.h"
 
+#ifdef VERILATOR
+#include "VTemplateInheritedBaseArray.h"
+#endif
+
 long _system_clock = -1;
 
 static bool check_generated_sv()
 {
     std::filesystem::path path = "generated/TemplateInheritedBaseArray.sv";
 #ifdef VERILATOR
-    if (!std::filesystem::exists(path)) path = "TemplateInheritedBaseArray/TemplateInheritedBaseArray.sv";
+    if (!std::filesystem::exists(path)) path = "TemplateInheritedBaseArray_3/TemplateInheritedBaseArray.sv";
 #endif
     std::ifstream in(path);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -100,11 +104,28 @@ static bool check_generated_sv()
 int main()
 {
     bool ok = check_generated_sv();
+    uint8_t actual;
 #ifndef VERILATOR
+    TemplateInheritedBaseArray<3> dut;
+    dut._assign();
+    dut._work(false);
+    dut._strobe();
+    ++_system_clock;
+    actual = (uint8_t)dut.value_out();
     ok &= VerilatorCompile(__FILE__, "TemplateInheritedBaseArray",
-        {"Predef_pkg", "TemplateInheritedArrayLeaf"}, {"../../../../include"});
-    ok &= std::system("TemplateInheritedBaseArray/obj_dir/VTemplateInheritedBaseArray") == 0;
+        {"Predef_pkg", "TemplateInheritedArrayLeaf"}, {"../../../../include"}, 3);
+    ok &= std::system("TemplateInheritedBaseArray_3/obj_dir/VTemplateInheritedBaseArray") == 0;
+#else
+    VTemplateInheritedBaseArray dut;
+    dut.clk = 0;
+    dut.reset = 0;
+    dut.eval();
+    actual = dut.value_out;
 #endif
+    if (actual != 2) {
+        std::print("ERROR: inherited array output={}, expected 2 for COUNT=3\n", actual);
+        ok = false;
+    }
     return !ok;
 }
 #endif

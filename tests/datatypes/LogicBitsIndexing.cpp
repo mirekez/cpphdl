@@ -262,6 +262,35 @@ public:
             }
         }
 
+        logic<2048> wideSource = 0;
+        logic<2048> wideDestination = ~logic<2048>(0);
+        for (size_t bit = 0; bit < 2048; ++bit) {
+            wideSource.set(bit, ((bit * 13 + bit / 7) & 1) != 0);
+        }
+        logic<2048> unalignedSlice = wideSource.bits(1900, 3);
+        for (size_t bit = 0; bit < 1898 && !error; ++bit) {
+            if (unalignedSlice.get(bit) != wideSource.get(bit + 3)) {
+                std::print("\nwide unaligned read ERROR at bit {}\n", bit);
+                error = true;
+            }
+        }
+        for (size_t bit = 1898; bit < 2048 && !error; ++bit) {
+            if (unalignedSlice.get(bit)) {
+                std::print("\nwide unaligned read padding ERROR at bit {}\n", bit);
+                error = true;
+            }
+        }
+        wideDestination.bits(1900, 3) = unalignedSlice;
+        for (size_t bit = 0; bit < 2048 && !error; ++bit) {
+            const bool expected = bit >= 3 && bit <= 1900
+                                      ? wideSource.get(bit)
+                                      : true;
+            if (wideDestination.get(bit) != expected) {
+                std::print("\nwide unaligned write ERROR at bit {}\n", bit);
+                error = true;
+            }
+        }
+
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",
             (std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::high_resolution_clock::now() - start)).count());

@@ -11,12 +11,14 @@ using namespace cpphdl;
 class RGMIIVerif
 {
     std::deque<std::vector<uint8_t>> rx_packets;
+    std::deque<bool> rx_packet_priority;
     std::vector<uint8_t> tx_packet;
     std::vector<std::vector<uint8_t>> tx_packets;
     bool rx_have_low = false;
     uint8_t rx_low = 0;
     bool rx_low_last = false;
     bool tx_high = false;
+    bool rx_packet_started = false;
     uint8_t tx_byte = 0;
 
 public:
@@ -29,15 +31,36 @@ public:
     void push_rx_packet(const std::vector<uint8_t>& packet)
     {
         rx_packets.push_back(packet);
+        rx_packet_priority.push_back(true);
         ++rx_packet_count;
     }
 
-    bool push_rx_packet_limited(const std::vector<uint8_t>& packet, size_t max_packets)
+    bool push_rx_packet_priority_limited(const std::vector<uint8_t>& packet,
+        size_t max_packets, bool priority, bool& evicted)
     {
+        evicted = false;
         if (max_packets != 0 && rx_packets.size() >= max_packets) {
-            return false;
+            size_t first_pending = rx_packet_started ? 1 : 0;
+            // Never remove the front packet after any of it has reached
+            // RGMII. tx_high alone is insufficient: it is false between
+            // every pair of byte nibbles, while the frame is still active.
+            size_t victim = rx_packets.size();
+            for (size_t index = first_pending; index < rx_packets.size(); ++index) {
+                if (!rx_packet_priority[index]) {
+                    victim = index;
+                    break;
+                }
+            }
+            if (victim == rx_packets.size()) {
+                return false;
+            }
+            rx_packets.erase(rx_packets.begin() + victim);
+            rx_packet_priority.erase(rx_packet_priority.begin() + victim);
+            evicted = true;
         }
-        push_rx_packet(packet);
+        rx_packets.push_back(packet);
+        rx_packet_priority.push_back(priority);
+        ++rx_packet_count;
         return true;
     }
 
@@ -58,6 +81,11 @@ public:
         return packet;
     }
 
+    const std::vector<uint8_t>& front_tx_packet() const
+    {
+        return tx_packets.front();
+    }
+
     const std::vector<std::vector<uint8_t>>& transmitted_packets() const
     {
         return tx_packets;
@@ -73,6 +101,7 @@ public:
             std::vector<uint8_t>& packet = rx_packets.front();
             if (!packet.empty()) {
                 if (!tx_high) {
+                    rx_packet_started = true;
                     tx_byte = packet.front();
                     rgmii_rxd = tx_byte & 0x0f;
                     rgmii_rx_ctl = true;
@@ -87,6 +116,8 @@ public:
                     tx_high = false;
                     if (packet.empty()) {
                         rx_packets.pop_front();
+                        rx_packet_priority.pop_front();
+                        rx_packet_started = false;
                     }
                 }
             }
@@ -132,9 +163,11 @@ public:
         verif.push_rx_packet(packet);
     }
 
-    bool push_rx_packet_limited(const std::vector<uint8_t>& packet, size_t max_packets)
+    bool push_rx_packet_priority_limited(const std::vector<uint8_t>& packet,
+        size_t max_packets, bool priority, bool& evicted)
     {
-        return verif.push_rx_packet_limited(packet, max_packets);
+        return verif.push_rx_packet_priority_limited(
+            packet, max_packets, priority, evicted);
     }
 
     size_t pending_rx_packets() const
@@ -150,6 +183,11 @@ public:
     std::vector<uint8_t> pop_tx_packet()
     {
         return verif.pop_tx_packet();
+    }
+
+    const std::vector<uint8_t>& front_tx_packet() const
+    {
+        return verif.front_tx_packet();
     }
 
     void _assign() {}

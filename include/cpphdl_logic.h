@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cpphdl_bitops.h"
+#include <cstring>
 #include <type_traits>
 #include <initializer_list>
 #include <utility>
@@ -77,6 +78,61 @@ constexpr bool is_constant_evaluated_compat() noexcept
 #endif
 }
 
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+// Writeback tails contain at most eight bytes. Fixed-size copies become native
+// loads/stores without requiring alignment or reading past the packed object.
+__attribute__((always_inline)) inline uint64_t load_writeback_word(const uint8_t* source, size_t bytes)
+{
+    uint64_t result = 0;
+    if (bytes == 8) {
+        std::memcpy(&result, source, 8);
+        return result;
+    }
+    size_t shift = 0;
+    if (bytes >= 4) {
+        uint32_t word;
+        std::memcpy(&word, source, 4);
+        result = word;
+        source += 4;
+        bytes -= 4;
+        shift = 32;
+    }
+    if (bytes >= 2) {
+        uint16_t word;
+        std::memcpy(&word, source, 2);
+        result |= uint64_t(word) << shift;
+        source += 2;
+        bytes -= 2;
+        shift += 16;
+    }
+    if (bytes) result |= uint64_t(*source) << shift;
+    return result;
+}
+
+__attribute__((always_inline)) inline void store_writeback_word(uint8_t* destination, uint64_t value, size_t bytes)
+{
+    if (bytes == 8) {
+        std::memcpy(destination, &value, 8);
+        return;
+    }
+    if (bytes >= 4) {
+        const uint32_t word = static_cast<uint32_t>(value);
+        std::memcpy(destination, &word, 4);
+        destination += 4;
+        bytes -= 4;
+        value >>= 32;
+    }
+    if (bytes >= 2) {
+        const uint16_t word = static_cast<uint16_t>(value);
+        std::memcpy(destination, &word, 2);
+        destination += 2;
+        bytes -= 2;
+        value >>= 16;
+    }
+    if (bytes) *destination = static_cast<uint8_t>(value);
+}
+#endif
+
 }
 
 template<size_t WIDTH>
@@ -93,6 +149,39 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr logic() = default;
     constexpr logic(const logic& other) = default;
 
+    // Runtime scalar creation and width conversion dominate generated RTL glue.
+    // Fixed-size copies let the compiler use native loads/stores while these byte
+    // loops remain available for C++17 constant-expression evaluation.
+    // Generated narrow values call this hundreds of times per combinational pass.
+    // Keep the constexpr fallback in the header, but force the runtime scalar load
+    // into its caller so a one-byte assignment cannot become an out-of-line call.
+    __attribute__((always_inline)) constexpr void assign_uint64(uint64_t value)
+    {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        if (!detail::is_constant_evaluated_compat()) {
+            constexpr size_t copied = SIZE < sizeof(value) ? SIZE : sizeof(value);
+            std::memcpy(bytes, &value, copied);
+            if constexpr (SIZE > sizeof(value)) {
+                std::memset(bytes + sizeof(value), 0, SIZE - sizeof(value));
+            }
+            if constexpr ((WIDTH % 8) != 0) {
+                bytes[SIZE - 1] &=
+                    static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
+            }
+            return;
+        }
+#endif
+        for (size_t i = 0; i < SIZE; ++i) {
+            bytes[i] = i < sizeof(value)
+                ? static_cast<uint8_t>((value >> (8 * i)) & 0xffu)
+                : 0;
+        }
+        if constexpr ((WIDTH % 8) != 0) {
+            bytes[SIZE - 1] &=
+                static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
+        }
+    }
+
     template<size_t WIDTH1>
     constexpr logic(const logic<WIDTH1>& other);
 
@@ -100,15 +189,9 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr logic(const logic_bits<WIDTH1>& other);
 
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
-    constexpr logic(T other) : bytes{}
+    __attribute__((always_inline)) constexpr logic(T other) : bytes{}
     {
-        uint64_t value = static_cast<uint64_t>(other);
-        for (size_t i = 0; i < SIZE; ++i) {
-            bytes[i] = i < sizeof(uint64_t) ? static_cast<uint8_t>((value >> (8 * i)) & 0xffu) : 0;
-        }
-        if constexpr ((WIDTH % 8) != 0) {
-            bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
-        }
+        assign_uint64(static_cast<uint64_t>(other));
     }
 
     // A packed value such as cat can be a valid SystemVerilog constant expression.
@@ -145,15 +228,9 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr logic& operator=(const logic& other) = default;
 
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
-    constexpr logic& operator=(T other)
+    __attribute__((always_inline)) constexpr logic& operator=(T other)
     {
-        uint64_t value = static_cast<uint64_t>(other);
-        for (size_t i = 0; i < SIZE; ++i) {
-            bytes[i] = i < sizeof(uint64_t) ? static_cast<uint8_t>((value >> (8 * i)) & 0xffu) : 0;
-        }
-        if constexpr ((WIDTH % 8) != 0) {
-            bytes[SIZE - 1] &= static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
-        }
+        assign_uint64(static_cast<uint64_t>(other));
         return *this;
     }
 
@@ -313,19 +390,34 @@ struct logic : public bitops<logic<WIDTH>>
     }
 
     // The inherited bitops complement was not constexpr for logic constants.
-    // SystemVerilog requires width-limited inversion rather than host integer promotion.
-    // Invert each declared bit into a same-width logic result.
+    // Per-bit get/set made runtime complement linear in bits instead of storage bytes.
+    // Invert complete bytes, then clear padding above the declared SystemVerilog width.
     constexpr logic operator~() const
     {
         logic result{};
-        for (size_t i = 0; i < WIDTH; ++i) {
-            result.set(i, get(i) ? 0 : 1);
+        for (size_t i = 0; i < SIZE; ++i) {
+            result.bytes[i] = static_cast<uint8_t>(~bytes[i]);
+        }
+        if constexpr ((WIDTH % 8) != 0) {
+            result.bytes[SIZE - 1] &=
+                static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
         }
         return result;
     }
 
     constexpr uint64_t to_uint64_constexpr() const
     {
+        // Runtime scalar conversion is pervasive in generated comparisons and shifts.
+        // One fixed-size copy lets the compiler emit a single unaligned load on little-endian
+        // targets; retain the byte loop for portable constant-expression evaluation.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        if (!detail::is_constant_evaluated_compat()) {
+            uint64_t value = 0;
+            std::memcpy(&value, bytes,
+                        SIZE < sizeof(uint64_t) ? SIZE : sizeof(uint64_t));
+            return value;
+        }
+#endif
         uint64_t value = 0;
         constexpr size_t limit = SIZE < sizeof(uint64_t) ? SIZE : sizeof(uint64_t);
         for (size_t i = 0; i < limit; ++i) {
@@ -434,6 +526,21 @@ template<size_t WIDTH>
 template<size_t WIDTH1>
 constexpr logic<WIDTH>& logic<WIDTH>::operator=(const logic<WIDTH1>& other)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    if (!detail::is_constant_evaluated_compat()) {
+        constexpr size_t SRC_SIZE = logic<WIDTH1>::SIZE;
+        constexpr size_t copied = SIZE < SRC_SIZE ? SIZE : SRC_SIZE;
+        std::memcpy(bytes, other.bytes, copied);
+        if constexpr (SIZE > SRC_SIZE) {
+            std::memset(bytes + SRC_SIZE, 0, SIZE - SRC_SIZE);
+        }
+        if constexpr ((WIDTH % 8) != 0) {
+            bytes[SIZE - 1] &=
+                static_cast<uint8_t>((1u << (WIDTH % 8)) - 1u);
+        }
+        return *this;
+    }
+#endif
     constexpr size_t SRC_SIZE = logic<WIDTH1>::SIZE;
     for (size_t i = 0; i < SIZE; ++i) {
         bytes[i] = i < SRC_SIZE ? other.bytes[i] : 0;
@@ -497,38 +604,96 @@ struct logic_bits : public logic<WIDTH>
 
     logic_bits(logic<WIDTH>* parent, size_t first, size_t last) : parent(parent), first(first), last(last)
     {
-        if ((first%8)==0 && first != last) {
-            memcpy(logic<WIDTH>::bytes, &parent->bytes[first/8], (last+1-first+7)/8);
-            memset(&logic<WIDTH>::bytes[(last+1-first+7)/8], 0, sizeof(logic<WIDTH>::bytes)-(last+1-first+7)/8);
-            for (size_t i=last+1-first; i%8 != 0; ++i) {
-                logic<WIDTH>::set(i, 0);
-            }
+        const size_t bitCount = last + 1 - first;
+        const size_t byteCount = (bitCount + 7) / 8;
+        const size_t sourceByte = first / 8;
+        const size_t shift = first % 8;
+        if (shift == 0) {
+            memcpy(logic<WIDTH>::bytes, &parent->bytes[sourceByte], byteCount);
         }
         else {
-            memset(logic<WIDTH>::bytes, 0, sizeof(logic<WIDTH>::bytes));
-            size_t j = 0;
-            for (size_t i=first; i <= last; ++i) {
-                logic<WIDTH>::set(j++, parent->get(i));
+            for (size_t destination = 0; destination < byteCount; ++destination) {
+                const size_t source = sourceByte + destination;
+                uint16_t pair = parent->bytes[source];
+                if (source + 1 < logic<WIDTH>::SIZE) {
+                    pair |= static_cast<uint16_t>(parent->bytes[source + 1]) << 8;
+                }
+                logic<WIDTH>::bytes[destination] = static_cast<uint8_t>(pair >> shift);
             }
         }
+        if ((bitCount % 8) != 0) {
+            logic<WIDTH>::bytes[byteCount - 1] &=
+                static_cast<uint8_t>((1u << (bitCount % 8)) - 1u);
+        }
+        memset(&logic<WIDTH>::bytes[byteCount], 0,
+               sizeof(logic<WIDTH>::bytes) - byteCount);
     }
 
     void updateParent() const
     {
         if (parent) {  // if parent==0 then it can be pointer to logic, not logic_bits - we can use only logic
-            if ((first%8)==0) {
-                memcpy(&parent->bytes[first/8], logic<WIDTH>::bytes, (last+1-first)/8);
-                size_t j = (last-first)/8*8;
-                for (size_t i=last/8*8; i <= last; ++i) {  // rest bits
-                    parent->set(i, this->get(j++));
-                }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            // Optimize only writeback: the proxy already owns a separate source
+            // snapshot. Changing reads or proxy layout regressed the bus replay.
+            // Mask against the live parent, preserving other slices and padding.
+            if constexpr (WIDTH > 0 && WIDTH <= 64) {
+                uint64_t source = 0;
+                uint64_t destination = 0;
+                std::memcpy(&source, logic<WIDTH>::bytes, logic<WIDTH>::SIZE);
+                std::memcpy(&destination, parent->bytes, logic<WIDTH>::SIZE);
+                const size_t count = last - first + 1;
+                const uint64_t mask = (~uint64_t{0} >> (64 - count)) << first;
+                destination = (destination & ~mask) | ((source << first) & mask);
+                std::memcpy(parent->bytes, &destination, logic<WIDTH>::SIZE);
+                return;
             }
-            else {
-                size_t j = 0;
-                for (size_t i=first; i <= last; ++i) {  // todo? optimize with ulong
-                    parent->set(i, this->get(j++));
+            size_t destinationFirst = first;
+            size_t sourceFirst = 0;
+            size_t count = last - first + 1;
+            while (count != 0) {
+                const size_t destinationShift = destinationFirst % 8;
+                const size_t sourceShift = sourceFirst % 8;
+                const size_t chunk = count < 64 - destinationShift ? count : 64 - destinationShift;
+                const size_t sourceBytes = (sourceShift + chunk + 7) / 8;
+                const size_t destinationBytes = (destinationShift + chunk + 7) / 8;
+                uint64_t incoming = detail::load_writeback_word(
+                    logic<WIDTH>::bytes + sourceFirst / 8, sourceBytes < 8 ? sourceBytes : 8);
+                incoming >>= sourceShift;
+                if (sourceBytes > 8) {
+                    incoming |= uint64_t(logic<WIDTH>::bytes[sourceFirst / 8 + 8]) << (64 - sourceShift);
                 }
+                const uint64_t mask = (~uint64_t{0} >> (64 - chunk)) << destinationShift;
+                uint64_t previous = 0;
+                if (mask != ~uint64_t{0}) {
+                    previous = detail::load_writeback_word(parent->bytes + destinationFirst / 8, destinationBytes);
+                }
+                const uint64_t result = (previous & ~mask) | ((incoming << destinationShift) & mask);
+                detail::store_writeback_word(parent->bytes + destinationFirst / 8, result, destinationBytes);
+                destinationFirst += chunk;
+                sourceFirst += chunk;
+                count -= chunk;
             }
+#else
+            size_t destination = first;
+            size_t source = 0;
+            while (destination <= last && (destination % 8) != 0) {
+                parent->set(destination++, this->get(source++));
+            }
+            while (destination + 7 <= last) {
+                const size_t sourceByte = source / 8;
+                const size_t shift = source % 8;
+                uint16_t pair = logic<WIDTH>::bytes[sourceByte];
+                if (shift != 0 && sourceByte + 1 < logic<WIDTH>::SIZE) {
+                    pair |= static_cast<uint16_t>(logic<WIDTH>::bytes[sourceByte + 1]) << 8;
+                }
+                parent->bytes[destination / 8] = static_cast<uint8_t>(pair >> shift);
+                destination += 8;
+                source += 8;
+            }
+            while (destination <= last) {
+                parent->set(destination++, this->get(source++));
+            }
+#endif
 //            parent->updateParent();
         }
     }

@@ -485,7 +485,19 @@ std::string astStatementText(const clang::Stmt *statement,
       conditional && conditional->isConstexpr()) {
     const auto selected = conditional->getNondiscardedCase(context);
     if (selected) {
-      return *selected ? astStatementText(*selected, context, policy) : "{}";
+      const clang::Stmt *active = *selected;
+      // Discarded generate branches contribute no statements. Peel only
+      // single-statement scopes without declarations, keeping local lifetimes
+      // intact while exposing specialized assignments to the graph optimizer.
+      while (const auto *block = clang::dyn_cast_or_null<clang::CompoundStmt>(active)) {
+        if (block->size() != 1) break;
+        const clang::Stmt *child = *block->body_begin();
+        const auto *nested = clang::dyn_cast<clang::IfStmt>(child);
+        if (!clang::isa<clang::Expr, clang::CompoundStmt>(child) &&
+            !(nested && nested->isConstexpr())) break;
+        active = child;
+      }
+      return active ? astStatementText(active, context, policy) : "";
     }
   }
   if (const auto *compound = clang::dyn_cast<clang::CompoundStmt>(statement)) {
@@ -568,6 +580,30 @@ bool derivesModule(const clang::CXXRecordDecl *record) {
   return false;
 }
 
+bool indexedStorageType(clang::QualType type, clang::ASTContext &context) {
+  type = type.getNonReferenceType()
+             .getUnqualifiedType()
+             .getDesugaredType(context);
+  if (type->isArrayType()) {
+    return true;
+  }
+  const auto *specialization =
+      clang::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(
+          type->getAsCXXRecordDecl());
+  if (!specialization) {
+    return false;
+  }
+  const std::string templateName =
+      specialization->getSpecializedTemplate()->getQualifiedNameAsString();
+  if (templateName == "cpphdl::array") {
+    return true;
+  }
+  const auto &arguments = specialization->getTemplateArgs();
+  return templateName == "cpphdl::function_ref" && arguments.size() != 0 &&
+         arguments[0].getKind() == clang::TemplateArgument::Type &&
+         indexedStorageType(arguments[0].getAsType(), context);
+}
+
 std::string recordTypeName(const clang::CXXRecordDecl *record,
                            clang::ASTContext &context) {
   if (!record) {
@@ -595,44 +631,6 @@ struct FieldInfo {
   bool indexedStorage = false;
   FieldKind kind = FieldKind::Other;
 };
-
-std::optional<std::string>
-projectedMemberPath(const FieldInfo &field, std::string_view suffix) {
-  // hdlcpp's dependent projected types retain the exact nested member chain
-  // in their requires expression. Recover it here so aggregate comb storage
-  // can serve a projected port without evaluating a second procedural comb.
-  constexpr std::string_view valueName = "__cpphdl_projected_value";
-  for (size_t search = 0;;) {
-    const size_t found = field.type.find(valueName, search);
-    if (found == std::string::npos) {
-      break;
-    }
-    size_t cursor = skipSpace(field.type, found + valueName.size());
-    std::string path;
-    while (cursor < field.type.size() && field.type[cursor] == '.') {
-      const size_t member = skipSpace(field.type, cursor + 1);
-      if (member >= field.type.size() || !identifierStart(field.type[member])) {
-        break;
-      }
-      size_t end = member + 1;
-      while (end < field.type.size() && identifierPart(field.type[end])) {
-        ++end;
-      }
-      path += "." + field.type.substr(member, end - member);
-      cursor = skipSpace(field.type, end);
-    }
-    if (!path.empty()) {
-      return path;
-    }
-    search = found + valueName.size();
-  }
-
-  // A one-level projection has no ambiguity even when the member contains
-  // underscores. Nested projections use the dependent type path above.
-  return suffix.empty() ? std::nullopt
-                        : std::optional<std::string>("." +
-                                                     std::string(suffix));
-}
 
 struct FreeHelper {
   std::optional<std::string> receiverParameter;
@@ -673,6 +671,8 @@ struct ClassInfo {
   // Derived from collected method bodies after deferred bodies are loaded.
   // It need not be serialized in collection shards.
   std::map<std::string, std::string> inlineMethods;
+  std::map<std::string, std::string> helperSignatures;
+  std::map<std::string, std::set<std::string>> helperLocals;
   // Semantic work-write metadata is kept beside the collected method body.
   // It records ordinary storage only; register next-state updates remain
   // invisible to current-clock comb evaluation until the strobe commits them.
@@ -984,6 +984,8 @@ void writeClassInfo(CollectionWriter &writer, const ClassInfo &info,
     writer.text(name);
     writer.text(field.name);
     writer.text(field.type);
+    // Keep the retired projected-path slot compatible with v4 collections.
+    writer.text("");
     writer.number(field.packedWidth ? static_cast<uint64_t>(*field.packedWidth) + 1
                                     : 0);
     writer.text(field.childClass);
@@ -1014,10 +1016,13 @@ void writeClassInfo(CollectionWriter &writer, const ClassInfo &info,
   writer.flag(info.supportsTemplateArgumentDeduction);
   writer.flag(info.typeAlias);
   writer.flag(info.opaque);
+  writeStringMap(writer, info.helperSignatures);
+  writeStringSetMap(writer, info.helperLocals);
 }
 
 ClassInfo readClassInfo(CollectionReader &reader,
-                        const std::vector<ClassInfo::Body> &bodies) {
+                        const std::vector<ClassInfo::Body> &bodies,
+                        bool hasHelperMetadata) {
   ClassInfo info;
   info.name = reader.text();
   info.templateBase = reader.text();
@@ -1040,6 +1045,7 @@ ClassInfo readClassInfo(CollectionReader &reader,
     FieldInfo field;
     field.name = reader.text();
     field.type = reader.text();
+    (void)reader.text();
     const uint64_t packedWidth = reader.number();
     if (packedWidth != 0) {
       field.packedWidth = static_cast<unsigned>(packedWidth - 1);
@@ -1080,6 +1086,10 @@ ClassInfo readClassInfo(CollectionReader &reader,
   info.supportsTemplateArgumentDeduction = reader.flag();
   info.typeAlias = reader.flag();
   info.opaque = reader.flag();
+  if (hasHelperMetadata) {
+    readStringMap(reader, info.helperSignatures);
+    readStringSetMap(reader, info.helperLocals);
+  }
   return info;
 }
 
@@ -1131,6 +1141,8 @@ void mergeClassInfo(ClassInfo &target, ClassInfo incoming) {
     }
   }
   mergeMap(incoming.methods, target.methods);
+  mergeMap(incoming.helperSignatures, target.helperSignatures);
+  mergeMap(incoming.helperLocals, target.helperLocals);
   mergeSet(incoming.concreteMethods, target.concreteMethods);
   mergeSet(incoming.workMutatedFields, target.workMutatedFields);
   if (!incoming.constructorBody)
@@ -1158,6 +1170,16 @@ struct FieldReferenceCollector
   FieldReferenceCollector(const ClassInfo &info,
                           std::set<std::string> &fields)
       : info(info), fields(fields) {}
+
+  bool TraverseMemberExpr(clang::MemberExpr *expression) {
+    // An array of registers is classified as ordinary aggregate storage, but
+    // writing element._next still cannot change an element's current value.
+    // Stop at the semantic reg boundary instead of marking the entire array.
+    const auto *record = expression->getBase()->getType()->getAsCXXRecordDecl();
+    if (expression->getMemberDecl()->getNameAsString() == "_next" && record &&
+        record->getQualifiedNameAsString() == "cpphdl::reg") return true;
+    return clang::RecursiveASTVisitor<FieldReferenceCollector>::TraverseMemberExpr(expression);
+  }
 
   bool VisitMemberExpr(clang::MemberExpr *expression) {
     // Only the outermost field rooted directly at this belongs to the class
@@ -1215,7 +1237,31 @@ struct WorkMutationCollector
     if (!callee) {
       return true;
     }
-    const size_t count = std::min<size_t>(expression->getNumArgs(),
+    const auto *operatorCall = clang::dyn_cast<clang::CXXOperatorCallExpr>(expression);
+    if (operatorCall) {
+      switch (operatorCall->getOperator()) {
+      case clang::OO_Equal:
+      case clang::OO_PlusEqual:
+      case clang::OO_MinusEqual:
+      case clang::OO_StarEqual:
+      case clang::OO_SlashEqual:
+      case clang::OO_PercentEqual:
+      case clang::OO_CaretEqual:
+      case clang::OO_AmpEqual:
+      case clang::OO_PipeEqual:
+      case clang::OO_LessLessEqual:
+      case clang::OO_GreaterGreaterEqual:
+      case clang::OO_PlusPlus:
+      case clang::OO_MinusMinus:
+        collect(operatorCall->getArg(0));
+        break;
+      default:
+        break;
+      }
+    }
+    const auto *method = clang::dyn_cast<clang::CXXMethodDecl>(callee);
+    const size_t argumentOffset = operatorCall && method && !method->isStatic() ? 1 : 0;
+    const size_t count = std::min<size_t>(expression->getNumArgs() - argumentOffset,
                                           callee->getNumParams());
     for (size_t index = 0; index < count; ++index) {
       clang::QualType type = callee->getParamDecl(index)->getType();
@@ -1227,7 +1273,7 @@ struct WorkMutationCollector
         continue;
       }
       if (!type.isConstQualified()) {
-        collect(expression->getArg(index));
+        collect(expression->getArg(index + argumentOffset));
       }
     }
     return true;
@@ -1604,10 +1650,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       item.name = field->getNameAsString();
       item.type = field->getType().getAsString();
       item.packedWidth = packedLogicWidth(item.type);
-      item.indexedStorage = field->getType()->isArrayType() ||
-                            item.type.find("cpphdl::array<") !=
-                                std::string::npos ||
-                            item.type.find("std::array<") != std::string::npos;
+      item.indexedStorage = indexedStorageType(field->getType(), context);
+      const auto *fieldRecord = field->getType()->getAsCXXRecordDecl();
       if (item.type.find("cpphdl::function_ref<") != std::string::npos) {
         item.kind = FieldKind::Port;
         if (field->hasInClassInitializer()) {
@@ -1684,7 +1728,8 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
             }
           }
         }
-      } else if (item.type.find("cpphdl::reg<") != std::string::npos) {
+      } else if ((fieldRecord && fieldRecord->getQualifiedNameAsString() == "cpphdl::reg") ||
+                 item.type.find("cpphdl::reg<") != std::string::npos) {
         item.kind = FieldKind::Reg;
         if (const auto *registerRecord =
                 field->getType()->getAsCXXRecordDecl()) {
@@ -1787,7 +1832,7 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
         }
       }
       // Classification above is the only consumer of the canonical field
-      // spelling. Keeping it can recursively expand structural NTTP values.
+      // spelling; retaining the type can expand structural NTTP values.
       item.type.clear();
       info.fields[item.name] = std::move(item);
     }
@@ -1811,6 +1856,17 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
           variable->getInit()->EvaluateAsInt(result, context)) {
         info.constantValues[variable->getNameAsString()] =
             result.Val.getInt().getLimitedValue();
+      }
+    }
+    if (info.useTemplatePatternMethods && info.structuralTemplateParameters.empty()) {
+      // RecursiveASTVisitor does not visit implicit template instantiations by
+      // default. Collect already-instantiated getters of this reached class,
+      // not every library specialization and not new semantic instantiations.
+      // Otherwise reconciliation only ever sees the generic source body.
+      for (auto *method : declaration->methods()) {
+        if (method->param_empty() && method->getReturnType()->isReferenceType() &&
+            method->doesThisDeclarationHaveABody())
+          VisitCXXMethodDecl(method);
       }
     }
     collecting.erase(name);
@@ -2028,6 +2084,20 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     const auto methodBody =
         makeBody(std::move(body));
     info.methods[methodName] = methodBody;
+    // hdlcpp outlines generate-local expressions for the RTL frontend. Preserve
+    // their parameter scope so native scheduling still sees producer reads.
+    if (methodName.starts_with("__hdlcpp_expr_") &&
+        !declaration->isVariadic() && !declaration->getDescribedFunctionTemplate()) {
+      std::string signature = "[&](";
+      for (const auto *parameter : declaration->parameters()) {
+        if (parameter != *declaration->param_begin()) signature += ", ";
+        signature += sourceText(parameter->getSourceRange(), context);
+        info.helperLocals[methodName].insert(parameter->getNameAsString());
+      }
+      signature += ") -> " + sourceText(declaration->getReturnTypeSourceRange(), context);
+      info.helperSignatures[methodName] = std::move(signature);
+      info.helperLocals.try_emplace(methodName);
+    }
     info.concreteMethods.insert(methodName);
     if (methodName == "_assign") {
       info.assignBody = methodBody;
@@ -2108,6 +2178,10 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       if (info.methods.empty()) {
         info.methods = pattern->methods;
       }
+      for (const auto &[name, signature] : pattern->helperSignatures) {
+        info.helperSignatures.try_emplace(name, signature);
+        info.helperLocals.try_emplace(name, pattern->helperLocals.at(name));
+      }
       if (info.useTemplatePatternMethods) {
         for (const auto &[methodName, methodBody] : pattern->methods) {
           // Every collection shard performs full source-body reconciliation.
@@ -2117,13 +2191,26 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
             info.methods.try_emplace(methodName, methodBody);
             continue;
           }
+          const auto concrete = info.methods.find(methodName);
+          const bool keepConcrete = info.structuralTemplateParameters.empty() &&
+              info.concreteMethods.contains(methodName) && concrete != info.methods.end() &&
+              bodyText(concrete->second).size() <= bodyText(methodBody).size();
+          const auto &parameterBody = keepConcrete ? concrete->second : methodBody;
+          info.methodTemplateParameters.erase(methodName);
           bool usesTemplateParameter = false;
-          for (const auto &[parameter, unused] :
-               info.templateSubstitutions) {
-            if (containsIdentifier(bodyText(methodBody), parameter)) {
+          for (const auto &[parameter, unused] : info.templateSubstitutions) {
+            if (containsIdentifier(bodyText(parameterBody), parameter)) {
               info.methodTemplateParameters[methodName].insert(parameter);
               usesTemplateParameter = true;
             }
+          }
+          if (keepConcrete) {
+            // Do not replace an already-specialized, compact method with the
+            // generic source pattern. That resurrects discarded branches and
+            // hides transparent producers behind repeated runtime dispatch.
+            // Surviving parameters remain dependent; expanded bodies and
+            // structural NTTPs keep the bounded source-pattern path.
+            continue;
           }
 
           // Concrete semantic bodies can expand a compact generated template
@@ -2147,6 +2234,13 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       if (info.workBody == pattern->workBody) {
         info.workMutatedFields = pattern->workMutatedFields;
       }
+      // Dependent reg<T> fields can look like ordinary fields in the primary
+      // template. Reconcile with concrete storage: reg assignment writes next
+      // state, not the current value consumed by this evaluation phase.
+      std::erase_if(info.workMutatedFields, [&](const std::string &fieldName) {
+        const auto field = info.fields.find(fieldName);
+        return field != info.fields.end() && field->second.kind == FieldKind::Reg;
+      });
       const auto strobe = info.methods.find("_strobe");
       info.strobeBody = strobe == info.methods.end() ? nullptr : strobe->second;
       for (auto &[fieldName, field] : info.fields) {
@@ -2217,6 +2311,57 @@ std::optional<std::string> singleReturnExpression(const std::string &body) {
     return std::nullopt;
   }
   return interior;
+}
+
+std::optional<std::string>
+singleStorageAssignmentExpression(const std::string &body,
+                                  const std::string &storage) {
+  std::string interior = trim(bodyInterior(body));
+  while (interior.starts_with("using namespace ")) {
+    const size_t semicolon = interior.find(';');
+    if (semicolon == std::string::npos) {
+      return std::nullopt;
+    }
+    interior = trim(interior.substr(semicolon + 1));
+  }
+  const std::string returned = "return " + storage + ";";
+  if (!interior.ends_with(returned)) {
+    return std::nullopt;
+  }
+  std::string assignment =
+      trim(interior.substr(0, interior.size() - returned.size()));
+  if (!assignment.ends_with(';')) {
+    return std::nullopt;
+  }
+  const size_t previous = assignment.rfind(';', assignment.size() - 2);
+  if (previous != std::string::npos) {
+    const std::string initialization = trim(assignment.substr(0, previous));
+    const size_t initialEquals = skipSpace(initialization, storage.size());
+    if (!initialization.starts_with(storage) ||
+        initialEquals >= initialization.size() ||
+        initialization[initialEquals] != '=' ||
+        !trim(initialization.substr(initialEquals + 1)).ends_with("{}")) {
+      return std::nullopt;
+    }
+    assignment = trim(assignment.substr(previous + 1));
+  }
+  if (!assignment.starts_with(storage)) {
+    return std::nullopt;
+  }
+  const size_t equals = skipSpace(assignment, storage.size());
+  if (equals >= assignment.size() || assignment[equals] != '=' ||
+      (equals + 1 < assignment.size() && assignment[equals + 1] == '=')) {
+    return std::nullopt;
+  }
+  std::string expression =
+      trim(assignment.substr(equals + 1, assignment.size() - equals - 2));
+  if (expression.empty() || containsIdentifier(expression, storage)) {
+    return std::nullopt;
+  }
+  // Whole-storage assignment followed by its return is a pure graph value.
+  // Recognizing the generated form lets compact projected values be inlined
+  // without materializing their byte-oriented CppHDL storage object.
+  return expression;
 }
 
 std::optional<std::string>
@@ -2620,6 +2765,40 @@ std::string maskNonCode(const std::string &text) {
   return result;
 }
 
+std::optional<std::string>
+removeFinalCombReturn(const std::string &body, const std::string &storage) {
+  // Optimized procedural combs already write their concrete module storage.
+  // Removing the generated getter's final return lets calc_all invoke that body
+  // in place instead of copying a packed result out and back into itself.
+  const std::regex returnPattern("\\breturn\\s+(?:this\\s*->\\s*)?" + storage +
+                                 "\\s*;");
+  const std::string code = maskNonCode(body);
+  std::optional<std::pair<size_t, size_t>> finalReturn;
+  for (auto iterator =
+           std::sregex_iterator(code.begin(), code.end(), returnPattern);
+       iterator != std::sregex_iterator(); ++iterator) {
+    finalReturn = std::pair<size_t, size_t>{
+        static_cast<size_t>(iterator->position()),
+        static_cast<size_t>(iterator->length())};
+  }
+  if (!finalReturn) {
+    return std::nullopt;
+  }
+  const size_t closing = code.rfind('}');
+  if (closing == std::string::npos || finalReturn->first >= closing) {
+    return std::nullopt;
+  }
+  for (size_t index = finalReturn->first + finalReturn->second; index < closing;
+       ++index) {
+    if (!std::isspace(static_cast<unsigned char>(code[index]))) {
+      return std::nullopt;
+    }
+  }
+  std::string result = body;
+  result.erase(finalReturn->first, finalReturn->second);
+  return result;
+}
+
 std::string maskUnevaluatedOperands(const std::string &text) {
   std::string code = maskNonCode(text);
   for (size_t start = 0; start < code.size();) {
@@ -2674,7 +2853,10 @@ struct Node {
   bool referenced = false;
   bool conditionallyEvaluated = false;
   bool directCombExpression = false;
+  bool projectedCombValue = false;
+  bool inPlaceComb = false;
   bool memoizableProcedural = false;
+  bool indexedWriteProof = false;
   int visitState = 0;
 };
 
@@ -2712,7 +2894,7 @@ struct CombsOptimizer::Impl {
       bodies.add(info.workBody);
       bodies.add(info.strobeBody);
     }
-    writer.text("cpphdl-combs-collection-v4");
+    writer.text("cpphdl-combs-collection-v5");
     writer.number(bodies.bodies.size());
     for (const std::string *body : bodies.bodies) {
       writer.text(*body);
@@ -2734,7 +2916,9 @@ struct CombsOptimizer::Impl {
 
   bool loadCollection(const std::string &path) {
     CollectionReader reader(path);
-    if (reader.text() != "cpphdl-combs-collection-v4") {
+    const auto version = reader.text();
+    if (version != "cpphdl-combs-collection-v4" &&
+        version != "cpphdl-combs-collection-v5") {
       llvm::errs() << "cpphdl --optimize-combs: invalid collection " << path
                    << "\n";
       return false;
@@ -2762,7 +2946,8 @@ struct CombsOptimizer::Impl {
     std::string largestClass;
     for (uint64_t index = 0; index < classCount && reader; ++index) {
       auto name = reader.text();
-      auto info = readClassInfo(reader, bodies);
+      auto info = readClassInfo(reader, bodies,
+                                version == "cpphdl-combs-collection-v5");
       size_t classBytes = info.name.size() + info.templateBase.size() +
                           info.header.size();
       const auto addMapBytes = [&classBytes](const auto &values) {
@@ -2829,7 +3014,9 @@ struct CombsOptimizer::Impl {
     }
     for (const auto &[path, indexes] : needed) {
       CollectionReader reader(path);
-      if (reader.text() != "cpphdl-combs-collection-v4") {
+      const auto version = reader.text();
+      if (version != "cpphdl-combs-collection-v4" &&
+          version != "cpphdl-combs-collection-v5") {
         error = "invalid deferred collection " + path;
         return false;
       }
@@ -2872,6 +3059,7 @@ struct CombsOptimizer::Impl {
   // comb bodies. Retain the explicit L1 mode so the upstream CLI can select
   // and report that behavior without falling back to the legacy optimizer.
   bool l1Scheduling = false;
+  std::set<std::pair<size_t, std::string>> expandingHelpers;
   bool collectionOnly = false;
   std::map<std::string, ClassInfo> classes;
   std::map<std::string, FreeHelper> freeHelpers;
@@ -2894,12 +3082,92 @@ struct CombsOptimizer::Impl {
   size_t preparedNodeCount = 0;
   std::vector<size_t> *activeDemandOrder = nullptr;
   std::unordered_set<size_t> dynamicNodes;
+  std::unordered_set<size_t> cyclicNodes;
   std::string error;
   bool mathOptimization = false;
   size_t threadCount = 1;
   size_t mathBitReversals = 0;
   size_t mathReplications = 0;
   size_t mathSignExtensions = 0;
+  std::string replayContextInput, replaySourcePrefix, replayTargetPrefix;
+  std::string replayContextOutput;
+  std::unordered_set<size_t> replayDemandNodes;
+
+  std::string relativeInstancePath(const Instance &instance) const {
+    const Instance *root = &instance;
+    while (root->parent) root = root->parent;
+    return instance.path == root->path ? std::string{} :
+        instance.path.substr(root->path.size() + 1);
+  }
+
+  bool loadReplayContext() {
+    replayDemandNodes.clear();
+    if (replayContextInput.empty()) return true;
+    std::ifstream input(replayContextInput);
+    std::string magic;
+    unsigned version = 0, mode = 0;
+    if (!(input >> magic >> version >> mode) ||
+        magic != "CPPHDL_REPLAY_CONTEXT" || version != 1 ||
+        mode != unsigned(l1Scheduling)) {
+      error = "invalid replay context or scheduling mode: " + replayContextInput;
+      return false;
+    }
+    size_t matched = 0;
+    std::set<std::pair<std::string, std::string>> seen;
+    std::string kind, path, type, name;
+    unsigned demand = 0;
+    while (input >> kind) {
+      if (!(input >> demand >> std::quoted(path) >> std::quoted(type) >>
+            std::quoted(name)) || (kind != "C" && kind != "P") || demand > 1 ||
+          !seen.emplace(kind, path + ":" + name).second) {
+        error = "malformed or duplicate replay context row";
+        return false;
+      }
+      if (path != replaySourcePrefix &&
+          !(replaySourcePrefix.empty() ||
+            path.starts_with(replaySourcePrefix + "."))) continue;
+      const std::string suffix = replaySourcePrefix.empty() ? path :
+          path.substr(replaySourcePrefix.size() + (path != replaySourcePrefix));
+      const std::string target = replayTargetPrefix +
+          (replayTargetPrefix.empty() || suffix.empty() ? "" : ".") + suffix;
+      for (const Node &node : nodes) {
+        if (relativeInstancePath(*node.instance) != target || node.name != name ||
+            (node.kind == NodeKind::Comb ? "C" : "P") != kind) continue;
+        const auto &actualType = node.instance->type->templateBase.empty() ?
+            node.instance->type->name : node.instance->type->templateBase;
+        if (type != actualType) {
+          error = "replay context module type mismatch at " + target;
+          return false;
+        }
+        ++matched;
+        if (demand) replayDemandNodes.insert(node.id);
+      }
+    }
+    if (!input.eof() || matched == 0) {
+      error = "replay context matched no graph nodes or could not be read";
+      return false;
+    }
+    llvm::errs() << "cpphdl replay context: matched=" << matched
+                 << " demand=" << replayDemandNodes.size() << "\n";
+    return true;
+  }
+
+  bool saveReplayContext() const {
+    if (replayContextOutput.empty()) return true;
+    std::ofstream output(replayContextOutput);
+    output << "CPPHDL_REPLAY_CONTEXT 1 " << unsigned(l1Scheduling) << "\n";
+    for (const size_t id : schedule) {
+      const Node &node = nodes[id];
+      const auto &type = node.instance->type->templateBase.empty() ?
+          node.instance->type->name : node.instance->type->templateBase;
+      output << (node.kind == NodeKind::Comb ? "C " : "P ")
+             << unsigned(dynamicNodes.contains(id)) << " "
+             << std::quoted(relativeInstancePath(*node.instance)) << " "
+             << std::quoted(type) << " " << std::quoted(node.name) << "\n";
+    }
+    output.close();
+    return bool(output);
+  }
 
   std::optional<IndexedAssignment>
   indexedAssignment(const std::string &statement,
@@ -3167,6 +3435,30 @@ struct CombsOptimizer::Impl {
     return std::nullopt;
   }
 
+  std::optional<size_t> projectedCombNode(Instance &instance,
+                                          const std::string &method,
+                                          const std::string &member) {
+    const auto aggregate = instance.type->combStorage.find(method);
+    if (aggregate == instance.type->combStorage.end() || member.empty()) {
+      return std::nullopt;
+    }
+    constexpr std::string_view suffix = "_comb";
+    if (!aggregate->second.ends_with(suffix)) {
+      return std::nullopt;
+    }
+    const std::string projectedStorage =
+        aggregate->second.substr(0, aggregate->second.size() - suffix.size()) +
+        "_" + member + std::string(suffix);
+    for (const auto &[candidate, storage] : instance.type->combStorage) {
+      if (storage == projectedStorage) {
+        const size_t id = getNode(instance, NodeKind::Comb, candidate);
+        nodes[id].projectedCombValue = true;
+        return id;
+      }
+    }
+    return std::nullopt;
+  }
+
   std::string nodeValue(size_t id) const {
     const Node &node = nodes[id];
     if (node.kind == NodeKind::Port) {
@@ -3191,7 +3483,8 @@ struct CombsOptimizer::Impl {
         macro != bindingMacros.end() &&
         (macro->second.starts_with("_ASSIGN_REG") ||
          macro->second.starts_with("_ASSIGN_COMB"));
-    return guarded || (!rootInput && !addressableBinding);
+    return cyclicNodes.contains(node.id) || guarded ||
+           (!rootInput && !addressableBinding);
   }
 
   bool memoizableProceduralComb(const Node &node) const {
@@ -3224,15 +3517,21 @@ struct CombsOptimizer::Impl {
       }
       first = afterTarget;
     }
+    const auto proof = node.instance->type->constantValues.find(
+        "__cpphdl_complete_" + storage->second);
+    const bool completeIndexedWrites = proof != node.instance->type->constantValues.end() &&
+                                       proof->second == 1;
     const size_t equals = skipSpace(code, first + target.size());
-    if (equals >= code.size() || code[equals] != '=' ||
-        (equals + 1 < code.size() && code[equals + 1] == '=')) {
-      return false;
-    }
-    const size_t semicolon = code.find(';', equals + 1);
-    if (semicolon == std::string::npos ||
-        code.find(target, equals + 1) < semicolon) {
-      return false;
+    if (!completeIndexedWrites) {
+      if (equals >= code.size() || code[equals] != '=' ||
+          (equals + 1 < code.size() && code[equals + 1] == '=')) {
+        return false;
+      }
+      const size_t semicolon = code.find(';', equals + 1);
+      if (semicolon == std::string::npos ||
+          code.find(target, equals + 1) < semicolon) {
+        return false;
+      }
     }
 
     // Writes to the result or its subfields remain local comb computation.
@@ -3261,6 +3560,103 @@ struct CombsOptimizer::Impl {
     return true;
   }
 
+  std::string lowerPackedBitStores(const std::string &expression) const {
+    // Lower at emission, after effect analysis and scheduling. A bit store
+    // needs a masked word update, not a parent-width proxy and writeback loop.
+    // Keep every store and demand in source order: this does not assume a
+    // complete write, move a producer, or change retained values in an SCC.
+    static const std::regex targetPattern(
+        R"(\bn([0-9]+)\.([A-Za-z_][A-Za-z0-9_]*)\s*\[)");
+    const std::string code = maskUnevaluatedOperands(expression);
+    std::string output;
+    std::string scope;
+    size_t scanned = 0;
+    size_t copied = 0;
+    for (auto iterator = std::sregex_iterator(code.begin(), code.end(),
+                                             targetPattern);
+         iterator != std::sregex_iterator(); ++iterator) {
+      const auto &match = *iterator;
+      const size_t start = match.position();
+      if (start < copied) continue;
+      for (; scanned < start; ++scanned) {
+        if (std::string_view("([{").find(code[scanned]) != std::string_view::npos)
+          scope += code[scanned];
+        else if (!scope.empty() &&
+                 std::string_view(")]}").find(code[scanned]) != std::string_view::npos)
+          scope.pop_back();
+      }
+      if (scope.empty() || scope.back() != '{') continue;
+      const size_t previous = start == 0 ? std::string::npos :
+          code.find_last_not_of(" \t\r\n", start - 1);
+      if (previous != std::string::npos &&
+          std::string_view("{;}").find(code[previous]) == std::string_view::npos)
+        continue;
+      const size_t instance = std::stoull(match[1].str());
+      if (instance >= instances.size()) continue;
+      const auto &fields = instances[instance]->type->fields;
+      const auto field = fields.find(match[2].str());
+      // Collection intentionally discards expanded C++ type spellings, and
+      // dependent logic widths are not necessarily printed as integer literals.
+      // The typed helper resolves those widths without another elaborator.
+      if (field == fields.end() || field->second.kind != FieldKind::Other)
+        continue;
+      size_t opening = start + match.length() - 1;
+      auto closing = matchingDelimiter(expression, opening, '[', ']');
+      if (!closing) continue;
+      const size_t firstOpening = opening;
+      while (skipSpace(code, *closing + 1) < code.size() &&
+             code[skipSpace(code, *closing + 1)] == '[') {
+        opening = skipSpace(code, *closing + 1);
+        closing = matchingDelimiter(expression, opening, '[', ']');
+        if (!closing) break;
+      }
+      if (!closing) continue;
+      if (field->second.indexedStorage && opening == firstOpening) continue;
+      const size_t equals = skipSpace(expression, *closing + 1);
+      if (equals + 1 >= expression.size() || expression[equals] != '=' ||
+          expression[equals + 1] == '=') continue;
+      if (code[skipSpace(code, equals + 1)] == '{') continue;
+      size_t end = equals + 1;
+      for (; end < code.size() && code[end] != ';'; ++end) {
+        const char openingChar = code[end];
+        if (std::string_view(")]},").find(openingChar) != std::string_view::npos)
+          break;
+        const size_t delimiter = std::string_view("([{").find(openingChar);
+        if (delimiter == std::string_view::npos) continue;
+        const auto close = matchingDelimiter(code, end, openingChar,
+                                              std::string_view(")]}")[delimiter]);
+        if (!close) break;
+        end = *close;
+      }
+      if (end == code.size() || code[end] != ';') continue;
+      const std::string target = "n" + match[1].str() + "." + match[2].str();
+      output.append(expression, copied, start - copied);
+      // C++ assignment evaluates RHS before LHS. Capture both once, in that
+      // order; retain RHS references until assignment rather than converting
+      // early, because evaluating the index can itself mutate referenced data.
+      // A call argument also keeps RHS temporaries alive through writeback.
+      output += "([&](auto&& __cpphdl_bit_value) { ";
+      std::string storeTarget = target;
+      if (opening != firstOpening) {
+        // Evaluate the subscript chain before its final index, as C++ does.
+        // Binding the proxy keeps RHS/index side effects and temporary lifetime
+        // intact; the typed helper uses its parent rather than copying its bits.
+        output += "auto&& __cpphdl_bit_target = " +
+                  expression.substr(start, opening - start) + "; ";
+        storeTarget = "__cpphdl_bit_target";
+      }
+      output += "const std::size_t __cpphdl_bit_index = (" +
+                expression.substr(opening + 1, *closing - opening - 1) +
+                "); cpphdl::sv_assign_bit(" + storeTarget +
+                ", __cpphdl_bit_index, std::forward<decltype(__cpphdl_bit_value)>"
+                "(__cpphdl_bit_value)); }(" +
+                expression.substr(equals + 1, end - equals - 1) + "));";
+      copied = end + 1;
+    }
+    output.append(expression, copied, expression.size() - copied);
+    return output;
+  }
+
   std::string nodeAssignment(size_t id, const std::string &expression) const {
     const Node &node = nodes[id];
     if (node.kind == NodeKind::Port) {
@@ -3275,6 +3671,9 @@ struct CombsOptimizer::Impl {
       return "(s.p" + suffix + "_storage = (" + expression +
              "), s.p" + suffix + "_pointer = std::addressof(s.p" + suffix +
              "_storage))";
+    }
+    if (node.inPlaceComb) {
+      return lowerPackedBitStores(expression);
     }
     return nodeValue(id) + " = " + expression;
   }
@@ -3322,6 +3721,10 @@ struct CombsOptimizer::Impl {
       if (instance < instances.size() && cursor != fieldStart &&
           instances[instance]->type->workMutatedFields.contains(
               expression.substr(fieldStart, cursor - fieldStart))) {
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: mutated field " << instances[instance]->path
+                       << "." << expression.substr(fieldStart, cursor - fieldStart)
+                       << "\n";
         return true;
       }
     }
@@ -3430,6 +3833,34 @@ struct CombsOptimizer::Impl {
           start >= 2 && (input.substr(start - 2, 2) == "::" ||
                          input.substr(start - 2, 2) == "->");
       const bool memberBefore = start > 0 && input[start - 1] == '.';
+      if (l1Scheduling && !qualifiedBefore && !memberBefore &&
+          !locals.contains(identifier) &&
+          context.type->helperSignatures.contains(identifier) &&
+          afterIdentifier < input.size() && input[afterIdentifier] == '(' &&
+          expandingHelpers.size() < 64 &&
+          !expandingHelpers.contains({context.id, identifier})) {
+        const auto closing = matchingDelimiter(input, afterIdentifier, '(', ')');
+        const auto found = context.type->methods.find(identifier);
+        if (closing && found != context.type->methods.end()) {
+          const auto &body = bodyText(found->second);
+          if (!body.empty()) {
+            auto helperLocals = localVariables(body);
+            const auto &parameters = context.type->helperLocals.at(identifier);
+            helperLocals.insert(parameters.begin(), parameters.end());
+            expandingHelpers.emplace(context.id, identifier);
+            const auto helper = rewrite(context.type->helperSignatures.at(identifier) + body,
+                                        context, dependencies, helperLocals, unavailableValue);
+            expandingHelpers.erase({context.id, identifier});
+            const auto arguments = rewrite(input.substr(afterIdentifier + 1,
+                *closing - afterIdentifier - 1), context, dependencies, locals, unavailableValue);
+            // Native-only lowering keeps references and call evaluation order;
+            // hdlcpp's RTL-facing source remains free of runtime closures.
+            output += "(" + helper + ")(" + arguments + ")";
+            index = *closing + 1;
+            continue;
+          }
+        }
+      }
       const bool forcedField =
           locals.contains(identifier) &&
           (input.find(identifier + "._next") != std::string::npos ||
@@ -3628,6 +4059,28 @@ struct CombsOptimizer::Impl {
         if (closing && trim(input.substr(afterIdentifier + 1,
                                          *closing - afterIdentifier - 1))
                            .empty()) {
+          const size_t dot = skipSpace(input, *closing + 1);
+          if (dot < input.size() && input[dot] == '.') {
+            const size_t memberStart = skipSpace(input, dot + 1);
+            size_t memberEnd = memberStart;
+            while (memberEnd < input.size() &&
+                   identifierPart(input[memberEnd])) {
+              ++memberEnd;
+            }
+            if (memberEnd != memberStart) {
+              const std::string member =
+                  input.substr(memberStart, memberEnd - memberStart);
+              if (auto node = projectedCombNode(context, identifier, member)) {
+                // hdlcpp emits demanded packed members as sibling combs. Use
+                // that semantic projection before the aggregate node enters
+                // the graph, avoiding an eager unpack of every union member.
+                referenceNode(*node, dependencies);
+                output += nodeValue(*node);
+                index = memberEnd;
+                continue;
+              }
+            }
+          }
           const auto field = context.type->fields.find(identifier);
           if (field != context.type->fields.end() &&
               !field->second.portModuleClass.empty()) {
@@ -3809,6 +4262,16 @@ struct CombsOptimizer::Impl {
           output += context.alias + "." + identifier;
           continue;
         }
+      }
+
+      if (!qualifiedBefore && !memberBefore &&
+          !locals.contains(identifier) &&
+          context.type->methods.contains(identifier) &&
+          afterIdentifier < input.size() && input[afterIdentifier] == '<') {
+        // Flattening leaves the class scope. Explicit-template helper calls
+        // need the same receiver as ordinary calls, plus dependent disambiguation.
+        output += context.alias + ".template " + identifier;
+        continue;
       }
 
       const auto field = context.type->fields.find(identifier);
@@ -4071,11 +4534,13 @@ struct CombsOptimizer::Impl {
       if (!qualifiedBefore && !memberBefore &&
           !preservedIdentifiers.contains(identifier) &&
           context.type->methods.contains(identifier) &&
-          afterIdentifier < input.size() && input[afterIdentifier] == '(') {
+          afterIdentifier < input.size() &&
+          (input[afterIdentifier] == '(' || input[afterIdentifier] == '<')) {
         // Unevaluated operands stay as C++ calls instead of graph nodes, but
         // moving their enclosing expression out of class scope still requires
         // every member method, including helpers with arguments, to be bound.
-        output += context.alias + "." + identifier;
+        output += context.alias +
+                  (input[afterIdentifier] == '<' ? ".template " : ".") + identifier;
         continue;
       }
 
@@ -4108,6 +4573,18 @@ struct CombsOptimizer::Impl {
       if (auto direct = singleReturnExpression(expressionText)) {
         expressionText = std::move(*direct);
         directCombExpression = true;
+      } else if (auto direct = singleStorageAssignmentExpression(
+                     expressionText, storage->second)) {
+        expressionText = std::move(*direct);
+        directCombExpression = true;
+      } else if (auto inPlace =
+                     removeFinalCombReturn(expressionText, storage->second)) {
+        expressionText = std::move(*inPlace);
+        nodes[id].inPlaceComb = true;
+      } else {
+        error = "cannot remove final return from optimized comb " +
+                instance->path + "." + name;
+        return false;
       }
       locals = localVariables(expressionText);
       // The final `return storage;` resembles a declaration to the
@@ -4190,9 +4667,8 @@ struct CombsOptimizer::Impl {
     if (!error.empty()) {
       return false;
     }
-    if (kind == NodeKind::Comb && !directCombExpression) {
-      const std::string &storage =
-          instance->type->combStorage.at(name);
+    if (kind == NodeKind::Comb &&
+        (!directCombExpression || !dependentTemplateParameters.empty())) {
       std::string lambdaTemplate;
       std::string lambdaModuleType;
       const bool deduceTemplateParameters =
@@ -4229,21 +4705,29 @@ struct CombsOptimizer::Impl {
                 "comb " + instance->path + "." + name;
         return false;
       }
+      const bool deduced = !dependentTemplateParameters.empty();
       const std::string invocation =
-          dependentTemplateParameters.empty()
-              ? "()"
-              : "(" + instance->alias + ")";
-      expressionText = "([&]" +
-                       (dependentTemplateParameters.empty()
-                            ? std::string{}
-                            : "<" + lambdaTemplate + ">") +
-                       (dependentTemplateParameters.empty()
-                            ? "()"
-                            : "(" + lambdaModuleType + "& " +
-                                  instance->alias + ")") +
-                       " -> std::remove_cvref_t<decltype(" +
-                       instance->alias + "." + storage + ")> " +
-                       expressionText + ")" + invocation;
+          deduced ? "(" + instance->alias + ")" : "()";
+      const std::string parameters =
+          deduced ? "(" + lambdaModuleType + "& " + instance->alias + ")"
+                  : "()";
+      if (directCombExpression) {
+        // Even a single-expression comb can still depend on a structural
+        // NTTP. Deduce it from the concrete module type instead of serializing
+        // Clang's semantic aggregate spelling into generated C++.
+        expressionText = "([&]<" + lambdaTemplate + ">" + parameters +
+                         " { return (" + expressionText + "); })" +
+                         invocation;
+      } else {
+        // The rewritten body assigns its own storage and has no value to
+        // return. A void lambda retains template deduction and local scope
+        // without a redundant packed-structure return and self-assignment.
+        expressionText = "([&]" +
+                         (deduced ? "<" + lambdaTemplate + ">"
+                                  : std::string{}) +
+                         parameters + " " + expressionText + ")" +
+                         invocation;
+      }
     }
     nodes[id].expression = std::move(expressionText);
     nodes[id].expressionContext = expressionContext;
@@ -4255,6 +4739,28 @@ struct CombsOptimizer::Impl {
     // purity now from the original rewritten method so every later optimizer
     // phase makes the same per-clock memoization decision for this node.
     nodes[id].memoizableProcedural = memoizableProceduralComb(nodes[id]);
+    if (std::getenv("CPPHDL_TRACE_COMB_PROOF") &&
+        nodes[id].kind == NodeKind::Comb) {
+      const auto storage = nodes[id].instance->type->combStorage.find(nodes[id].name);
+      if (storage != nodes[id].instance->type->combStorage.end()) {
+        const auto proof = nodes[id].instance->type->constantValues.find(
+            "__cpphdl_complete_" + storage->second);
+        if (proof != nodes[id].instance->type->constantValues.end())
+          llvm::errs() << "comb proof: " << nodes[id].instance->path << "."
+                       << nodes[id].name << " complete=" << proof->second
+                       << " memoizable=" << nodes[id].memoizableProcedural
+                       << " unresolved=" << hasUnresolvedInstanceCall(nodes[id].expression) << "\n";
+      }
+    }
+    if (nodes[id].memoizableProcedural) {
+      const auto storage = nodes[id].instance->type->combStorage.find(nodes[id].name);
+      if (storage != nodes[id].instance->type->combStorage.end()) {
+        const auto proof = nodes[id].instance->type->constantValues.find(
+            "__cpphdl_complete_" + storage->second);
+        nodes[id].indexedWriteProof = proof != nodes[id].instance->type->constantValues.end() &&
+                                     proof->second == 1;
+      }
+    }
     ++preparedNodeCount;
 #if defined(__GLIBC__)
     // Rewriting large generated methods creates short-lived regex and string
@@ -4392,6 +4898,7 @@ struct CombsOptimizer::Impl {
     std::vector<std::pair<size_t, size_t>> cyclicComponents;
     std::vector<size_t> largestCyclicComponent;
     int nextIndex = 0;
+    cyclicNodes.clear();
 
     std::function<void(size_t)> strongConnect = [&](size_t id) {
       index[id] = low[id] = nextIndex++;
@@ -4432,6 +4939,7 @@ struct CombsOptimizer::Impl {
         demandSeeds.insert(demandSeeds.end(), component.begin(),
                            component.end());
         sccSeeds.insert(component.begin(), component.end());
+        cyclicNodes.insert(component.begin(), component.end());
         cyclicComponents.emplace_back(component.size(), component.front());
         if (component.size() > largestCyclicComponent.size()) {
           largestCyclicComponent = component;
@@ -4453,7 +4961,15 @@ struct CombsOptimizer::Impl {
         demandSeeds.push_back(id);
         conditionalSeeds.insert(id);
       }
-      if (hasUnresolvedInstanceCall(nodes[id].expression)) {
+      const Node &node = nodes[id];
+      const bool externalRootPort =
+          node.kind == NodeKind::Port && !node.instance->parent &&
+          !bindings.contains(
+              nodeKey(node.instance->id, NodeKind::Port, node.name));
+      // An unbound root port is an external graph leaf whose accessor is read
+      // once by calc_all. It is not unresolved hierarchy dispatch and must not
+      // pull every downstream consumer into demand scheduling.
+      if (!externalRootPort && hasUnresolvedInstanceCall(node.expression)) {
         demandSeeds.push_back(id);
         unresolvedSeeds.insert(id);
       }
@@ -4462,6 +4978,9 @@ struct CombsOptimizer::Impl {
       // remains at the source call site after the imperative write occurs.
       if (readsWorkMutatedField(nodes[id].expression)) {
         workMutationSeeds.push_back(id);
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: work seed " << node.instance->path
+                       << "." << node.name << "\n";
       }
     }
 
@@ -4495,6 +5014,26 @@ struct CombsOptimizer::Impl {
       }
     }
 
+    // Complete indexed writes prove local purity, not phase stability. Do not
+    // grant new caching rights through feedback, unresolved calls or imperative
+    // work writes; retain the existing settling and demand semantics there.
+    std::vector<size_t> unstable(workMutationSeeds.begin(), workMutationSeeds.end());
+    unstable.insert(unstable.end(), cyclicNodes.begin(), cyclicNodes.end());
+    unstable.insert(unstable.end(), unresolvedSeeds.begin(), unresolvedSeeds.end());
+    std::unordered_set<size_t> unstableSeen;
+    while (!unstable.empty()) {
+      const size_t id = unstable.back();
+      unstable.pop_back();
+      if (!unstableSeen.insert(id).second) continue;
+      if (nodes[id].indexedWriteProof) {
+        nodes[id].memoizableProcedural = false;
+        if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
+          llvm::errs() << "comb proof: unstable " << nodes[id].instance->path
+                       << "." << nodes[id].name << "\n";
+      }
+      unstable.insert(unstable.end(), consumers[id].begin(), consumers[id].end());
+    }
+
     // Any eager consumer could otherwise trigger an on-demand dependency before
     // the call site which first reaches it in the source model. That changes
     // function_ref/_LAZY_COMB cache contents and SCC retained-value selection.
@@ -4511,6 +5050,12 @@ struct CombsOptimizer::Impl {
       if (dynamicNodes.insert(id).second) {
         pending.push_back(id);
       }
+    }
+    // A scalar trace input must not erase the source design's lazy consumer
+    // context. Original generated consumers still determine evaluation counts.
+    for (const size_t id : replayDemandNodes) {
+      if (activeNodes.contains(id) && dynamicNodes.insert(id).second)
+        pending.push_back(id);
     }
     while (!pending.empty()) {
       const size_t dependency = pending.back();
@@ -4561,6 +5106,19 @@ struct CombsOptimizer::Impl {
                    << " unresolved=" << reverseConeSize(unresolvedSeeds)
                    << " work_mutated=" << reverseConeSize(workMutationSeeds)
                    << "\n";
+      // An unresolved no-argument member call can conservatively pull most of
+      // a graph into demand scheduling. Report the exact generic seed while
+      // tracing so classification bugs can be fixed at their parser boundary.
+      for (const size_t id : unresolvedSeeds) {
+        constexpr size_t expressionLimit = 1000;
+        const std::string &expression = nodes[id].expression;
+        llvm::errs() << "cpphdl comb graph unresolved seed="
+                     << nodes[id].instance->path << "." << nodes[id].name
+                     << " expression="
+                     << expression.substr(0, expressionLimit)
+                     << (expression.size() > expressionLimit ? "..." : "")
+                     << "\n";
+      }
       for (size_t rank = 0;
            rank < std::min<size_t>(cyclicComponents.size(), 8); ++rank) {
         const auto [size, representative] = cyclicComponents[rank];
@@ -5038,17 +5596,25 @@ struct CombsOptimizer::Impl {
         R"(^n[0-9]+\.[A-Za-z_][A-Za-z0-9_]*$)");
     for (const size_t id : schedule) {
       Node &node = nodes[id];
-      if (dynamicNodes.contains(id) || node.kind != NodeKind::Port ||
-          !node.instance->parent) {
+      if (dynamicNodes.contains(id)) {
         continue;
       }
       constexpr size_t maxInlineExpressionBytes = 1024;
-      if ((uses[id] == 1 &&
+      const bool projectedDirectComb =
+          node.kind == NodeKind::Comb && node.projectedCombValue &&
+          node.directCombExpression &&
+          node.expression.size() <= maxInlineExpressionBytes;
+      const bool childPort =
+          node.kind == NodeKind::Port && node.instance->parent;
+      if (projectedDirectComb ||
+          (childPort && uses[id] == 1 &&
            node.expression.size() <= maxInlineExpressionBytes) ||
-          std::regex_match(node.expression, directFieldPattern)) {
+          (childPort && std::regex_match(node.expression,
+                                         directFieldPattern))) {
         // Small single-use values remove harmless temporaries, while a size
         // limit prevents recursively embedding generated type-heavy bodies.
-        // Direct field aliases remain compact regardless of their use count.
+        // Pure compact combs may be repeated: the C++ optimizer can CSE their
+        // extraction while avoiding byte-backed intermediate object traffic.
         node.inlineExpression = replaceAliases(node.expression);
       }
     }
@@ -5990,64 +6556,6 @@ struct CombsOptimizer::Impl {
     }
   }
 
-  void redirectProjectedPortBindings() {
-    static constexpr std::string_view marker = "__field_";
-    static const std::regex zeroArgumentCall(
-        R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*$)");
-
-    for (Instance *instance : instances) {
-      for (const auto &[projectedName, projectedField] :
-           instance->type->fields) {
-        const size_t markerPosition = projectedName.find(marker);
-        if (projectedField.kind != FieldKind::Port ||
-            markerPosition == std::string::npos) {
-          continue;
-        }
-        const std::string aggregateName =
-            projectedName.substr(0, markerPosition);
-        const auto aggregateField = instance->type->fields.find(aggregateName);
-        if (aggregateField == instance->type->fields.end() ||
-            aggregateField->second.kind != FieldKind::Port) {
-          continue;
-        }
-
-        const std::string projectedKey =
-            nodeKey(instance->id, NodeKind::Port, projectedName);
-        const std::string aggregateKey =
-            nodeKey(instance->id, NodeKind::Port, aggregateName);
-        auto projectedBinding = bindings.find(projectedKey);
-        const auto aggregateBinding = bindings.find(aggregateKey);
-        if (projectedBinding == bindings.end() ||
-            aggregateBinding == bindings.end() ||
-            projectedBinding->second.first != instance ||
-            aggregateBinding->second.first != instance) {
-          continue;
-        }
-
-        // Only replace converter-style comb initializers. An explicitly
-        // rebound hand-written port with the same spelling remains untouched.
-        std::smatch projectedCall;
-        std::smatch aggregateCall;
-        if (!std::regex_match(projectedBinding->second.second, projectedCall,
-                              zeroArgumentCall) ||
-            !std::regex_match(aggregateBinding->second.second, aggregateCall,
-                              zeroArgumentCall) ||
-            !instance->type->combStorage.contains(projectedCall[1].str()) ||
-            !instance->type->combStorage.contains(aggregateCall[1].str())) {
-          continue;
-        }
-        const auto path = projectedMemberPath(
-            projectedField,
-            std::string_view(projectedName).substr(markerPosition +
-                                                   marker.size()));
-        if (!path) {
-          continue;
-        }
-        projectedBinding->second.second = aggregateName + "()" + *path;
-      }
-    }
-  }
-
   std::string proceduralCombBody(const std::string &methodName,
                                  const std::string &body) const {
     std::vector<std::string> lines;
@@ -6162,7 +6670,10 @@ struct CombsOptimizer::Impl {
       return false;
     }
     findCombExpressions();
-    redirectProjectedPortBindings();
+    // Preserve field-level dependencies supplied by hdlcpp. Equal final field
+    // values do not justify reading the whole aggregate: unrelated ready/valid
+    // dependencies can create a false cycle and cache a partially written bus.
+    // Share actual common producers, not aggregates inferred from port names.
     tracePhase("comb discovery");
 
     // The roots are state updates in _work and externally visible root
@@ -6295,7 +6806,12 @@ struct CombsOptimizer::Impl {
     // Classify lazy boundaries before alias simplification can erase ports.
     // Dynamic function_ref nodes carry observable per-clock cache semantics.
     // Recompute after simplification below to classify the final graph too.
+    if (!loadReplayContext()) return false;
     identifyDynamicNodes();
+    if (!saveReplayContext()) {
+      error = "cannot write replay context: " + replayContextOutput;
+      return false;
+    }
     optimizeGraph(work);
     // Alias and inline simplification removes thousands of transparent port
     // nodes. Rebuild the concrete graph from those simplified expressions so
@@ -6425,12 +6941,6 @@ struct CombsOptimizer::Impl {
     const size_t clockCachedDynamicStates = std::count_if(
         dynamicStateSchedule.begin(), dynamicStateSchedule.end(),
         [this](size_t id) { return cachesForSystemClock(nodes[id]); });
-
-    // Evaluator definitions stay in source partitions. Duplicating even small
-    // definitions in the common internal header makes every partition parse
-    // and optimize the same bodies, while CVA6 profiling showed no runtime
-    // benefit over hidden direct calls.
-    std::unordered_set<size_t> inlineDynamicEvaluators;
 
     struct RootOutputPort {
       std::string name;
@@ -7025,34 +7535,16 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
     internal << "};\n\n";
     for (const size_t id : dynamicSchedule) {
-      if (inlineDynamicEvaluators.contains(id)) {
-        internal << "[[gnu::always_inline]] inline void ";
-      } else {
-        // Evaluators can be called from another generated partition, but they
-        // are private to this specialized executable. Hidden visibility prevents
-        // ELF interposition from blocking same-TU inlining at -O2.
-        internal << "[[gnu::visibility(\"hidden\")]] void ";
-      }
+      // Keep one evaluator definition in its source partition. Header-level
+      // duplication increased build work without a measured runtime benefit;
+      // native stores instead remove work inside every existing evaluator.
+      // Hidden visibility still permits same-TU inlining without interposition.
+      internal << "[[gnu::visibility(\"hidden\")]] void ";
       internal << shortRoot << "_optimized_comb_eval_" << id
                << "(" << shortRoot << "&, "
                << shortRoot << "_optimized_combs_state&);\n";
     }
     internal << '\n';
-    for (const size_t id : dynamicSchedule) {
-      if (!inlineDynamicEvaluators.contains(id)) {
-        continue;
-      }
-      const Node &node = nodes[id];
-      const std::set<size_t> usedInstances =
-          referencedInstances(node.expression, {0, node.instance->id});
-      internal << "[[gnu::always_inline]] inline void " << shortRoot
-               << "_optimized_comb_eval_" << id << "(" << shortRoot
-               << "& obj, " << shortRoot
-               << "_optimized_combs_state& s) {\n";
-      emitAliases(internal, usedInstances);
-      internal << "  " << nodeAssignment(id, node.expression)
-               << ";\n}\n\n";
-    }
     for (size_t chunk = 0; chunk < prefixChunks.size(); ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_prefix_chunk_"
                << chunk << "(" << shortRoot << "&, " << shortRoot
@@ -7243,9 +7735,6 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
                   << "_optimized_combs_internal.h\"\n\n";
       for (size_t position = begin; position < end; ++position) {
         const size_t id = dynamicSchedule[position];
-        if (inlineDynamicEvaluators.contains(id)) {
-          continue;
-        }
         const Node &node = nodes[id];
         const std::set<size_t> usedInstances =
             referencedInstances(node.expression, {0, node.instance->id});
@@ -7785,7 +8274,6 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
                  << modelChunkCount << " model chunks, "
                  << memoryChunkCount << " memory chunks, "
                  << dynamicSchedule.size() << " dynamic evaluators, "
-                 << inlineDynamicEvaluators.size() << " inline evaluators, "
                  << clockCachedDynamicStates << " dynamic states, "
                  << lazyCycleBackEdges << " lazy cycle back-edges\n"
                  << (threadedCombs ? "  estimated staged weight: " : "")
@@ -7849,6 +8337,14 @@ void CombsOptimizer::collect(clang::ASTContext &context) {
 
 void CombsOptimizer::setL1Scheduling(bool enabled) {
   impl->l1Scheduling = enabled;
+}
+
+void CombsOptimizer::setReplayContext(std::string input, std::string sourcePrefix,
+                                     std::string targetPrefix, std::string output) {
+  impl->replayContextInput = std::move(input);
+  impl->replaySourcePrefix = std::move(sourcePrefix);
+  impl->replayTargetPrefix = std::move(targetPrefix);
+  impl->replayContextOutput = std::move(output);
 }
 
 void CombsOptimizer::setCollectionOnly(bool enabled) {

@@ -10,6 +10,7 @@ public:
     _PORT(bool) tx_valid_in;
     _PORT(u<8>) tx_data_in;
     _PORT(bool) tx_last_in;
+    _PORT(bool) tx_idle_out = _ASSIGN(!tx_busy_reg && !rgmii_tx_ctl_reg);
     _PORT(bool) tx_ready_out = _ASSIGN(!tx_busy_reg);
 
     _PORT(bool) rx_valid_out = _ASSIGN_REG(rx_valid_reg);
@@ -40,6 +41,8 @@ private:
     reg<u<4>> rgmii_txd_reg;
     reg<u1> rgmii_tx_last_reg;
 
+    reg<u1> rx_drop_frame_reg;
+    reg<u1> rx_abort_pending_reg;
     reg<u1> rx_have_low_reg;
     reg<u<4>> rx_low_reg;
     reg<u1> rx_low_last_reg;
@@ -106,17 +109,36 @@ public:
             }
         }
 
+        // RGMII cannot be backpressured. On overflow, keep nibble alignment,
+        // discard the rest of that frame and terminate the partial packet once
+        // the downstream FIFO can accept it. Otherwise a lost last marker can
+        // join all subsequent frames and permanently wedge the MAC.
+        if (rx_abort_pending_reg && (!rx_valid_reg || rx_ready_in())) {
+            rx_data_reg._next = 0;
+            rx_last_reg._next = true;
+            rx_valid_reg._next = true;
+            rx_abort_pending_reg._next = false;
+        }
         if (rgmii_rx_ctl_in()) {
             if (!rx_have_low_reg) {
                 rx_low_reg._next = rgmii_rxd_in();
                 rx_low_last_reg._next = rgmii_rx_last_in();
                 rx_have_low_reg._next = true;
             }
-            else if (!rx_valid_reg || rx_ready_in()) {
-                rx_data_reg._next = (uint8_t)(((uint32_t)rgmii_rxd_in() << 4) | (uint32_t)rx_low_reg);
-                rx_last_reg._next = rgmii_rx_last_in() || rx_low_last_reg;
-                rx_valid_reg._next = true;
+            else {
                 rx_have_low_reg._next = false;
+                if (rx_drop_frame_reg || rx_abort_pending_reg) {
+                    rx_drop_frame_reg._next = !(rgmii_rx_last_in() || rx_low_last_reg);
+                }
+                else if (!rx_valid_reg || rx_ready_in()) {
+                    rx_data_reg._next = (uint8_t)(((uint32_t)rgmii_rxd_in() << 4) | (uint32_t)rx_low_reg);
+                    rx_last_reg._next = rgmii_rx_last_in() || rx_low_last_reg;
+                    rx_valid_reg._next = true;
+                }
+                else {
+                    rx_drop_frame_reg._next = !(rgmii_rx_last_in() || rx_low_last_reg);
+                    rx_abort_pending_reg._next = true;
+                }
             }
         }
 
@@ -234,6 +256,8 @@ public:
             rgmii_tx_ctl_reg._next = false;
             rgmii_txd_reg._next = 0;
             rgmii_tx_last_reg._next = false;
+            rx_drop_frame_reg._next = false;
+            rx_abort_pending_reg._next = false;
             rx_have_low_reg._next = false;
             rx_low_reg._next = 0;
             rx_low_last_reg._next = false;
@@ -271,6 +295,8 @@ public:
         rgmii_tx_ctl_reg.strobe();
         rgmii_txd_reg.strobe();
         rgmii_tx_last_reg.strobe();
+        rx_drop_frame_reg.strobe();
+        rx_abort_pending_reg.strobe();
         rx_have_low_reg.strobe();
         rx_low_reg.strobe();
         rx_low_last_reg.strobe();

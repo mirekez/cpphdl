@@ -190,7 +190,7 @@ class TestTribe : public Module
     SDController<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> sdcard;
     SDCardVerifFrontend sdcard_verif;
     EthGigDMA<clog2(MAX_RAM_SIZE),4,TRIBE_L2_AXI_WIDTH> ethgig_dma;
-    EthGigMAC<256> ethgig_mac;
+    EthGigMAC<2048> ethgig_mac;
     EthGigPCS<256> ethgig_pcs;
     EthGigPHY ethgig_phy;
     RGMIIVerifFrontend ethgig_verif;
@@ -340,6 +340,7 @@ class TestTribe : public Module
     {
         std::string expected_output;
         std::string captured_output;
+        bool completion_pending = false;
         bool expected_marker_seen = false;
         bool checkpoint_save_after_seen = false;
         bool mirrored_needs_newline = false;
@@ -751,10 +752,13 @@ public:
         uart_script_pos_reg.set((u32)((uint32_t)uart_script_pos_reg + 1u));
     }
 
-    static constexpr bool eth_dma_needs_cache_invalidate(bool tx_irq, bool rx_irq)
+    static constexpr bool eth_dma_cache_invalidate_next(
+        bool completion, bool pending, bool ready)
     {
-        (void)tx_irq;
-        return rx_irq;
+        // Retain each DMA completion until the CPU can safely invalidate.
+        // Sticky interrupt status is not a completion event: using it here
+        // repeatedly resets L1 initialization until software clears the IRQ.
+        return completion || (pending && !ready);
     }
 
     void set_uart_script_delay(uint32_t delay)
@@ -772,12 +776,8 @@ public:
         tribe.boot_dtb_addr_in = _ASSIGN(boot_dtb_addr);
         tribe.boot_priv_in = _ASSIGN((u<2>)boot_priv);
         tribe.external_cache_invalidate_in =
-#ifdef ENABLE_MMU_TLB
             _ASSIGN(((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !debug_core_value().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out());
-#else
-            _ASSIGN((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg);
-#endif
+                tribe.external_cache_invalidate_ready_out());
         tribe.memory_base_in = _ASSIGN(start_mem_addr);
         tribe.memory_size_in = _ASSIGN((uint32_t)MAX_RAM_SIZE);
         tribe.dma_line_valid_in = _ASSIGN(false);
@@ -964,12 +964,8 @@ public:
         tribe.boot_dtb_addr_in = boot_dtb_addr;
         tribe.boot_priv_in = boot_priv;
         tribe.external_cache_invalidate_in =
-#ifdef ENABLE_MMU_TLB
             ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
-#else
-            (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
-#endif
+                (bool)tribe.external_cache_invalidate_ready_out;
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.dma_line_valid_in = false;
@@ -1170,12 +1166,8 @@ public:
         tribe.memory_base_in = start_mem_addr;
         tribe.memory_size_in = MAX_RAM_SIZE;
         tribe.external_cache_invalidate_in =
-#ifdef ENABLE_MMU_TLB
             ((bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg) &&
-                !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
-#else
-            (bool)sd_dma_cache_invalidate_reg || (bool)eth_dma_cache_invalidate_reg;
-#endif
+                (bool)tribe.external_cache_invalidate_ready_out;
         tribe.mem_region_size_in[0] = TRIBE_MEM_REGION0_SIZE;
         tribe.mem_region_size_in[1] = TRIBE_MEM_REGION1_SIZE;
         tribe.mem_region_size_in[2] = TRIBE_MEM_REGION2_SIZE;
@@ -1218,16 +1210,14 @@ public:
         ethgig_pcs._work(reset);
         ethgig_phy._work(reset);
         ethgig_verif._work(reset);
-#ifdef ENABLE_MMU_TLB
 #ifdef VERILATOR
         sd_dma_cache_invalidate_ready =
-            !debug_core_value().memory_wait && !((bool)tribe.dmem_read_out) && !((bool)tribe.dmem_write_out);
+            (bool)tribe.external_cache_invalidate_ready_out;
         eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
 #else
         sd_dma_cache_invalidate_ready =
-            !debug_core_value().memory_wait && !tribe.dmem_read_out() && !tribe.dmem_write_out();
+            tribe.external_cache_invalidate_ready_out();
         eth_dma_cache_invalidate_ready = sd_dma_cache_invalidate_ready;
-#endif
 #endif
         if (sdcard.dma_write_complete_out()) {
             sd_dma_cache_invalidate_reg._next = true;
@@ -1238,15 +1228,9 @@ public:
         else {
             sd_dma_cache_invalidate_reg._next = sd_dma_cache_invalidate_reg;
         }
-        if (eth_dma_needs_cache_invalidate(ethgig_dma.tx_irq_out(), ethgig_dma.rx_irq_out())) {
-            eth_dma_cache_invalidate_reg._next = true;
-        }
-        else if (eth_dma_cache_invalidate_reg && eth_dma_cache_invalidate_ready) {
-            eth_dma_cache_invalidate_reg._next = false;
-        }
-        else {
-            eth_dma_cache_invalidate_reg._next = eth_dma_cache_invalidate_reg;
-        }
+        eth_dma_cache_invalidate_reg._next = eth_dma_cache_invalidate_next(
+            ethgig_dma.rx_write_complete_out(), eth_dma_cache_invalidate_reg,
+            eth_dma_cache_invalidate_ready);
 #ifdef VERILATOR
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem0.axi_in, 0);
         AXI4_RESPONDER_FROM_VERILATOR(tribe, mem1.axi_in, 1);

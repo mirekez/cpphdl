@@ -385,6 +385,15 @@ bool TestTribe::handle_uart_simulation(const UartOutputConfig& output_config,
     FILE* uart_rx_trace_out = interactive_config.trace_rx_file ? interactive_config.trace_rx_file : stdout;
 
     if (capture_uart_output(output_config, output_state, error)) {
+        output_state.completion_pending = true;
+    }
+    // DMA completion/UART output can precede the last physical Ethernet byte.
+    // Preserve the completion request while the media pipeline drains, even
+    // on cycles with no UART character, so a successful test delivers its reply.
+    if (output_state.completion_pending &&
+        (!eth_tap_socket.active() ||
+         (ethgig_mac.tx_idle_out() && ethgig_pcs.tx_idle_out() &&
+          ethgig_phy.tx_idle_out() && !ethgig_verif.has_tx_packet()))) {
         return true;
     }
 
@@ -1968,8 +1977,16 @@ int main (int argc, char** argv)
 #ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
     if (!noveril) {
         std::cout << "Building verilator simulation... =============================================================\n";
-        std::string verilator_l2_width_define = "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH);
-        setenv("CPPHDL_VERILATOR_CFLAGS", verilator_l2_width_define.c_str(), 1);
+        std::string verilator_config_defines =
+            "-DL2_AXI_WIDTH=" + std::to_string(TRIBE_L2_AXI_WIDTH) +
+            " -DTRIBE_RAM_BYTES_CONFIG=" + std::to_string(TRIBE_RAM_BYTES) +
+            " -DTRIBE_IO_REGION_SIZE_CONFIG=" + std::to_string(TRIBE_IO_REGION_SIZE);
+#ifdef MULTICORE
+        // The generated top module has per-hart interrupt ports. Its C++
+        // driver must select the same wrapper layout as the HDL generator.
+        verilator_config_defines += " -DMULTICORE";
+#endif
+        setenv("CPPHDL_VERILATOR_CFLAGS", verilator_config_defines.c_str(), 1);
         const auto source_root = tribe_source_root_dir();
         auto start = std::chrono::high_resolution_clock::now();
         if (!regenerate_tribe_sv(source_root)) {

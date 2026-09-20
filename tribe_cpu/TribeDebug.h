@@ -142,6 +142,40 @@ struct TribeSbiDebug
 } __PACKED;
 
 #if !defined(SYNTHESIS)
+inline bool eth_tap_frame_has_priority(const std::vector<uint8_t>& frame)
+{
+    if (frame.size() < 14) {
+        return false;
+    }
+    // ARP is required to establish the link and must not be displaced by
+    // background IPv4 traffic.
+    if (frame[12] == 0x08u && frame[13] == 0x06u) {
+        return true;
+    }
+    if (frame[12] != 0x08u || frame[13] != 0x00u || frame.size() < 34) {
+        return false;
+    }
+    const size_t ip_header = (frame[14] & 0x0fu) * 4u;
+    if (ip_header < 20 || frame.size() < 14 + ip_header || frame[23] != 6) {
+        return false;
+    }
+    const uint16_t ip_length = (uint16_t(frame[16]) << 8) | frame[17];
+    if (ip_length < ip_header + 20 || frame.size() < 14 + ip_length) {
+        return false;
+    }
+    const size_t tcp = 14 + ip_header;
+    const size_t tcp_header = (frame[tcp + 12] >> 4) * 4u;
+    if (tcp_header < 20 || ip_length < ip_header + tcp_header) {
+        return false;
+    }
+    const uint8_t flags = frame[tcp + 13];
+    const size_t payload = ip_length - ip_header - tcp_header;
+    // Preserve TCP data and connection state. Pure ACK/window-update packets
+    // are recoverable and may be displaced when the real-time host outruns
+    // the cycle-level receiver.
+    return payload != 0 || (flags & 0x07u) != 0;
+}
+
 class EthGigTapSocket
 {
 #if defined(__linux__)
@@ -153,18 +187,14 @@ class EthGigTapSocket
     std::ofstream trace_file;
     uint64_t rx_backlog_drop_count = 0;
     uint64_t rx_backlog_last_report_cycle = 0;
-    uint64_t host_control_drop_count = 0;
-    uint64_t host_control_last_report_cycle = 0;
-    uint64_t last_host_arp_request_cycle = 0;
-    uint64_t last_host_icmp_echo_cycle = 0;
 
     static constexpr uint8_t MSG_HELLO = 1;
     static constexpr uint8_t MSG_FRAME = 2;
     static constexpr size_t ETHERNET_MIN_FRAME_BYTES = 60;
-    static constexpr size_t MAX_RX_BACKLOG_PACKETS = 2;
+    // Absorb a host burst while the cycle-level receiver advances.
+    static constexpr size_t MAX_RX_BACKLOG_PACKETS = 16;
     static constexpr size_t MAX_RX_DGRAMS_PER_PUMP = 16;
     static constexpr uint64_t RX_BACKLOG_REPORT_PERIOD = 1000000;
-    static constexpr uint64_t HOST_CONTROL_MIN_CYCLES = 195312;
 
     static bool sockaddr_from_path(const std::string& path, sockaddr_un& addr)
     {
@@ -236,7 +266,7 @@ class EthGigTapSocket
     static std::string frame_prefix(const std::vector<uint8_t>& frame)
     {
         std::ostringstream out;
-        size_t limit = std::min<size_t>(frame.size(), 32);
+        size_t limit = std::min<size_t>(frame.size(), 64);
         for (size_t i = 0; i < limit; ++i) {
             if (i != 0) {
                 out << ' ';
@@ -247,46 +277,6 @@ class EthGigTapSocket
             out << " ...";
         }
         return out.str();
-    }
-
-    static bool is_host_arp_request(const std::vector<uint8_t>& frame)
-    {
-        return frame.size() >= 42 &&
-            frame[12] == 0x08u && frame[13] == 0x06u &&
-            frame[20] == 0x00u && frame[21] == 0x01u;
-    }
-
-    static bool is_host_icmp_echo_request(const std::vector<uint8_t>& frame)
-    {
-        if (frame.size() < 34 || frame[12] != 0x08u || frame[13] != 0x00u) {
-            return false;
-        }
-        uint8_t ihl = (uint8_t)((frame[14] & 0x0fu) * 4u);
-        size_t icmp = 14u + ihl;
-        return ihl >= 20u && frame.size() > icmp &&
-            frame[23] == 0x01u && frame[icmp] == 0x08u;
-    }
-
-    bool should_drop_host_control_frame(const std::vector<uint8_t>& frame)
-    {
-        uint64_t now = _system_clock;
-        uint64_t* last_cycle = nullptr;
-        if (is_host_arp_request(frame)) {
-            last_cycle = &last_host_arp_request_cycle;
-        }
-        else if (is_host_icmp_echo_request(frame)) {
-            last_cycle = &last_host_icmp_echo_cycle;
-        }
-        else {
-            return false;
-        }
-
-        if (*last_cycle != 0 && now - *last_cycle < HOST_CONTROL_MIN_CYCLES) {
-            ++host_control_drop_count;
-            return true;
-        }
-        *last_cycle = now;
-        return false;
     }
 
     void trace(const char* direction, const std::vector<uint8_t>& frame)
@@ -315,23 +305,6 @@ class EthGigTapSocket
             << rx_backlog_drop_count << " pending=" << pending_rx_packets << '\n';
         out.flush();
         rx_backlog_drop_count = 0;
-    }
-
-    void trace_host_control_drops()
-    {
-        if (!trace_enabled || host_control_drop_count == 0) {
-            return;
-        }
-        uint64_t now = _system_clock;
-        if (now - host_control_last_report_cycle < RX_BACKLOG_REPORT_PERIOD) {
-            return;
-        }
-        host_control_last_report_cycle = now;
-        std::ostream& out = trace_file.is_open() ? trace_file : std::cerr;
-        out << "ethtap cycle=" << now << " drop-host-control-rate count="
-            << host_control_drop_count << '\n';
-        out.flush();
-        host_control_drop_count = 0;
     }
 
     bool send_frame(const std::vector<uint8_t>& frame)
@@ -385,6 +358,11 @@ public:
             std::print("can't create eth tap socket: {}\n", std::strerror(errno));
             return false;
         }
+        constexpr int socket_buffer_bytes = 4 * 1024 * 1024;
+        (void)::setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+            &socket_buffer_bytes, sizeof(socket_buffer_bytes));
+        (void)::setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+            &socket_buffer_bytes, sizeof(socket_buffer_bytes));
         ::unlink(local_path.c_str());
         if (::bind(fd, reinterpret_cast<sockaddr*>(&local_addr), sizeof(local_addr)) != 0) {
             std::print("can't bind eth tap socket '{}': {}\n", local_path, std::strerror(errno));
@@ -458,24 +436,16 @@ public:
                 size_t len = (size_t(msg[1]) << 8) | msg[2];
                 if (len <= (size_t)got - 3) {
                     std::vector<uint8_t> tap_frame(msg.begin() + 3, msg.begin() + 3 + len);
-                    // Host ping/ARP runs against real wall clock, but the
-                    // simulated Linux clock advances much more slowly. Drop
-                    // repeated control frames in simulated time so old echo
-                    // requests do not become delayed replies with growing RTT.
-                    if (should_drop_host_control_frame(tap_frame)) {
-                        continue;
-                    }
-                    // The host TAP runs in real time while Tribe simulation is
-                    // much slower. Bound ingress buffering so stale host frames
-                    // are drained and dropped instead of turning into seconds
-                    // of latency. Keep the drop trace summarized because ARP
-                    // storms can otherwise dominate simulator runtime.
-                    if (rgmii.pending_rx_packets() >= MAX_RX_BACKLOG_PACKETS) {
-                        ++rx_backlog_drop_count;
-                        continue;
-                    }
+                    // Bound host bursts while preserving the in-flight frame
+                    // and queued ARP/TCP payload. When full, only a pending
+                    // low-priority frame may be displaced; earlier payload
+                    // must stay ahead of later traffic.
+                    bool evicted = false;
                     std::vector<uint8_t> wire_frame = tap_frame_to_wire(tap_frame);
-                    if (rgmii.push_rx_packet_limited(wire_frame, MAX_RX_BACKLOG_PACKETS)) {
+                    if (rgmii.push_rx_packet_priority_limited(
+                            wire_frame, MAX_RX_BACKLOG_PACKETS,
+                            eth_tap_frame_has_priority(tap_frame), evicted)) {
+                        rx_backlog_drop_count += evicted ? 1 : 0;
                         trace("tap->wire", tap_frame);
                     }
                     else {
@@ -485,19 +455,20 @@ public:
             }
         }
         trace_rx_backlog_drops(rgmii.pending_rx_packets());
-        trace_host_control_drops();
 
         while (rgmii.has_tx_packet()) {
-            std::vector<uint8_t> wire_frame = rgmii.pop_tx_packet();
+            const std::vector<uint8_t>& wire_frame = rgmii.front_tx_packet();
             std::vector<uint8_t> tap_frame;
             if (!wire_frame_to_tap(wire_frame, tap_frame)) {
                 trace("drop-bad-wire", wire_frame);
+                rgmii.pop_tx_packet();
                 continue;
             }
             trace("wire->tap", tap_frame);
             if (!send_frame(tap_frame)) {
                 break;
             }
+            rgmii.pop_tx_packet();
         }
 #else
         (void)rgmii;

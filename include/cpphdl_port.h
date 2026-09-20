@@ -5,7 +5,8 @@
 #include <memory>
 #include <stdio.h>
 
-#if __cplusplus >= 202302L && __has_include(<stacktrace>) && \
+#if defined(CPPHDL_HAVE_STACKTRACE) && \
+    __cplusplus >= 202302L && __has_include(<stacktrace>) && \
     !defined(SYNTHESIS) && !defined(VERILATOR)
 // Record that this translation unit can use stacktrace; CMake's capability
 // result alone is insufficient when a consumer selects C++17.
@@ -130,9 +131,7 @@ public:
     template<typename F>
     function_ref(F&& f, enable_if_pointer<F>* = nullptr)
     {
-        func1_ = std::move(f);
-        func2_ = nullptr;
-        assigned = true;
+        assign_pointer(std::forward<F>(f));
     }
 
     template<typename F>
@@ -146,9 +145,7 @@ public:
     template<typename F, typename = enable_if_pointer<F>>
     function_ref& operator=(const F& f)  // we dont destroy source object
     {
-        func1_ = f;
-        func2_ = nullptr;
-        assigned = true;
+        assign_pointer(f);
         return *this;
     }
 
@@ -171,6 +168,22 @@ public:
     }
 
 private:
+    template<typename F>
+    void assign_pointer(F&& f)
+    {
+        if constexpr (std::is_convertible<invoke_result_t<remove_cvref_t<F>>, A*>::value) {
+            func1_ = std::forward<F>(f);
+            func2_ = nullptr;
+        }
+        else {
+            // u8/u16/etc. expose raw scalar pointers through operator&.
+            // Convert the pointed-to value; never reinterpret it as an A object.
+            func2_ = [fn = std::forward<F>(f)]() mutable -> A { return *fn(); };
+            func1_ = nullptr;
+        }
+        assigned = true;
+    }
+
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline))
 #endif

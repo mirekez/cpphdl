@@ -29,19 +29,105 @@ static std::filesystem::path tribe_linux_dir()
     return std::filesystem::path(__FILE__).parent_path().parent_path() / "linux";
 }
 
-static bool linux_perf_inputs_available()
+static std::string shell_quote(const std::filesystem::path& path)
 {
-    const auto linux_dir = tribe_linux_dir();
-    const auto elf = linux_dir / "vmlinux";
-    const auto dtb = linux_dir / "config32.initramfs.dtb";
-    const auto initramfs = linux_dir / "initramfs.cpio";
-    for (const auto& path : {elf, dtb, initramfs}) {
-        if (!std::filesystem::exists(path)) {
-            std::print("missing Linux perf input: {}\n", path.string());
-            return false;
+    std::string quoted = "'";
+    for (char ch : path.string()) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += ch;
         }
     }
+    return quoted + "'";
+}
+
+static bool newer_than(const std::filesystem::path& source,
+                       const std::filesystem::path& output)
+{
+    return std::filesystem::exists(source) &&
+        (!std::filesystem::exists(output) ||
+         std::filesystem::last_write_time(source) > std::filesystem::last_write_time(output));
+}
+
+static bool run_command(const std::string& command)
+{
+    const int status = std::system(command.c_str());
+    if (status != 0) {
+        std::print("command failed ({}): {}\n", status, command);
+        return false;
+    }
     return true;
+}
+
+static std::filesystem::path find_dtc()
+{
+    if (const char* configured = std::getenv("DTC")) {
+        if (std::filesystem::exists(configured)) {
+            return configured;
+        }
+    }
+    if (std::system("command -v dtc >/dev/null 2>&1") == 0) {
+        return "dtc";
+    }
+    return {};
+}
+
+// Returns 0 when ready, 77 when the packaged inputs are absent, and 1 when
+// preparation was attempted but failed.
+static int prepare_linux_perf_inputs()
+{
+    const auto linux_dir = tribe_linux_dir();
+    const auto elf_archive = linux_dir / "vmlinux.tgz";
+    const auto initramfs_archive = linux_dir / "initramfs.cpio.gz";
+    const auto dts = linux_dir / "config32.initramfs.dts";
+    const auto elf = linux_dir / "vmlinux";
+    const auto initramfs = linux_dir / "initramfs.cpio";
+    const auto dtb = linux_dir / "config32.initramfs.dtb";
+
+    for (const auto& path : {elf_archive, initramfs_archive, dts}) {
+        if (!std::filesystem::exists(path)) {
+            std::print("missing packaged Linux perf input: {}\n", path.string());
+            return 77;
+        }
+    }
+
+    if (newer_than(elf_archive, elf)) {
+        if (!run_command("tar -xzf " + shell_quote(elf_archive) + " -C " +
+                         shell_quote(linux_dir) + " vmlinux")) {
+            return 1;
+        }
+        // tar restores the archived file's original timestamp. Match the
+        // container timestamp so the next test process does not unpack it
+        // again merely because the archive itself was created later.
+        std::filesystem::last_write_time(
+            elf, std::filesystem::last_write_time(elf_archive));
+    }
+    if (newer_than(initramfs_archive, initramfs) &&
+        !run_command("gzip -dc " + shell_quote(initramfs_archive) + " > " +
+                     shell_quote(initramfs))) {
+        return 1;
+    }
+    if (newer_than(dts, dtb) || newer_than(initramfs, dtb)) {
+        const auto dtc = find_dtc();
+        if (dtc.empty()) {
+            std::print("cannot prepare Linux perf DTB: missing dtc; set DTC or add dtc to PATH\n");
+            return 1;
+        }
+        if (!run_command(shell_quote(dtc) + " -I dts -O dtb -o " +
+                         shell_quote(dtb) + " " + shell_quote(dts))) {
+            return 1;
+        }
+    }
+
+    for (const auto& path : {elf, initramfs, dtb}) {
+        if (!std::filesystem::exists(path)) {
+            std::print("failed to prepare Linux perf input: {}\n", path.string());
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static double percent(uint64_t value, uint64_t total)
@@ -92,9 +178,6 @@ static bool run_perf_test(bool debug, bool check_wall_time)
     const auto elf = linux_dir / "vmlinux";
     const auto dtb = linux_dir / "config32.initramfs.dtb";
     const auto initramfs = linux_dir / "initramfs.cpio";
-    if (!linux_perf_inputs_available()) {
-        return false;
-    }
 
     TestTribe test(debug);
     const char* old_quiet = std::getenv("TRIBE_TEST_QUIET");
@@ -199,8 +282,8 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!linux_perf_inputs_available()) {
-        return 77;
+    if (const int preparation_status = prepare_linux_perf_inputs()) {
+        return preparation_status;
     }
 
 #ifdef VERILATOR

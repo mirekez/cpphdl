@@ -6,6 +6,14 @@ add_test(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_arch_config.py"
 )
 
+add_test(NAME L1Cache_test_lifecycle
+    COMMAND "${CMAKE_COMMAND}"
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/ctest/L1Cache_test_lifecycle
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_l1_lifecycle.cmake)
+set_tests_properties(L1Cache_test_lifecycle PROPERTIES TIMEOUT 60)
+
 set(TRIBE_CTEST_ENVIRONMENT
     "CPPHDL_TOOLCHAIN_ARGS=${CPPHDL_TOOLCHAIN_ARGS};TRIBE_KEEP_WORKDIR=1;CPPHDL_BUILD_DIR=${CMAKE_BINARY_DIR}"
 )
@@ -233,6 +241,13 @@ foreach(src ${TRIBE_TEST_SOURCES})
         add_dependencies(${target_name} tribe64)
     endif()
 
+    # Keep each target's generated RTL beside its private Verilator CTest
+    # workspace. Several test sources specialize the same modules with
+    # different preprocessor settings (notably Perf_test's CLINT divider), so
+    # a shared generated/ directory makes parallel builds nondeterministic.
+    set(verilator_ctest_work_dir "${CMAKE_CURRENT_BINARY_DIR}/ctest/${target_name}_verilator")
+    file(MAKE_DIRECTORY "${verilator_ctest_work_dir}")
+
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
@@ -249,7 +264,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../verif
                 -I ${CMAKE_CURRENT_SOURCE_DIR}/../spec
                 -I ${CMAKE_SOURCE_DIR}/examples/axi
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        WORKING_DIRECTORY "${verilator_ctest_work_dir}"
     )
 
     set(ctest_work_dir "${CMAKE_CURRENT_BINARY_DIR}/ctest/${target_name}")
@@ -320,8 +335,6 @@ foreach(src ${TRIBE_TEST_SOURCES})
         if(target_name STREQUAL "Multicore_test")
             set(verilator_test_timeout 1200)
         endif()
-        set(verilator_ctest_work_dir "${CMAKE_CURRENT_BINARY_DIR}/ctest/${target_name}_verilator")
-        file(MAKE_DIRECTORY "${verilator_ctest_work_dir}")
         add_test(
             NAME ${target_name}_verilator
             COMMAND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" "$<TARGET_FILE:${target_name}>" ${verilator_test_args}

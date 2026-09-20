@@ -50,8 +50,8 @@ public:
 
     void _work(bool)
     {
-        work_value = producer_comb_func();
         work_output = child.output();
+        work_value = producer_comb_func();
     }
 
 private:

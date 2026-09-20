@@ -78,7 +78,7 @@ static bool check_generated_sv()
     std::filesystem::path top_path = "generated/TemplateArrayDimension.sv";
 #ifdef VERILATOR
     if (!std::filesystem::exists(top_path)) {
-        top_path = "TemplateArrayDimension/TemplateArrayDimension.sv";
+        top_path = "TemplateArrayDimension_4/TemplateArrayDimension.sv";
     }
 #endif
 
@@ -146,19 +146,23 @@ public:
         _assign();
         error |= !check_generated_sv();
 
-        seed = u<16>(0x1230u);
-        index = u<6>(1);
-        ++_system_clock;
+        for (uint16_t sample_seed : {uint16_t(0x1230), uint16_t(0xfffc)}) {
+            for (unsigned sample_index = 0; sample_index < 64; ++sample_index) {
+                seed = u<16>(sample_seed);
+                index = u<6>(sample_index);
 #ifdef VERILATOR
-        dut.seed_in = (uint16_t)seed;
-        dut.index_in = (uint8_t)index;
-        dut.eval();
+                dut.seed_in = (uint16_t)seed;
+                dut.index_in = (uint8_t)index;
+                dut.eval();
 #endif
-        uint16_t expected = (uint16_t)((uint16_t)seed + 7u);
-        if (output() != expected) {
-            std::print("\nERROR: array element 1 returned {:04x}, expected {:04x}\n",
-                output(), expected);
-            error = true;
+                const uint16_t expected = uint16_t(sample_seed + (sample_index % 2) * 7u);
+                if (output() != expected) {
+                    std::print("\nERROR: array index {} returned {:04x}, expected {:04x}\n",
+                        sample_index, output(), expected);
+                    error = true;
+                }
+                ++_system_clock;
+            }
         }
         return !error;
     }
@@ -177,10 +181,10 @@ int main(int argc, char** argv)
 #ifndef VERILATOR
     if (!noveril) {
         auto start = std::chrono::high_resolution_clock::now();
-        ok &= VerilatorCompile(__FILE__, "TemplateArrayDimension", {"Predef_pkg", "BF16E8_pkg"}, {"../../../../include"});
+        ok &= VerilatorCompile(__FILE__, "TemplateArrayDimension", {"Predef_pkg", "BF16E8_pkg"}, {"../../../../include"}, 4);
         auto compile_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - start).count();
-        ok = ok && std::system("TemplateArrayDimension/obj_dir/VTemplateArrayDimension") == 0;
+        ok = ok && std::system("TemplateArrayDimension_4/obj_dir/VTemplateArrayDimension") == 0;
         std::print("Verilator compilation time: {} microseconds\n", compile_us);
     }
 #else

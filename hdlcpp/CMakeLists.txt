@@ -18,12 +18,38 @@ else()
 endif()
 
 add_executable(hdlcpp hdlcpp.cpp)
+target_compile_definitions(hdlcpp PRIVATE HDLCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(hdlcpp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(hdlcpp PRIVATE slang::slang)
 
 add_executable(test_combs tests/test_combs.cpp)
 target_include_directories(test_combs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_combs COMMAND test_combs)
+add_test(NAME hdlcpp_indexed_comb_proof COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/indexed_comb_proof.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_blocking_array_update COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/blocking_array_update.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_packed_struct_array_expr COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/packed_struct_array_expr.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_native_packed_layout COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_packed_layout.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+find_program(HDLCPP_WIDTHS_VERILATOR verilator)
+set(HDLCPP_WIDTHS_REFERENCE_ARGS)
+if(HDLCPP_WIDTHS_VERILATOR)
+    list(APPEND HDLCPP_WIDTHS_REFERENCE_ARGS "${HDLCPP_WIDTHS_VERILATOR}")
+endif()
+add_test(NAME hdlcpp_constant_widths COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/constant_widths.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}"
+    ${HDLCPP_WIDTHS_REFERENCE_ARGS})
+add_test(NAME hdlcpp_expression_helpers COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/expression_helpers.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}"
+    ${HDLCPP_WIDTHS_REFERENCE_ARGS})
 
 add_executable(test_modules tests/test_modules.cpp)
 target_include_directories(test_modules PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -11,6 +11,7 @@ public:
     _PORT(bool) tx_valid_in;
     _PORT(u<8>) tx_data_in;
     _PORT(bool) tx_last_in;
+    _PORT(bool) tx_idle_out = _ASSIGN(tx_count_reg == 0);
     _PORT(bool) tx_ready_out = _ASSIGN(tx_count_reg != FIFO_DEPTH);
 
     _PORT(bool) tx_valid_out = _ASSIGN(tx_count_reg != 0);

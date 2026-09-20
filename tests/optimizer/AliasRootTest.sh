@@ -96,12 +96,17 @@ if search_q 'bool evaluating|s\.evaluating' \
     exit 1
 fi
 
-# The common already-cached path must test state before making an out-of-line
-# evaluator call. Otherwise every graph edge pays a cross-TU call merely to
-# return, which made the flattened implementation slower than function_ref.
-if ! search_q '\? void\(\) : AliasRoot_optimized_comb_eval_' \
+# Ordinary comb methods in this fixture mutate an evaluation counter and are
+# explicitly called more than once. They must remain ordinary evaluator calls;
+# adding a clock guard would silently erase the source-visible side effects.
+if ! search_q '= \(\(AliasRoot_optimized_comb_eval_' \
+    "$build_dir"/AliasRoot_optimized_combs_work_*.cpp; then
+    printf 'ordinary repeated comb was not emitted as an evaluator call\n' >&2
+    exit 1
+fi
+if search_q 'evaluated[0-9]+.*AliasRoot_optimized_comb_eval_' \
     "$build_dir"/AliasRoot_optimized_combs*; then
-    printf 'dynamic evaluator use-site fast path was not generated\n' >&2
+    printf 'ordinary repeated comb gained a clock-cache guard\n' >&2
     exit 1
 fi
 
@@ -120,20 +125,6 @@ fi
 if ! search_q '\[\[gnu::visibility\("hidden"\)\]\] void AliasRoot_optimized_comb_eval_' \
     "$build_dir/AliasRoot_optimized_combs_internal.h"; then
     printf 'optimized evaluator visibility permits interposition\n' >&2
-    exit 1
-fi
-
-# A dynamic value used at exactly one evaluated site is cheaper and clearer as
-# an inline guarded body. Its state remains in the global graph, but no dead
-# out-of-line evaluator definition should survive after reachability pruning.
-if ! search_q '\? void\(\) : \(\[&\]\(\) \{' \
-    "$build_dir"/AliasRoot_optimized_combs_*.cpp; then
-    printf 'single-use dynamic evaluator was not fused at its demand site\n' >&2
-    exit 1
-fi
-if search_q '^.*void AliasRoot_optimized_comb_eval_2\(' \
-    "$build_dir"/AliasRoot_optimized_combs_dynamic_*.cpp; then
-    printf 'fused dynamic evaluator retained an unreachable definition\n' >&2
     exit 1
 fi
 

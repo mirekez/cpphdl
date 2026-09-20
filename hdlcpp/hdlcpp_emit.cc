@@ -2399,7 +2399,8 @@
             auto concreteTargetType = concreteChildInputType(
                 childElementType, sourcePortName, targetPort);
             std::set<std::string> fields = configuredInputPortFields(childBaseType, sourcePortName);
-            if (auto* child = findModule(childBaseType)) {
+            auto* child = findModule(childBaseType);
+            if (child) {
                 for (const auto& item : child->inputFieldProjections) {
                     const auto& projection = item.second;
                     if (!projection.projectedType.empty() &&
@@ -2525,6 +2526,7 @@
                 }
                 auto sourceField = sourceMember.empty() ? field : sourceMember + "." + field;
                 std::string projectedSource;
+                std::string projectedSourceType;
                 auto sourcePort = std::find_if(module.ports.begin(), module.ports.end(), [&](const PortGen& port) {
                     return port.direction == "input" && port.name == sourceBase;
                 });
@@ -2541,6 +2543,7 @@
                         continue;
                     }
                     projectedSource = projection.projectedCppPort + "()" + sourceIndices;
+                    projectedSourceType = projection.projectedType;
                 }
                 else if (module.combMethodByBase.count(sourceBase) ||
                          module.pendingCombByBase.count(sourceBase)) {
@@ -2552,6 +2555,10 @@
                     module.requestedCombFields.insert({sourceBase, sourceField});
                     projectedSource = sourceBase + "_" + hdlcpp::projectedFieldIdentifier(sourceField) +
                         "_comb_func()" + sourceIndices;
+                    projectedSourceType = projectedFieldType(
+                        sourceType->second, sourceField,
+                        fieldPathDependsOnTypeParameter(module, sourceType->second, sourceField),
+                        &module);
                 }
                 bool addressableLocalProjection = false;
                 if (projectedSource.empty() && module.varNames.count(sourceBase)) {
@@ -2569,11 +2576,34 @@
                 if (projectedSource.empty()) {
                     continue;
                 }
+                auto projectedTarget = projectedInputPortName(targetPort, field);
                 auto wrapper = indexedCombWrapper(projectedSource, targetInstance);
+                auto projectedTargetType = projectedFieldType(
+                    concreteTargetType, field, true, child);
+                auto selectedSourceType = trim(projectedSourceType);
+                for (size_t pos = 0; (pos = sourceIndices.find('[', pos)) != std::string::npos; ++pos) {
+                    const bool standardArray = selectedSourceType.rfind("std::array<", 0) == 0;
+                    auto arrayArgs = templateArgsFor(
+                        selectedSourceType, standardArray ? "std::array" : "array");
+                    if (arrayArgs.size() < 2) {
+                        break;
+                    }
+                    selectedSourceType = trim(arrayArgs[standardArray ? 0 : 1]);
+                }
+                const bool targetIsArray = projectedTargetType.rfind("array<", 0) == 0 ||
+                    projectedTargetType.rfind("std::array<", 0) == 0;
+                const bool sourceSliceIsArray = selectedSourceType.rfind("array<", 0) == 0 ||
+                    selectedSourceType.rfind("std::array<", 0) == 0;
+                if (targetIsArray || sourceSliceIsArray) {
+                    auto projectedPortType = "std::remove_cvref_t<decltype(" +
+                        targetInstance + "." + projectedTarget + "())>";
+                    projectedSource = projectedPortType + "(" + projectedSource + ")";
+                    replaceAll(wrapper, "_ASSIGN_COMB", "_ASSIGN");
+                }
                 if (addressableLocalProjection) {
                     replaceAll(wrapper, "_ASSIGN_COMB", "_ASSIGN_REG");
                 }
-                auto projectedLine = targetInstance + "." + projectedInputPortName(targetPort, field) +
+                auto projectedLine = targetInstance + "." + projectedTarget +
                     " = " + wrapper + (wrapper.back() == ',' ? "" : "(") + projectedSource + ");";
                 if (existing.insert(projectedLine).second) {
                     module.assignLines.push_back(projectedLine);
@@ -4360,7 +4390,43 @@
 	                            appendLevel(projectionSourceType, sourceRoot, targetExpr, 0);
 	                            lines.push_back("}");
 	                        };
-	                        if (sourceIsDirectStorage) {
+	                        std::vector<std::string> projectedArrayBody;
+	                        if (!sourceIsDirectStorage && sourceArrayArgs.size() >= 2) {
+	                            auto sourceBody = source->body;
+	                            if (!source->returnBase.empty() && source->returnBase != sourceStorageName) {
+	                                for (auto& line : sourceBody) {
+	                                    replaceIdentifierAll(line, source->returnBase, sourceStorageName);
+	                                }
+	                            }
+	                            projectedArrayBody = hdlcpp::extractProjectedArrayFieldCombLines(
+	                                sourceBody, sourceStorageName, field, storageName);
+	                            for (auto& line : projectedArrayBody) {
+	                                // A slice's own reads observe its intermediate value,
+	                                // not a recursively evaluated completed aggregate getter.
+	                                line = hdlcpp::localizeProjectedArrayFieldReads(
+	                                    std::move(line), sourceStorageName, field, storageName);
+	                            }
+	                        }
+	                        auto sourceValueReads = projectedArrayBody;
+	                        for (auto& line : sourceValueReads) {
+	                            // Width-preserving casts inspect their destination's type,
+	                            // not its value; they must not merge independent producers.
+	                            line = stripDecltypeExpressions(std::move(line));
+	                        }
+	                        // Inspect the field slice, not the unsliced aggregate: unrelated
+	                        // field writes and packed-element RMW seeds are not dependencies.
+	                        const bool preserveArrayUpdates = !projectedArrayBody.empty() &&
+	                            std::any_of(sourceValueReads.begin(), sourceValueReads.end(), [&](const auto& line) {
+	                                return hdlcpp::containsIdentifier(line, sourceStorageName);
+	                            });
+	                        if (preserveArrayUpdates) {
+	                            // Array element moves and conditional blocking writes observe
+	                            // intermediate values. Independent field slices cannot read the
+	                            // completed sibling/aggregate getter at those program points.
+	                            // Keep one procedural producer and project its completed result.
+	                            directStorageRhs = source->name + "()";
+	                        }
+	                        if (sourceIsDirectStorage || preserveArrayUpdates) {
 	                            std::vector<std::string> methodBody;
 	                            methodBody.push_back(storageName + " = " + typeDefaultExpr() + ";");
 	                            if (sourceArrayArgs.size() >= 2) {
@@ -4402,17 +4468,7 @@
 	                            continue;
 	                        }
 	                        if (sourceArrayArgs.size() >= 2) {
-	                            auto sourceBody = source->body;
-	                            if (!source->returnBase.empty() && source->returnBase != sourceStorageName) {
-	                                for (auto& line : sourceBody) {
-	                                    // The canonical element-update lambda reads and writes the
-	                                    // aggregate inside one line, so normalize every exact base
-	                                    // identifier in this extraction-only copy.
-	                                    replaceIdentifierAll(line, source->returnBase, sourceStorageName);
-	                                }
-	                            }
-	                            auto extracted = hdlcpp::extractProjectedArrayFieldCombLines(
-	                                sourceBody, sourceStorageName, field, storageName);
+	                            auto extracted = std::move(projectedArrayBody);
 	                            if (!extracted.empty()) {
 	                                std::vector<std::string> projectedWholeAssignments;
 	                                for (const auto& line : extracted) {
@@ -5588,6 +5644,12 @@
 	            for (auto& t : m.typeDecls) {
                 auto typeDeclLine = t;
                 for (auto& kv : localConstItems) {
+                    // These constants have already been emitted before the
+                    // types. Re-expanding them loses their declared truncation
+                    // boundary and needlessly duplicates the width expression.
+                    if (emittedConstants.count(kv.first)) {
+                        continue;
+                    }
                     replaceAll(typeDeclLine, "logic<" + kv.first + ">", "logic<(" + kv.second + ")>");
                     replaceIdentifierAll(typeDeclLine, kv.first, "(" + kv.second + ")");
                 }
@@ -7042,6 +7104,9 @@
 	            for (size_t methodIndex = emittedMethodCount; methodIndex < m.methods.size(); ++methodIndex) {
 	                emitMethod(h, m, m.methods[methodIndex]);
 	            }
+	            for (const auto& [name, definition] : m.helperDefinitions) {
+                    h << definition << "\n";
+                }
 	            h << "};\n\n";
 	        }
         h.close();
@@ -7368,14 +7433,9 @@
             method.body.push_back("{");
             method.body.push_back("    using __cpphdl_target_array_t = " + retType + ";");
             method.body.push_back("    " + storage + " = {};");
-            method.body.push_back("    auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>(__cpphdl_src_arg_t&& __cpphdl_src) {");
+            const auto helperBegin = method.body.size();
             method.body.push_back("    using __cpphdl_src_t = std::remove_cvref_t<__cpphdl_src_arg_t>;");
-            method.body.push_back("    constexpr bool __cpphdl_same_array_packing = []() {");
-            method.body.push_back("        if constexpr (requires { __cpphdl_src_t::PACKED; }) {");
-            method.body.push_back("            return __cpphdl_target_array_t::PACKED == __cpphdl_src_t::PACKED;");
-            method.body.push_back("        }");
-            method.body.push_back("        return true;");
-            method.body.push_back("    }();");
+            method.body.push_back("    constexpr bool __cpphdl_same_array_packing = __hdlcpp_same_packing<__cpphdl_target_array_t, __cpphdl_src_t>();");
             method.body.push_back("    using __cpphdl_target_elem_t = std::remove_cvref_t<decltype(std::declval<const __cpphdl_target_array_t&>()[0])>;");
             method.body.push_back("    constexpr std::size_t __cpphdl_target_count = __cpphdl_target_array_t::SIZE_BITS / __cpphdl_target_array_t::ELEMENT_BITS;");
             method.body.push_back("        constexpr std::size_t __cpphdl_target_elem_bits = cpphdl::type_width<__cpphdl_target_elem_t>();");
@@ -7404,8 +7464,29 @@
             method.body.push_back("            " + storage + "[__cpphdl_i] = cpphdl::unpack_value<__cpphdl_target_elem_t>(logic<__cpphdl_target_elem_bits>(__cpphdl_packed.bits((__cpphdl_i + 1) * __cpphdl_target_elem_bits - 1, __cpphdl_i * __cpphdl_target_elem_bits)));");
             method.body.push_back("        }");
             method.body.push_back("    }");
-            method.body.push_back("    };");
-            method.body.push_back("    __cpphdl_assign(" + rhs + ");");
+            m.helperDefinitions["__hdlcpp_same_packing"] = R"cpp(
+    template<typename Target, typename Source>
+    static constexpr bool __hdlcpp_same_packing()
+    {
+        if constexpr (requires { Source::PACKED; }) {
+            return Target::PACKED == Source::PACKED;
+        }
+        return true;
+    }
+)cpp";
+            std::string definition =
+                "    template<typename __cpphdl_target_array_t, typename __cpphdl_src_arg_t>\n"
+                "    static __cpphdl_target_array_t __hdlcpp_port_array_cast(__cpphdl_src_arg_t&& __cpphdl_src)\n    {\n"
+                "        __cpphdl_target_array_t __cpphdl_out{};\n";
+            for (size_t lineIndex = helperBegin; lineIndex < method.body.size(); ++lineIndex) {
+                auto line = method.body[lineIndex];
+                replaceIdentifierAll(line, storage, "__cpphdl_out");
+                definition += line + "\n";
+            }
+            definition += "        return __cpphdl_out;\n    }\n";
+            m.helperDefinitions["__hdlcpp_port_array_cast"] = std::move(definition);
+            method.body.resize(helperBegin);
+            method.body.push_back("    " + storage + " = __hdlcpp_port_array_cast<__cpphdl_target_array_t>(" + rhs + ");");
             method.body.push_back("}");
             m.methods.push_back(method);
             return method.name + "()";
@@ -8320,6 +8401,12 @@
                     rhs = materializePackedToArrayPortBinding(conn.instance, portName, actualPortType, rhs);
                     wrapper = "_ASSIGN_COMB";
                 }
+                else if (portTypeKnown && rhsIndexesCpphdlGetter &&
+                         (resolvedTarget.rfind("array<", 0) == 0 ||
+                          resolvedTarget.rfind("std::array<", 0) == 0)) {
+                    rhs = actualPortType + "(" + rhs + ")";
+                    wrapper = "_ASSIGN_COMB";
+                }
                 else if (portTypeKnown && target == "bool" && wrapper == "_ASSIGN_COMB") {
                     const bool dynamicBoolSource = rhsIsParentPortAccessRef || rhsIsCombAccessRef ||
                         rhsReferencesDynamicGetter || isSimpleCombRef(rhs) || exprReferencesModuleState(m, rhs);
@@ -8734,8 +8821,18 @@
 	                    if (projectedSource.empty()) {
 	                        continue;
 	                    }
+	                    auto projectedTargetType = projectedFieldType(
+	                        projectionTargetType, field, true, child);
+	                    const bool targetIsArray = projectedTargetType.rfind("array<", 0) == 0 ||
+	                        projectedTargetType.rfind("std::array<", 0) == 0;
+	                    if (targetIsArray) {
+	                        auto exactTargetType = "std::remove_cvref_t<decltype(" +
+	                            conn.instance + "." + targetProjection + "())>";
+	                        projectedSource = exactTargetType + "(" + projectedSource + ")";
+	                    }
 	                    auto projectedAssign = conn.instance + "." + targetProjection +
-	                        " = _ASSIGN_COMB(" + projectedSource + ");";
+	                        (targetIsArray ? " = _ASSIGN(" : " = _ASSIGN_COMB(") +
+	                        projectedSource + ");";
 	                    m.assignLines.push_back(projectedAssign);
 	                    if (!conn.guards.empty()) {
 	                        m.structuralAssignGuards[projectedAssign] = conn.guards;
@@ -11622,6 +11719,9 @@
             return line;
         }
         auto expr = trim(line.substr(exprBegin, exprEnd - exprBegin));
+        if (expr.rfind("std::remove_cvref_t<decltype(", 0) == 0) {
+            return line;
+        }
         if (isChildInputPortBinding(line) && expr.rfind("__port_bind_", 0) == 0 &&
             isSimpleCombRef(expr)) {
             return line;
@@ -11689,6 +11789,10 @@
             return line;
         }
         auto expr = trim(line.substr(exprBegin, exprEnd - exprBegin));
+        if (expr.rfind("std::remove_cvref_t<decltype(", 0) == 0) {
+            line.replace(assignPos, std::string("_ASSIGN_COMB").size(), "_ASSIGN");
+            return line;
+        }
         if (referencesDynamicCpphdlGetter(expr) || isCombAddressableExpr(expr) ||
             isCpphdlGetterAddressableExpr(expr) || isSimpleCombRef(expr)) {
             return line;
@@ -12277,6 +12381,30 @@
             const bool guardProjectedField =
                 !projectedAggregateType.empty() && !projectedField.empty();
             auto noCacheComb = noCacheCombMethod(mod, m);
+            if (!guardProjectedField && !m.deferredContinuousBody.empty() && m.body == m.deferredContinuousBody &&
+                !methodHasCombSideEffects(mod, m)) {
+                // Preserve the distinction between concurrent net equations and
+                // ordered procedural C++ writes. Scheduling belongs to cpphdl;
+                // this metadata changes neither the callable body nor its ABI.
+                out << "    static constexpr bool __cpphdl_net_" << m.returnName << " = true;\n";
+            }
+            if (m.continuousWriteProofValid &&
+                !m.continuousWriteProof.empty() && m.body == m.deferredContinuousBody &&
+                !methodHasCombSideEffects(mod, m) && type.rfind("logic<", 0) == 0) {
+                // Emit evidence, not a lazy-comb promise: cpphdl must still reject
+                // cyclic or work-mutated dependency cones before sharing values.
+                out << "#if !defined(SYNTHESIS) || defined(CPPHDL_COMB_OPTIMIZATION)\n"
+                    << "    static constexpr bool __cpphdl_complete_" << m.returnName << " = []() {\n"
+                    << "        if constexpr (cpphdl::type_width<" << postProcessCppLine(type)
+                    << ">() > 4096) return false;\n        else {\n"
+                    << "        cpphdl::comb_write_proof<cpphdl::type_width<"
+                    << postProcessCppLine(type) << ">()> __proof;\n";
+                for (const auto& line : m.continuousWriteProof)
+                    out << "        " << postProcessCppLine(line) << "\n";
+                out << "        return __proof.complete();\n        }\n    }();\n";
+                out << "    static_assert(__cpphdl_complete_" << m.returnName
+                    << " || !__cpphdl_complete_" << m.returnName << ");\n#endif\n";
+            }
 		    if (noCacheComb) {
                 const bool readonlyCombOutput = !m.returnBase.empty() &&
                     !guardProjectedField &&
@@ -12619,20 +12747,23 @@
                 replaceSameMethodCombReads(emittedLine);
                 normalizeReturnDefaultBranches(emittedLine);
                 materializeSelectedGetterMemberRead(emittedLine);
-                auto packedArrayAssignExpr = [](const std::string& targetType, const std::string& value) {
-                    return "([&]() -> " + targetType + " { auto&& __cpphdl_src = (" + value +
-                        "); using __cpphdl_target_t = " + targetType +
-                        "; auto __cpphdl_assign = [&]<typename __cpphdl_src_arg_t>(__cpphdl_src_arg_t&& __cpphdl_src_val) -> __cpphdl_target_t { " +
-                        "using __cpphdl_src_t = std::remove_cvref_t<__cpphdl_src_arg_t>; __cpphdl_target_t __cpphdl_out{}; " +
-                        "constexpr bool __cpphdl_same_array_packing = []() { " +
-                        "if constexpr (requires { __cpphdl_src_t::PACKED; }) { " +
-                        "return __cpphdl_target_t::PACKED == __cpphdl_src_t::PACKED; } " +
-                        "return false; }(); " +
-                        "if constexpr (__cpphdl_same_array_packing && std::is_assignable_v<__cpphdl_target_t&, __cpphdl_src_t>) { " +
-                        "__cpphdl_out = __cpphdl_src_val; } else { " +
-                        "__cpphdl_out = cpphdl::unpack_value<__cpphdl_target_t>(" +
-                        "cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(__cpphdl_src_val)); } " +
-                        "return __cpphdl_out; }; return __cpphdl_assign(__cpphdl_src); })()";
+                auto packedArrayAssignExpr = [&](const std::string& targetType, const std::string& value) {
+                    mod.helperDefinitions["__hdlcpp_array_cast"] = R"cpp(
+    template<typename Target, typename Source>
+    static Target __hdlcpp_array_cast(Source&& source)
+    {
+        using SourceType = std::remove_cvref_t<Source>;
+        if constexpr (requires { SourceType::PACKED; }) {
+            if constexpr (Target::PACKED == SourceType::PACKED && std::is_assignable_v<Target&, SourceType>) {
+                Target result{};
+                result = source;
+                return result;
+            }
+        }
+        return cpphdl::unpack_value<Target>(cpphdl::pack_value<cpphdl::type_width<Target>()>(source));
+    }
+)cpp";
+                    return "__hdlcpp_array_cast<" + targetType + ">(" + value + ")";
                 };
                 auto normalizeWholeArrayAssignment = [&]() {
                     auto eq = hdlcpp::topLevelAssignPos(emittedLine);
@@ -13098,14 +13229,21 @@
                         emittedLine = emittedLine.substr(0, eq + 1) + " " +
                             packedArrayAssignExpr(targetType, rhs) + (hasSemicolon ? ";" : "");
                     }
+                    else if (targetIsUnpackedArray) {
+                        // Packed SV arrays of structs use addressable C++ array storage.
+                        // A packed expression must be unpacked across that whole storage;
+                        // sv_assign_field instead broadcasts it to every unpacked element.
+                        emittedLine = emittedLine.substr(0, eq + 1) + " cpphdl::unpack_value<" +
+                            targetType + ">(cpphdl::pack_value<cpphdl::type_width<" + targetType +
+                            ">()>(" + rhs + "))" + (hasSemicolon ? ";" : "");
+                    }
                     else {
-                        emittedLine = emittedLine.substr(0, eq + 1) + " ([&]() -> " + targetType +
-                            " { if constexpr (std::is_assignable_v<" + targetType +
-                            "&, std::remove_cvref_t<decltype((" + rhs + "))>>) { " + targetType +
-                            " __cpphdl_direct{}; __cpphdl_direct = " + rhs + "; return __cpphdl_direct; " +
-                            "; } else { return cpphdl::unpack_value<" + targetType +
-                            ">(cpphdl::pack_value<cpphdl::type_width<" + targetType + ">()>(" + rhs +
-                            ")); } })()" + (hasSemicolon ? ";" : "");
+                        // Write aggregate conversions into their final storage. The
+                        // CppHDL helper selects native assignment or the equivalent
+                        // packed fallback without constructing a returned temporary.
+                        const auto indent = emittedLine.substr(0, emittedLine.find_first_not_of(" \t"));
+                        emittedLine = indent + "cpphdl::sv_assign_field(" + lhs + ", " + rhs + ")" +
+                            (hasSemicolon ? ";" : "");
                     }
                 };
                 auto rewritePackedScalarAggregateAssignment = [&]() {
@@ -13372,13 +13510,22 @@
                         return "cpphdl::value_type_for_ref_t<decltype(" + lvalue + ")>";
                     };
                     auto targetType = lvalueValueType(lhs);
+                    mod.helperDefinitions["__hdlcpp_assignment_cast"] = R"cpp(
+    template<typename Target, typename Cast, typename Source>
+    static Target __hdlcpp_assignment_cast(const Source& source)
+    {
+        if constexpr (std::is_assignable_v<Target&, Cast>) {
+            Target result{};
+            result = cpphdl::sv_cast<Cast>(source);
+            return result;
+        } else {
+            return cpphdl::unpack_value<Target>(cpphdl::pack_value<cpphdl::type_width<Target>()>(source));
+        }
+    }
+)cpp";
                     emittedLine = emittedLine.substr(0, eq + 1) +
-                        " ([&]() -> " + targetType + " { using __cpphdl_target_t = " + targetType +
-                        "; using __cpphdl_cast_t = " + casted.first +
-                        "; if constexpr (std::is_assignable_v<__cpphdl_target_t&, __cpphdl_cast_t>) { " +
-                        "__cpphdl_target_t __cpphdl_value{}; __cpphdl_value = cpphdl::sv_cast<__cpphdl_cast_t>(" +
-                        casted.second + "); return __cpphdl_value; } else { return cpphdl::unpack_value<__cpphdl_target_t>(cpphdl::pack_value<cpphdl::type_width<__cpphdl_target_t>()>(" +
-                        casted.second + ")); } })()" + (hasSemicolon ? ";" : "");
+                        " __hdlcpp_assignment_cast<" + targetType + ", " + casted.first + ">(" +
+                        casted.second + ")" + (hasSemicolon ? ";" : "");
                 };
                 normalizeWholeArrayAssignment();
                 rewritePackedScalarAggregateAssignment();
@@ -13560,8 +13707,29 @@ static bool identChar(char c)
 static size_t findMatchingAngle(const std::string& text, size_t open)
 {
     int depth = 0;
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    int braceDepth = 0;
     for (size_t i = open; i < text.size(); ++i) {
-        if (text[i] == '<' && i + 1 < text.size() &&
+        if (text[i] == '(') {
+            ++parenDepth;
+        }
+        else if (text[i] == ')' && parenDepth > 0) {
+            --parenDepth;
+        }
+        else if (text[i] == '[') {
+            ++bracketDepth;
+        }
+        else if (text[i] == ']' && bracketDepth > 0) {
+            --bracketDepth;
+        }
+        else if (text[i] == '{') {
+            ++braceDepth;
+        }
+        else if (text[i] == '}' && braceDepth > 0) {
+            --braceDepth;
+        }
+        else if (text[i] == '<' && i + 1 < text.size() &&
             (text[i + 1] == '<' || text[i + 1] == '=')) {
             ++i;
         }
@@ -13569,6 +13737,10 @@ static size_t findMatchingAngle(const std::string& text, size_t open)
             ++depth;
         }
         else if (text[i] == '>' && i + 1 < text.size() && text[i + 1] == '=') {
+            ++i;
+        }
+        else if (text[i] == '>' && i + 1 < text.size() && text[i + 1] == '>' &&
+                 (parenDepth > 0 || bracketDepth > 0 || braceDepth > 0)) {
             ++i;
         }
         else if (text[i] == '>') {
@@ -14652,12 +14824,20 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
 
 int main(int argc, char** argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--native-graph") {
+        return hdlcpp_native::run(argc, argv);
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--word-model") {
+        return runWordFrontend(argc, argv);
+    }
     if (argc == 3 && std::string(argv[1]) == "--optimize") {
         return optimizeConcreteRun(argv[2]);
     }
     if (argc != 2) {
         std::cerr << "usage: hdlcpp <file.sv>\n";
         std::cerr << "       hdlcpp --optimize <main.cpp>\n";
+        std::cerr << "       hdlcpp --word-model --top NAME --output DIR [-I DIR] [-D NAME] files.sv\n";
+        std::cerr << "       hdlcpp --native-graph --top NAME --output model.cc [-I DIR] [-D NAME] files.sv\n";
         return 1;
     }
 
@@ -14708,6 +14888,7 @@ int main(int argc, char** argv)
         std::cerr << "HDLCPP_PHASE visit done modules=" << converter.modules.size() << "\n";
     }
     for (auto& module : converter.modules) {
+        module.methods.insert(module.methods.end(), module.expressionHelpers.begin(), module.expressionHelpers.end());
         converter.flushDeferredContinuousAssignments(module);
         converter.discoverInputFieldProjections(module, false);
         converter.discoverOutputFieldProjections(module, false);

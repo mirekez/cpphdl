@@ -85,6 +85,18 @@ public:
         return dma_invalidate_ready_l2_comb;
     }
 
+    _LAZY_COMB(external_cache_invalidate_ready_comb, bool)
+        size_t i;
+        bool ready;
+        ready = true;
+        for (i = 0; i < CPU_CORES; ++i) {
+            ready = ready && cores[i].external_cache_invalidate_ready_out();
+        }
+        return external_cache_invalidate_ready_comb = ready;
+    }
+    _PORT(bool) external_cache_invalidate_ready_out =
+        _ASSIGN_COMB(external_cache_invalidate_ready_comb_func());
+
     _PORT(bool) dmem_write_out = _ASSIGN_COMB(cores[0].dmem_write_out());
     _PORT(uint32_t) dmem_write_data_out = _ASSIGN_COMB(cores[0].dmem_write_data_out());
     _PORT(uint8_t) dmem_write_mask_out = _ASSIGN_COMB(cores[0].dmem_write_mask_out());
@@ -696,3 +708,11 @@ public:
     }
 #endif
 };
+
+// This header is the complete synthesizable design seen by CppHDL. The native
+// TestTribe harness is excluded by SYNTHESIS, so keep the required concrete
+// specializations explicit for HDL generation.
+template class TribeTest<1>;
+#ifdef MULTICORE
+template class TribeTest<CPUS_PER_L2_CACHE>;
+#endif

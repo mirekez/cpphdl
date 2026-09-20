@@ -1,0 +1,3 @@
+/vmlinux
+/initramfs.cpio
+/config32.initramfs.dtb

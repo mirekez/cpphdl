@@ -42,12 +42,16 @@ fi
 # x86-64's small model cannot link references beyond 2 GiB, while medium keeps
 # code addressing compact and permits this workload's large data section.
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
-    SPIKE_DIR="$SCRIPT_DIR/cva6/tools/spike"
+    SPIKE_DIR="${CPPHDL_SPIKE_DIR:-${RISCV:-${CVA6_SRC:-$SCRIPT_DIR/cva6}/tools/spike}}"
     DEFAULT_CXXFLAGS+=" -mcmodel=medium -I$SPIKE_DIR/include"
 fi
 CPPHDL_CXXFLAGS="${CPPHDL_CXXFLAGS:-$DEFAULT_CXXFLAGS}"
 if [[ "$CPPHDL_CVA6_NATIVE_HARNESS" == "1" ]]; then
-    DEFAULT_LDFLAGS="-L$SPIKE_DIR/lib -Wl,-rpath,$SPIKE_DIR/lib -lfesvr -lriscv -ldisasm -lyaml-cpp -pthread -latomic -lstdc++exp"
+    DEFAULT_LDFLAGS="-L$SPIKE_DIR/lib -Wl,-rpath,$SPIKE_DIR/lib -lfesvr -lriscv -ldisasm"
+    if compgen -G "$SPIKE_DIR/lib/libyaml-cpp.*" >/dev/null; then
+        DEFAULT_LDFLAGS+=" -lyaml-cpp"
+    fi
+    DEFAULT_LDFLAGS+=" -pthread -latomic -lstdc++exp"
 else
     DEFAULT_LDFLAGS="-lstdc++exp"
 fi
@@ -154,12 +158,18 @@ marker = '#include "cpphdl_optimized_externs.h"\n'
 if marker not in source:
     raise SystemExit("optimized runner include layout changed")
 declarations = (
+    "cpphdl_opt_t0* cpphdl_optimized_root_create();\n"
+    "extern \"C\" void cpphdl_optimized_root_assign_abi(void*);\n"
+    "const ariane_axi::req_t& cpphdl_optimized_root_noc_req(cpphdl_opt_t0&);\n"
     "void calc_all(cpphdl_opt_t0&, bool);\n"
     "void commit_optimized_regs(cpphdl_opt_t0&);\n"
     "extern \"C\" void cpphdl_optimized_bind_ports_abi(void*);\n"
 )
-if declarations not in source:
-    source = source.replace(marker, marker + declarations, 1)
+source = source.replace(
+    marker,
+    '#include "cpphdl_opt_t0_optimized_combs_internal.h"\n' + declarations,
+    1,
+)
 replacements = {
     "cpphdl_optimized_root_strobe(dut);": "commit_optimized_regs(dut);",
     "cpphdl_optimized_root_work(dut, !bool(reset_n));":
@@ -186,17 +196,23 @@ MODE_RUNNER := {runner}
 MODE_BUILD := build/$(MODE_SUFFIX)
 MODE_MAIN_SOURCE := cpphdl_mode_main_$(MODE_SUFFIX).cpp
 MODE_MAIN_OBJ := $(MODE_BUILD)/cpphdl_mode_main.o
+MODE_PCH := $(MODE_BUILD)/cpphdl_opt_t0_optimized_combs_internal.pch
+MODE_PCH_USE := -DCPPHDL_USE_GENERATED_PCH -include-pch $(MODE_PCH)
 MODE_COMB_SOURCES := $(sort $(wildcard cpphdl_opt_t0_optimized_combs*.cpp))
 MODE_COMB_OBJS := $(patsubst %.cpp,$(MODE_BUILD)/%.o,$(MODE_COMB_SOURCES))
 MODE_BASE_OBJS := $(filter-out build/opt/cpphdl_optimized_main.o,$(OBJS))
 
-$(MODE_MAIN_OBJ): $(MODE_MAIN_SOURCE) cpphdl_opt_t0_optimized_combs.h $(PCH_O2)
+$(MODE_MAIN_OBJ): $(MODE_MAIN_SOURCE) cpphdl_opt_t0_optimized_combs.h $(MODE_PCH)
 \t@mkdir -p $(dir $@)
-\t$(CXX) $(CXXFLAGS) $(PCH_USE_O2) $(DEPFLAGS) -c $< -o $@
+\t$(CXX) $(CXXFLAGS) $(MODE_PCH_USE) $(DEPFLAGS) -c $< -o $@
 
-$(MODE_BUILD)/%.o: %.cpp cpphdl_opt_t0_optimized_combs.h
+$(MODE_PCH): cpphdl_opt_t0_optimized_combs_internal.h
 \t@mkdir -p $(dir $@)
-\t$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
+\t$(CXX) $(CXXFLAGS) -x c++-header $< -o $@
+
+$(MODE_BUILD)/%.o: %.cpp cpphdl_opt_t0_optimized_combs.h $(MODE_PCH)
+\t@mkdir -p $(dir $@)
+\t$(CXX) $(CXXFLAGS) $(MODE_PCH_USE) $(DEPFLAGS) -c $< -o $@
 
 $(MODE_RUNNER): $(MODE_MAIN_OBJ) $(MODE_COMB_OBJS)
 \t@test -n "$(MODE_BASE_OBJS)"

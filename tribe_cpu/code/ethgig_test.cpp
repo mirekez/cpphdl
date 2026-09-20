@@ -16,8 +16,8 @@ static volatile uint32_t tx_irq_seen;
 static volatile uint32_t rx_irq_seen;
 static volatile uint32_t fail_seen;
 
-static uint8_t tx_packet[18] __attribute__((aligned(64)));
-static uint8_t rx_packet[64] __attribute__((aligned(64)));
+static uint8_t tx_packet[554] __attribute__((aligned(64)));
+static uint8_t rx_packet[576] __attribute__((aligned(64)));
 static uint32_t tx_desc[16] __attribute__((aligned(64)));
 static uint32_t rx_desc[16] __attribute__((aligned(64)));
 
@@ -81,7 +81,7 @@ static void prepare_descriptors(void)
         rx_desc[i] = 0;
     }
     for (unsigned i = 0; i < sizeof(tx_packet); ++i) {
-        tx_packet[i] = packet_template[i];
+        tx_packet[i] = i < sizeof(packet_template) ? packet_template[i] : (uint8_t)(i * 37u + 11u);
     }
     for (unsigned i = 0; i < sizeof(rx_packet); ++i) {
         rx_packet[i] = 0xa5u;
@@ -110,6 +110,37 @@ static int packet_matches(void)
     return 1;
 }
 
+#ifdef ETHGIG_POLLING_TEST
+// DMA completion must not invalidate a load response held by the no-MMU CPU.
+// Keep copying and checking bytes while loopback DMA completes asynchronously.
+static volatile uint8_t polling_copy[sizeof(tx_packet)] __attribute__((aligned(64)));
+int main(void)
+{
+    for (unsigned trial = 0; trial < 8; ++trial) {
+        prepare_descriptors();
+        eth_dma_reset();
+        eth_dma_start_rx(rx_desc);
+        eth_dma_start_tx(tx_desc);
+        for (unsigned copy = 0; copy < 6; ++copy) {
+            for (unsigned i = 0; i < sizeof(tx_packet); ++i) polling_copy[i] = tx_packet[i];
+            for (unsigned i = 0; i < sizeof(tx_packet); ++i) {
+                if (polling_copy[i] != tx_packet[i]) {
+                    tribe_uart_puts("ETHGIG\nFAIL\n");
+                    return 1;
+                }
+            }
+        }
+        unsigned guard = 0;
+        while (!(eth_read32(ETH_DMA_RX_SR) & ETH_DMA_IRQ_IOC) && ++guard < 200000u) {}
+        if (guard == 200000u || !packet_matches()) {
+            tribe_uart_puts("ETHGIG\nFAIL\n");
+            return 1;
+        }
+    }
+    tribe_uart_puts("ETHGIG\nDONE\n");
+    return 0;
+}
+#else
 int main(void)
 {
     tx_irq_seen = 0;
@@ -151,7 +182,7 @@ int main(void)
         tribe_uart_puts("R0\n");
         return 1;
     }
-    if ((rx_sts & ETH_BD_LEN_MASK) != 60u) {
+    if ((rx_sts & ETH_BD_LEN_MASK) != sizeof(tx_packet)) {
         tribe_uart_puts("R1\n");
         return 1;
     }
@@ -164,3 +195,5 @@ int main(void)
     tribe_uart_puts("DONE\n");
     return 0;
 }
+
+#endif

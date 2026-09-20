@@ -1,12 +1,102 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_test(NAME optimizer_generated_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/GeneratedHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(optimizer_generated_helper PROPERTIES TIMEOUT 120)
+
+add_test(NAME optimizer_template_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/TemplateHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+add_test(NAME optimizer_indexed_proof COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/IndexedProofTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME native_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-graph")
+        set_tests_properties(native_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph")
+        set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
+    add_test(NAME netlist_driver COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/netlist/test_driver.py")
+    set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    find_program(CPPHDL_NETLIST_VERILATOR verilator)
+    if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME netlist_converter COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/netlist/ConverterChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --source-root "${CMAKE_SOURCE_DIR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/netlist-converter"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+    endif()
+    find_program(CPPHDL_NETLIST_YOSYS yosys)
+    find_program(CPPHDL_NETLIST_SV2V sv2v)
+    find_path(CPPHDL_CXXRTL_RUNTIME cxxrtl/cxxrtl.h
+        PATHS /usr/share/yosys/include/backends/cxxrtl/runtime
+              /usr/local/share/yosys/include/backends/cxxrtl/runtime)
+    if(CPPHDL_NETLIST_YOSYS AND CPPHDL_NETLIST_SV2V AND CPPHDL_CXXRTL_RUNTIME)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME word_pipeline COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/netlist/WordChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --sv2v "${CPPHDL_NETLIST_SV2V}" --yosys "${CPPHDL_NETLIST_YOSYS}"
+                --runtime "${CPPHDL_CXXRTL_RUNTIME}" --cxx "${CMAKE_CXX_COMPILER}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/word-pipeline")
+            set_tests_properties(word_pipeline PROPERTIES TIMEOUT 300
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        endif()
+        add_test(NAME netlist_word_graph COMMAND "${CMAKE_COMMAND}"
+            "-DPYTHON=${Python3_EXECUTABLE}" "-DCPPHDL=$<TARGET_FILE:cpphdl>"
+            "-DSV2V=${CPPHDL_NETLIST_SV2V}" "-DYOSYS=${CPPHDL_NETLIST_YOSYS}"
+            "-DCXXRTL_RUNTIME=${CPPHDL_CXXRTL_RUNTIME}" "-DCXX=${CMAKE_CXX_COMPILER}"
+            "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/netlist"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/netlist/Smoke.cmake")
+        set_tests_properties(netlist_word_graph PROPERTIES TIMEOUT 180)
+    endif()
+endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
+
+# Unsupported closures must fail conversion, not emit malformed RTL.
+foreach(lambda_case reference value captureless immediate explicit reference_alias)
+    add_test(NAME code_unsupported_lambda_${lambda_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCPPHDL=$<TARGET_FILE:cpphdl>
+            -DCXX=${CMAKE_CXX_COMPILER}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DCASE=${lambda_case}
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/unsupported_lambda
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/code/CheckUnsupportedLambda.cmake)
+    set_tests_properties(code_unsupported_lambda_${lambda_case} PROPERTIES TIMEOUT 60)
+endforeach()
+
+# These tests select concrete template types/widths in their native testbench.
+# Parse that testbench too, so conversion sees the same implicit instances.
+set(template_hierarchy_tests
+    code/TypeTemplateModule.cpp
+    templates/TemplateArrayDimension.cpp
+    templates/TemplateBaseAliasPackage.cpp
+    templates/TemplateTypeWidth.cpp
+    templates/TemplateInheritedBaseArray.cpp)
 
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
@@ -40,7 +130,9 @@ foreach(src ${TEST_SOURCES})
     # Public header APIs must remain usable by C++17 projects even though converter
     # regressions normally compile in the newest supported language mode.
     if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp" OR
+       rel_path STREQUAL "datatypes/PackedWriteback.cpp" OR
        rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
+       rel_path STREQUAL "datatypes/PointerPorts.cpp" OR
        rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
         target_compile_options(${target_name} PRIVATE "-std=c++17")
     endif()
@@ -69,10 +161,8 @@ foreach(src ${TEST_SOURCES})
     if(rel_path MATCHES "^json/")
         set(cpphdl_json_args "--json-output generated/${name}")
     endif()
-    # This regression defines its module only outside SYNTHESIS guards.
-    # It must exercise cpphdl's new opt-out rather than the default preprocessing mode.
-    # Append the frontend option only for that targeted JSON extraction test.
-    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp")
+    # Include guarded definitions/instances in tests that require them.
+    if(rel_path STREQUAL "json/JsonNoSynthesisFlag.cpp" OR rel_path IN_LIST template_hierarchy_tests)
         string(APPEND cpphdl_json_args " --no-synthesis-flag")
     endif()
 
@@ -89,11 +179,27 @@ foreach(src ${TEST_SOURCES})
 
     cpphdl_add_converter_dependency(${target_name})
 
-    add_test(
-        NAME ${target_name}
-        COMMAND "$<TARGET_FILE:${target_name}>"
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
-    )
+    if(rel_path IN_LIST template_hierarchy_tests)
+        set(template_top ${name})
+        if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
+            set(template_top TypeTemplateModuleParent)
+        endif()
+        add_test(NAME ${target_name}
+            COMMAND ${CMAKE_COMMAND}
+                -DCPPHDL=$<TARGET_FILE:cpphdl>
+                -DSOURCE=${src}
+                -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+                -DTEST_EXE=$<TARGET_FILE:${target_name}>
+                -DTOP=${template_top}
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/template_hierarchy/${target_name}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateHierarchy.cmake)
+    else()
+        add_test(
+            NAME ${target_name}
+            COMMAND "$<TARGET_FILE:${target_name}>"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests
+        )
+    endif()
     set_tests_properties(${target_name} PROPERTIES
         TIMEOUT 600
     )
@@ -113,8 +219,42 @@ foreach(src ${TEST_SOURCES})
 
 endforeach()
 
+# Exercise the byte-oriented fallback even on little-endian development hosts.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(datatypes_PackedWritebackPortable datatypes/PackedWriteback.cpp)
+    set_target_properties(datatypes_PackedWritebackPortable PROPERTIES CXX_STANDARD 17)
+    target_include_directories(datatypes_PackedWritebackPortable PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_compile_options(datatypes_PackedWritebackPortable PRIVATE -U__BYTE_ORDER__)
+    cpphdl_link_stdcxxexp_if_available(datatypes_PackedWritebackPortable)
+    add_test(NAME datatypes_PackedWritebackPortable COMMAND datatypes_PackedWritebackPortable)
+endif()
+
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+add_test(NAME code_NativeLambdaHarness
+    COMMAND ${CMAKE_COMMAND}
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DCXX=${CMAKE_CXX_COMPILER}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/native_lambda_harness
+        -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/code/NativeLambdaHarness.cmake)
+set_tests_properties(code_NativeLambdaHarness PROPERTIES TIMEOUT 60)
+
+add_test(NAME templates_DependentBitVectorAliases
+    COMMAND ${CMAKE_COMMAND}
+        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DCXX=${CMAKE_CXX_COMPILER}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/dependent_bit_vector_aliases
+        -DVERILATOR=${CPPHDL_TEMPLATE_VERILATOR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/templates/DependentBitVectorAliases.cmake)
+set_tests_properties(templates_DependentBitVectorAliases PROPERTIES TIMEOUT 120)
+if(CPPHDL_LOCAL_CONDA_PREFIX)
+    set_tests_properties(templates_DependentBitVectorAliases PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+endif()
+
 foreach(replacement_case standalone concrete partial expressions named parent)
     add_test(NAME format_replacement_defaults_${replacement_case}
         COMMAND ${CMAKE_COMMAND}
@@ -162,7 +302,7 @@ foreach(cli_case help forwarding)
     set_tests_properties(cli_${cli_case} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named empty missing_effectful deferred_template assign_ports constexpr_ports tuple_pipeline)
+foreach(lifecycle_case valid register memory child_work child_strobe work_method strobe_method wrong_phase dead_helper inheritance hidden_base named missing_named missing_legacy empty missing_effectful deferred_template deferred_struct empty_delegated missing_effectful_delegated derived composed_base assign_ports constexpr_ports tuple_pipeline)
     add_test(NAME lint_lifecycle_${lifecycle_case}
         COMMAND ${CMAKE_COMMAND}
             -DCPPHDL=$<TARGET_FILE:cpphdl>
@@ -319,9 +459,37 @@ add_test(
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
 
-# Converter-projected output ports are views of an aggregate comb result.
-# Ensure optimized scheduling evaluates that aggregate once instead of
-# retaining one duplicate procedural evaluator for every requested field.
+add_test(
+    NAME optimizer_replay_context
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ReplayContextTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_replay_context PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_native_bit_store
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/NativeBitStoreTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_native_bit_store PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_specialized_comb
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/SpecializedCombTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_specialized_comb PROPERTIES TIMEOUT 120)
+
+# Preserve converter field dependencies while sharing actual common producers.
 add_test(
     NAME optimizer_projected_comb
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedCombTest.sh"
@@ -331,6 +499,16 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_projected_comb PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_projected_handshake
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ProjectedHandshakeTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_projected_handshake PROPERTIES TIMEOUT 120)
 
 # A helper called from _work may mutate module storage by non-const reference.
 # Readers of that storage must remain lazy until their original demand point

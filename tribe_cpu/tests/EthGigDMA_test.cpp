@@ -35,6 +35,7 @@ public:
     _PORT(bool) rgmii_rx_last_in;
     _PORT(bool) tx_irq_out;
     _PORT(bool) rx_irq_out;
+    _PORT(bool) rx_write_complete_out;
     _PORT(uint32_t) debug_state_out;
     _PORT(bool) debug_rx_ready_out;
 
@@ -50,7 +51,7 @@ public:
         mac.tx_valid_in = dma.mac_tx_valid_out;
         mac.tx_data_in = dma.mac_tx_data_out;
         mac.tx_last_in = dma.mac_tx_last_out;
-        mac.local_mac_in = _ASSIGN(logic<48>(0x020000000002ull));
+        mac.local_mac_in = dma.local_mac_out;
         mac.local_ip_in = _ASSIGN((uint32_t)0xc0a8012au);
         mac.local_mask_in = _ASSIGN((uint32_t)0xffffff00u);
         mac.promisc_in = _ASSIGN(false);
@@ -92,6 +93,7 @@ public:
         phy.mdio_host_data_in = _ASSIGN(true);
         tx_irq_out = _ASSIGN(dma.tx_irq_out());
         rx_irq_out = _ASSIGN(dma.rx_irq_out());
+        rx_write_complete_out = dma.rx_write_complete_out;
         debug_state_out = _ASSIGN(dma.debug_state_out());
         debug_rx_ready_out = _ASSIGN(dma.mac_rx_ready_out());
 
@@ -154,6 +156,7 @@ class TestEthGigDMA : public Module
     RGMIIVerifFrontend verif;
     Axi4Driver<32, 4, DATA_WIDTH> cpu = {};
     bool error = false;
+    unsigned rx_completions = 0;
 
 public:
     void _assign()
@@ -194,6 +197,7 @@ public:
 #ifdef VERILATOR
         (void)reset;
 #else
+        if (!reset && dut.rx_write_complete_out()) ++rx_completions;
         dut._work(reset);
         ram._work(reset);
         verif._work(reset);
@@ -271,7 +275,8 @@ public:
             cpu.ar.addr = addr;
             cpu.ar.id = 0;
             if (dut.axi_in.rvalid_out()) {
-                uint32_t value = (uint32_t)dut.axi_in.rdata_out().bits(31, 0);
+                uint32_t lane = (addr % DATA_BYTES) / 4u;
+                uint32_t value = (uint32_t)dut.axi_in.rdata_out().bits(lane * 32 + 31, lane * 32);
                 clear_cpu();
                 cycle(false);
                 return value;
@@ -410,8 +415,17 @@ public:
             cycle(true);
         }
 
+        mmio_write(EthGigDMA<>::XAE_UAW0_OFFSET, 0x00000002u);
+        mmio_write(EthGigDMA<>::XAE_UAW1_OFFSET, 0x00000200u);
+        if (mmio_read(EthGigDMA<>::XAE_UAW0_OFFSET) != 0x00000002u ||
+            mmio_read(EthGigDMA<>::XAE_UAW1_OFFSET) != 0x00000200u) {
+            std::print("ERROR: configured MAC address readback mismatch\n");
+            error = true;
+        }
         std::vector<uint8_t> tx = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00,
             0x00, 0x00, 0x00, 0x02, 0x08, 0x00, 0x45, 0x46, 0x47, 0x48};
+        tx.resize(554);
+        for (size_t i = 18; i < tx.size(); ++i) tx[i] = uint8_t(i * 37u + 11u);
         mem_write_packet(TX_BUF, tx);
         mem_write32(TX_DESC + EthGigDMA<>::XAXIDMA_BD_NDESC_OFFSET, TX_DESC2);
         mem_write32(TX_DESC2 + EthGigDMA<>::XAXIDMA_BD_STS_OFFSET, 0);
@@ -769,20 +783,21 @@ public:
         for (int i = 0; i < 100; ++i) {
             cycle(false);
         }
+        const unsigned before_ring = rx_completions;
         verif.push_rx_packet(make_wire_frame(rx_ring0));
         if (!wait_for(true)) {
             std::print("\nERROR: first RX ring descriptor did not interrupt, state={}, rx_ready={}\n",
                 dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
             error = true;
         }
-        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_SR_OFFSET), EthGigDMA<>::XAXIDMA_IRQ_IOC_MASK);
-        for (int i = 0; i < 100; ++i) {
-            cycle(false);
-        }
+        // Leave IOC asserted across a second packet. Coherency must observe
+        // both descriptor completions without retriggering on the held IRQ.
+        for (int i = 0; i < 100; ++i) cycle(false);
+        if (rx_completions != before_ring + 1 || !dut.rx_irq_out()) error = true;
         verif.push_rx_packet(make_wire_frame(rx_ring1));
-        if (!wait_for(true)) {
-            std::print("\nERROR: second RX ring descriptor did not interrupt, state={}, rx_ready={}\n",
-                dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
+        for (int i = 0; i < 20000; ++i) cycle(false);
+        if (rx_completions != before_ring + 2 || !dut.rx_irq_out()) {
+            std::print("ERROR: sticky IRQ must produce exactly two RX completion events\n");
             error = true;
         }
         auto rx_ring0_got = mem_read_packet(RX_BUF, 60);
@@ -821,8 +836,11 @@ public:
         for (int i = 0; i < 100; ++i) {
             cycle(false);
         }
+        mmio_write(dma_reg(EthGigDMA<>::XAXIDMA_RX_CR_OFFSET), EthGigDMA<>::XAXIDMA_CR_RUNSTOP_MASK);
+        const unsigned before_polling = rx_completions;
         verif.push_rx_packet(make_wire_frame(rx_unaligned));
-        if (!wait_for(true)) {
+        for (int i = 0; i < 20000; ++i) cycle(false);
+        if (rx_completions != before_polling + 1 || dut.rx_irq_out()) {
             std::print("\nERROR: unaligned RX DMA did not interrupt, state={}, rx_ready={}\n",
                 dut.debug_state_out(), (bool)dut.debug_rx_ready_out());
             error = true;

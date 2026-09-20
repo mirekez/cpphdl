@@ -539,6 +539,34 @@ public:
             error = true;
         }
 
+        // A frame larger than this test MAC's 128-byte storage must be
+        // discarded through its end marker, without blocking later traffic.
+        auto oversized = rx;
+        oversized.resize(256, 0xa5);
+        verif.push_rx_packet(make_wire_frame(oversized));
+        for (int i = 0; i < 5000; ++i) cycle(false);
+        verif.push_rx_packet(make_wire_frame(rx));
+        auto after_oversize = receive_packet();
+        if (after_oversize.size() != 60 || !vector_prefix_matches(after_oversize, rx)) {
+            std::print("\nERROR: receiver did not recover after oversized frame\n");
+            error = true;
+        }
+
+        // Real RGMII has no ready signal. Fill MAC/PCS while the consumer is
+        // stopped, then check that overflow cannot lose framing indefinitely.
+        host_rx_ready = false;
+        for (int packet = 0; packet < 32; ++packet)
+            verif.push_rx_packet(make_wire_frame(rx));
+        for (int i = 0; i < 12000; ++i) cycle(false);
+        host_rx_ready = true;
+        for (int i = 0; i < 12000; ++i) cycle(false);
+        verif.push_rx_packet(make_wire_frame(rx));
+        auto after_overflow = receive_packet();
+        if (after_overflow.size() != 60 || !vector_prefix_matches(after_overflow, rx)) {
+            std::print("\nERROR: receiver did not recover after RGMII backpressure overflow\n");
+            error = true;
+        }
+
         mdio_write(4, 0x01e1);
         uint16_t mdio_value = mdio_read(4);
         if (mdio_value != 0x01e1) {
