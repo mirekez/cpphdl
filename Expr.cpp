@@ -965,6 +965,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
                 return width + "'(" + operand + ")";
             };
+            if (value.rfind("svtype:", 0) == 0) {
+                return indent_str + value.substr(7) + "'(" + sub[0].str(prefix, suffix) + ")";
+            }
             if (value == "bool" || value == "_Bool") {
                 declSize = 1;
                 if (sub[0].type == EXPR_CAST
@@ -976,12 +979,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);
-                return indent_str + sub[0].str(prefix, suffix);
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             }
             // considering casting names as special case since Verilog cant cast using logic[31:0]'val  (what a strange language)
             if (value.find("logic") == 0) {
-                declSize = numericWidth(templateWidth(value, "logic<"));
-                return indent_str + sub[0].str(prefix, suffix);
+                const std::string width = templateWidth(value, "logic<");
+                declSize = numericWidth(width);
+                if (width.empty()) return indent_str + sub[0].str(prefix, suffix);
+                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
             } else
             if (value == "signedchar") {
                 return indent_str + "signed'(8'(" + sub[0].str(prefix, suffix) + "))";
@@ -1001,7 +1006,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "unsignedshort") {
                 return indent_str + "unsigned'(16'(" + sub[0].str(prefix, suffix) + "))";
             } else
-            if (value == "unsignedlong" || value == "size_t") {
+            if (value == "unsignedlong" || value == "unsignedlonglong" || value == "size_t") {
                 return indent_str + "unsigned'(64'(" + sub[0].str(prefix, suffix) + "))";
             } else
             if (value.compare(0, 8, "unsigned") == 0) {
@@ -1329,6 +1334,11 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
+    if (type.find("cpphdl_logic") == 0) {
+        std::string width = sizedCpphdlWidth(type, "cpphdl_logic");
+        str = logic + size + "[" + width + "-1:0]";
+        declSize = numericWidth(width);
+    } else
     if (type.find("cpphdl_u") == 0) {
         std::string width = sizedCpphdlWidth(type, "cpphdl_u");
         str = logic + size + "[" + width + "-1:0]";
@@ -1371,7 +1381,7 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size + "[15:0]";
         declSize = 16;
     } else
-    if (type == "uint64_t" || type == "unsignedlong" || type == "size_t") {
+    if (type == "uint64_t" || type == "unsignedlong" || type == "unsignedlonglong" || type == "size_t") {
         str = logic + size + "[63:0]";
         declSize = 64;
     } else

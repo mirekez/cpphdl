@@ -8,6 +8,7 @@
 using namespace clang;
 
 bool cpphdlRecordHasValueFields(const CXXRecordDecl* RD);
+void addEnumPackageImport(EnumDecl* ED, std::vector<cpphdl::Import>& imports);
 
 struct Helpers
 {
@@ -30,6 +31,7 @@ struct Helpers
 
     cpphdl::Expr exprToExpr(const Stmt* E);
     std::string castTypeName(QualType QT);
+    cpphdl::Expr valueCast(QualType target, const clang::Expr* operand);
     void ArgToExpr(const TemplateArgument& Arg, cpphdl::Expr& expr, bool specialization = true);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);
