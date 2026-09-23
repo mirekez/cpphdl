@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -38,8 +39,20 @@ def main():
         if not sources or any(len(path.name) > 200 for path in sources):
             raise RuntimeError(f'{name}: missing RTL or unsafe filename')
         model = next(path for path in sources if f'module {top} (' in path.read_text())
-        if name == 'missing_init' and 'for (;lane' not in model.read_text():
-            raise RuntimeError('Missing initializer shifted the remaining clauses')
+        # Check clause positions, not the spelling of casts in the condition.
+        loops = re.findall(r'\bfor\s*\(([^;]*);([^;]*);(.*?)\)\s*begin',
+                           model.read_text(), re.DOTALL)
+        if len(loops) != 1:
+            raise RuntimeError(f'{name}: expected one procedural loop')
+        init, condition, increment = (clause.strip() for clause in loops[0])
+        if not re.search(r'\blane\b[^;]*<', condition):
+            raise RuntimeError(f'{name}: loop condition shifted or missing')
+        if name == 'missing_init':
+            if init or re.sub(r'\s+', '', increment) != 'lane=lane+1':
+                raise RuntimeError('Missing initializer shifted the remaining clauses')
+        elif name == 'missing_increment':
+            if increment or not re.match(r'lane\s*=', init):
+                raise RuntimeError('Missing increment shifted the remaining clauses')
         command = [args.verilator, '--lint-only', '-Wno-fatal', '--prefix', 'VNetlistCheck',
                    '--Mdir', str(work / 'obj_dir'), str(generated / 'Predef_pkg.sv'), str(model)]
         result = subprocess.run(command, cwd=work, capture_output=True, text=True)
