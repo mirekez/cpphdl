@@ -1744,7 +1744,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* CLE = dyn_cast<CompoundLiteralExpr>(E)) {
         DEBUG_AST1(" CompoundLiteralExpr");
-        return cpphdl::Expr{CLE->getType().getAsString(), cpphdl::Expr::EXPR_INIT, {{exprToExpr(CLE->getInitializer())}}};
+        return exprToExpr(CLE->getInitializer());
     }
     if (auto* SL = dyn_cast<StringLiteral>(E)) {
         DEBUG_AST1(" StringLiteral");
@@ -1849,6 +1849,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* ILE = dyn_cast<InitListExpr>(E)) {
         DEBUG_AST1(" InitListExpr");
+        // The semantic form includes omitted fields and default member values.
+        if (ILE->isSyntacticForm() && ILE->getSemanticForm())
+            ILE = ILE->getSemanticForm();
         if (!ILE->getNumInits()) {
             return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
         }
@@ -1869,6 +1872,25 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             case UETT_PreferredAlignOf: op = "preferred_alignof"; break;
             case UETT_OpenMPRequiredSimdAlign: op = "omp required simd align"; break;
             default: op = "unknown_trait"; break;
+        }
+
+        if (UETTE->getKind() == UETT_SizeOf && mod) {
+            // sizeof is an unevaluated type dependency, even when spelled
+            // sizeof(expr). No variable/port declaration need import this
+            // record elsewhere. Use the exported specialization identity,
+            // not the spelling of a cv-qualified type or alias.
+            auto* record = resolveCXXRecordDecl(UETTE->getTypeOfArgument());
+            if (cpphdlRecordShouldExportAsStruct(record, *this)) {
+                auto st = exportStruct(record, *this);
+                const auto name = st.name;
+                if (std::none_of(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp) { return imp.name == name; })) {
+                    mod->imports.emplace_back(name);
+                    currProject->structs.emplace_back(std::move(st));
+                }
+                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT,
+                    {cpphdl::Expr{name, cpphdl::Expr::EXPR_TYPE}}};
+            }
         }
 
         if (UETTE->isArgumentType()) {
@@ -1907,8 +1929,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         return cpphdl::Expr{"CXXFoldExpr", cpphdl::Expr::EXPR_BODY, {expr}};
     }
-    if (/*auto* IVIE = */dyn_cast<ImplicitValueInitExpr>(E)) {
-        return cpphdl::Expr{"ImplicitValueInitExpr", cpphdl::Expr::EXPR_NONE};
+    if (auto* DIE = dyn_cast<CXXDefaultInitExpr>(E)) {
+        return exprToExpr(DIE->getExpr());
+    }
+    if (isa<ImplicitValueInitExpr>(E) || isa<CXXScalarValueInitExpr>(E)) {
+        // A value-initialized field is present and zero, not a missing field.
+        return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
     }
     if (auto* SOPE = dyn_cast<SizeOfPackExpr>(E)) {
         if (!SOPE->isValueDependent() && !SOPE->isTypeDependent()) {

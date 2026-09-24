@@ -1,5 +1,5 @@
 #ifdef MAIN_FILE_INCLUDED
-#define NO_MAINFILE
+#define AVALON_EXAMPLE_NO_MAINFILE
 #endif
 #define MAIN_FILE_INCLUDED
 
@@ -258,7 +258,7 @@ public:
 
 // CppHDL INLINE TEST ///////////////////////////////////////////////////
 
-#if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
+#if !defined(SYNTHESIS) && !defined(AVALON_EXAMPLE_NO_MAINFILE)
 
 #include <chrono>
 #include <cstring>
@@ -807,5 +807,5 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef MAIN_FILE_INCLUDED
-#undef NO_MAINFILE
+#undef AVALON_EXAMPLE_NO_MAINFILE
 #endif
