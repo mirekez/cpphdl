@@ -60,6 +60,34 @@ struct CastPacketView { uint32_t data; uint16_t tag; };
     case 47: return character_locals(x); \
     case 48: return struct_references(x); \
     case 49: return signed_reference(x); \
+    case 50: return C(int64_t, C(int8_t, x)); \
+    case 51: return C(uint64_t, C(int16_t, C(int8_t, x))); \
+    case 52: return C(uint64_t, C(uint16_t, C(int8_t, x))); \
+    case 53: return C(int64_t, C(int32_t, C(uint8_t, x))); \
+    case 54: return (x & 0x100) ? C(int8_t, x) : C(uint8_t, x); \
+    case 55: return (x & 0x100) ? C(int8_t, x) : C(uint32_t, x); \
+    case 56: return C(int64_t, (x & 0x100) ? C(int8_t, x) : C(int16_t, x)); \
+    case 57: return C(int64_t, C(int16_t, x)) >> 3; \
+    case 58: return C(int64_t, C(int16_t, x) + 1); \
+    case 59: return C(logic<64>, C(int8_t, x)); \
+    case 60: return C(uint64_t, C(int8_t, C(uint8_t, x))); \
+    case 61: return C(int64_t, C(int8_t, x)) < 0; \
+    case 62: return C(uint64_t, C(int32_t, x)); \
+    case 63: return C(logic<64>, C(int32_t, x)); \
+    case 64: return C(int64_t, C(int32_t, x)) >> 31; \
+    case 65: return C(int16_t, C(uint8_t, x)); \
+    case 66: return C(int64_t, x); \
+    case 67: return (C(uint32_t, x) + 1u) % UINT64_C(3); \
+    case 68: return (C(uint32_t, x) + 1u) < UINT64_C(3); \
+    case 69: return C(int32_t, x) < -1; \
+    case 70: return (C(int32_t, x) + 0) >> 1; \
+    case 71: { u<16> lane; lane = C(int8_t, x); return lane; } \
+    case 72: { logic<16> lane; lane = C(int8_t, x); return lane; } \
+    case 73: { bool flag; flag = x; return flag; } \
+    case 74: { logic<64> lane = x; return lane.bits(C(uint64_t, 31), C(uint64_t, 8)); } \
+    case 75: { logic<64> lane = x; return lane.bits(C(int32_t, 15), C(int32_t, 0)); } \
+    case 76: { logic<64> lane = x; lane.bits(C(uint64_t, 23), C(uint64_t, 8)) = C(uint16_t, x); return lane; } \
+    case 77: return ~C(logic<8>, x); \
     default: return references(x);
 
 #define STATIC_CAST(T, x) static_cast<T>(x)

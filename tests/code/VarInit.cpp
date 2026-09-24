@@ -131,6 +131,8 @@ static bool check_generated_sv()
     ok &= compact.find("explicit_empty=0;") != std::string::npos;
     ok &= compact.find("logic[4-1:0]explicit_zero;") != std::string::npos;
     ok &= compact.find("explicit_zero=0;") != std::string::npos ||
+          compact.find("explicit_zero=4'h0;") != std::string::npos ||
+          compact.find("explicit_zero=4'(64'h0);") != std::string::npos ||
           compact.find("explicit_zero=unsigned'(4'h0);") != std::string::npos ||
           compact.find("explicit_zero=unsigned'(unsigned'(64'h4)'(unsigned'(64'(unsigned'(64'h0)))));") != std::string::npos;
     if (!ok) {

@@ -439,6 +439,18 @@ std::string Helpers::castTypeName(QualType QT)
     }
     std::string sugared = QT.getAsString(ctx->getPrintingPolicy());
     std::string canonical = QT.getCanonicalType().getAsString(ctx->getPrintingPolicy());
+    // A literal width may itself carry a C++ promotion (64'h10). Normalize
+    // only literal spellings; symbolic module widths must stay symbolic.
+    auto normalizeWidth = [](std::string text) {
+        const auto hex = text.find("'h");
+        if (hex != std::string::npos
+            && text.substr(0, hex).find_first_not_of("0123456789") == std::string::npos) {
+            uint64_t width;
+            if (!llvm::StringRef(text).drop_front(hex + 2).getAsInteger(16, width))
+                return std::to_string(width);
+        }
+        return text;
+    };
 
     auto isCpphdlSizedType = [](const std::string& name) {
         return name.find("cpphdl::u<") != std::string::npos ||
@@ -494,10 +506,7 @@ std::string Helpers::castTypeName(QualType QT)
                         ArgToExpr(args[0], width, false);
                     }
                     if (!width.sub.empty()) {
-                        std::string width_text = width.sub[0].str();
-                        if (width_text.size() > 2 && width_text[0] == '\'' && width_text[1] == 'h') {
-                            width_text = std::to_string(std::stoul(width_text.substr(2), nullptr, 16));
-                        }
+                        std::string width_text = normalizeWidth(width.sub[0].str());
                         if (widthUsesOnlyModuleNames(width_text)) {
                             return name + width_text;
                         }
@@ -508,7 +517,7 @@ std::string Helpers::castTypeName(QualType QT)
         QualType cast_qt = QT.getNonReferenceType();
         cpphdl::Expr type_expr;
         if (templateToExpr(cast_qt, type_expr) && type_expr.value.find("cpphdl_") == 0 && !type_expr.sub.empty()) {
-            return type_expr.value + type_expr.sub[0].str();
+            return type_expr.value + normalizeWidth(type_expr.sub[0].str());
         }
     }
 
@@ -529,24 +538,103 @@ static cpphdl::Expr unsupportedLambda(ASTContext& ctx, SourceLocation location)
     return cpphdl::Expr{};
 }
 
+// Only prove unsignedness for expressions whose RTL representation is known.
+// Library conversion operators can disappear during lowering, so their C++
+// return type alone is not evidence about the generated signal's signedness.
+static bool naturallyUnsigned(const clang::Expr* expr)
+{
+    expr = expr->IgnoreParens();
+    if (isa<IntegerLiteral>(expr) || isa<CXXBoolLiteralExpr>(expr)) return true;
+    if (const auto* cast = dyn_cast<CastExpr>(expr)) {
+        if (cast->getCastKind() == CK_IntegralCast || cast->getCastKind() == CK_IntegralToBoolean)
+            return cast->getType()->isUnsignedIntegerType() || cast->getType()->isBooleanType();
+        if (cast->getCastKind() == CK_LValueToRValue || cast->getCastKind() == CK_NoOp)
+            return naturallyUnsigned(cast->getSubExpr());
+        return false;
+    }
+    if (const auto* ref = dyn_cast<DeclRefExpr>(expr)) {
+        const auto* var = dyn_cast<VarDecl>(ref->getDecl());
+        return var && !var->isConstexpr() && var->getType()->isUnsignedIntegerType();
+    }
+    if (const auto* ref = dyn_cast<MemberExpr>(expr))
+        return isa<FieldDecl>(ref->getMemberDecl()) && ref->getType()->isUnsignedIntegerType();
+    if (const auto* binary = dyn_cast<BinaryOperator>(expr)) {
+        if (binary->isComparisonOp() || binary->isLogicalOp()) return true;
+        if (binary->isAssignmentOp()) return naturallyUnsigned(binary->getLHS());
+        if (binary->isShiftOp()) return naturallyUnsigned(binary->getLHS());
+        if (binary->isAdditiveOp() || binary->isMultiplicativeOp() || binary->isBitwiseOp())
+            return naturallyUnsigned(binary->getLHS()) || naturallyUnsigned(binary->getRHS());
+        return false;
+    }
+    if (const auto* unary = dyn_cast<UnaryOperator>(expr))
+        return unary->getOpcode() == UO_LNot || naturallyUnsigned(unary->getSubExpr());
+    return false;
+}
+
 cpphdl::Expr Helpers::valueCast(QualType target, const clang::Expr* operand)
 {
     auto lowered = exprToExpr(operand);
     const auto source = operand->getType();
+    const auto targetName = castTypeName(target);
+    bool unsignedOperand = naturallyUnsigned(operand)
+        || (lowered.type == cpphdl::Expr::EXPR_CAST
+            && (lowered.value.rfind("cpphdl_u", 0) == 0 || lowered.value.rfind("cpphdl_logic", 0) == 0));
+    // A conversion is already self-sized. Do not wrap it again when a
+    // comparison or an outer C++ cast requests exactly the same type.
+    if (lowered.type == cpphdl::Expr::EXPR_CAST && lowered.value == targetName)
+        return lowered;
+    const auto* plain = operand->IgnoreParenImpCasts();
+    const auto* ref = dyn_cast<DeclRefExpr>(plain);
+    const auto* var = ref ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+    const auto* member = dyn_cast<MemberExpr>(plain);
+    const bool typedVariable = (var && !var->isConstexpr())
+        || (member && isa<FieldDecl>(member->getMemberDecl()));
+    if (source->isIntegralOrEnumerationType() && !source->isEnumeralType()
+        && ctx->hasSameUnqualifiedType(source, target)
+        && typedVariable
+        && ctx->hasSameUnqualifiedType(plain->getType(), source)) {
+        // Ordinary typed variables already have the C++ width and sign in
+        // RTL. Unlike arithmetic, reading one cannot acquire a wider context.
+        return lowered;
+    }
+    if (target->isIntegerType() && !target->isBooleanType()
+        && isa<IntegerLiteral>(plain)
+        && lowered.type == cpphdl::Expr::EXPR_NUM && lowered.sub.empty()) {
+        // Emit a typed literal, not a chain of casts around an unsigned hex
+        // literal. Only fold literals, never symbolic module parameters.
+        clang::Expr::EvalResult result;
+        if (operand->EvaluateAsInt(result, *ctx)) {
+            auto bits = result.Val.getInt().extOrTrunc(ctx->getTypeSize(target));
+            llvm::SmallString<32> text;
+            bits.toString(text, 16, false);
+            return cpphdl::Expr{std::to_string(ctx->getTypeSize(target))
+                + (target->isSignedIntegerType() ? "'sh" : "'h") + text.str().str(),
+                cpphdl::Expr::EXPR_NUM};
+        }
+    }
     // SV propagates a widening size cast down into arithmetic. C++ first
     // evaluates at the operand's width (including unsigned wrap), then converts.
     // Preserve that boundary before widening, including bit-vector constructors.
-    if (lowered.type != cpphdl::Expr::EXPR_NUM
+    const cpphdl::Expr* sized = &lowered;
+    while (sized->type == cpphdl::Expr::EXPR_PAREN && sized->sub.size() == 1)
+        sized = &sized->sub[0];
+    if ((sized->type == cpphdl::Expr::EXPR_BINARY
+            || sized->type == cpphdl::Expr::EXPR_UNARY
+            || sized->type == cpphdl::Expr::EXPR_COND)
         && source->isIntegralOrEnumerationType() && !source->isBooleanType()
         && (!target->isIntegralOrEnumerationType() || ctx->getTypeSize(source) < ctx->getTypeSize(target))) {
         lowered = cpphdl::Expr{castTypeName(source), cpphdl::Expr::EXPR_CAST, {std::move(lowered)}};
+        lowered.castKeepsUnsigned = unsignedOperand && source->isUnsignedIntegerType();
+        unsignedOperand = source->isUnsignedIntegerType();
     }
     if (const auto* type = target->getAs<EnumType>()) {
         if (mod) addEnumPackageImport(type->getDecl(), mod->imports);
         return cpphdl::Expr{"svtype:" + genTypeName(type->getDecl()->getQualifiedNameAsString()),
             cpphdl::Expr::EXPR_CAST, {std::move(lowered)}};
     }
-    return cpphdl::Expr{castTypeName(target), cpphdl::Expr::EXPR_CAST, {std::move(lowered)}};
+    cpphdl::Expr result{targetName, cpphdl::Expr::EXPR_CAST, {std::move(lowered)}};
+    result.castKeepsUnsigned = unsignedOperand;
+    return result;
 }
 
 cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
@@ -793,7 +881,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                         DEBUG_AST1(" *pointer*");
                     }
 
-                    QT = QT.getDesugaredType(*ctx);
+                    // Keep alias/template sugar for digQT: desugaring here
+                    // bakes a module parameter's default into local widths.
                     auto* CRD = resolveCXXRecordDecl(QT);
                     const bool stdString = CRD &&
                         CRD->getQualifiedNameAsString().find("std::basic_string") == 0;
@@ -803,8 +892,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
                     // std::string is a native SystemVerilog string and must remain
                     // visible when it carries an intermediate formatting result.
+                    const auto sizedType = CRD ? castTypeName(QT) : std::string{};
+                    const bool bitVector = sizedType.rfind("cpphdl_logic", 0) == 0
+                        || sizedType.rfind("cpphdl_u", 0) == 0 || sizedType.rfind("cpphdl_i", 0) == 0;
                     expr.sub.emplace_back(stdString
                         ? cpphdl::Expr{"std::string", cpphdl::Expr::EXPR_TYPE}
+                        : bitVector ? cpphdl::Expr{sizedType, cpphdl::Expr::EXPR_TYPE}
                         : digQT(QT));
                     if (VD->getInit()) {
                         const clang::Expr* init = VD->getInit()->IgnoreImplicit();
@@ -875,11 +968,35 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (BO->isComparisonOp() || BO->getOpcode() == BO_Div
             || BO->getOpcode() == BO_Rem || BO->getOpcode() == BO_Shr) {
             auto operand = [&](const clang::Expr* arg) {
-                return arg->getType()->isIntegralOrEnumerationType()
+                const auto* plain = arg->IgnoreParenImpCasts();
+                const auto* ref = dyn_cast<DeclRefExpr>(plain);
+                const auto* member = dyn_cast<MemberExpr>(plain);
+                const auto* decl = ref ? ref->getDecl() : member ? member->getMemberDecl() : nullptr;
+                const auto* var = dyn_cast_or_null<VarDecl>(decl);
+                // SV module parameters/localparams are emitted without an
+                // explicit C++ type. Unlike ordinary variables, their width
+                // and signedness must still be supplied to these operators.
+                const bool parameter = isa_and_nonnull<NonTypeTemplateParmDecl>(decl)
+                    || (var && var->isConstexpr());
+                return (arg->getType()->isSignedIntegerOrEnumerationType()
+                    || (parameter && arg->getType()->isIntegerType()))
                     ? valueCast(arg->getType(), arg) : exprToExpr(arg);
             };
             return cpphdl::Expr{BO->getOpcodeStr().data(), cpphdl::Expr::EXPR_BINARY,
                 {operand(BO->getLHS()), operand(BO->getRHS())}};
+        }
+        if (BO->getOpcode() == BO_Assign && BO->getLHS()->getType()->isIntegerType()
+            && !BO->getLHS()->getType()->isBooleanType()) {
+            auto rhs = exprToExpr(BO->getRHS());
+            // Assignment supplies exactly this conversion already. Retain
+            // inner casts that constrain intermediate arithmetic widths.
+            const auto target = castTypeName(BO->getLHS()->getType());
+            while (rhs.type == cpphdl::Expr::EXPR_CAST && rhs.value == target) {
+                auto operand = std::move(rhs.sub[0]);
+                rhs = std::move(operand);
+            }
+            return cpphdl::Expr{"=", cpphdl::Expr::EXPR_BINARY,
+                {exprToExpr(BO->getLHS()), std::move(rhs)}};
         }
 //        QualType LQT = BO->getLHS()->IgnoreParenImpCasts()->getType().getNonReferenceType();
 //        if (BO->getOpcodeStr() == "+" && LQT->isPointerType() && !(flag&&FLAG_POINTER_BASE)) {  // convert pointer add into index
@@ -1005,10 +1122,40 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         for (unsigned i = 0; i < OCE->getNumArgs(); ++i) {
             call.sub.push_back(exprToExpr(OCE->getArg(i)));
         }
+        if (OCE->getOperator() == OO_Tilde) {
+            const auto resultType = castTypeName(OCE->getArg(0)->getType());
+            if (resultType.rfind("cpphdl_logic", 0) == 0 || resultType.rfind("cpphdl_u", 0) == 0) {
+                // CppHDL complements only the bit-vector's declared bits.
+                // SV would propagate a wider assignment through ~ and invert
+                // the extension bits too. Derive the width from the SV operand
+                // so instantiated C++ default widths cannot replace parameters.
+                return cpphdl::Expr{"cpphdl_bitnot", cpphdl::Expr::EXPR_CAST, {std::move(call.sub[0])}};
+            }
+        }
         if (OCE->getOperator() == OO_Equal && OCE->getNumArgs() >= 2) {
             QualType targetType = OCE->getArg(0)->getType().getNonReferenceType();
             if (skipStdFunctionType(targetType) && targetType->isBooleanType()) {
                 cpphdl::coerceReturnToBool(call.sub[1]);
+            }
+            // Fixed-width bit-vector assignment, like scalar assignment,
+            // supplies a final narrowing conversion. Keep any inner arithmetic
+            // barrier; only the outer conversion is redundant here.
+            auto width = [](const std::string& type) -> unsigned {
+                for (const std::string prefix : {"cpphdl_u", "cpphdl_i", "cpphdl_logic"}) {
+                    if (type.rfind(prefix, 0) != 0) continue;
+                    const auto digits = type.substr(prefix.size());
+                    if (digits.empty() || digits.size() > 6
+                        || digits.find_first_not_of("0123456789") != std::string::npos) return 0;
+                    return std::stoul(digits);
+                }
+                return 0;
+            };
+            const auto targetWidth = width(castTypeName(targetType));
+            if (targetType->isRecordType() && targetWidth
+                && call.sub[1].type == cpphdl::Expr::EXPR_CAST
+                && width(call.sub[1].value) >= targetWidth) {
+                auto operand = std::move(call.sub[1].sub[0]);
+                call.sub[1] = std::move(operand);
             }
         }
         return call;
@@ -1570,6 +1717,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 if (cast_type.find("cpphdl_u") == 0 || cast_type.find("cpphdl_i") == 0 || cast_type.find("cpphdl_logic") == 0 ||
                     str.find("cpphdl::u<") != std::string::npos || str.find("cpphdl::i<") != std::string::npos ||
                     str.find("cpphdl::logic<") != std::string::npos) {
+                    if (CtorDecl->isCopyOrMoveConstructor())
+                        return exprToExpr(CE->getArg(0));
                     return valueCast(CE->getType(), CE->getArg(0));
                 }
                 return /*cpphdl::Expr{str, cpphdl::Expr::EXPR_CAST, {*/exprToExpr(CE->getArg(0))/*}}*/;

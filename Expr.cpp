@@ -442,6 +442,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 value = "int";
             }
             std::string str = typeToSV(value, suffix);  // also calc size
+            if (!declSize && (value.rfind("cpphdl_logic", 0) == 0
+                    || value.rfind("cpphdl_u", 0) == 0 || value.rfind("cpphdl_i", 0) == 0)) {
+                // A symbolic bit-vector width is unknown, not a struct name.
+                declSize = (size_t)-1;
+            }
             if (!declSize && declSize != (size_t)-1) {  // unknown type or structure
                 declSize = getStructSize(value);
             }
@@ -958,12 +963,25 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
+            if (value == "cpphdl_bitnot") {
+                const auto operand = sub[0].str(prefix, suffix);
+                return indent_str + "$bits(" + operand + ")'(~(" + operand + "))";
+            }
             auto sizedOperand = [&](const std::string& width) {
                 const std::string operand = sub[0].str(prefix, suffix);
                 if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0 && numericWidth(width)) {
                     return width + operand;
                 }
-                return width + "'(" + operand + ")";
+                // A compound size must bind as a whole: A/8'(x) means
+                // division by a cast, not a cast to A/8 bits.
+                const bool simpleWidth = std::all_of(width.begin(), width.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == '_' || c == '$' || c == ':';
+                });
+                return (simpleWidth ? width : "(" + width + ")") + "'(" + operand + ")";
+            };
+            auto unsignedOperand = [&](const std::string& width) {
+                auto operand = sizedOperand(width);
+                return castKeepsUnsigned ? operand : "unsigned'(" + operand + ")";
             };
             if (value.rfind("svtype:", 0) == 0) {
                 return indent_str + value.substr(7) + "'(" + sub[0].str(prefix, suffix) + ")";
@@ -979,14 +997,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
+                return indent_str + unsignedOperand(width);
             }
             // considering casting names as special case since Verilog cant cast using logic[31:0]'val  (what a strange language)
             if (value.find("logic") == 0) {
                 const std::string width = templateWidth(value, "logic<");
                 declSize = numericWidth(width);
                 if (width.empty()) return indent_str + sub[0].str(prefix, suffix);
-                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
+                return indent_str + unsignedOperand(width);
             } else
             if (value == "signedchar") {
                 return indent_str + "signed'(8'(" + sub[0].str(prefix, suffix) + "))";
@@ -1018,7 +1036,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
+                return indent_str + unsignedOperand(width);
             } else
             if (value.find("cpphdl_i") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_i");
@@ -1431,11 +1449,38 @@ Expr Expr::simplify()  // open brackets for *(+-)
             else if (e.value == "false") {
                 value = 0;
             }
-            else if (e.value.size() > 2 && e.value[0] == '\'' && (e.value[1] == 'h' || e.value[1] == 'H')) {
-                value = std::stoll(e.value.substr(2), nullptr, 16);
-            }
             else {
-                value = std::stoll(e.value, nullptr, 0);
+                // Sized literals must be read as values, not as their width:
+                // stoll("64'h1f") silently reads 64. Slice widths depend on
+                // this arithmetic (high - low + 1).
+                const auto quote = e.value.find('\'');
+                size_t begin = 0;
+                int base = 0;
+                bool isSigned = false;
+                if (quote != std::string::npos) {
+                    begin = quote + 1;
+                    if (begin < e.value.size() && (e.value[begin] == 's' || e.value[begin] == 'S')) {
+                        isSigned = true;
+                        ++begin;
+                    }
+                    if (begin >= e.value.size()) return false;
+                    switch (e.value[begin++]) {
+                        case 'h': case 'H': base = 16; break;
+                        case 'd': case 'D': base = 10; break;
+                        case 'o': case 'O': base = 8; break;
+                        case 'b': case 'B': base = 2; break;
+                        default: return false;
+                    }
+                }
+                size_t consumed = 0;
+                value = std::stoll(e.value.substr(begin), &consumed, base);
+                if (begin + consumed != e.value.size()) return false;
+                if (isSigned && quote > 0) {
+                    const auto width = numericWidth(e.value.substr(0, quote));
+                    if (!width) return false;
+                    if (width < 64 && (value & (int64_t{1} << (width - 1))))
+                        value |= -(int64_t{1} << (width - 1));
+                }
             }
         }
         catch (...) {

@@ -243,9 +243,9 @@ static bool check_generated_sv()
     ok &= decoder.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
     ok &= arithmetic.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
     ok &= top.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
-    ok &= decoder.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
+    // Only the arithmetic child uses this helper type. Its parents need no
+    // transitive import of packages not referenced by their own RTL.
     ok &= arithmetic.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
-    ok &= top.find("import TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::*;") != std::string::npos;
     ok &= helper_pkg.find("CONV_TYPE") == std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::EXP_WIDTH") == std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::MANT_WIDTH") == std::string::npos;

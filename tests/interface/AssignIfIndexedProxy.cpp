@@ -110,7 +110,7 @@ static bool check_generated_sv()
 
     // The integer literal may carry an explicit C++ width/sign cast. Keep
     // checking both endpoints and the PORTS_CNT * 2 index in each direction.
-    const std::string index = R"(\[PORTS_CNT\*(?:unsigned'\([0-9]+'h2\)|'h2)\])";
+    const std::string index = R"(\[PORTS_CNT\*(?:unsigned'\([0-9]+'h2\)|[0-9]*'h2)\])";
     if (!std::regex_search(sv, std::regex("assign source__ports_in__data_in" + index +
             "=sink__port_out__data_out;")) ||
         !std::regex_search(sv, std::regex("assign sink__port_out__data_in=source__ports_in__data_out" +
