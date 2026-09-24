@@ -120,11 +120,15 @@ static bool check_generated_sv()
 
     bool ok = true;
     ok &= text.find("unsigned'(CAST_BITS'(") != std::string::npos;
-    const std::string dependent_width_cast = "unsigned'($clog2(WIDTH_PARAM)'(";
-    const size_t first_dependent = text.find(dependent_width_cast);
-    ok &= first_dependent != std::string::npos;
-    ok &= first_dependent != std::string::npos &&
-          text.find(dependent_width_cast, first_dependent + 1) != std::string::npos;
+    // Integral promotions may add explicit size/sign casts around the width.
+    // Check the parameter dependency, not the incidental cast formatting.
+    unsigned dependent_casts = 0;
+    for (size_t pos = text.find("$clog2("); pos != std::string::npos;
+         pos = text.find("$clog2(", pos + 1)) {
+        const size_t parameter = text.find("WIDTH_PARAM", pos);
+        if (parameter != std::string::npos && parameter < text.find('\n', pos)) ++dependent_casts;
+    }
+    ok &= dependent_casts >= 2;
     ok &= text.find("unsigned'(1'(") == std::string::npos;
     ok &= text.find("clog2WIDTH") == std::string::npos;
     ok &= text.find("clog2ENTRIES") == std::string::npos;

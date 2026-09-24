@@ -22,13 +22,15 @@ if(NOT result EQUAL 0)
     message(FATAL_ERROR "Dependent alias conversion failed:\n${output}\n${error}")
 endif()
 file(READ "${work}/generated/DependentBitVectorAliases.sv" rtl)
-foreach(declaration
-    "typedef logic[AXI_DATA_WIDTH-1:0] data_t;"
-    "typedef logic[AXI_STRB_WIDTH-1:0] strb_t;"
-    "typedef logic[AXI_DATA_WIDTH-1:0] chained_t;")
-    string(FIND "${rtl}" "${declaration}" found)
-    if(found LESS 0)
-        message(FATAL_ERROR "Missing symbolic alias '${declaration}':\n${rtl}")
+foreach(alias data_t strb_t chained_t)
+    set(parameter AXI_DATA_WIDTH)
+    if(alias STREQUAL "strb_t")
+        set(parameter AXI_STRB_WIDTH)
+    endif()
+    # Integer promotions can wrap widths in SV size/sign casts. Preserve the
+    # symbolic dependency; the elaborated $bits checks below verify its value.
+    if(NOT rtl MATCHES "typedef logic\\[[^\n;]*${parameter}[^\n;]*-1:0\\] ${alias};")
+        message(FATAL_ERROR "Missing symbolic alias '${alias}' using ${parameter}:\n${rtl}")
     endif()
 endforeach()
 

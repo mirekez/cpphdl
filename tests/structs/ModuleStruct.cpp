@@ -138,7 +138,8 @@ static bool check_generated_sv()
     ok &= consumer.find("source.transform_member(payload_in)") != std::string::npos;
     ok &= consumer.find("ModuleStructSource___transform_member") == std::string::npos;
     ok &= source.find("ModuleStructSource_pkg::PARAMS") == std::string::npos;
-    ok &= source.find("i < PARAMS") != std::string::npos;
+    ok &= source.find("i < PARAMS") != std::string::npos ||
+          source.find("i < unsigned'(64'(PARAMS))") != std::string::npos;
     ok &= package.find("package ModuleStructSource_pkg;") != std::string::npos;
     ok &= package.find("PARAMS = 'h3") != std::string::npos;
     if (!ok) {

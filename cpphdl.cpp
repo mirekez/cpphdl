@@ -620,39 +620,6 @@ bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
     return false;
 }
 
-void addEnumPackageImport(EnumDecl* ED, cpphdl::Struct* st)
-{
-    if (!ED) {
-        return;
-    }
-
-    std::string name = genTypeName(ED->getQualifiedNameAsString());
-    if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
-        st->imports.emplace_back(name);
-    }
-
-    if (std::find_if(currProject->enums.begin(), currProject->enums.end(), [&](auto& en){ return en.name == name; }) != currProject->enums.end()) {
-        return;
-    }
-
-    cpphdl::Enum en{name, ED->getQualifiedNameAsString()};
-    QualType integerType = ED->getIntegerType();
-    if (!integerType.isNull()) {
-        en.bitWidth = ED->getASTContext().getTypeSize(integerType);
-        en.isSigned = integerType->isSignedIntegerType();
-    }
-    for (const EnumConstantDecl* ECD : ED->enumerators()) {
-        if (ECD->getInitExpr()) {
-            en.fields.emplace_back(cpphdl::Field{ECD->getName().str(),
-                {std::to_string(ECD->getInitVal().getSExtValue()), cpphdl::Expr::EXPR_NUM}});
-        }
-        else {
-            en.fields.emplace_back(cpphdl::Field{ECD->getName().str()});
-        }
-    }
-    currProject->enums.emplace_back(std::move(en));
-}
-
 
 }
 
@@ -1152,7 +1119,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 
                 auto* CRD = hlp.resolveCXXRecordDecl(QT);
                 if (const auto* ET = QT->getAs<EnumType>()) {
-                    addEnumPackageImport(ET->getDecl(), st);
+                    addEnumPackageImport(ET->getDecl(), st->imports);
                 }
                 DEBUG_AST1(" {var " << FD->getNameAsString() << "} " << (CRD && CRD->isAnonymousStructOrUnion()?"ANON":""));
                 st->fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
@@ -2007,10 +1974,18 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     QualType aliasQT = TypeAlias->getUnderlyingType().getNonReferenceType();
                     CXXRecordDecl* aliasRD = hlp.resolveCXXRecordDecl(aliasQT);
                     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+                    bool cpphdlAlias = aliasRD
+                        && aliasRD->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                    if (const auto* specialization = aliasQT->getAs<TemplateSpecializationType>()) {
+                        const auto* templ = specialization->getTemplateName().getAsTemplateDecl();
+                        cpphdlAlias |= templ
+                            && templ->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                    }
                     const bool aliasIsClassOnly =
-                        aliasRD
-                        && (!cpphdlRecordHasValueFields(aliasRD)
-                            || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)));
+                        aliasRD && (aliasRD->getDefinition()
+                            ? (!cpphdlRecordHasValueFields(aliasRD)
+                                || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)))
+                            : !cpphdlAlias);
                     if (!aliasIsClassOnly
                         && TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
                         // A dependent logic<W> has a TemplateSpecializationType
@@ -2018,16 +1993,16 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         // declaration instead of flattening its canonical
                         // spelling into an invented identifier. digQT keeps
                         // width expressions and their parameter bindings.
-                        bool cpphdlAlias = aliasRD
-                            && aliasRD->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
-                        if (const auto* specialization = aliasQT->getAs<TemplateSpecializationType>()) {
-                            const auto* templ = specialization->getTemplateName().getAsTemplateDecl();
-                            cpphdlAlias |= templ
-                                && templ->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
-                        }
                         cpphdl::Expr aliasExpr = cpphdlAlias
                             ? hlp.digQT(aliasQT)
                             : cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE};
+                        if (aliasExpr.type == cpphdl::Expr::EXPR_TEMPLATE
+                            && (aliasExpr.value == "cpphdl_logic" || aliasExpr.value == "cpphdl_u"
+                                || aliasExpr.value == "cpphdl_i")) {
+                            // A defined specialization has concrete template
+                            // args; the alias's sugared type retains WIDTH.
+                            aliasExpr = cpphdl::Expr{hlp.castTypeName(aliasQT), cpphdl::Expr::EXPR_TYPE};
+                        }
                         mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(), std::move(aliasExpr)});
                     }
                 }

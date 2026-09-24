@@ -105,6 +105,7 @@ public:
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <string>
 #include "../../examples/tools.h"
 
@@ -160,13 +161,16 @@ static bool generated_sv_has_comb_return_disable()
     const bool has_indexed_reg_clear = text.find("indexed_reg_tmp[i] = '0;") != std::string::npos &&
         text.find("indexed_reg[i]_tmp") == std::string::npos;
     const bool has_function_return = text.find("return ") != std::string::npos;
+    // The return may contain width/sign casts. Require separate assignment and
+    // return statements on both paths, with no assignment inside the return.
     const bool has_split_assignment_return =
-        text.find("function_return_cache = first_in +") != std::string::npos &&
-        text.find("return unsigned'(32'(function_return_cache));") != std::string::npos &&
-        text.find("return unsigned'(32'(function_return_cache =") == std::string::npos &&
-        text.find("bool_return_cache=value;") != std::string::npos &&
-        text.find("return bool_return_cache;") != std::string::npos &&
-        text.find("return bool_return_cache=") == std::string::npos;
+        std::regex_search(text, std::regex(
+            R"(function_return_cache\s*=\s*first_in\s*\+[^;]+;\s*return\s+[^;=]*\bfunction_return_cache\b[^;=]*;)")) &&
+        std::regex_search(text, std::regex(
+            R"(function_return_cache\s*=\s*_context\s*\+[^;]+;\s*return\s+[^;=]*\bfunction_return_cache\b[^;=]*;)")) &&
+        std::regex_search(text, std::regex(
+            R"(bool_return_cache\s*=\s*value;\s*return\s+bool_return_cache;)")) &&
+        !std::regex_search(text, std::regex(R"(\breturn\b[^;]*=)"));
     const bool has_no_function_disable = text.find("disable value_function") == std::string::npos;
     if (!has_always_comb || !has_named_block || !has_disable || !has_task || !has_task_disable ||
         !has_function || !has_escaped_keyword_argument || !has_indexed_reg_clear ||

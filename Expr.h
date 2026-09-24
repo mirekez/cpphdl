@@ -71,6 +71,8 @@ struct Expr
 
     int indent = 0;
     size_t declSize = 0;
+    // Local to a value cast; unlike flags this must not propagate to children.
+    bool castKeepsUnsigned = false;
 
 //    bool isMultiline()
 //    {

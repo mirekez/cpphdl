@@ -78,6 +78,7 @@ public:
 #include <fstream>
 #include <iostream>
 #include <print>
+#include <regex>
 #include <string>
 #include "../../examples/tools.h"
 
@@ -120,7 +121,10 @@ static bool check_generated_sv()
         "child cpphdl::array port is not packed");
     require(leaf.find("input wire[8-1:0] add_in[SIZE]") != std::string::npos,
         "child C-style array port is not unpacked");
-    require(leaf.find("mul_a_in[index] + add_in[index]") != std::string::npos,
+    // C++ array indexing may explicitly widen index; the runtime oracle below
+    // checks the result for every index while this checks signal selection.
+    require(std::regex_search(leaf, std::regex(
+        R"(mul_a_in\[[^\];]*\bindex\b[^\];]*\]\s*\+\s*add_in\[index\])")),
         "dynamic array-port read was not emitted as an indexed signal");
     require(leaf.find("unknown()") == std::string::npos,
         "dynamic array-port read was emitted as unknown()");
