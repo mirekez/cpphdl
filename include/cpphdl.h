@@ -689,7 +689,8 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 #define _ASSIGN_REG_INDEXED(caps, a...)  [&, CPPHDL_UNPAREN caps]() { return &a; }  // (faster) register or comb returning &
 #define _ASSIGN_COMB_INDEXED(a...)  _ASSIGN_REG_INDEXED(a)
 
-// _LAZY_COMB saves some time when calling comb() 
+// Caching is simulation-only; no timestamp or early return belongs in RTL.
+#ifndef SYNTHESIS
 #define _LAZY_COMB(name, type...) \
     type name; \
     long __prev__system_clock_##name = -1; \
@@ -698,6 +699,11 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
             return name; \
         } \
         __prev__system_clock_##name = _system_clock;
+#else
+#define _LAZY_COMB(name, type...) \
+    type name; \
+    type& name##_func() {
+#endif
 
 #else  // legacy CPPHDL_STATIC - requires all methods to be static - 2 times faster but does not support arrays of modules -> not supported now
 
@@ -706,7 +712,8 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 #define _ASSIGN_REG(a...)  +[]() { return &a; }  // variable
 #define _ASSIGN_COMB(a...)  _ASSIGN_REG(a)
 
-// _LAZY_COMB saves some time when calling comb() 
+// Keep the legacy static variant subject to the same synthesis boundary.
+#ifndef SYNTHESIS
 #define _LAZY_COMB(name, type...) \
     inline static type name; \
     inline static long __prev__system_clock_##name = -1; \
@@ -715,6 +722,11 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
             return name; \
         } \
         __prev__system_clock_##name = _system_clock;
+#else
+#define _LAZY_COMB(name, type...) \
+    inline static type name; \
+    static type& name##_func() {
+#endif
 
 #endif
 

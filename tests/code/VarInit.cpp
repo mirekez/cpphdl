@@ -107,6 +107,9 @@ static bool check_generated_sv()
     }
 
     bool ok = true;
+    ok &= text.find("__prev__system_clock") == std::string::npos;
+    ok &= text.find("$time") == std::string::npos;
+    ok &= text.find("disable ready_comb") == std::string::npos;
     ok &= text.find("always_comb begin : ready_comb_func") != std::string::npos;
     ok &= text.find("always_comb begin : ready_comb1_func") != std::string::npos;
     ok &= compact.find("ready_comb=0;") != std::string::npos ||
@@ -128,7 +131,8 @@ static bool check_generated_sv()
     ok &= compact.find("explicit_empty=0;") != std::string::npos;
     ok &= compact.find("logic[4-1:0]explicit_zero;") != std::string::npos;
     ok &= compact.find("explicit_zero=0;") != std::string::npos ||
-          compact.find("explicit_zero=unsigned'(4'h0);") != std::string::npos;
+          compact.find("explicit_zero=unsigned'(4'h0);") != std::string::npos ||
+          compact.find("explicit_zero=unsigned'(unsigned'(64'h4)'(unsigned'(64'(unsigned'(64'h0)))));") != std::string::npos;
     if (!ok) {
         std::print("\nERROR: lazy comb aggregate-init generation check failed in {}\n", sv_path.string());
     }
