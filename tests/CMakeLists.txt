@@ -17,6 +17,11 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME code_slice_casts_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
+    set_tests_properties(code_slice_casts_cpp PROPERTIES TIMEOUT 240)
     add_test(NAME structs_sizeof_imports_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/structs/SizeofImportsChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -99,6 +104,12 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
             --verilator "${CPPHDL_NETLIST_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
+        add_test(NAME code_slice_casts_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
+        set_tests_properties(code_slice_casts_verilator PROPERTIES TIMEOUT 240)
         set_tests_properties(interface_hierarchy_imports_verilator PROPERTIES TIMEOUT 240)
         add_test(NAME cast_parameter_widths COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
