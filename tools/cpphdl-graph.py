@@ -54,7 +54,7 @@ def main(arguments=None):
             with (output / (label + '.log')).open('w') as log:
                 result = subprocess.run(command, cwd=output, stdout=log, stderr=log)
             if result.returncode:
-                raise RuntimeError(f'{label} failed: see {output / (label + ".log")}')
+                raise RuntimeError(f'{label} failed (status {result.returncode}): see {output / (label + ".log")}')
 
         graph_source = source
         if args.top:

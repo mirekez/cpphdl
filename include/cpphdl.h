@@ -186,26 +186,6 @@ constexpr bool sv_isunknown(const T&)
     return false;
 }
 
-template<typename T>
-constexpr uint64_t sv_bits_runtime(const T& value, size_t last, size_t first)
-{
-    auto width = last >= first ? last - first + 1 : 0;
-    uint64_t raw = 0;
-    if constexpr (detail::has_bits_method<T>::value) {
-        raw = static_cast<uint64_t>(value.bits(last, first));
-    }
-    else {
-        raw = static_cast<uint64_t>(value) >> first;
-    }
-    if (width == 0) {
-        return 0;
-    }
-    if (width >= 64) {
-        return raw;
-    }
-    return raw & ((1ull << width) - 1ull);
-}
-
 template<size_t WIDTH>
 constexpr logic<WIDTH> byteswap(const logic<WIDTH>& value)
 {

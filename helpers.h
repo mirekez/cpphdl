@@ -28,14 +28,17 @@ struct Helpers
         FLAG_ABSTRACT = 2,       // we're in abstract declaration of template module
     };
     unsigned flags = 0;
+    // Empty targets denote native SV loops; named targets denote switches.
+    std::vector<std::string> breakTargets;
+    unsigned switchSerial = 0;
 
     cpphdl::Expr exprToExpr(const Stmt* E);
     std::string castTypeName(QualType QT);
     cpphdl::Expr valueCast(QualType target, const clang::Expr* operand);
+    cpphdl::Expr bitIndexToExpr(const clang::Expr* operand);
     void ArgToExpr(const TemplateArgument& Arg, cpphdl::Expr& expr, bool specialization = true);
     bool templateToExpr(QualType QT, cpphdl::Expr& expr);
     cpphdl::Expr digQT(QualType& QT);
-    cpphdl::Expr bitIndexToExpr(const clang::Expr* operand);
     bool genSpecializationTypeName(bool first, std::string& name, cpphdl::Expr& param, bool onlyTypes = false);
     void followSpecialization(const CXXRecordDecl* RD, std::string& name, std::vector<cpphdl::Field>* params = nullptr, bool onlyTypes = false);
     bool skipStdFunctionType(QualType& QT);

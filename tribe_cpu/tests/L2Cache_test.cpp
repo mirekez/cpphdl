@@ -1786,7 +1786,7 @@ public:
         }
     }
 
-    void multi_cpu_port_pairs_check()
+    void multi_cpu_port_pairs_check(uint32_t round)
     {
         bool write_pending[CPU_PORTS];
         bool read_pending[CPU_PORTS];
@@ -1799,14 +1799,10 @@ public:
         uint32_t data;
         bool last_cpu_done;
 
-        if (CPU_PORTS <= 1) {
-            return;
-        }
-
         remaining = CPU_PORTS;
         for (index = 0; index < CPU_PORTS; ++index) {
-            addr[index] = 0x00018004u + (uint32_t)index * 0x40u;
-            expected[index] = 0x51000000u | ((uint32_t)index * 0x010101u + 0x1234u);
+            addr[index] = 0x00018004u + round * 0x200u + (uint32_t)index * 0x40u;
+            expected[index] = (0x51000000u | ((uint32_t)index * 0x010101u + 0x1234u)) ^ (round << 20);
             write_pending[index] = true;
             read_pending[index] = true;
             set_cpu_d_write(index, true, addr[index], expected[index]);
@@ -1949,7 +1945,11 @@ public:
         slave_request_does_not_drop_cpu_dport_read_check();
         local_slave_address_with_nonzero_memory_base_check();
         uncached_device_region_check();
-        multi_cpu_port_pairs_check();
+        // Reuse every response slot with new identities/data, including CPU 0
+        // in the single-port RTL configuration. A truncated/aliased selector
+        // must not acknowledge a different CPU's or the previous round's read.
+        multi_cpu_port_pairs_check(0);
+        multi_cpu_port_pairs_check(1);
         cycle_prbs_test();
 
         std::print(" {} ({} us)\n", !error ? "PASSED" : "FAILED",

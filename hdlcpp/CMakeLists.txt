@@ -51,6 +51,23 @@ add_test(NAME hdlcpp_expression_helpers COMMAND bash
     "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}"
     ${HDLCPP_WIDTHS_REFERENCE_ARGS})
 
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_xperm_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/XpermChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/xperm")
+    set_tests_properties(hdlcpp_xperm_cpp PROPERTIES TIMEOUT 240)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_xperm_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/XpermChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/xperm")
+        set_tests_properties(hdlcpp_xperm_verilator PROPERTIES TIMEOUT 240)
+    endif()
+endif()
+
 add_executable(test_modules tests/test_modules.cpp)
 target_include_directories(test_modules PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_modules COMMAND test_modules)

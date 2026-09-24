@@ -26,9 +26,13 @@ struct Node {
     unsigned width = 0;
     Value left, right, select;
     std::string name;
+    bool hostEffect() const { return op == "host_random" || op == "host_jtag_tick" || op == "host_debug_tick"; }
 };
 struct Port { std::string name; Value bits; bool input; };
 struct State { Value bits, next, trigger; };
+struct Memory { std::string name; unsigned width; uint64_t depth; };
+struct MemoryAccess { size_t memory; Value address, enabled; bool transaction; };
+struct MemoryWrite { size_t memory; Value address, data, enabled; };
 
 inline uint64_t mask(unsigned width) {
     return width >= 64 ? ~uint64_t(0) : (uint64_t(1) << width) - 1;
@@ -66,6 +70,9 @@ public:
     std::map<Bit, Bit> aliases;
     std::vector<Port> ports;
     std::vector<State> states;
+    std::vector<Memory> memories;
+    std::vector<MemoryAccess> memoryAccesses;
+    std::vector<MemoryWrite> memoryWrites;
 
     Value add(std::string op, unsigned width, Value left = {}, Value right = {},
               Value select = {}, std::string name = {}) {
@@ -192,6 +199,7 @@ public:
         auto& node = nodes[index];
         node.left = resolved(node.left); node.right = resolved(node.right);
         node.select = resolved(node.select);
+        if (node.hostEffect() || node.op == "memory_read") return false;
         bool changed = false;
         auto redirect = [&](unsigned offset, Bit bit) {
             Bit target = (index + 1) * 64 + 2 + offset;
@@ -263,11 +271,12 @@ public:
             if (round == 99) throw std::runtime_error("graph simplification did not converge");
         }
         // Share producers after resolving hierarchy aliases, not before their
-        // actual connectivity is known. State/input nodes are never merged.
+        // actual connectivity is known. State/input nodes and host effects
+        // are never merged, even when their arguments are identical.
         std::map<std::string, size_t> shared;
         for (size_t index = 0; index < nodes.size(); ++index) {
             auto& node = nodes[index];
-            if (node.op == "wire" || node.op == "input" || node.op == "state") continue;
+            if (node.op == "wire" || node.op == "input" || node.op == "state" || node.hostEffect()) continue;
             node.left = resolved(node.left); node.right = resolved(node.right); node.select = resolved(node.select);
             std::ostringstream key;
             key << node.op << ':' << node.width;
@@ -290,6 +299,7 @@ public:
             bool collision = false;
             for (const auto& node : nodes) collision |= node.name.find(marker) != std::string::npos;
             for (const auto& port : ports) collision |= port.name.find(marker) != std::string::npos;
+            for (const auto& memory : memories) collision |= memory.name.find(marker) != std::string::npos;
             if (!collision) break;
             delimiter = "cpphdl_" + std::to_string(++suffix);
             if (delimiter.size() > 16) throw std::runtime_error("cannot delimit graph records");
@@ -318,6 +328,15 @@ public:
         output << states.size() << '\n';
         for (auto& state : states)
             output << valueText(state.bits) << valueText(state.next) << valueText(state.trigger) << '\n';
+        output << memories.size() << '\n';
+        for (const auto& memory : memories)
+            output << std::quoted(memory.name) << ' ' << memory.width << ' ' << memory.depth << '\n';
+        output << memoryAccesses.size() << '\n';
+        for (const auto& access : memoryAccesses)
+            output << access.memory << ' ' << valueText(access.address) << valueText(access.enabled) << access.transaction << '\n';
+        output << memoryWrites.size() << '\n';
+        for (const auto& write : memoryWrites)
+            output << write.memory << ' ' << valueText(write.address) << valueText(write.data) << valueText(write.enabled) << '\n';
         output << ")" << delimiter << "\"); graph.emit(argv[1]); } catch(const std::exception& error) {\n"
                   "fprintf(stderr, \"%s\\n\", error.what()); return 1; }\n}\n";
     }
@@ -351,9 +370,38 @@ public:
             State state; state.bits=readValue(); state.next=readValue(); state.trigger=readValue();
             states.push_back(std::move(state));
         }
+        input >> std::ws;
+        if (input.eof()) return;
+        input >> count;
+        for (size_t index = 0; index < count; ++index) {
+            Memory memory; input >> std::quoted(memory.name) >> memory.width >> memory.depth;
+            memories.push_back(std::move(memory));
+        }
+        input >> count;
+        for (size_t index = 0; index < count; ++index) {
+            MemoryAccess access; input >> access.memory;
+            access.address = readValue(); access.enabled = readValue(); input >> access.transaction;
+            memoryAccesses.push_back(std::move(access));
+        }
+        input >> count;
+        for (size_t index = 0; index < count; ++index) {
+            MemoryWrite write; input >> write.memory;
+            write.address = readValue(); write.data = readValue(); write.enabled = readValue();
+            memoryWrites.push_back(std::move(write));
+        }
     }
 
     void emit(const std::string& path) {
+        for (const auto& memory : memories)
+            if (!memory.width || memory.width > 1048576 || !memory.depth)
+                throw std::runtime_error("invalid graph memory dimensions");
+        for (const auto& access : memoryAccesses)
+            if (access.memory >= memories.size() || access.address.empty() || access.address.size() > 64 || access.enabled.size() != 1)
+                throw std::runtime_error("invalid graph memory access");
+        for (const auto& write : memoryWrites)
+            if (write.memory >= memories.size() || write.data.size() != memories[write.memory].width ||
+                write.address.empty() || write.address.size() > 64 || write.enabled.size() != 1)
+                throw std::runtime_error("invalid graph memory write");
         for (const auto& port : ports) {
             if (port.name.empty() || (!std::isalpha(static_cast<unsigned char>(port.name[0])) && port.name[0] != '_'))
                 throw std::runtime_error("top port is not a C++ identifier");
@@ -385,6 +433,7 @@ public:
             std::vector<unsigned> marks(nodes.size());
             std::vector<size_t> stack;
             std::optional<size_t> cycle;
+            bool outputCone = true;
             order.clear();
             std::function<void(Bit)> visit = [&](Bit raw) {
                 auto bit = resolve(raw);
@@ -403,6 +452,8 @@ public:
                 }
                 const auto& node = nodes[index];
                 if (node.op == "wire") throw std::runtime_error("undriven bit: " + node.name);
+                if (outputCone && node.hostEffect())
+                    throw std::runtime_error("transactional host effect reaches a combinational output");
                 marks[index] = 1;
                 stack.push_back(index);
                 for (auto* value : {&node.left, &node.right, &node.select}) for (auto input : *value) visit(input);
@@ -410,10 +461,26 @@ public:
                 stack.pop_back();
             };
             for (const auto& port : ports) if (!port.input) for (auto bit : port.bits) visit(bit);
+            for (const auto& access : memoryAccesses) if (!access.transaction) {
+                for (auto bit : access.address) visit(bit);
+                for (auto bit : access.enabled) visit(bit);
+            }
+            outputCone = false;
+            for (const auto& access : memoryAccesses) if (access.transaction) {
+                for (auto bit : access.address) visit(bit);
+                for (auto bit : access.enabled) visit(bit);
+            }
+            for (const auto& write : memoryWrites)
+                for (const auto* value : {&write.address, &write.data, &write.enabled})
+                    for (auto bit : *value) visit(bit);
             for (const auto& state : states) {
                 for (auto bit : state.next) visit(bit);
                 for (auto bit : state.trigger) visit(bit);
             }
+            // A discarded return value does not discard a host-side effect.
+            // The left dependency orders calls; select is their execution guard.
+            for (size_t index = 0; index < nodes.size(); ++index)
+                if (nodes[index].hostEffect()) visit((index + 1) * 64 + 2);
             if (!cycle) break;
             auto index = *cycle;
             const auto node = nodes[index];
@@ -427,8 +494,21 @@ public:
         }
         std::ofstream output(path);
         if (!output) throw std::runtime_error("cannot write native model");
-        output << "#pragma once\n#include <array>\n#include <cstdint>\n#include <stdexcept>\n"
+        output << "#pragma once\n";
+        if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_random"; }))
+            output << "#include <cstdlib>\n";
+        if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_jtag_tick"; }))
+            output << "extern \"C\" int jtag_tick(unsigned char*, unsigned char*, unsigned char*, unsigned char*, unsigned char);\n";
+        if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_debug_tick"; }))
+            output << "extern \"C\" int debug_tick(unsigned char*, unsigned char, int*, int*, int*, unsigned char, unsigned char*, int, int);\n";
+        output << "#include <array>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
                   "namespace cpphdl_native {\nstruct Model {\n";
+        // Memory depth belongs to runtime storage, never to the bit graph or
+        // the C++ stack. Reads observe committed rows throughout evaluation.
+        for (size_t index = 0; index < memories.size(); ++index) {
+            auto type = "std::vector<std::array<uint64_t," + std::to_string((memories[index].width + 63) / 64) + ">>";
+            output << type << " memory" << index << " = " << type << '(' << memories[index].depth << "ull);\n";
+        }
         std::map<size_t, std::string> names;
         for (const auto& port : ports) {
             output << "std::array<uint32_t," << (port.bits.size()+31)/32 << "> " << port.name << "{};\n";
@@ -470,10 +550,77 @@ public:
         for (auto index : order) {
             const auto& node = nodes[index];
             if (node.op == "state" || node.op == "input") continue;
+            if (node.op == "memory_read") {
+                auto memory = number(node.right), word = number(node.select);
+                if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
+                    node.left.empty() || node.left.size() > 64 || node.width != std::min<uint64_t>(64, memories[*memory].width - *word * 64))
+                    throw std::runtime_error("invalid graph memory read");
+                auto address = assembly(node.left);
+                output << "const uint64_t value" << index << " = " << address << " < " << memories[*memory].depth
+                       << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
+                continue;
+            }
+            if (node.op == "host_debug_tick") {
+                if (node.width != 32 || node.right.size() != 192 || node.select.size() != 1)
+                    throw std::runtime_error("invalid debug_tick effect layout");
+                const unsigned sizes[] = {8, 8, 32, 32, 32, 8, 8, 32, 32};
+                const bool pointers[] = {true, false, true, true, true, false, true, false, false};
+                auto prefix = "debug" + std::to_string(index);
+                unsigned offset = 0;
+                // Initialize pointer locals from current storage: a callback
+                // may intentionally leave outputs unchanged on a stalled tick.
+                for (unsigned argument = 0; argument < 9; ++argument) {
+                    auto type = sizes[argument] == 8 ? "unsigned char" : "int";
+                    output << type << ' ' << prefix << '_' << argument << " = static_cast<"
+                           << type << ">(" << assembly(slice(node.right, offset, sizes[argument])) << ");\n";
+                    offset += sizes[argument];
+                }
+                output << "uint64_t value" << index << " = 0;\n"
+                       << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n"
+                       << "value" << index << " = uint32_t(::debug_tick(";
+                for (unsigned argument = 0; argument < 9; ++argument) {
+                    if (argument) output << ", ";
+                    if (pointers[argument]) output << '&';
+                    output << prefix << '_' << argument;
+                }
+                output << "));\n} }\n";
+                continue;
+            }
+            if (node.op == "host_debug_output") {
+                auto argument = number(node.select);
+                if (node.left.size() != 1 || node.left.front() < 2 || !argument ||
+                    (*argument != 0 && *argument != 2 && *argument != 3 && *argument != 4 && *argument != 6) ||
+                    nodes[owner(node.left.front())].op != "host_debug_tick" ||
+                    node.width != (*argument == 0 || *argument == 6 ? 8u : 32u))
+                    throw std::runtime_error("invalid debug_tick output projection");
+                output << "const uint64_t value" << index << " = uint32_t(debug"
+                       << owner(node.left.front()) << '_' << *argument << ");\n";
+                continue;
+            }
             auto left = assembly(node.left), right = assembly(node.right);
+            if (node.op == "host_jtag_tick") {
+                if (node.width != 64 || node.right.size() != 40 || node.select.size() != 1)
+                    throw std::runtime_error("invalid jtag_tick effect layout");
+                auto prefix = "jtag" + std::to_string(index);
+                output << "uint64_t value" << index << " = (" << right << " & 4294967295ull) << 32;\n"
+                       << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n";
+                for (unsigned argument = 0; argument < 4; ++argument)
+                    output << "unsigned char " << prefix << '_' << argument << " = static_cast<unsigned char>("
+                           << assembly(slice(node.right, 8 * argument, 8)) << ");\n";
+                output << "const int " << prefix << "_result = ::jtag_tick(";
+                for (unsigned argument = 0; argument < 4; ++argument)
+                    output << '&' << prefix << '_' << argument << ", ";
+                output << "static_cast<unsigned char>(" << assembly(slice(node.right, 32, 8)) << "));\n"
+                       << "value" << index << " = uint64_t(uint32_t(" << prefix << "_result))";
+                for (unsigned argument = 0; argument < 4; ++argument)
+                    output << " | (uint64_t(" << prefix << '_' << argument << ") << " << 32 + 8 * argument << ')';
+                output << ";\n} }\n";
+                continue;
+            }
             std::string expr;
             auto op = node.op;
-            if (op == "mux") expr = assembly(node.select) + " ? " + left + " : " + right;
+            if (op == "host_random") expr = "Commit && " + assembly(node.select) + " ? uint64_t(::random()) : 0ull";
+            else if (op == "mux") expr = assembly(node.select) + " ? " + left + " : " + right;
             else if (op == "any") expr = left + " != 0";
             else if (op == "all") expr = left + " == " + std::to_string(mask(node.left.size())) + "ull";
             else if (op == "parity") expr = "__builtin_parityll(" + left + ")";
@@ -492,6 +639,20 @@ public:
             }
             output << "const uint64_t value" << index << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
         }
+        for (const auto& access : memoryAccesses)
+            output << "if(" << (access.transaction ? "Commit && " : "") << assembly(access.enabled)
+                   << " && " << assembly(access.address) << " >= " << memories[access.memory].depth
+                   << "ull) throw std::out_of_range(\"native graph memory address\");\n";
+        for (size_t index = 0; index < memoryWrites.size(); ++index) {
+            const auto& write = memoryWrites[index];
+            output << "const bool memory_enable" << index << " = " << assembly(write.enabled) << ";\n"
+                   << "const uint64_t memory_address" << index << " = " << assembly(write.address) << ";\n";
+            output << "if(Commit && memory_enable" << index << " && memory_address" << index << " >= "
+                   << memories[write.memory].depth << "ull) throw std::out_of_range(\"native graph memory write address\");\n";
+            for (unsigned offset = 0; offset < write.data.size(); offset += 64)
+                output << "const uint64_t memory_next" << index << '_' << offset / 64 << " = "
+                       << assembly(slice(write.data, offset, std::min<size_t>(64, write.data.size() - offset))) << ";\n";
+        }
         for (const auto& port : ports) if (!port.input)
             for (unsigned offset = 0; offset < port.bits.size(); offset += 32)
                 output << port.name << '[' << offset/32 << "] = uint32_t(" << assembly(slice(port.bits, offset, std::min<size_t>(32,port.bits.size()-offset))) << ");\n";
@@ -502,6 +663,16 @@ public:
                 output << "const uint64_t next" << index << '_' << offset << " = " << assembly(slice(state.next, offset, std::min<size_t>(64,state.next.size()-offset))) << ";\n";
         }
         output << "if constexpr(Commit) {\n";
+        // Snapshot all write operands before any state commit. Ordered writes
+        // to one address retain the C++ queue's last-write-wins semantics.
+        for (size_t index = 0; index < memoryWrites.size(); ++index) {
+            const auto& write = memoryWrites[index];
+            output << "if(memory_enable" << index << ") {\n";
+            for (unsigned offset = 0; offset < write.data.size(); offset += 64)
+                output << "memory" << write.memory << "[memory_address" << index << "][" << offset / 64
+                       << "] = memory_next" << index << '_' << offset / 64 << ";\n";
+            output << "}\n";
+        }
         for (size_t index = 0; index < states.size(); ++index) {
             auto& state = states[index];
             output << "if(trigger" << index << ") {\n";

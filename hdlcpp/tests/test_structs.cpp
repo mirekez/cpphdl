@@ -575,12 +575,15 @@ static void testNestedPackedArrayElementWriteUsesPackedSlice(const char* argv0)
 {
     const std::string sv = R"sv(
 module nested_packed_array_element_write(
+    input  logic clk_i,
     input  logic [63:0] a_i,
     input  logic [63:0] b_i,
-    output logic [127:0] out_o
+    output logic [127:0] out_o,
+    output logic [127:0] registered_o
 );
   typedef logic [63:0] word_t;
   word_t [0:0][1:0] buf_q;
+  word_t [0:0][1:0] retained;
 
   always_comb begin
     buf_q = '0;
@@ -588,12 +591,20 @@ module nested_packed_array_element_write(
     buf_q[0][1] = b_i;
   end
 
+  always_ff @(posedge clk_i) begin
+    retained[0][0] <= a_i;
+    retained[0][1] <= b_i;
+  end
+
   assign out_o = buf_q[0];
+  assign registered_o = retained[0];
 endmodule
 )sv";
 
     auto h = convertModule(argv0, "nested_packed_array_element_write", sv);
-    expectContains(h, ".data.bits(");
+    expectContains(h, "buf_q_comb.bits(");
+    expectContains(h, "retained._next.bits(");
+    expectNotContains(h, ".data.bits(");
     expectContains(h, " = a_i_in()");
     expectContains(h, " = b_i_in()");
     expectNotContains(h, "][(unsigned)");
@@ -624,7 +635,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "nested_packed_array_conditional_write", sv);
-    expectContains(h, ".data.bits(");
+    expectContains(h, "buf_q_comb.bits(");
+    expectNotContains(h, ".data.bits(");
     expectContains(h, "cpphdl::sv_cast<byte_t>(a_i_in())");
     expectContains(h, "cpphdl::sv_cast<byte_t>(b_i_in())");
     expectNotContains(h, "logic<((uint64_t)(((((");
@@ -1034,7 +1046,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "packed_storage_cross_comb", sv);
-    expectContains(h, ".data.bits(");
+    expectContains(h, "matrix_comb.bits(");
+    expectNotContains(h, ".data.bits(");
     expectContains(h, "choose_comb_func() ? cpphdl::sv_cast<nibble_t>(payload_comb_func())");
     expectNotContains(h, "= choose ?");
     expectNotContains(h, "sv_cast<nibble_t>(payload)");

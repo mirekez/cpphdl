@@ -27,10 +27,21 @@ struct EmptyInitNestedDefaults {
     uint8_t tag = 0xa7;
 };
 
+struct EmptyInitInstruction {
+    union {
+        uint32_t raw;
+        struct { uint16_t low; uint16_t high; } parts;
+    };
+};
+struct EmptyInitMiddle : EmptyInitInstruction {};
+struct EmptyInitDerived : EmptyInitMiddle {};
+struct EmptyInitExtended : EmptyInitPlain { uint16_t tag; };
+union EmptyInitUnion { uint32_t raw; uint32_t alternative; };
+
 class EmptyInit : public Module {
 public:
     _PORT(logic<16>) seed_in;
-    _PORT(logic<4>) mode_in;
+    _PORT(logic<5>) mode_in;
     _PORT(logic<64>) result_out = _ASSIGN_COMB(result_comb_func());
 
     logic<64> result_comb;
@@ -49,6 +60,9 @@ public:
         EmptyInitNestedDefaults nested_defaults{{uint8_t(seed), seed}, uint8_t(seed)};
         EmptyInitPlain local{};
         EmptyInitDefaults local_defaults{};
+        EmptyInitDerived instruction{{{{uint32_t(seed) | 0xa5a50000u}}}};
+        EmptyInitExtended extended{{uint8_t(seed), seed}, 0x5a5a};
+        EmptyInitUnion named{uint32_t(seed) | 0x12340000u};
 
         bits.low = seed;
         bits.high = 0x10000u | seed;
@@ -108,6 +122,23 @@ public:
             nested = (EmptyInitNested){{uint8_t(seed), seed}, 0x5a};
             return uint64_t(nested.inner.low) | (uint64_t(nested.inner.high) << 8)
                 | (uint64_t(nested.tag) << 24);
+        case 16:
+            return instruction.raw;
+        case 17:
+            return uint64_t(extended.low) | (uint64_t(extended.high) << 8)
+                | (uint64_t(extended.tag) << 24);
+        case 18:
+            return named.raw;
+        case 19:
+            named = {.alternative = uint32_t(seed) | 0x56780000u};
+            return named.alternative;
+        case 20:
+            extended = {{}, 0x55aa};
+            return uint64_t(extended.low) | (uint64_t(extended.high) << 8)
+                | (uint64_t(extended.tag) << 24);
+        case 21:
+            instruction = {};
+            return instruction.raw;
         default:
             break;
         }

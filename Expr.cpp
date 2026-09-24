@@ -1225,11 +1225,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return str;
         }
+        case EXPR_BREAK:
+            return indent_str + (value.empty() ? "break" : "disable " + value);
+        case EXPR_CONTINUE:
+            return indent_str + "continue";
         case EXPR_SWITCH:
         {
             ASSERT(sub.size()>=1);
             std::string str;
+            const bool named = value.starts_with("__cpphdl_switch_");
+            if (named) str += indent_str + "begin : " + value + "\n";
             str += indent_str + "case (" + sub[0].str() + ")\n";
+            // SV requires at least one case item, even for an empty C++ switch.
+            if (sub.size() == 1) str += indent_str + "default: ;\n";
             if (sub.size() > 1) {
                 for (size_t i=1; i < sub.size(); ++i) {
                     sub[i].indent = indent + 1;
@@ -1243,6 +1251,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
             str += indent_str + "endcase\n";
+            if (named) str += indent_str + "end\n";
             return str;
         }
         case EXPR_BODY:
