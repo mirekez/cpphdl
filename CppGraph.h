@@ -196,7 +196,7 @@ class Lowering {
         if (item.closure) return read(invokeClosure(item.closure));
         if (item.key.empty()) return item.bits;
         if (port(item.type)) {
-            if (bindings.count(item.key)) return read(invokeClosure(bindings.at(item.key)));
+            if (bindings.count(item.key)) return read(boundPort(item));
         }
         auto source = cells.count(item.key) ? cells.at(item.key) : initial(item);
         unsigned count = width(item.type);
@@ -216,6 +216,16 @@ class Lowering {
         if (clean(type)->isBooleanType()) bits = graph.unary("any", bits);
         else bits = resize(bits, width(type), !item.type.isNull() && clean(item.type)->isSignedIntegerOrEnumerationType());
         return value(bits, type);
+    }
+    Item boundPort(const Item& portItem) {
+        auto result = invokeClosure(bindings.at(portItem.key));
+        auto type = payload(portItem.type);
+        // function_ref<A> converts value-returning bindings to A. Do this
+        // before selecting primitives (e.g. logic::bits), not just on write.
+        // Pointer-backed bindings already return their pointee Item; retain
+        // its reference/storage metadata when it has the declared value type.
+        if (context.hasSameType(clean(result.type), clean(type))) return result;
+        return cast(result, type);
     }
     void write(Item target, Item source) {
         if (source.closure) {
@@ -590,7 +600,7 @@ class Lowering {
             if (isa<CXXMethodDecl>(function)) { receiver = expr(call->getArg(0)); start = 1; }
             auto op = operation->getOperator();
             if (op == OO_Call && port(receiver.type)) {
-                if (bindings.count(receiver.key)) return invokeClosure(bindings.at(receiver.key));
+                if (bindings.count(receiver.key)) return boundPort(receiver);
                 return value(read(receiver), payload(receiver.type));
             }
             if (op == OO_Subscript) return index(receiver, expr(call->getArg(start)), call->getType());
@@ -619,6 +629,18 @@ class Lowering {
             auto high = integer(arguments.at(1)), low = integer(arguments.at(2));
             auto count = high >= low ? std::min<uint64_t>(high - low + 1, width(call->getType())) : 0;
             return value(resize(slice(read(arguments.at(0)), low, count), width(call->getType())), call->getType());
+        }
+        // A bound value can be sliced without constructing a logic_bits proxy.
+        // Keep this read-only, constant-index path independent of storage-range
+        // handling: temporary values have no writeback destination.
+        if (name == "bits" && !receiver.type.isNull() && receiver.key.empty() &&
+            templateName(payload(receiver.type)) == "cpphdl::logic" && arguments.size() == 2) {
+            auto high = number(graph.resolved(read(arguments[0])));
+            auto low = number(graph.resolved(read(arguments[1])));
+            if (high && low) {
+                if (*low > *high || *high >= width(receiver.type)) fail("invalid C++ bit range", call);
+                return value(slice(read(receiver), *low, *high - *low + 1), call->getType());
+            }
         }
         if (qualified == "cpphdl::sv_insert_field") {
             auto parameters = function->getTemplateSpecializationArgs();
