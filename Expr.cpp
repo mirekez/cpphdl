@@ -1421,11 +1421,6 @@ Expr Expr::simplify()  // open brackets for *(+-)
             e = e.sub[0];
         }
     };
-    auto containsVar = [](Expr& e) {
-        return e.traverseIf([](Expr& check) {
-            return check.type == EXPR_MEMBER || check.type == EXPR_VAR;
-        });
-    };
     auto numValue = [](const Expr& e, int64_t& value) {
         if (e.type != EXPR_NUM) {
             return false;
@@ -1513,20 +1508,6 @@ Expr Expr::simplify()  // open brackets for *(+-)
     do {
         changed = false;
         expr.traverseIf( [&](Expr& e) {
-            if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                unwrap(e.sub[0]);
-                unwrap(e.sub[1]);
-                if (containsVar(e.sub[0]) || containsVar(e.sub[1])) {
-                    e = Expr{"0", EXPR_NUM};
-                    changed = true;
-                }
-            }
-            return false;
-        });
-    } while (changed);
-    do {
-        changed = false;
-        expr.traverseIf( [&](Expr& e) {
             int64_t left;
             int64_t right;
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.sub.size() == 2 &&
@@ -1547,7 +1528,51 @@ Expr Expr::simplify()  // open brackets for *(+-)
             return false;
         });
     } while (changed);
-    return expr;
+    // Widths are high - low + 1. Cancel equal additive terms, rather than
+    // replacing every variable product by zero. A u<N> conversion can be a
+    // member-call node, and unmatched variable terms must never disappear.
+    auto binary = [](const Expr& e) {
+        return e.type == EXPR_BINARY || e.type == EXPR_OPERATORCALL;
+    };
+    auto equal = [&](auto&& self, const Expr& a, const Expr& b) -> bool {
+        int64_t left, right;
+        if (numValue(a, left) && numValue(b, right)) return left == right;
+        if (a.type != b.type && !(binary(a) && binary(b))) return false;
+        if (a.value != b.value || a.sub.size() != b.sub.size()) return false;
+        for (size_t i = 0; i < a.sub.size(); ++i)
+            if (!self(self, a.sub[i], b.sub[i])) return false;
+        return true;
+    };
+    std::vector<std::pair<Expr, int>> terms;
+    int64_t constant = 0;
+    auto collect = [&](auto&& self, const Expr& e, int sign) -> void {
+        if (binary(e) && e.sub.size() == 2 && (e.value == "+" || e.value == "-")) {
+            self(self, e.sub[0], sign);
+            self(self, e.sub[1], e.value == "+" ? sign : -sign);
+            return;
+        }
+        int64_t number;
+        if (numValue(e, number)) { constant += sign * number; return; }
+        for (auto& [term, coefficient] : terms) {
+            if (equal(equal, term, e)) { coefficient += sign; return; }
+        }
+        terms.emplace_back(e, sign);
+    };
+    collect(collect, expr, 1);
+    Expr result;
+    for (auto& [term, coefficient] : terms) {
+        if (!coefficient) continue;
+        if (coefficient != 1 && coefficient != -1)
+            term = Expr{"*", EXPR_BINARY, {makeNum(std::abs(coefficient)), term}};
+        if (result.type == EXPR_NONE && coefficient > 0) result = term;
+        else {
+            if (result.type == EXPR_NONE) result = makeNum(0);
+            result = Expr{coefficient > 0 ? "+" : "-", EXPR_BINARY, {result, term}};
+        }
+    }
+    if (result.type == EXPR_NONE) return makeNum(constant);
+    if (constant) result = Expr{"+", EXPR_BINARY, {result, makeNum(constant)}};
+    return result;
 }
 
 std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint,
