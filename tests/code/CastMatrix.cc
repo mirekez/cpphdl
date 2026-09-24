@@ -4,6 +4,8 @@ using namespace cpphdl;
 enum class CastByte : signed char { zero = 0 };
 struct CastParent { uint32_t field; };
 struct CastChild : CastParent {};
+struct CastPacket { uint32_t data; uint16_t tag; };
+struct CastPacketView { uint32_t data; uint16_t tag; };
 
 // Return widened results so that the output assignment cannot hide a lost
 // narrow cast. The same expressions exercise all three value-cast spellings.
@@ -56,6 +58,8 @@ struct CastChild : CastParent {};
     case 45: return ~C(uint32_t, x); \
     case 46: return C(logic<64>, C(uint32_t, x) + 1u); \
     case 47: return character_locals(x); \
+    case 48: return struct_references(x); \
+    case 49: return signed_reference(x); \
     default: return references(x);
 
 #define STATIC_CAST(T, x) static_cast<T>(x)
@@ -126,6 +130,26 @@ public:
         e = static_cast<unsigned long long>(x);
         return static_cast<uint64_t>(a) ^ (static_cast<uint64_t>(b) << 8)
             ^ (static_cast<uint64_t>(c) << 24) ^ static_cast<uint64_t>(d) ^ e;
+    }
+    uint64_t struct_references(uint64_t x) {
+        CastPacket packet;
+        packet.data = uint32_t(x);
+        packet.tag = uint16_t(x >> 32);
+        // Round trips through a different reference type are valid C++: only
+        // access the object after casting back to its actual type. In RTL all
+        // these reference views must retain the original assignable signal.
+        ((CastPacket&)(CastPacketView&)packet).data ^= 0x12345678u;
+        reinterpret_cast<CastPacket&>(reinterpret_cast<CastPacketView&>(packet)).tag += 3;
+        const_cast<CastPacket&>(static_cast<const CastPacket&>(packet)).data += 7u;
+        return uint64_t(((const CastPacket&)(const CastPacketView&)packet).data)
+            | (uint64_t(packet.tag) << 32);
+    }
+    uint64_t signed_reference(uint64_t x) {
+        uint32_t value;
+        value = uint32_t(x);
+        // Access through the corresponding signed type is permitted in C++.
+        reinterpret_cast<int32_t&>(value) = 123;
+        return value;
     }
     uint64_t as_static(uint64_t x, unsigned selector) {
         switch (selector) { CAST_MATRIX(STATIC_CAST) }

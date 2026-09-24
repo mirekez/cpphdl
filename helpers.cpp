@@ -1636,10 +1636,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (FCE->getCastKind() == CK_FloatingToIntegral || FCE->getCastKind() == CK_IntegralToFloating
             || FCE->getCastKind() == CK_FloatingCast || FCE->getCastKind() == CK_FloatingToBoolean
             || FCE->getCastKind() == CK_MemberPointerToBoolean || FCE->getType()->isMemberPointerType()) {
-            const unsigned id = ctx->getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error,
-                "cpphdl: unsupported RTL cast (%0); floating-point/member-pointer conversions require an explicit hardware implementation");
-            ctx->getDiagnostics().Report(FCE->getExprLoc(), id) << FCE->getCastKindName();
-            return cpphdl::Expr{};
+            // No RTL lowering for this conversion: retain the operand rather
+            // than reject it or drop its side effects.
+            return exprToExpr(FCE->getSubExpr());
         }
         if (FCE->getType()->isBooleanType()
             && !FCE->getSubExpr()->getType()->isBooleanType()) {
@@ -1665,22 +1664,13 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (kind == CK_Dynamic || kind == CK_PointerToIntegral || kind == CK_IntegralToPointer
             || kind == CK_MemberPointerToBoolean || target->isMemberPointerType()
             || target->isRealFloatingType() || source->isRealFloatingType()) {
-            const unsigned id = ctx->getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error,
-                "cpphdl: unsupported RTL cast (%0); runtime pointers/RTTI and floating-point "
-                "conversions require an explicit hardware implementation");
-            ctx->getDiagnostics().Report(cast->getExprLoc(), id) << cast->getCastKindName();
-            return cpphdl::Expr{};
+            return exprToExpr(cast->getSubExpr());
         }
         // Qualifier/reference and hierarchy casts select the same hardware
         // object. Keep it an lvalue: a sized SV value cast cannot be assigned.
         if (cast->isGLValue() || target->isPointerType() || target->isVoidType()) {
-            if (cast->isGLValue() && kind == CK_LValueBitCast
-                && !ctx->hasSameUnqualifiedType(target, source)) {
-                const unsigned id = ctx->getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error,
-                    "cpphdl: unsupported RTL cast: type-punning reference; use explicit bit-vector operations");
-                ctx->getDiagnostics().Report(cast->getExprLoc(), id);
-                return cpphdl::Expr{};
-            }
+            // This also covers (Struct&) and reinterpret_cast<Struct&> views.
+            // Do not turn a reference into a packed-value cast or temporary.
             // SV does not allow a parenthesized assignment as a standalone
             // statement. A discarded C++ value still performs its side effects.
             return exprToExpr(target->isVoidType()

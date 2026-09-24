@@ -22,7 +22,7 @@ if(Python3_Interpreter_FOUND)
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
     set_tests_properties(interface_hierarchy_imports_cpp PROPERTIES TIMEOUT 240)
-    foreach(flow cpp reject)
+    foreach(flow cpp fallback)
         add_test(NAME cast_${flow} COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

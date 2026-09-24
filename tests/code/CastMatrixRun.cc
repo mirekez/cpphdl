@@ -37,10 +37,14 @@ int main() {
         uint64_t x = sample < 1024 ? sample : rng;
         if (sample >= 1024 && sample < 1152) x = UINT64_C(1) << (sample & 63);
         if (sample >= 1152 && sample < 1280) x = ~(UINT64_C(1) << (sample & 63));
-        for (unsigned mode = 0; mode < 48; ++mode) {
+        for (unsigned mode = 0; mode < 50; ++mode) {
             h.input = x; h.mode = mode;
             ++_system_clock;
             uint64_t expected = h.model.static_out();
+            if (mode == 48 && expected !=
+                (uint64_t(uint32_t((uint32_t(x) ^ 0x12345678u) + 7u)) |
+                 (uint64_t(uint16_t((x >> 32) + 3u)) << 32))) return 4;
+            if (mode == 49 && expected != 123) return 5;
             uint64_t a = expected, b = h.model.cstyle_out(), c = h.model.functional_out();
             if (a != b || a != c) return 3;
 #ifdef CAST_VERILATOR

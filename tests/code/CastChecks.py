@@ -1,4 +1,4 @@
-"""Check C++ cast semantics against RTL, and diagnose non-hardware casts."""
+"""Check supported casts against RTL, and operand fallback for other casts."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--cpphdl', required=True)
     parser.add_argument('--cxx', required=True)
     parser.add_argument('--work', type=Path, required=True)
-    parser.add_argument('--flow', choices=('cpp', 'verilator', 'reject', 'widths'), required=True)
+    parser.add_argument('--flow', choices=('cpp', 'verilator', 'fallback', 'widths'), required=True)
     parser.add_argument('--verilator')
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
@@ -18,14 +18,11 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=args.flow + '-', dir=args.work))
 
-    def run(command, label, reject=False):
+    def run(command, label):
         result = subprocess.run(list(map(str, command)), cwd=work, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
         (work / (label + '.log')).write_text(result.stdout)
-        if reject:
-            if result.returncode == 0 or 'cpphdl: unsupported RTL cast' not in result.stdout:
-                raise RuntimeError(f'Missing cast diagnostic: {result.stdout}\nArtifacts: {work}')
-        elif result.returncode:
+        if result.returncode:
             raise RuntimeError(f'{label} failed: {result.stdout[-8000:]}\nArtifacts: {work}')
         return result.stdout
 
@@ -44,15 +41,22 @@ def main():
                  fixture / 'CastWidthsRun.cc'], f'verilator-{width}')
             print(run([work / f'obj-{width}/VCastWidths'], f'run-{width}'), end='')
         return
-    if args.flow == 'reject':
+    if args.flow == 'fallback':
         for case in range(8):
-            # Reject fixtures must first be valid C++, not ordinary Clang errors.
-            flags = ['-std=c++23', '-I' + str(include), '-DCAST_REJECT=' + str(case)]
-            source = fixture / 'CastReject.cc'
+            # Check conversion policy, not behavioral equivalence for runtime
+            # features that have no hardware lowering.
+            flags = ['-std=c++23', '-I' + str(include), '-DCAST_FALLBACK=' + str(case)]
+            source = fixture / 'CastFallback.cc'
             run([args.cxx, '-fsyntax-only', source, *flags], f'syntax-{case}')
             run([args.cpphdl, '--generated-dir=' + str(work / f'rtl-{case}'),
-                 source, '--', *flags], f'reject-{case}', reject=True)
-        print('unsupported casts: eight diagnostics passed')
+                 source, '--', *flags], f'fallback-{case}')
+            sv = (work / f'rtl-{case}/CastFallback.sv').read_text()
+            # The operand must survive: simply suppressing the error while
+            # returning an empty expression would silently erase the write.
+            operand = 'base.value' if case == 0 else 'value' if case in (3, 4, 7) else 'p'
+            if not any('result=' in ''.join(line.split()) and operand in line for line in sv.splitlines()):
+                raise AssertionError(f'fallback {case} lost operand {operand}: {sv}')
+        print('unsupported cast operand fallback: eight cases passed')
         return
     if args.flow == 'cpp':
         run([args.cxx, '-std=c++23', '-O1', '-fsanitize=address,undefined',
