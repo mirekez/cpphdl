@@ -583,23 +583,6 @@ cpphdl::Expr Helpers::valueCast(QualType target, const clang::Expr* operand)
     // comparison or an outer C++ cast requests exactly the same type.
     if (lowered.type == cpphdl::Expr::EXPR_CAST && lowered.value == targetName)
         return lowered;
-cpphdl::Expr Helpers::bitIndexToExpr(const clang::Expr* operand)
-{
-    // bits() accepts size_t, but an SV select index is self-determined: no
-    // enclosing data width can widen its arithmetic. Drop only the final
-    // implicit widening to size_t, not explicit/narrowing casts or conversions
-    // inside the index expression. All valid C++ bits() indices are nonnegative
-    // and in range (the library asserts this), so this widening changes none.
-    const auto* cast = dyn_cast<ImplicitCastExpr>(operand->IgnoreParens());
-    if (cast && cast->getCastKind() == CK_IntegralCast
-        && ctx->hasSameUnqualifiedType(cast->getType(), ctx->getSizeType())
-        && cast->getSubExpr()->getType()->isIntegerType()
-        && ctx->getTypeSize(cast->getSubExpr()->getType()) <= ctx->getTypeSize(cast->getType())) {
-        return exprToExpr(cast->getSubExpr());
-    }
-    return exprToExpr(operand);
-}
-
     const auto* plain = operand->IgnoreParenImpCasts();
     const auto* ref = dyn_cast<DeclRefExpr>(plain);
     const auto* var = ref ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
@@ -652,6 +635,23 @@ cpphdl::Expr Helpers::bitIndexToExpr(const clang::Expr* operand)
     cpphdl::Expr result{targetName, cpphdl::Expr::EXPR_CAST, {std::move(lowered)}};
     result.castKeepsUnsigned = unsignedOperand;
     return result;
+}
+
+cpphdl::Expr Helpers::bitIndexToExpr(const clang::Expr* operand)
+{
+    // bits() accepts size_t, but an SV select index is self-determined: no
+    // enclosing data width can widen its arithmetic. Drop only the final
+    // implicit widening to size_t, not explicit/narrowing casts or conversions
+    // inside the index expression. All valid C++ bits() indices are nonnegative
+    // and in range (the library asserts this), so this widening changes none.
+    const auto* cast = dyn_cast<ImplicitCastExpr>(operand->IgnoreParens());
+    if (cast && cast->getCastKind() == CK_IntegralCast
+        && ctx->hasSameUnqualifiedType(cast->getType(), ctx->getSizeType())
+        && cast->getSubExpr()->getType()->isIntegerType()
+        && ctx->getTypeSize(cast->getSubExpr()->getType()) <= ctx->getTypeSize(cast->getType())) {
+        return exprToExpr(cast->getSubExpr());
+    }
+    return exprToExpr(operand);
 }
 
 cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
