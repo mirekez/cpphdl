@@ -88,6 +88,7 @@ public:
 #include <fstream>
 #include <iostream>
 #include <print>
+#include <regex>
 #include <string>
 #include "../../examples/tools.h"
 
@@ -134,8 +135,12 @@ static bool check_generated_sv()
         "conditional interface assignment for index 1");
     require("assign direct_children__port_out__data_in[gi] = 'h33;",
         "conditional interface assignment for index 3");
-    require("assign connected_children__port_out__data_in[gi]=source__ports_in__data_out['h4 + gi];",
-        "expanded whole-interface member assignment");
+    // Accept explicit literal casts without weakening the endpoint/index check.
+    if (!std::regex_search(top, std::regex(
+            R"(assign connected_children__port_out__data_in\[gi\]=source__ports_in__data_out\[(?:unsigned'\([0-9]+'h4\)|'h4) \+ gi\];)"))) {
+        std::print("\nERROR: missing expanded whole-interface member assignment at 4 + gi\n");
+        ok = false;
+    }
 
     if (top.find("__port_out[gi]__") != std::string::npos ||
         top.find("assign connected_children__port_out[gi]") != std::string::npos) {

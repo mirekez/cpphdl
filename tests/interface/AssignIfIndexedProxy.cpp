@@ -73,6 +73,7 @@ public:
 #include <fstream>
 #include <iostream>
 #include <print>
+#include <regex>
 #include <string>
 #include "../../examples/tools.h"
 
@@ -107,10 +108,16 @@ static bool check_generated_sv()
         }
     };
 
-    require("assign source__ports_in__data_in[PORTS_CNT*'h2]=sink__port_out__data_out;",
-        "indexed input-side interface assignment");
-    require("assign sink__port_out__data_in=source__ports_in__data_out[PORTS_CNT*'h2];",
-        "indexed output-side interface assignment");
+    // The integer literal may carry an explicit C++ width/sign cast. Keep
+    // checking both endpoints and the PORTS_CNT * 2 index in each direction.
+    const std::string index = R"(\[PORTS_CNT\*(?:unsigned'\([0-9]+'h2\)|'h2)\])";
+    if (!std::regex_search(sv, std::regex("assign source__ports_in__data_in" + index +
+            "=sink__port_out__data_out;")) ||
+        !std::regex_search(sv, std::regex("assign sink__port_out__data_in=source__ports_in__data_out" +
+            index + ";"))) {
+        std::print("\nERROR: missing indexed interface assignment at PORTS_CNT * 2\n");
+        ok = false;
+    }
     require("assign source__ports_in__data_in[gi]=sinks__port_out__data_out[gi];",
         "loop-indexed input-side interface assignment");
     require("assign sinks__port_out__data_in[gi]=source__ports_in__data_out[gi];",
