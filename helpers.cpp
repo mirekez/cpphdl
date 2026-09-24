@@ -1874,6 +1874,25 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             default: op = "unknown_trait"; break;
         }
 
+        if (UETTE->getKind() == UETT_SizeOf && mod) {
+            // sizeof is an unevaluated type dependency, even when spelled
+            // sizeof(expr). No variable/port declaration need import this
+            // record elsewhere. Use the exported specialization identity,
+            // not the spelling of a cv-qualified type or alias.
+            auto* record = resolveCXXRecordDecl(UETTE->getTypeOfArgument());
+            if (cpphdlRecordShouldExportAsStruct(record, *this)) {
+                auto st = exportStruct(record, *this);
+                const auto name = st.name;
+                if (std::none_of(mod->imports.begin(), mod->imports.end(),
+                        [&](const auto& imp) { return imp.name == name; })) {
+                    mod->imports.emplace_back(name);
+                    currProject->structs.emplace_back(std::move(st));
+                }
+                return cpphdl::Expr{op, cpphdl::Expr::EXPR_TRAIT,
+                    {cpphdl::Expr{name, cpphdl::Expr::EXPR_TYPE}}};
+            }
+        }
+
         if (UETTE->isArgumentType()) {
             auto QT = UETTE->getArgumentType().getNonReferenceType().getDesugaredType(*ctx);
             if (!QT->getAs<RecordType>()) {  // cant know the type - will try to replace it later
