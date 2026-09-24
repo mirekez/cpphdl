@@ -1744,7 +1744,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* CLE = dyn_cast<CompoundLiteralExpr>(E)) {
         DEBUG_AST1(" CompoundLiteralExpr");
-        return cpphdl::Expr{CLE->getType().getAsString(), cpphdl::Expr::EXPR_INIT, {{exprToExpr(CLE->getInitializer())}}};
+        return exprToExpr(CLE->getInitializer());
     }
     if (auto* SL = dyn_cast<StringLiteral>(E)) {
         DEBUG_AST1(" StringLiteral");
@@ -1849,6 +1849,9 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* ILE = dyn_cast<InitListExpr>(E)) {
         DEBUG_AST1(" InitListExpr");
+        // The semantic form includes omitted fields and default member values.
+        if (ILE->isSyntacticForm() && ILE->getSemanticForm())
+            ILE = ILE->getSemanticForm();
         if (!ILE->getNumInits()) {
             return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
         }
@@ -1907,8 +1910,12 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
         return cpphdl::Expr{"CXXFoldExpr", cpphdl::Expr::EXPR_BODY, {expr}};
     }
-    if (/*auto* IVIE = */dyn_cast<ImplicitValueInitExpr>(E)) {
-        return cpphdl::Expr{"ImplicitValueInitExpr", cpphdl::Expr::EXPR_NONE};
+    if (auto* DIE = dyn_cast<CXXDefaultInitExpr>(E)) {
+        return exprToExpr(DIE->getExpr());
+    }
+    if (isa<ImplicitValueInitExpr>(E) || isa<CXXScalarValueInitExpr>(E)) {
+        // A value-initialized field is present and zero, not a missing field.
+        return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
     }
     if (auto* SOPE = dyn_cast<SizeOfPackExpr>(E)) {
         if (!SOPE->isValueDependent() && !SOPE->isTypeDependent()) {

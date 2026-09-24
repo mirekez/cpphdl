@@ -1065,36 +1065,24 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
-            ASSERT(sub.size()>=1);
+        {
             if (exprIsZeroInitializer(*this)) {
                 return indent_str + "0";
             }
-            if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
-                bool first = true;
-                std::string ret;
-                for (size_t i=sub.size(); i > 0; --i) {
-                    if (sub[i-1].type != EXPR_NONE) {
-                        if (first) {
-                            first = false;
-                            // Aggregate fields need assignment-pattern context sizing; children are reversed for packed C++ layout.
-                            ret = indent_str + "'{";
-                        }
-                        else {
-                            ret += ", ";
-                        }
-                        sub[i-1].flags |= flags;
-                        ret += sub[i-1].str();
-                    }
-                }
-                if (!first) {
-                    ret += "}";
-                }
-                if (ret == "") {
-                    ret += indent_str + "0";
-                }
-                return ret;
+            // Each list is one aggregate level, including when its first
+            // field is another aggregate. Do not discard the outer fields.
+            // Reverse fields for packed C++ layout, retaining pattern sizing.
+            std::string ret = indent_str + "'{";
+            bool first = true;
+            for (size_t i = sub.size(); i > 0; --i) {
+                if (sub[i-1].type == EXPR_NONE) continue;
+                if (!first) ret += ", ";
+                first = false;
+                sub[i-1].flags |= flags;
+                ret += sub[i-1].str();
             }
-            return indent_str + sub[0].str();
+            return ret + "}";
+        }
         case EXPR_CAT:
         {
             std::string ret = indent_str + "{";
