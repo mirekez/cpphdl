@@ -69,98 +69,44 @@ static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordD
     return current->isDerivedFrom(owner);
 }
 
-static bool statementAlwaysReturns(const Stmt* statement);
-
-// A nested switch exits its enclosing case when every represented case returns.
-// Exhaustiveness is intentionally not checked here; the switch converter already
-// treats a final case without default as complete for fallthrough diagnostics.
-static bool switchCasesAlwaysReturn(const SwitchStmt* switchStmt)
-{
-    const auto* compound = dyn_cast_or_null<CompoundStmt>(switchStmt->getBody());
-    if (!compound) {
-        return false;
-    }
-
-    bool sawCase = false;
-    bool currentCaseReturns = false;
-    for (const Stmt* statement : compound->body()) {
-        const Stmt* caseBody = nullptr;
-        if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
-            caseBody = caseStmt->getSubStmt();
-        } else if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
-            caseBody = defaultStmt->getSubStmt();
-        }
-
-        if (caseBody) {
-            if (sawCase && !currentCaseReturns) {
-                return false;
-            }
-            sawCase = true;
-            currentCaseReturns = statementAlwaysReturns(caseBody);
-        } else if (sawCase && !currentCaseReturns && statementAlwaysReturns(statement)) {
-            currentCaseReturns = true;
-        }
-    }
-    return sawCase && currentCaseReturns;
-}
-
-// Report a case as returning only when every control-flow path through the
-// statement exits the current function. This recognizes Clang's nested AST for
-// `case X: return value;` and for switches used directly as a case body.
-static bool statementAlwaysReturns(const Stmt* statement)
-{
-    if (!statement) {
-        return false;
-    }
-    if (isa<ReturnStmt>(statement)) {
-        return true;
-    }
-    if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
-        for (const Stmt* child : compound->body()) {
-            if (statementAlwaysReturns(child)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
-        return ifStmt->getElse() && statementAlwaysReturns(ifStmt->getThen()) &&
-            statementAlwaysReturns(ifStmt->getElse());
-    }
-    if (const auto* switchStmt = dyn_cast<SwitchStmt>(statement)) {
-        return switchCasesAlwaysReturn(switchStmt);
-    }
-    if (const auto* caseStmt = dyn_cast<CaseStmt>(statement)) {
-        return statementAlwaysReturns(caseStmt->getSubStmt());
-    }
-    if (const auto* defaultStmt = dyn_cast<DefaultStmt>(statement)) {
-        return statementAlwaysReturns(defaultStmt->getSubStmt());
-    }
-    return false;
-}
-
-// A direct break terminates the current switch case but does not return from
-// the function, so keep it separate from statementAlwaysReturns().
+// Conservative suffix pruning: these exits all leave the current case.
+// Do not look through nested switches/loops: they consume their own breaks.
+// Emitting an unreachable suffix is harmless; dropping a reachable one is not.
 static bool statementTerminatesSwitchCase(const Stmt* statement)
 {
-    if (!statement) {
-        return false;
-    }
-    if (isa<BreakStmt>(statement) || statementAlwaysReturns(statement)) {
+    if (!statement) return false;
+    if (isa<BreakStmt>(statement) || isa<ReturnStmt>(statement) || isa<ContinueStmt>(statement))
         return true;
-    }
+    if (const auto* attributed = dyn_cast<AttributedStmt>(statement))
+        return statementTerminatesSwitchCase(attributed->getSubStmt());
     if (const auto* compound = dyn_cast<CompoundStmt>(statement)) {
-        for (const Stmt* child : compound->body()) {
-            if (statementTerminatesSwitchCase(child)) {
-                return true;
-            }
-        }
+        for (const Stmt* child : compound->body())
+            if (statementTerminatesSwitchCase(child)) return true;
     }
-    if (const auto* ifStmt = dyn_cast<IfStmt>(statement)) {
+    if (const auto* ifStmt = dyn_cast<IfStmt>(statement))
         return ifStmt->getElse() && statementTerminatesSwitchCase(ifStmt->getThen()) &&
             statementTerminatesSwitchCase(ifStmt->getElse());
-    }
     return false;
+}
+
+// A trailing break is already implemented by the SV case boundary. Remove it
+// without looking through a nested loop/switch. Ordinary switches then need
+// neither a named block nor disable statements in synthesizable always blocks.
+static void removeTrailingSwitchBreak(cpphdl::Expr& expression, const std::string& target)
+{
+    using E = cpphdl::Expr;
+    if (expression.type == E::EXPR_BREAK && expression.value == target) {
+        expression = E{};
+    } else if (expression.type == E::EXPR_BODY) {
+        for (auto it = expression.sub.rbegin(); it != expression.sub.rend(); ++it) {
+            if (it->type == E::EXPR_NONE) continue;
+            removeTrailingSwitchBreak(*it, target);
+            break;
+        }
+    } else if (expression.type == E::EXPR_IF) {
+        for (size_t index = 1; index < expression.sub.size(); ++index)
+            removeTrailingSwitchBreak(expression.sub[index], target);
+    }
 }
 
 static bool cpphdlRecordHasValueFieldsImpl(const CXXRecordDecl* RD, std::unordered_set<const CXXRecordDecl*>& visited)
@@ -682,6 +628,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
 
     if (auto* FS = dyn_cast<ForStmt>(E)) {
         DEBUG_AST1(" ForStmt");
+        breakTargets.emplace_back();
+        on_return popBreakTarget([&](){ breakTargets.pop_back(); });
 
         cpphdl::Expr expr = cpphdl::Expr{"for", cpphdl::Expr::EXPR_FOR};
 
@@ -708,6 +656,8 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
     }
     if (auto* WS = dyn_cast<WhileStmt>(E)) {
         DEBUG_AST1(" WhileStmt");
+        breakTargets.emplace_back();
+        on_return popBreakTarget([&](){ breakTargets.pop_back(); });
 
         cpphdl::Expr expr = cpphdl::Expr{"while", cpphdl::Expr::EXPR_WHILE};
 
@@ -765,87 +715,72 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         return expr;
     }
     if (auto* SS = dyn_cast<SwitchStmt>(E)) {
-        cpphdl::Expr expr = cpphdl::Expr{"switch", cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
-
-        cpphdl::Expr body;
-        bool caseOpen = false;
-        bool caseTerminated = true;
-        for (const Stmt *S : dyn_cast<CompoundStmt>(SS->getBody())->body()) {
-            if (const auto* CS = dyn_cast<CaseStmt>(S)) {
-                if (caseOpen) {
-                    expr.sub.emplace_back(std::move(body));
-                    if (!caseTerminated) {
-                        const SourceManager &SM = ctx->getSourceManager();
-                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
-                    }
+        // SV case does not fall through. Give every entry label the C++ suffix
+        // it can execute, and translate switch breaks to a named-block exit.
+        // Nested loops still own their native break/continue statements.
+        auto name = "__cpphdl_switch_" + std::to_string(++switchSerial);
+        breakTargets.push_back(name);
+        on_return popBreakTarget([&](){ breakTargets.pop_back(); });
+        cpphdl::Expr selection{name, cpphdl::Expr::EXPR_SWITCH, {exprToExpr(SS->getCond())}};
+        struct Arm { std::string label; std::vector<const Stmt*> statements; };
+        std::vector<Arm> arms;
+        auto compound = dyn_cast<CompoundStmt>(SS->getBody());
+        if (!compound) {
+            auto id = ctx->getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error,
+                "cpphdl: switch requires a compound body");
+            ctx->getDiagnostics().Report(SS->getBeginLoc(), id);
+            return {};
+        }
+        for (const Stmt* child : compound->body()) {
+            while (auto label = dyn_cast<SwitchCase>(child)) {
+                std::string text = "default";
+                if (const auto* item = dyn_cast<CaseStmt>(label)) {
+                    text = exprToExpr(item->getLHS()).str();
+                    if (item->getRHS())
+                        text = "[" + text + ":" + exprToExpr(item->getRHS()).str() + "]";
                 }
-
-                body = cpphdl::Expr{exprToExpr(CS->getLHS()).str(), cpphdl::Expr::EXPR_BODY};  // first place we call str() in Clang part (to make a string value)
-                if (CS->getRHS()) {
-                    body.value = std::string("[") + exprToExpr(CS->getLHS()).str() + ":" + exprToExpr(CS->getRHS()).str() + "]";  // first place we call str() in Clang part (to make a string value)
-                }
-                body.sub.emplace_back(exprToExpr(CS->getSubStmt()));
-                caseOpen = true;
-                caseTerminated = statementTerminatesSwitchCase(CS->getSubStmt());
-                if (caseTerminated) {
-                    expr.sub.emplace_back(std::move(body));
-                    caseOpen = false;
-                }
-            } else
-            if (const auto* DS = dyn_cast<DefaultStmt>(S)) {
-                if (caseOpen) {
-                    expr.sub.emplace_back(std::move(body));
-                    if (!caseTerminated) {
-                        const SourceManager &SM = ctx->getSourceManager();
-                        PresumedLoc loc = SM.getPresumedLoc(SS->getSwitchLoc());
-                        std::cerr << "WARNING: case is not terminated by break or return, " << loc.getFilename() << ":" << loc.getLine() << "\n";
-                    }
-                }
-                body = cpphdl::Expr{"default", cpphdl::Expr::EXPR_BODY};
-                // Clang stores an inline default body inside DefaultStmt just as
-                // it does for CaseStmt, so preserve it in the generated case.
-                body.sub.emplace_back(exprToExpr(DS->getSubStmt()));
-                caseOpen = true;
-                caseTerminated = statementTerminatesSwitchCase(DS->getSubStmt());
-                if (caseTerminated) {
-                    expr.sub.emplace_back(std::move(body));
-                    caseOpen = false;
-                }
-            } else
-            if (dyn_cast<BreakStmt>(S)) {
-                if (caseOpen) {
-                    expr.sub.emplace_back(std::move(body));
-                    caseOpen = false;
-                }
-                caseTerminated = true;
-            } else
-            if (dyn_cast<ReturnStmt>(S)) {
-                if (caseOpen) {
-                    body.sub.emplace_back(exprToExpr(S));
-                    expr.sub.emplace_back(std::move(body));
-                    caseOpen = false;
-                }
-                caseTerminated = true;
+                arms.push_back({text, {}});
+                child = label->getSubStmt();
             }
-            else {
-                if (caseOpen) {
-                    body.sub.emplace_back(exprToExpr(S));
-                    caseTerminated = statementTerminatesSwitchCase(S);
+            if (!arms.empty()) arms.back().statements.push_back(child);
+        }
+        for (size_t entry = 0; entry < arms.size(); ++entry) {
+            cpphdl::Expr arm{arms[entry].label, cpphdl::Expr::EXPR_BODY};
+            bool terminated = false;
+            for (size_t index = entry; index < arms.size() && !terminated; ++index) {
+                for (auto child : arms[index].statements) {
+                    arm.sub.push_back(exprToExpr(child));
+                    if (statementTerminatesSwitchCase(child)) { terminated = true; break; }
                 }
             }
+            removeTrailingSwitchBreak(arm, name);
+            selection.sub.push_back(std::move(arm));
         }
-        if (caseOpen) {
-            expr.sub.emplace_back(std::move(body));
-        }
-
-        return expr;
+        bool needsExit = false;
+        selection.traverseIf([&](cpphdl::Expr& expression) {
+            if (expression.type == cpphdl::Expr::EXPR_BREAK && expression.value == name)
+                needsExit = true;
+            return false;
+        });
+        if (!needsExit) selection.value = "switch";
+        cpphdl::Expr result{"switch scope", cpphdl::Expr::EXPR_BODY};
+        if (SS->getInit()) result.sub.push_back(exprToExpr(SS->getInit()));
+        if (SS->getConditionVariableDeclStmt())
+            result.sub.push_back(exprToExpr(SS->getConditionVariableDeclStmt()));
+        result.sub.push_back(std::move(selection));
+        return result;
     }
     if (/*auto* CS =*/ dyn_cast<CaseStmt>(E)) {
         return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};
     }
-    if (/*auto* BS =*/ dyn_cast<BreakStmt>(E)) {
-        return cpphdl::Expr{"", cpphdl::Expr::EXPR_NONE};
+    if (isa<BreakStmt>(E)) {
+        return cpphdl::Expr{breakTargets.empty() ? "" : breakTargets.back(), cpphdl::Expr::EXPR_BREAK};
+    }
+    if (isa<ContinueStmt>(E)) {
+        return cpphdl::Expr{"", cpphdl::Expr::EXPR_CONTINUE};
+    }
+    if (const auto* attributed = dyn_cast<AttributedStmt>(E)) {
+        return exprToExpr(attributed->getSubStmt());
     }
     if (auto* CS = dyn_cast<CompoundStmt>(E)) {
         DEBUG_AST1(" CompoundStmt");
@@ -1874,9 +1809,26 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (!ILE->getNumInits()) {
             return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
         }
+        auto* record = ILE->getType()->getAsCXXRecordDecl();
+        if (record && record->isUnion()) {
+            // A packed union adds no bits or aggregate layer to its active
+            // member. In particular, wrapping a scalar raw value in an SV
+            // pattern instead initializes the first (reversed) union member.
+            return exprToExpr(ILE->getInit(0));
+        }
         auto expr = cpphdl::Expr{"init", cpphdl::Expr::EXPR_INIT};
+        unsigned index = 0;
         for (const Expr *Init : ILE->inits()) {
-            expr.sub.emplace_back(exprToExpr(Init));
+            auto child = exprToExpr(Init);
+            if (record && index < record->getNumBases()
+                && child.type == cpphdl::Expr::EXPR_INIT && child.value == "init") {
+                // exportStruct flattens base-class fields into the derived
+                // type; only those initializer layers must be flattened too.
+                for (auto& field : child.sub) expr.sub.emplace_back(std::move(field));
+            } else {
+                expr.sub.emplace_back(std::move(child));
+            }
+            ++index;
         }
         return expr;
     }

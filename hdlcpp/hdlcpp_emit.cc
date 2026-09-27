@@ -11,6 +11,28 @@
             "} return __cpphdl_slice_out; }())";
     }
 
+    std::string emitPackedBitsRead(const std::string& base, const std::string& high,
+                                   const std::string& low, const std::string& sourceWidth = "")
+    {
+        auto source = base;
+        auto type = mod ? resolveSelectType(expressionStorageType(*mod, base)) : std::string();
+        auto name = stripBalancedOuterParens(base);
+        name = name.substr(0, name.find_first_of("[."));
+        bool constant = !constantType(name).empty();
+        if (mod) {
+            for (const auto& param : mod->params) {
+                if (templateParamName(param) == name) constant = true;
+            }
+        }
+        if (constant || (type.rfind("logic<", 0) != 0 && type.rfind("array<", 0) != 0 &&
+            type.rfind("memory_row<", 0) != 0)) {
+            auto width = sourceWidth.empty() ?
+                "cpphdl::type_width<std::remove_cvref_t<decltype(" + base + ")>>()" : sourceWidth;
+            source = "logic<" + width + ">(" + base + ")";
+        }
+        return "(" + source + ").bits(" + high + "," + low + ")";
+    }
+
     std::string emitSvBitsValue(const std::string& base, const ElementSelectSyntax& select,
                                 const std::string& sourceWidth = "")
     {
@@ -38,7 +60,9 @@
         if (width.empty()) {
             width = std::move(rawWidth);
         }
-        auto dynamicWidth = textMentionsRuntimeIndex(width) || textMentionsRuntimeIndex(select.toString());
+        auto indexed = rangeOp == "+:" || rangeOp == "+" || rangeOp == "-:" || rangeOp == "-";
+        auto dynamicWidth = textMentionsRuntimeIndex(width) ||
+            textMentionsRuntimeIndex(indexed ? r.right->toString() : select.toString());
         for (auto& var : loopVars) {
             if (isIdentifierUsed(width, var)) {
                 dynamicWidth = true;
@@ -74,28 +98,9 @@
                 return shifted;
             }
         }
-        if (rangeOp == "+:" || rangeOp == "+") {
-            auto left = emitIndexExpr(*r.left);
-            auto count = emitIndexExpr(*r.right);
-            if (dynamicWidth) {
-                return "cpphdl::sv_bits_runtime(" + base + ",(" + left + ")+(" + count + ")-1," + left + ")";
-            }
-            return "cpphdl::sv_bits<" + width + ">(" + base + ",(" + left + ")+(" + count + ")-1," + left + ")";
-        }
-        if (rangeOp == "-:" || rangeOp == "-") {
-            auto left = emitIndexExpr(*r.left);
-            auto count = emitIndexExpr(*r.right);
-            if (dynamicWidth) {
-                return "cpphdl::sv_bits_runtime(" + base + "," + left + ",(" + left + ")-(" + count + ")+1)";
-            }
-            return "cpphdl::sv_bits<" + width + ">(" + base + "," + left + ",(" + left + ")-(" + count + ")+1)";
-        }
-        if (dynamicWidth) {
-            return "cpphdl::sv_bits_runtime(" + base + "," + emitIndexExpr(*r.left) + "," +
-                emitIndexExpr(*r.right) + ")";
-        }
-        return "cpphdl::sv_bits<" + width + ">(" + base + "," + emitIndexExpr(*r.left) + "," +
-            emitIndexExpr(*r.right) + ")";
+        auto bounds = indexedRangeBounds(r);
+        auto selected = emitPackedBitsRead(base, bounds.first, bounds.second, effectiveSourceWidth);
+        return dynamicWidth ? "(uint64_t)(" + selected + ")" : "logic<" + width + ">(" + selected + ")";
     }
 
     std::string emitSideEffectRead(const ModuleGen& modRef, const std::string& driver, const std::string& name)
@@ -1144,15 +1149,19 @@
                 while (operand && operand->kind == SyntaxKind::ParenthesizedExpression) {
                     operand = operand->as<ParenthesizedExpressionSyntax>().expression;
                 }
-                if (!operand || operand->kind != SyntaxKind::ElementSelectExpression) {
+                const ElementSelectSyntax* select = nullptr;
+                if (operand && operand->kind == SyntaxKind::ElementSelectExpression) {
+                    select = operand->as<ElementSelectExpressionSyntax>().select;
+                }
+                else if (operand && operand->kind == SyntaxKind::IdentifierSelectName) {
+                    auto& selectors = operand->as<IdentifierSelectNameSyntax>().selectors;
+                    if (!selectors.empty()) select = selectors.back();
+                }
+                if (!select || !select->selector ||
+                    !RangeSelectSyntax::isKind(select->selector->kind)) {
                     return "";
                 }
-                auto& selected = operand->as<ElementSelectExpressionSyntax>();
-                if (!selected.select || !selected.select->selector ||
-                    !RangeSelectSyntax::isKind(selected.select->selector->kind)) {
-                    return "";
-                }
-                auto& r = selected.select->selector->as<RangeSelectSyntax>();
+                auto& r = select->selector->as<RangeSelectSyntax>();
                 auto rangeOp = tok(r.range);
                 if (rangeOp == "+:" || rangeOp == "+" || rangeOp == "-:" || rangeOp == "-") {
                     return emitNumericExpr(*r.right);
@@ -1189,14 +1198,14 @@
             }
             if (op == "&") {
                 auto operand = reductionOperand();
-                if (operand.find("cpphdl::sv_bits_runtime(") != std::string::npos) {
+                if (textMentionsRuntimeIndex(runtimeRangeWidth())) {
                     return reduceAndRuntime(operand);
                 }
                 return "cpphdl::reduce_and(" + operand + ")";
             }
             if (op == "~&") {
                 auto operand = reductionOperand();
-                if (operand.find("cpphdl::sv_bits_runtime(") != std::string::npos) {
+                if (textMentionsRuntimeIndex(runtimeRangeWidth())) {
                     return "!" + reduceAndRuntime(operand);
                 }
                 return "!cpphdl::reduce_and(" + operand + ")";
@@ -1231,8 +1240,15 @@
         if (expr.kind == SyntaxKind::ConditionalExpression) {
             auto& c = expr.as<ConditionalExpressionSyntax>();
             auto width = foldWidth(exprWidth(expr));
-            auto leftWidth = foldWidth(exprWidth(*c.left));
-            auto rightWidth = foldWidth(exprWidth(*c.right));
+            auto branchWidth = [&](const ExpressionSyntax& branch) {
+                auto result = foldWidth(exprWidth(branch));
+                // Indexed selects retain integer casts / masks in their width,
+                // whereas sized SV literals report plain numbers.
+                auto bits = parseConfiguredUint(result);
+                return bits ? std::to_string(*bits) : result;
+            };
+            auto leftWidth = branchWidth(*c.left);
+            auto rightWidth = branchWidth(*c.right);
             if (width == "1") {
                 return emitPredicate(*c.predicate) + " ? " +
                     primitiveCast("bool", truthyExpr(emitExpr(*c.left), exprWidth(*c.left))) + " : " +
@@ -1245,9 +1261,9 @@
             }
             if (isNumber(leftWidth) && isNumber(rightWidth) && targetCastableExpr(*c.left) && targetCastableExpr(*c.right)) {
                 auto targetWidth = std::to_string(std::max(std::stoul(leftWidth), std::stoul(rightWidth)));
-                if (targetWidth != leftWidth || targetWidth != rightWidth) {
-                    return emitConditionalAsType(c, "logic<" + targetWidth + ">");
-                }
+                // Equal SV widths do not imply equal C++ types: a runtime
+                // select returns uint64_t, while a literal can be logic<N>.
+                return emitConditionalAsType(c, "logic<" + targetWidth + ">");
             }
             if (isZeroLiteralExpr(*c.left) && !rightWidth.empty() && targetCastableExpr(*c.right)) {
                 return emitConditionalAsType(c, "logic<" + rightWidth + ">");
@@ -10849,7 +10865,7 @@
             static const std::set<std::string> ignored{
                 "array", "bool", "cat", "cpphdl", "decltype", "false", "logic",
                 "pack_value", "remove_cvref_t", "signed", "static_cast", "std",
-                "sv_bits", "sv_bits_runtime", "true", "type_width", "u",
+                "sv_bits", "true", "type_width", "u",
                 "uint16_t", "uint32_t", "uint64_t", "uint8_t", "unsigned",
                 "unpack_value"
             };

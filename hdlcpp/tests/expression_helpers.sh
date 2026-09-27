@@ -14,6 +14,10 @@ if grep -Fq '[&]' generated/expression_helpers.h; then
     exit 1
 fi
 grep -q 'if constexpr' generated/expression_helpers.h
+if grep -q 'sv_bits_runtime' generated/expression_helpers.h; then
+    echo 'obsolete runtime slice helper in generated C++' >&2
+    exit 1
+fi
 for optimization in -O0 -O2; do
     "$cxx" -std=c++23 "$optimization" -g0 -I"$include_dir" -I. \
         "$source_dir/expression_helpers.cpp" -o run

@@ -40,7 +40,8 @@ def main():
                 raise AssertionError(f'invalid aggregate initializer: {forbidden}\nArtifacts: {work}')
         # Dependencies must precede packages containing nested structs.
         packages = ['Predef', 'EmptyInitPlain', 'EmptyInitBits', 'EmptyInitDefaults',
-                    'EmptyInitNested', 'EmptyInitNestedDefaults']
+                    'EmptyInitNested', 'EmptyInitNestedDefaults', 'EmptyInitDerived',
+                    'EmptyInitExtended', 'EmptyInitUnion']
         run([args.verilator, '--cc', '--exe', '--build', '-j', '1', '-Wno-fatal',
              '--top-module', 'EmptyInit', '--Mdir', work / 'obj',
              '-CFLAGS', '-std=c++23 -DEMPTY_INIT_VERILATOR -I' + str(include),

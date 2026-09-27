@@ -2208,44 +2208,6 @@ static std::string repairSplitSvBitsCall(std::string s)
         }
         return std::string::npos;
     };
-    auto repairOneName = [&](const std::string& name) {
-        for (size_t pos = 0; (pos = s.find(name, pos)) != std::string::npos;) {
-            auto open = s.find('(', pos + name.size());
-            if (open == std::string::npos) {
-                break;
-            }
-            auto close = matchingCloseParen(s, open);
-            if (close == std::string::npos) {
-                pos = open + 1;
-                continue;
-            }
-            auto comma = close + 1;
-            while (comma < s.size() && std::isspace(static_cast<unsigned char>(s[comma]))) {
-                ++comma;
-            }
-            if (comma >= s.size() || s[comma] != ',') {
-                pos = close + 1;
-                continue;
-            }
-            auto argStart = comma + 1;
-            while (argStart < s.size() && std::isspace(static_cast<unsigned char>(s[argStart]))) {
-                ++argStart;
-            }
-            if (argStart >= s.size() || s[argStart] != '(') {
-                pos = close + 1;
-                continue;
-            }
-            auto argEnd = matchingCloseParen(s, argStart);
-            if (argEnd == std::string::npos) {
-                pos = close + 1;
-                continue;
-            }
-            auto third = s.substr(argStart, argEnd - argStart + 1);
-            s.replace(close, argEnd - close + 1, "," + third + ")");
-            pos = close + third.size() + 2;
-        }
-    };
-    repairOneName("cpphdl::sv_bits_runtime");
     for (size_t pos = 0; (pos = s.find("cpphdl::sv_bits<", pos)) != std::string::npos;) {
         auto templ = matchingTemplateCloseLocal(s, pos + std::string("cpphdl::sv_bits").size());
         if (templ == std::string::npos) {
@@ -2963,7 +2925,7 @@ static std::string postProcessCppLineImpl(std::string line)
         }
     }
 	    line = updateCpphdlArraySyntax(std::move(line));
-	    if (line.find(".data.bits(") == std::string::npos) {
+	    if (line.find(".bits(") == std::string::npos) {
 	        line = repairDottedLogicWidthCasts(std::move(line));
 	    }
 	    line = repairNumericCastSplitMemberAccess(std::move(line));
@@ -3716,7 +3678,7 @@ static std::string postProcessCppLineImpl(std::string line)
 	    auto lhs = line.substr(0, eq + 1);
 	    auto rhs = line.substr(eq + 1);
 	    auto lhsTrim = trim(lhs.substr(0, lhs.size() - 1));
-	    const bool packedStorageBitsAssign = lhsTrim.find(".data.bits(") != std::string::npos;
+	    const bool packedStorageBitsAssign = lhsTrim.find(".bits(") != std::string::npos;
 
 	    auto unwrapTypedTargetConstructors = [&](std::string text) {
         auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";

@@ -9,7 +9,7 @@ long _system_clock = 0;
 struct Harness {
     EmptyInit model;
     logic<16> seed;
-    logic<4> mode;
+    logic<5> mode;
     void _assign() {
         model.seed_in = _ASSIGN(seed);
         model.mode_in = _ASSIGN(mode);
@@ -25,6 +25,12 @@ static uint64_t expected(uint16_t seed, unsigned mode) {
     case 9: return 0xa7864235;
     case 10: return 0x864200 | (seed & 0xff);
     case 12: return 0x5a000000;
+    case 16: return 0xa5a50000u | seed;
+    case 17: return (uint64_t(0x5a5a) << 24) | (uint64_t(seed) << 8) | (seed & 0xff);
+    case 18: return 0x12340000u | seed;
+    case 19: return 0x56780000u | seed;
+    case 20: return uint64_t(0x55aa) << 24;
+    case 21: return 0;
     default: return (uint64_t(seed) << 8) | (seed & 0xff);
     }
 }
@@ -40,7 +46,7 @@ int main() {
     // Exhaust the input and alternate populated/cleared aggregates. The
     // independent field-value oracle does not depend on C++ struct padding.
     for (unsigned seed = 0; seed < 65536; ++seed) {
-        for (unsigned mode = 0; mode < 16; ++mode) {
+        for (unsigned mode = 0; mode < 22; ++mode) {
             h.seed = seed;
             h.mode = mode;
             ++_system_clock;
@@ -63,5 +69,5 @@ int main() {
 #endif
         }
     }
-    std::puts("empty/partial/nested aggregate initialization: 1048576 checks passed");
+    std::puts("empty/partial/nested/union/inherited initialization: 1441792 checks passed");
 }

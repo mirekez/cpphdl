@@ -40,7 +40,11 @@ private:
         for (i = 0; i < VALUES_IN_WORD; ++i) {
             bf16_sum_a_comb[i].raw = (uint16_t)seed_in() + i * 7u;
         }
-        data_comb = bf16_sum_a_comb[(uint8_t)index_in() % VALUES_IN_WORD].raw;
+        // Verilator 5.034 crashes on a 64-bit remainder used directly as a
+        // packed-struct-array index (V3Expand: extending larger thing into
+        // smaller). Narrow only the completed index: the unsigned remainder
+        // cannot exceed the 6-bit input, regardless of VALUES_IN_WORD.
+        data_comb = bf16_sum_a_comb[(uint8_t)((uint8_t)index_in() % VALUES_IN_WORD)].raw;
         return data_comb;
     }
 

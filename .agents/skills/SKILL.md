@@ -169,3 +169,7 @@ Use these rules when changing template handling in the cpphdl converter.
 - Template `Module` classes keep numeric template parameters as SystemVerilog module parameters. Numeric parameters should not be added to the generated module name, and method/member expressions should preserve the symbolic parameter where possible.
 - Template `Module` classes use type and textual/string-like template parameters as specialization identity. These parameters are added to the generated module name and select a separate SV module for each type/text combination.
 - When a fixed type specialization contributes static `constexpr` values used by a module, resolve those fixed type constexprs to concrete values. Numeric module parameters remain symbolic.
+
+# CppHDL conversion development rules
+
+- There shouldnt be code worsening in SV generation just because cpphdl is unsure in something. SV code shouldnt make cast where it didnt in C++ and it is not 100% necessary (due to differences between C++ and SystemVerilog casting/assignments)

@@ -17,6 +17,11 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME cpp_graph_wide_slice COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/wide-slice")
+    set_tests_properties(cpp_graph_wide_slice PROPERTIES TIMEOUT 480)
     add_test(NAME code_slice_widths_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceWidthsChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -57,6 +62,11 @@ if(Python3_Interpreter_FOUND)
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
     set_tests_properties(interface_hierarchy_imports_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_zero_concat COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/zero-concat")
+    set_tests_properties(cpp_graph_zero_concat PROPERTIES TIMEOUT 240)
     foreach(flow cpp fallback)
         add_test(NAME cast_${flow} COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
@@ -64,7 +74,31 @@ if(Python3_Interpreter_FOUND)
             --work "${CMAKE_CURRENT_BINARY_DIR}/casts" --flow ${flow})
         set_tests_properties(cast_${flow} PROPERTIES TIMEOUT 240)
     endforeach()
+    foreach(flow cpp graph effects)
+        # The host-effect oracle wraps libc random() using the ELF linker.
+        if(flow STREQUAL "effects" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            continue()
+        endif()
+        add_test(NAME switch_control_${flow} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control" --flow ${flow})
+        set_tests_properties(switch_control_${flow} PROPERTIES TIMEOUT 240)
+    endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME cpp_graph_memory_scaling COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphMemoryChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph-memory")
+        set_tests_properties(cpp_graph_memory_scaling PROPERTIES TIMEOUT 180
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
     if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_xperm_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/XpermChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/xperm-graph")
+        set_tests_properties(hdlcpp_xperm_graph PROPERTIES TIMEOUT 240)
         add_test(NAME native_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeGraphChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
@@ -85,6 +119,12 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME wide_slice_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wide-slice")
+        set_tests_properties(wide_slice_verilator PROPERTIES TIMEOUT 480)
         add_test(NAME code_slice_widths_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceWidthsChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -97,6 +137,12 @@ if(Python3_Interpreter_FOUND)
             --verilator "${CPPHDL_NETLIST_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/port-binding")
         set_tests_properties(port_binding_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME code_slice_casts_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
+        set_tests_properties(code_slice_casts_verilator PROPERTIES TIMEOUT 240)
         add_test(NAME structs_sizeof_imports_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/structs/SizeofImportsChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -126,13 +172,15 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
             --verilator "${CPPHDL_NETLIST_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
-        add_test(NAME code_slice_casts_verilator COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
-            --verilator "${CPPHDL_NETLIST_VERILATOR}"
-            --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
-        set_tests_properties(code_slice_casts_verilator PROPERTIES TIMEOUT 240)
         set_tests_properties(interface_hierarchy_imports_verilator PROPERTIES TIMEOUT 240)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME cpp_graph_zero_repeat_verilator COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/zero-repeat")
+            set_tests_properties(cpp_graph_zero_repeat_verilator PROPERTIES TIMEOUT 240)
+        endif()
         add_test(NAME cast_parameter_widths COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -145,6 +193,12 @@ if(Python3_Interpreter_FOUND)
             --work "${CMAKE_CURRENT_BINARY_DIR}/casts" --flow verilator
             --verilator "${CPPHDL_NETLIST_VERILATOR}")
         set_tests_properties(cast_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME switch_control_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control" --flow verilator
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+        set_tests_properties(switch_control_verilator PROPERTIES TIMEOUT 240)
         add_test(NAME netlist_converter COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/netlist/ConverterChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --source-root "${CMAKE_SOURCE_DIR}"
@@ -210,6 +264,12 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent CppHDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# These fixtures are built by SwitchControlChecks.py with a separate runner
+# and flow-specific definitions, not as standalone inline-test executables.
+list(REMOVE_ITEM TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControl.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlRun.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchEffects.cpp")
 # This source is an integration driver for two optimizer-generated trees.
 # Its custom target is declared below instead of using the converter loop.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeL1\\.cpp$")
@@ -240,6 +300,7 @@ foreach(src ${TEST_SOURCES})
        rel_path STREQUAL "datatypes/PackedWriteback.cpp" OR
        rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
        rel_path STREQUAL "datatypes/PointerPorts.cpp" OR
+       rel_path STREQUAL "datatypes/LogicConversions.cpp" OR
        rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
         target_compile_options(${target_name} PRIVATE "-std=c++17")
     endif()

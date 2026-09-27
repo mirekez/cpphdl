@@ -40,6 +40,57 @@ inline constexpr bool is_logic_v = is_logic<std::remove_cv_t<std::remove_referen
 namespace detail
 {
 
+// Select the available conversions once per width. Per-use SFINAE on seven
+// conversion operators made Clang retain hundreds of megabytes of temporary
+// substitution ASTs for a small repeated word-level circuit. Keep the operators
+// templated: non-template narrow conversions change built-in overload resolution.
+template<size_t Width, typename Derived>
+struct logic_conversions {};
+
+template<typename Derived>
+struct logic_conversions<8, Derived> {
+    template<typename = void>
+    constexpr operator unsigned char() const {
+        return static_cast<unsigned char>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed char() const {
+        return static_cast<signed char>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<16, Derived> {
+    template<typename = void>
+    constexpr operator unsigned short() const {
+        return static_cast<unsigned short>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed short() const {
+        return static_cast<signed short>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<32, Derived> {
+    template<typename = void>
+    constexpr operator unsigned int() const {
+        return static_cast<unsigned int>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed int() const {
+        return static_cast<signed int>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<64, Derived> {
+    template<typename = void>
+    constexpr operator signed long() const {
+        return static_cast<signed long>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
 template<typename T, typename = void>
 struct has_pack_method : std::false_type {};
 
@@ -136,7 +187,7 @@ __attribute__((always_inline)) inline void store_writeback_word(uint8_t* destina
 }
 
 template<size_t WIDTH>
-struct logic : public bitops<logic<WIDTH>>
+struct logic : public bitops<logic<WIDTH>>, public detail::logic_conversions<WIDTH, logic<WIDTH>>
 {
     constexpr static size_t SIZE = (WIDTH+7)/8;
     uint8_t bytes[SIZE];
@@ -429,48 +480,6 @@ struct logic : public bitops<logic<WIDTH>>
     constexpr operator uint64_t() const
     {
         return to_uint64_constexpr();
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator unsigned char() const
-    {
-        return static_cast<unsigned char>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator unsigned short() const
-    {
-        return static_cast<unsigned short>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator unsigned int() const
-    {
-        return static_cast<unsigned int>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator signed char() const
-    {
-        return static_cast<signed char>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator signed short() const
-    {
-        return static_cast<signed short>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator signed int() const
-    {
-        return static_cast<signed int>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 64, int> = 0>
-    constexpr operator signed long() const
-    {
-        return static_cast<signed long>(to_uint64_constexpr());
     }
 
     explicit constexpr operator bool() const

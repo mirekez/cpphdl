@@ -165,14 +165,16 @@ private:
 
     // CPU/L1 completions capture request identity and data together so wait is
     // released only for the request that produced this registered response.
+    // Keep slot arithmetic at 32 bits: valid CPU indices are 0..7 (slots
+    // 8..15), and Verilator 5.034 fails on 64-bit packed-struct-array indices.
     void send_cpu_response(logic<256> data)
     {
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].valid = true;
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].read = req_reg.read;
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].write = req_reg.write;
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].data_port = req_reg.port;
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].addr = req_reg.addr;
-        response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = data;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].valid = true;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].read = req_reg.read;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].write = req_reg.write;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].data_port = req_reg.port;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].addr = req_reg.addr;
+        response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].r.data = data;
     }
 
     // Produce conventional synchronous-RAM controls outside the clocked FSM
@@ -399,11 +401,11 @@ public:
         logic<256> completion_data;
         active_request = active_request_comb_func();
         active_request_completed = !active_request.request.from_slave &&
-            response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].valid &&
-            response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].data_port == active_request.request.port &&
-            response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].read == active_request.request.read &&
-            response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].write == active_request.request.write &&
-            response_reg[CPU_RESPONSE_BASE + active_request.request.cpu_index].addr == active_request.request.addr;
+            response_reg[CPU_RESPONSE_BASE + (uint32_t)active_request.request.cpu_index].valid &&
+            response_reg[CPU_RESPONSE_BASE + (uint32_t)active_request.request.cpu_index].data_port == active_request.request.port &&
+            response_reg[CPU_RESPONSE_BASE + (uint32_t)active_request.request.cpu_index].read == active_request.request.read &&
+            response_reg[CPU_RESPONSE_BASE + (uint32_t)active_request.request.cpu_index].write == active_request.request.write &&
+            response_reg[CPU_RESPONSE_BASE + (uint32_t)active_request.request.cpu_index].addr == active_request.request.addr;
         request_geometry = request_geometry_comb_func();
         evict_candidate = evict_candidate_comb_func();
         hit_lookup = hit_lookup_comb_func();
@@ -505,12 +507,12 @@ public:
         else if (state_reg == ST_IDLE) {
             if (request_pipe_valid_reg) {
                 request_pipe_valid_reg._next = false;
-                if (!(response_reg[CPU_RESPONSE_BASE + request_pipe_reg.request.cpu_index].valid &&
+                if (!(response_reg[CPU_RESPONSE_BASE + (uint32_t)request_pipe_reg.request.cpu_index].valid &&
                       !request_pipe_reg.request.from_slave &&
-                      response_reg[CPU_RESPONSE_BASE + request_pipe_reg.request.cpu_index].data_port == request_pipe_reg.request.port &&
-                      response_reg[CPU_RESPONSE_BASE + request_pipe_reg.request.cpu_index].read == request_pipe_reg.request.read &&
-                      response_reg[CPU_RESPONSE_BASE + request_pipe_reg.request.cpu_index].write == request_pipe_reg.request.write &&
-                      response_reg[CPU_RESPONSE_BASE + request_pipe_reg.request.cpu_index].addr == request_pipe_reg.request.addr)) {
+                      response_reg[CPU_RESPONSE_BASE + (uint32_t)request_pipe_reg.request.cpu_index].data_port == request_pipe_reg.request.port &&
+                      response_reg[CPU_RESPONSE_BASE + (uint32_t)request_pipe_reg.request.cpu_index].read == request_pipe_reg.request.read &&
+                      response_reg[CPU_RESPONSE_BASE + (uint32_t)request_pipe_reg.request.cpu_index].write == request_pipe_reg.request.write &&
+                      response_reg[CPU_RESPONSE_BASE + (uint32_t)request_pipe_reg.request.cpu_index].addr == request_pipe_reg.request.addr)) {
                 if (trace_active_line) {
                     std::print("trace-l2 cycle={} cpu={} accept addr={:08x} rd={} wr={} wdata={:08x} mask={:02x} slave={} dport={} victim={}\n",
                         _system_clock, (uint32_t)request_pipe_reg.request.cpu_index,
@@ -758,7 +760,7 @@ public:
                 if (req_reg.read && fill_beat_reg == request_geometry.beat) {
                     // Preserve an early requested beat in the unified response
                     // stage until the complete cache line has been installed.
-                    response_reg._next[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data = refill_data_reg;
+                    response_reg._next[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].r.data = refill_data_reg;
                 }
                 if (fill_beat_reg == LINE_BEATS - 1) {
                     // Final fill beat commits the line; a spillover store then re-enters lookup for the next line.
@@ -780,7 +782,7 @@ public:
                                         send_slave_read_response(i, req_reg.slave_id,
                                             (fill_beat_reg == request_geometry.beat) ?
                                                 refill_data_reg :
-                                                response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data);
+                                                response_reg[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].r.data);
                                     }
                                     if (req_reg.write) {
                                         send_slave_write_response(i, req_reg.slave_id);
@@ -793,7 +795,7 @@ public:
                             completion_data = req_reg.read ?
                                 ((fill_beat_reg == request_geometry.beat) ?
                                     refill_data_reg :
-                                    response_reg[CPU_RESPONSE_BASE + req_reg.cpu_index].r.data) : logic<256>(0);
+                                    response_reg[CPU_RESPONSE_BASE + (uint32_t)req_reg.cpu_index].r.data) : logic<256>(0);
                             send_cpu_response(completion_data);
                             state_reg._next = ST_IDLE;
                         }

@@ -1887,6 +1887,11 @@
             if (width.empty() && !rawWidth.empty()) {
                 width = rawWidth;
             }
+            // A statically empty replication contributes no concatenation bits.
+            // Keep symbolic widths: parameter overrides can make them nonzero.
+            if (width == "0") {
+                continue;
+            }
             // Imported package functions may be declared in a separately converted source.
             // Preserve their generated C++ result type instead of borrowing a cast width
             // from an argument or defaulting the concatenation operand to 64 bits.
@@ -2098,6 +2103,9 @@
             auto width = foldWidth(rawWidth);
             if (width.empty() && !rawWidth.empty()) {
                 width = rawWidth;
+            }
+            if (width == "0") {
+                continue;
             }
             if (e->kind == SyntaxKind::InvocationExpression) {
                 auto& invocation = e->as<InvocationExpressionSyntax>();
@@ -3117,7 +3125,7 @@
         }
         auto first = "((" + flat + ") * (uint64_t)(" + width + "))";
         auto last = "(" + first + " + (uint64_t)(" + width + ") - 1)";
-        return PackedArrayElementWrite{baseExpr + ".data.bits(" + last + "," + first + ")", leafType};
+        return PackedArrayElementWrite{baseExpr + ".bits(" + last + "," + first + ")", leafType};
     }
 
     std::optional<PackedArrayFieldWrite> packedArrayFieldWriteTarget(const ExpressionSyntax& lhsExpr, bool nextValue)
@@ -4978,7 +4986,7 @@
             }
             auto runtimeWidth = runtimeRangeSelectWidth(*last);
             if (!runtimeWidth.empty()) {
-                return "(uint64_t)(cpphdl::sv_bits_runtime(" + s + "," + bounds.first + "," + bounds.second + "))";
+                return "(uint64_t)(" + emitPackedBitsRead(s, bounds.first, bounds.second, resolvedTypeWidth(currentType)) + ")";
             }
             if (currentType.find("decltype(") != std::string::npos) {
                 return "(uint64_t)(logic<" + width + ">(logic<cpphdl::type_width<" + currentType + ">()>(" +
@@ -5062,8 +5070,7 @@
             return "(uint64_t)(" + shifted + ")";
         }
         if (!runtimeRangeSelectWidth(*e.select).empty()) {
-            return "(uint64_t)(cpphdl::sv_bits_runtime(" + emitExpr(*e.left) + "," +
-                   bounds.first + "," + bounds.second + "))";
+            return "(uint64_t)(" + emitPackedBitsRead(emitExpr(*e.left), bounds.first, bounds.second, sourceWidth) + ")";
         }
         return "(uint64_t)(logic<" + width + ">(" + emitExpr(*e.left) + ".bits(" + bounds.first + "," + bounds.second + ")))";
     }

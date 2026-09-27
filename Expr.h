@@ -44,6 +44,8 @@ struct Expr
         EXPR_WHILE,
         EXPR_IF,
         EXPR_SWITCH,
+        EXPR_BREAK,
+        EXPR_CONTINUE,
         EXPR_BODY,
         EXPR_UNKNOWN
     } type = EXPR_NONE;
@@ -137,6 +139,8 @@ struct Expr
             case EXPR_WHILE: str << "EXPR_WHILE"; break;
             case EXPR_IF: str << "EXPR_IF"; break;
             case EXPR_SWITCH: str << "EXPR_SWITCH"; break;
+            case EXPR_BREAK: str << "EXPR_BREAK"; break;
+            case EXPR_CONTINUE: str << "EXPR_CONTINUE"; break;
             case EXPR_BODY: str << "EXPR_BODY"; break;
             case EXPR_UNKNOWN: str << "EXPR_UNKNOWN"; break;
             default: str << "EXPR_???"; break;

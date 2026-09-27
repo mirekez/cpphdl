@@ -1398,12 +1398,10 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "runtime_range_select", sv, "");
-    expectContains(h, "cpphdl::sv_bits_runtime");
+    expectContains(h, ".bits(");
+    expectNotContains(h, "sv_bits_runtime");
     expectNotContains(h, ",(uint64_t))(");
-    expectNotContains(h, "sv_bits_runtime(in_i_in(),(uint64_t))");
-    expectNotContains(h, "sv_bits_runtime(in_i_in(),(uint64_t)(N) -");
     expectNotContains(h, "sv_bits<((uint64_t)((uint64_t)(i)))+1>");
-    expectNotContains(h, "reduce_and(cpphdl::sv_bits_runtime");
 }
 
 static void testRuntimeRangeConcatUsesRuntimeOperandWidths(const char* argv0)
@@ -1425,7 +1423,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "runtime_range_concat", sv, "");
-    expectContains(h, "cpphdl::sv_bits_runtime");
+    expectContains(h, ".bits(");
+    expectNotContains(h, "sv_bits_runtime");
     expectContains(h, "__cpphdl_cat_part_width");
     expectNotContains(h, "__cpphdl_cat_append");
     expectNotContains(h, "cpphdl::sv_bits<((uint64_t)(Levels)");
@@ -1509,7 +1508,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "static_parameterized_range_select", sv, "");
-    expectContains(h, "cpphdl::sv_bits<");
+    expectContains(h, ".bits(");
     expectNotContains(h, ">)(in_i_in()");
 }
 
@@ -8506,9 +8505,9 @@ endmodule
 
     auto h = convertModule(argv0, "typedef_array_indexed_part_select", sv, "");
     expectContains(h, "void merge_data(word_buf_t& ret_data");
-    expectContains(h, "cpphdl::sv_bits_runtime(new_data[");
-    expectContains(h, "cpphdl::sv_bits_runtime(old_data[");
-    expectNotContains(h, "logic<8>(logic<1>(cpphdl::sv_bits_runtime");
+    expectContains(h, "new_data[");
+    expectContains(h, "old_data[");
+    expectNotContains(h, "sv_bits_runtime");
     expectNotContains(h, "logic<((uint64_t)(8) & ((1ull << 32) - 1ull))>(logic<1>(");
 }
 
