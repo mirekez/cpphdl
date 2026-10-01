@@ -10,6 +10,7 @@ import shutil
 import shlex
 import subprocess
 import sys
+from graph_clocks import add_clock_arguments, clock_arguments
 
 
 def main(arguments=None):
@@ -26,7 +27,11 @@ def main(arguments=None):
     parser.add_argument('--top', help='root variable in ordinary CppHDL C++ (no hdlcpp graph mode)')
     parser.add_argument('--frontend-flag', action='append', default=[], help='C++ parsing flag; use --frontend-flag=-I/path')
     parser.add_argument('source', type=Path)
+    add_clock_arguments(parser)
     args = parser.parse_args(arguments)
+    clocks = clock_arguments(parser, args)
+    if clocks and not args.top:
+        parser.error('clock declarations require --top for ordinary CppHDL lowering')
     output = args.output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error('output must be a new or empty directory')
@@ -40,7 +45,7 @@ def main(arguments=None):
             raise ValueError('C++ compiler not found')
         runner = args.runner.resolve(strict=True) if args.runner else None
         include = Path(__file__).resolve().parent.parent / 'include'
-        inputs = [source, include / 'cpphdl_graph.h'] + ([runner] if runner else [])
+        inputs = [source, include / 'cpphdl_graph.h', include / 'cpphdl_graph_native.h'] + ([runner] if runner else [])
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         manifest['inputs'] = {str(path): digest(path) for path in inputs}
         output.mkdir(parents=True, exist_ok=True)
@@ -70,7 +75,7 @@ def main(arguments=None):
                                         *[(output / path).resolve(strict=True) for path in headers]]))
             manifest['inputs'] = {str(path): digest(path) for path in inputs}
             run([str(Path(args.cpphdl).resolve()), '--lower-cpp-graph', str(source),
-                 str(graph_source), args.top, '--', '-std=c++23', '-I' + str(include),
+                 str(graph_source), args.top, *clocks, '--', '-std=c++23', '-I' + str(include),
                  *args.frontend_flag], 'cpp-to-graph')
         run([compiler, '-std=c++23', '-O1', '-I' + str(include), str(graph_source),
              '-o', str(output / 'lower')], 'build-graph-compiler')

@@ -40,7 +40,7 @@ class Lowering {
         Value memoryAddress;
     };
     using Locals = std::map<const ValueDecl*, Item>;
-    struct Closure { const LambdaExpr* expression; Item object; Locals locals; };
+    struct Closure { const LambdaExpr* expression; Item object; Locals locals; std::string scope; };
     // Branch snapshots share immutable bit vectors. Copying every wide bus at
     // each nested condition makes frontend memory grow with call depth.
     struct Environment : std::map<std::string, std::shared_ptr<const Value>> {
@@ -74,6 +74,26 @@ class Lowering {
     bool committing = false;
     bool working = false;
     bool concatenating = false;
+    int activeProcess = -1;
+    bool resetting = false;
+    std::map<std::string, int> resetOwners;
+    std::map<std::string, Value> resetValues;
+    std::map<size_t, int> memoryOwners, memoryCommits, pendingReaders;
+    std::set<int> asyncProcesses;
+    std::map<std::string, int> nextOwners, commitOwners;
+    std::map<std::string, std::set<int>> nextReaders;
+
+    std::string processMethod(int process, bool strobe = false) const {
+        return std::string(strobe ? "_strobe_" : "_work_") + (process % 2 ? "neg_" : "") + graph.clocks.at(process / 2).name;
+    }
+    std::string resetMethod(int process) const {
+        return std::string(process % 2 ? "_reset_neg_" : "_reset_pos_") + graph.clocks.at(process / 2).name;
+    }
+    void claim(std::map<std::string, int>& owners, const std::string& key) {
+        auto [entry, fresh] = owners.emplace(key, activeProcess);
+        if (!fresh && entry->second != activeProcess)
+            fail("multiple clock/edge owners for " + key + ": " + processMethod(entry->second) + " and " + processMethod(activeProcess));
+    }
     std::vector<std::pair<Value, bool>> effectPath;
     Value previousEffect;
     unsigned effectCount = 0;
@@ -83,6 +103,7 @@ class Lowering {
     std::set<size_t> appliedMemories;
     std::set<std::string> memoryGetters;
     std::set<const CXXRecordDecl*> validatedModules;
+    std::set<std::string> annotatedInstances;
     struct NetWrites { std::string key; std::vector<unsigned> counts; };
     std::vector<NetWrites> netWrites;
     std::vector<std::string> producerStorage;
@@ -170,6 +191,7 @@ class Lowering {
     void validateModule(QualType type) {
         auto record = clean(type)->getAsCXXRecordDecl();
         if (!validatedModules.insert(record).second) return;
+        for (const auto& base : record->bases()) if (module(base.getType())) validateModule(base.getType());
         for (auto constructor : record->ctors()) if (constructor->isUserProvided() && constructor->isDefaultConstructor()) {
             // We check constructors, but never execute them. Instantiating an
             // empty template constructor also instantiates every child object's
@@ -186,10 +208,14 @@ class Lowering {
         }
         for (auto candidate : record->methods()) {
             auto name = candidate->getNameAsString();
-            if (name == "_work_neg" || name == "_strobe_neg") {
+            if (name.starts_with("_work_") || name.starts_with("_strobe_") || name.starts_with("_reset_")) {
+                bool declared = false;
+                for (size_t process = 0; process < graph.clocks.size() * 2; ++process)
+                    declared |= name == processMethod(process) || name == processMethod(process, true) || name == resetMethod(process);
+                if (declared) continue;
                 instantiate(candidate);
                 auto body = dyn_cast<CompoundStmt>(candidate->getBody());
-                if (!body || !body->body_empty()) fail("negative-phase C++ lifecycle unsupported", candidate->getBody());
+                if (!body || !body->body_empty()) fail("named-clock, reset-event or negative-phase C++ lifecycle unsupported", candidate->getBody());
             }
         }
     }
@@ -264,13 +290,19 @@ class Lowering {
         return enabled;
     }
     Item memoryRow(Item base, Item index, QualType type, bool pending) {
+        if (resetting) fail("asynchronous reset cannot access memory");
         if (structural || committing) fail("C++ memory access outside evaluation");
         if (pending && !working) fail("pending C++ memory read requires a work transaction");
         auto identity = memoryId(base);
         auto address = resize(read(index), 64);
         auto count = graph.memories[identity].width;
         auto enabled = executionGuard();
-        graph.memoryAccesses.push_back({identity, address, enabled, working});
+        graph.memoryAccesses.push_back({identity, address, enabled, working,
+            working && activeProcess >= 0 ? activeProcess / 2 : -1, working && activeProcess >= 0 && bool(activeProcess % 2)});
+        if (pending && activeProcess >= 0) {
+            auto [entry, fresh] = pendingReaders.emplace(identity, activeProcess);
+            if (!fresh && entry->second != activeProcess) fail("cross-clock pending memory read");
+        }
         for (const auto& getter : activeGetters) memoryGetters.insert(getter);
         Value bits;
         for (unsigned offset = 0; offset < count; offset += 64) {
@@ -280,7 +312,8 @@ class Lowering {
         }
         // pending() forwards queued whole rows in program order; ordinary
         // operator[] reads always see committed storage, even after a write.
-        if (pending) for (const auto& write : graph.memoryWrites) if (write.memory == identity) {
+        if (pending) for (const auto& write : graph.memoryWrites) if (write.memory == identity &&
+            (activeProcess < 0 || (write.clock == activeProcess / 2 && write.falling == bool(activeProcess % 2)))) {
             auto match = graph.binary("and", write.enabled, graph.binary("eq", address, write.address, 1), 1);
             bits = graph.mux(match, write.data, bits);
         }
@@ -293,7 +326,12 @@ class Lowering {
         if (!working || structural || committing || !producerStorage.empty())
             fail("C++ memory write requires a work transaction outside combinational getters");
         if (!row.memory) fail("C++ memory row lost its destination");
-        graph.memoryWrites.push_back({*row.memory, row.memoryAddress, read(row), executionGuard()});
+        if (activeProcess >= 0) {
+            auto [entry, fresh] = memoryOwners.emplace(*row.memory, activeProcess);
+            if (!fresh && entry->second != activeProcess) fail("multiple clock/edge writers for memory");
+        }
+        graph.memoryWrites.push_back({*row.memory, row.memoryAddress, read(row), executionGuard(),
+            activeProcess < 0 ? -1 : activeProcess / 2, activeProcess >= 0 && bool(activeProcess % 2)});
         ++effectCount;
     }
     uint64_t packedOffset(QualType type, const FieldDecl* field) {
@@ -366,6 +404,12 @@ class Lowering {
         return originals.at(item.key);
     }
     Value read(Item item) {
+        if (activeProcess >= 0 && item.key.ends_with("._next")) {
+            auto key = item.key.substr(0, item.key.size() - 6);
+            nextReaders[key].insert(activeProcess);
+            if (nextOwners.count(key) && nextOwners.at(key) != activeProcess)
+                fail("cross-clock next-state read: " + key);
+        }
         if (item.closure) return read(invokeClosure(item.closure));
         if (!item.rangeMask.empty()) {
             auto mask = std::move(item.rangeMask); item.rangeMask.clear();
@@ -442,6 +486,10 @@ class Lowering {
             return;
         }
         if (target.key.empty()) fail("assignment to non-addressable C++ value");
+        if (activeProcess >= 0 && target.key.ends_with("._next")) {
+            if (!working) fail("next-state assignment outside clock work method");
+            claim(resetting ? resetOwners : nextOwners, target.key.substr(0, target.key.size() - 6));
+        }
         if (!target.rangeMask.empty()) {
             for (const auto& net : netWrites) if (net.key == target.key) fail("dynamic destination in concurrent C++ net");
             auto mask = std::move(target.rangeMask); target.rangeMask.clear();
@@ -458,6 +506,7 @@ class Lowering {
             fail("direct current-state C++ mutation unsupported: " + target.key);
         if (moduleFields.count(target.key)) {
             if (working && producerStorage.empty()) {
+                if (!graph.clocks.empty()) fail("multiclock persistent state must use cpphdl::reg: " + target.key);
                 if (combinationalWrites.count(target.key)) fail("mixed work/combinational C++ writes: " + target.key);
                 if (moduleFields.at(target.key)->hasInClassInitializer()) fail("initialized C++ work storage unsupported: " + target.key);
                 if (!blockingStates.count(target.key)) {
@@ -612,7 +661,8 @@ class Lowering {
         bool sign = !left.type.isNull() && clean(left.type)->isSignedIntegerOrEnumerationType();
         if (sign && operation == "lt") operation = "slt";
         if (sign && operation == "shr") operation = "sar";
-        if (sign && (operation == "div" || operation == "mod")) fail("signed dynamic division unsupported");
+        if (sign && operation == "div") operation = "sdiv";
+        if (sign && operation == "mod") operation = "smod";
         auto result = graph.binary(operation, lhs, rhs, count);
         if (invert) result = graph.unary("not", result);
         return value(result, type);
@@ -633,6 +683,7 @@ class Lowering {
     }
     Item invokeClosure(std::shared_ptr<Closure> closure, const FunctionDecl* function = nullptr,
                        const std::vector<Item>& arguments = {}) {
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope, closure->scope);
         if (!function) function = closure->expression->getCallOperator();
         instantiate(function);
         if (stack.size() > 256) fail("C++ call nesting limit");
@@ -697,9 +748,25 @@ class Lowering {
         getterReads.at(activeGetters.back())->producers.insert(std::move(reads));
     }
     Item invoke(const FunctionDecl* function, Item receiver, std::vector<Item> arguments) {
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope, module(receiver.type) ? receiver.key : graph.currentScope);
+        if (module(receiver.type) && annotatedInstances.insert(receiver.key).second) {
+            auto record = clean(receiver.type)->getAsCXXRecordDecl();
+            for (const auto* attribute : record->specific_attrs<AnnotateAttr>()) {
+                auto text = attribute->getAnnotation().str();
+                const std::string prefix = "CPPHDL_RETIMING=";
+                if (text.starts_with(prefix)) graph.attributes.push_back({receiver.key, "retiming", text.substr(prefix.size())});
+                const std::string boxPrefix = "CPPHDL_KEEP_BOX=";
+                if (text.starts_with(boxPrefix)) graph.attributes.push_back({receiver.key, "keep_box", text.substr(boxPrefix.size())});
+            }
+        }
         if (module(receiver.type)) validateModule(receiver.type);
         instantiate(function);
         auto name = function->getNameAsString();
+        if (activeProcess >= 0)
+            for (size_t process = 0; process < graph.clocks.size() * 2; ++process)
+                if ((name == processMethod(process) || name == processMethod(process, true) || name == resetMethod(process)) && int(process) != activeProcess)
+                    fail("cross-clock lifecycle call: " + name);
+        if (name.starts_with("_reset_") && !resetting) fail("reset handler called outside reset phase");
         std::string key = receiver.key + "::" + name;
         auto returnStorage = function->getReturnType()->isReferenceType() ? returnedField(function) : nullptr;
         bool cache = isa<CXXMethodDecl>(function) && module(receiver.type) && function->param_empty() && returnStorage;
@@ -815,7 +882,8 @@ class Lowering {
                     auto& item = captured.at(capture.getCapturedVar());
                     item = value(read(item), item.type);
                 }
-            Item result; result.closure = std::make_shared<Closure>(Closure{lambda, object, std::move(captured)}); return result;
+            Item result; result.closure = std::make_shared<Closure>(Closure{lambda, object, std::move(captured),
+                !object.type.isNull() && module(object.type) ? object.key : graph.currentScope}); return result;
         }
         if (isa<CXXThisExpr>(expression)) return object;
         if (expression->getType()->isIntegralOrEnumerationType())
@@ -993,7 +1061,9 @@ class Lowering {
                 return memoryRow(receiver, arguments[0], call->getType(), true);
             if (name == "apply" && arguments.empty()) {
                 if (!committing) fail("C++ memory apply requires the strobe phase", call);
-                if (!appliedMemories.insert(memoryId(receiver)).second) fail("repeated C++ memory apply unsupported", call);
+                auto identity = memoryId(receiver);
+                if (!appliedMemories.insert(identity).second) fail("repeated C++ memory apply unsupported", call);
+                if (activeProcess >= 0) memoryCommits[identity] = activeProcess;
                 return {};
             }
             fail("unsupported C++ memory method: " + name, call);
@@ -1172,9 +1242,22 @@ class Lowering {
             target.type = arguments.at(1).type;
             write(target, arguments.at(1)); return {};
         }
+        if (resetting && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg" &&
+            (name == "clr" || name == "set")) {
+            if ((name == "clr" && !arguments.empty()) || (name == "set" && arguments.size() != 1))
+                fail("unsupported asynchronous register reset", call);
+            initial(receiver);
+            claim(resetOwners, receiver.key);
+            cells.set(receiver.key + "._next", name == "clr" ? Value(width(receiver.type), 0) : read(cast(arguments[0], payload(receiver.type))));
+            return {};
+        }
         if (name == "strobe" && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg") {
             if (!committing || !arguments.empty()) fail("unsupported register commit", call);
             initial(receiver);
+            if (activeProcess >= 0) {
+                if (graph.resolved(executionGuard()) != Value{1}) fail("conditional multiclock register strobe: " + receiver.key);
+                claim(commitOwners, receiver.key);
+            }
             committed.insert(receiver.key);
             return {};
         }
@@ -1417,7 +1500,72 @@ class Lowering {
         return nullptr;
     }
 public:
-    Lowering(ASTContext& context, Sema& sema) : context(context), sema(sema) {}
+    Lowering(ASTContext& context, Sema& sema, std::vector<Clock> clocks = {}) : context(context), sema(sema) {
+        graph.clocks = std::move(clocks);
+    }
+    void runClocks(const Item& root, const Value& reset) {
+        // Each process reads the same current-state nodes. Strobe records
+        // ownership, never committing state during AST lowering.
+        for (size_t process = 0; process < graph.clocks.size() * 2; ++process) {
+            auto work = method(root.type, processMethod(process));
+            auto strobe = method(root.type, processMethod(process, true));
+            auto handler = method(root.type, resetMethod(process));
+            if (process % 2 && !work && !strobe && !handler) continue;
+            if (!work || !strobe) fail("missing clock lifecycle pair: " + processMethod(process) + "/" + processMethod(process, true));
+            activeProcess = int(process);
+            working = true;
+            if (handler) {
+                asyncProcesses.insert(activeProcess);
+                effectPath.emplace_back(reset, false);
+            }
+            invoke(work, root, {value(reset, context.BoolTy)});
+            if (handler) effectPath.pop_back();
+            working = false;
+            committing = true;
+            invoke(strobe, root, {});
+            committing = false;
+        }
+        // Reset handlers are a separate elaboration of the same registers,
+        // not another clock owner or a mutation of their normal next-state cone.
+        for (auto process : asyncProcesses) {
+            activeProcess = process;
+            auto saved = cells;
+            for (const auto& [key, bits] : registers) cells.set(key + "._next", bits);
+            resetting = working = true;
+            invoke(method(root.type, resetMethod(process)), root, {});
+            resetting = working = false;
+            for (const auto& [key, owner] : resetOwners) if (owner == process) {
+                if (!nextOwners.count(key) || nextOwners.at(key) != process)
+                    fail("asynchronous reset clock ownership mismatch: " + key);
+                auto bits = graph.resolved(cells.at(key + "._next"));
+                if (std::any_of(bits.begin(), bits.end(), [](Bit bit) { return bit > 1; }))
+                    fail("asynchronous reset requires an unconditional constant value: " + key);
+                resetValues[key] = std::move(bits);
+            }
+            cells = std::move(saved);
+        }
+        activeProcess = -1;
+        for (const auto& [key, readers] : nextReaders)
+            for (auto process : readers)
+                if (!nextOwners.count(key) || nextOwners.at(key) != process) fail("cross-clock next-state read: " + key);
+        for (const auto& [key, bits] : registers) {
+            if (!nextOwners.count(key) || !commitOwners.count(key)) fail("missing clock work/strobe assignment for " + key);
+            if (nextOwners.at(key) != commitOwners.at(key)) fail("clock work/strobe mismatch for " + key);
+            auto process = nextOwners.at(key);
+            if (asyncProcesses.count(process) && !resetValues.count(key)) fail("missing asynchronous reset assignment: " + key);
+            graph.states.push_back({bits, cells.at(key + "._next"), {1}, process / 2, bool(process % 2),
+                resetValues.count(key) ? reset : Value{}, resetValues.count(key) ? resetValues.at(key) : Value{}});
+        }
+        for (const auto& [memory, process] : memoryOwners)
+            if (!memoryCommits.count(memory) || memoryCommits.at(memory) != process)
+                fail("memory write/apply clock mismatch: " + graph.memories[memory].name);
+        for (const auto& [memory, process] : pendingReaders)
+            if (memoryOwners.count(memory) && memoryOwners.at(memory) != process)
+                fail("cross-clock pending memory read");
+        for (const auto& node : graph.nodes) if (node.hostEffect()) fail("multiclock host effects are not implemented");
+        graph.clockContract = ClockContract::NamedEdges;
+        graph.validateClocks();
+    }
     void statistics() const {
         size_t directReads = 0, producerEdges = 0;
         for (const auto& [key, reads] : getterReads) {
@@ -1465,6 +1613,16 @@ public:
         for (auto& [name, item] : outputs) graph.ports.push_back({name, read(item), false});
         auto reset = graph.wire(1, "work_reset", "input");
         graph.ports.push_back({"work_reset", reset, true});
+        if (!graph.clocks.empty()) {
+            for (const auto* name : {"_work", "_strobe"}) if (auto legacy = method(rootObject.type, name)) {
+                instantiate(legacy);
+                auto body = dyn_cast<CompoundStmt>(legacy->getBody());
+                if (!body || !body->body_empty()) fail("named clocks cannot ignore root " + std::string(name));
+            }
+            runClocks(rootObject, reset);
+            graph.writeCpp(output);
+            return;
+        }
         working = true;
         if (auto work = method(rootObject.type, "_work")) invoke(work, rootObject, {value(reset, context.BoolTy)});
         working = false;
@@ -1484,6 +1642,7 @@ public:
             graph.states.push_back({bits, cells.count(key) ? cells.at(key) : bits, {1}});
         for (const auto& write : graph.memoryWrites)
             if (!appliedMemories.count(write.memory)) fail("C++ memory writes without strobe apply: " + graph.memories[write.memory].name);
+        graph.clockContract = ClockContract::RisingEdgeStep;
         graph.writeCpp(output);
     }
 };
@@ -1492,9 +1651,10 @@ class Consumer : public ASTConsumer {
     CompilerInstance& compiler;
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Consumer(CompilerInstance& compiler, std::string root, std::string output, bool& success)
-        : compiler(compiler), root(std::move(root)), output(std::move(output)), success(success) {}
+    Consumer(CompilerInstance& compiler, std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : compiler(compiler), root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
     void HandleTranslationUnit(ASTContext& context) override {
         if (compiler.getDiagnostics().hasErrorOccurred()) return;
         // Parsing has popped the TU scope. Late template instantiation can
@@ -1508,7 +1668,7 @@ public:
             for (auto declaration : context.getTranslationUnitDecl()->decls())
                 if (auto variable = dyn_cast<VarDecl>(declaration); variable && variable->getNameAsString() == root) found = variable;
             if (!found) throw std::runtime_error("C++ root variable not found: " + root);
-            Lowering lowering(context, compiler.getSema());
+            Lowering lowering(context, compiler.getSema(), clocks);
             try { lowering.run(found, output); }
             catch (...) { lowering.statistics(); throw; }
             lowering.statistics();
@@ -1519,37 +1679,58 @@ public:
 class Action : public ASTFrontendAction {
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Action(std::string root, std::string output, bool& success) : root(std::move(root)), output(std::move(output)), success(success) {}
+    Action(std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
     bool BeginSourceFileAction(CompilerInstance& compiler) override {
         compiler.getDiagnostics().setSeverity(diag::err_cannot_open_file, diag::Severity::Ignored, SourceLocation());
         return true;
     }
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance& compiler, llvm::StringRef) override {
-        return std::make_unique<Consumer>(compiler, root, output, success);
+        return std::make_unique<Consumer>(compiler, root, output, success, clocks);
     }
 };
 class Factory : public tooling::FrontendActionFactory {
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Factory(std::string root, std::string output, bool& success) : root(std::move(root)), output(std::move(output)), success(success) {}
-    std::unique_ptr<FrontendAction> create() override { return std::make_unique<Action>(root, output, success); }
+    Factory(std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
+    std::unique_ptr<FrontendAction> create() override { return std::make_unique<Action>(root, output, success, clocks); }
 };
 inline int run(int argc, const char** argv, std::vector<std::string> includes) {
-    if (argc < 6 || std::string_view(argv[5]) != "--") {
-        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable -- compiler flags\n";
+    if (argc < 6) {
+        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable [--clock NAME HZ ...] -- compiler flags\n";
         return 2;
     }
     if (!std::filesystem::is_regular_file(argv[2]) || std::filesystem::exists(argv[3])) {
         llvm::errs() << "C++ graph requires an existing source and a new output file\n";
         return 2;
     }
-    for (int index = 6; index < argc; ++index) includes.emplace_back(argv[index]);
+    int index = 5;
+    std::vector<Clock> clocks;
+    try {
+        while (index < argc && std::string_view(argv[index]) != "--") {
+            if (std::string_view(argv[index]) != "--clock" || index + 2 >= argc)
+                throw std::runtime_error("expected --clock NAME HZ or --");
+            std::string frequency = argv[index + 2];
+            if (frequency.empty() || frequency.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("clock frequency must be a positive integer");
+            clocks.push_back({argv[index + 1], std::stoull(frequency)});
+            index += 3;
+        }
+        if (index == argc) throw std::runtime_error("missing -- before compiler flags");
+        if (!clocks.empty()) {
+            Graph check; check.clockContract = ClockContract::NamedEdges; check.clocks = clocks; check.validateClocks();
+        }
+    } catch (const std::exception& error) { llvm::errs() << error.what() << '\n'; return 2; }
+    for (++index; index < argc; ++index) includes.emplace_back(argv[index]);
     tooling::FixedCompilationDatabase database(".", includes);
     tooling::ClangTool tool(database, {argv[2]});
     bool success = false;
-    Factory factory(argv[4], argv[3], success);
+    Factory factory(argv[4], argv[3], success, clocks);
     int status = tool.run(&factory);
     if (!success || status) { std::filesystem::remove(argv[3]); return 1; }
     return 0;

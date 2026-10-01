@@ -2412,6 +2412,10 @@ Clocks:
   Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
   Frequencies validate the design; the testbench must schedule clock edges.
 
+Experimental gate synthesis:
+  --synth [options]             Synthesize CppHDL to gate-level Verilog using Yosys;
+                                use --synth --help for options.
+
 Native simulation optimizer (generates C++, not SystemVerilog):
   --word-model [options]        Build a CXXRTL C++ word model; use
                                 --word-model --help for backend options.
@@ -2600,6 +2604,9 @@ int main(int argc, const char **argv)
     }
     if (argc > 1 && std::string_view(argv[1]) == "--native-graph") {
         return cpphdl::word_lowering::driver(argc, argv, "cpphdl-graph.py");
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--synth") {
+        return cpphdl::word_lowering::driver(argc, argv, "../synth/synthesize.py");
     }
     if (argc > 1 && std::string_view(argv[1]) == "--word-model") {
         return cpphdl::word_lowering::driver(argc, argv);
