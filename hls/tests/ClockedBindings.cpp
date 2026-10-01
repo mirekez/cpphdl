@@ -35,6 +35,10 @@ struct BindingsCounter {
 };
 
 struct BindingsPadding { uint64_t guard = 0x12345678; };
+struct BindingsPointerInit {
+    uint32_t value;
+    explicit BindingsPointerInit(uint32_t* p) : value(*p++) { value += *p; }
+};
 struct BindingsOffsetCounter : BindingsPadding, BindingsCounter {
     uint32_t marker = 19;
     uint32_t addBase(uint32_t amount) { return BindingsCounter::add(amount); }
@@ -45,7 +49,7 @@ struct BindingsMethods {
     std::array<uint32_t, 8> data{};
     BindingsCounter left, right;
     BindingsOffsetCounter shifted;
-    static constexpr bool singleClock(uint32_t op) { return op != 1 && op != 2 && op != 6; }
+    static constexpr bool singleClock(uint32_t op) { return op != 1 && op != 2 && op != 6 && op != 14; }
     uint64_t sum(uint32_t bias) {
         uint64_t total = bias;
         for (uint32_t i = 0; i < data.size(); ++i) total += data[i];
@@ -57,6 +61,15 @@ struct BindingsMethods {
     }
     static uint32_t aliases(uint32_t& a, uint32_t& b) { a += 7; b *= 3; return a + b; }
     static void indirect(uint32_t* value) { *value += 11; }
+    static BindingsOwner* take_owner(BindingsOwner*& pointer, uint32_t& calls) {
+        BindingsOwner* result = pointer;
+        pointer = nullptr; ++calls;
+        return result;
+    }
+    static BindingsCounter& choose(bool select, BindingsCounter& a, BindingsCounter& b) {
+        if (select) return a;
+        return b;
+    }
     uint64_t command(uint32_t operation, uint32_t index, uint32_t value) {
         if (operation == 0) { data[index] = value; return data[index]; }
         if (operation == 1) return sum(value) + sum(index);
@@ -125,6 +138,26 @@ struct BindingsMethods {
             ref.value += index;
             return local;
         }
+        if (operation == 14) {
+            BindingsCounter& selected = choose((index & 1) != 0, left, right);
+            selected.repeat(value);
+            return uint64_t(left.value) * 65537 + right.value;
+        }
+        if (operation == 15) {
+            uint32_t local[2]{value, index};
+            BindingsPointerInit item(local);
+            return item.value;
+        }
+        if (operation == 16) {
+            uint32_t destroyed = 0, calls = 0;
+            BindingsOwner* owner = new BindingsOwner(destroyed);
+            uint32_t* scalar = new uint32_t(value);
+            uint32_t saved = *scalar;
+            delete take_owner(owner, calls);
+            delete owner; // Null: do not run the destructor a second time.
+            delete scalar;
+            return uint64_t(destroyed) * 65537 + calls + saved;
+        }
         return data[index];
     }
 #ifndef SYNTHESIS
@@ -140,6 +173,9 @@ struct BindingsMethods {
             test(11, i, 0);
             test(12, i, i * 37 + 17);
             test(13, i, i * 41 + 19);
+            test(14, i, i * 43 + 23);
+            test(15, i, i * 47 + 29);
+            test(16, i, i * 53 + 31);
         }
     }
 #endif

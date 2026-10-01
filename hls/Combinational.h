@@ -17,7 +17,12 @@ public:
 // Outline a single-entry call only when every path reaches exit without a clock.
 bool outlineCall(std::vector<ScheduledBlock>& blocks, int entry, int exit,
                  const std::string& callerMethod, BlockSharing& sharing,
-                 const std::set<std::string>& preserved = {}, BlockUses* uses = nullptr);
+                 const std::set<std::string>& preserved = {}, BlockUses* uses = nullptr,
+                 const std::string& storageArguments = "storage");
 void coalesceBlocks(std::vector<ScheduledBlock>& blocks, int resetEntry, int commandEntry);
+// Remove speculative call clocks only when their feedback path already crosses a clock.
+void releaseSharedCallBoundaries(std::vector<ScheduledBlock>& blocks);
+std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks,
+                                     const std::map<std::string, BlockSymbol>& symbols);
 
 }

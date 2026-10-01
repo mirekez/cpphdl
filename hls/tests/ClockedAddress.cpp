@@ -1,5 +1,7 @@
 #include "../Clocked.h"
+#include "ClockedOptions.h"
 #include <array>
+#include <type_traits>
 
 struct AddressMethods {
     std::array<uint64_t, 8> data{};
@@ -38,8 +40,10 @@ struct AddressMethods {
 
 class ClockedAddressTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<AddressMethods, 0, 16> narrow_worker;
-    cpphdl::hls::Clocked<AddressMethods, 0, 32> wide_worker;
+    static_assert(std::is_same_v<cpphdl::hls::Clocked<AddressMethods>, cpphdl::hls::Clocked<AddressMethods, 0, 16>>,
+        "Clocked objects must default to 16-bit addresses");
+    cpphdl::hls::Clocked<AddressMethods, 0, 16, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> narrow_worker;
+    cpphdl::hls::Clocked<AddressMethods, 0, 32, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> wide_worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

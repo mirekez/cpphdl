@@ -145,6 +145,40 @@ BlockUses::BlockUses(const std::vector<ScheduledBlock>& blocks, const Symbols& s
     for (size_t i = 0; i < blocks.size(); ++i) update(i, blocks[i]);
 }
 
+std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks, const Symbols& symbols) {
+    std::vector<std::set<std::string>> uses(blocks.size()), defs(blocks.size()), live(blocks.size());
+    for (size_t n = 0; n < blocks.size(); ++n) {
+        auto read = [&](const std::string& text) {
+            symbolsIn(text, symbols, [&](const std::string& name) {
+                if (!defs[n].count(name)) uses[n].insert(name);
+                return name;
+            });
+        };
+        for (const auto& text : blocks[n].statements) {
+            std::string target, rhs;
+            if (assignment(text, symbols, target, rhs)) {
+                read(rhs);
+                defs[n].insert(target);
+            } else read(text);
+        }
+        read(blocks[n].condition);
+    }
+    bool changed;
+    do {
+        changed = false;
+        for (size_t n = blocks.size(); n-- > 0;) {
+            auto next = uses[n];
+            for (int to : {blocks[n].yes, blocks[n].no}) if (to >= 0)
+                for (const auto& name : live[to]) if (!defs[n].count(name)) next.insert(name);
+            if (next != live[n]) { live[n] = std::move(next); changed = true; }
+        }
+    } while (changed);
+    std::set<std::string> result;
+    for (const auto& block : blocks) if (block.suspend && block.yes >= 0)
+        for (const auto& name : live[block.yes]) if (symbols.at(name).writable) result.insert(name);
+    return result;
+}
+
 void BlockUses::update(int index, const ScheduledBlock& block) {
     for (const auto& name : names[index]) users[name].erase(index);
     names[index].clear();
@@ -170,7 +204,7 @@ std::set<std::string> BlockUses::outside(const std::map<int, std::set<int>>& reg
 
 bool outlineCall(std::vector<ScheduledBlock>& blocks, int entry, int exit,
                  const std::string& callerMethod, BlockSharing& sharing,
-                 const std::set<std::string>& preserved, BlockUses* uses) {
+                 const std::set<std::string>& preserved, BlockUses* uses, const std::string& storageArguments) {
     std::map<int, std::set<int>> postdominators;
     std::set<int> visiting;
     postdominators[exit] = {exit};
@@ -202,7 +236,7 @@ bool outlineCall(std::vector<ScheduledBlock>& blocks, int entry, int exit,
         std::string pad(depth * 2, ' ');
         while (n != stop) {
             const auto& b = blocks[n];
-            for (const auto& s : b.statements) out << pad << "if (fault == 0) begin " << s << " end\n";
+            for (const auto& s : b.statements) out << pad << s << "\n";
             if (b.no >= 0) {
                 int join = exit;
                 for (int candidate : postdominators.at(b.yes))
@@ -220,17 +254,43 @@ bool outlineCall(std::vector<ScheduledBlock>& blocks, int entry, int exit,
     body.statements = {render(entry, exit, 3)};
     body.condition.clear(); body.yes = body.no = -1;
     body.combinational = true;
-    auto call = sharing.add(body);
+    auto liveOutputs = uses ? uses->outside(postdominators, exit) :
+        BlockUses(blocks, sharing.symbolTable()).outside(postdominators, exit);
+    liveOutputs.insert(preserved.begin(), preserved.end());
+    auto call = sharing.add(body, &liveOutputs);
     std::string invocation = sharing.functions[call.function].body.name +
-        "(storage, fault, heap_next, operation_in, index_in, value_in";
+        "(" + storageArguments + ", fault, heap_next, operation_in, index_in, value_in";
     for (const auto& argument : call.arguments) invocation += ", " + argument;
     invocation += ");";
     auto& wrapper = blocks[entry];
     wrapper.statements = {std::move(invocation)};
     wrapper.condition.clear(); wrapper.yes = exit; wrapper.no = -1;
     wrapper.method = callerMethod;
-    if (uses) for (const auto& [n, _] : postdominators) if (n != exit) uses->update(n, blocks[n]);
+    // The single-entry call is now represented by its wrapper. Its old
+    // interior blocks are unreachable; counting their uses would make private
+    // temporaries appear live outside an enclosing outlined call.
+    if (uses) for (const auto& [n, _] : postdominators) if (n != exit)
+        uses->update(n, n == entry ? blocks[n] : ScheduledBlock{});
     return true;
+}
+
+void releaseSharedCallBoundaries(std::vector<ScheduledBlock>& blocks) {
+    for (size_t source = 0; source < blocks.size(); ++source) {
+        auto& call = blocks[source];
+        if (!call.sharedCallBoundary || !call.suspend) continue;
+        std::set<int> visited;
+        std::vector<int> pending{call.yes};
+        bool cycle = false;
+        while (!pending.empty()) {
+            int n = pending.back(); pending.pop_back();
+            if (n < 0 || !visited.insert(n).second) continue;
+            if (n == int(source)) { cycle = true; break; }
+            const auto& b = blocks[n];
+            if (!b.suspend) pending.push_back(b.yes);
+            pending.push_back(b.no);
+        }
+        if (!cycle) call.suspend = false;
+    }
 }
 
 void coalesceBlocks(std::vector<ScheduledBlock>& blocks, int resetEntry, int commandEntry) {
@@ -255,6 +315,9 @@ void coalesceBlocks(std::vector<ScheduledBlock>& blocks, int resetEntry, int com
             b.statements.insert(b.statements.end(), following.statements.begin(), following.statements.end());
             b.condition = following.condition; b.yes = following.yes; b.no = following.no;
             b.suspend = following.suspend;
+            b.memoryBoundary = following.memoryBoundary;
+            b.recursiveBoundary = following.recursiveBoundary;
+            b.sharedCallBoundary = following.sharedCallBoundary;
             following = {};
             changed = true;
             break;

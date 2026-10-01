@@ -7,6 +7,7 @@ endif()
 file(REMOVE_RECURSE "${WORK}/helpers_obj")
 execute_process(COMMAND "${VERILATOR}" --binary --top-module StorageHelpers
     --Mdir "${WORK}/helpers_obj" -Wno-fatal ${verilator_options}
+    "-I${CMAKE_CURRENT_LIST_DIR}"
     "-DHLS_STORAGE_BYTES=${CMAKE_MATCH_1}"
     -CFLAGS "${cxx_flags}" -LDFLAGS "${link_flags} -L${atomic_dir}"
     -MAKEFLAGS "CXX=${CXX} LINK=${CXX}" -j 2

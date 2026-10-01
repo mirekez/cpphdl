@@ -1,4 +1,5 @@
 #include "../../Clocked.h"
+#include "../ClockedOptions.h"
 #include <array>
 
 struct ClockedTag {
@@ -87,7 +88,7 @@ struct ArrayMethods {
 
 class ClockedArrayTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<ArrayMethods> worker;
+    cpphdl::hls::Clocked<ArrayMethods, 0, 16, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

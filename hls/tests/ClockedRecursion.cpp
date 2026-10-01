@@ -1,25 +1,49 @@
 #include "../Clocked.h"
+#include "ClockedOptions.h"
 #include <array>
 
 struct RecursionMethods {
     std::array<uint32_t, 2> values{};
+    uint64_t outer(uint32_t n) {
+        if (n == 0) return 7;
+        if (n == 1) return inner(0) + 3;
+        uint64_t first = outer(n - 1);
+        return first + inner(n - 1);
+    }
+    uint64_t inner(uint32_t n) {
+        if (n == 0) return 5;
+        uint64_t first = outer(n - 1);
+        return first + inner(n - 1);
+    }
     uint64_t descend(uint32_t depth, uint32_t value) {
         if (depth == 0) return value;
         uint64_t sum = 0;
         for (uint32_t i = 0; i < 2; ++i) sum += value + i;
         return sum + descend(depth - 1, value + 1);
     }
+    uint64_t branching(uint32_t depth, uint32_t value) {
+        values[1] += value;
+        if (depth == 0) return values[1];
+        uint64_t saved = value * 17 + values[1];
+        uint64_t left = branching(depth - 1, value + 1);
+        uint64_t right = branching(depth - 1, value + 3);
+        return saved + left * 131 + right;
+    }
     uint64_t command(uint32_t operation, uint32_t index, uint32_t value) {
+        if (operation == 99) return outer(index);
         values[0] = value;
         values[1] = operation;
-        return descend(index, values[0]) + values[1];
+        values[index & 1] += 1;
+        uint64_t first = branching(index, value);
+        uint64_t second = branching(index, value + 7);
+        return first * 65537 + second + descend(index, values[0]) + values[1];
     }
 };
 
 class ClockedRecursionTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<RecursionMethods, 4> worker;
-    cpphdl::hls::Clocked<RecursionMethods, 2> narrow;
+    cpphdl::hls::Clocked<RecursionMethods, 4, 64, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> worker;
+    cpphdl::hls::Clocked<RecursionMethods, 2, 64, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> narrow;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;
@@ -78,15 +102,16 @@ int main() {
             check(dut.command_ready_out && !dut.response_valid_out && !dut.fault_out && !dut.narrow_fault_out);
         };
         reset();
-        auto transaction = [&](unsigned depth, unsigned expectedFault) {
+        auto transaction = [&](unsigned depth, unsigned expectedFault, unsigned operation = 7) {
             check(dut.command_ready_out);
-            dut.operation_in = 7; dut.index_in = depth; dut.value_in = 19;
+            dut.operation_in = operation; dut.index_in = depth; dut.value_in = 19;
             dut.command_valid_in = 1; tick(); dut.command_valid_in = 0;
             dut.index_in = 99; dut.value_in = 99;
-            for (unsigned i = 0; !dut.response_valid_out && i < 100; ++i) tick();
+            // Two branching traversals now include serialized memory accesses.
+            for (unsigned i = 0; !dut.response_valid_out && i < 1000; ++i) tick();
             check(dut.response_valid_out && dut.fault_out == expectedFault);
-            if (!expectedFault) check(dut.result_out == reference.command(7, depth, 19));
-            if (depth < 2) check(dut.narrow_valid_out && dut.narrow_fault_out == 0 && dut.narrow_result_out == dut.result_out);
+            if (!expectedFault) check(dut.result_out == reference.command(operation, depth, 19));
+            if (depth < (operation == 99 ? 3u : 2u)) check(dut.narrow_valid_out && dut.narrow_fault_out == 0 && dut.narrow_result_out == dut.result_out);
             else check(dut.narrow_fault_out == 5);
             auto result = dut.result_out;
             for (unsigned i = 0; i < 3; ++i) {
@@ -100,13 +125,19 @@ int main() {
         transaction(4, 5);
         reset();
         transaction(3, 0);
+        reset();
+        for (unsigned i = 0; i <= 4; ++i) transaction(i, 0, 99);
+        transaction(5, 5, 99);
+        reset();
+        transaction(2, 0, 99);
 #else
         ClockedRecursionTop dut;
         bool valid = false, ready = false;
         uint32_t depth = 0;
+        uint32_t operation = 7;
         dut.command_valid_in = _ASSIGN(valid);
         dut.response_ready_in = _ASSIGN(ready);
-        dut.operation_in = _ASSIGN(7u);
+        dut.operation_in = _ASSIGN(operation);
         dut.index_in = _ASSIGN(depth);
         dut.value_in = _ASSIGN(19u);
         dut._assign();
@@ -115,6 +146,12 @@ int main() {
         for (depth = 0; depth <= 3; ++depth) {
             valid = true; tick(); valid = false;
             check(dut.response_valid_out() && dut.result_out() == reference.command(7, depth, 19));
+            ready = true; tick(); ready = false;
+        }
+        operation = 99;
+        for (depth = 0; depth <= 4; ++depth) {
+            valid = true; tick(); valid = false;
+            check(dut.response_valid_out() && dut.result_out() == reference.command(operation, depth, 19));
             ready = true; tick(); ready = false;
         }
 #endif

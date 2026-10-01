@@ -1,4 +1,5 @@
 #include "../Clocked.h"
+#include "ClockedOptions.h"
 #include <array>
 
 struct ReuseNode {
@@ -82,6 +83,47 @@ struct ReuseMethods {
             return uint64_t(first) * 65537 + ReuseNode::inspect(&root, value);
         }
         if (operation == 11) return copy_paths(value, index) ^ copy_paths(index, value);
+        if (operation == 12) {
+            // Fixed local structs are now promoted. Exercise byte-storage
+            // helpers on genuine allocations, including a whole-object copy.
+            struct Pair { uint64_t low, high; };
+            uint8_t* byte = new uint8_t(uint8_t(index));
+            uint16_t* half = new uint16_t(uint16_t(value));
+            Pair* original = new Pair{(uint64_t(value) << 32) | index, value};
+            Pair* copy = new Pair(*original);
+            uint64_t result = *byte + *half + copy->low + copy->high;
+            ::operator delete(byte); ::operator delete(half);
+            ::operator delete(original); ::operator delete(copy);
+            return result;
+        }
+        if (operation == 13) {
+            struct Bytes { uint8_t a, b, c; };
+            Bytes* original = new Bytes{uint8_t(index), uint8_t(value), uint8_t(value >> 8)};
+            Bytes* copy = new Bytes(*original);
+            copy->b ^= 0x5a;
+            uint64_t result = original->b + (uint64_t(copy->a) << 8) +
+                (uint64_t(copy->b) << 16) + (uint64_t(copy->c) << 24);
+            ::operator delete(original); ::operator delete(copy);
+            return result;
+        }
+        if (operation == 14) {
+            struct __attribute__((packed)) Unaligned { uint8_t tag; uint64_t payload; };
+            Unaligned* item = new Unaligned{uint8_t(index), (uint64_t(value) << 32) | index};
+            unsigned char* alias = reinterpret_cast<unsigned char*>(&item->payload);
+            alias[3] ^= 0x87;
+            uint64_t result = item->payload ^ item->tag;
+            ::operator delete(item);
+            return result;
+        }
+        if (operation == 15) {
+            ReuseNode* parent = new ReuseNode{nullptr, value};
+            ReuseNode* child = new ReuseNode{parent, index};
+            parent->left = child;
+            child->left->value += 7;
+            uint64_t result = parent->left->value + (uint64_t(child->left->value) << 32);
+            ::operator delete(parent); ::operator delete(child);
+            return result;
+        }
         return data[index];
     }
 #ifndef SYNTHESIS
@@ -95,6 +137,10 @@ struct ReuseMethods {
             test(9, i + 256, i * 1000 + 0x43218765u);
             test(10, i, i * 1000 + 17);
             test(11, i, i * 1000 + 17);
+            test(12, i, i * 1000 + 0x76543210u);
+            test(13, i, i * 1000 + 0x12345678u);
+            test(14, i, i * 1000 + 0x23456789u);
+            test(15, i, i * 1000 + 0x34567890u);
             test(1, i, 33);
         }
     }
@@ -103,7 +149,7 @@ struct ReuseMethods {
 
 class ClockedReuseTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<ReuseMethods> worker;
+    cpphdl::hls::Clocked<ReuseMethods, 0, 64, 4096, HLS_SHARED_MEMORY, HLS_BLOCK_RAM> worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

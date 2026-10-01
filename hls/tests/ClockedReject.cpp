@@ -8,9 +8,17 @@ uint32_t volatile_identity(volatile uint32_t value) { return value; }
 struct MutableConstant { mutable uint32_t value; };
 constexpr MutableConstant mutableConstant{7};
 #endif
+#if HLS_REJECT == 21
+struct DeleteTarget { virtual ~DeleteTarget() = default; };
+#elif HLS_REJECT == 22
+struct DeleteTarget { static void operator delete(void*) {} };
+#endif
+
 struct UnsupportedMethods {
 #if HLS_REJECT == 12
     uint8_t too_large[300];
+#elif HLS_REJECT == 19
+    uint8_t too_large[65536];
 #endif
 #if HLS_REJECT == 3
     volatile uint32_t device;
@@ -35,6 +43,20 @@ struct UnsupportedMethods {
         return ++mutableConstant.value;
 #elif HLS_REJECT == 11
         return volatile_identity(value);
+#elif HLS_REJECT == 12
+        too_large[index % 300] = uint8_t(value);
+        return too_large[index % 300];
+#elif HLS_REJECT == 19
+        too_large[index % 65536] = uint8_t(value);
+        return too_large[index % 65536];
+#elif HLS_REJECT == 20
+        uint32_t* p = nullptr;
+        delete[] p;
+        return value;
+#elif HLS_REJECT == 21 || HLS_REJECT == 22
+        DeleteTarget* p = nullptr;
+        delete p;
+        return value;
 #else
         return value;
 #endif
@@ -50,6 +72,14 @@ public:
     cpphdl::hls::Clocked<UnsupportedMethods, 0, 0> worker;
 #elif HLS_REJECT == 14
     cpphdl::hls::Clocked<UnsupportedMethods, 0, 65> worker;
+#elif HLS_REJECT == 15
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 16, 0> worker;
+#elif HLS_REJECT == 16
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 16, 17> worker;
+#elif HLS_REJECT == 17
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 16, 16777232> worker;
+#elif HLS_REJECT == 18
+    cpphdl::hls::Clocked<UnsupportedMethods, 0, 16, 4096, false, true> worker;
 #else
     cpphdl::hls::Clocked<UnsupportedMethods> worker;
 #endif

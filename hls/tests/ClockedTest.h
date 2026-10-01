@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdio>
 #include <stdexcept>
+#ifndef HLS_SHARED_MEMORY
+#define HLS_SHARED_MEMORY 0
+#endif
 #ifdef VERILATOR
 #include "VClockedModel.h"
 #endif
@@ -52,7 +55,7 @@ template<class T, class Top> int clockedTest()
                     (unsigned long long)expected, (unsigned long long)dut.result_out, dut.fault_out, clocks);
                 throw std::runtime_error("AST scheduled result mismatch");
             }
-            if (T::singleClock(op) && clocks != 1) throw std::runtime_error("straight-line call was split across clocks");
+            if (!HLS_SHARED_MEMORY && T::singleClock(op) && clocks != 1) throw std::runtime_error("straight-line call was split across clocks");
             if (op == 1 && clocks <= 1) throw std::runtime_error("loops were not clocked");
             commandClocks += clocks;
             if (clocks > longestCommand) longestCommand = clocks;
