@@ -442,6 +442,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 value = "int";
             }
             std::string str = typeToSV(value, suffix);  // also calc size
+            if (!declSize && (value.rfind("cpphdl_logic", 0) == 0
+                    || value.rfind("cpphdl_u", 0) == 0 || value.rfind("cpphdl_i", 0) == 0)) {
+                // A symbolic bit-vector width is unknown, not a struct name.
+                declSize = (size_t)-1;
+            }
             if (!declSize && declSize != (size_t)-1) {  // unknown type or structure
                 declSize = getStructSize(value);
             }
@@ -576,7 +581,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             return indent_str + prefix + value + sub[0].str();
         case EXPR_COND:
             ASSERT(sub.size()==3);
-            return indent_str + prefix + "((" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + "))";
+            return indent_str + prefix + "(" + sub[0].str() + ") ? (" + sub[1].str() + ") : (" + sub[2].str() + ")";
         case EXPR_CALL:
         {
             if (cpphdl_is_comb_func_name(value)) {
@@ -819,13 +824,13 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (cpphdl_is_comb_func_name(value)) {
                 return indent_str + prefix + cpphdl_comb_func_signal_name(value) + suffix;
             }
-            if (sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
+            if (currModule && sub[0].type == EXPR_NONE && any_of(currModule->ports.begin(), currModule->ports.end(), [&](auto& m){ return m.name == value; } )) {  // is port? member without base / unknown base
                 return indent_str + prefix + escapeIdentifier(value) + suffix;
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
             if (base != "_this" && (sub[0].type == EXPR_MEMBER || sub[0].type == EXPR_PACK)   // for member classe's ports it calls MEMBERCALL, not operator()
-                && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // Port struct
+                && (isMemberName(base) || interface)) {  // Port struct
 
                 if (isModuleClockLifecycleMethod(member)) {  // child clock blocks call their own lifecycle methods
                     return "";
@@ -893,7 +898,9 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             std::string base = sub[0].str();
             std::string member = escapeIdentifier(value);
-            if (base != "_this" && (any_of(currModule->members.begin(), currModule->members.end(), [&](auto& m){ return m.name == base; } ) || interface)) {  // we compare full string because Pack can add "tuple_N"
+            // Type expressions can be rendered before a module is selected.
+            // Only flatten an actual module member, not an ordinary struct field.
+            if (base != "_this" && (isMemberName(base) || interface)) {
                 delim = "__";
                 if (interface && str_ending(base, "_out")) {  // for Port structs
                     if (str_ending(member, "_out")) {
@@ -956,13 +963,29 @@ std::string Expr::str(std::string prefix, std::string suffix)
         {
             ASSERT(sub.size()==1);
             sub[0].indent = indent;
+            if (value == "cpphdl_bitnot") {
+                const auto operand = sub[0].str(prefix, suffix);
+                return indent_str + "$bits(" + operand + ")'(~(" + operand + "))";
+            }
             auto sizedOperand = [&](const std::string& width) {
                 const std::string operand = sub[0].str(prefix, suffix);
                 if (sub[0].type == EXPR_NUM && operand.rfind("'h", 0) == 0 && numericWidth(width)) {
                     return width + operand;
                 }
-                return width + "'(" + operand + ")";
+                // A compound size must bind as a whole: A/8'(x) means
+                // division by a cast, not a cast to A/8 bits.
+                const bool simpleWidth = std::all_of(width.begin(), width.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == '_' || c == '$' || c == ':';
+                });
+                return (simpleWidth ? width : "(" + width + ")") + "'(" + operand + ")";
             };
+            auto unsignedOperand = [&](const std::string& width) {
+                auto operand = sizedOperand(width);
+                return castKeepsUnsigned ? operand : "unsigned'(" + operand + ")";
+            };
+            if (value.rfind("svtype:", 0) == 0) {
+                return indent_str + value.substr(7) + "'(" + sub[0].str(prefix, suffix) + ")";
+            }
             if (value == "bool" || value == "_Bool") {
                 declSize = 1;
                 if (sub[0].type == EXPR_CAST
@@ -974,12 +997,14 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value.find("cpphdl_logic") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_logic");
                 declSize = numericWidth(width);
-                return indent_str + sub[0].str(prefix, suffix);
+                return indent_str + unsignedOperand(width);
             }
             // considering casting names as special case since Verilog cant cast using logic[31:0]'val  (what a strange language)
             if (value.find("logic") == 0) {
-                declSize = numericWidth(templateWidth(value, "logic<"));
-                return indent_str + sub[0].str(prefix, suffix);
+                const std::string width = templateWidth(value, "logic<");
+                declSize = numericWidth(width);
+                if (width.empty()) return indent_str + sub[0].str(prefix, suffix);
+                return indent_str + unsignedOperand(width);
             } else
             if (value == "signedchar") {
                 return indent_str + "signed'(8'(" + sub[0].str(prefix, suffix) + "))";
@@ -999,7 +1024,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (value == "unsignedshort") {
                 return indent_str + "unsigned'(16'(" + sub[0].str(prefix, suffix) + "))";
             } else
-            if (value == "unsignedlong" || value == "size_t") {
+            if (value == "unsignedlong" || value == "unsignedlonglong" || value == "size_t") {
                 return indent_str + "unsigned'(64'(" + sub[0].str(prefix, suffix) + "))";
             } else
             if (value.compare(0, 8, "unsigned") == 0) {
@@ -1011,7 +1036,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + sub[0].str(prefix, suffix);
                 }
                 declSize = numericWidth(width);
-                return indent_str + "unsigned'(" + sizedOperand(width) + ")";
+                return indent_str + unsignedOperand(width);
             } else
             if (value.find("cpphdl_i") == 0) {
                 std::string width = sizedCpphdlWidth(value, "cpphdl_i");
@@ -1040,36 +1065,24 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return indent_str + "(" + sub[0].str() + ")";
         case EXPR_INIT:
-            ASSERT(sub.size()>=1);
+        {
             if (exprIsZeroInitializer(*this)) {
                 return indent_str + "0";
             }
-            if (sub[0].type != EXPR_INIT) {  // exclude one initializer case
-                bool first = true;
-                std::string ret;
-                for (size_t i=sub.size(); i > 0; --i) {
-                    if (sub[i-1].type != EXPR_NONE) {
-                        if (first) {
-                            first = false;
-                            // Aggregate fields need assignment-pattern context sizing; children are reversed for packed C++ layout.
-                            ret = indent_str + "'{";
-                        }
-                        else {
-                            ret += ", ";
-                        }
-                        sub[i-1].flags |= flags;
-                        ret += sub[i-1].str();
-                    }
-                }
-                if (!first) {
-                    ret += "}";
-                }
-                if (ret == "") {
-                    ret += indent_str + "0";
-                }
-                return ret;
+            // Each list is one aggregate level, including when its first
+            // field is another aggregate. Do not discard the outer fields.
+            // Reverse fields for packed C++ layout, retaining pattern sizing.
+            std::string ret = indent_str + "'{";
+            bool first = true;
+            for (size_t i = sub.size(); i > 0; --i) {
+                if (sub[i-1].type == EXPR_NONE) continue;
+                if (!first) ret += ", ";
+                first = false;
+                sub[i-1].flags |= flags;
+                ret += sub[i-1].str();
             }
-            return indent_str + sub[0].str();
+            return ret + "}";
+        }
         case EXPR_CAT:
         {
             std::string ret = indent_str + "{";
@@ -1212,11 +1225,19 @@ std::string Expr::str(std::string prefix, std::string suffix)
             }
             return str;
         }
+        case EXPR_BREAK:
+            return indent_str + (value.empty() ? "break" : "disable " + value);
+        case EXPR_CONTINUE:
+            return indent_str + "continue";
         case EXPR_SWITCH:
         {
             ASSERT(sub.size()>=1);
             std::string str;
+            const bool named = value.starts_with("__cpphdl_switch_");
+            if (named) str += indent_str + "begin : " + value + "\n";
             str += indent_str + "case (" + sub[0].str() + ")\n";
+            // SV requires at least one case item, even for an empty C++ switch.
+            if (sub.size() == 1) str += indent_str + "default: ;\n";
             if (sub.size() > 1) {
                 for (size_t i=1; i < sub.size(); ++i) {
                     sub[i].indent = indent + 1;
@@ -1230,6 +1251,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 }
             }
             str += indent_str + "endcase\n";
+            if (named) str += indent_str + "end\n";
             return str;
         }
         case EXPR_BODY:
@@ -1327,6 +1349,11 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size;
         declSize = 1;
     } else
+    if (type.find("cpphdl_logic") == 0) {
+        std::string width = sizedCpphdlWidth(type, "cpphdl_logic");
+        str = logic + size + "[" + width + "-1:0]";
+        declSize = numericWidth(width);
+    } else
     if (type.find("cpphdl_u") == 0) {
         std::string width = sizedCpphdlWidth(type, "cpphdl_u");
         str = logic + size + "[" + width + "-1:0]";
@@ -1369,7 +1396,7 @@ std::string Expr::typeToSV(std::string type, std::string size)
         str = logic + size + "[15:0]";
         declSize = 16;
     } else
-    if (type == "uint64_t" || type == "unsignedlong" || type == "size_t") {
+    if (type == "uint64_t" || type == "unsignedlong" || type == "unsignedlonglong" || type == "size_t") {
         str = logic + size + "[63:0]";
         declSize = 64;
     } else
@@ -1403,11 +1430,6 @@ Expr Expr::simplify()  // open brackets for *(+-)
             e = e.sub[0];
         }
     };
-    auto containsVar = [](Expr& e) {
-        return e.traverseIf([](Expr& check) {
-            return check.type == EXPR_MEMBER || check.type == EXPR_VAR;
-        });
-    };
     auto numValue = [](const Expr& e, int64_t& value) {
         if (e.type != EXPR_NUM) {
             return false;
@@ -1419,11 +1441,38 @@ Expr Expr::simplify()  // open brackets for *(+-)
             else if (e.value == "false") {
                 value = 0;
             }
-            else if (e.value.size() > 2 && e.value[0] == '\'' && (e.value[1] == 'h' || e.value[1] == 'H')) {
-                value = std::stoll(e.value.substr(2), nullptr, 16);
-            }
             else {
-                value = std::stoll(e.value, nullptr, 0);
+                // Sized literals must be read as values, not as their width:
+                // stoll("64'h1f") silently reads 64. Slice widths depend on
+                // this arithmetic (high - low + 1).
+                const auto quote = e.value.find('\'');
+                size_t begin = 0;
+                int base = 0;
+                bool isSigned = false;
+                if (quote != std::string::npos) {
+                    begin = quote + 1;
+                    if (begin < e.value.size() && (e.value[begin] == 's' || e.value[begin] == 'S')) {
+                        isSigned = true;
+                        ++begin;
+                    }
+                    if (begin >= e.value.size()) return false;
+                    switch (e.value[begin++]) {
+                        case 'h': case 'H': base = 16; break;
+                        case 'd': case 'D': base = 10; break;
+                        case 'o': case 'O': base = 8; break;
+                        case 'b': case 'B': base = 2; break;
+                        default: return false;
+                    }
+                }
+                size_t consumed = 0;
+                value = std::stoll(e.value.substr(begin), &consumed, base);
+                if (begin + consumed != e.value.size()) return false;
+                if (isSigned && quote > 0) {
+                    const auto width = numericWidth(e.value.substr(0, quote));
+                    if (!width) return false;
+                    if (width < 64 && (value & (int64_t{1} << (width - 1))))
+                        value |= -(int64_t{1} << (width - 1));
+                }
             }
         }
         catch (...) {
@@ -1468,20 +1517,6 @@ Expr Expr::simplify()  // open brackets for *(+-)
     do {
         changed = false;
         expr.traverseIf( [&](Expr& e) {
-            if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.value == "*" && e.sub.size() == 2) {
-                unwrap(e.sub[0]);
-                unwrap(e.sub[1]);
-                if (containsVar(e.sub[0]) || containsVar(e.sub[1])) {
-                    e = Expr{"0", EXPR_NUM};
-                    changed = true;
-                }
-            }
-            return false;
-        });
-    } while (changed);
-    do {
-        changed = false;
-        expr.traverseIf( [&](Expr& e) {
             int64_t left;
             int64_t right;
             if ((e.type == EXPR_OPERATORCALL || e.type == EXPR_BINARY) && e.sub.size() == 2 &&
@@ -1502,7 +1537,51 @@ Expr Expr::simplify()  // open brackets for *(+-)
             return false;
         });
     } while (changed);
-    return expr;
+    // Widths are high - low + 1. Cancel equal additive terms, rather than
+    // replacing every variable product by zero. A u<N> conversion can be a
+    // member-call node, and unmatched variable terms must never disappear.
+    auto binary = [](const Expr& e) {
+        return e.type == EXPR_BINARY || e.type == EXPR_OPERATORCALL;
+    };
+    auto equal = [&](auto&& self, const Expr& a, const Expr& b) -> bool {
+        int64_t left, right;
+        if (numValue(a, left) && numValue(b, right)) return left == right;
+        if (a.type != b.type && !(binary(a) && binary(b))) return false;
+        if (a.value != b.value || a.sub.size() != b.sub.size()) return false;
+        for (size_t i = 0; i < a.sub.size(); ++i)
+            if (!self(self, a.sub[i], b.sub[i])) return false;
+        return true;
+    };
+    std::vector<std::pair<Expr, int>> terms;
+    int64_t constant = 0;
+    auto collect = [&](auto&& self, const Expr& e, int sign) -> void {
+        if (binary(e) && e.sub.size() == 2 && (e.value == "+" || e.value == "-")) {
+            self(self, e.sub[0], sign);
+            self(self, e.sub[1], e.value == "+" ? sign : -sign);
+            return;
+        }
+        int64_t number;
+        if (numValue(e, number)) { constant += sign * number; return; }
+        for (auto& [term, coefficient] : terms) {
+            if (equal(equal, term, e)) { coefficient += sign; return; }
+        }
+        terms.emplace_back(e, sign);
+    };
+    collect(collect, expr, 1);
+    Expr result;
+    for (auto& [term, coefficient] : terms) {
+        if (!coefficient) continue;
+        if (coefficient != 1 && coefficient != -1)
+            term = Expr{"*", EXPR_BINARY, {makeNum(std::abs(coefficient)), term}};
+        if (result.type == EXPR_NONE && coefficient > 0) result = term;
+        else {
+            if (result.type == EXPR_NONE) result = makeNum(0);
+            result = Expr{coefficient > 0 ? "+" : "-", EXPR_BINARY, {result, term}};
+        }
+    }
+    if (result.type == EXPR_NONE) return makeNum(constant);
+    if (constant) result = Expr{"+", EXPR_BINARY, {result, makeNum(constant)}};
+    return result;
 }
 
 std::string Expr::replacePrintFormat(std::vector<Expr>& params, bool fprint,

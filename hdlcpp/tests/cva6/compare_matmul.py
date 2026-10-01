@@ -39,6 +39,15 @@ def equivalent(reference, candidate):
                     for name in ['reset_cycles', 'work_cycles', 'total_cycles']))
 
 
+def simulation_command(binary, variant, elf, cycles):
+    if variant == 'verilator':
+        # Match cpphdl's ELF-derived tracer termination instead of waiting for
+        # a later DTM poll. The native driver accepts this plusarg after BINARY.
+        return [str(binary), '--seed=1', '--max-cycles=' + str(cycles), str(elf),
+                '+elf_file=' + str(elf)]
+    return [str(binary), str(elf), str(cycles)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--verilator', type=Path, required=True)
@@ -73,9 +82,7 @@ def main():
         directory = output / (label + '-' + variant)
         directory.mkdir(exist_ok=True)
         command = ([] if args.cpu is None else ['taskset', '-c', str(args.cpu)])
-        command += [str(binaries[variant])]
-        command += (['--seed=1', '--max-cycles=' + str(cycles), str(elf)]
-                    if variant == 'verilator' else [str(elf), str(cycles)])
+        command += simulation_command(binaries[variant], variant, elf, cycles)
         started = time.perf_counter()
         try:
             process = subprocess.run(command, cwd=directory, env=environment,

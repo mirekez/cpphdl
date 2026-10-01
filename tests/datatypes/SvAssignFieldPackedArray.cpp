@@ -77,6 +77,34 @@ bool checkLayoutCopies()
     return roundTrip.pack() == packed.pack();
 }
 
+template<size_t Width>
+bool checkPackedElementBitStores()
+{
+    array<3, logic<Width>, true> expected{};
+    array<3, logic<Width>, true> actual{};
+    for (size_t byte = 0; byte < sizeof(expected.data.bytes); ++byte) {
+        expected.data.bytes[byte] = actual.data.bytes[byte] = 0xa5;
+    }
+    for (size_t element = 0; element < 3; ++element) {
+        for (size_t bit = 0; bit < Width; ++bit) {
+            for (unsigned value = 0; value < 4; ++value) {
+                expected[element][bit] = logic<8>(value);
+                auto target = actual[element];
+                sv_assign_bit(target, bit, logic<8>(value));
+                if (std::memcmp(expected.data.bytes, actual.data.bytes,
+                                sizeof(expected.data.bytes))) return false;
+            }
+        }
+    }
+    auto target = actual[1];
+    try {
+        sv_assign_bit(target, Width, 1);
+        return false;
+    }
+    catch (const cpphdl_exception&) {}
+    return true;
+}
+
 // Packed-array field assignment previously repeated or narrowed scalar sources.
 // SystemVerilog instead assigns the scalar to the complete packed destination value.
 // Verify nonzero replication is rejected and zero assignment clears every element.
@@ -199,5 +227,8 @@ int main()
         !checkBitStores<65>() || !checkBitStores<129>()) return 11;
     if (!checkLayoutCopies<1>() || !checkLayoutCopies<9>() ||
         !checkLayoutCopies<65>()) return 15;
+    if (!checkPackedElementBitStores<1>() || !checkPackedElementBitStores<9>() ||
+        !checkPackedElementBitStores<21>() || !checkPackedElementBitStores<32>() ||
+        !checkPackedElementBitStores<65>() || !checkPackedElementBitStores<129>()) return 16;
     return 0;
 }

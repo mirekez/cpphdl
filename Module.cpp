@@ -168,10 +168,34 @@ bool hasImportedSpecialization(const std::string& name, const std::unordered_set
     });
 }
 
-std::unordered_set<std::string> ModuleAvailableImportPackages(const Module& mod)
+void collectPortTypeImports(Expr type, std::vector<Import>& imports)
+{
+    // Work from the emitted type, not the spelling of a C++ alias or child
+    // module. Arrays wrap their element type; template structs name a concrete
+    // package, whose own dependencies are expanded by printImports below.
+    std::string name;
+    if (type.type == Expr::EXPR_TYPE) {
+        name = type.value;
+    } else if (type.type == Expr::EXPR_TEMPLATE && type.value.rfind("cpphdl_", 0) != 0) {
+        type.traverseIf([](auto& expr) { expr.flags = 0; return false; });
+        name = type.str();
+    }
+    if (!name.empty() && (findStructPackage(name) ||
+        std::any_of(currProject->enums.begin(), currProject->enums.end(),
+            [&](const auto& item) { return item.name == name; }))) {
+        if (std::none_of(imports.begin(), imports.end(),
+                [&](const auto& item) { return genTypeName(item.name) == name; })) {
+            imports.emplace_back(name);
+        }
+        return;
+    }
+    for (const auto& sub : type.sub) collectPortTypeImports(sub, imports);
+}
+
+std::unordered_set<std::string> ModuleAvailableImportPackages(const std::vector<Import>& imports)
 {
     std::unordered_set<std::string> packages;
-    for (const auto& imp : mod.imports) {
+    for (const auto& imp : imports) {
         std::string name = genTypeName(imp.name);
         packages.insert(name);
         if (const Struct* st = findStructPackage(name)) {
@@ -619,17 +643,21 @@ void Module::printImports(std::ofstream& out, std::unordered_set<std::string>* i
     if (!importsSet) {
         importsSet = &importsRoot;
     }
-    const std::unordered_set<std::string> availablePackages = ModuleAvailableImportPackages(*this);
-    for (auto& imp : imports) {
-        for (auto& member : members) {
-            auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& m){
-//out << "importing " << (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) << "..." << m.origName << "\n";
- return (member.expr.type == Expr::EXPR_TEMPLATE?member.expr.sub[member.expr.sub.size()-1].str():member.expr.str()) == m.origName; });
-
-            if (it != currProject->modules.end() && it->replacement.empty()) {
-                it->printImports(out, importsSet);
+    auto requiredImports = imports;
+    for (const auto& port : ports) collectPortTypeImports(port.expr, requiredImports);
+    for (const auto& member : members) {
+        // printMembers emits a wire for every child port, assigned or not.
+        // Resolve precisely the same specialized module and substituted type.
+        auto memberType = member.expr;
+        if (const auto* child = currProject->findModule(memberType.str())) {
+            for (const auto& port : child->ports) {
+                auto wire = portWireField(port, *child, member);
+                collectPortTypeImports(wire.expr, requiredImports);
             }
         }
+    }
+    const auto availablePackages = ModuleAvailableImportPackages(requiredImports);
+    for (const auto& imp : requiredImports) {
         std::string name = genTypeName(imp.name);
         const bool hasStructPackage = std::find_if(currProject->structs.begin(), currProject->structs.end(), [&](auto& s) {
             return s.name == name;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -775,6 +776,26 @@ inline std::vector<std::string> dependencyOrderedContinuousLoopHeaders(
     return ordered;
 }
 
+inline bool hasRetainedCombBody(const std::string& header,
+                                const std::vector<std::string>& body)
+{
+    if (!header.starts_with("switch ") && !header.starts_with("switch(")) {
+        return !body.empty();
+    }
+    // Slicing preserves case breaks to prevent fallthrough, but breaks alone
+    // do not make a switch relevant. Retaining that shell also retains its
+    // enclosing ready/valid condition, creating false lazy-evaluation cycles.
+    // Keep every label when any case still does work (including an empty case
+    // that must suppress a nonempty default); only discard the entire shell.
+    return std::any_of(body.begin(), body.end(), [](const auto& line) {
+        const auto text = trimCombText(line);
+        const bool label = (text.starts_with("case ") || text.starts_with("default:")) &&
+                           (text.ends_with("{") || text.ends_with(":"));
+        return !text.empty() && text != "break;" && text != "{" && text != "}" &&
+               !label;
+    });
+}
+
 inline std::vector<std::string> pruneTargetCombLinesRange(const std::vector<std::string>& lines,
                                                           const std::set<std::string>& deps,
                                                           size_t begin,
@@ -849,7 +870,7 @@ inline std::vector<std::string> pruneTargetCombLinesRange(const std::vector<std:
             if (close > i && close < end) {
                 auto body = pruneTargetCombLinesRange(lines, deps, i + 1, close,
                                                       inForLoop || isForHeader(text));
-                if (!body.empty()) {
+                if (hasRetainedCombBody(text, body)) {
                     out.push_back(lines[i]);
                     out.insert(out.end(), body.begin(), body.end());
                     out.push_back(lines[close]);
@@ -911,6 +932,21 @@ inline std::set<std::string> targetDependencyVariablesWithPrunedControls(const s
         }
     }
     return deps;
+}
+
+inline std::string localizeProjectedArrayFieldReads(std::string line,
+                                                    const std::string& base,
+                                                    const std::string& field,
+                                                    const std::string& resultName)
+{
+    const auto accesses = projectedMemberAccesses(line, base);
+    for (auto access = accesses.rbegin(); access != accesses.rend(); ++access) {
+        if (access->field == field || access->field.starts_with(field + ".")) {
+            line.replace(access->begin, access->end - access->begin,
+                         resultName + access->indices + access->field.substr(field.size()));
+        }
+    }
+    return line;
 }
 
 inline std::vector<std::string> extractTargetCombLines(const std::vector<std::string>& lines,
@@ -1263,8 +1299,8 @@ inline std::vector<std::string> extractTargetFieldCombLinesRange(const std::vect
             auto close = matchingBlockEnd(lines, i);
             if (close > i && close < end) {
                 auto body = extractTargetFieldCombLinesRange(lines, base, field, resultName, indexName,
-                                                             i + 1, close, inForLoop || isForHeader(text));
-                if (!body.empty()) {
+                                                            i + 1, close, inForLoop || isForHeader(text));
+                if (hasRetainedCombBody(text, body)) {
                     out.push_back(lines[i]);
                     out.insert(out.end(), body.begin(), body.end());
                     out.push_back(lines[close]);
@@ -1479,6 +1515,21 @@ inline std::vector<std::string> extractProjectedArrayFieldCombLinesRange(
             out.push_back(lines[i++]);
             continue;
         }
+        if (text == "{" && i + 4 < end &&
+            trimCombText(lines[i + 1]).starts_with("auto __cpphdl_elem = ") &&
+            trimCombText(lines[i + 2]).starts_with("__cpphdl_elem.") &&
+            trimCombText(lines[i + 4]) == "}") {
+            // A scoped packed-field update is the same operation as the old
+            // helper expression. Project it before slicing sibling fields;
+            // falling back to the whole aggregate introduces false cycles.
+            const auto update = generatedElementFieldUpdate(
+                lines[i + 1] + " " + lines[i + 2] + " " + lines[i + 3]);
+            if (update.has_value()) {
+                if (!update->empty()) out.push_back(*update);
+                i += 5;
+                continue;
+            }
+        }
         if (auto declaration = declarationName(lines[i]); !declaration.empty()) {
             deferredDeclarations.push_back({declaration, lines[i]});
             ++i;
@@ -1589,7 +1640,7 @@ inline std::vector<std::string> extractProjectedArrayFieldCombLinesRange(
                 auto body = extractProjectedArrayFieldCombLinesRange(
                     lines, base, field, resultName, i + 1, close,
                     inForLoop || isForHeader(text));
-                if (!body.empty()) {
+                if (hasRetainedCombBody(text, body)) {
                     out.push_back(lines[i]);
                     out.insert(out.end(), body.begin(), body.end());
                     out.push_back(lines[close]);

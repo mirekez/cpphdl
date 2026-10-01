@@ -146,7 +146,59 @@
         return out;
     }
 
-    void storeGenerateLocalExpr(const std::string& name, const std::string& expr, const std::string& guard = "")
+    std::string emitExpressionHelper(const std::string& type, std::vector<std::string> body,
+                                     const std::set<std::string>& locals = {},
+                                     const std::vector<std::string>& loopHeaders = {})
+    {
+        MethodGen helper;
+        helper.name = "__hdlcpp_expr_" + std::to_string(mod->expressionHelpers.size());
+        helper.ret = type;
+        helper.body = std::move(body);
+        helper.localNames = locals;
+        std::string text;
+        for (const auto& line : helper.body) {
+            text += line + "\n";
+        }
+        std::map<std::string, std::string> captures;
+        for (const auto& name : loopVars) {
+            captures[name] = "unsigned";
+        }
+        for (const auto& header : loopHeaders) {
+            auto text = trim(header);
+            const std::string prefix = "for (unsigned ";
+            if (text.rfind(prefix, 0) == 0) {
+                auto end = text.find_first_of(" =;", prefix.size());
+                captures[text.substr(prefix.size(), end - prefix.size())] = "unsigned";
+            }
+        }
+        for (const auto& scope : localTypeScopes) {
+            for (const auto& [name, localType] : scope) {
+                captures[name] = localType;
+            }
+        }
+        std::string arguments;
+        for (const auto& [name, localType] : captures) {
+            if (locals.count(name) || !isIdentifierUsed(text, cppIdent(name))) {
+                continue;
+            }
+            if (!arguments.empty()) {
+                arguments += ", ";
+                helper.args += ", ";
+            }
+            arguments += cppIdent(name);
+            // Generate indices can become constant expressions after binding;
+            // only procedural locals have an lvalue that can be captured by reference.
+            helper.args += localType + (lookupLocalType(name).empty() ? " " : "& ") + cppIdent(name);
+            helper.localNames.insert(name);
+        }
+        auto call = helper.name + "(" + arguments + ")";
+        mod->functionReturnTypes[helper.name] = type;
+        mod->expressionHelpers.push_back(std::move(helper));
+        return call;
+    }
+
+    void storeGenerateLocalExpr(const std::string& name, const std::string& expr, const std::string& guard = "",
+                                 const std::vector<std::string>& loopHeaders = {})
     {
         if (name.empty() || generateLocalExprScopes.empty()) {
             return;
@@ -155,8 +207,9 @@
             if (guard.empty()) {
                 return expr;
             }
-            return "([&]() { if constexpr (" + guard + ") { return " + expr +
-                   "; } else { return " + previous + "; } }())";
+            auto type = mod->types.count(name) ? unwrapRegType(mod->types.at(name)) : "logic<1>";
+            return emitExpressionHelper(type, {"if constexpr (" + guard + ") {",
+                "return " + expr + ";", "} else {", "return " + previous + ";", "}"}, {}, loopHeaders);
         };
         for (size_t n = generateLocalNameScopes.size(); n > 0; --n) {
             if (generateLocalNameScopes[n - 1].count(name)) {
@@ -1875,6 +1928,13 @@
             for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
                 port.type = "array<" + port.type + "," + *it + ">";
             }
+            // Re-conversion already has the full elaboration's per-port type.
+            // Its synthesized parameters must not collapse back onto the first
+            // interface's widths merely because they now look like declarations.
+            auto configuredType = configuredPortType(mod->name, port.name, "");
+            if (!configuredType.empty()) {
+                port.type = configuredType;
+            }
             port.array.clear();
         }
         if (!port.array.empty()) {
@@ -3500,7 +3560,7 @@
                         if (!outBase.empty() && isGenerateLocalName(outBase) &&
                             trim(lhs) == outBase) {
                             storeGenerateLocalExpr(outBase, outExpr,
-                                                   generateLocalGuardExpr(methodLoopHeaders));
+                                                   generateLocalGuardExpr(methodLoopHeaders), methodLoopHeaders);
                             continue;
                         }
                         if (methodLoopHeaders.empty() && !outBase.empty() && mod->outputPortCppNames.count(outBase) &&
@@ -3895,30 +3955,38 @@
                     for (const auto& base : assignedList) {
                         auto typeIt = mod->types.find(base);
                         auto type = typeIt == mod->types.end() ? std::string("logic<1>") : unwrapRegType(typeIt->second);
-                        std::ostringstream expr;
-                        expr << "([&]() { " << type << " " << base << " = {}; ";
+                        std::vector<std::string> body = {type + " " + base + " = {};"};
+                        auto helperLocals = localNames;
+                        helperLocals.insert(assignedList.begin(), assignedList.end());
                         for (const auto& other : assignedList) {
                             if (other != base) {
                                 auto otherTypeIt = mod->types.find(other);
                                 auto otherType = otherTypeIt == mod->types.end() ? std::string("logic<1>") : unwrapRegType(otherTypeIt->second);
-                                expr << otherType << " " << other << " = {}; ";
+                                body.push_back(otherType + " " + other + " = {};");
                             }
                         }
                         auto localLoopDepth = std::min(generateLocalLoopDepth(base), methodLoopHeaders.size());
                         for (size_t n = localLoopDepth; n < methodLoopHeaders.size(); ++n) {
-                            expr << trim(methodLoopHeaders[n]) << " ";
+                            auto header = trim(methodLoopHeaders[n]);
+                            body.push_back(header);
+                            if (header.rfind("for (unsigned ", 0) == 0) {
+                                auto begin = std::string("for (unsigned ").size();
+                                auto end = header.find_first_of(" =;", begin);
+                                helperLocals.insert(header.substr(begin, end - begin));
+                            }
                         }
                         for (const auto& line : lines) {
                             auto text = trim(line);
                             if (!text.empty()) {
-                                expr << text << " ";
+                                body.push_back(text);
                             }
                         }
                         for (size_t n = localLoopDepth; n < methodLoopHeaders.size(); ++n) {
-                            expr << "} ";
+                            body.push_back("}");
                         }
-                        expr << "return " << base << "; }())";
-                        storeGenerateLocalExpr(base, expr.str(), guard);
+                        body.push_back("return " + base + ";");
+                        auto expression = emitExpressionHelper(type, std::move(body), helperLocals, methodLoopHeaders);
+                        storeGenerateLocalExpr(base, expression, guard, methodLoopHeaders);
                     }
                     loopVars = savedLoopVars;
                     return;
@@ -4113,6 +4181,7 @@
                         loopVars.insert(replacement.first);
                     }
                     auto rhs = emitExpr(*b.right);
+                    auto writeProof = continuousBitWriteProof(*b.left, *b.right, base);
                     if (b.right->kind == SyntaxKind::ConditionalExpression &&
                         lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
                         rhs = emitConditionalForLValue(b.right->as<ConditionalExpressionSyntax>(), *b.left, lhs);
@@ -4122,8 +4191,11 @@
                     applyGenerateReplacements(rhs);
                     applyGenerateReplacements(dependencyLhs);
                     applyGenerateReplacements(dependencyRhs);
+                    if (writeProof) {
+                        for (auto& line : *writeProof) applyGenerateReplacements(line);
+                    }
                     if (!base.empty() && wholeNetAssign && isGenerateLocalName(base)) {
-                        storeGenerateLocalExpr(base, "(" + rhs + ")", generateLocalGuardExpr(methodLoopHeaders));
+                        storeGenerateLocalExpr(base, "(" + rhs + ")", generateLocalGuardExpr(methodLoopHeaders), methodLoopHeaders);
                         continue;
                     }
                     if (addConcatOutputAssignments(*mod, lhs, rhs, methodLoopHeaders)) {
@@ -4161,13 +4233,13 @@
                     if (!base.empty() && mod->outputPortCppNames.count(base) &&
                         !configuredNameEquals("HDLCPP_INLINE_COMB_MODULES", mod->name)) {
                         addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders,
-                                          dependencyLhs, dependencyRhs);
+                                          dependencyLhs, dependencyRhs, writeProof);
                         continue;
                     }
                     if (internalWholeNet || (!base.empty() && mod->varNames.count(base) &&
                         (lhs.find('[') != std::string::npos || lhs.find('.') != std::string::npos))) {
                         addCombAssignment(*mod, base, lhs, rhs, methodLoopHeaders,
-                                          dependencyLhs, dependencyRhs);
+                                          dependencyLhs, dependencyRhs, writeProof);
                         continue;
                     }
                     // Dotted lhs here is a struct member/value assignment, not a port binding.
@@ -4683,10 +4755,63 @@
         target.assignLines.swap(kept);
     }
 
+    std::optional<std::vector<std::string>> continuousBitWriteProof(
+        const ExpressionSyntax& lhs, const ExpressionSyntax& rhs, const std::string& base)
+    {
+        // Keep bit dependencies before value lowering turns a selected read into
+        // a cast of the whole packed net. Generate controls are elaboration-time
+        // constants; data-dependent indices and calls deliberately get no proof.
+        std::function<bool(const SyntaxNode&)> constantIndex = [&](const SyntaxNode& node) {
+            if (node.kind == SyntaxKind::IdentifierName) {
+                auto name = tok(node.as<IdentifierNameSyntax>().identifier);
+                return loopVars.count(name) || mod->valueNames.count(name);
+            }
+            if (node.kind == SyntaxKind::InvocationExpression ||
+                node.kind == SyntaxKind::IdentifierSelectName ||
+                node.kind == SyntaxKind::ElementSelectExpression) return false;
+            for (size_t child = 0; child < node.getChildCount(); ++child) {
+                if (auto nested = node.childNode(child); nested && !constantIndex(*nested)) return false;
+            }
+            return true;
+        };
+        auto bitIndex = [&](const IdentifierSelectNameSyntax& select) -> std::optional<std::string> {
+            if (select.selectors.size() != 1 ||
+                select.selectors[0]->selector->kind != SyntaxKind::BitSelect) return std::nullopt;
+            const auto& index = *select.selectors[0]->selector->as<BitSelectSyntax>().expr;
+            if (!constantIndex(index)) return std::nullopt;
+            return emitExpr(index);
+        };
+        if (lhs.kind != SyntaxKind::IdentifierSelectName ||
+            tok(lhs.as<IdentifierSelectNameSyntax>().identifier) != base) return std::nullopt;
+        auto write = bitIndex(lhs.as<IdentifierSelectNameSyntax>());
+        if (!write) return std::nullopt;
+        std::vector<std::string> proof;
+        std::function<bool(const SyntaxNode&)> read = [&](const SyntaxNode& node) {
+            if (node.kind == SyntaxKind::InvocationExpression) return false;
+            if (node.kind == SyntaxKind::IdentifierName &&
+                tok(node.as<IdentifierNameSyntax>().identifier) == base) return false;
+            if (node.kind == SyntaxKind::IdentifierSelectName &&
+                tok(node.as<IdentifierSelectNameSyntax>().identifier) == base) {
+                auto index = bitIndex(node.as<IdentifierSelectNameSyntax>());
+                if (!index) return false;
+                proof.push_back("__proof.read(" + *index + ");");
+                return true;
+            }
+            for (size_t child = 0; child < node.getChildCount(); ++child) {
+                if (auto nested = node.childNode(child); nested && !read(*nested)) return false;
+            }
+            return true;
+        };
+        if (!read(rhs)) return std::nullopt;
+        proof.push_back("__proof.write(" + *write + ");");
+        return proof;
+    }
+
     void addCombAssignment(ModuleGen& target, const std::string& svBase, const std::string& lhs, const std::string& rhs,
                            const std::vector<std::string>& loopHeaders = {},
                            const std::string& dependencyLhs = {},
-                           const std::string& dependencyRhs = {})
+                           const std::string& dependencyRhs = {},
+                           const std::optional<std::vector<std::string>>& writeProof = std::nullopt)
     {
         auto base = !svBase.empty() ? svBase : baseFromLValueText(lhs);
         if (base.empty() || (!target.types.count(base) && !target.outputPortCppNames.count(base))) {
@@ -4727,6 +4852,27 @@
             method = &target.methods.back();
         }
         target.combAssignedVars.insert(base);
+
+        if (!writeProof || retType.rfind("logic<", 0) != 0) {
+            method->continuousWriteProofValid = false;
+        }
+        else if (method->continuousWriteProofValid) {
+            const auto headers = hdlcpp::dependencyOrderedContinuousLoopHeaders(
+                loopHeaders, base, dependencyLhs, dependencyRhs);
+            for (const auto& header : headers) {
+                method->continuousWriteProof.push_back(header);
+                if (trim(header).rfind("for", 0) == 0)
+                    method->continuousWriteProof.push_back("if (!__proof.step()) return false;");
+            }
+            for (const auto& line : target.assignLines) {
+                if (trim(line).rfind("static constexpr ", 0) == 0)
+                    method->continuousWriteProof.push_back(line);
+            }
+            method->continuousWriteProof.insert(method->continuousWriteProof.end(),
+                                                writeProof->begin(), writeProof->end());
+            for (size_t depth = 0; depth < headers.size(); ++depth)
+                method->continuousWriteProof.push_back("}");
+        }
 
         auto finalRhs = rhs;
         if (retType == "bool" || retType == "u1") {
@@ -4807,13 +4953,18 @@
         }();
         auto packedArrayFieldAssignmentLine = [&]() {
             const auto& assignment = *packedArrayFieldAssignment;
-            return assignment.selectedElement + " = ([&]() -> " +
-                assignment.elementType + " { auto __cpphdl_elem = " +
+            auto name = "__hdlcpp_update_" + assignment.field;
+            std::replace(name.begin(), name.end(), '.', '_');
+            target.helperDefinitions[name] =
+                "    template<typename Element, typename Value>\n"
+                "    static Element " + name + "(Element element, const Value& value)\n    {\n"
+                "        element." + assignment.field + " = value;\n"
+                "        return element;\n    }\n";
+            return assignment.selectedElement + " = " + name + "(" +
                 "cpphdl::unpack_value<" + assignment.elementType +
                 ">(cpphdl::pack_value<cpphdl::type_width<" +
                 assignment.elementType + ">()>(" + assignment.selectedElement +
-                ")); __cpphdl_elem." + assignment.field + " = " + finalRhs +
-                "; return __cpphdl_elem; })();";
+                ")), " + finalRhs + ");";
         };
 
         auto wholeArrayAssignmentNeedsElementUnpack = [&]() {

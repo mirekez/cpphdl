@@ -18,6 +18,11 @@ cycle budget. A timeout is a validation failure, not an equivalent-work sample.
 If validation fails, the script exits nonzero and does **not** report a speed
 ratio. It does not replace or emulate the hardware to obtain a passing result.
 
+The native command also receives `+elf_file=PATH` after the binary argument.
+This initializes the RTL tracer's `tohost` address from the same ELF, matching
+cpphdl's tracer configuration. Without it, the native driver can keep running
+until a later DTM poll even though the guest has already completed.
+
 Once validation passes, three alternating trials per simulator measure
 `steady_clock` time inside the simulation loop. Initialization, ten reset
 clocks, ELF loading, conversion, and compilation are excluded. Process wall

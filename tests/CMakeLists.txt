@@ -1,6 +1,235 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_test(NAME optimizer_generated_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/GeneratedHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(optimizer_generated_helper PROPERTIES TIMEOUT 120)
+
+add_test(NAME optimizer_template_helper COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/TemplateHelperTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
+add_test(NAME optimizer_indexed_proof COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/IndexedProofTest.sh"
+    "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME cpp_graph_wide_slice COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/wide-slice")
+    set_tests_properties(cpp_graph_wide_slice PROPERTIES TIMEOUT 480)
+    add_test(NAME code_slice_widths_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceWidthsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/slice-widths")
+    set_tests_properties(code_slice_widths_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_port_binding COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/PortBindingChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/port-binding")
+    set_tests_properties(cpp_graph_port_binding PROPERTIES TIMEOUT 240)
+    add_test(NAME code_slice_casts_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
+    set_tests_properties(code_slice_casts_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME structs_sizeof_imports_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/structs/SizeofImportsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/sizeof-imports")
+    set_tests_properties(structs_sizeof_imports_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME structs_empty_init_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/structs/EmptyInitChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/empty-init")
+    set_tests_properties(structs_empty_init_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME code_buffer_casts_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/code/BufferCastsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/buffer-casts")
+    set_tests_properties(code_buffer_casts_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME code_lazy_comb_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/code/LazyCombChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/lazy-comb")
+    set_tests_properties(code_lazy_comb_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME interface_hierarchy_imports_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/interface/HierarchyImportsChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
+    set_tests_properties(interface_hierarchy_imports_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_zero_concat COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/zero-concat")
+    set_tests_properties(cpp_graph_zero_concat PROPERTIES TIMEOUT 240)
+    foreach(flow cpp fallback)
+        add_test(NAME cast_${flow} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/casts" --flow ${flow})
+        set_tests_properties(cast_${flow} PROPERTIES TIMEOUT 240)
+    endforeach()
+    foreach(flow cpp graph effects)
+        # The host-effect oracle wraps libc random() using the ELF linker.
+        if(flow STREQUAL "effects" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            continue()
+        endif()
+        add_test(NAME switch_control_${flow} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control" --flow ${flow})
+        set_tests_properties(switch_control_${flow} PROPERTIES TIMEOUT 240)
+    endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME cpp_graph_memory_scaling COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphMemoryChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph-memory")
+        set_tests_properties(cpp_graph_memory_scaling PROPERTIES TIMEOUT 180
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
+    if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_xperm_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/XpermChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/xperm-graph")
+        set_tests_properties(hdlcpp_xperm_graph PROPERTIES TIMEOUT 240)
+        add_test(NAME native_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-graph")
+        set_tests_properties(native_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_pipeline COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph")
+        set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endif()
+    add_test(NAME netlist_driver COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/netlist/test_driver.py")
+    set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    find_program(CPPHDL_NETLIST_VERILATOR verilator)
+    if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME wide_slice_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wide-slice")
+        set_tests_properties(wide_slice_verilator PROPERTIES TIMEOUT 480)
+        add_test(NAME code_slice_widths_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceWidthsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/slice-widths")
+        set_tests_properties(code_slice_widths_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME port_binding_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/PortBindingChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/port-binding")
+        set_tests_properties(port_binding_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME code_slice_casts_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/SliceCastsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/slice-casts")
+        set_tests_properties(code_slice_casts_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME structs_sizeof_imports_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/structs/SizeofImportsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/sizeof-imports")
+        set_tests_properties(structs_sizeof_imports_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME structs_empty_init_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/structs/EmptyInitChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/empty-init")
+        set_tests_properties(structs_empty_init_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME code_buffer_casts_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/BufferCastsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/buffer-casts")
+        set_tests_properties(code_buffer_casts_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME code_lazy_comb_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/LazyCombChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/lazy-comb")
+        set_tests_properties(code_lazy_comb_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME interface_hierarchy_imports_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/interface/HierarchyImportsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
+        set_tests_properties(interface_hierarchy_imports_verilator PROPERTIES TIMEOUT 240)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME cpp_graph_zero_repeat_verilator COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/zero-repeat")
+            set_tests_properties(cpp_graph_zero_repeat_verilator PROPERTIES TIMEOUT 240)
+        endif()
+        add_test(NAME cast_parameter_widths COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/casts" --flow widths
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+        set_tests_properties(cast_parameter_widths PROPERTIES TIMEOUT 240)
+        add_test(NAME cast_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/code/CastChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/casts" --flow verilator
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+        set_tests_properties(cast_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME switch_control_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control" --flow verilator
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+        set_tests_properties(switch_control_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME netlist_converter COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/netlist/ConverterChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --source-root "${CMAKE_SOURCE_DIR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/netlist-converter"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}")
+    endif()
+    find_program(CPPHDL_NETLIST_YOSYS yosys)
+    find_program(CPPHDL_NETLIST_SV2V sv2v)
+    find_path(CPPHDL_CXXRTL_RUNTIME cxxrtl/cxxrtl.h
+        PATHS /usr/share/yosys/include/backends/cxxrtl/runtime
+              /usr/local/share/yosys/include/backends/cxxrtl/runtime)
+    if(CPPHDL_NETLIST_YOSYS AND CPPHDL_NETLIST_SV2V AND CPPHDL_CXXRTL_RUNTIME)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME word_pipeline COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/netlist/WordChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --sv2v "${CPPHDL_NETLIST_SV2V}" --yosys "${CPPHDL_NETLIST_YOSYS}"
+                --runtime "${CPPHDL_CXXRTL_RUNTIME}" --cxx "${CMAKE_CXX_COMPILER}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/word-pipeline")
+            set_tests_properties(word_pipeline PROPERTIES TIMEOUT 300
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        endif()
+        add_test(NAME netlist_word_graph COMMAND "${CMAKE_COMMAND}"
+            "-DPYTHON=${Python3_EXECUTABLE}" "-DCPPHDL=$<TARGET_FILE:cpphdl>"
+            "-DSV2V=${CPPHDL_NETLIST_SV2V}" "-DYOSYS=${CPPHDL_NETLIST_YOSYS}"
+            "-DCXXRTL_RUNTIME=${CPPHDL_CXXRTL_RUNTIME}" "-DCXX=${CMAKE_CXX_COMPILER}"
+            "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/netlist"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/netlist/Smoke.cmake")
+        set_tests_properties(netlist_word_graph PROPERTIES TIMEOUT 180)
+    endif()
+endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
@@ -35,6 +264,12 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent CppHDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# These fixtures are built by SwitchControlChecks.py with a separate runner
+# and flow-specific definitions, not as standalone inline-test executables.
+list(REMOVE_ITEM TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControl.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlRun.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchEffects.cpp")
 # This source is an integration driver for two optimizer-generated trees.
 # Its custom target is declared below instead of using the converter loop.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/combs/OptimizeL1\\.cpp$")
@@ -62,8 +297,10 @@ foreach(src ${TEST_SOURCES})
     # Public header APIs must remain usable by C++17 projects even though converter
     # regressions normally compile in the newest supported language mode.
     if(rel_path STREQUAL "datatypes/ConstexprHelpers.cpp" OR
+       rel_path STREQUAL "datatypes/PackedWriteback.cpp" OR
        rel_path STREQUAL "datatypes/ArrayUnpacked.cpp" OR
        rel_path STREQUAL "datatypes/PointerPorts.cpp" OR
+       rel_path STREQUAL "datatypes/LogicConversions.cpp" OR
        rel_path STREQUAL "datatypes/NoStdFormatCpp17.cpp")
         target_compile_options(${target_name} PRIVATE "-std=c++17")
     endif()
@@ -148,6 +385,16 @@ foreach(src ${TEST_SOURCES})
     endif()
 
 endforeach()
+
+# Exercise the byte-oriented fallback even on little-endian development hosts.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(datatypes_PackedWritebackPortable datatypes/PackedWriteback.cpp)
+    set_target_properties(datatypes_PackedWritebackPortable PROPERTIES CXX_STANDARD 17)
+    target_include_directories(datatypes_PackedWritebackPortable PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_compile_options(datatypes_PackedWritebackPortable PRIVATE -U__BYTE_ORDER__)
+    cpphdl_link_stdcxxexp_if_available(datatypes_PackedWritebackPortable)
+    add_test(NAME datatypes_PackedWritebackPortable COMMAND datatypes_PackedWritebackPortable)
+endif()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
@@ -378,6 +625,16 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_replay_context
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ReplayContextTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            "${CPPHDL_STDCXXEXP}"
+)
+set_tests_properties(optimizer_replay_context PROPERTIES TIMEOUT 120)
 
 add_test(
     NAME optimizer_native_bit_store

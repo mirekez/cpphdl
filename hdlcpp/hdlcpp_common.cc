@@ -19,6 +19,8 @@ struct MethodGen {
     // them separate while parsing so source order cannot evaluate them before
     // the procedural value they consume has been produced.
     std::vector<std::string> deferredContinuousBody;
+    std::vector<std::string> continuousWriteProof;
+    bool continuousWriteProofValid = true;
     bool continuousBodyAppended = false;
     std::set<std::string> localNames;
     std::string returnName;
@@ -80,6 +82,8 @@ struct ModuleGen {
     std::map<std::string, std::vector<std::string>> memberArrayDimensions;
     std::vector<InstanceConnGen> instanceConns;
     std::vector<MethodGen> methods;
+    std::vector<MethodGen> expressionHelpers;
+    mutable std::map<std::string, std::string> helperDefinitions;
     std::vector<std::pair<std::string, std::string>> assigns;
     std::vector<std::string> assignLines;
     std::set<std::string> portNames;
@@ -2204,44 +2208,6 @@ static std::string repairSplitSvBitsCall(std::string s)
         }
         return std::string::npos;
     };
-    auto repairOneName = [&](const std::string& name) {
-        for (size_t pos = 0; (pos = s.find(name, pos)) != std::string::npos;) {
-            auto open = s.find('(', pos + name.size());
-            if (open == std::string::npos) {
-                break;
-            }
-            auto close = matchingCloseParen(s, open);
-            if (close == std::string::npos) {
-                pos = open + 1;
-                continue;
-            }
-            auto comma = close + 1;
-            while (comma < s.size() && std::isspace(static_cast<unsigned char>(s[comma]))) {
-                ++comma;
-            }
-            if (comma >= s.size() || s[comma] != ',') {
-                pos = close + 1;
-                continue;
-            }
-            auto argStart = comma + 1;
-            while (argStart < s.size() && std::isspace(static_cast<unsigned char>(s[argStart]))) {
-                ++argStart;
-            }
-            if (argStart >= s.size() || s[argStart] != '(') {
-                pos = close + 1;
-                continue;
-            }
-            auto argEnd = matchingCloseParen(s, argStart);
-            if (argEnd == std::string::npos) {
-                pos = close + 1;
-                continue;
-            }
-            auto third = s.substr(argStart, argEnd - argStart + 1);
-            s.replace(close, argEnd - close + 1, "," + third + ")");
-            pos = close + third.size() + 2;
-        }
-    };
-    repairOneName("cpphdl::sv_bits_runtime");
     for (size_t pos = 0; (pos = s.find("cpphdl::sv_bits<", pos)) != std::string::npos;) {
         auto templ = matchingTemplateCloseLocal(s, pos + std::string("cpphdl::sv_bits").size());
         if (templ == std::string::npos) {
@@ -2959,7 +2925,7 @@ static std::string postProcessCppLineImpl(std::string line)
         }
     }
 	    line = updateCpphdlArraySyntax(std::move(line));
-	    if (line.find(".data.bits(") == std::string::npos) {
+	    if (line.find(".bits(") == std::string::npos) {
 	        line = repairDottedLogicWidthCasts(std::move(line));
 	    }
 	    line = repairNumericCastSplitMemberAccess(std::move(line));
@@ -3712,7 +3678,7 @@ static std::string postProcessCppLineImpl(std::string line)
 	    auto lhs = line.substr(0, eq + 1);
 	    auto rhs = line.substr(eq + 1);
 	    auto lhsTrim = trim(lhs.substr(0, lhs.size() - 1));
-	    const bool packedStorageBitsAssign = lhsTrim.find(".data.bits(") != std::string::npos;
+	    const bool packedStorageBitsAssign = lhsTrim.find(".bits(") != std::string::npos;
 
 	    auto unwrapTypedTargetConstructors = [&](std::string text) {
         auto target = "std::remove_cvref_t<decltype(" + lhsTrim + ")>";
@@ -3997,6 +3963,28 @@ static std::string postProcessCppLine(std::string line)
     line = postProcessCppLineImpl(std::move(line));
     line = repairNumericCastSplitMemberAccess(std::move(line));
     line = repairSplitSvBitsCall(std::move(line));
+    // Replace only the exact, width-preserving conversion emitted by hdlcpp.
+    // convert_packed proves structural equivalence or retains the old bit cast.
+    const std::string conversionPrefix = "cpphdl::unpack_value<";
+    for (size_t search = 0; (search = line.find(conversionPrefix, search)) != std::string::npos;) {
+        const auto typeEnd = matchingTemplateCloseLocal(line, search + conversionPrefix.size() - 1);
+        if (typeEnd == std::string::npos) break;
+        const auto target = line.substr(search + conversionPrefix.size(), typeEnd - search - conversionPrefix.size());
+        const auto packedPrefix = "(cpphdl::pack_value<cpphdl::type_width<" + target + ">()>(";
+        if (line.compare(typeEnd + 1, packedPrefix.size(), packedPrefix) != 0) {
+            search = typeEnd + 1;
+            continue;
+        }
+        const auto begin = typeEnd + 1 + packedPrefix.size();
+        const auto end = matchingParenClose(line, begin - 1);
+        if (end == std::string::npos || end + 1 >= line.size() || line[end + 1] != ')') {
+            search = begin;
+            continue;
+        }
+        line.replace(search, end + 2 - search,
+                     "cpphdl::convert_packed<" + target + ">(" + line.substr(begin, end - begin) + ")");
+        search += std::string("cpphdl::convert_packed<").size();
+    }
     return line;
 }
 
@@ -5763,7 +5751,31 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
     }
     std::string line;
     if (!fields.empty()) {
+        line += "    using __hdlcpp_layout_owner = " + name + ";\n";
+        line += "    static constexpr bool __hdlcpp_native_fields = " + std::string(isUnion ? "false" : "true");
+        for (const auto& field : fields)
+            line += " && cpphdl::detail::native_field_safe<std::remove_cvref_t<decltype(" + field.name + ")>>::value";
+        line += ";\n";
         line += "    static constexpr std::size_t _size_bits() { return " + width + "; }\n";
+        line += "    static constexpr bool __hdlcpp_struct_layout = " + std::string(isUnion ? "false" : "true") + ";\n";
+        line += "    static constexpr std::size_t __hdlcpp_field_count = " + std::to_string(fields.size()) + ";\n";
+        std::string layoutOffset = "0";
+        for (const auto& field : fields) {
+            line += "    static constexpr std::size_t __hdlcpp_offset_" + field.name + " = " + layoutOffset + ";\n";
+            if (!isUnion) layoutOffset = addWidthExpr(layoutOffset, field.width);
+        }
+        line += "    template<typename Source> static constexpr bool __hdlcpp_layout_compatible() {\n";
+        line += "        if constexpr (requires(const Source& source) { Source::__hdlcpp_struct_layout; Source::__hdlcpp_field_count; Source::_size_bits();";
+        for (const auto& field : fields)
+            line += " Source::__hdlcpp_offset_" + field.name + "; source." + field.name + ";";
+        line += " }) {\n        return __hdlcpp_struct_layout && Source::__hdlcpp_struct_layout && Source::__hdlcpp_field_count == __hdlcpp_field_count && Source::_size_bits() == _size_bits()";
+        for (const auto& field : fields)
+            line += " && Source::__hdlcpp_offset_" + field.name + " == __hdlcpp_offset_" + field.name + " && cpphdl::type_width<decltype(std::declval<Source>()." + field.name + ")>() == cpphdl::type_width<decltype(" + field.name + ")>()";
+        line += " && cpphdl::detail::generated_layout<Source>::value;\n        } else return false;\n    }\n";
+        line += "    template<typename Source> void __hdlcpp_assign_layout(const Source& source) {\n";
+        for (const auto& field : fields)
+            line += "        this->" + field.name + " = cpphdl::convert_packed<std::remove_cvref_t<decltype(this->" + field.name + ")>>(source." + field.name + ");\n";
+        line += "    }\n";
         line += "    template<std::size_t W> " + name + "& operator=(const logic<W>& v) { const auto packed = logic<" + width + ">(v);\n";
         std::string offset = "0";
         uint64_t numericOffset = 0;
@@ -5790,7 +5802,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
             }
         }
         line += "        return *this; }\n";
-        line += "    template<typename T, typename std::enable_if_t<!std::is_integral_v<std::remove_cvref_t<T>> && !std::is_enum_v<std::remove_cvref_t<T>> && cpphdl::detail::has_pack_method<std::remove_cvref_t<T>>::value, int> = 0> " + name + "& operator=(const T& v) { return this->template operator=<" + width + ">(logic<" + width + ">(v.pack())); }\n";
+        line += "    template<typename T, typename std::enable_if_t<!std::is_integral_v<std::remove_cvref_t<T>> && !std::is_enum_v<std::remove_cvref_t<T>> && cpphdl::detail::has_pack_method<std::remove_cvref_t<T>>::value, int> = 0> " + name + "& operator=(const T& v) { if constexpr (__hdlcpp_layout_compatible<T>()) { __hdlcpp_assign_layout(v); return *this; } else return this->template operator=<" + width + ">(logic<" + width + ">(v.pack())); }\n";
         line += "    template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> " + name + "& operator=(T v) { return this->template operator=<" + width + ">(logic<" + width + ">(v)); }\n";
         line += "    logic<" + width + "> pack() const { logic<" + width + "> packed = 0;\n";
         offset = "0";
@@ -5812,7 +5824,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
                         field.width + ">(this->" + field.name + ")))" + mask + ");\n";
                 }
                 else {
-                    line += "                packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(0)) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                    line += "                cpphdl::sv_insert_field<0, " + field.width + ">(packed, cpphdl::pack_value<" + field.width + ">(this->" + field.name + "));\n";
                 }
                 line += "            }\n";
                 line += "            return packed;\n";
@@ -5830,7 +5842,7 @@ static std::string packedAggregateHelpers(const std::string& name, std::string w
                         std::to_string(numericOffset) + ")));\n";
                 }
                 else {
-                    line += "            packed.bits((uint64_t)(" + next + " - 1),(uint64_t)(" + offset + ")) = cpphdl::pack_value<" + field.width + ">(this->" + field.name + ");\n";
+                    line += "            cpphdl::sv_insert_field<(uint64_t)(" + offset + "), " + field.width + ">(packed, cpphdl::pack_value<" + field.width + ">(this->" + field.name + "));\n";
                 }
             }
             line += "        }\n";

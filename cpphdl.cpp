@@ -22,6 +22,8 @@
 #include "json_output.h"
 #include "Combs.h"
 #include "LifecycleChecks.h"
+#include "WordLowering.h"
+#include "CppGraph.h"
 #include "hls/HLS.h"
 #include "hls/AstClocked.h"
 
@@ -621,39 +623,6 @@ bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
     return false;
 }
 
-void addEnumPackageImport(EnumDecl* ED, cpphdl::Struct* st)
-{
-    if (!ED) {
-        return;
-    }
-
-    std::string name = genTypeName(ED->getQualifiedNameAsString());
-    if (std::find_if(st->imports.begin(), st->imports.end(), [&](auto& imp){ return imp.name == name; }) == st->imports.end()) {
-        st->imports.emplace_back(name);
-    }
-
-    if (std::find_if(currProject->enums.begin(), currProject->enums.end(), [&](auto& en){ return en.name == name; }) != currProject->enums.end()) {
-        return;
-    }
-
-    cpphdl::Enum en{name, ED->getQualifiedNameAsString()};
-    QualType integerType = ED->getIntegerType();
-    if (!integerType.isNull()) {
-        en.bitWidth = ED->getASTContext().getTypeSize(integerType);
-        en.isSigned = integerType->isSignedIntegerType();
-    }
-    for (const EnumConstantDecl* ECD : ED->enumerators()) {
-        if (ECD->getInitExpr()) {
-            en.fields.emplace_back(cpphdl::Field{ECD->getName().str(),
-                {std::to_string(ECD->getInitVal().getSExtValue()), cpphdl::Expr::EXPR_NUM}});
-        }
-        else {
-            en.fields.emplace_back(cpphdl::Field{ECD->getName().str()});
-        }
-    }
-    currProject->enums.emplace_back(std::move(en));
-}
-
 
 }
 
@@ -1154,7 +1123,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 
                 auto* CRD = hlp.resolveCXXRecordDecl(QT);
                 if (const auto* ET = QT->getAs<EnumType>()) {
-                    addEnumPackageImport(ET->getDecl(), st);
+                    addEnumPackageImport(ET->getDecl(), st->imports);
                 }
                 DEBUG_AST1(" {var " << FD->getNameAsString() << "} " << (CRD && CRD->isAnonymousStructOrUnion()?"ANON":""));
                 st->fields.emplace_back(cpphdl::Field{FD->getNameAsString(), std::move(expr)/*, std::move(params)*/});
@@ -2031,10 +2000,18 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                     QualType aliasQT = TypeAlias->getUnderlyingType().getNonReferenceType();
                     CXXRecordDecl* aliasRD = hlp.resolveCXXRecordDecl(aliasQT);
                     auto* ModuleClass = hlp.lookupQualifiedRecord("cpphdl::Module");
+                    bool cpphdlAlias = aliasRD
+                        && aliasRD->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                    if (const auto* specialization = aliasQT->getAs<TemplateSpecializationType>()) {
+                        const auto* templ = specialization->getTemplateName().getAsTemplateDecl();
+                        cpphdlAlias |= templ
+                            && templ->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
+                    }
                     const bool aliasIsClassOnly =
-                        aliasRD
-                        && (!cpphdlRecordHasValueFields(aliasRD)
-                            || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)));
+                        aliasRD && (aliasRD->getDefinition()
+                            ? (!cpphdlRecordHasValueFields(aliasRD)
+                                || (ModuleClass && aliasRD->isDerivedFrom(ModuleClass)))
+                            : !cpphdlAlias);
                     if (!aliasIsClassOnly
                         && TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy()).find("std::") != 0) {
                         // A dependent logic<W> has a TemplateSpecializationType
@@ -2042,16 +2019,16 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         // declaration instead of flattening its canonical
                         // spelling into an invented identifier. digQT keeps
                         // width expressions and their parameter bindings.
-                        bool cpphdlAlias = aliasRD
-                            && aliasRD->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
-                        if (const auto* specialization = aliasQT->getAs<TemplateSpecializationType>()) {
-                            const auto* templ = specialization->getTemplateName().getAsTemplateDecl();
-                            cpphdlAlias |= templ
-                                && templ->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0;
-                        }
                         cpphdl::Expr aliasExpr = cpphdlAlias
                             ? hlp.digQT(aliasQT)
                             : cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE};
+                        if (aliasExpr.type == cpphdl::Expr::EXPR_TEMPLATE
+                            && (aliasExpr.value == "cpphdl_logic" || aliasExpr.value == "cpphdl_u"
+                                || aliasExpr.value == "cpphdl_i")) {
+                            // A defined specialization has concrete template
+                            // args; the alias's sugared type retains WIDTH.
+                            aliasExpr = cpphdl::Expr{hlp.castTypeName(aliasQT), cpphdl::Expr::EXPR_TYPE};
+                        }
                         mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(), std::move(aliasExpr)});
                     }
                 }
@@ -2436,6 +2413,13 @@ Clocks:
   Frequencies validate the design; the testbench must schedule clock edges.
 
 Native simulation optimizer (generates C++, not SystemVerilog):
+  --word-model [options]        Build a CXXRTL C++ word model; use
+                                --word-model --help for backend options.
+  --native-graph [options]      Compile an hdlcpp value graph without Yosys;
+                                use --native-graph --help for options.
+                                With --top VARIABLE, lower ordinary CppHDL C++.
+  --lower-word-model IN OUT -- [Clang arguments]
+                                Lower typed concatenation trees to word stores.
   --optimize-combs <root>        Generate a dependency-scheduled model for the
                                 named root module class.
   --optimize-combs-l1 <root>     Also schedule cached procedural comb methods.
@@ -2446,6 +2430,10 @@ Native simulation optimizer (generates C++, not SystemVerilog):
                                 Save an intermediate optimizer collection and
                                 exit without generating the model.
   --optimize-combs-load <file>   Load a saved collection; may be repeated.
+  --replay-export=<file>        Export full-design demand context for cut-out tests.
+  --replay-context=<file>       Import demand constraints (not new caching rights).
+  --replay-source=<path>        Source instance relative to the exported root.
+  --replay-target=<path>        Corresponding instance relative to the replay root.
   Math, threads, collect and load require one of the two root options above.
   Both root options disable the implicit SYNTHESIS definition.
   All single-value long options accept either --option value or --option=value;
@@ -2602,12 +2590,35 @@ tooling::CommandLineArguments adjustCppInputKind(
 
 int main(int argc, const char **argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--lower-cpp-graph") {
+        std::vector<std::string> include_arguments;
+#ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
+        appendDelimitedIncludeDirs(include_arguments, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
+#endif
+        appendCompilerProbeIncludeDirs(include_arguments);
+        return cpphdl::cpp_graph::run(argc, argv, include_arguments);
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--native-graph") {
+        return cpphdl::word_lowering::driver(argc, argv, "cpphdl-graph.py");
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--word-model") {
+        return cpphdl::word_lowering::driver(argc, argv);
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--lower-word-model") {
+        std::vector<std::string> include_arguments;
+#ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
+        appendDelimitedIncludeDirs(include_arguments, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
+#endif
+        appendCompilerProbeIncludeDirs(include_arguments);
+        return cpphdl::word_lowering::run(argc, argv, include_arguments);
+    }
     std::vector<const char*> replace;
     std::deque<std::string> owned_args;
     std::string generated_dir = "generated";
     std::string json_output;
     std::string optimize_combs_root;
     bool optimize_combs_l1 = false;
+    std::string replay_context, replay_source, replay_target, replay_export;
     std::string optimize_combs_collection_output;
     std::vector<std::string> optimize_combs_collection_inputs;
     bool optimize_math = false;
@@ -2634,6 +2645,27 @@ int main(int argc, const char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
+
+        if (!saw_double_dash) {
+            const std::string_view option(arg);
+            bool context_option = false;
+            for (auto [prefix, destination] : {
+                std::pair{"--replay-context=", &replay_context},
+                std::pair{"--replay-source=", &replay_source},
+                std::pair{"--replay-target=", &replay_target},
+                std::pair{"--replay-export=", &replay_export}}) {
+                if (option.starts_with(prefix)) {
+                    *destination = option.substr(std::strlen(prefix));
+                    if (destination->empty()) {
+                        llvm::errs() << prefix << " requires a value\n";
+                        return 1;
+                    }
+                    context_option = true;
+                    break;
+                }
+            }
+            if (context_option) continue;
+        }
 
         if (!saw_double_dash &&
             (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0)) {
@@ -2864,6 +2896,16 @@ int main(int argc, const char **argv)
         llvm::errs() << "--optimize-combs-collect/load requires --optimize-combs or --optimize-combs-l1\n";
         return 1;
     }
+    if ((!replay_context.empty() || !replay_export.empty() || !replay_source.empty() ||
+         !replay_target.empty()) && (optimize_combs_root.empty() ||
+                                    !optimize_combs_collection_output.empty())) {
+        llvm::errs() << "replay context requires comb generation, not collection-only mode\n";
+        return 1;
+    }
+    if (replay_context.empty() && (!replay_source.empty() || !replay_target.empty())) {
+        llvm::errs() << "--replay-source/target require --replay-context\n";
+        return 1;
+    }
     if (!primary_clocks.empty()) {
         for (const auto& secondary : secondary_clocks) {
             if (secondary.name == primary_clocks.front().name) {
@@ -2911,6 +2953,9 @@ int main(int argc, const char **argv)
         "-Wno-ambiguous-reversed-operator"};
     if (add_synthesis_flag) {
         args.push_back("-DSYNTHESIS");
+    }
+    if (!optimize_combs_root.empty()) {
+        args.push_back("-DCPPHDL_COMB_OPTIMIZATION");
     }
     args.insert(args.end(), cpphdl_include_args.begin(), cpphdl_include_args.end());
 
@@ -2964,6 +3009,7 @@ int main(int argc, const char **argv)
     }
     cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
+    combsOptimizer.setReplayContext(replay_context, replay_source, replay_target, replay_export);
     combsOptimizer.setCollectionOnly(!optimize_combs_collection_output.empty());
     for (const auto& input : optimize_combs_collection_inputs) {
         if (!combsOptimizer.loadCollection(input)) {

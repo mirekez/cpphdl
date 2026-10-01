@@ -1,9 +1,17 @@
 import unittest
 
-from compare_matmul import equivalent, parse_run
+from compare_matmul import equivalent, parse_run, simulation_command
 
 
 class ComparisonTest(unittest.TestCase):
+    def test_native_tracer_uses_same_elf(self):
+        elf = '/tmp/program with spaces.riscv'
+        self.assertEqual(simulation_command('/tmp/verilator', 'verilator', elf, 100),
+                         ['/tmp/verilator', '--seed=1', '--max-cycles=100', elf,
+                          '+elf_file=' + elf])
+        self.assertEqual(simulation_command('/tmp/cpphdl', 'cpphdl', elf, 100),
+                         ['/tmp/cpphdl', elf, '100'])
+
     def output(self, total=100, work=90):
         return (f'PASSED\nprogram *** SUCCESS *** (tohost = 0) after {total} cycles\n'
                 f'CVA6_BENCH reset_cycles=10 work_cycles={work} total_cycles={total} work_seconds=1.25\n')

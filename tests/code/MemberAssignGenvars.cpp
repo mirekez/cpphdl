@@ -119,6 +119,7 @@ public:
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <string>
 #include "../../examples/tools.h"
 
@@ -172,7 +173,10 @@ static bool generated_sv_has_smart_genvars()
         && text.find("genvar gc;") != std::string::npos
         && text.find("genvar gd;") != std::string::npos
         && text.find("genvar ge;") != std::string::npos;
-    const bool has_assign_5d = text.find("for (ge = 'h0;ge < 'h2;ge=ge+1)") != std::string::npos;
+    // Preserve the fifth loop's three clauses while allowing width/sign casts.
+    // The simulation below independently checks the generated iteration range.
+    const bool has_assign_5d = std::regex_search(text, std::regex(
+        R"(for\s*\(ge\s*=[^;]+;[^;]*\bge\b[^;]*<[^;]+;\s*ge\s*=\s*ge\s*\+\s*1\s*\))"));
     const bool no_old_member_genvars = text.find("genvar gi, gj, gk;") == std::string::npos;
 
     if (!has_member_genvars || !has_member_4d || !has_assign_genvars || !has_assign_5d || !no_old_member_genvars) {

@@ -40,6 +40,57 @@ inline constexpr bool is_logic_v = is_logic<std::remove_cv_t<std::remove_referen
 namespace detail
 {
 
+// Select the available conversions once per width. Per-use SFINAE on seven
+// conversion operators made Clang retain hundreds of megabytes of temporary
+// substitution ASTs for a small repeated word-level circuit. Keep the operators
+// templated: non-template narrow conversions change built-in overload resolution.
+template<size_t Width, typename Derived>
+struct logic_conversions {};
+
+template<typename Derived>
+struct logic_conversions<8, Derived> {
+    template<typename = void>
+    constexpr operator unsigned char() const {
+        return static_cast<unsigned char>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed char() const {
+        return static_cast<signed char>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<16, Derived> {
+    template<typename = void>
+    constexpr operator unsigned short() const {
+        return static_cast<unsigned short>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed short() const {
+        return static_cast<signed short>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<32, Derived> {
+    template<typename = void>
+    constexpr operator unsigned int() const {
+        return static_cast<unsigned int>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+    template<typename = void>
+    constexpr operator signed int() const {
+        return static_cast<signed int>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
+template<typename Derived>
+struct logic_conversions<64, Derived> {
+    template<typename = void>
+    constexpr operator signed long() const {
+        return static_cast<signed long>(static_cast<const Derived*>(this)->to_uint64_constexpr());
+    }
+};
+
 template<typename T, typename = void>
 struct has_pack_method : std::false_type {};
 
@@ -78,10 +129,65 @@ constexpr bool is_constant_evaluated_compat() noexcept
 #endif
 }
 
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+// Writeback tails contain at most eight bytes. Fixed-size copies become native
+// loads/stores without requiring alignment or reading past the packed object.
+__attribute__((always_inline)) inline uint64_t load_writeback_word(const uint8_t* source, size_t bytes)
+{
+    uint64_t result = 0;
+    if (bytes == 8) {
+        std::memcpy(&result, source, 8);
+        return result;
+    }
+    size_t shift = 0;
+    if (bytes >= 4) {
+        uint32_t word;
+        std::memcpy(&word, source, 4);
+        result = word;
+        source += 4;
+        bytes -= 4;
+        shift = 32;
+    }
+    if (bytes >= 2) {
+        uint16_t word;
+        std::memcpy(&word, source, 2);
+        result |= uint64_t(word) << shift;
+        source += 2;
+        bytes -= 2;
+        shift += 16;
+    }
+    if (bytes) result |= uint64_t(*source) << shift;
+    return result;
+}
+
+__attribute__((always_inline)) inline void store_writeback_word(uint8_t* destination, uint64_t value, size_t bytes)
+{
+    if (bytes == 8) {
+        std::memcpy(destination, &value, 8);
+        return;
+    }
+    if (bytes >= 4) {
+        const uint32_t word = static_cast<uint32_t>(value);
+        std::memcpy(destination, &word, 4);
+        destination += 4;
+        bytes -= 4;
+        value >>= 32;
+    }
+    if (bytes >= 2) {
+        const uint16_t word = static_cast<uint16_t>(value);
+        std::memcpy(destination, &word, 2);
+        destination += 2;
+        bytes -= 2;
+        value >>= 16;
+    }
+    if (bytes) *destination = static_cast<uint8_t>(value);
+}
+#endif
+
 }
 
 template<size_t WIDTH>
-struct logic : public bitops<logic<WIDTH>>
+struct logic : public bitops<logic<WIDTH>>, public detail::logic_conversions<WIDTH, logic<WIDTH>>
 {
     constexpr static size_t SIZE = (WIDTH+7)/8;
     uint8_t bytes[SIZE];
@@ -376,48 +482,6 @@ struct logic : public bitops<logic<WIDTH>>
         return to_uint64_constexpr();
     }
 
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator unsigned char() const
-    {
-        return static_cast<unsigned char>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator unsigned short() const
-    {
-        return static_cast<unsigned short>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator unsigned int() const
-    {
-        return static_cast<unsigned int>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 8, int> = 0>
-    constexpr operator signed char() const
-    {
-        return static_cast<signed char>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 16, int> = 0>
-    constexpr operator signed short() const
-    {
-        return static_cast<signed short>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 32, int> = 0>
-    constexpr operator signed int() const
-    {
-        return static_cast<signed int>(to_uint64_constexpr());
-    }
-
-    template<size_t W = WIDTH, typename std::enable_if_t<W == 64, int> = 0>
-    constexpr operator signed long() const
-    {
-        return static_cast<signed long>(to_uint64_constexpr());
-    }
-
     explicit constexpr operator bool() const
     {
         return to_uint64_constexpr() != 0;
@@ -577,6 +641,48 @@ struct logic_bits : public logic<WIDTH>
     void updateParent() const
     {
         if (parent) {  // if parent==0 then it can be pointer to logic, not logic_bits - we can use only logic
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            // Optimize only writeback: the proxy already owns a separate source
+            // snapshot. Changing reads or proxy layout regressed the bus replay.
+            // Mask against the live parent, preserving other slices and padding.
+            if constexpr (WIDTH > 0 && WIDTH <= 64) {
+                uint64_t source = 0;
+                uint64_t destination = 0;
+                std::memcpy(&source, logic<WIDTH>::bytes, logic<WIDTH>::SIZE);
+                std::memcpy(&destination, parent->bytes, logic<WIDTH>::SIZE);
+                const size_t count = last - first + 1;
+                const uint64_t mask = (~uint64_t{0} >> (64 - count)) << first;
+                destination = (destination & ~mask) | ((source << first) & mask);
+                std::memcpy(parent->bytes, &destination, logic<WIDTH>::SIZE);
+                return;
+            }
+            size_t destinationFirst = first;
+            size_t sourceFirst = 0;
+            size_t count = last - first + 1;
+            while (count != 0) {
+                const size_t destinationShift = destinationFirst % 8;
+                const size_t sourceShift = sourceFirst % 8;
+                const size_t chunk = count < 64 - destinationShift ? count : 64 - destinationShift;
+                const size_t sourceBytes = (sourceShift + chunk + 7) / 8;
+                const size_t destinationBytes = (destinationShift + chunk + 7) / 8;
+                uint64_t incoming = detail::load_writeback_word(
+                    logic<WIDTH>::bytes + sourceFirst / 8, sourceBytes < 8 ? sourceBytes : 8);
+                incoming >>= sourceShift;
+                if (sourceBytes > 8) {
+                    incoming |= uint64_t(logic<WIDTH>::bytes[sourceFirst / 8 + 8]) << (64 - sourceShift);
+                }
+                const uint64_t mask = (~uint64_t{0} >> (64 - chunk)) << destinationShift;
+                uint64_t previous = 0;
+                if (mask != ~uint64_t{0}) {
+                    previous = detail::load_writeback_word(parent->bytes + destinationFirst / 8, destinationBytes);
+                }
+                const uint64_t result = (previous & ~mask) | ((incoming << destinationShift) & mask);
+                detail::store_writeback_word(parent->bytes + destinationFirst / 8, result, destinationBytes);
+                destinationFirst += chunk;
+                sourceFirst += chunk;
+                count -= chunk;
+            }
+#else
             size_t destination = first;
             size_t source = 0;
             while (destination <= last && (destination % 8) != 0) {
@@ -596,6 +702,7 @@ struct logic_bits : public logic<WIDTH>
             while (destination <= last) {
                 parent->set(destination++, this->get(source++));
             }
+#endif
 //            parent->updateParent();
         }
     }
