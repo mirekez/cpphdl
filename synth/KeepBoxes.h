@@ -18,10 +18,11 @@ struct KeepBoxes {
     std::vector<KeepBox> boxes;
     std::map<size_t, size_t> owner;
     explicit KeepBoxes(graph::Graph& g) {
-        for (const auto& attr : g.attributes) if (attr.name == "keep_box") {
+        for (const auto& attr : g.attributes) if (attr.name == "keep_box" || attr.name == "one_clock") {
             size_t used = 0;
             double delay = std::stod(attr.value, &used);
-            if (used != attr.value.size() || !std::isfinite(delay) || delay <= 0 || attr.scope.empty())
+            if (used != attr.value.size() || !std::isfinite(delay) || delay < 0 ||
+                (delay == 0 && attr.name == "keep_box") || attr.scope.empty())
                 throw std::runtime_error("keep box requires a positive delay in ns: " + attr.scope);
             for (const auto& box : boxes) if (boxScope(box.scope, attr.scope) || boxScope(attr.scope, box.scope))
                 throw std::runtime_error("overlapping keep boxes: " + attr.scope);

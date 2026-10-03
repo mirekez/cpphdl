@@ -76,7 +76,7 @@ On the second branch, the already-read `__w->__left_` pointer is loaded again.
 Similarly, `__tree_is_left_child(x)` reads `x->__parent_` and then its left link;
 surrounding statements often reload that same parent.
 
-`AstClocked.cpp::read()` creates a new access for each lvalue read.
+`delayed_scheduler.cpp::read()` creates a new access for each lvalue read.
 `resolveAccesses()` promotes statically known, nonescaping objects to direct
 values, but otherwise emits a memory request and `@memory_clock@` for each
 access. It does not perform general load value numbering or propagate a loaded
@@ -249,8 +249,8 @@ Neither container's source or workload changed.
 
 Both shared-register-memory and BRAM simulations match the native C++ results.
 Current generated files and logs are in the corresponding
-`build/hls/tests/std/hls_clocked_Map_shared_memory*-rtl/` and
-`build/hls/examples/map/hls_clocked_RbMap_shared_memory*-rtl/` directories.
+`build/hls/tests/std/hls_delayed_Map_shared_memory*-rtl/` and
+`build/hls/examples/map/hls_delayed_RbMap_shared_memory*-rtl/` directories.
 LUT synthesis was refreshed on 2026-09-30 with the unchanged Xilinx mapping
 flows, 16-bit addresses, and allocation pools:
 
@@ -274,7 +274,7 @@ All mappings pass `check -assert`. Exact input snapshots and reports are in
 the other standard-container tests. No placement/routing or timing closure
 was performed.
 
-The permanent regression is `hls/tests/ClockedMemoryEffects.cpp`, with native,
+The permanent regression is `hls/tests/DelayedMemoryEffects.cpp`, with native,
 direct-register RTL, shared-memory RTL, and BRAM RTL checks. It includes exact
 clock assertions: repeated reads and both arms following a dominating read
 reuse one sample, but another memory transaction or a loop edge prevents reuse.

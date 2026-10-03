@@ -1,5 +1,5 @@
-add_clocked_test(RbMap TRUE)
-add_clocked_test(RbMap TRUE TRUE)
+add_delayed_test(RbMap TRUE)
+add_delayed_test(RbMap TRUE TRUE)
 add_hls_native(hls_rbmap_invariants RbMap_test.cpp)
 add_test(NAME hls_rbmap_invariants COMMAND "${HLS_NATIVE_BINARY}")
 set_tests_properties(hls_rbmap_invariants PROPERTIES TIMEOUT 30)

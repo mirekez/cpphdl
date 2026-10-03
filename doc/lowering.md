@@ -87,10 +87,13 @@ This is an incremental separation, not a finished abstract synthesis IR:
 - Operations still use the existing 64-bit node encoding. Wider connections and
   bitwise values can span nodes; general arbitrary-width arithmetic remains work
   for a later representation revision.
-- HLS scheduled blocks still contain emitted statement strings. HLS must export
-  structured operations before timing-driven scheduling can use this graph.
-- Source locations, technology delay models,
-  automatic pipeline insertion, and arithmetic resource binding remain planned.
+- HLS scheduled blocks contain explicitly sized expression strings. On
+  `--synth`, `synth/ScheduledGraph.cpp` lowers those expressions and the
+  scheduler's control edges directly into the shared graph, before SV function
+  sharing. Wrapper detection selects the appropriate scheduler automatically;
+  ordinary SV conversion does not perform this extra graph export.
+- Source locations, technology delay models and arithmetic resource binding
+  remain planned. Opt-in pipeline insertion uses the estimates described below.
 
 ## Initial Synthesis Flow
 
@@ -98,7 +101,7 @@ This is an incremental separation, not a finished abstract synthesis IR:
 
 ```sh
 build/cpphdl --synth --top cpphdl_top --module SynthMath \
-  --cxx c++ --yosys yosys --output /tmp/cpphdl-math \
+  --cxx c++ --output /tmp/cpphdl-math \
   synth/tests/math.cpp
 ```
 
@@ -106,10 +109,10 @@ The output directory must be new or empty. C++ parsing options such as `-I` and
 `-D` follow `--`. Run `build/cpphdl --synth --help` for available options.
 
 The flow lowers the root object's bindings and methods into the shared graph,
-emits `operations.v`, then runs Yosys generic synthesis and gate mapping.
+emits `operations.v`, then uses `synth/Mapping.cpp` for generic gate mapping.
 `gates.v` is the gate-level Verilog result; `gates.json` records the mapped cells.
 The driver rejects remaining non-generic cells instead of labeling unmapped
-arithmetic as a finished gate netlist. Logs, the Yosys script, and cell counts in
+arithmetic as a finished gate netlist. Logs and cell counts in
 `manifest.json` remain alongside the result.
 
 One rising edge of the generated `clk` executes one `_work`/`_strobe` transaction.
@@ -122,9 +125,16 @@ shifts, statically expanded helper functions/loops, and synchronous registers.
 It supports single-writer memories and named-clock asynchronous reset handlers
 as described below. It rejects host callbacks, explicit event graphs and undeclared
 clock methods. It does not
-implement floating-point library functions, HLS container scheduling, or automatic
-retiming. Generic gates are not an ASIC library mapping or a physical timing
+implement floating-point library functions. Scheduled HLS graphs and opt-in
+retiming are described in [retiming](../synth/retiming.md). Generic gates are not an ASIC library mapping or a physical timing
 guarantee. Clock-targeted synthesis needs a subsequent technology-aware stage.
+
+Neither graph export nor gate mapping invokes Yosys or another HDL elaborator.
+The mapper expands arithmetic into bit gates, shares identical gates, and maps
+memories to flip-flops with decoded writes and multiplexed reads. This generic
+backend does not infer FPGA block RAM or report FPGA LUT counts. Explicit keep
+boxes preserve their operation-level implementations for subsequent technology
+mapping. Gate tests use Verilator; passing simulation is not a formal proof.
 
 ## Multiple Clocks
 
@@ -251,10 +261,10 @@ clock processes, not arbitrary reset expressions or multiple reset signals.
 ## Regression Tests
 
 Enable `CPPHDL_BUILD_TESTS` and `CPPHDL_BUILD_SYNTH_TESTS`. Set
-`CPPHDL_SYNTH_YOSYS` and `CPPHDL_SYNTH_VERILATOR` to tool paths if needed.
+`CPPHDL_SYNTH_VERILATOR` to the Verilator executable if it is not on `PATH`.
 
 ```sh
-cmake --build build --target cpphdl synth_graph_checks
+cmake --build build --target cpphdl synth_graph_checks synth_mapping_checks synth_schedule_checks synth_retiming_checks synth_stream_checks
 ctest --test-dir build --output-on-failure -R '^synth_'
 ```
 
@@ -262,11 +272,24 @@ ctest --test-dir build --output-on-failure -R '^synth_'
 65,536 pairs of 8-bit operands, with unsigned arithmetic, signed multiplication,
 division, remainder and comparison, arithmetic shifts, saturation, integer square
 root, population count, 64-bit operations, and an enabled accumulator with
-synchronous reset.
+synchronous reset. Nested handwritten records exercise native field offsets,
+padding, constant initialization and partial updates without generated layout metadata.
 Independent arithmetic expectations check the ordinary C++ model. The native
 graph and Verilated **mapped gates**, not just the intermediate RTL, are compared
 with that model. `synth_graph_checks` checks explicit rejection of unsupported
 effects, malformed clock/memory contracts, undriven signals, and combinational cycles.
+
+`synth_mapping_checks` tests bit-level arithmetic expansion, narrowing, signed
+division and memory address bounds. `synth_schedule_checks` checks loop clock
+boundaries, initialization and response handshakes. The HLS integration tests
+compare original RTL and mapped gates cycle-for-cycle, then check the retimed
+results under backpressure and reset. `synth_hls_hft` runs the complete streaming
+packet testbench against baseline gates, then requires full-design 315 MHz
+retiming with II=1. Explicit RTL stages split the collector-to-decision boundary
+outside the HLS regions. The current full-design estimate is 3.15 ns, with
+12/6/30 clocks of latency in the three HLS regions. See
+[the HFT results](../hls/examples/net/README.md) for the manual stages and
+functional checks; estimated timing does not establish physical timing closure.
 
 `synth/tests/pipeline.cpp` adds a two-stage parent/child design with 4,096 cycles
 of stalls and resets. It checks simultaneous state updates and unchanged latency.
@@ -293,6 +316,34 @@ reference when allowed latency changes.
 ## Delay-Based Retiming
 
 The synthesis driver supports cycle-preserving register movement and
-latency-changing feed-forward pipelining. See [Retiming](../docs/retiming.md)
+latency-changing feed-forward pipelining and ready/commit scheduling for
+register-only feedback. `--synth` also imports the actual Clocked FSM and
+supports atomic memory transactions and output bundles. Pure functions in the
+ordinary C++ graph flow can carry a checked `CPPHDL_ONE_CLOCK`
+boundary. See [Retiming](../synth/retiming.md)
 for the delay model, command-line options, module annotations, memory rules,
-and regression tests. These passes use the shared graph without involving HLS.
+and regression tests. Both frontends use these shared graph passes; their
+external timing contracts must be respected when integrating the result.
+
+### Streaming Regions
+
+`ClockedPipeline` exports an untimed method transition as a streaming region
+alongside its initial physical pipeline. The shared graph records its input
+and output bindings, owned registers, constant state initialization, and HLS
+stage boundaries. This metadata survives serialization and gate expansion;
+the synthesis pass does not need to reparse C++ or infer intent from hold muxes.
+
+HLS distributes operations by dependency depth. Synthesis
+`fit_pipeline_retiming` expands oversized operators and adds delay-based cuts
+while preserving those boundaries, operand alignment and ready/valid flow.
+It rebuilds the region from the logical transition, retaining II=1 instead of
+using the ordinary feedback transaction scheduler. Each invocation snapshots
+committed state at admission and commits its candidate state at the final
+pipeline stage. Retiming delays that feedback; it need not preserve sequential
+C++ decisions. Global backpressure freezes updates, bubbles do not commit,
+and synchronous reset discards all in-flight calls.
+
+The native `ClockedPipeline<T, N>` wrapper models N advancing edges. A retimed
+reference must instead use the reported streaming latency. Stateful pipeline
+tests compare this contract in native C++, generated RTL and retimed mapped
+gates, including nonzero reset state and simultaneous admission/commit.

@@ -25,15 +25,15 @@ recursion limit, auxiliary stack, or sentinel allocation.
 
 ## Clocked Example
 
-`ClockedRbMap.cpp` wraps the tree in `RbMapMethods`, which exposes the same command
-operations as `hls/tests/std/ClockedMap.cpp`: insert/update, ordered checksum,
+`DelayedRbMap.cpp` wraps the tree in `RbMapMethods`, which exposes the same command
+operations as `hls/tests/std/DelayedMap.cpp`: insert/update, ordered checksum,
 fill existing values, lookup, erase, clear, and size.
 
 The two configurations use the same memory scheduling contract:
 
 ```cpp
-cpphdl::hls::Clocked<RbMapMethods, 0, 16, 4096, true, false> registers;
-cpphdl::hls::Clocked<RbMapMethods, 0, 16, 4096, true, true> block_ram;
+cpphdl::hls::ClockedDelayer<RbMapMethods, 0, 16, 4096, true, false> registers;
+cpphdl::hls::ClockedDelayer<RbMapMethods, 0, 16, 4096, true, true> block_ram;
 ```
 
 Both have 16-bit address signals and a 4,096-byte allocation pool. The converter
@@ -55,9 +55,9 @@ From the repository root, with the usual HLS/libc++ prerequisites installed:
 
 ```sh
 cmake -S . -B build -DCPPHDL_BUILD_HLS_TESTS=ON
-cmake --build build --target cpphdl hls_clocked_RbMap_shared_memory \
-    hls_clocked_RbMap_shared_memory_bram hls_rbmap_invariants
-ctest --test-dir build -R '^hls_(clocked_RbMap.*|rbmap_invariants)$' --output-on-failure
+cmake --build build --target cpphdl hls_delayed_RbMap_shared_memory \
+    hls_delayed_RbMap_shared_memory_bram hls_rbmap_invariants
+ctest --test-dir build -R '^hls_(delayed_RbMap.*|rbmap_invariants)$' --output-on-failure
 ```
 
 The native and Verilator transaction tests use the independent `std::map`
@@ -65,11 +65,21 @@ reference and the same 240-command workload as the standard-container example.
 They also check response backpressure, input changes while busy, reset during
 an operation, and reuse after reset. Generated RTL is under:
 
-- `build/hls/examples/map/hls_clocked_RbMap_shared_memory-rtl/generated/`
-- `build/hls/examples/map/hls_clocked_RbMap_shared_memory_bram-rtl/generated/`
+- `build/hls/examples/map/hls_delayed_RbMap_shared_memory-rtl/generated/`
+- `build/hls/examples/map/hls_delayed_RbMap_shared_memory_bram-rtl/generated/`
 
 Each test directory contains conversion, Verilator, build, and simulation logs.
 The simulation log reports total execution clocks and the longest command.
+
+Generated SystemVerilog snapshots are also available beside the example:
+
+- [generated/registers/](generated/registers/): register-backed arena.
+- [generated/bram/](generated/bram/): block-RAM-oriented arena.
+
+Each directory includes its top module, scheduled worker and required packages.
+Compile one variant at a time; the two directories define the same top module.
+These are HLS RTL outputs, not technology-mapped netlists. The regressions above
+regenerate and test the corresponding build-directory copies.
 
 `RbMap_test.cpp` separately checks the native tree after each mutation against
 `std::map`: strict ordering, parent links, root color, no adjacent red nodes,

@@ -17,7 +17,150 @@ Clang CodeGen, `kernel-source.ll`, `kernel-lowered.ll`, or an external C++
 compiler to synthesize a method. Native test executables and Verilator's
 generated C++ still need a C++ compiler, as usual.
 
-## Clocked Class Instantiation
+The [packet-processing example](examples/net/README.md) uses ordinary C++
+methods to parse Ethernet/IPv4/UDP/SBE and construct OUCH order frames, with
+1,000 randomized quotes checked in native and Verilator flows. Its scheduled
+FSM can be exported directly to the synthesis graph. Retiming that delayed
+FSM does not turn it into an II=1 streaming pipeline.
+
+## Scheduler Selection
+
+Choose the scheduler in C++, not with a converter scheduling flag:
+
+```cpp
+cpphdl::hls::ClockedDelayer<ContainerMethods> container;
+cpphdl::hls::ClockedPipeline<WordMethods, 3> stream;
+```
+
+Both wrappers are declared in `hls/Clocked.h` and use the same command/response
+ports and `uint64_t command(uint32_t, uint32_t, uint32_t)` entry signature.
+Ordinary SV conversion and synthesis recognize these wrappers automatically.
+The wrapper selects the scheduler; `--synth` selects graph export and gate-level
+synthesis instead of ordinary SV emission. Container diagnostics and bounded
+recursion outside these wrappers also run automatically. `Clocked<T, ...>` remains a compatibility
+alias for `ClockedDelayer<T, ...>`.
+
+### delayed_logic
+
+`ClockedDelayer` accepts one invocation at a time. Its AST schedule executes
+straight-line helper calls within a clock, suspending at loops and scheduled
+memory accesses. Persistent objects, containers, and bounded recursion remain
+supported. Its native wrapper is a transaction reference, not a cycle-accurate
+model of variable-duration method execution.
+
+Implementation: `delayed_scheduler.h/.cpp`. Existing scheduler regressions
+are named `Delayed*.cpp` and registered as `hls_delayed_*`.
+
+### pipelined_logic
+
+`ClockedPipeline<T, STAGES>` accepts a new invocation every clock when the
+consumer keeps `response_ready_in` asserted. Several invocations occupy
+different stages simultaneously. Without stalls, an accepted input produces
+its output after exactly `STAGES` rising edges, including its acceptance edge.
+`STAGES` must be between 1 and 64.
+
+The scheduler translates the method calculations into an acyclic operation
+graph, distributes dependent operations among stages, and registers operands
+crossing stage boundaries. Branch predicates, results, and fault values remain
+aligned. It does not just delay the output of a serialized calculation.
+
+If the output is valid and the consumer is not ready, all stages freeze and
+`command_ready_out` goes low. Keep the offered command stable until accepted.
+Clocked reset discards every in-flight invocation. The native wrapper matches
+this handshake and latency, but evaluates a copy of the C++ object at acceptance
+and delays its result and state update; generated RTL partitions the calculations.
+
+#### Floating Feedback
+
+Persistent scalar fields are allowed. Each accepted invocation reads the
+currently committed object state. Its candidate next state becomes visible
+when its result enters the last stage, on the same advancing edge. A call
+accepted on that edge still reads the old state. Bubbles do not update state;
+backpressure freezes both data and state updates. Reset restores the object's
+constant initializer and discards all pending updates.
+
+This deliberately does **not** preserve sequential C++ feedback behavior.
+For example, with three stages, the first three consecutive calls can all read
+the initial counter. State is a whole-object snapshot, so a later call can also
+overwrite a field changed by an earlier call. There is no forwarding, interlock,
+or automatic merging of concurrent updates. An FSM author must design for this
+delayed reaction, partition independent state, or use `ClockedDelayer` when each
+call must observe its predecessor's update. Increasing pipeline latency can
+change decisions, not just delay otherwise identical answers.
+
+#### Scheduling and Timing Are Separate
+
+`pipeline_scheduler.h/.cpp` chooses initial stages from operation dependency
+depth, without cell-delay estimates. `STAGES` specifies this initial pipeline.
+The graph retains the logical transition, state/reset boundaries, ready/valid
+bindings, and original stage boundaries.
+
+With synthesis `fit_pipeline_retiming`, the synthesis retimer uses estimated
+cell delays to insert further registers, including inside expanded arithmetic.
+It aligns branch data, result metadata, validity, and state updates. The
+resulting latency is reported in the graph's streaming-region metadata and
+`timing.json` under `streaming_regions` (`hls_stages`, `latency`, and
+`initiation_interval`).
+**II remains one** when the consumer is ready; feedback is not converted to a
+serialized transaction. Feedback becomes visible after the new latency.
+The native wrapper models the configured `STAGES`, not a subsequently retimed
+latency. Verify retimed RTL against a reference using the reported latency.
+
+Current supported source subset:
+
+- Integer calculations, branches, and straight-line helper calls are supported.
+- Loops, recursion, static locals, mutable globals, dynamic allocation, escaping
+  pointers, and operations requiring scheduled memory are rejected. There is
+  no fallback to delayed execution.
+- Stage placement balances operation dependency depth. It does not promise a
+  technology-specific frequency or split an individual multiply/divide.
+  Function `CPPHDL_ONE_CLOCK` and `CPPHDL_KEEP_BOX` constraints are rejected
+  until pipeline placement can preserve them; they are not silently ignored.
+- State must be trivially copyable and have constant initialization. Arrays
+  requiring scheduled memory and dynamic storage remain unsupported.
+- Pipeline retiming rules must include a whole streaming region. Synchronous
+  reset is supported; asynchronous reset for these regions is not yet supported.
+  Unachievable cell/control delays produce an error, not a false timing success.
+
+Implementation: `pipeline_scheduler.h/.cpp`, sharing AST lowering with the
+delayed scheduler. [Pipeline.cpp](tests/Pipeline.cpp) has a fully wired parent
+and matching C++/Verilator tests at 1, 3, and 7 stages. They check 1,024
+consecutive commands, randomized branches and bubbles, long output stalls,
+tag alignment, and reset with in-flight work. A separate graph test checks
+that arithmetic spans stages and synthesis cannot serialize it.
+[PipelineFeedback.cpp](tests/PipelineFeedback.cpp) adds mutable 96-bit state,
+nonzero initialization, conditional updates, bubbles, stalls, and reset. Both
+examples also run through delay-based retiming and gate-level Verilator testing.
+
+```sh
+build/cpphdl --generated-dir build/pipeline hls/tests/Pipeline.cpp -- -Iinclude
+ctest --test-dir build -R '^hls_pipeline_' --output-on-failure
+```
+
+To apply delay-based synthesis retiming, use a new output directory:
+
+```sh
+build/cpphdl --synth --top PipelineTop --module PipelineTop \
+  --retiming fit_pipeline_retiming --clock-period-ns 3.205128205 \
+  --output build/pipeline-synth hls/tests/PipelineFeedback.cpp -- -Iinclude
+```
+
+The converter detects scheduled wrappers in the selected module hierarchy and
+exports their hardware graph. The C++ wrapper selects the scheduling policy. The period is the
+312 MHz estimate target. Read `timing.json` and validate the resulting latency
+and feedback behavior before integrating the design.
+
+The [HFT example](examples/net/README.md) uses `ClockedPipeline` for independent
+word/header parsing, decisions and explicitly indexed TX words. Its short
+per-word stream recurrences remain in the RTL wrapper, with explicit registers
+separating checksum accumulation, validation and sequence filtering. Native and
+four/eight-stage Verilator regressions check 20,000 uninterrupted input words,
+packet contents, backpressure and reset. Full-design retiming now estimates
+3.15 ns against the 315 MHz target while keeping II=1; the gate regression
+checks the retimed design with the same packet testbench. This is an estimated
+timing result, not physical timing closure.
+
+## Delayed Class Instantiation
 
 An ordinary class can be a clocked member of an RTL module:
 
@@ -41,21 +184,21 @@ struct Samples {
 
 class Top : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<Samples> worker;
+    cpphdl::hls::ClockedDelayer<Samples> worker;
     // Expose and connect worker's command/response ports in _assign().
     void _work(bool reset) { worker._work(reset); }
     void _strobe() { worker._strobe(); }
 };
 ```
 
-`Clocked<T>` carries the `CPPHDL_HLS_CLOCKED` annotation. It is the explicit
+`ClockedDelayer<T>` carries the `CPPHDL_HLS_CLOCKED` annotation. It is the explicit
 opt-in to AST scheduling; `T` itself does not need clock methods, registers,
 ports, or a Module base. See the fully connected parent modules in
-[ClockedArray.cpp](tests/std/ClockedArray.cpp),
-[ClockedVector.cpp](tests/std/ClockedVector.cpp),
-[ClockedMap.cpp](tests/std/ClockedMap.cpp),
-[ClockedList.cpp](tests/std/ClockedList.cpp), and
-[ClockedMultimap.cpp](tests/std/ClockedMultimap.cpp).
+[DelayedArray.cpp](tests/std/DelayedArray.cpp),
+[DelayedVector.cpp](tests/std/DelayedVector.cpp),
+[DelayedMap.cpp](tests/std/DelayedMap.cpp),
+[DelayedList.cpp](tests/std/DelayedList.cpp), and
+[DelayedMultimap.cpp](tests/std/DelayedMultimap.cpp).
 
 The initial entry contract is deliberately small:
 `uint64_t command(uint32_t operation, uint32_t index, uint32_t value)`.
@@ -66,15 +209,15 @@ Reset cancels the current operation and reconstructs the object before ready
 is asserted again.
 
 ```sh
-build/cpphdl --hls --generated-dir build/clocked-vector \
-    hls/tests/std/ClockedVector.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
+build/cpphdl --generated-dir build/clocked-vector \
+    hls/tests/std/DelayedVector.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
 cmake --build build --target hls_tests
-ctest --test-dir build -R '^hls_clocked_' --output-on-failure
+ctest --test-dir build -R '^hls_delayed_' --output-on-failure
 ```
 
 Standard-container examples and their analysis helpers live in `hls/tests/std/`.
 The Verilator tests generate RTL under
-`build/hls/tests/std/hls_clocked_<name>-rtl/generated/`, where `<name>` is
+`build/hls/tests/std/hls_delayed_<name>-rtl/generated/`, where `<name>` is
 `Array`, `Vector`, `Map`, or `MapSmall`. Shared-memory test names append
 `_shared_memory`; List and Multimap currently use that schedule exclusively.
 General clocked HLS tests (bindings, recursion,
@@ -83,7 +226,7 @@ tests live in `hls/tests/`.
 
 ## Source-Based Scheduling
 
-`AstClocked.cpp` follows concrete methods reachable from `T::command()` and
+`delayed_scheduler.cpp` follows concrete methods reachable from `T::command()` and
 the object's initialization. Missing template bodies are instantiated with
 Sema. Calls, fields, offsets, casts, constructors, and control flow come from
 those declarations, including declarations in the installed standard library.
@@ -133,13 +276,13 @@ RTL module, its child instance, and port connections.
 
 ### Shared Memory Schedule
 
-The fifth `Clocked` template argument explicitly selects a smaller, slower
+The fifth `ClockedDelayer` template argument explicitly selects a smaller, slower
 memory implementation:
 
 ```cpp
 // Real std::map methods; 16-bit addresses, 192-byte allocation pool.
 // true selects one shared memory port instead of parallel arena accesses.
-cpphdl::hls::Clocked<MapSmallMethods, 0, 16, 192, true> worker;
+cpphdl::hls::ClockedDelayer<MapSmallMethods, 0, 16, 192, true> worker;
 ```
 
 The default is `false`; existing loop-only schedules do not change. With
@@ -166,7 +309,7 @@ not clear every byte of the arena.
 The `*_shared_memory_native` and `*_shared_memory_verilator` tests exercise
 Array, Vector, Map, MapSmall, List, Multimap, UnorderedMap, and Reuse with this option.
 Generated files are under
-`build/hls/tests/std/hls_clocked_MapSmall_shared_memory-rtl/generated/`, for example.
+`build/hls/tests/std/hls_delayed_MapSmall_shared_memory-rtl/generated/`, for example.
 
 List exercises linked-node insertion, indexed traversal, updates, erase, clear,
 and reset. Multimap exercises duplicate keys, counting duplicates, removing one
@@ -174,7 +317,7 @@ duplicate at a time, sorted traversal, tree removal, clear, and reset. Both
 flows compare results with actual native standard containers; RTL tests also
 change command pins while busy and apply response backpressure.
 
-`ClockedUnorderedMap.cpp` uses test-local overrides from
+`DelayedUnorderedMap.cpp` uses test-local overrides from
 `UnorderedMapOverrides.h` for missing library helpers and floating-point load
 calculations. Its native reference still calls the unmodified standard library.
 The example keeps the default load factor of 1, limits floating size calculations
@@ -197,7 +340,7 @@ uint32_t calculate_rtl(uint32_t input) {
 ```
 
 The original function must still be declared for C++ parsing. The annotation
-selects the replacement only when lowering calls inside `Clocked<T>`; it does
+selects the replacement only when lowering calls inside `ClockedDelayer<T>`; it does
 not alter native C++ calls, redefine a library symbol, or patch library headers.
 It can replace a missing body or an existing body, including a function whose
 internals use floating point. Return and parameter types must match. Overloads
@@ -274,13 +417,13 @@ Projects not building HLS examples can set `-DCPPHDL_BUILD_HLS_TESTS=OFF`
 without disabling the ordinary CppHDL tests.
 
 ```sh
-build/cpphdl --hls --generated-dir build/clocked-map \
-    hls/tests/std/ClockedMap.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
-cmake --build build --target hls_clocked_Map
-ctest --test-dir build -R '^hls_clocked_Map_' --output-on-failure
+build/cpphdl --generated-dir build/clocked-map \
+    hls/tests/std/DelayedMap.cpp -- -Iinclude -stdlib=libc++ -fno-exceptions
+cmake --build build --target hls_delayed_Map
+ctest --test-dir build -R '^hls_delayed_Map_' --output-on-failure
 ```
 
-Look in `cpphdl_hls_ClockedMapMethods_R8_A16.sv` for functions whose names retain
+Look in `cpphdl_hls_ClockedDelayerMapMethods_R8_A16.sv` for functions whose names retain
 `__tree_min`, `__tree_next_iter`, `__tree_balance_after_insert`,
 `__tree_remove`, `__tree_left_rotate`, and `__tree_right_rotate`.
 Node accesses retain `__left_`, `__right_`, `__parent_`, and `__is_black_`.
@@ -369,13 +512,13 @@ allocation and memory-operation lowering. The libc++ `std::map` example also
 uses only installed headers. Bounded aligned allocation and C++17 returned-object
 construction preserve the library's temporary node-owner semantics.
 
-Tree clearing recursively visits subtrees. `Clocked<MapMethods, 8, 16>` explicitly
+Tree clearing recursively visits subtrees. `ClockedDelayer<MapMethods, 8, 16>` explicitly
 permits up to eight simultaneously active calls of the same concrete function.
 The scheduler unfolds these calls into separately named depth-specific values and nonrecursive
 SV blocks. A call beyond the bound produces `fault_out == 5`, not a successful
 partial result. The fault persists until reset. The bound must include the
 terminal/base-case invocation. It is not a bound on the number of map elements.
-`Clocked<T>` defaults to rejecting recursion; explicit bounds may be 1 through
+`ClockedDelayer<T>` defaults to rejecting recursion; explicit bounds may be 1 through
 16. Without shared-memory scheduling, branching recursion can still produce
 excessively large generated code.
 Different bounds produce distinct module names, such as `_R2` and `_R4`, so
@@ -398,7 +541,7 @@ another recursive function retain the correct depth limits.
 ### Small Red-Black Map Example
 
 A separate, deliberately small red-black tree example lives in
-[`examples/map`](examples/map/README.md). It uses the same `Clocked` scheduler,
+[`examples/map`](examples/map/README.md). It uses the same `ClockedDelayer` scheduler,
 16-bit addresses, 4 KiB pool, shared register/BRAM backends, and transaction
 workload as the `std::map` regression. Its insertion, deletion, traversal, and
 clear are iterative; it is not a replacement for the standard-container tests.
@@ -408,11 +551,11 @@ clear are iterative; it is not a replacement for the standard-container tests.
 The third template argument selects the address width for a clocked object:
 
 ```cpp
-cpphdl::hls::Clocked<VectorMethods, 0, 16> vector_worker;
-cpphdl::hls::Clocked<MapMethods, 8, 16> map_worker;
+cpphdl::hls::ClockedDelayer<VectorMethods, 0, 16> vector_worker;
+cpphdl::hls::ClockedDelayer<MapMethods, 8, 16> map_worker;
 ```
 
-`Clocked<T, MAX_RECURSION, ADDRESS_BITS, HEAP_BYTES, SHARED_MEMORY, BLOCK_RAM>` accepts address widths from 8 to 64;
+`ClockedDelayer<T, MAX_RECURSION, ADDRESS_BITS, HEAP_BYTES, SHARED_MEMORY, BLOCK_RAM>` accepts address widths from 8 to 64;
 the default is 16. All standard-container examples use 16-bit addresses;
 their complete storage layouts fit within this address range. Explicitly wider
 addresses remain available for larger arenas. This controls pointer signals,
@@ -439,10 +582,10 @@ objects and temporaries occupy additional storage; `MEM_BYTES` in generated
 RTL reports the total. The native reference still uses the host allocator.
 
 ```cpp
-cpphdl::hls::Clocked<MapSmallMethods, 0, 16, 192> worker;
+cpphdl::hls::ClockedDelayer<MapSmallMethods, 0, 16, 192> worker;
 ```
 
-[ClockedMapSmall.cpp](tests/std/ClockedMapSmall.cpp) uses the real libc++
+[DelayedMapSmall.cpp](tests/std/DelayedMapSmall.cpp) uses the real libc++
 `std::map` with four entries, arbitrary 32-bit keys and values, insertion,
 updates, lookup, size, and traversal. It rejects a fifth distinct key before
 allocating, but permits updates at capacity. It does not erase nodes, so four
@@ -497,8 +640,8 @@ storage is register-backed; the optional sixth template argument selects inferre
 block RAM:
 
 ```cpp
-cpphdl::hls::Clocked<MapMethods, 8, 16, 4096, true, false> register_map;
-cpphdl::hls::Clocked<MapMethods, 8, 16, 4096, true, true> block_ram_map;
+cpphdl::hls::ClockedDelayer<MapMethods, 8, 16, 4096, true, false> register_map;
+cpphdl::hls::ClockedDelayer<MapMethods, 8, 16, 4096, true, true> block_ram_map;
 ```
 
 `BLOCK_RAM` requires `SHARED_MEMORY`. Both use the same container methods,
@@ -566,10 +709,10 @@ It also verifies that no LLVM `.ll` files were generated.
 - Direct values: unaddressed scalar locals must not have byte-memory addresses;
   only values live across clock boundaries have register assignments. Generated
   code must not contain saved `this` slots or unresolved source access handles.
-- Known aggregates: `ClockedAggregates.cpp` checks copies, source/copy isolation,
+- Known aggregates: `DelayedAggregates.cpp` checks copies, source/copy isolation,
   nested fields, inheritance, aliased references, known pointer arguments,
   same-target reference returns, partial updates, and loop-carried aggregates.
-  Its generated methods must have no byte-storage accesses. `ClockedBindings`
+  Its generated methods must have no byte-storage accesses. `DelayedBindings`
   also checks conditional references to different objects across loop clocks.
 - Storage helpers: generated read/write functions are tested directly for
   8/16/24/32/64/128-bit accesses, little-endian byte order, unaligned addresses,
@@ -599,8 +742,8 @@ It also verifies that no LLVM `.ll` files were generated.
   helper-domain comparisons, forward jumps with scope cleanup, full-expression
   temporary destruction, and invalid-policy faults with reset recovery.
 - Rejection tests: unavailable function bodies without overrides, recursion without a bound, static locals,
-  volatile access, floating-point expressions without policies, indirect calls, missing
-  `--hls`, and the removed kernel option.
+  volatile access, floating-point expressions without policies, indirect calls,
+  and the removed kernel option.
 
 **The native wrapper is a transaction reference, not a cycle-accurate HLS
 simulator.** It invokes the original C++ command atomically. Tests compare
@@ -724,7 +867,7 @@ shared hardware; the explicit memory schedule provides the hardware sharing.
 After building the HLS tests, generate and test both storage variants, then run:
 
 ```sh
-ctest --test-dir build -R '^hls_clocked_.*shared_memory(_bram)?_verilator$' --output-on-failure
+ctest --test-dir build -R '^hls_delayed_.*shared_memory(_bram)?_verilator$' --output-on-failure
 python3 hls/tools/synth_std.py --build build \
     --yosys build/tools/oss-cad-suite/bin/yosys --memory-mib 6144 \
     --storage registers --output build/hls/std-synthesis-fast
@@ -949,7 +1092,7 @@ large and is not a claim of efficient or timing-closed implementation.
 #### 16-Bit Pointer Logic
 
 All standard-container examples now select 16-bit addresses, also the default
-for `Clocked<T>`. Memory-access temporaries holding pointers use the selected
+for `ClockedDelayer<T>`. Memory-access temporaries holding pointers use the selected
 address width instead of the host pointer width. Integer payloads, `size_t`,
 and `ptrdiff_t` keep their source widths. Stored aggregate layouts are unchanged:
 pointer slots still occupy their host-ABI size, with zero extension on writes.
@@ -1013,7 +1156,7 @@ rotation-associated register bits fall from 800 to 448; scheduled blocks fall
 from 723 to 619. Input snapshots, hashes, and synthesis reports are in
 `build/hls/map-call-sharing-bram/`. These are synthesis counts, not timing results.
 
-`ClockedSharing.cpp` checks repeated calls, aliased pointer arguments, values
+`DelayedSharing.cpp` checks repeated calls, aliased pointer arguments, values
 that must survive a call, conditional returns without dereferencing a null
 pointer, specialized local pointers, backpressure, and reset during a shared
 operation. Structural checks require actual multi-caller schedules in both
@@ -1063,7 +1206,7 @@ keeps one reusable outlined body instead of producing a different body and
 extra sample outputs for each call site. These analysis boundaries add no
 clocks. Read-only helpers remain transparent to sample reuse.
 
-`ClockedMemoryEffects.cpp` compares native C++17 and generated RTL in all three
+`DelayedMemoryEffects.cpp` compares native C++17 and generated RTL in all three
 storage configurations. It covers helper calls, forks/joins, conditional and
 aliased writes, changed pointers, partial stores, multi-beat reads, loop boundaries, backpressure,
 reset, and bounds faults. Exact latency checks require a repeated port read
@@ -1088,9 +1231,36 @@ and unordered_map remain **analysis-only, expected-rejection tests**.
 `StdContainers.cpp` records reachable methods and layouts in
 `hls-analysis.json`; it does not replace their algorithms. These tests also use
 libc++ headers, but their unwrapped container members do not opt into the
-`Clocked<T>` scheduler and are still rejected for RTL emission.
+`ClockedDelayer<T>` scheduler and are still rejected for RTL emission.
 
 The separate scalar recursion pass in `HLS.cpp` remains available for ordinary
 CppHDL methods: bounded, numbered functions with an explicit terminal method.
 It is independent of the clocked-object scheduler's bounded call scheduling;
 neither mechanism emits recursive SystemVerilog or an unbounded runtime stack.
+
+## Synthesis-Only Scheduled Graph Export
+
+Use `cpphdl --synth --top TOP_CLASS --output NEW_DIRECTORY source.cpp`
+to export the real `ClockedDelayer<T>` state machine or `ClockedPipeline<T>` pipeline
+to the shared synthesis graph. Scheduler selection is automatic, including wrappers
+inside child modules, module arrays and base classes.
+`--synth` is the existing synthesis flag; no separate `--synthesis` is needed.
+Here `--top` names a C++ module class or a root object variable; `--module`
+sets the output Verilog module name. Ordinary RTL without wrappers continues to
+use the native RTL graph lowering; it does not acquire HLS scheduling.
+
+The HLS scheduler operates on C++ ASTs. `synth/ScheduledGraph.cpp` consumes its
+scheduled blocks before SV function sharing and emits graph operations,
+registers and memory ports directly. `synth/Mapping.cpp` maps the retimed graph
+to generic gates. Neither stage invokes Yosys, reparses generated SV, synthesizes
+the native transaction reference, or uses compiler IR. Container algorithms
+remain the instantiated source methods.
+Ordinary conversion emits scheduled SV without exporting a synthesis graph.
+The former `--hls` flag is no longer accepted; remove it from existing commands.
+
+`--retiming fit_pipeline_retiming --clock-period-ns PERIOD` schedules each FSM
+edge as a transaction, captures its inputs and commits its writes atomically.
+The new admission/commit signals require explicit integration; this is not
+transparent cycle-preserving retiming. See
+[scheduled HLS graphs](../synth/retiming.md#scheduled-hls-graphs) for the port
+contract, artifacts and current restrictions.

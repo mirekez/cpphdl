@@ -52,6 +52,6 @@ int main()
         const uint32_t expected = i == 0 ? 0 : input * 2 + 14;
         if (result != expected) { std::fprintf(stderr,"static helper: %u != %u\n",result,expected); return 1; }
     }
-    std::puts("PASS distinct static helper numeric specializations without --hls");
+    std::puts("PASS distinct static helper numeric specializations");
 }
 #endif

@@ -19,7 +19,6 @@
 
 namespace cpphdl::hls {
 namespace {
-bool enabled = false;
 bool failed = false;
 using Key = std::pair<std::string, std::string>;
 std::set<Key> active;
@@ -60,11 +59,8 @@ bool sameType(const Expr& a, const Expr& b)
 }
 }
 
-void enable() { enabled = true; }
-
 bool prepare(clang::ASTContext& context, clang::Sema& sema)
 {
-    if (!enabled) return true;
     prepareClocked(context, sema);
     if (!inspectStdContainers(context, sema)) {
         failed = true;
@@ -83,25 +79,22 @@ bool enterMethod(Module& module, const std::string& name,
 {
     const Key key{module.name, name};
     if (active.count(key)) {
-        if (!enabled) error(module.name + "::" + name + " is recursive; use --hls with a bounded recursion contract");
         return false;
     }
     active.insert(key);
-    if (enabled) {
-        unsigned limit = 10;
-        for (const auto* attr : declaration.specific_attrs<clang::AnnotateAttr>()) {
-            const std::string annotation = attr->getAnnotation().str();
-            const std::string_view prefix = "CPPHDL_HLS_MAX_RECURSION=";
-            if (annotation.compare(0, prefix.size(), prefix) != 0) continue;
-            const char* begin = annotation.data() + prefix.size();
-            const char* end = annotation.data() + annotation.size();
-            const auto parsed = std::from_chars(begin, end, limit);
-            if (parsed.ec != std::errc{} || parsed.ptr != end || !limit || limit > 64) {
-                error(module.name + "::" + name + ": MAX_RECURSION must be between 1 and 64");
-            }
+    unsigned limit = 10;
+    for (const auto* attr : declaration.specific_attrs<clang::AnnotateAttr>()) {
+        const std::string annotation = attr->getAnnotation().str();
+        const std::string_view prefix = "CPPHDL_HLS_MAX_RECURSION=";
+        if (annotation.compare(0, prefix.size(), prefix) != 0) continue;
+        const char* begin = annotation.data() + prefix.size();
+        const char* end = annotation.data() + annotation.size();
+        const auto parsed = std::from_chars(begin, end, limit);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || !limit || limit > 64) {
+            error(module.name + "::" + name + ": MAX_RECURSION must be between 1 and 64");
         }
-        limits[key] = limit;
     }
+    limits[key] = limit;
     return true;
 }
 
@@ -113,7 +106,7 @@ void leaveMethod(Module& module, const std::string& name)
 bool lower(Project& project)
 {
     if (!clockedSucceeded()) return false;
-    if (failed || !enabled) return !failed;
+    if (failed) return false;
     for (auto& module : project.modules) {
         std::map<std::string, size_t> methods;
         for (size_t i = 0; i < module.methods.size(); ++i) methods[module.methods[i].name] = i;
@@ -154,6 +147,7 @@ bool lower(Project& project)
             }
         }
         if (failed) return false;
+        if (recursive.empty()) continue;
         std::vector<Method> result;
         for (size_t i = 0; i < count; ++i) {
             const auto& original = module.methods[i];

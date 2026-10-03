@@ -1,5 +1,5 @@
 #include "../Clocked.h"
-#include "ClockedOptions.h"
+#include "DelayedOptions.h"
 #include <cstdint>
 #include <cstdio>
 
@@ -20,7 +20,7 @@ struct MemoryPortMethods {
 
 class MemoryPortTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<MemoryPortMethods, 0, 16, 64, true, HLS_BLOCK_RAM> worker;
+    cpphdl::hls::ClockedDelayer<MemoryPortMethods, 0, 16, 64, true, HLS_BLOCK_RAM> worker;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;

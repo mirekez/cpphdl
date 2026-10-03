@@ -10,6 +10,8 @@ struct RetimingRule {
 struct RetimingReport {
     double before = 0, after = 0, target = 0;
     unsigned moved = 0, insertedBits = 0, addedLatency = 0;
+    unsigned initiationInterval = 1;
+    bool feedbackScheduled = false;
     bool met = false;
 };
 RetimingReport retime(graph::Graph&, const RetimingRule&, const DelayModel& = {});

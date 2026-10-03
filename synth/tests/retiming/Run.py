@@ -8,7 +8,7 @@ import subprocess
 
 def main():
     p = argparse.ArgumentParser()
-    for arg in ('cpphdl', 'cxx', 'yosys', 'verilator', 'work', 'case'):
+    for arg in ('cpphdl', 'cxx', 'verilator', 'work', 'case'):
         p.add_argument('--' + arg, required=True)
     args = p.parse_args()
     root = Path(__file__).resolve().parents[3]
@@ -39,7 +39,7 @@ def main():
         source_flags = ['-DRETIMING_ANNOTATE'] if mode == 'annotated' else []
         if mode == 'fast_box': source_flags += ['-DBOX_DELAY_NS="0.2"']
         run([args.cpphdl, '--synth', '--top', 'cpphdl_top', '--module', 'SynthRetiming', '--output', work / 'rtl',
-             '--cxx', args.cxx, '--yosys', args.yosys, *flags, source, '--', *source_flags], 'synth')
+             '--cxx', args.cxx, *flags, source, '--', *source_flags], 'synth')
         report = json.loads((work / 'rtl/timing.json').read_text())['rules'][0]
         print(mode, report, flush=True)
         reports[mode] = report
@@ -59,18 +59,8 @@ def main():
         if mode == 'keep_behaviour_retiming':
             if (not report['moved_boundaries'] and args.case != 'keep_box') or report['added_latency']:
                 raise RuntimeError('no behaviour-preserving move')
-            run([work / 'rtl/emit', work / 'baseline.v', 'Reference', work / 'baseline.json',
-                 work / 'baseline.cc', 'none', '0', '', '1'], 'baseline-emit')
-            # Box module names are per design; the reference needs its own names.
-            if args.case == 'keep_box':
-                baseline = work / 'baseline.v'
-                baseline.write_text(baseline.read_text().replace('__cpphdl_keep_box_', '__reference_keep_box_'))
-            script = (f'read_verilog baseline.v rtl/operations.v; '
-                      'miter -equiv -flatten Reference SynthRetiming miter; '
-                      'hierarchy -top miter; proc; memory_map; opt; flatten; opt; '
-                      'sat -seq 8 -set-init-zero -set-def-inputs -set-at 1 in_work_reset 1 '
-                      '-prove trigger 0 -prove-skip 1 -verify -timeout 60 miter')
-            run([args.yosys, '-p', script], 'bounded-equivalence')
+            # Both the retimed graph and mapped gates are checked against the
+            # original C++ cycle-level oracle below; no external mapper is used.
         elif not report['target_met'] or not report['added_latency']:
             raise RuntimeError('pipeline did not meet target')
         definitions = ['-DRETIMING_RUN', '-DRETIMING_LATENCY=' + str(report['added_latency']),

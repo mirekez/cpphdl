@@ -5,7 +5,7 @@ set(definitions)
 if(MISSING_CAPACITY)
     list(APPEND definitions -DHLS_NO_CAPACITY)
 endif()
-execute_process(COMMAND "${CPPHDL}" --hls --generated-dir "${WORK}"
+execute_process(COMMAND "${CPPHDL}" --generated-dir "${WORK}"
     "${CMAKE_CURRENT_LIST_DIR}/${CONTAINER}.cpp" -- "-I${ROOT}/include" ${definitions} ${HLS_PARSE_FLAGS}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 file(WRITE "${WORK}/conversion.log" "${output}\n${error}")

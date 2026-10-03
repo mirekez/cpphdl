@@ -75,8 +75,8 @@ def main():
         work.mkdir(exist_ok=True)
         variant = "_bram" if args.storage == "bram" else ""
         directory = "hls/examples/map" if name == "RbMap" else "hls/tests/std"
-        generated = build / directory / f"hls_clocked_{name}_shared_memory{variant}-rtl/generated"
-        top = f"Clocked{name}Top"
+        generated = build / directory / f"hls_delayed_{name}_shared_memory{variant}-rtl/generated"
+        top = f"Delayed{name}Top"
         files = [generated / "Predef_pkg.sv", *sorted(generated.glob("*Methods*.sv")), generated / (top + ".sv")]
         row = {"name": name, "status": "missing RTL", "memory_limit_mib": args.memory_mib,
                "timeout_seconds": args.timeout}

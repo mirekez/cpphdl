@@ -50,5 +50,5 @@ struct OverrideRejectMethods {
 };
 class OverrideRejectTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<OverrideRejectMethods> worker;
+    cpphdl::hls::ClockedDelayer<OverrideRejectMethods> worker;
 };

@@ -75,7 +75,7 @@ possible operations, not an unusually expensive key comparison or divider.
 
 ### Memory And Next-State Selection
 
-`AstClocked.cpp::resolveAccesses()` turns each indirect access into a memory
+`delayed_scheduler.cpp::resolveAccesses()` turns each indirect access into a memory
 request and a scheduling boundary. The shared-block emitter then carries
 successive versions of state through the scheduled blocks. Conceptually:
 
@@ -151,7 +151,7 @@ does not make all of this work removable.
 
 ### Function Reuse Is Not Yet Complete Hardware Reuse
 
-`AstClocked.cpp` assigns ordinary calls distinct `__call_N_depth_D` scopes.
+`delayed_scheduler.cpp` assigns ordinary calls distinct `__call_N_depth_D` scopes.
 `SharedBlocks.cpp::BlockSharing::add()` reuses matching function text with
 parameters, but the emitter still invokes those helpers from separately
 scheduled blocks with separate live values.
@@ -279,7 +279,7 @@ just equal function declarations. Nonstatic methods and ordinary read-only
 helpers remain outside this optimization.
 
 The updated standard-map RTL is in
-`build/hls/tests/std/hls_clocked_Map_shared_memory_bram-rtl/generated/`.
+`build/hls/tests/std/hls_delayed_Map_shared_memory_bram-rtl/generated/`.
 Reproduce the new synthesis measurements with:
 
 ```sh

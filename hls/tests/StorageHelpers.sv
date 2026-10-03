@@ -11,7 +11,7 @@ module StorageHelpers;
     logic [23:0] read24;
     logic [31:0] read32;
 
-    cpphdl_hls_ClockedReuseMethods dut (
+    cpphdl_hls_ClockedDelayerReuseMethods dut (
         .clk(1'b0), .reset(1'b0), .command_valid_in(1'b0),
         .operation_in(32'd0), .index_in(32'd0), .value_in(32'd0),
         .command_ready_out(), .response_ready_in(1'b0),

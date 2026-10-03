@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_test(NAME cpp_graph_clocked_boundary_rejected COMMAND "${CMAKE_COMMAND}"
+    "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/clocked-boundary"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/graph/ClockedBoundary.cmake")
+set_tests_properties(cpp_graph_clocked_boundary_rejected PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
 add_test(NAME optimizer_generated_helper COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/GeneratedHelperTest.sh"
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"

@@ -37,6 +37,15 @@ struct MemoryAccess { size_t memory; Value address, enabled; bool transaction; i
 struct MemoryWrite { size_t memory; Value address, data, enabled; int clock = -1; bool falling = false; };
 struct ScopeAttribute { std::string scope, name, value; };
 
+// A streaming region retains its untimed transition graph for latency-changing
+// scheduling. Boundary bindings refer to this graph; logic uses local bit IDs.
+struct StreamPipeline {
+    std::string scope, logic;
+    std::map<std::string, Value> pins;
+    std::vector<Value> registers;
+    unsigned stages = 1, latency = 1, generation = 0;
+};
+
 // RisingEdgeStep means one lifecycle transaction per rising edge. Reset and
 // enable are next-state logic; ExplicitEvents preserves frontend event logic.
 enum class ClockContract { ExplicitEvents, RisingEdgeStep, NamedEdges };
@@ -84,6 +93,7 @@ public:
     std::vector<MemoryWrite> memoryWrites;
     std::string currentScope;
     std::vector<ScopeAttribute> attributes;
+    std::vector<StreamPipeline> pipelines;
 
     void validateClocks() const {
         for (const auto& state : states) if (!state.reset.empty()) {
@@ -381,6 +391,8 @@ public:
             for (const auto& memory : memories) collision |= memory.name.find(marker) != std::string::npos;
             for (const auto& attribute : attributes)
                 collision |= attribute.scope.find(marker) != std::string::npos || attribute.name.find(marker) != std::string::npos || attribute.value.find(marker) != std::string::npos;
+            for (const auto& pipeline : pipelines)
+                collision |= pipeline.scope.find(marker) != std::string::npos || pipeline.logic.find(marker) != std::string::npos;
             if (!collision) break;
             delimiter = "cpphdl_" + std::to_string(++suffix);
             if (delimiter.size() > 16) throw std::runtime_error("cannot delimit graph records");
@@ -389,6 +401,15 @@ public:
         if (!output) throw std::runtime_error("cannot write graph C++");
         output << "#include <cpphdl_graph.h>\ncpphdl::graph::Graph makeGraph() {\n"
                   "cpphdl::graph::Graph graph;\ngraph.load(R\"" << delimiter << "(\n";
+        save(output);
+        output << ")" << delimiter << "\"); return graph; }\n"
+                  "#ifndef CPPHDL_GRAPH_NO_MAIN\nint main(int argc, char** argv) {\n"
+                  "if(argc != 2) return 2;\ntry { auto graph = makeGraph(); graph.emit(argv[1]); } catch(const std::exception& error) {\n"
+                  "fprintf(stderr, \"%s\\n\", error.what()); return 1; }\n}\n";
+        output << "#endif\n";
+    }
+
+    void save(std::ostream& output) const {
         auto valueText = [](const Value& value) {
             std::ostringstream result; result << value.size() << ' ';
             for (auto bit : value) result << bit << ' ';
@@ -432,11 +453,15 @@ public:
         output << attributes.size() << '\n';
         for (const auto& attribute : attributes)
             output << std::quoted(attribute.scope) << ' ' << std::quoted(attribute.name) << ' ' << std::quoted(attribute.value) << '\n';
-        output << ")" << delimiter << "\"); return graph; }\n"
-                  "#ifndef CPPHDL_GRAPH_NO_MAIN\nint main(int argc, char** argv) {\n"
-                  "if(argc != 2) return 2;\ntry { auto graph = makeGraph(); graph.emit(argv[1]); } catch(const std::exception& error) {\n"
-                  "fprintf(stderr, \"%s\\n\", error.what()); return 1; }\n}\n";
-        output << "#endif\n";
+        output << "streams_v1\n" << pipelines.size() << '\n';
+        for (const auto& p : pipelines) {
+            output << std::quoted(p.scope) << ' ' << std::quoted(p.logic) << ' '
+                   << p.stages << ' ' << p.latency << ' ' << p.generation << '\n';
+            output << p.pins.size() << '\n';
+            for (const auto& [name, bits] : p.pins) output << std::quoted(name) << ' ' << valueText(bits) << '\n';
+            output << p.registers.size() << '\n';
+            for (const auto& bits : p.registers) output << valueText(bits) << '\n';
+        }
     }
 
     void load(const char* text) {
@@ -524,6 +549,22 @@ public:
                 ScopeAttribute attribute;
                 input >> std::quoted(attribute.scope) >> std::quoted(attribute.name) >> std::quoted(attribute.value);
                 attributes.push_back(std::move(attribute));
+            }
+        }
+        if (!input.eof()) input >> std::ws;
+        if (!input.eof()) {
+            std::string tag; input >> tag;
+            if (tag != "streams_v1") throw std::runtime_error("invalid graph stream metadata");
+            input >> count;
+            if (count > 1024) throw std::runtime_error("too many streaming regions");
+            for (size_t i = 0; i < count; ++i) {
+                StreamPipeline p;
+                input >> std::quoted(p.scope) >> std::quoted(p.logic) >> p.stages >> p.latency >> p.generation;
+                size_t size; input >> size;
+                for (size_t j = 0; j < size; ++j) { std::string name; input >> std::quoted(name); p.pins[name] = readValue(); }
+                input >> size;
+                for (size_t j = 0; j < size; ++j) p.registers.push_back(readValue());
+                pipelines.push_back(std::move(p));
             }
         }
         validateClocks();

@@ -1,6 +1,20 @@
 #include "cpphdl.h"
 #include <cstdint>
 
+// Native field layout, including bool and nested-record padding, needs no
+// hdlcpp-generated packed-offset metadata.
+struct MathRecord {
+    struct Pair { bool valid; uint32_t value; } pair;
+    uint8_t tag;
+    static MathRecord update(MathRecord record, uint32_t value, bool enabled) {
+        record.pair.valid = enabled;
+        if (enabled) record.pair.value += value;
+        record.tag = uint8_t(value);
+        return record;
+    }
+};
+inline constexpr MathRecord initial_record{{true, 17}, 3};
+
 class SynthMath : public cpphdl::Module {
 public:
     _PORT(uint8_t) a_in;
@@ -23,8 +37,12 @@ public:
     _PORT(uint64_t) wide_sum_out = _ASSIGN(wide_in() + uint64_t(a_in()));
     _PORT(uint64_t) wide_shift_out = _ASSIGN(wide_in() >> (b_in() & 63));
     _PORT(uint32_t) accumulated_out = _ASSIGN_REG(accumulated);
+    _PORT(uint32_t) record_out = _ASSIGN(record.pair.value);
+    _PORT(bool) record_valid_out = _ASSIGN(record.pair.valid);
+    _PORT(uint8_t) record_tag_out = _ASSIGN(record.tag);
 
     cpphdl::reg<cpphdl::u<32>> accumulated;
+    cpphdl::reg<MathRecord> record;
 
     static uint8_t saturating_add(uint8_t a, uint8_t b) {
         uint16_t sum = uint16_t(a) + b;
@@ -51,11 +69,12 @@ public:
         return uint8_t(root);
     }
     void _work(bool reset) {
+        record._next = reset ? initial_record : MathRecord::update(record, a_in(), en_in());
         accumulated._next = accumulated;
         if (en_in()) accumulated._next = uint32_t(accumulated) + uint32_t(a_in()) * b_in();
         if (reset) accumulated._next = 0;
     }
-    void _strobe() { accumulated.strobe(); }
+    void _strobe() { accumulated.strobe(); record.strobe(); }
 };
 
 SynthMath cpphdl_top;
@@ -84,6 +103,7 @@ int main() {
     uint64_t wide = 0;
     bool enable = false;
     uint32_t expected_accumulated = 0;
+    uint32_t expected_record = 17;
     uint64_t random = 0x981277bac37513ull;
 #ifdef SYNTH_MATH_VERILATOR
     VSynthMath dut;
@@ -105,6 +125,8 @@ int main() {
         bool reset = sample % 257 == 0;
         if (enable) expected_accumulated += uint32_t(a) * b;
         if (reset) expected_accumulated = 0;
+        if (enable) expected_record += a;
+        if (reset) expected_record = 17;
 #ifdef SYNTH_MATH_VERILATOR
         dut.clk = 0; dut.work_reset = reset;
         dut.a = a; dut.b = b; dut.wide = wide; dut.en = enable;
@@ -165,6 +187,9 @@ int main() {
         CHECK(wide_sum, wide + a);
         CHECK(wide_shift, wide >> (b & 63));
         CHECK(accumulated, expected_accumulated);
+        CHECK(record, expected_record);
+        CHECK(record_valid, reset || enable);
+        CHECK(record_tag, reset ? 3 : a);
 #ifdef SYNTH_MATH_GRAPH
         check("wide sum upper", graph.wide_sum[1], uint32_t((wide + a) >> 32), sample);
         check("wide shift upper", graph.wide_shift[1], uint32_t((wide >> (b & 63)) >> 32), sample);

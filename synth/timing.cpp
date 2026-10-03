@@ -30,6 +30,25 @@ TimingReport estimateTiming(Graph& graph, const DelayModel& model, const std::st
         if (!std::isfinite(delay) || delay < 0) throw std::runtime_error("cell delays must be finite and nonnegative");
     graph.optimize();
     auto order = graph.dependencyOrder();
+    // A one-clock function has an estimated, not user-invented, delay. Its
+    // external operands start at time zero; helper calls belong to this scope.
+    {
+        KeepBoxes groups(graph);
+        for (auto& attr : graph.attributes) if (attr.name == "one_clock") {
+            std::map<size_t, double> arrival;
+            double delay = 0;
+            for (auto n : order) if (groups.owner.count(n) && groups.boxes[groups.owner.at(n)].scope == attr.scope) {
+                double incoming = 0;
+                for (const auto* v : {&graph.nodes[n].left, &graph.nodes[n].right, &graph.nodes[n].select})
+                    for (auto bit : graph.resolved(*v)) if (bit > 1 && arrival.count(Graph::owner(bit)))
+                        incoming = std::max(incoming, arrival.at(Graph::owner(bit)));
+                arrival[n] = incoming + cellDelay(graph, graph.nodes[n], model);
+                delay = std::max(delay, arrival[n]);
+            }
+            std::ostringstream text; text << std::setprecision(17) << delay;
+            attr.value = text.str();
+        }
+    }
     KeepBoxes boxes(graph);
     TimingReport report;
     report.arrival.resize(graph.nodes.size());

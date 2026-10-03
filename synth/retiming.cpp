@@ -1,5 +1,7 @@
 #include "retiming.h"
 #include "KeepBoxes.h"
+#include "Mapping.h"
+#include "StreamPipeline.h"
 #include <cmath>
 #include <tuple>
 
@@ -171,8 +173,11 @@ class Pipeline {
     std::map<std::tuple<Value, unsigned, Value>, Scheduled> delayed;
     State domain;
     Value syncReset;
+    Value accept, commit;
     std::map<size_t, Value> resetValues, normalValues;
-    double budget;
+    double budget, capturedInputArrival = 0;
+    bool alreadyFits;
+    bool scheduledHls = false;
     Value cofactor(Value value, bool asserted, std::map<size_t, Value>& cache) {
         value = g.resolved(value);
         for (auto& bit : value) if (bit > 1) {
@@ -194,13 +199,15 @@ class Pipeline {
     }
 public:
     unsigned inserted = 0, latency = 0;
-    Pipeline(Graph& graph, const RetimingRule& r, const DelayModel& m)
-        : g(graph), rule(r), model(m), original(g.states), owners(stateBits(g)), boxes(g) {
+    bool feedback = false;
+    Pipeline(Graph& graph, const RetimingRule& r, const DelayModel& m, bool fits)
+        : g(graph), rule(r), model(m), original(g.states), owners(stateBits(g)), boxes(g), alreadyFits(fits) {
+        for (const auto& a : g.attributes) scheduledHls |= a.name == "scheduled_hls";
         for (size_t i = 0; i < original.size(); ++i) if (selected(g, original[i], rule)) targets.insert(i);
         if (targets.empty()) throw std::runtime_error("retiming scope has no registers");
         domain = original[*targets.begin()];
         for (auto i : targets) if (!sameDomain(domain, original[i])) throw std::runtime_error("fit pipeline requires one clock/edge/reset domain per rule");
-        for (const auto& p : g.ports) if (p.input && p.name == "work_reset") syncReset = p.bits;
+        for (const auto& p : g.ports) if (p.input && (p.name == "work_reset" || (scheduledHls && p.name == "reset"))) syncReset = g.resolved(p.bits);
         if (!domain.reset.empty()) syncReset.clear();
         if (!syncReset.empty()) {
             std::map<size_t, Value> asserted, released;
@@ -220,6 +227,9 @@ public:
                 auto normal = cofactor(original[s].next, false, released);
                 usesReset |= dependsOnReset(original[s].next);
                 bool constantReset = std::all_of(reset.begin(), reset.end(), [](Bit b) { return b < 2; });
+                // Scheduled HLS deliberately does not reset RAM-like storage
+                // registers. Holding those bits is an exact reset operation.
+                if (scheduledHls && reset == original[s].bits) constantReset = true;
                 any |= constantReset; all &= constantReset;
                 resetValues[s] = reset; normalValues[s] = normal;
             }
@@ -229,23 +239,51 @@ public:
         }
         budget = rule.period - model.setup - (syncReset.empty() ? 0 : model.mux);
         if (budget <= model.clockToQ) throw std::runtime_error("target period is below register overhead");
-        // A register dependency loop cannot acquire latency without changing its algorithm.
+        // Cyclic regions execute one original state transition per transaction.
         std::set<size_t> active, done;
         std::function<void(size_t)> checkState;
-        std::function<void(Value, std::set<size_t>&)> walk = [&](Value value, std::set<size_t>& seen) {
-            for (auto bit : g.resolved(value)) if (bit > 1) {
-                if (owners.count(bit)) checkState(owners.at(bit).first);
+        auto dependencies = [&](Value pending) {
+            std::set<size_t> seen, result;
+            while (!pending.empty()) {
+                auto bit = g.resolve(pending.back()); pending.pop_back();
+                if (bit < 2) continue;
+                if (owners.count(bit)) result.insert(owners.at(bit).first);
                 else if (seen.insert(Graph::owner(bit)).second) {
-                    auto n = g.nodes.at(Graph::owner(bit)); walk(n.left, seen); walk(n.right, seen); walk(n.select, seen);
+                    const auto& n = g.nodes.at(Graph::owner(bit));
+                    for (const auto* v : {&n.left, &n.right, &n.select}) pending.insert(pending.end(), v->begin(), v->end());
                 }
             }
+            return result;
         };
         checkState = [&](size_t s) {
-            if (active.count(s)) throw std::runtime_error("fit pipeline rejects register feedback/enable loops");
+            if (active.count(s)) { feedback = true; return; }
             if (!done.insert(s).second) return;
-            active.insert(s); std::set<size_t> seen; walk(original[s].next, seen); active.erase(s);
+            active.insert(s);
+            for (auto dependency : dependencies(original[s].next)) checkState(dependency);
+            active.erase(s);
         };
         for (auto s : targets) checkState(s);
+        if (feedback) {
+            if (targets.size() != original.size())
+                throw std::runtime_error("feedback scheduling requires the entire register region");
+            if (!scheduledHls && (!g.memories.empty() || !g.memoryWrites.empty() || !g.memoryAccesses.empty()))
+                throw std::runtime_error("feedback scheduling cannot yet move memory transactions");
+            for (const auto& w : g.memoryWrites)
+                if (w.clock != domain.clock || w.falling != domain.falling)
+                    throw std::runtime_error("scheduled memory must share the FSM clock/edge");
+            for (const auto& p : g.ports) if (p.name == "retiming_ready_out" || p.name == "retiming_commit_out")
+                throw std::runtime_error("feedback scheduling port already exists");
+            accept = g.wire(1, rule.scope + ".accept");
+            commit = g.wire(1, rule.scope + ".commit");
+            budget -= model.mux; // Atomic commit enable on original registers.
+            // At most one new stage per live operation. Bound the phase
+            // decoder before scheduling, including its path into input muxes.
+            unsigned phaseWidth = 1;
+            while ((uint64_t(1) << phaseWidth) <= g.nodes.size() + 1) ++phaseWidth;
+            double decoder = 2 * model.gate + std::ceil(std::log2(double(std::max(2u, phaseWidth)))) * model.gate;
+            capturedInputArrival = model.clockToQ + decoder + model.mux +
+                ((!syncReset.empty() || !domain.reset.empty()) ? model.mux : 0);
+        }
         std::function<bool(Value, std::set<size_t>&)> touches = [&](Value value, std::set<size_t>& seen) {
             for (auto bit : g.resolved(value)) if (bit > 1) {
                 if (owners.count(bit)) { if (targets.count(owners.at(bit).first)) return true; }
@@ -257,6 +295,7 @@ public:
             return false;
         };
         for (const auto& w : g.memoryWrites) {
+            if (feedback && scheduledHls) continue;
             std::set<size_t> seen;
             if (touches(w.address, seen) || touches(w.data, seen) || touches(w.enabled, seen))
                 throw std::runtime_error("fit pipeline cannot delay state driving a memory write");
@@ -266,11 +305,16 @@ public:
             if (touches(original[s].next, seen) || touches(original[s].reset, seen))
                 throw std::runtime_error("fit pipeline cannot delay state driving an unselected register");
         }
-        for (const auto& p : g.ports) if (!p.input) for (auto bit : g.resolved(p.bits))
+        for (const auto& p : g.ports) if (!p.input && !scheduledHls) for (auto bit : g.resolved(p.bits))
             if (bit > 1 && !owners.count(bit)) throw std::runtime_error("fit pipeline requires registered output boundaries");
     }
-    Scheduled delay(Scheduled source, unsigned target, Value resetBits = {}) {
+    Scheduled delay(Scheduled source, unsigned target, Value resetBits = {}, bool timingBoundary = false) {
         if (std::all_of(source.bits.begin(), source.bits.end(), [](Bit b) { return b < 2; })) { source.stage = target; return source; }
+        // A serialized transition holds its state, inputs and memory until
+        // commit. Earlier results remain valid once their stage has elapsed;
+        // they need no shift register merely to wait for another branch.
+        // Keep their real arrival delay. Only a timing cut resets that delay.
+        if (feedback && !timingBoundary) { source.stage = target; return source; }
         while (source.stage < target) {
             auto key = std::make_tuple(source.bits, source.stage + 1, resetBits);
             if (delayed.count(key)) { source = delayed.at(key); continue; }
@@ -292,7 +336,10 @@ public:
         Scheduled result; result.stage = stage;
         for (auto b : bits) {
             if (b < 2) { result.bits.push_back(b); continue; }
-            auto part = delay(node(Graph::owner(b)), stage);
+            auto part = node(Graph::owner(b));
+            if (feedback && part.stage < stage && part.arrival > model.clockToQ + 1e-9)
+                part = delay(part, part.stage + 1, {}, true);
+            else part = delay(part, stage);
             result.bits.push_back(part.bits.at(Graph::lane(b)));
             result.arrival = std::max(result.arrival, part.arrival);
         }
@@ -303,6 +350,7 @@ public:
         const auto& s = original[index];
         if (s.clock != domain.clock || s.falling != domain.falling) throw std::runtime_error("fit pipeline cannot cross clock/edge domains");
         if (!targets.count(index)) return {s.bits, 0, model.clockToQ};
+        if (feedback) return {s.bits, 0, model.clockToQ};
         if (!visiting.insert(index).second) throw std::runtime_error("fit pipeline register cycle");
         auto data = syncReset.empty() ? g.resolved(s.next) : normalValues.at(index);
         auto scheduled = value(data);
@@ -319,8 +367,8 @@ public:
             if (!boxVisiting.insert(b).second) throw std::runtime_error("combinational path leaves and re-enters keep box");
             auto inputs = value(box.inputs);
             if (box.delay + model.clockToQ > budget + 1e-9)
-                throw std::runtime_error("indivisible keep box exceeds target period: " + box.scope);
-            if (inputs.arrival + box.delay > budget + 1e-9) inputs = delay(inputs, inputs.stage + 1);
+                throw std::runtime_error("indivisible keep box / one-clock function exceeds target period: " + box.scope);
+            if (inputs.arrival + box.delay > budget + 1e-9) inputs = delay(inputs, inputs.stage + 1, {}, true);
             std::map<Bit, Bit> replacement;
             for (size_t i = 0; i < box.inputs.size(); ++i) replacement[box.inputs[i]] = inputs.bits[i];
             auto mapped = [&](Value v) {
@@ -347,24 +395,52 @@ public:
             result.bits = slice(result.bits, s->second.second, n.width);
             return nodes[index] = result;
         }
-        if (n.op == "input") return nodes[index] = {nodeBits(g, index), 0, 0};
+        if (n.op == "input") {
+            auto bits = nodeBits(g, index);
+            if (!feedback || bits == syncReset || bits == domain.reset) return nodes[index] = {bits, 0, 0};
+            auto held = g.wire(n.width, rule.scope + ".transaction_input", "state");
+            auto next = g.mux(accept, bits, held);
+            if (!syncReset.empty()) next = g.mux(syncReset, Value(n.width, 0), next);
+            g.states.push_back({held, next, {1}, domain.clock, domain.falling, domain.reset,
+                domain.reset.empty() ? Value{} : Value(n.width, 0)});
+            inserted += n.width;
+            return nodes[index] = {g.mux(accept, bits, held), 0, capturedInputArrival};
+        }
         auto left = value(n.left), right = value(n.right), select = value(n.select);
         auto stage = std::max({left.stage, right.stage, select.stage});
-        left = delay(left, stage); right = delay(right, stage); select = delay(select, stage);
+        if (feedback) {
+            // An early branch has spare cycles. Register it before joining a
+            // later branch so its delay does not consume the later stage.
+            for (auto* operand : {&left, &right, &select})
+                if (operand->stage < stage && operand->arrival > model.clockToQ + 1e-9)
+                    *operand = delay(*operand, operand->stage + 1, {}, true);
+        } else {
+            left = delay(left, stage); right = delay(right, stage); select = delay(select, stage);
+        }
         double cost = cellDelay(g, n, model);
         if (cost + model.clockToQ > budget + 1e-9) throw std::runtime_error("indivisible cell exceeds target period: " + n.op);
-        if (n.op == "memory_read" && stage) throw std::runtime_error("fit pipeline cannot delay a memory read address");
+        if (n.op == "memory_read" && stage && !(feedback && scheduledHls)) throw std::runtime_error("fit pipeline cannot delay a memory read address");
         double arrival = std::max({left.arrival, right.arrival, select.arrival}) + cost;
         if (arrival > budget + 1e-9) {
-            if (n.op == "memory_read") throw std::runtime_error("memory access exceeds target period; cannot move its transaction");
-            ++stage;
-            left = delay(left, stage); right = delay(right, stage); select = delay(select, stage);
+            if (n.op == "memory_read" && !(feedback && scheduledHls)) throw std::runtime_error("memory access exceeds target period; cannot move its transaction");
+            if (feedback) {
+                // Held transaction values can be registered as soon as they
+                // settle, independently of a later reconverging branch.
+                for (auto* operand : {&left, &right, &select})
+                    if (operand->arrival + cost > budget + 1e-9)
+                        *operand = delay(*operand, operand->stage + 1, {}, true);
+                stage = std::max({left.stage, right.stage, select.stage});
+            } else {
+                ++stage;
+                left = delay(left, stage, {}, true); right = delay(right, stage, {}, true); select = delay(select, stage, {}, true);
+            }
             arrival = std::max({left.arrival, right.arrival, select.arrival}) + cost;
         }
         auto bits = copyOperation(g, n, left.bits, right.bits, select.bits);
         return nodes[index] = {bits, stage, arrival};
     }
     void run() {
+        if (feedback) { runFeedback(); return; }
         for (auto s : targets) state(s);
         // Balance only external copies. Moving an internal bank here would
         // change consumers already scheduled against that bank's old latency.
@@ -382,6 +458,65 @@ public:
             if (owner != owners.end() && outputs.count(owner->second.first)) bit = outputs.at(owner->second.first).at(owner->second.second);
         }
     }
+    void runFeedback() {
+        std::map<size_t, Scheduled> next;
+        std::map<size_t, Scheduled> outputs;
+        struct Write { Scheduled address, data, enabled; };
+        std::vector<Write> writes;
+        for (auto s : targets) if (!alreadyFits) {
+            next[s] = value(syncReset.empty() ? original[s].next : normalValues.at(s));
+            latency = std::max(latency, next[s].stage);
+        }
+        if (scheduledHls && !alreadyFits) {
+            // Every output describes the same original FSM edge as its memory
+            // writes and next-state registers. Present the bundle at commit.
+            for (size_t p = 0; p < g.ports.size(); ++p) if (!g.ports[p].input) {
+                outputs[p] = value(g.ports[p].bits);
+                latency = std::max(latency, outputs[p].stage);
+            }
+            for (const auto& w : g.memoryWrites) {
+                writes.push_back({value(w.address), value(w.data), value(w.enabled)});
+                const auto& n = writes.back();
+                latency = std::max({latency, n.address.stage, n.data.stage, n.enabled.stage});
+            }
+            for (const auto& [p, output] : outputs) g.ports[p].bits = delay(output, latency).bits;
+            for (size_t i = 0; i < writes.size(); ++i) {
+                g.memoryWrites[i].address = delay(writes[i].address, latency).bits;
+                g.memoryWrites[i].data = delay(writes[i].data, latency).bits;
+                g.memoryWrites[i].enabled = g.binary("and", delay(writes[i].enabled, latency).bits, commit, 1);
+            }
+            // Read ports are combinational while a transaction is in flight.
+            // All writes wait for commit, so delayed reads see the old store.
+            g.memoryAccesses.clear();
+        }
+        for (auto s : targets) if (!alreadyFits) {
+            auto data = delay(next.at(s), latency).bits;
+            data = g.mux(commit, data, original[s].bits);
+            if (!syncReset.empty()) data = g.mux(syncReset, resetValues.at(s), data);
+            g.states[s].next = data;
+        }
+        Value ready{1}, complete{1};
+        if (latency) {
+            unsigned width = 1;
+            while ((uint64_t(1) << width) <= latency) ++width;
+            auto phase = g.wire(width, rule.scope + ".transaction_phase", "state");
+            ready = g.binary("eq", phase, constant(0, width), 1);
+            complete = g.binary("eq", phase, constant(latency, width), 1);
+            auto nextPhase = g.mux(complete, constant(0, width), g.binary("add", phase, constant(1, width), width));
+            if (!syncReset.empty()) nextPhase = g.mux(syncReset, constant(0, width), nextPhase);
+            g.states.push_back({phase, nextPhase, {1}, domain.clock, domain.falling, domain.reset,
+                domain.reset.empty() ? Value{} : constant(0, width)});
+            inserted += width;
+        }
+        Value reset = syncReset.empty() ? domain.reset : syncReset;
+        if (!reset.empty()) {
+            ready = g.mux(reset, {0}, ready);
+            complete = g.mux(reset, {0}, complete);
+        }
+        g.connect(accept, ready); g.connect(commit, complete);
+        g.ports.push_back({"retiming_ready_out", ready, false});
+        g.ports.push_back({"retiming_commit_out", complete, false});
+    }
 };
 }
 RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& model) {
@@ -393,6 +528,104 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
     for (const auto& s : g.states) { if (s.trigger != Value{1}) throw std::runtime_error("retiming requires unconditional clock events"); found |= selected(g, s, rule); }
     if (!found) throw std::runtime_error("retiming scope has no registers: " + rule.scope);
     RetimingReport report; report.target = rule.period; report.before = estimateTiming(g, model, rule.scope).worst;
+    bool streaming = false;
+    for (const auto& attr : g.attributes) if (attr.name == "hls_pipeline_ii" &&
+        (inside(attr.scope,rule.scope) || inside(rule.scope,attr.scope))) {
+        bool metadata = false;
+        for (const auto& p : g.pipelines) metadata |= p.scope == attr.scope;
+        if (!metadata) throw std::runtime_error("streaming retiming requires transition metadata; regenerate this graph");
+    }
+    for (const auto& p : g.pipelines) {
+        if (!inside(p.scope,rule.scope) && inside(rule.scope,p.scope))
+            throw std::runtime_error("retiming cannot split a streaming region scope: " + p.scope);
+        streaming |= inside(p.scope,rule.scope);
+    }
+    if (streaming) {
+        if (report.before <= rule.period + 1e-9) {
+            report.after = report.before; report.met = true; graph = std::move(g); return report;
+        }
+        if (rule.mode != "fit_pipeline_retiming")
+            throw std::runtime_error("streaming feedback latency changes require fit_pipeline_retiming");
+        const double budget = rule.period-model.setup-3*model.mux;
+        if (budget <= model.clockToQ)
+            throw std::runtime_error("streaming target period is below register/control overhead");
+        for (auto& p : g.pipelines) if (inside(p.scope,rule.scope)) {
+            if (estimateTiming(g,model,p.scope).worst <= rule.period + 1e-9) continue;
+            auto oldPins = p.pins;
+            for (auto& [name,bits] : oldPins) bits = g.resolved(bits);
+            for (auto& [name,bits] : p.pins) bits = g.resolved(bits);
+            std::set<Value> owned;
+            size_t oldBits = 0;
+            for (auto bits : p.registers) { owned.insert(g.resolved(bits)); oldBits += bits.size(); }
+            int clock = -1; bool falling = false, domainFound = false;
+            for (const auto& state : g.states) if (owned.count(g.resolved(state.bits))) {
+                if (!state.reset.empty()) throw std::runtime_error("streaming asynchronous reset is not supported");
+                if (domainFound && (state.clock != clock || state.falling != falling))
+                    throw std::runtime_error("streaming region must use one clock/edge");
+                clock = state.clock; falling = state.falling;
+                domainFound = true;
+            }
+            if (!domainFound) throw std::runtime_error("streaming region lost register ownership");
+            g.states.erase(std::remove_if(g.states.begin(),g.states.end(),
+                [&](const State& s) { return owned.count(g.resolved(s.bits)); }),g.states.end());
+            Graph logic; logic.load(p.logic.c_str());
+            std::set<size_t> expand;
+            for (auto n : logic.dependencyOrder()) {
+                const auto& cell = logic.nodes[n];
+                if (cell.op != "input" && cell.op != "state" &&
+                    cellDelay(logic,cell,model) + model.clockToQ > budget + 1e-9) expand.insert(n);
+            }
+            if (!expand.empty()) logic = expandGates(std::move(logic),expand);
+            const auto oldLatency = p.latency;
+            const auto firstState = g.states.size();
+            buildStreamPipeline(g,p,logic,[&](const Node& cell) { return cellDelay(logic,cell,model); },budget,model.clockToQ);
+            for (size_t i = firstState; i < g.states.size(); ++i) {
+                g.states[i].clock = clock; g.states[i].falling = falling;
+            }
+            for (const std::string name : {"result_out","fault_out","command_ready_out","response_valid_out"}) {
+                const auto& before = oldPins.at(name);
+                const auto& after = p.pins.at(name);
+                for (size_t i = 0; i < before.size(); ++i) {
+                    auto bit = g.resolve(before[i]), replacement = g.resolve(after[i]);
+                    if (bit == replacement) continue;
+                    if (bit < 2) throw std::runtime_error("streaming output changed a constant boundary");
+                    g.connect({bit},{replacement});
+                }
+            }
+            size_t newBits = 0; for (const auto& bits : p.registers) newBits += bits.size();
+            report.insertedBits += newBits > oldBits ? newBits-oldBits : 0;
+            report.addedLatency = std::max(report.addedLatency,p.latency-oldLatency);
+        }
+        auto timing = estimateTiming(g,model,rule.scope);
+        report.after = timing.worst; report.met = report.after <= rule.period + 1e-9;
+        if (!report.met) {
+            std::string path;
+            Value edge;
+            for (const auto& state : g.states)
+                if ("register " + g.nodes.at(Graph::owner(state.bits[0])).name == timing.endpoint) edge = state.next;
+            for (unsigned depth = 0; depth < 64 && !edge.empty(); ++depth) {
+                size_t owner = 0;
+                double latest = 0;
+                for (auto bit : g.resolved(edge)) if (bit > 1 && timing.arrival[Graph::owner(bit)] > latest) {
+                    owner = Graph::owner(bit); latest = timing.arrival[owner];
+                }
+                if (!latest) break;
+                const auto& node = g.nodes[owner];
+                path += "\n  " + node.op + "[" + std::to_string(node.width) + "] " + node.name +
+                    " arrival=" + std::to_string(latest);
+                if (node.op == "state" || node.op == "input") break;
+                edge = node.left;
+                edge.insert(edge.end(), node.right.begin(), node.right.end());
+                edge.insert(edge.end(), node.select.begin(), node.select.end());
+            }
+            throw std::runtime_error("streaming target not met at boundary: " +
+                timing.endpoint + " (" + std::to_string(report.after) + " ns)" + path);
+        }
+        g.validateClocks(); graph = std::move(g); return report;
+    }
+    for (const auto& attr : g.attributes) if (attr.name == "one_clock" && inside(attr.scope, rule.scope) &&
+        std::stod(attr.value) + model.clockToQ + model.setup > rule.period + 1e-9)
+        throw std::runtime_error("one-clock function exceeds target period: " + attr.scope);
     if (rule.mode == "keep_behaviour_retiming") {
         for (unsigned round = 0; round < 128; ++round) {
             auto bestDelay = estimateTiming(g, model, rule.scope).worst;
@@ -419,18 +652,34 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
             g = std::move(*best); ++report.moved;
         }
     } else {
+        // Word operators are not physical cells. Expose their gates when the
+        // operation cannot fit between registers; keep explicit boxes intact.
+        KeepBoxes boxes(g);
+        std::set<size_t> expand;
+        for (auto n : g.dependencyOrder()) {
+            const auto& cell = g.nodes[n];
+            if (!operation(cell) || !inside(cell.scope, rule.scope) || boxes.owner.count(n)) continue;
+            if (cell.op == "and" || cell.op == "or" || cell.op == "xor" || cell.op == "mux" || cell.op == "memory_read") continue;
+            if (cellDelay(g, cell, model) + model.clockToQ + model.setup + 2 * model.mux > rule.period + 1e-9)
+                expand.insert(n);
+        }
+        if (!expand.empty()) g = expandGates(std::move(g), expand);
         // New boundary registers/reset muxes belong to the selected region,
         // never to the last module visited by a graph-building client.
         auto previousScope = g.currentScope;
         g.currentScope = rule.scope;
-        Pipeline pipeline(g, rule, model); pipeline.run();
+        Pipeline pipeline(g, rule, model, report.before <= rule.period + 1e-9); pipeline.run();
         g.currentScope = previousScope;
         report.insertedBits = pipeline.inserted; report.addedLatency = pipeline.latency;
+        report.feedbackScheduled = pipeline.feedback;
+        report.initiationInterval = pipeline.feedback ? pipeline.latency + 1 : 1;
     }
-    report.after = estimateTiming(g, model, rule.scope).worst;
+    auto finalTiming = estimateTiming(g, model, rule.scope);
+    report.after = finalTiming.worst;
     report.met = report.after <= rule.period + 1e-9;
     if (rule.mode == "fit_pipeline_retiming" && !report.met)
-        throw std::runtime_error("fit pipeline cannot meet target at an unchanged boundary");
+        throw std::runtime_error("fit pipeline cannot meet target at an unchanged boundary: " + finalTiming.endpoint +
+            " (" + std::to_string(report.after) + " ns, target " + std::to_string(rule.period) + " ns)");
     g.validateClocks(); graph = std::move(g);
     return report;
 }

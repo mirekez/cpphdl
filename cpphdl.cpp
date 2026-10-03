@@ -2395,9 +2395,8 @@ Conversion options:
   --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
                                 source normally hidden by synthesis guards.
   --debug                        Print converter/AST diagnostics.
-  --hls                          Enable experimental Clocked<T> AST scheduling
-                                and bounded RTL recursion. Container methods run
-                                until a loop boundary. See hls/HLS.md for limits.
+  HLS scheduling and bounded recursion are selected by source contracts.
+  See hls/HLS.md for supported scheduling contracts.
 
 Clocks:
   --primary_clock <name> <freq>  Declare the primary clock (positive integer
@@ -2413,8 +2412,12 @@ Clocks:
   Frequencies validate the design; the testbench must schedule clock edges.
 
 Experimental gate synthesis:
-  --synth [options]             Synthesize CppHDL to gate-level Verilog using Yosys;
+  --synth [options]             Synthesize CppHDL to generic gate-level Verilog;
                                 use --synth --help for options.
+                                --top names a C++ module class or root object.
+                                ClockedPipeline/ClockedDelayer automatically select
+                                their HLS scheduler.
+                                Uses the internal graph exporter and gate mapper.
 
 Native simulation optimizer (generates C++, not SystemVerilog):
   --word-model [options]        Build a CXXRTL C++ word model; use
@@ -2594,7 +2597,9 @@ tooling::CommandLineArguments adjustCppInputKind(
 
 int main(int argc, const char **argv)
 {
-    if (argc > 1 && std::string_view(argv[1]) == "--lower-cpp-graph") {
+    if (argc > 1 && (std::string_view(argv[1]) == "--lower-cpp-graph" ||
+                     std::string_view(argv[1]) == "--lower-scheduled-graph" ||
+                     std::string_view(argv[1]) == "--lower-synthesis-graph")) {
         std::vector<std::string> include_arguments;
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
         appendDelimitedIncludeDirs(include_arguments, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
@@ -2629,7 +2634,6 @@ int main(int argc, const char **argv)
     std::string optimize_combs_collection_output;
     std::vector<std::string> optimize_combs_collection_inputs;
     bool optimize_math = false;
-    bool hls_mode = false;
     size_t optimize_threads = 1;
     bool optimize_threads_specified = false;
     // JSON extraction previously forced SYNTHESIS and hid test-only modules.
@@ -2684,16 +2688,9 @@ int main(int argc, const char **argv)
             cpphdlDebugEnabled = true;
             continue;
         }
-
-        if (!saw_double_dash && std::strcmp(arg, "--hls") == 0) {
-            hls_mode = true;
-            cpphdl::hls::enable();
-            continue;
-        }
-
         if (!saw_double_dash && (std::strcmp(arg, "--hls-kernel") == 0 ||
                                 std::strncmp(arg, "--hls-kernel=", 13) == 0)) {
-            llvm::errs() << "--hls-kernel was removed; use --hls with a cpphdl::hls::Clocked<T> module member\n";
+            llvm::errs() << "--hls-kernel was removed; use a cpphdl::hls::ClockedDelayer<T> module member\n";
             return 1;
         }
 
@@ -3010,10 +3007,6 @@ int main(int argc, const char **argv)
     // The comb optimizer can restrict method extraction to the concrete root.
     // Supplying it before Clang's AST walk avoids retaining unrelated module
     // implementations from the same generated umbrella header.
-    if (hls_mode && !optimize_combs_root.empty()) {
-        llvm::errs() << "--hls cannot currently be combined with native comb optimization\n";
-        return 1;
-    }
     cpphdl::CombsOptimizer combsOptimizer(optimize_combs_root);
     combsOptimizer.setL1Scheduling(optimize_combs_l1);
     combsOptimizer.setReplayContext(replay_context, replay_source, replay_target, replay_export);

@@ -9,7 +9,7 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser()
-    for key in ('cpphdl', 'cxx', 'yosys', 'verilator', 'work'):
+    for key in ('cpphdl', 'cxx', 'verilator', 'work'):
         parser.add_argument('--' + key, required=True)
     parser.add_argument('--case', choices=('math', 'pipeline', 'main_and_secondary', 'two_main_clocks', 'memory', 'async_reset', 'memory_async_reset'), default='math')
     args = parser.parse_args()
@@ -59,7 +59,7 @@ def main():
         print(result.stdout[-1000:], flush=True)
 
     run([args.cpphdl, '--synth', '--top', 'cpphdl_top', '--module', module,
-         '--cxx', args.cxx, '--yosys', args.yosys, '--output', work / 'rtl', *clocks, source], 'synthesis')
+         '--cxx', args.cxx, '--output', work / 'rtl', *clocks, source], 'synthesis')
     run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
          '--output', work / 'native', '--runner', source, *clocks, source, '--',
          '-D' + define + '_RUN', '-D' + define + '_GRAPH', '-I' + str(root / 'include')], 'native-build')

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "include/cpphdl_graph.h"
+#include "hls/AstClocked.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/RecordLayout.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Basic/DiagnosticLex.h"
@@ -19,6 +21,8 @@ namespace cpphdl::cpp_graph {
 using namespace clang;
 using namespace cpphdl::graph;
 using clang::Expr;
+inline bool scheduledExport = false;
+inline bool synthesisExport = false;
 
 // This frontend consumes the ordinary C++ model, not the original RTL. Keep
 // logical bit layout separate from C++ object layout: padding, proxy objects
@@ -59,6 +63,9 @@ class Lowering {
     std::map<std::string, Value> blockingStates;
     std::map<std::string, const FieldDecl*> moduleFields;
     std::set<std::string> combinationalWrites;
+    std::map<std::string, std::map<std::string, Value>> scheduledPorts;
+    std::map<std::string, std::vector<size_t>> scheduledMemories;
+    std::set<std::string> scheduledWork, scheduledStrobe;
     struct GetterReads {
         Environment fields;
         std::set<std::shared_ptr<const GetterReads>> producers;
@@ -69,6 +76,8 @@ class Lowering {
     std::map<QualType, unsigned> widths;
     std::vector<std::string> stack;
     unsigned serial = 0;
+    unsigned oneClockSerial = 0, oneClockDepth = 0;
+    unsigned oneClockSerialBegin = 0;
     std::vector<std::string> localNames;
     bool structural = false;
     bool committing = false;
@@ -170,6 +179,23 @@ class Lowering {
         if (auto array = context.getAsConstantArrayType(type)) return containsModule(array->getElementType());
         return false;
     }
+    bool containsClocked(QualType type, std::set<const CXXRecordDecl*>& visited) {
+        type = clean(type);
+        if (auto array = context.getAsConstantArrayType(type))
+            return containsClocked(array->getElementType(), visited);
+        auto name = templateName(type);
+        if (name == "cpphdl::array" || name == "std::array")
+            return containsClocked(specialization(type)->getTemplateArgs()[name == "cpphdl::array" ? 1 : 0].getAsType(), visited);
+        if (!module(type)) return false;
+        auto record = type->getAsCXXRecordDecl()->getDefinition();
+        if (!visited.insert(record).second) return false;
+        if (hls::isClocked(record)) return true;
+        for (const auto& base : record->bases())
+            if (containsClocked(base.getType(), visited)) return true;
+        for (const auto* member : record->fields())
+            if (containsClocked(member->getType(), visited)) return true;
+        return false;
+    }
     std::optional<uint64_t> evaluated(const Expr* expression) {
         Expr::EvalResult result;
         if (!expression || expression->isValueDependent() || expression->isInstantiationDependent()) return {};
@@ -191,6 +217,12 @@ class Lowering {
     void validateModule(QualType type) {
         auto record = clean(type)->getAsCXXRecordDecl();
         if (!validatedModules.insert(record).second) return;
+        // Clocked's C++ body is a transaction reference. Its scheduled RTL has
+        // different state/latency and must not be replaced by this body.
+        if (hls::isClocked(record)) {
+                if (scheduledExport) return;
+                else fail("HLS Clocked requires the scheduled HLS graph; use --synth --top RTL_MODULE instead of lowering its native transaction reference");
+        }
         for (const auto& base : record->bases()) if (module(base.getType())) validateModule(base.getType());
         for (auto constructor : record->ctors()) if (constructor->isUserProvided() && constructor->isDefaultConstructor()) {
             // We check constructors, but never execute them. Instantiating an
@@ -218,6 +250,12 @@ class Lowering {
                 if (!body || !body->body_empty()) fail("named-clock, reset-event or negative-phase C++ lifecycle unsupported", candidate->getBody());
             }
         }
+    }
+    bool nativeRecordLayout(const CXXRecordDecl* record) {
+        if (!record || !record->isStandardLayout() || record->isUnion() || record->getNumBases()) return false;
+        for (auto method : record->methods())
+            if (method->getNameAsString() == "_size_bits") return false;
+        return true;
     }
     unsigned width(QualType type) {
         type = clean(type);
@@ -247,6 +285,14 @@ class Lowering {
                 result = integer(returned);
                 object = saved;
                 break;
+            }
+            if (!result && nativeRecordLayout(record)) {
+                for (auto field : record->fields()) {
+                    if (field->isBitField() || field->getType()->isPointerType() || field->getType()->isReferenceType())
+                        fail("unsupported native graph record field: " + field->getNameAsString());
+                    width(field->getType());
+                }
+                result = context.getTypeSize(type);
             }
         }
         if (!result || result > 1048576) fail("unsupported C++ hardware type: " + type.getAsString());
@@ -336,6 +382,10 @@ class Lowering {
     }
     uint64_t packedOffset(QualType type, const FieldDecl* field) {
         auto record = clean(type)->getAsCXXRecordDecl();
+        // Handwritten RTL structs have C++ field layout; hdlcpp records carry
+        // explicit logical offsets, which must retain their stricter checks.
+        if (nativeRecordLayout(record))
+            return context.getASTRecordLayout(record).getFieldOffset(field->getFieldIndex());
         for (auto declaration : record->decls()) if (auto variable = dyn_cast<VarDecl>(declaration))
             if (variable->getNameAsString() == "__hdlcpp_offset_" + field->getNameAsString()) {
                 if (!variable->getInit()) sema.InstantiateVariableDefinition(variable->getLocation(), variable, true);
@@ -387,7 +437,8 @@ class Lowering {
                     result[offset + bit] = part[bit]; covered[offset + bit] = true;
                 }
             }
-            if (record->getNumBases() || std::find(covered.begin(), covered.end(), false) != covered.end())
+            if (record->getNumBases() || (!nativeRecordLayout(record) &&
+                std::find(covered.begin(), covered.end(), false) != covered.end()))
                 fail("incomplete constant packed layout: " + type.getAsString());
             return value(result, type);
         }
@@ -395,6 +446,10 @@ class Lowering {
     }
     Value initial(const Item& item) {
         if (!originals.count(item.key)) {
+            if (item.key.ends_with("._next")) {
+                auto state = registers.find(item.key.substr(0, item.key.size() - 6));
+                if (state != registers.end()) return originals[item.key] = state->second;
+            }
             auto count = item.extent ? item.extent : width(item.type);
             bool state = templateName(item.type) == "cpphdl::reg";
             originals[item.key] = graph.wire(count, item.key, state ? "state" : "wire");
@@ -486,6 +541,9 @@ class Lowering {
             return;
         }
         if (target.key.empty()) fail("assignment to non-addressable C++ value");
+        if (oneClockDepth && !(target.key.starts_with("$local") &&
+            std::stoul(target.key.substr(6)) > oneClockSerialBegin))
+            fail("CPPHDL_ONE_CLOCK requires a pure combinational function: writes " + target.key);
         if (activeProcess >= 0 && target.key.ends_with("._next")) {
             if (!working) fail("next-state assignment outside clock work method");
             claim(resetting ? resetOwners : nextOwners, target.key.substr(0, target.key.size() - 6));
@@ -683,7 +741,7 @@ class Lowering {
     }
     Item invokeClosure(std::shared_ptr<Closure> closure, const FunctionDecl* function = nullptr,
                        const std::vector<Item>& arguments = {}) {
-        llvm::SaveAndRestore<std::string> scope(graph.currentScope, closure->scope);
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope, oneClockDepth ? graph.currentScope : closure->scope);
         if (!function) function = closure->expression->getCallOperator();
         instantiate(function);
         if (stack.size() > 256) fail("C++ call nesting limit");
@@ -748,7 +806,51 @@ class Lowering {
         getterReads.at(activeGetters.back())->producers.insert(std::move(reads));
     }
     Item invoke(const FunctionDecl* function, Item receiver, std::vector<Item> arguments) {
-        llvm::SaveAndRestore<std::string> scope(graph.currentScope, module(receiver.type) ? receiver.key : graph.currentScope);
+        if (scheduledExport && module(receiver.type) && hls::isClocked(clean(receiver.type)->getAsCXXRecordDecl())) {
+            const auto name = function->getNameAsString();
+            if (name == "_assign") {
+                if (!structural) fail("Clocked _assign requires structural binding");
+                if (scheduledPorts.count(receiver.key)) fail("repeated Clocked structural binding");
+                auto savedScope = graph.currentScope;
+                auto firstMemory = graph.memories.size();
+                auto pins = hls::exportClockedGraph(context, sema, clean(receiver.type)->getAsCXXRecordDecl(), graph, receiver.key);
+                for (size_t m = firstMemory; m < graph.memories.size(); ++m) scheduledMemories[receiver.key].push_back(m);
+                graph.currentScope = savedScope;
+                for (const auto& [pin,bits] : pins) if (pin.ends_with("_out")) cells.set(receiver.key + "." + pin, bits);
+                scheduledPorts[receiver.key] = std::move(pins);
+            } else if (name == "_work") {
+                if (!working || graph.resolved(executionGuard()) != Value{1})
+                    fail("scheduled Clocked work must be unconditional in the work phase");
+                if (!scheduledPorts.count(receiver.key) || !scheduledWork.insert(receiver.key).second) fail("missing or repeated Clocked lifecycle binding");
+                for (const auto& [pin,bits] : scheduledPorts.at(receiver.key)) {
+                    if (pin == "reset") graph.connect(bits, read(arguments.at(0)));
+                    else if (pin.ends_with("_in")) {
+                        const FieldDecl* member = nullptr;
+                        for (auto* f : clean(receiver.type)->getAsCXXRecordDecl()->fields()) if (f->getNameAsString() == pin) member = f;
+                        if (!member) fail("missing Clocked input: " + pin);
+                        graph.connect(bits, read(field(receiver, member)));
+                    }
+                }
+            } else if (name == "_strobe") {
+                if (!committing || !scheduledStrobe.insert(receiver.key).second)
+                    fail("scheduled Clocked strobe must occur once in the strobe phase");
+                for (auto m : scheduledMemories[receiver.key]) appliedMemories.insert(m);
+            }
+            else fail("scheduled Clocked method must be a lifecycle call: " + name);
+            return {};
+        }
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope,
+            module(receiver.type) && !oneClockDepth ? receiver.key : graph.currentScope);
+        bool oneClock = false;
+        for (const auto* attribute : function->specific_attrs<AnnotateAttr>())
+            oneClock |= attribute->getAnnotation() == "CPPHDL_ONE_CLOCK";
+        llvm::SaveAndRestore<unsigned> clockDepth(oneClockDepth, oneClockDepth + unsigned(oneClock));
+        llvm::SaveAndRestore<unsigned> clockLocals(oneClockSerialBegin, oneClock ? serial : oneClockSerialBegin);
+        if (oneClock) {
+            if (oneClockDepth > 1) fail("nested CPPHDL_ONE_CLOCK functions are not supported");
+            graph.currentScope += ".one_clock_" + function->getNameAsString() + "_" + std::to_string(++oneClockSerial);
+            graph.attributes.push_back({graph.currentScope, "one_clock", "0"});
+        }
         if (module(receiver.type) && annotatedInstances.insert(receiver.key).second) {
             auto record = clean(receiver.type)->getAsCXXRecordDecl();
             for (const auto* attribute : record->specific_attrs<AnnotateAttr>()) {
@@ -824,6 +926,7 @@ class Lowering {
         if (cache) activeGetters.push_back(key);
         if (cache) producerStorage.push_back(receiver.key + "." + returnStorage->getNameAsString());
         auto result = statement(function->getBody()).result;
+        if (oneClock && effectCount != effectsBefore) fail("CPPHDL_ONE_CLOCK requires a pure combinational function");
         if (cache) producerStorage.pop_back();
         if (concurrent) {
             auto net = std::move(netWrites.back()); netWrites.pop_back();
@@ -906,6 +1009,8 @@ class Lowering {
         if (auto castExpr = dyn_cast<CastExpr>(expression)) {
             auto result = expr(castExpr->getSubExpr());
             if (castExpr->getCastKind() == CK_ToVoid) return {};
+            // Module arrays are hierarchy paths, not packed values or host pointers.
+            if (castExpr->getCastKind() == CK_ArrayToPointerDecay && containsModule(result.type)) return result;
             if (result.closure || castExpr->getCastKind() == CK_NoOp || castExpr->getCastKind() == CK_LValueToRValue || castExpr->getCastKind() == CK_DerivedToBase || castExpr->getCastKind() == CK_UncheckedDerivedToBase) return result;
             return cast(result, castExpr->getType());
         }
@@ -1046,7 +1151,12 @@ class Lowering {
                 if (templateName(receiver.type) == "cpphdl::memory_row") queueMemory(receiver);
                 return receiver;
             }
+            // Native-width CppHDL wrappers expose their storage through unary
+            // operator& (used by _ASSIGN_REG). This is an alias, not bitwise AND.
+            if (op == OO_Amp && call->getNumArgs() == 1 &&
+                integerWrapperWidth(payload(receiver.type))) return receiver;
             if (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual) {
+                if (call->getNumArgs() != 2) fail("unsupported unary overloaded operator", call);
                 auto left = start ? receiver : expr(call->getArg(0));
                 return binary(getOperatorSpelling(op), left, expr(call->getArg(1)), call->getType());
             }
@@ -1259,6 +1369,18 @@ class Lowering {
                 claim(commitOwners, receiver.key);
             }
             committed.insert(receiver.key);
+            return {};
+        }
+        if (working && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg" &&
+            name == "clr" && arguments.empty()) {
+            initial(receiver);
+            auto next = receiver;
+            next.key += "._next";
+            next.type = payload(receiver.type);
+            write(next, value(Value(width(next.type), 0), next.type));
+            // clr() also changes the value seen by subsequent statements in
+            // this C++ work call; graph state itself still commits on the edge.
+            cells.set(receiver.key, Value(width(receiver.type), 0));
             return {};
         }
         if (qualified == "cpphdl::sv_assign_field") { write(arguments.at(0), arguments.at(1)); return {}; }
@@ -1584,6 +1706,10 @@ public:
         if (sema.RequireCompleteType(root->getLocation(), object.type, diag::err_incomplete_type))
             fail("incomplete C++ graph root type");
         if (!module(object.type)) fail("C++ graph root must derive from cpphdl::Module");
+        if (synthesisExport) {
+            std::set<const CXXRecordDecl*> visited;
+            scheduledExport = containsClocked(object.type, visited);
+        }
         auto rootObject = object;
         auto record = clean(root->getType())->getAsCXXRecordDecl();
         std::vector<std::pair<std::string, Item>> outputs;
@@ -1600,7 +1726,7 @@ public:
             bool outputPort = baseName.ends_with("_out");
             bool inputPort = baseName.ends_with("_in");
             if (!outputPort && !inputPort) fail("top C++ ports require _in/_out direction suffix");
-            name.erase(directionEnd - (outputPort ? 4 : 3), outputPort ? 4 : 3);
+            if (!scheduledExport) name.erase(directionEnd - (outputPort ? 4 : 3), outputPort ? 4 : 3);
             if (inputPort) {
                 auto bits = graph.wire(width(item.type), name, "input");
                 originals[item.key] = bits; cells.set(item.key, bits);
@@ -1611,8 +1737,8 @@ public:
         if (auto assign = method(rootObject.type, "_assign")) invoke(assign, rootObject, {});
         structural = false;
         for (auto& [name, item] : outputs) graph.ports.push_back({name, read(item), false});
-        auto reset = graph.wire(1, "work_reset", "input");
-        graph.ports.push_back({"work_reset", reset, true});
+        auto reset = graph.wire(1, scheduledExport ? "reset" : "work_reset", "input");
+        graph.ports.push_back({scheduledExport ? "reset" : "work_reset", reset, true});
         if (!graph.clocks.empty()) {
             for (const auto* name : {"_work", "_strobe"}) if (auto legacy = method(rootObject.type, name)) {
                 instantiate(legacy);
@@ -1643,6 +1769,8 @@ public:
         for (const auto& write : graph.memoryWrites)
             if (!appliedMemories.count(write.memory)) fail("C++ memory writes without strobe apply: " + graph.memories[write.memory].name);
         graph.clockContract = ClockContract::RisingEdgeStep;
+        for (const auto& [instance, pins] : scheduledPorts)
+            if (!scheduledWork.count(instance) || !scheduledStrobe.count(instance)) fail("missing scheduled Clocked work/strobe: " + instance);
         graph.writeCpp(output);
     }
 };
@@ -1667,6 +1795,10 @@ public:
             const VarDecl* found = nullptr;
             for (auto declaration : context.getTranslationUnitDecl()->decls())
                 if (auto variable = dyn_cast<VarDecl>(declaration); variable && variable->getNameAsString() == root) found = variable;
+            if (!found && (scheduledExport || synthesisExport)) for (auto declaration : context.getTranslationUnitDecl()->decls())
+                if (auto record = dyn_cast<CXXRecordDecl>(declaration); record && record->getNameAsString() == root && record->isCompleteDefinition())
+                    found = VarDecl::Create(context, context.getTranslationUnitDecl(), record->getLocation(), record->getLocation(),
+                        &context.Idents.get("cpphdl_synth_top"), context.getRecordType(record), nullptr, SC_Extern);
             if (!found) throw std::runtime_error("C++ root variable not found: " + root);
             Lowering lowering(context, compiler.getSema(), clocks);
             try { lowering.run(found, output); }
@@ -1701,6 +1833,8 @@ public:
     std::unique_ptr<FrontendAction> create() override { return std::make_unique<Action>(root, output, success, clocks); }
 };
 inline int run(int argc, const char** argv, std::vector<std::string> includes) {
+    scheduledExport = argc > 1 && std::string_view(argv[1]) == "--lower-scheduled-graph";
+    synthesisExport = argc > 1 && std::string_view(argv[1]) == "--lower-synthesis-graph";
     if (argc < 6) {
         llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable [--clock NAME HZ ...] -- compiler flags\n";
         return 2;

@@ -10,7 +10,7 @@ public:
     void _work(bool reset) {
         result._next = result;
         if (en_in()) result._next = a_in() + b_in();
-        if (reset) result._next = 0;
+        if (reset) result.clr();
     }
     void _strobe() { result.strobe(); }
 };

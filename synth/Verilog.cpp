@@ -5,7 +5,7 @@
 namespace cpphdl::synth {
 using namespace graph;
 
-void emitVerilog(Graph& graph, const std::string& path, const std::string& module) {
+static std::string buildVerilog(Graph& graph, const std::string& module, std::string* boxImplementations) {
     graph.validateClocks();
     if (graph.clockContract != ClockContract::RisingEdgeStep && graph.clockContract != ClockContract::NamedEdges)
         throw std::runtime_error("synthesis requires a rising-edge lifecycle graph");
@@ -138,11 +138,17 @@ void emitVerilog(Graph& graph, const std::string& path, const std::string& modul
         // Separate resettable and non-resettable registers even within a domain.
         for (const auto* entry : states) {
             const auto& state = *entry;
+            std::string reset;
+            if (!state.reset.empty()) {
+                for (const auto& port : graph.ports)
+                    if (port.input && graph.resolved(port.bits) == graph.resolved(state.reset)) reset = identifier(port.name);
+                if (reset.empty()) throw std::runtime_error("asynchronous reset input port not found");
+            }
             out << "always @(" << (falling ? "negedge " : "posedge ") << identifier(clocks[clock].name);
-            if (!state.reset.empty()) out << " or posedge " << bits(state.reset);
+            if (!reset.empty()) out << " or posedge " << reset;
             out << ") begin\n";
-            if (!state.reset.empty())
-                out << "  if (" << bits(state.reset) << ") " << bits(state.bits) << " <= " << bits(state.resetValue) << ";\n  else ";
+            if (!reset.empty())
+                out << "  if (" << reset << ") " << bits(state.bits) << " <= " << bits(state.resetValue) << ";\n  else ";
             out << "  " << bits(state.bits) << " <= " << bits(state.next) << ";\nend\n";
         }
         bool opened = false;
@@ -159,11 +165,23 @@ void emitVerilog(Graph& graph, const std::string& path, const std::string& modul
     }
     out << "endmodule\n";
     out << implementations.str();
+    if (boxImplementations) *boxImplementations = implementations.str();
+    return out.str();
+}
+
+std::string verilogText(Graph& graph, const std::string& module) {
+    return buildVerilog(graph,module,nullptr);
+}
+
+void emitVerilog(Graph& graph, const std::string& path, const std::string& module) {
+    std::string implementations;
+    auto text = buildVerilog(graph,module,&implementations);
     std::ofstream file(path);
-    if (!file || !(file << out.str())) throw std::runtime_error("cannot write synthesis Verilog");
-    if (!boxes.boxes.empty()) {
+    if (!file || !(file << text)) throw std::runtime_error("cannot write synthesis Verilog");
+    if (!implementations.empty()) {
         std::ofstream bodies(std::filesystem::path(path).parent_path() / "keep_boxes.v");
-        if (!bodies || !(bodies << implementations.str())) throw std::runtime_error("cannot write keep box implementations");
+        if (!bodies || !(bodies << implementations))
+            throw std::runtime_error("cannot write keep box implementations");
     }
 }
 }

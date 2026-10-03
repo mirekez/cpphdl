@@ -14,7 +14,7 @@ if(BLOCK_RAM)
     list(APPEND HLS_PARSE_FLAGS -DHLS_BLOCK_RAM=1)
     set(bench_definitions -DHLS_BLOCK_RAM=1)
 endif()
-execute_process(COMMAND "${CPPHDL}" --hls --generated-dir "${WORK}/generated"
+execute_process(COMMAND "${CPPHDL}" --generated-dir "${WORK}/generated"
     "${SOURCE}" -- "-I${ROOT}/include" -fno-exceptions ${HLS_PARSE_FLAGS}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT result EQUAL 0)

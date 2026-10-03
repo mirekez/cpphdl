@@ -10,5 +10,5 @@ struct OverridePolicyMethods {
 };
 class OverridePolicyTop : public cpphdl::Module {
 public:
-    cpphdl::hls::Clocked<OverridePolicyMethods, 0, 32, 64, true> worker;
+    cpphdl::hls::ClockedDelayer<OverridePolicyMethods, 0, 32, 64, true> worker;
 };

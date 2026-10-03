@@ -1,6 +1,8 @@
 #include "Verilog.h"
 #include "retiming.h"
 #include "KeepBoxes.h"
+#include "Mapping.h"
+#include <filesystem>
 #include <cstdio>
 #include <cmath>
 
@@ -38,6 +40,8 @@ int main(int argc, char** argv) {
                    << ",\"target_ns\":" << result.target << ",\"before_ns\":" << result.before
                    << ",\"after_ns\":" << result.after << ",\"moved_boundaries\":" << result.moved
                    << ",\"inserted_register_bits\":" << result.insertedBits << ",\"added_latency\":" << result.addedLatency
+                   << ",\"initiation_interval\":" << result.initiationInterval
+                   << ",\"feedback_scheduled\":" << (result.feedbackScheduled ? "true" : "false")
                    << ",\"target_met\":" << (result.met ? "true" : "false") << "}";
         }
         report << "],\"worst_ns\":" << cpphdl::synth::estimateTiming(graph, model).worst;
@@ -49,10 +53,22 @@ int main(int argc, char** argv) {
                    << ",\"scope\":" << std::quoted(box.scope) << ",\"delay_ns\":" << box.delay << "}";
             comma = true;
         }
+        report << "],\"streaming_regions\":[";
+        comma = false;
+        for (const auto& pipeline : graph.pipelines) {
+            report << (comma ? "," : "") << "{\"scope\":" << std::quoted(pipeline.scope)
+                   << ",\"hls_stages\":" << pipeline.stages << ",\"latency\":" << pipeline.latency
+                   << ",\"initiation_interval\":1,\"feedback_policy\":\"floating\"}";
+            comma = true;
+        }
         report << "]}\n";
         if (!report) throw std::runtime_error("cannot write timing report");
         graph.writeCpp(argv[4]);
         cpphdl::synth::emitVerilog(graph, argv[1], argv[2]);
+        auto directory = std::filesystem::path(argv[1]).parent_path();
+        auto gates = cpphdl::synth::mapGates(graph);
+        cpphdl::synth::emitVerilog(gates, (directory / "gates.v").string(), argv[2]);
+        cpphdl::synth::writeGateReport(gates, (directory / "gates.json").string(), argv[2]);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "CppHDL synthesis: %s\n", error.what());
         return 1;

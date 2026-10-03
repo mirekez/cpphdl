@@ -5,7 +5,7 @@ set(reasons "signature mismatch" "duplicate HLS override" "cyclic HLS override"
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
-execute_process(COMMAND "${CPPHDL}" --hls --generated-dir "${WORK}/generated"
+execute_process(COMMAND "${CPPHDL}" --generated-dir "${WORK}/generated"
     "${ROOT}/hls/tests/OverridesReject.cpp" -- "-I${ROOT}/include" "-DOVERRIDE_CASE=${CASE}" ${HLS_PARSE_FLAGS}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 file(WRITE "${WORK}/conversion.log" "${output}\n${error}")

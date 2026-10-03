@@ -357,6 +357,8 @@ find_package(ZLIB REQUIRED)
 
 add_executable(cpphdl cpphdl.cpp helpers.cpp Project.cpp Module.cpp Method.cpp Field.cpp Expr.cpp Optimizer.cpp Struct.cpp Enum.cpp json_output.cpp Combs.cpp LifecycleChecks.cpp)
 target_sources(cpphdl PRIVATE hls/HLS.cpp hls/StdContainers.cpp hls/AstClocked.cpp hls/SharedBlocks.cpp hls/Combinational.cpp hls/FunctionOverrides.cpp hls/MemoryEffects.cpp)
+target_sources(cpphdl PRIVATE synth/ScheduledGraph.cpp synth/Verilog.cpp hls/delayed_scheduler.cpp hls/pipeline_scheduler.cpp)
+target_include_directories(cpphdl PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 include(CheckCXXCompilerFlag)
 foreach(flag -std=c++26 -std=c++2c -std=c++23)
