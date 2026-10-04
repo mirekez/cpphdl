@@ -17,6 +17,31 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME cpp_graph_unary_cat COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/UnaryCatNegationChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/unary-cat")
+    set_tests_properties(cpp_graph_unary_cat PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_switch_complete COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchCompleteChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/switch-complete")
+    set_tests_properties(cpp_graph_switch_complete PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_wide_write COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideWriteChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/wide-write")
+    set_tests_properties(cpp_graph_wide_write PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_local_reg_copy COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/LocalRegCopyChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/local-reg-copy")
+    set_tests_properties(cpp_graph_local_reg_copy PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_empty_repeat_cast COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/EmptyRepeatCastChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/empty-repeat-cast")
+    set_tests_properties(cpp_graph_empty_repeat_cast PROPERTIES TIMEOUT 240)
     add_test(NAME cpp_graph_wide_slice COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -86,6 +111,12 @@ if(Python3_Interpreter_FOUND)
         set_tests_properties(switch_control_${flow} PROPERTIES TIMEOUT 240)
     endforeach()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME graph_construction_memory COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/GraphConstructionChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/graph-construction")
+        set_tests_properties(graph_construction_memory PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
         add_test(NAME cpp_graph_memory_scaling COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphMemoryChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>"
@@ -94,6 +125,26 @@ if(Python3_Interpreter_FOUND)
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_byte_string_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/ByteStringChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/byte-string-graph")
+        set_tests_properties(hdlcpp_byte_string_graph PROPERTIES TIMEOUT 240)
+        add_test(NAME hdlcpp_array_write_bounds_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/ArrayWriteBoundsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds-graph")
+        set_tests_properties(hdlcpp_array_write_bounds_graph PROPERTIES TIMEOUT 600)
+        add_test(NAME hdlcpp_nested_packed_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/NestedPackedChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/nested-packed-graph")
+        set_tests_properties(hdlcpp_nested_packed_graph PROPERTIES TIMEOUT 600)
+        add_test(NAME hdlcpp_declared_ranges_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/DeclaredRangesChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/declared-ranges-graph")
+        set_tests_properties(hdlcpp_declared_ranges_graph PROPERTIES TIMEOUT 240)
         add_test(NAME hdlcpp_xperm_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/XpermChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
@@ -119,6 +170,36 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME unary_cat_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/UnaryCatNegationChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/unary-cat")
+        set_tests_properties(unary_cat_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME switch_complete_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchCompleteChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-complete")
+        set_tests_properties(switch_complete_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME wide_write_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideWriteChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wide-write")
+        set_tests_properties(wide_write_verilator PROPERTIES TIMEOUT 300)
+        add_test(NAME local_reg_copy_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/LocalRegCopyChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/local-reg-copy")
+        set_tests_properties(local_reg_copy_verilator PROPERTIES TIMEOUT 240)
+        add_test(NAME empty_repeat_cast_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/EmptyRepeatCastChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/empty-repeat-cast")
+        set_tests_properties(empty_repeat_cast_verilator PROPERTIES TIMEOUT 240)
         add_test(NAME wide_slice_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

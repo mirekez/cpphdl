@@ -282,6 +282,11 @@ inline std::string declarationName(const std::string& line)
     if (begin == end) {
         return {};
     }
+    auto prefix = trimCombText(lhs.substr(0, begin));
+    if (!prefix.empty() && (prefix.back() == '.' || prefix.back() == ':' ||
+        (prefix.size() >= 2 && prefix.compare(prefix.size() - 2, 2, "->") == 0))) {
+        return {};
+    }
     auto name = lhs.substr(begin, end - begin);
     if (name == "if" || name == "for" || name == "while" || name == "switch" ||
         name == "return") {

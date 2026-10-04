@@ -283,6 +283,11 @@ static void testDeclarationIsNotAssignmentBase()
     assert(hdlcpp::declarationName("u32 count = 0;") == "count");
     assert(hdlcpp::declarationName("satp_t satp;") == "satp");
     assert(hdlcpp::declarationName("flag = 0;").empty());
+    assert(hdlcpp::declarationName("entries[(unsigned)(PORTS - 1)].is_compressed = is_compressed[0];").empty());
+    assert(hdlcpp::declarationName("entries[PORTS - 1]. is_compressed = source;").empty());
+    assert(hdlcpp::declarationName("(pointer + 1)->field = source;").empty());
+    assert(hdlcpp::declarationName("Namespace:: field = source;").empty());
+    assert(hdlcpp::declarationName("const logic<WIDTH + 1>& value = source;") == "value");
 }
 
 static void testStructOutputFieldThroughLocal()

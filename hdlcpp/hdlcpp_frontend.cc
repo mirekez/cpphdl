@@ -603,6 +603,56 @@
         return isPackedUnion(st) ? "struct" : (tok(st.keyword) == "union" ? "union" : "struct");
     }
 
+    // Nested records need their own packed layout and must contribute to the
+    // parent's layout; sharing this emitter keeps all declaration forms consistent.
+    std::string aggregateDefinition(const StructUnionTypeSyntax& aggregate,
+                                    const std::string& name, std::string qualifiedName = "")
+    {
+        if (qualifiedName.empty()) qualifiedName = name;
+        mod->types[qualifiedName] = qualifiedName;
+        std::string definition = cppAggregateKeyword(aggregate) + " " + name + " {\n";
+        std::vector<PackedFieldInfo> fields;
+        for (auto member : aggregate.members) {
+            for (auto declarator : member->declarators) {
+                const auto fieldName = tok(declarator->name);
+                std::string fieldType;
+                std::string emittedType;
+                if (member->type->kind == SyntaxKind::StructType ||
+                    member->type->kind == SyntaxKind::UnionType) {
+                    const auto& nested = member->type->as<StructUnionTypeSyntax>();
+                    auto nestedName = "__hdlcpp_" + cppIdent(fieldName) + "_t";
+                    auto nestedKey = qualifiedName + "::" + nestedName;
+                    definition += aggregateDefinition(nested, nestedName, nestedKey) + "\n";
+                    fieldType = "typename " + nestedKey;
+                    auto packed = dimensionWidths(nested.dimensions);
+                    for (auto dimension = packed.rbegin(); dimension != packed.rend(); ++dimension)
+                        fieldType = arrayTypeForDimension(fieldType, *dimension, true);
+                    auto unpacked = dimensionWidths(declarator->dimensions);
+                    for (auto dimension = unpacked.rbegin(); dimension != unpacked.rend(); ++dimension)
+                        fieldType = arrayTypeForDimension(fieldType, *dimension, false);
+                    emittedType = fieldType;
+                    replaceAll(emittedType, "typename " + nestedKey, nestedName);
+                }
+                else {
+                    fieldType = varType(*member->type, *declarator);
+                    emittedType = mod->isPackage ? constexprStructFieldType(fieldType) : fieldType;
+                }
+                registerTypeField(qualifiedName, fieldName, fieldType,
+                                  fieldDeclarationLowerBounds(*member->type, *declarator));
+                auto fieldWidth = packedFieldWidth(fieldType);
+                if (!fieldWidth.empty())
+                    fields.push_back({cppIdent(fieldName), fieldWidth, packedFieldUsesPack(fieldType)});
+                definition += "    " + emittedType + " " + cppIdent(fieldName) + ";\n";
+            }
+        }
+        auto width = isPackedUnion(aggregate) ? packedUnionWidth(fields) : joinedPackedWidth(fields);
+        if (isPackedUnion(aggregate)) registerPackedUnionType(qualifiedName);
+        if (!width.empty()) mod->typeWidths[qualifiedName] = width;
+        definition += packedAggregateHelpers(name, width, packedHelperFields(aggregate, fields),
+                                             isPackedUnion(aggregate));
+        return definition + "};";
+    }
+
     std::string usingOverrideTarget(const std::string& typeName, const std::string& decl) const
     {
         auto text = trim(decl);
@@ -887,6 +937,9 @@
         else if (type.kind == SyntaxKind::ImplicitType) {
             append(type.as<ImplicitTypeSyntax>().dimensions);
         }
+        else if (type.kind == SyntaxKind::StructType || type.kind == SyntaxKind::UnionType) {
+            append(type.as<StructUnionTypeSyntax>().dimensions);
+        }
         return bounds;
     }
 
@@ -908,6 +961,11 @@
         bool changed = true;
         while (changed) {
             changed = false;
+            if (type.rfind("typename ", 0) == 0) {
+                type = trim(type.substr(9));
+                changed = true;
+                continue;
+            }
             if (type.rfind("reg<", 0) == 0 && type.back() == '>') {
                 type = trim(type.substr(4, type.size() - 5));
                 changed = true;
@@ -952,7 +1010,7 @@
             }
             return "";
         };
-        auto sep = parentType.rfind("::");
+        auto sep = parentType.find("::");
         if (sep != std::string::npos) {
             auto pkg = parentType.substr(0, sep);
             auto localType = parentType.substr(sep + 2);
@@ -1036,7 +1094,7 @@
             }
             return std::vector<std::string>{};
         };
-        auto separator = parentType.rfind("::");
+        auto separator = parentType.find("::");
         if (separator != std::string::npos) {
             auto packageName = parentType.substr(0, separator);
             auto localType = parentType.substr(separator + 2);
@@ -1155,7 +1213,7 @@
             }
             return {};
         };
-        auto sep = parentType.rfind("::");
+        auto sep = parentType.find("::");
         if (sep != std::string::npos) {
             auto pkg = parentType.substr(0, sep);
             auto localType = parentType.substr(sep + 2);
@@ -1224,7 +1282,7 @@
             return alias != candidate.types.end() && alias->second != name &&
                    candidate.packedUnionTypes.count(alias->second);
         };
-        auto separator = type.rfind("::");
+        auto separator = type.find("::");
         if (separator != std::string::npos) {
             auto scope = type.substr(0, separator);
             auto localType = type.substr(separator + 2);
@@ -1555,46 +1613,7 @@
 	                            if (d->assignment->type->kind == SyntaxKind::StructType ||
 	                                d->assignment->type->kind == SyntaxKind::UnionType) {
 	                                auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
-	                                std::string line = cppAggregateKeyword(st) + " " + name + " {\n";
-	                                std::vector<PackedFieldInfo> fieldWidths;
-	                                std::vector<std::string> fieldLines;
-	                                for (auto member : st.members) {
-	                                    for (auto md : member->declarators) {
-	                                        if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
-	                                auto& nested = member->type->as<StructUnionTypeSyntax>();
-		                                line += std::string("    ") + cppAggregateKeyword(nested) + " { ";
-                                for (auto nestedMember : nested.members) {
-                                    for (auto nd : nestedMember->declarators) {
-                                        line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
-                                    }
-                                }
-                                line += "} " + cppIdent(tok(md->name)) + ";\n";
-	                            }
-	                            else {
-	                                auto fieldType = varType(*member->type, *md);
-	                                registerTypeField(name, tok(md->name), fieldType,
-	                                                  fieldDeclarationLowerBounds(*member->type, *md));
-	                                auto directFieldWidth = typeWidth(fieldType);
-	                                auto fieldWidth = directFieldWidth.empty() ? packedFieldWidth(fieldType) : directFieldWidth;
-	                                if (!fieldWidth.empty()) {
-	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth, packedFieldUsesPack(fieldType)});
-	                                }
-	                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
-	                }
-	            }
-		        }
-	                                auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
-	                                if (isPackedUnion(st)) registerPackedUnionType(name);
-	                                for (auto& fieldLine : fieldLines) {
-	                                    line += fieldLine;
-	                                }
-	                                auto helperFields = packedHelperFields(st, fieldWidths);
-	                                line += packedAggregateHelpers(name, packedWidth, helperFields, isPackedUnion(st));
-	                                line += "};";
-	                                if (!packedWidth.empty()) {
-	                                    mod->typeWidths[name] = packedWidth;
-	                                }
-	                                mod->typeDecls.push_back(line);
+                                mod->typeDecls.push_back(aggregateDefinition(st, name));
                             }
                             else {
                                 auto initType = d->assignment && d->assignment->type ? typeText(*d->assignment->type) :
@@ -1631,47 +1650,8 @@
                                 }
                                 line += ">\n";
                             }
-                            line += cppAggregateKeyword(st) + " " + defaultName + " {\n";
-                            std::vector<PackedFieldInfo> fieldWidths;
-                            std::vector<std::string> fieldLines;
-                            for (auto member : st.members) {
-                                for (auto md : member->declarators) {
-                                    if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
-                                        auto& nested = member->type->as<StructUnionTypeSyntax>();
-                                        std::string fieldLine = std::string("    ") + cppAggregateKeyword(nested) + " { ";
-                                        for (auto nestedMember : nested.members) {
-                                            for (auto nd : nestedMember->declarators) {
-                                                fieldLine += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
-                                            }
-                                        }
-                                        fieldLine += "} " + cppIdent(tok(md->name)) + ";\n";
-                                        fieldLines.push_back(fieldLine);
-                                    }
-                                    else {
-                                        auto fieldType = varType(*member->type, *md);
-                                        registerTypeField(defaultName, tok(md->name), fieldType,
-                                                          fieldDeclarationLowerBounds(*member->type, *md));
-                                        auto directFieldWidth = typeWidth(fieldType);
-                                        auto fieldWidth = directFieldWidth.empty() ? packedFieldWidth(fieldType) : directFieldWidth;
-                                        if (!fieldWidth.empty()) {
-                                            fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth, packedFieldUsesPack(fieldType)});
-                                        }
-                                        fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
-                                    }
-                                }
-                            }
-                            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
-                            if (isPackedUnion(st)) registerPackedUnionType(defaultName);
-                            for (auto& fieldLine : fieldLines) {
-                                line += fieldLine;
-                            }
-                            auto helperFields = packedHelperFields(st, fieldWidths);
-                            line += packedAggregateHelpers(defaultName, packedWidth, helperFields, isPackedUnion(st));
-                            line += "};\n";
+                            line += aggregateDefinition(st, defaultName);
                             mod->preClassDecls.push_back(line);
-                            if (!packedWidth.empty()) {
-                                mod->typeWidths[defaultName] = packedWidth;
-                            }
                             std::string args;
                             for (auto& declared : mod->params) {
                                 if (!args.empty()) {
@@ -2013,43 +1993,7 @@
             auto& st = node.type->as<StructUnionTypeSyntax>();
             auto firstName = tok(node.declarators[0]->name);
             anonymousStructType = firstName + "_t";
-	            std::string line = cppAggregateKeyword(st) + " " + anonymousStructType + " {\n";
-	            std::vector<PackedFieldInfo> fieldWidths;
-	            std::vector<std::string> fieldLines;
-	            for (auto member : st.members) {
-                for (auto d : member->declarators) {
-                    if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
-                        auto& nested = member->type->as<StructUnionTypeSyntax>();
-	                        line += std::string("    ") + cppAggregateKeyword(nested) + " { ";
-                        for (auto nestedMember : nested.members) {
-                            for (auto nd : nestedMember->declarators) {
-                                line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
-                            }
-                        }
-                        line += "} " + cppIdent(tok(d->name)) + ";\n";
-                    }
-	                    else {
-	                        auto fieldType = varType(*member->type, *d);
-	                        registerTypeField(anonymousStructType, tok(d->name), fieldType,
-	                                          fieldDeclarationLowerBounds(*member->type, *d));
-	                        auto directFieldWidth = typeWidth(fieldType);
-	                        auto fieldWidth = directFieldWidth.empty() ? packedFieldWidth(fieldType) : directFieldWidth;
-	                        if (!fieldWidth.empty()) {
-	                            fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth, packedFieldUsesPack(fieldType)});
-	                        }
-		                        fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
-		                    }
-		                }
-		            }
-	            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
-	            if (isPackedUnion(st)) registerPackedUnionType(anonymousStructType);
-	            for (auto& fieldLine : fieldLines) {
-	                line += fieldLine;
-	            }
-	            auto helperFields = packedHelperFields(st, fieldWidths);
-		            line += packedAggregateHelpers(anonymousStructType, packedWidth, helperFields, isPackedUnion(st));
-            line += "};";
-            mod->typeDecls.push_back(line);
+            mod->typeDecls.push_back(aggregateDefinition(st, anonymousStructType));
             mod->types[anonymousStructType] = anonymousStructType;
         }
         for (auto d : node.declarators) {
@@ -2072,7 +2016,7 @@
             }
             mod->vars.push_back({type, name});
             if (d->initializer && d->initializer->expr) {
-                mod->varInitializers[name] = emitExpr(*d->initializer->expr);
+                mod->varInitializers[name] = emitTypedExpr(*d->initializer->expr, type);
             }
             mod->varNames.insert(name);
             mod->types[name] = type;
@@ -2111,7 +2055,7 @@
             }
             recordArrayLowerBounds(name, d->dimensions);
             if (d->initializer && d->initializer->expr) {
-                auto rhs = emitExpr(*d->initializer->expr);
+                auto rhs = emitTypedExpr(*d->initializer->expr, type);
                 if (d->initializer->expr->kind == SyntaxKind::ConditionalExpression) {
                     auto targetType = unwrapRegType(type);
                     if (targetType.rfind("logic<", 0) == 0 || targetType.rfind("u<", 0) == 0 ||
@@ -2270,37 +2214,8 @@
         }
         if (node.type->kind == SyntaxKind::StructType || node.type->kind == SyntaxKind::UnionType) {
             auto& st = node.type->as<StructUnionTypeSyntax>();
-            std::string line = cppAggregateKeyword(st) + " " + name + " {\n";
-	            std::vector<PackedFieldInfo> fieldWidths;
-	            std::vector<std::string> fieldLines;
-            for (auto member : st.members) {
-	                for (auto d : member->declarators) {
-	                    auto fieldType = varType(*member->type, *d);
-	                    registerTypeField(name, tok(d->name), fieldType,
-	                                      fieldDeclarationLowerBounds(*member->type, *d));
-	                    auto directFieldWidth = typeWidth(fieldType);
-	                    auto fieldWidth = directFieldWidth.empty() ? packedFieldWidth(fieldType) : directFieldWidth;
-	                    if (!fieldWidth.empty()) {
-	                        fieldWidths.push_back({cppIdent(tok(d->name)), fieldWidth, packedFieldUsesPack(fieldType)});
-                    }
-                    if (mod->isPackage) {
-                        fieldType = constexprStructFieldType(fieldType);
-                    }
-	                    fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(d->name)) + ";\n");
-	                }
-	            }
-	            auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
-	            if (isPackedUnion(st)) registerPackedUnionType(name);
-	            for (auto& fieldLine : fieldLines) {
-	                line += fieldLine;
-	            }
-	            auto helperFields = packedHelperFields(st, fieldWidths);
-	            line += packedAggregateHelpers(name, packedWidth, helperFields, isPackedUnion(st));
-            line += "};";
+            auto line = aggregateDefinition(st, name);
             mod->typeDecls.push_back(line);
-            if (!packedWidth.empty()) {
-                mod->typeWidths[name] = packedWidth;
-            }
             if (mod->isPackage) {
                 mod->packageDecls.push_back(line);
             }
@@ -2344,46 +2259,7 @@
                 if (d->assignment && (d->assignment->type->kind == SyntaxKind::StructType ||
                                       d->assignment->type->kind == SyntaxKind::UnionType)) {
 	                    auto& st = d->assignment->type->as<StructUnionTypeSyntax>();
-		                    std::string line = cppAggregateKeyword(st) + " " + name + " {\n";
-		                    std::vector<PackedFieldInfo> fieldWidths;
-		                    std::vector<std::string> fieldLines;
-	                    for (auto member : st.members) {
-	                        for (auto md : member->declarators) {
-	                            if (member->type->kind == SyntaxKind::StructType || member->type->kind == SyntaxKind::UnionType) {
-                                auto& nested = member->type->as<StructUnionTypeSyntax>();
-	                                line += std::string("    ") + cppAggregateKeyword(nested) + " { ";
-                                for (auto nestedMember : nested.members) {
-                                    for (auto nd : nestedMember->declarators) {
-                                        line += varType(*nestedMember->type, *nd) + " " + cppIdent(tok(nd->name)) + "; ";
-                                    }
-                                }
-	                                line += "} " + cppIdent(tok(md->name)) + ";\n";
-	                            }
-	                            else {
-	                                auto fieldType = varType(*member->type, *md);
-	                                registerTypeField(name, tok(md->name), fieldType,
-	                                                  fieldDeclarationLowerBounds(*member->type, *md));
-	                                auto directFieldWidth = typeWidth(fieldType);
-	                                auto fieldWidth = directFieldWidth.empty() ? packedFieldWidth(fieldType) : directFieldWidth;
-	                                if (!fieldWidth.empty()) {
-	                                    fieldWidths.push_back({cppIdent(tok(md->name)), fieldWidth, packedFieldUsesPack(fieldType)});
-	                                }
-		                                fieldLines.push_back("    " + fieldType + " " + cppIdent(tok(md->name)) + ";\n");
-		                            }
-		                        }
-		                    }
-			                    auto packedWidth = isPackedUnion(st) ? packedUnionWidth(fieldWidths) : joinedPackedWidth(fieldWidths);
-			                    if (isPackedUnion(st)) registerPackedUnionType(name);
-		                    for (auto& fieldLine : fieldLines) {
-		                        line += fieldLine;
-		                    }
-		                    auto helperFields = packedHelperFields(st, fieldWidths);
-			                    line += packedAggregateHelpers(name, packedWidth, helperFields, isPackedUnion(st));
-	                    line += "};";
-	                    if (!packedWidth.empty()) {
-	                        mod->typeWidths[name] = packedWidth;
-	                    }
-	                    mod->typeDecls.push_back(line);
+                    mod->typeDecls.push_back(aggregateDefinition(st, name));
 	                }
                 else if (d->assignment) {
                     auto aliasOverrides = configuredTextMap("HDLCPP_TYPE_ALIAS_OVERRIDES");
@@ -5448,71 +5324,7 @@
         }
         if (RangeSelectSyntax::isKind(range.selector->kind)) {
             auto& r = range.selector->as<RangeSelectSyntax>();
-            auto& left = *r.left;
-            uint64_t rawLeft = 0;
-            uint64_t rawRight = 0;
-            if (parseCppIntegralLiteral(exprText(r.left->toString()), rawLeft) &&
-                parseCppIntegralLiteral(exprText(r.right->toString()), rawRight)) {
-                return std::to_string((rawLeft > rawRight ? rawLeft - rawRight : rawRight - rawLeft) + 1);
-            }
-            auto rawLeftText = trim(exprText(r.left->toString()));
-            auto rawRightText = trim(exprText(r.right->toString()));
-            auto isConstValue = [](const std::string& text, uint64_t expected) {
-                if (auto value = parseConfiguredUint(text)) {
-                    return *value == expected;
-                }
-                return false;
-            };
-            if (isConstValue(rawLeftText, 0)) {
-                if (BinaryExpressionSyntax::isKind(r.right->kind)) {
-                    auto width = minusOneRangeBaseWidth(*r.right);
-                    if (!width.empty()) {
-                        return width;
-                    }
-                }
-            }
-            if (isConstValue(rawRightText, 0)) {
-                if (BinaryExpressionSyntax::isKind(r.left->kind)) {
-                    auto width = minusOneRangeBaseWidth(*r.left);
-                    if (!width.empty()) {
-                        return width;
-                    }
-                }
-                return rangeUpperPlusOneWidth(*r.left);
-            }
-            auto right = emitIndexExpr(*r.right);
-            if (isConstValue(right, 0)) {
-                if (BinaryExpressionSyntax::isKind(left.kind)) {
-                    auto width = minusOneRangeBaseWidth(left);
-                    if (!width.empty()) {
-                        return width;
-                    }
-                }
-                return rangeUpperPlusOneWidth(left);
-            }
-            auto leftExpr = emitIndexExpr(left);
-            if (isConstValue(leftExpr, 0)) {
-                if (BinaryExpressionSyntax::isKind(r.right->kind)) {
-                    auto& b = r.right->as<BinaryExpressionSyntax>();
-                    auto bright = trim(emitUntypedNumericExpr(*b.right));
-                    if (tok(b.operatorToken) == "-" && isConstValue(bright, 1)) {
-                        return emitIndexExpr(*b.left);
-                    }
-                }
-                auto e = foldWidth(right);
-                if (isNumber(e)) {
-                    return std::to_string(std::stoul(e) + 1);
-                }
-                return "(" + e + ")+1";
-            }
-            auto l = foldWidth(emitIndexExpr(left));
-            right = foldWidth(right);
-            if (isNumber(l) && isNumber(right)) {
-                auto lv = std::stoul(l);
-                auto rv = std::stoul(right);
-                return std::to_string((lv > rv ? lv - rv : rv - lv) + 1);
-            }
-            return "(((uint64_t)(" + l + ") >= (uint64_t)(" + right + ") ? ((uint64_t)(" + l + ") - (uint64_t)(" + right + ")) : ((uint64_t)(" + right + ") - (uint64_t)(" + l + "))) + 1)";
+            return inclusiveRangeWidth(emitIndexExpr(*r.left), emitIndexExpr(*r.right));
         }
         return textRangeWidth(range.selector->toString());
     }
@@ -6004,6 +5816,7 @@
 
 	    std::string typeWidth(const std::string& type)
 	    {
+            if (type.rfind("typename ", 0) == 0) return typeWidth(type.substr(9));
 	        auto between = [&](const std::string& prefix) -> std::string {
 	            if (type.rfind(prefix, 0) != 0 || type.back() != '>') {
 	                return "";

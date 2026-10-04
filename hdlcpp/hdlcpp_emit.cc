@@ -532,8 +532,11 @@
     std::string emitExpr(const ExpressionSyntax& expr)
     {
         auto isStringLiteral = [](const ExpressionSyntax& e) {
-            auto text = trim(exprText(e.toString()));
-            return !text.empty() && text.front() == '"';
+            auto expression = &e;
+            while (expression->kind == SyntaxKind::ParenthesizedExpression) {
+                expression = expression->as<ParenthesizedExpressionSyntax>().expression;
+            }
+            return expression->kind == SyntaxKind::StringLiteralExpression;
         };
         if (isStringLiteral(expr)) {
             return trim(exprText(expr.toString()));
@@ -978,6 +981,24 @@
             }
             auto rhs = emitExpr(*b.right);
             if ((op == "==" || op == "!=") && (isStringLiteral(*b.left) || isStringLiteral(*b.right))) {
+                auto integralOperand = [&](const ExpressionSyntax& operand) {
+                    auto value = &operand;
+                    while (value->kind == SyntaxKind::ParenthesizedExpression) {
+                        value = value->as<ParenthesizedExpressionSyntax>().expression;
+                    }
+                    if (mod && value->kind == SyntaxKind::IdentifierName) {
+                        auto name = tok(value->as<IdentifierNameSyntax>().identifier);
+                        for (const auto& param : mod->params) {
+                            if (templateParamName(param) == name) {
+                                return !resolvedTypeWidth(templateParamValueType(normalizeTemplateParamDecl(param))).empty();
+                            }
+                        }
+                    }
+                    return !isStringLiteral(operand) && !resolvedTypeWidth(exprType(operand)).empty();
+                };
+                if (integralOperand(*b.left) || integralOperand(*b.right)) {
+                    return "(" + emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right) + ")";
+                }
                 return "(" + emitExpr(*b.left) + " " + op + " " + rhs + ")";
             }
             if (op == "&=" || op == "|=" || op == "^=" || op == "+=" || op == "-=" || op == "<<=" || op == ">>=") {
@@ -1336,7 +1357,7 @@
                     width = foldWidth(typeWidth(target));
                 }
                 if (!width.empty()) {
-                    return target + "(cpphdl::pack_value<" + width + ">(" + emitExpr(*operand) + "))";
+                    return target + "(cpphdl::pack_value<" + width + ">(" + emitTypedExpr(*operand, resolvedTarget) + "))";
                 }
                 return target + "(" + emitNumericExpr(*operand) + ")";
             }
@@ -1344,7 +1365,7 @@
                 target == "uint64_t" || target == "uint32_t" || target == "uint16_t" || target == "uint8_t") {
                 auto width = foldWidth(logicWidth(target));
                 if (!width.empty()) {
-                    return target + "(cpphdl::pack_value<" + width + ">(" + emitExpr(*operand) + "))";
+                    return target + "(cpphdl::pack_value<" + width + ">(" + emitTypedExpr(*operand, target) + "))";
                 }
                 return target + "(" + emitNumericExpr(*operand) + ")";
             }
@@ -2639,6 +2660,12 @@
         std::ofstream h("generated/" + stem + ".h");
 
         h << "#pragma once\n\n#include \"cpphdl.h\"\n#include <array>\n#include <tuple>\n#include <print>\n#include <type_traits>\n#include <utility>\n\n"
+             "#ifndef HDLCPP_RANGE_WIDTH_DEFINED\n"
+             "#define HDLCPP_RANGE_WIDTH_DEFINED\n"
+             "consteval uint64_t __hdlcpp_range_width(int32_t first, int32_t last) {\n"
+             "    return first >= last ? uint64_t(int64_t(first) - last) + 1 : uint64_t(int64_t(last) - first) + 1;\n"
+             "}\n"
+             "#endif\n\n"
              "#ifndef HDLCPP_FIXED_STRING_DEFINED\n"
              "#define HDLCPP_FIXED_STRING_DEFINED\n"
              "template <size_t N>\n"
@@ -10617,6 +10644,10 @@
         }
         auto lhs = selfStrippedLine.substr(0, eq);
         auto rhs = selfStrippedLine.substr(eq + 1);
+        if (comb && !method.returnName.empty() && !method.returnBase.empty() &&
+            !method.localNames.count(method.returnBase)) {
+            replaceIdentifierAll(rhs, method.returnBase, method.returnName);
+        }
         auto declaredLocal = hdlcpp::declarationName(selfStrippedLine);
         if (!declaredLocal.empty()) {
             auto boundRhs = bindWithLocals(rhs, "");
@@ -10643,10 +10674,6 @@
             if (baseEnd != std::string::npos) {
                 lhs.replace(baseEnd, lhsBase.size(), combStorageName(mod, lhsBase));
             }
-        }
-        if (comb && !method.returnName.empty() && !method.returnBase.empty() &&
-            !method.localNames.count(method.returnBase)) {
-            replaceIdentifierAll(rhs, method.returnBase, method.returnName);
         }
         auto boundLhs = bindWithLocals(lhs, lhsBase, true);
         if (!lhsBase.empty()) {
@@ -13415,6 +13442,9 @@
                         (hasSemicolon ? ";" : "");
                 };
                 auto rewriteAggregateSvCastAssignmentFallback = [&]() {
+                    if (!hdlcpp::declarationName(emittedLine).empty()) {
+                        return;
+                    }
                     auto eq = hdlcpp::topLevelAssignPos(emittedLine);
                     if (eq == std::string::npos) {
                         return;
@@ -15099,12 +15129,12 @@ int main(int argc, char** argv)
                 }
             }
             for (const auto& type : module.packedUnionTypes) {
-                if (type.find("::") == std::string::npos) {
+                if (type.find("::") == std::string::npos || module.types.count(type)) {
                     moduleTraits << module.name << "\ttype_union." << type << "=1\n";
                 }
             }
             for (const auto& [type, order] : module.typeFieldOrder) {
-                if (type.find("::") != std::string::npos) {
+                if (type.find("::") != std::string::npos && !module.types.count(type)) {
                     continue;
                 }
                 auto fields = module.typeFields.find(type);

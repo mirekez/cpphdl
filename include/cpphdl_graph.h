@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -66,7 +67,9 @@ inline Value slice(const Value& value, int64_t offset, unsigned width) {
 
 class Graph {
 public:
-    std::vector<Node> nodes;
+    // Node IDs are indices. Segmented storage keeps them stable without a
+    // second, doubled allocation when a multi-million-node graph grows.
+    std::deque<Node> nodes;
     std::map<Bit, Bit> aliases;
     std::vector<Port> ports;
     std::vector<State> states;
@@ -78,10 +81,19 @@ public:
               Value select = {}, std::string name = {}) {
         if (!width || width > 64) throw std::runtime_error("invalid graph node width");
         auto base = (nodes.size() + 1) * 64 + 2;
-        nodes.push_back({std::move(op), width, std::move(left), std::move(right),
-                         std::move(select), std::move(name)});
+        Node node{std::move(op), width, std::move(left), std::move(right),
+                  std::move(select), std::move(name)};
         Value result(width);
         for (unsigned index = 0; index < width; ++index) result[index] = base + index;
+        // Resolve identities before allocating persistent nodes or aliases.
+        // The same rules still run after hierarchy connections become known.
+        simplifyNode(node, [&](unsigned offset, Bit bit) { result[offset] = bit; });
+        if (std::none_of(result.begin(), result.end(),
+                         [&](Bit bit) { return bit >= base && bit < base + width; }))
+            return result;
+        nodes.push_back(std::move(node));
+        for (unsigned index = 0; index < width; ++index)
+            if (result[index] != base + index) aliases[base + index] = result[index];
         return result;
     }
     static size_t owner(Bit bit) { return (bit - 2) / 64 - 1; }
@@ -145,8 +157,7 @@ public:
                 result.insert(result.end(), part.begin(), part.end());
                 offset += count;
             }
-            simplifyLast(result);
-            return resolved(result);
+            return result;
         }
         if (left.size() > 64 || right.size() > 64 || width > 64)
             throw std::runtime_error("wide arithmetic not supported: " + op);
@@ -167,8 +178,7 @@ public:
             auto part = add("mux", count, slice(yes, offset, count), slice(no, offset, count), condition);
             result.insert(result.end(), part.begin(), part.end());
         }
-        simplifyLast(result);
-        return resolved(result);
+        return result;
     }
     static int64_t signedNumber(uint64_t value, unsigned width) {
         if (width == 64) return int64_t(value);
@@ -190,21 +200,18 @@ public:
         throw std::runtime_error("unsupported graph operation: " + op);
     }
 
-    void simplifyLast(const Value& value) {
-        std::set<size_t> owners;
-        for (auto bit : value) if (bit > 1) owners.insert(owner(bit));
-        for (auto index : owners) simplify(index);
-    }
     bool simplify(size_t index) {
-        auto& node = nodes[index];
-        node.left = resolved(node.left); node.right = resolved(node.right);
-        node.select = resolved(node.select);
-        if (node.hostEffect() || node.op == "memory_read") return false;
         bool changed = false;
-        auto redirect = [&](unsigned offset, Bit bit) {
+        simplifyNode(nodes[index], [&](unsigned offset, Bit bit) {
             Bit target = (index + 1) * 64 + 2 + offset;
             if (!aliases.count(target) && target != bit) { aliases[target] = bit; changed = true; }
-        };
+        });
+        return changed;
+    }
+    template<class Redirect> void simplifyNode(Node& node, Redirect redirect) {
+        node.left = resolved(std::move(node.left)); node.right = resolved(std::move(node.right));
+        node.select = resolved(std::move(node.select));
+        if (node.hostEffect() || node.op == "memory_read") return;
         if (node.op == "mux" || node.op == "and" || node.op == "or" || node.op == "xor") {
             for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto left = node.left[offset], right = node.right[offset];
@@ -260,7 +267,6 @@ public:
             }
             if (node.op == "eq" && node.left == node.right) redirect(0, 1);
         }
-        return changed;
     }
 
     void optimize() {

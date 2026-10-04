@@ -1785,7 +1785,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "scalar_typedef_parameter_width", sv, "");
-    expectContains(h, "logic<(uint64_t)((uint64_t)(W))>");
+    expectContains(h, "logic<__hdlcpp_range_width(");
+    expectContains(h, "(uint64_t)(W)");
     expectNotContains(h, "cpphdl::pack_value<32>(W)");
 }
 
@@ -4168,8 +4169,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "zero_type_array", sv, "");
-    expectContains(h, "_LAZY_COMB(reqs_comb, array<PORTS,req_t,true>)");
-    expectContains(h, "cpphdl::pack_value<cpphdl::type_width<array<PORTS,req_t,true>>()>(0)");
+    expectContains(h, "_LAZY_COMB(reqs_comb, array<__hdlcpp_range_width(int32_t(PORTS-1), 0),req_t,true>)");
+    expectContains(h, "cpphdl::pack_value<cpphdl::type_width<array<__hdlcpp_range_width(int32_t(PORTS-1), 0),req_t,true>>()>(0)");
     expectNotContains(h, "array<PORTS,req_t>>(0)");
 }
 

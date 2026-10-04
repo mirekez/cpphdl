@@ -34,10 +34,10 @@ class Lowering {
         unsigned selectedWidth = 0;
         Value rangeMask, rangeLow;
         bool bitSelection = false;
-        bool readOnlyWideRange = false;
         std::shared_ptr<Closure> closure;
         std::optional<size_t> memory;
         Value memoryAddress;
+        std::optional<Value> registerNext;
     };
     using Locals = std::map<const ValueDecl*, Item>;
     struct Closure { const LambdaExpr* expression; Item object; Locals locals; };
@@ -73,7 +73,7 @@ class Lowering {
     bool structural = false;
     bool committing = false;
     bool working = false;
-    bool concatenating = false;
+    bool allowEmptyValue = false;
     std::vector<std::pair<Value, bool>> effectPath;
     Value previousEffect;
     unsigned effectCount = 0;
@@ -228,10 +228,9 @@ class Lowering {
         return result;
     }
     unsigned valueWidth(QualType type) {
-        // SV permits a zero-count replication as an empty concat operand.
-        // hdlcpp represents it with temporary logic<0> values (including the
-        // repeat() result). Never relax width() for addressable storage/ports.
-        if (concatenating && templateName(type) == "cpphdl::logic" &&
+        // Empty concat operands and scalar conversions may consume temporary
+        // logic<0> values. Never relax width() for addressable storage/ports.
+        if (allowEmptyValue && templateName(type) == "cpphdl::logic" &&
             specialization(type)->getTemplateArgs()[0].getAsIntegral() == 0)
             return 0;
         return width(type);
@@ -358,7 +357,7 @@ class Lowering {
     Value initial(const Item& item) {
         if (!originals.count(item.key)) {
             auto count = item.extent ? item.extent : width(item.type);
-            bool state = templateName(item.type) == "cpphdl::reg";
+            bool state = templateName(item.type) == "cpphdl::reg" && !item.key.starts_with("$");
             originals[item.key] = graph.wire(count, item.key, state ? "state" : "wire");
             if (item.key.starts_with("$")) localNames.push_back(item.key);
             if (state) registers[item.key] = originals[item.key];
@@ -369,7 +368,9 @@ class Lowering {
         if (item.closure) return read(invokeClosure(item.closure));
         if (!item.rangeMask.empty()) {
             auto mask = std::move(item.rangeMask); item.rangeMask.clear();
-            return graph.binary("shr", graph.binary("and", read(item), mask, mask.size()), item.rangeLow, mask.size());
+            auto selected = graph.binary("and", read(item), mask, mask.size());
+            if (mask.size() > 64) return wideShiftRight(std::move(selected), item.rangeLow);
+            return graph.binary("shr", selected, item.rangeLow, mask.size());
         }
         if (item.key.empty()) return item.bits;
         if (port(item.type)) {
@@ -394,11 +395,26 @@ class Lowering {
         if (!known) fail("expected a static C++ value");
         return *known;
     }
+    Item nextRegister(Item item) {
+        auto type = payload(item.type);
+        if (item.key.empty()) {
+            if (!item.registerNext) fail("C++ register temporary has no next-state value");
+            return value(*item.registerNext, type);
+        }
+        initial(item);
+        item.key += "._next"; item.type = type; item.extent = width(type);
+        return item;
+    }
     Item cast(Item item, QualType type) {
         auto bits = read(item);
         if (clean(type)->isBooleanType()) bits = graph.unary("any", bits);
         else bits = resize(bits, valueWidth(type), !item.type.isNull() && clean(item.type)->isSignedIntegerOrEnumerationType());
         auto result = value(bits, type);
+        // A reg copy owns both its current payload and its pending payload.
+        // Freeze them before local initialization or a by-value call can write
+        // either source. Only module-owned storage is clocked graph state.
+        if (templateName(type) == "cpphdl::reg" && templateName(item.type) == "cpphdl::reg")
+            result.registerNext = read(nextRegister(item));
         if (templateName(type) == "cpphdl::memory_row") {
             result.memory = item.memory; result.memoryAddress = item.memoryAddress;
         }
@@ -423,6 +439,21 @@ class Lowering {
         // Do not alias oversized offsets by ignoring their upper bits.
         return graph.mux(graph.binary("lt", amount, constant(count, 64), 1), bits, Value(count, 0));
     }
+    Value wideShiftLeft(Value bits, const Value& amount) {
+        const unsigned count = bits.size();
+        // The wide path uses wiring plus word-sized muxes, not wide arithmetic.
+        for (unsigned shift = 1, bit = 0; shift < count; shift <<= 1, ++bit)
+            bits = graph.mux(slice(amount, bit, 1), slice(bits, -int64_t(shift), count), bits);
+        return graph.mux(graph.binary("lt", amount, constant(count, 64), 1), bits, Value(count, 0));
+    }
+    Value wideSliceMask(unsigned count, const Value& high, const Value& low) {
+        auto valid = graph.binary("and", graph.binary("lt", high, constant(count, 64), 1),
+            graph.unary("not", graph.binary("lt", high, low, 1)), 1);
+        auto padding = graph.binary("sub", constant(count - 1, 64), high, 64);
+        auto mask = graph.binary("and", wideShiftRight(Value(count, 1), padding),
+                                 wideShiftLeft(Value(count, 1), low), count);
+        return graph.mux(valid, mask, Value(count, 0));
+    }
     Value wideSliceRead(Value source, const Value& high, const Value& low) {
         const unsigned count = source.size();
         auto valid = graph.binary("and", graph.binary("lt", high, constant(count, 64), 1),
@@ -434,8 +465,6 @@ class Lowering {
         return graph.mux(valid, graph.binary("and", selected, mask, count), Value(count, 0));
     }
     void write(Item target, Item source) {
-        if (target.readOnlyWideRange)
-            fail("wide or nested dynamic C++ bit range unsupported: write to a wide dynamic slice");
         if (source.closure) {
             if (!structural || target.key.empty() || !port(target.type)) fail("closure assignment outside structural port binding");
             bindings[target.key] = source.closure;
@@ -447,15 +476,18 @@ class Lowering {
             auto mask = std::move(target.rangeMask); target.rangeMask.clear();
             auto incoming = resize(read(source), mask.size(),
                 !source.type.isNull() && clean(source.type)->isSignedIntegerOrEnumerationType());
-            incoming = graph.binary("shl", incoming, target.rangeLow, mask.size());
+            incoming = mask.size() > 64 ? wideShiftLeft(std::move(incoming), target.rangeLow) :
+                graph.binary("shl", incoming, target.rangeLow, mask.size());
             auto kept = graph.binary("and", read(target), graph.unary("not", mask), mask.size());
             write(target, value(graph.binary("or", kept, graph.binary("and", incoming, mask, mask.size()), mask.size())));
             return;
         }
         if (!producerStorage.empty() && !target.key.starts_with("$") && target.key != producerStorage.back())
             fail("combinational getter mutates another field: " + target.key);
-        if (templateName(target.type) == "cpphdl::reg" || registers.count(target.key))
+        if ((templateName(target.type) == "cpphdl::reg" && !target.key.starts_with("$")) || registers.count(target.key))
             fail("direct current-state C++ mutation unsupported: " + target.key);
+        if (templateName(target.type) == "cpphdl::reg" && templateName(source.type) == "cpphdl::reg")
+            write(nextRegister(target), value(read(nextRegister(source)), payload(target.type)));
         if (moduleFields.count(target.key)) {
             if (working && producerStorage.empty()) {
                 if (combinationalWrites.count(target.key)) fail("mixed work/combinational C++ writes: " + target.key);
@@ -483,7 +515,9 @@ class Lowering {
         auto previous = cells.count(target.key) ? cells.at(target.key) : initial(target);
         auto offset = number(graph.resolved(target.offset));
         if (offset) {
-            if (*offset + incoming.size() > previous.size()) fail("C++ write out of bounds");
+            if (*offset > previous.size() || incoming.size() > previous.size() - *offset)
+                fail("C++ write out of bounds: " + target.key + " offset=" + std::to_string(*offset) +
+                     " width=" + std::to_string(incoming.size()) + " storage=" + std::to_string(previous.size()));
             for (auto& net : netWrites) if (net.key == target.key)
                 for (unsigned index = 0; index < incoming.size(); ++index)
                     if (graph.resolve(incoming[index]) != graph.resolve(previous[*offset + index])) ++net.counts[*offset + index];
@@ -539,12 +573,10 @@ class Lowering {
             return result;
         }
         if (name == "_next" && templateName(base.type) == "cpphdl::reg") {
-            initial(base);
-            base.key += "._next"; base.type = member->getType(); base.extent = width(base.type);
-            return base;
+            return nextRegister(base);
         }
         auto record = payload(base.type)->getAsCXXRecordDecl();
-        if (templateName(base.type) == "cpphdl::reg") initial(base);
+        if (templateName(base.type) == "cpphdl::reg" && !base.key.empty()) initial(base);
         if (!record) fail("field of non-record");
         auto offset = packedOffset(payload(base.type), member);
         if (base.key.empty()) return value(slice(read(base), offset, width(member->getType())), member->getType());
@@ -555,7 +587,7 @@ class Lowering {
     }
     Item index(Item base, Item indexValue, QualType resultType) {
         auto sourceType = payload(base.type);
-        if (templateName(base.type) == "cpphdl::reg") initial(base);
+        if (templateName(base.type) == "cpphdl::reg" && !base.key.empty()) initial(base);
         auto name = templateName(sourceType);
         if (name == "cpphdl::memory") return memoryRow(base, indexValue, resultType, false);
         unsigned count = 0, elementWidth = 1;
@@ -813,7 +845,9 @@ class Lowering {
             for (const auto& capture : lambda->captures())
                 if (capture.capturesVariable() && capture.getCaptureKind() == LCK_ByCopy && captured.count(capture.getCapturedVar())) {
                     auto& item = captured.at(capture.getCapturedVar());
-                    item = value(read(item), item.type);
+                    auto frozen = value(read(item), item.type);
+                    if (templateName(item.type) == "cpphdl::reg") frozen.registerNext = read(nextRegister(item));
+                    item = std::move(frozen);
                 }
             Item result; result.closure = std::make_shared<Closure>(Closure{lambda, object, std::move(captured)}); return result;
         }
@@ -844,7 +878,7 @@ class Lowering {
         if (auto construct = dyn_cast<CXXConstructExpr>(expression)) {
             if (templateName(construct->getType()) == "cpphdl::cat") {
                 auto count = width(construct->getType()); // An all-empty concat is invalid.
-                llvm::SaveAndRestore scope(concatenating, true);
+                llvm::SaveAndRestore scope(allowEmptyValue, true);
                 std::vector<Item> parts;
                 // Evaluate in C++ braced-initializer order, even for empty
                 // operands, then pack least-significant bits first.
@@ -859,7 +893,11 @@ class Lowering {
                 }
                 return value(bits, construct->getType());
             }
-            if (!construct->getNumArgs()) return value(Value(valueWidth(construct->getType()), 0), construct->getType());
+            if (!construct->getNumArgs()) {
+                auto result = value(Value(valueWidth(construct->getType()), 0), construct->getType());
+                if (templateName(result.type) == "cpphdl::reg") result.registerNext = result.bits;
+                return result;
+            }
             auto result = expr(construct->getArg(0));
             if (result.closure) return result;
             return cast(result, construct->getType());
@@ -956,7 +994,18 @@ class Lowering {
         std::string name = function->getNameAsString();
         Item receiver;
         unsigned start = 0;
-        if (auto member = dyn_cast<CXXMemberCallExpr>(call)) receiver = expr(member->getImplicitObjectArgument());
+        if (auto member = dyn_cast<CXXMemberCallExpr>(call)) {
+            auto source = member->getImplicitObjectArgument();
+            bool emptyConversion = isa<CXXConversionDecl>(function) &&
+                call->getType()->isIntegralOrEnumerationType() &&
+                templateName(source->getType()) == "cpphdl::logic" &&
+                specialization(source->getType())->getTemplateArgs()[0].getAsIntegral() == 0;
+            // Evaluate the receiver normally, including replication operand
+            // side effects. cast() then zero-extends the empty value; storage
+            // still goes through the strict width() path in read()/initial().
+            llvm::SaveAndRestore scope(allowEmptyValue, allowEmptyValue || emptyConversion);
+            receiver = expr(source);
+        }
         if (auto operation = dyn_cast<CXXOperatorCallExpr>(call)) {
             if (isa<CXXMethodDecl>(function)) { receiver = expr(call->getArg(0)); start = 1; }
             auto op = operation->getOperator();
@@ -974,15 +1023,33 @@ class Lowering {
             }
             if (op == OO_Subscript) return index(receiver, expr(call->getArg(start)), call->getType());
             if (op == OO_Equal) {
-                write(receiver, expr(call->getArg(start)));
+                auto source = expr(call->getArg(start));
+                if (templateName(receiver.type) == "cpphdl::reg" &&
+                    templateName(function->getParamDecl(0)->getType()) != "cpphdl::reg")
+                    source = cast(source, payload(receiver.type));
+                write(receiver, source);
                 if (templateName(receiver.type) == "cpphdl::memory_row") queueMemory(receiver);
                 return receiver;
             }
-            if (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual) {
+            // Clang uses the same operator kind for unary and binary +/-
+            // (and &/*). Count AST arguments including the member receiver
+            // before accessing a second operand. Free unary operators have
+            // no receiver, so take their operand from argument zero instead.
+            if (call->getNumArgs() == 1 &&
+                (op == OO_Plus || op == OO_Minus || op == OO_Exclaim || op == OO_Tilde)) {
+                auto operand = start ? receiver : expr(call->getArg(0));
+                if (op == OO_Exclaim)
+                    return value(graph.unary("not", graph.unary("any", read(operand))), call->getType());
+                // For example, -cat<1,8> returns uint64_t, not a 9-bit value.
+                operand = cast(operand, call->getType());
+                if (op == OO_Plus) return operand;
+                if (op == OO_Tilde) return value(graph.unary("not", read(operand)), call->getType());
+                return binary("-", value(Value(width(call->getType()), 0), call->getType()), operand, call->getType());
+            }
+            if (call->getNumArgs() == 2 && (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual)) {
                 auto left = start ? receiver : expr(call->getArg(0));
                 return binary(getOperatorSpelling(op), left, expr(call->getArg(1)), call->getType());
             }
-            if (op == OO_Exclaim || op == OO_Tilde) return value(graph.unary("not", op == OO_Exclaim ? graph.unary("any", read(receiver)) : read(receiver)), call->getType());
         }
         if (isa<CXXConversionDecl>(function)) return cast(receiver, call->getType());
         std::vector<Item> arguments;
@@ -1088,11 +1155,18 @@ class Lowering {
             auto highValue = number(graph.resolved(highBits)), lowValue = number(graph.resolved(lowBits));
             if (!highValue || !lowValue) {
                 if (count > 64 && receiver.rangeMask.empty()) {
-                    auto result = value(wideSliceRead(read(receiver), highBits, lowBits), call->getType());
-                    // A value is sufficient for reads (including a mutable
-                    // source's logic_bits proxy), but never discard writes.
-                    result.readOnlyWideRange = true;
-                    return result;
+                    if (receiver.key.empty() || templateName(call->getType()) != "cpphdl::logic_bits")
+                        return value(wideSliceRead(read(receiver), highBits, lowBits), call->getType());
+                    // Keep addressable proxies tied to the original storage.
+                    // write() reads its latest value, preserving other slices
+                    // and the ordering of consecutive/overlapping updates.
+                    initial(receiver);
+                    if (!receiver.extent) receiver.extent = width(receiver.type);
+                    receiver.selectedWidth = count;
+                    receiver.rangeMask = wideSliceMask(count, highBits, lowBits);
+                    receiver.rangeLow = lowBits;
+                    receiver.type = call->getType();
+                    return receiver;
                 }
                 // A runtime slice is a masked word update, not an array of
                 // aligned elements. Keep both endpoints so unaligned slices
@@ -1174,6 +1248,11 @@ class Lowering {
         }
         if (name == "strobe" && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg") {
             if (!committing || !arguments.empty()) fail("unsupported register commit", call);
+            if (receiver.key.starts_with("$")) {
+                auto current = receiver; current.type = payload(receiver.type);
+                write(current, nextRegister(receiver));
+                return {};
+            }
             initial(receiver);
             committed.insert(receiver.key);
             return {};
@@ -1226,8 +1305,12 @@ class Lowering {
             else if (!from.result->type.isNull()) {
                 if (from.result->closure || into.result->closure || containsModule(from.result->type))
                     fail("dynamic C++ object return unsupported");
-                into.result = value(graph.mux(returning, read(*from.result), read(*into.result)),
+                auto merged = value(graph.mux(returning, read(*from.result), read(*into.result)),
                                     from.result->type);
+                if (templateName(merged.type) == "cpphdl::reg")
+                    merged.registerNext = graph.mux(returning, read(nextRegister(*from.result)),
+                                                   read(nextRegister(*into.result)));
+                into.result = std::move(merged);
             }
         }
         into.returns = either(into.returns, returning);
@@ -1275,6 +1358,7 @@ class Lowering {
             auto result = expr(returned->getRetValue());
             if (!structural && !containsModule(result.type) && !result.closure && !result.type.isNull()) {
                 auto frozen = value(read(result), result.type);
+                if (templateName(result.type) == "cpphdl::reg") frozen.registerNext = read(nextRegister(result));
                 frozen.memory = result.memory; frozen.memoryAddress = result.memoryAddress;
                 result = frozen;
             }
@@ -1341,17 +1425,43 @@ class Lowering {
                 }
                 parts.push_back({child, {}});
             }
+            // Lower each possible entry from the same environment. Sequential
+            // guarded writes retain an unreachable old-value dependency even
+            // when every entry writes (including default). Use the default's
+            // environment as the merge fallback instead; absent a default,
+            // keep the real no-match path and its undriven diagnostics.
+            auto before = cells;
+            auto fallbackCells = before;
+            std::vector<std::pair<Value, Environment>> alternatives;
             Flow flow; flow.normal = {0};
-            for (const auto& part : parts) {
-                if (part.label) {
-                    auto match = part.fallback ? graph.unary("not", matched) : part.match;
-                    flow.normal = either(flow.normal, match);
-                } else appendStatement(flow, part.body);
+            for (size_t entry = 0; entry < parts.size(); ++entry) {
+                if (!parts[entry].label) continue;
+                auto match = parts[entry].fallback ? graph.unary("not", matched) : parts[entry].match;
+                if (dead(match)) continue;
+                if ((structural || committing) && !number(graph.resolved(match)))
+                    fail("dynamic structural/commit C++ condition", body);
+                cells = before;
+                llvm::SaveAndRestore path(effectPath);
+                effectPath.emplace_back(match, true);
+                Flow branch;
+                for (size_t index = entry + 1; index < parts.size() && !dead(branch.normal); ++index)
+                    if (!parts[index].label) appendStatement(branch, parts[index].body);
+                // Break exits only this switch; continue still targets the
+                // enclosing loop. Return values and effects retain entry guards.
+                branch.breaks = {0};
+                collectExits(flow, branch, match);
+                if (parts[entry].fallback) {
+                    fallbackCells = cells;
+                } else {
+                    alternatives.emplace_back(match, cells);
+                }
             }
-            // Consume only this switch's breaks. No-match and end-of-body paths
-            // also continue; returns and enclosing-loop continues do not.
+            cells = fallbackCells;
+            for (const auto& [match, branchCells] : alternatives) {
+                auto accumulated = cells;
+                merge(match, before, branchCells, accumulated);
+            }
             flow.normal = graph.unary("not", either(flow.returns, flow.continues));
-            flow.breaks = {0};
             return flow;
         }
         if (auto loop = dyn_cast<ForStmt>(body)) {
@@ -1420,6 +1530,10 @@ public:
     Lowering(ASTContext& context, Sema& sema) : context(context), sema(sema) {}
     void statistics() const {
         size_t directReads = 0, producerEdges = 0;
+        size_t operandBytes = 0;
+        for (const auto& node : graph.nodes)
+            for (const auto* value : {&node.left, &node.right, &node.select})
+                operandBytes += value->capacity() * sizeof(Bit);
         for (const auto& [key, reads] : getterReads) {
             directReads += reads->fields.size();
             producerEdges += reads->producers.size();
@@ -1427,7 +1541,10 @@ public:
         llvm::errs() << "C++ graph: nodes=" << graph.nodes.size() << " cells=" << cells.size()
                      << " methods=" << results.size() << " registers=" << registers.size()
                      << " getter_reads=" << directReads << " getter_edges=" << producerEdges
-                     << " ast_bytes=" << context.getASTAllocatedMemory() << '\n';
+                     << " ast_bytes=" << context.getASTAllocatedMemory()
+                     << " node_bytes=" << graph.nodes.size() * sizeof(Node)
+                     << " operand_bytes=" << operandBytes
+                     << " aliases=" << graph.aliases.size() << '\n';
     }
     void run(const VarDecl* root, const std::string& output) {
         object.key = root->getNameAsString(); object.type = root->getType();
