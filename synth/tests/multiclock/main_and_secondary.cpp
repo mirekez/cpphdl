@@ -6,8 +6,18 @@ public:
     _PORT(cpphdl::logic<8>) count_out = _ASSIGN_REG(count);
     cpphdl::reg<cpphdl::logic<8>> count;
     void _work(bool reset) {
+#if !SYNTH_CLOCK_ERROR
+        // A local register-wrapper copy is ordinary scratch storage, not a
+        // separately clocked register requiring an owner and strobe.
+        auto snapshot = count;
+        snapshot._next = snapshot;
+        if (en_in()) snapshot._next = uint32_t(snapshot) + 1;
+        count._next = snapshot._next;
+#else
+        // Keep the negative ownership controls independent of pending reads.
         count._next = count;
         if (en_in()) count._next = uint32_t(count) + 1;
+#endif
         if (reset) count._next = 0;
     }
     void _strobe() { count.strobe(); }

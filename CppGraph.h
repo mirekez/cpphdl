@@ -458,7 +458,7 @@ class Lowering {
         return originals.at(item.key);
     }
     Value read(Item item) {
-        if (activeProcess >= 0 && item.key.ends_with("._next")) {
+        if (activeProcess >= 0 && !item.key.starts_with("$") && item.key.ends_with("._next")) {
             auto key = item.key.substr(0, item.key.size() - 6);
             nextReaders[key].insert(activeProcess);
             if (nextOwners.count(key) && nextOwners.at(key) != activeProcess)
@@ -573,7 +573,7 @@ class Lowering {
         if (oneClockDepth && !(target.key.starts_with("$local") &&
             std::stoul(target.key.substr(6)) > oneClockSerialBegin))
             fail("CPPHDL_ONE_CLOCK requires a pure combinational function: writes " + target.key);
-        if (activeProcess >= 0 && target.key.ends_with("._next")) {
+        if (activeProcess >= 0 && !target.key.starts_with("$") && target.key.ends_with("._next")) {
             if (!working) fail("next-state assignment outside clock work method");
             claim(resetting ? resetOwners : nextOwners, target.key.substr(0, target.key.size() - 6));
         }
@@ -1560,7 +1560,8 @@ class Lowering {
         }
         if (auto returned = dyn_cast<ReturnStmt>(body)) {
             auto result = expr(returned->getRetValue());
-            if (!structural && !containsModule(result.type) && !result.closure && !result.type.isNull()) {
+            if (!structural && !containsModule(result.type) && !result.closure && !result.type.isNull() &&
+                !returned->getRetValue()->getType()->isPointerType()) {
                 auto frozen = value(read(result), result.type);
                 if (templateName(result.type) == "cpphdl::reg") frozen.registerNext = read(nextRegister(result));
                 frozen.memory = result.memory; frozen.memoryAddress = result.memoryAddress;
