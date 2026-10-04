@@ -19,7 +19,7 @@ graph emitter. Verilator is needed for gate-level regression tests, not for
 generating the netlist.
 
 Run commands from the repository root. This example synthesizes the integer
-arithmetic and register design in [tests/math.cpp](tests/math.cpp):
+arithmetic and register design in [tests/math.cpp](../synth/tests/math.cpp):
 
 ```sh
 cmake --build build --target cpphdl -j2
@@ -88,9 +88,9 @@ C++ Module hierarchy and port bindings
    and mapped gates. The driver checks that the mapping report contains only
    generic cells or explicitly preserved boxes before reporting completion.
 
-`cpphdl --synth` dispatches to [synthesize.py](synthesize.py). That driver
+`cpphdl --synth` dispatches to [synthesize.py](../synth/synthesize.py). That driver
 invokes the internal `--lower-synthesis-graph` entry point to produce `graph.cc`,
-then compiles it together with [Main.cpp](Main.cpp) and the synthesis backend.
+then compiles it together with [Main.cpp](../synth/Main.cpp) and the synthesis backend.
 Running this emitter performs retiming, mapping and file generation. The host
 C++ compiler builds the graph program; it does not determine the circuit by
 lowering the design through LLVM machine-code IR.
@@ -102,21 +102,21 @@ The main implementation files are:
 - [CppGraph.h](../CppGraph.h): C++ AST to graph, lifecycle and clock ownership.
 - [cpphdl_graph.h](../include/cpphdl_graph.h): shared operations, state, memory,
   simplification and graph serialization.
-- [ScheduledGraph.cpp](ScheduledGraph.cpp): scheduled HLS blocks and control
+- [ScheduledGraph.cpp](../synth/ScheduledGraph.cpp): scheduled HLS blocks and control
   flow to graph operations, registers and memory ports.
-- [StreamPipeline.h](StreamPipeline.h): elastic HLS pipeline construction,
+- [StreamPipeline.h](../synth/StreamPipeline.h): elastic HLS pipeline construction,
   operand alignment, valid propagation and feedback state.
-- [Mapping.cpp](Mapping.cpp): generic bit-gate mapping and cell reports.
-- [Verilog.cpp](Verilog.cpp): operation/gate Verilog emission.
-- [timing.cpp](timing.cpp), [timing.h](timing.h): delay model and path estimates.
-- [retiming.cpp](retiming.cpp), [retiming.h](retiming.h): retiming rules and passes.
-- [KeepBoxes.h](KeepBoxes.h): explicitly preserved operation-level regions.
-- [synthesize.py](synthesize.py), [Main.cpp](Main.cpp): command-line orchestration
+- [Mapping.cpp](../synth/Mapping.cpp): generic bit-gate mapping and cell reports.
+- [Verilog.cpp](../synth/Verilog.cpp): operation/gate Verilog emission.
+- [timing.cpp](../synth/timing.cpp), [timing.h](../synth/timing.h): delay model and path estimates.
+- [retiming.cpp](../synth/retiming.cpp), [retiming.h](../synth/retiming.h): retiming rules and passes.
+- [KeepBoxes.h](../synth/KeepBoxes.h): explicitly preserved operation-level regions.
+- [synthesize.py](../synth/synthesize.py), [Main.cpp](../synth/Main.cpp): command-line orchestration
   and the generated graph's synthesis entry point.
 
 Native simulation and synthesis share design semantics, not optimization goals.
 CPU execution scheduling belongs to the native backend; hardware pipeline
-placement belongs to synthesis. See [shared lowering](../doc/lowering.md).
+placement belongs to synthesis. See [shared lowering](lowering.md).
 
 ## Generated Files
 
@@ -189,8 +189,8 @@ provide active-high asynchronous reset through `work_reset`. Here `pos`/`neg`
 selects the clock edge, not reset polarity. Each handler must supply an
 unconditional constant reset value for every register in that clock/edge.
 It cannot access or clear memory. Domains without a handler retain clocked
-reset behavior. See [clock and reset details](../doc/lowering.md#multiple-clocks)
-and the [multiclock tests](tests/multiclock/).
+reset behavior. See [clock and reset details](lowering.md#multiple-clocks)
+and the [multiclock tests](../synth/tests/multiclock/).
 
 ## Memory
 
@@ -235,7 +235,7 @@ of an FSM that assumes immediate feedback. There is no automatic stale-state
 interlock. Use a latency-tolerant algorithm, an explicitly ordered RTL recurrence,
 or `ClockedDelayer` when calls must observe each preceding update.
 
-See [HLS contracts](../hls/HLS.md) and the
+See [HLS contracts](hls.md) and the
 [streaming HFT example](../hls/examples/net/README.md). The HFT example combines
 three HLS pipelines with manually registered framing, validation and checksum
 logic; timing analysis also checks the logic outside the HLS regions.

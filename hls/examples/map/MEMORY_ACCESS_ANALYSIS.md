@@ -270,7 +270,7 @@ saves a fixed amount of hardware. Generic mux-width totals have not been rerun.
 
 All mappings pass `check -assert`. Exact input snapshots and reports are in
 `build/hls/read-reuse-registers/` and `build/hls/read-reuse-bram/`; the
-[full current tables](../../HLS.md#current-utilization-2026-09-30) also include
+[full current tables](../../../doc/hls.md#current-utilization-2026-09-30) also include
 the other standard-container tests. No placement/routing or timing closure
 was performed.
 

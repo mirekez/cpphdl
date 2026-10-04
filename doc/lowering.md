@@ -126,7 +126,7 @@ It supports single-writer memories and named-clock asynchronous reset handlers
 as described below. It rejects host callbacks, explicit event graphs and undeclared
 clock methods. It does not
 implement floating-point library functions. Scheduled HLS graphs and opt-in
-retiming are described in [retiming](../synth/retiming.md). Generic gates are not an ASIC library mapping or a physical timing
+retiming are described in [retiming](retiming.md). Generic gates are not an ASIC library mapping or a physical timing
 guarantee. Clock-targeted synthesis needs a subsequent technology-aware stage.
 
 Neither graph export nor gate mapping invokes Yosys or another HDL elaborator.
@@ -320,7 +320,7 @@ latency-changing feed-forward pipelining and ready/commit scheduling for
 register-only feedback. `--synth` also imports the actual Clocked FSM and
 supports atomic memory transactions and output bundles. Pure functions in the
 ordinary C++ graph flow can carry a checked `CPPHDL_ONE_CLOCK`
-boundary. See [Retiming](../synth/retiming.md)
+boundary. See [Retiming](retiming.md)
 for the delay model, command-line options, module annotations, memory rules,
 and regression tests. Both frontends use these shared graph passes; their
 external timing contracts must be respected when integrating the result.

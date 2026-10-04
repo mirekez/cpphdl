@@ -2396,7 +2396,7 @@ Conversion options:
                                 source normally hidden by synthesis guards.
   --debug                        Print converter/AST diagnostics.
   HLS scheduling and bounded recursion are selected by source contracts.
-  See hls/HLS.md for supported scheduling contracts.
+  See doc/hls.md for supported scheduling contracts.
 
 Clocks:
   --primary_clock <name> <freq>  Declare the primary clock (positive integer

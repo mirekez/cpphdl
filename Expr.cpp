@@ -855,7 +855,11 @@ std::string Expr::str(std::string prefix, std::string suffix)
                     return indent_str + prefix + memberRef;
                 }
             }
-            if ((flags&FLAG_ASSIGN)) {  // no calls in assigns
+            const bool generatedFunction = currModule && std::any_of(
+                currModule->methods.begin(), currModule->methods.end(), [&](const Method& method) {
+                    return method.name == value && !method.ret.empty();
+                });
+            if ((flags&FLAG_ASSIGN) && !generatedFunction) {
                 return "";
             }
 

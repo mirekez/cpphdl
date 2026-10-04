@@ -17,7 +17,7 @@ Clang CodeGen, `kernel-source.ll`, `kernel-lowered.ll`, or an external C++
 compiler to synthesize a method. Native test executables and Verilator's
 generated C++ still need a C++ compiler, as usual.
 
-The [packet-processing example](examples/net/README.md) uses ordinary C++
+The [packet-processing example](../hls/examples/net/README.md) uses ordinary C++
 methods to parse Ethernet/IPv4/UDP/SBE and construct OUCH order frames, with
 1,000 randomized quotes checked in native and Verilator flows. Its scheduled
 FSM can be exported directly to the synthesis graph. Retiming that delayed
@@ -123,12 +123,12 @@ Current supported source subset:
   Unachievable cell/control delays produce an error, not a false timing success.
 
 Implementation: `pipeline_scheduler.h/.cpp`, sharing AST lowering with the
-delayed scheduler. [Pipeline.cpp](tests/Pipeline.cpp) has a fully wired parent
+delayed scheduler. [Pipeline.cpp](../hls/tests/Pipeline.cpp) has a fully wired parent
 and matching C++/Verilator tests at 1, 3, and 7 stages. They check 1,024
 consecutive commands, randomized branches and bubbles, long output stalls,
 tag alignment, and reset with in-flight work. A separate graph test checks
 that arithmetic spans stages and synthesis cannot serialize it.
-[PipelineFeedback.cpp](tests/PipelineFeedback.cpp) adds mutable 96-bit state,
+[PipelineFeedback.cpp](../hls/tests/PipelineFeedback.cpp) adds mutable 96-bit state,
 nonzero initialization, conditional updates, bubbles, stalls, and reset. Both
 examples also run through delay-based retiming and gate-level Verilator testing.
 
@@ -150,7 +150,7 @@ exports their hardware graph. The C++ wrapper selects the scheduling policy. The
 312 MHz estimate target. Read `timing.json` and validate the resulting latency
 and feedback behavior before integrating the design.
 
-The [HFT example](examples/net/README.md) uses `ClockedPipeline` for independent
+The [HFT example](../hls/examples/net/README.md) uses `ClockedPipeline` for independent
 word/header parsing, decisions and explicitly indexed TX words. Its short
 per-word stream recurrences remain in the RTL wrapper, with explicit registers
 separating checksum accumulation, validation and sequence filtering. Native and
@@ -194,11 +194,11 @@ public:
 `ClockedDelayer<T>` carries the `CPPHDL_HLS_CLOCKED` annotation. It is the explicit
 opt-in to AST scheduling; `T` itself does not need clock methods, registers,
 ports, or a Module base. See the fully connected parent modules in
-[DelayedArray.cpp](tests/std/DelayedArray.cpp),
-[DelayedVector.cpp](tests/std/DelayedVector.cpp),
-[DelayedMap.cpp](tests/std/DelayedMap.cpp),
-[DelayedList.cpp](tests/std/DelayedList.cpp), and
-[DelayedMultimap.cpp](tests/std/DelayedMultimap.cpp).
+[DelayedArray.cpp](../hls/tests/std/DelayedArray.cpp),
+[DelayedVector.cpp](../hls/tests/std/DelayedVector.cpp),
+[DelayedMap.cpp](../hls/tests/std/DelayedMap.cpp),
+[DelayedList.cpp](../hls/tests/std/DelayedList.cpp), and
+[DelayedMultimap.cpp](../hls/tests/std/DelayedMultimap.cpp).
 
 The initial entry contract is deliberately small:
 `uint64_t command(uint32_t operation, uint32_t index, uint32_t value)`.
@@ -541,7 +541,7 @@ another recursive function retain the correct depth limits.
 ### Small Red-Black Map Example
 
 A separate, deliberately small red-black tree example lives in
-[`examples/map`](examples/map/README.md). It uses the same `ClockedDelayer` scheduler,
+[`examples/map`](../hls/examples/map/README.md). It uses the same `ClockedDelayer` scheduler,
 16-bit addresses, 4 KiB pool, shared register/BRAM backends, and transaction
 workload as the `std::map` regression. Its insertion, deletion, traversal, and
 clear are iterative; it is not a replacement for the standard-container tests.
@@ -585,7 +585,7 @@ RTL reports the total. The native reference still uses the host allocator.
 cpphdl::hls::ClockedDelayer<MapSmallMethods, 0, 16, 192> worker;
 ```
 
-[DelayedMapSmall.cpp](tests/std/DelayedMapSmall.cpp) uses the real libc++
+[DelayedMapSmall.cpp](../hls/tests/std/DelayedMapSmall.cpp) uses the real libc++
 `std::map` with four entries, arbitrary 32-bit keys and values, insertion,
 updates, lookup, size, and traversal. It rejects a fifth distinct key before
 allocating, but permits updates at capacity. It does not erase nodes, so four
@@ -1262,5 +1262,5 @@ The former `--hls` flag is no longer accepted; remove it from existing commands.
 edge as a transaction, captures its inputs and commits its writes atomically.
 The new admission/commit signals require explicit integration; this is not
 transparent cycle-preserving retiming. See
-[scheduled HLS graphs](../synth/retiming.md#scheduled-hls-graphs) for the port
+[scheduled HLS graphs](retiming.md#scheduled-hls-graphs) for the port
 contract, artifacts and current restrictions.

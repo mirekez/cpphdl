@@ -245,7 +245,7 @@ The scheduler now shares eligible pointer-writing helpers across callers,
 including their parameter/local values and scheduled memory accesses. This is
 an AST-based rule for free/static `void` functions, not a special case for map
 or rotations. Known direct-object addresses remain specialized. See
-[Sharing Multi-Cycle Calls](../../HLS.md#sharing-multi-cycle-calls) for the
+[Sharing Multi-Cycle Calls](../../../doc/hls.md#sharing-multi-cycle-calls) for the
 eligibility rules and clock-boundary analysis.
 
 Using the unchanged BRAM synthesis flow and complete workloads:
