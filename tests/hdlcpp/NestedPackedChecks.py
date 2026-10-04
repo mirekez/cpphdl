@@ -4,6 +4,10 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -18,9 +22,12 @@ def main():
     include = fixture.parents[1] / 'include'
     args.work.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='nested-packed-', dir=args.work))
+    toolchain = TestToolchain(args.cxx, args.verilator, root)
 
     def run(command, label, env=None):
-        result = subprocess.run(list(map(str, command)), cwd=work, env=env, text=True,
+        result = subprocess.run(toolchain.command(command), cwd=work,
+                                env=toolchain.env if env is None else dict(env, LD_LIBRARY_PATH=toolchain.env.get('LD_LIBRARY_PATH', '')),
+                                text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
         (work / (label + '.log')).write_text(result.stdout)
         if result.returncode:

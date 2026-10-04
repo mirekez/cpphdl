@@ -35,6 +35,8 @@ foreach(alias data_t strb_t chained_t)
 endforeach()
 
 if(VERILATOR)
+    get_filename_component(compiler_bin "${CXX}" DIRECTORY)
+    get_filename_component(compiler_lib "${compiler_bin}/../lib" ABSOLUTE)
     # Add only a verification block to a private copy, leaving all generated
     # type/parameter declarations intact. Local typedefs need lexical scope:
     # Verilator does not resolve them in bind parameter expressions.
@@ -42,6 +44,8 @@ if(VERILATOR)
     string(REPLACE "endmodule" "${checks}\nendmodule" checked_rtl "${rtl}")
     file(WRITE "${work}/DependentBitVectorAliases.sv" "${checked_rtl}")
     execute_process(COMMAND "${VERILATOR}" --binary --timing -j 1 -Wno-fatal
+        -CFLAGS -std=c++20
+        -MAKEFLAGS "CXX=${CXX} LINK=${CXX} AR=ar" -LDFLAGS "-L${compiler_lib}"
         --top-module DependentBitVectorAliasesTb --Mdir "${work}/obj_dir"
         "${work}/generated/Predef_pkg.sv"
         "${work}/DependentBitVectorAliases.sv"
@@ -50,7 +54,8 @@ if(VERILATOR)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "Verilator alias checks failed to build:\n${output}\n${error}")
     endif()
-    execute_process(COMMAND "${work}/obj_dir/VDependentBitVectorAliasesTb"
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${compiler_lib}:$ENV{LD_LIBRARY_PATH}"
+        "${work}/obj_dir/VDependentBitVectorAliasesTb"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "Verilator alias width checks failed:\n${output}\n${error}")

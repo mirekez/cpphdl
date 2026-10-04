@@ -35,13 +35,20 @@ requires an acyclic live dependency graph. Unmarked incomplete writes are
 rejected, not silently reinterpreted as nets.
 Unwritten bits may be discarded only when dead; a live undriven bit remains an error.
 
-The C++ frontend's lifecycle differs from the SV frontend's clock-pin API:
+The default C++ frontend's lifecycle differs from the SV frontend's clock-pin API:
 `eval(false)` evaluates outputs; `eval(true)` performs one `_work(work_reset)` /
 `_strobe()` transaction with pre-commit outputs; `step()` additionally settles
 post-commit outputs. `work_reset` is an explicit one-bit input. Original C++
-conversion removes some SV clock information; this frontend does not invent
+conversion removes some SV clock information; this default mode does not invent
 clock edges or asynchronous events. The bus runner selects this contract
 with `-DUSE_CPP_GRAPH`.
+
+The shared graph also supports named clock domains and synthesis. These use
+explicit clock/reset ownership rather than the default transaction contract;
+see [lowering](lowering.md) and [synthesis](synthesis.md). Native model emission
+is separate from the graph core, so simulation-only helpers are not required by
+the synthesis backend. Eager identity/constant folding and segmented node storage
+remain shared by both consumers.
 
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing

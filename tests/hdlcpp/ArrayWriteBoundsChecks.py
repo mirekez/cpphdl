@@ -4,6 +4,10 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -19,9 +23,12 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='array-write-bounds-', dir=args.work) as temporary:
         work = Path(temporary)
+        toolchain = TestToolchain(args.cxx, args.verilator, work)
 
         def run(command, env=None):
-            result = subprocess.run(list(map(str, command)), cwd=work, env=env, text=True,
+            result = subprocess.run(toolchain.command(command), cwd=work,
+                                    env=toolchain.env if env is None else dict(env, LD_LIBRARY_PATH=toolchain.env.get('LD_LIBRARY_PATH', '')),
+                                    text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
             if result.returncode:
                 logs = ''.join(path.read_text(errors='replace')[-6000:]

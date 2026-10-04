@@ -3,6 +3,10 @@ from pathlib import Path
 import resource
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -21,9 +25,10 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='graph-construction-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, getattr(args, 'verilator', None), work)
 
         def run(command, limited=False):
-            result = subprocess.run(list(map(str, command)), cwd=work, text=True,
+            result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env, text=True,
                                     capture_output=True, timeout=120,
                                     preexec_fn=limit_memory if limited else None)
             if result.returncode:

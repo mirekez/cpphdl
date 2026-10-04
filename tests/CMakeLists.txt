@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_test(NAME cpp_graph_clocked_boundary_rejected COMMAND "${CMAKE_COMMAND}"
+    "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/clocked-boundary"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/graph/ClockedBoundary.cmake")
+set_tests_properties(cpp_graph_clocked_boundary_rejected PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
 add_test(NAME optimizer_generated_helper COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/GeneratedHelperTest.sh"
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
@@ -17,6 +22,31 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    foreach(fixture WideSliceMatrix ZeroConcatCases)
+        string(TOLOWER ${fixture} fixture_name)
+        add_test(NAME cpp_graph_${fixture_name} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/${fixture}Checks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/${fixture_name}")
+        set_tests_properties(cpp_graph_${fixture_name} PROPERTIES TIMEOUT 480)
+    endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME cpp_graph_acceleration_scaling COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/CppGraphAccelerationChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph-acceleration")
+        set_tests_properties(cpp_graph_acceleration_scaling PROPERTIES TIMEOUT 240)
+    endif()
+    foreach(flow cpp graph effects)
+        if(flow STREQUAL "effects" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            continue()
+        endif()
+        add_test(NAME switch_control_legacy_${flow} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlLegacyChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control-legacy" --flow ${flow})
+        set_tests_properties(switch_control_legacy_${flow} PROPERTIES TIMEOUT 240)
+    endforeach()
     add_test(NAME cpp_graph_unary_cat COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/UnaryCatNegationChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -42,6 +72,18 @@ if(Python3_Interpreter_FOUND)
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/empty-repeat-cast")
     set_tests_properties(cpp_graph_empty_repeat_cast PROPERTIES TIMEOUT 240)
+    add_test(NAME test_toolchain_setup COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/TestToolchainChecks.py")
+    add_test(NAME cpp_graph_closure_scope COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/ClosureScopeChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/closure-scope")
+    set_tests_properties(cpp_graph_closure_scope PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_signed_arithmetic COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/SignedArithmeticChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/signed-arithmetic")
+    set_tests_properties(cpp_graph_signed_arithmetic PROPERTIES TIMEOUT 240)
     add_test(NAME cpp_graph_wide_slice COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -170,6 +212,26 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
+        add_test(NAME wide_slice_matrix_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceMatrixChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wideslicematrix")
+        set_tests_properties(wide_slice_matrix_verilator PROPERTIES TIMEOUT 480)
+        add_test(NAME switch_control_legacy_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/SwitchControlLegacyChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_NETLIST_VERILATOR}" --flow verilator
+            --work "${CMAKE_CURRENT_BINARY_DIR}/switch-control-legacy")
+        set_tests_properties(switch_control_legacy_verilator PROPERTIES TIMEOUT 240)
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME zero_repeat_widths_roundtrip COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatCasesChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/zeroconcatcases")
+            set_tests_properties(zero_repeat_widths_roundtrip PROPERTIES TIMEOUT 480)
+        endif()
         add_test(NAME unary_cat_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/UnaryCatNegationChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

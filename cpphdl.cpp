@@ -24,6 +24,8 @@
 #include "LifecycleChecks.h"
 #include "WordLowering.h"
 #include "CppGraph.h"
+#include "hls/HLS.h"
+#include "hls/AstClocked.h"
 
 #include <algorithm>
 #include <array>
@@ -309,7 +311,7 @@ std::string shellQuote(const std::string& text)
     return out;
 }
 
-void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
+void appendCompilerProbeIncludeDirs(std::vector<std::string>& args, const std::string& library = "")
 {
     std::string compiler;
 #ifdef CPPHDL_CMAKE_CXX_COMPILER
@@ -324,7 +326,8 @@ void appendCompilerProbeIncludeDirs(std::vector<std::string>& args)
         compiler = "clang++";
     }
 
-    const std::string command = "printf '' | " + shellQuote(compiler) + " -E -x c++ - -v 2>&1";
+    const std::string command = "printf '' | " + shellQuote(compiler) +
+        (library.empty() ? "" : " " + shellQuote(library)) + " -E -x c++ - -v 2>&1";
     FILE* pipe = ::popen(command.c_str(), "r");
     if (!pipe) {
         return;
@@ -684,6 +687,7 @@ static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& h
 std::unordered_map<std::string, cpphdl::Expr> templateTypeSubstitutions(const CXXRecordDecl* RD, Helpers& hlp)
 {
     std::unordered_map<std::string, cpphdl::Expr> result;
+    if (cpphdl::hls::isClocked(RD)) return result;
     const auto* CTSD = dyn_cast<ClassTemplateSpecializationDecl>(RD);
     if (!CTSD || !CTSD->getSpecializedTemplate()) {
         return result;
@@ -1276,7 +1280,15 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
     const std::string qtText = QT.getAsString(hlp.ctx->getPrintingPolicy());
     const bool functionRefCpphdlArray = qtText.rfind("cpphdl::array<", 0) == 0 || qtText.rfind("array<", 0) == 0;
 
-    cpphdl::Expr expr = hlp.digQT(QT);
+    cpphdl::Expr expr;
+    if (CRD && cpphdl::hls::isClocked(CRD)) {
+        std::string clockedName = CRD->getQualifiedNameAsString();
+        hlp.followSpecialization(CRD, clockedName, nullptr, true);
+        clockedName = cpphdl::hls::clockedName(CRD, clockedName);
+        expr = cpphdl::Expr{clockedName, cpphdl::Expr::EXPR_TYPE};
+    } else {
+        expr = hlp.digQT(QT);
+    }
     // Dependent cpphdl::array specializations are not ClassTemplateSpecializationDecls,
     // so the type loop above cannot separate their dimensions from the element type.
     // Normalize them here to the same representation used by concrete specializations.
@@ -1725,6 +1737,13 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         method.name += MD->getNameAsString();
     }
 
+    if (!cpphdl::hls::enterMethod(*hlp.mod, method.name, *MD)) {
+        hlp.flags = savedFlags;
+        return method.name;
+    }
+    const std::string collectingMethodName = method.name;
+    on_return leaveHlsMethod([&]() { cpphdl::hls::leaveMethod(*hlp.mod, collectingMethodName); });
+
     for (const ParmVarDecl* param : MD->parameters()) {
         QualType QT = param->getType().getNonReferenceType();
 
@@ -1753,7 +1772,14 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
     }
 
-    const auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
+    auto typeSubstitutions = templateTypeSubstitutions(hlp.specializationParent, hlp);
+    if (MD->isStatic() && !MD->getParent()->isDerivedFrom(ModuleClass)) {
+        // Static helper specializations have no module parameter scope. Their
+        // own concrete arguments take precedence over the caller's parameters.
+        for (const auto& [name, value] : templateTypeSubstitutionsForRecord(MD->getParent(), hlp)) {
+            typeSubstitutions[name] = value;
+        }
+    }
     for (auto& ret : method.ret) {
         applyTemplateTypeSubstitutions(ret, typeSubstitutions);
     }
@@ -2136,6 +2162,17 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         mod->origName = RD->getQualifiedNameAsString();
         mod->replacement = cpphdlReplacementFromAnnotations(RD, *context);
 
+        if (cpphdl::hls::isClocked(RD)) {
+            mod->name = cpphdl::hls::clockedName(RD, mod->name);
+            mod->parameters.clear();
+            for (const auto* field : RD->fields()) {
+                if (field->getAccess() == AS_public)
+                    putField(field->getType(), field->getNameAsString(), nullptr, hlp);
+            }
+            cpphdl::hls::exportClocked(RD, *mod);
+            return;
+        }
+
         DEBUG_AST(debugIndent++, "# putModule: " << RD->getQualifiedNameAsString() << "(" << mod->name << ")"); on_return ret_debug([](){ --debugIndent; });
 
         hlp.forEachBase(RD, [&](const CXXRecordDecl* RD1){
@@ -2318,6 +2355,7 @@ struct MethodConsumer : public ASTConsumer
         if (combsOptimizer) {
             combsOptimizer->collect(context);
         } else {
+            if (!cpphdl::hls::prepare(context, compiler->getSema())) return;
             Visitor.TraverseDecl(context.getTranslationUnitDecl());
             Visitor.exportUninstantiatedNumericModules();
             checkModuleLifecycleCalls(context);
@@ -2357,6 +2395,8 @@ Conversion options:
   --no-synthesis-flag            Do not implicitly define SYNTHESIS; include
                                 source normally hidden by synthesis guards.
   --debug                        Print converter/AST diagnostics.
+  HLS scheduling and bounded recursion are selected by source contracts.
+  See doc/hls.md for supported scheduling contracts.
 
 Clocks:
   --primary_clock <name> <freq>  Declare the primary clock (positive integer
@@ -2370,6 +2410,14 @@ Clocks:
   need _work_<name>(bool reset) and _strobe_<name>() for every declared clock.
   Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
   Frequencies validate the design; the testbench must schedule clock edges.
+
+Experimental gate synthesis:
+  --synth [options]             Synthesize CppHDL to generic gate-level Verilog;
+                                use --synth --help for options.
+                                --top names a C++ module class or root object.
+                                ClockedPipeline/ClockedDelayer automatically select
+                                their HLS scheduler.
+                                Uses the internal graph exporter and gate mapper.
 
 Native simulation optimizer (generates C++, not SystemVerilog):
   --word-model [options]        Build a CXXRTL C++ word model; use
@@ -2549,7 +2597,9 @@ tooling::CommandLineArguments adjustCppInputKind(
 
 int main(int argc, const char **argv)
 {
-    if (argc > 1 && std::string_view(argv[1]) == "--lower-cpp-graph") {
+    if (argc > 1 && (std::string_view(argv[1]) == "--lower-cpp-graph" ||
+                     std::string_view(argv[1]) == "--lower-scheduled-graph" ||
+                     std::string_view(argv[1]) == "--lower-synthesis-graph")) {
         std::vector<std::string> include_arguments;
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
         appendDelimitedIncludeDirs(include_arguments, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
@@ -2559,6 +2609,9 @@ int main(int argc, const char **argv)
     }
     if (argc > 1 && std::string_view(argv[1]) == "--native-graph") {
         return cpphdl::word_lowering::driver(argc, argv, "cpphdl-graph.py");
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--synth") {
+        return cpphdl::word_lowering::driver(argc, argv, "../synth/synthesize.py");
     }
     if (argc > 1 && std::string_view(argv[1]) == "--word-model") {
         return cpphdl::word_lowering::driver(argc, argv);
@@ -2634,6 +2687,11 @@ int main(int argc, const char **argv)
         if (!saw_double_dash && std::strcmp(arg, "--debug") == 0) {
             cpphdlDebugEnabled = true;
             continue;
+        }
+        if (!saw_double_dash && (std::strcmp(arg, "--hls-kernel") == 0 ||
+                                std::strncmp(arg, "--hls-kernel=", 13) == 0)) {
+            llvm::errs() << "--hls-kernel was removed; use a cpphdl::hls::ClockedDelayer<T> module member\n";
+            return 1;
         }
 
         // This option belongs to cpphdl rather than the forwarded compiler args.
@@ -2876,10 +2934,19 @@ int main(int argc, const char **argv)
         cpphdl_include_args.push_back(cpphdl_source_include.string());
     }
 #endif
+    std::string selectedLibrary;
+    bool noStandardCppIncludes = false;
+    for (const std::string_view arg : replace) {
+        if (arg.rfind("-stdlib=", 0) == 0) selectedLibrary = arg;
+        if (arg == "-nostdinc++" || arg == "-nostdinc") noStandardCppIncludes = true;
+    }
+    // A selected library needs its own complete include order: libc++ wrappers
+    // must precede C headers, and must never include libstdc++ wrappers.
 #ifdef CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS
-    appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
+    if (selectedLibrary.empty() && !noStandardCppIncludes)
+        appendDelimitedIncludeDirs(cpphdl_include_args, CPPHDL_CXX_IMPLICIT_INCLUDE_DIRS);
 #endif
-    appendCompilerProbeIncludeDirs(cpphdl_include_args);
+    if (!noStandardCppIncludes) appendCompilerProbeIncludeDirs(cpphdl_include_args, selectedLibrary);
 
     // The old unconditional define made non-synthesis source invisible to JSON.
     // Preserve the established command-line behavior unless opted out above.
@@ -2964,6 +3031,8 @@ int main(int argc, const char **argv)
     if (ret != 0) {
         return ret;
     }
+    if (!cpphdl::hls::writeAnalysis(generated_dir)) return 1;
+    if (!cpphdl::hls::lower(*currProject)) return 1;
     if (!optimize_combs_collection_output.empty()) {
         return combsOptimizer.saveCollection(optimize_combs_collection_output)
             ? 0 : 1;

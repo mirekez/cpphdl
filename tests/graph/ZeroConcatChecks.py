@@ -1,65 +1,25 @@
-"""Zero-width concat temporaries are empty values, never hardware storage."""
-import argparse
-from pathlib import Path
-import subprocess
-import tempfile
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--cpphdl', required=True)
-    parser.add_argument('--cxx', required=True)
-    parser.add_argument('--work', required=True, type=Path)
-    parser.add_argument('--hdlcpp')
-    parser.add_argument('--verilator')
-    args = parser.parse_args()
-    fixture = Path(__file__).resolve().parent
-    include = fixture.parents[1] / 'include'
-    args.work.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix='zero-concat-', dir=args.work))
-
-    def run(command, label, success=True):
-        result = subprocess.run(list(map(str, command)), cwd=work, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
-        (work / (label + '.log')).write_text(result.stdout)
-        if (result.returncode == 0) != success:
-            raise RuntimeError(f'{label}: {result.stdout[-6000:]}\nArtifacts: {work}')
-        return result.stdout
-
-    if args.hdlcpp:
-        if not args.verilator:
-            parser.error('--hdlcpp requires --verilator')
-        run([args.hdlcpp, fixture / 'ZeroRepeat.sv'], 'hdlcpp')
-        for xlen, vlen in ((32, 32), (48, 32), (31, 31), (40, 7)):
-            name = f'sv-{xlen}-{vlen}'
-            output = work / name
-            definitions = [f'-DZERO_XLEN={xlen}', f'-DZERO_VLEN={vlen}']
-            run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
-                 '--frontend-flag=-I' + str(work),
-                 *['--frontend-flag=' + flag for flag in definitions],
-                 '--output', output, fixture / 'ZeroRepeatSeed.cc'], name + '-graph')
-            run([args.verilator, '--cc', '--exe', '--build', '-j', '1', '-Wno-fatal',
-                 '--top-module', 'ZeroRepeat', '--Mdir', output / 'obj',
-                 f'-GXLEN={xlen}', f'-GVLEN={vlen}',
-                 '-CFLAGS', ' '.join(['-std=c++23', *definitions, '-I' + str(include),
-                                      '-I' + str(work), '-I' + str(output)]),
-                 fixture / 'ZeroRepeat.sv', fixture / 'ZeroRepeatRun.cc'], name + '-verilator')
-            print(run([output / 'obj/VZeroRepeat'], name + '-run'), end='')
-    else:
-        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
-             '--runner', fixture / 'ZeroConcatRun.cc', '--output', work / 'direct',
-             fixture / 'ZeroConcat.cc', '--', '-I' + str(include),
-             '-fsanitize=address,undefined'], 'direct-graph')
-        print(run([work / 'direct/run'], 'direct-run'), end='')
-        for case in range(8):
-            output = work / f'reject-{case}.cc'
-            log = run([args.cpphdl, '--lower-cpp-graph', fixture / 'ZeroConcatReject.cc',
-                       output, 'cpphdl_top', '--', '-std=c++23', '-I' + str(include),
-                       f'-DZERO_REJECT={case}'], f'reject-{case}', success=False)
-            if 'unsupported C++ hardware type:' not in log or output.exists():
-                raise RuntimeError(f'case {case}: missing width diagnostic or emitted invalid graph\n{log}')
-        print('zero-width ports, storage, standalone repeat and all-empty concat remain rejected')
-
+from FixtureChecks import FixtureChecks
 
 if __name__ == '__main__':
-    main()
+    test = FixtureChecks('ZeroConcat')
+    # Zero-width C++ values belong to the native graph contract. The optional
+    # RTL flow below tests legal SV zero repetitions inside a concatenation.
+    test.native()
+    test.graph()
+    if test.args.hdlcpp:
+        source = test.fixture / 'ZeroRepeat.sv'
+        runner = test.fixture / 'ZeroRepeatRun.cc'
+        generated = test.work / 'zero-repeat.cc'
+        test.run([test.args.hdlcpp, '--native-graph', '--top', 'ZeroRepeat',
+                  '--output', generated, source], 'zero-repeat-frontend')
+        output = test.work / 'zero-repeat-graph'
+        test.run([test.args.cpphdl, '--native-graph', '--output', output,
+                  '--cxx', test.args.cxx, '--runner', runner, generated, '--',
+                  '-fsanitize=address,undefined'], 'zero-repeat-build')
+        print(test.run([output / 'run'], 'zero-repeat-run'), end='')
+    if test.args.verilator:
+        test.run([test.args.verilator, '--cc', '--exe', '--build', '-j', '1', '-Wno-fatal',
+                  '--top-module', 'ZeroRepeat', '--Mdir', test.work / 'repeat-obj',
+                  '-CFLAGS', '-std=c++17 -DTEST_RTL', test.fixture / 'ZeroRepeat.sv',
+                  test.fixture / 'ZeroRepeatRun.cc'], 'zero-repeat-verilator')
+        print(test.run([test.work / 'repeat-obj/VZeroRepeat'], 'zero-repeat-rtl-run'), end='')

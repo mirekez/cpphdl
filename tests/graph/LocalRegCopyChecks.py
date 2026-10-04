@@ -3,6 +3,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -16,9 +20,10 @@ def main():
     include = fixture.parents[1] / 'include'
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='local-reg-', dir=args.work))
+    toolchain = TestToolchain(args.cxx, getattr(args, 'verilator', None), work)
 
     def run(command, label, success=True):
-        result = subprocess.run(list(map(str, command)), cwd=work, text=True,
+        result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
         (work / (label + '.log')).write_text(result.stdout)
         if (result.returncode == 0) != success:

@@ -3,6 +3,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -18,9 +22,10 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='byte-string-', dir=args.work) as temporary:
         work = Path(temporary)
+        toolchain = TestToolchain(args.cxx, args.verilator, work)
 
         def run(command):
-            result = subprocess.run(list(map(str, command)), cwd=work, text=True,
+            result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
             if result.returncode:
                 logs = ''.join(path.read_text(errors='replace')[-3000:]
